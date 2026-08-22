@@ -1,0 +1,99 @@
+name: Hermes work packet
+description: Assign a bounded, reviewable build task to a Hermes or other external worker.
+title: "[WORK] "
+labels:
+  - work-packet
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include secrets, tokens, private production data, or mutable artifact URLs. One worker and one isolated branch per packet.
+  - type: input
+    id: cr_block
+    attributes:
+      label: CR block
+      description: Example CR-4D.
+    validations:
+      required: true
+  - type: input
+    id: worker_route
+    attributes:
+      label: Worker route
+      description: Worker ID, machine, harness, and model. Use provisional when not yet qualified.
+    validations:
+      required: true
+  - type: dropdown
+    id: task_class
+    attributes:
+      label: Task class
+      options:
+        - qualification
+        - mechanical
+        - bounded_implementation
+        - integration_candidate
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk
+      options:
+        - low
+        - medium
+        - high
+        - critical
+    validations:
+      required: true
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective and accepted contract
+      description: State the exact outcome and link the controlling schema, specification, or ADR.
+    validations:
+      required: true
+  - type: textarea
+    id: allowed_paths
+    attributes:
+      label: Allowed paths
+      description: List the only repository paths this packet may modify.
+    validations:
+      required: true
+  - type: textarea
+    id: forbidden
+    attributes:
+      label: Forbidden changes and effects
+      description: Include live systems, secrets, migrations, dependencies, network effects, and out-of-scope modules as applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Inputs and fixtures
+      description: Use immutable repository references or artifact checksums.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance checks
+      description: List exact commands, tests, and semantic review conditions.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Expected output
+      description: Define the pull request, files, reports, or artifact manifest to return.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: This packet contains no credentials or private production content.
+          required: true
+        - label: The worker may not expand scope or merge its own pull request.
+          required: true
+        - label: Codex/Sol review is required before merge.
+          required: true

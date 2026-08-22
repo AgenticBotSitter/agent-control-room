@@ -57,6 +57,10 @@ pnpm test:build
 - [Security and authority](docs/SECURITY_AND_AUTHORITY.md)
 - [Migration notes](docs/MIGRATIONS.md)
 - [CR-0 through CR-2 verification](docs/CR2_VERIFICATION.md)
+- [Research synthesis and build decisions](docs/RESEARCH_SYNTHESIS_AND_BUILD_DECISIONS.md)
+- [CR-3 architecture package](docs/CR3_INDEX.md)
+- [Current build status and next model setting](docs/BUILD_STATUS.md)
+- [Hermes delegation and GitHub bootstrap playbook](docs/HERMES_DELEGATION_PLAYBOOK.md)
 - [Project adapter JSON Schema](contracts/project-adapter-v1.schema.json)
 - [Command receipt JSON Schema](contracts/command-receipt-v1.schema.json)
 
@@ -78,3 +82,7 @@ See [fixtures/README.md](fixtures/README.md).
 6. Add a synthetic fixture pack before requesting a live integration phase.
 
 Live commands remain a separate, explicitly approved phase.
+
+## Bootstrap collaboration
+
+Until Control Room can dispatch its own work, the private GitHub repository is the coordination layer. Codex retains architecture and review ownership; Hermes workers receive bounded issues, work on isolated branches, and return pull requests. No agent pushes directly to `main`, and every Hermes contribution is reviewed before merge. See the [delegation playbook](docs/HERMES_DELEGATION_PLAYBOOK.md).
