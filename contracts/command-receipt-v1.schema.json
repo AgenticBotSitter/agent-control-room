@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-room.invalid/contracts/command-receipt-v1.schema.json",
+  "title": "Control Room Command Receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "receiptId", "idempotencyKey", "status", "message", "receivedAt"],
+  "properties": {
+    "contractVersion": { "const": "control-room-project-adapter/v1" },
+    "receiptId": { "$ref": "#/$defs/id" },
+    "idempotencyKey": { "type": "string", "minLength": 12, "maxLength": 180 },
+    "sourceCommandId": { "$ref": "#/$defs/id" },
+    "status": { "enum": ["accepted", "rejected", "already_applied", "scheduled"] },
+    "appliedVersion": { "type": "string", "maxLength": 180 },
+    "safeReasonCode": { "$ref": "#/$defs/id" },
+    "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "receivedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 3, "maxLength": 180, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$" }
+  }
+}

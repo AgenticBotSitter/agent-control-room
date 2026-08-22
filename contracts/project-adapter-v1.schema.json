@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-room.invalid/contracts/project-adapter-v1.schema.json",
+  "title": "Control Room Project Adapter v1",
+  "description": "Machine-readable CR-0 envelope definitions. Domain payload schemas are enforced by the TypeScript/Zod contract in src/contracts/v1.",
+  "oneOf": [
+    { "$ref": "#/$defs/manifest" },
+    { "$ref": "#/$defs/changePage" },
+    { "$ref": "#/$defs/commandRequest" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "minLength": 3, "maxLength": 180, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$" },
+    "authorityMode": { "enum": ["control_room_native", "source_scheduled", "advisory"] },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "adapterId", "sourceSystem", "authorityMode", "projectTypes", "supportedReadOperations", "supportedCommands", "changeFeed", "redactionPolicyVersion"],
+      "properties": {
+        "contractVersion": { "const": "control-room-project-adapter/v1" },
+        "adapterId": { "$ref": "#/$defs/id" },
+        "sourceSystem": { "$ref": "#/$defs/id" },
+        "authorityMode": { "$ref": "#/$defs/authorityMode" },
+        "projectTypes": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "supportedReadOperations": { "type": "array", "items": { "enum": ["getProjectSummary", "listWorkItems", "listExecutions", "listBlockers", "listWorkers", "listAttentionItems", "readChanges"] }, "uniqueItems": true },
+        "supportedCommands": { "type": "array", "items": { "enum": ["requestRetry", "setPriority", "setWorkerPreference", "pauseProjectOrWork", "resumeProjectOrWork", "recordDecision"] }, "uniqueItems": true },
+        "changeFeed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cursorType", "retentionDays"],
+          "properties": { "cursorType": { "const": "opaque" }, "retentionDays": { "type": "integer", "minimum": 1 } }
+        },
+        "redactionPolicyVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cursor", "sequence", "occurredAt", "operation", "recordKind", "recordId", "sourceVersion"],
+      "properties": {
+        "cursor": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "occurredAt": { "type": "string", "format": "date-time" },
+        "operation": { "enum": ["upsert", "remove"] },
+        "recordKind": { "enum": ["project", "work_item", "execution", "blocker", "attention", "worker", "agent"] },
+        "recordId": { "$ref": "#/$defs/id" },
+        "sourceVersion": { "type": "string", "minLength": 1 },
+        "payload": true
+      }
+    },
+    "changePage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "adapterId", "nextCursor", "hasMore", "changes"],
+      "properties": {
+        "contractVersion": { "const": "control-room-project-adapter/v1" },
+        "adapterId": { "$ref": "#/$defs/id" },
+        "afterCursor": { "type": "string" },
+        "nextCursor": { "type": "string", "minLength": 1 },
+        "hasMore": { "type": "boolean" },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } }
+      }
+    },
+    "commandRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "command", "adapterId", "workspaceId", "projectId", "targetId", "idempotencyKey", "reason", "requestedBy", "payload"],
+      "properties": {
+        "contractVersion": { "const": "control-room-project-adapter/v1" },
+        "command": { "enum": ["requestRetry", "setPriority", "setWorkerPreference", "pauseProjectOrWork", "resumeProjectOrWork", "recordDecision"] },
+        "adapterId": { "$ref": "#/$defs/id" },
+        "workspaceId": { "$ref": "#/$defs/id" },
+        "projectId": { "$ref": "#/$defs/id" },
+        "targetId": { "$ref": "#/$defs/id" },
+        "expectedVersion": { "type": "string" },
+        "idempotencyKey": { "type": "string", "minLength": 12, "maxLength": 180 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "requestedBy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["actorId", "actorType"],
+          "properties": { "actorId": { "$ref": "#/$defs/id" }, "actorType": { "enum": ["human", "agent", "service"] } }
+        },
+        "payload": { "type": "object" }
+      }
+    }
+  }
+}

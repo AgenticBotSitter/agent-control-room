@@ -1,0 +1,343 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import {
+  agents,
+  attentionItems,
+  blockers,
+  projects,
+  recentActivity,
+  workers,
+  workItems,
+} from "@/src/fixtures/data";
+import { portfolioScheduleScenario, transcriptionScenarios } from "@/src/simulator/scenarios";
+
+type Scope = "all" | (typeof projects)[number]["id"];
+type ScenarioKey = keyof typeof transcriptionScenarios;
+
+const projectAccent: Record<string, string> = {
+  "project.wayfarer.lazy-river": "river",
+  "project.blooms.content-ops": "bloom",
+  "project.website.public-site": "site",
+};
+
+function stateLabel(value: string): string {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function relativeHeartbeat(value: string): string {
+  const seconds = Math.max(0, Math.round((Date.parse("2026-08-22T17:30:00.000Z") - Date.parse(value)) / 1000));
+  return `${seconds}s ago`;
+}
+
+function projectName(projectId: string): string {
+  return projects.find((project) => project.id === projectId)?.workspaceName ?? "Control Room";
+}
+
+export function ControlRoomDashboard() {
+  const [scope, setScope] = useState<Scope>("all");
+  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("automatic");
+  const [simulationApplied, setSimulationApplied] = useState(false);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("control-room-theme");
+    const initial = saved === "light" || saved === "dark"
+      ? saved
+      : window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    setTheme(initial);
+    document.documentElement.dataset.theme = initial;
+  }, []);
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
+    window.localStorage.setItem("control-room-theme", next);
+  };
+
+  const scopedProjects = useMemo(
+    () => scope === "all" ? projects : projects.filter((project) => project.id === scope),
+    [scope],
+  );
+  const scopedIds = new Set(scopedProjects.map((project) => project.id));
+  const scopedAttention = attentionItems.filter((item) => scopedIds.has(item.source.projectId));
+  const scopedBlockers = blockers.filter((item) => scopedIds.has(item.source.projectId));
+  const scopedWork = workItems.filter((item) => scopedIds.has(item.source.projectId));
+  const scopedActivity = recentActivity.filter((item) => scopedIds.has(item.projectId));
+  const running = scopedWork.filter((item) => item.normalizedState === "running");
+  const scenario = transcriptionScenarios[scenarioKey];
+
+  const totalProgress = Math.round(
+    scopedProjects.reduce((sum, project) => sum + (project.progressPercent ?? 0), 0) / Math.max(scopedProjects.length, 1),
+  );
+  const activeWorkers = workers.filter((worker) => worker.state !== "offline" && worker.state !== "maintenance").length;
+
+  return (
+    <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to operations</a>
+
+      <aside className="sidebar" aria-label="Primary navigation">
+        <Link className="brand" href="/" prefetch={false} aria-label="Control Room home">
+          <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
+          <span><strong>Control Room</strong><small>Private operations</small></span>
+        </Link>
+
+        <nav className="side-nav">
+          <a className="active" href="#overview"><span aria-hidden="true">⌂</span> Overview</a>
+          <a href="#projects"><span aria-hidden="true">▦</span> Projects</a>
+          <a href="#attention"><span aria-hidden="true">◆</span> Needs Me <b>{scopedAttention.length}</b></a>
+          <a href="#workers"><span aria-hidden="true">◫</span> Workers</a>
+          <a href="#agents"><span aria-hidden="true">◎</span> Agents</a>
+          <a href="#capacity"><span aria-hidden="true">⌁</span> Capacity</a>
+          <a href="#activity"><span aria-hidden="true">≡</span> Activity</a>
+        </nav>
+
+        <div className="sidebar-foot">
+          <span className="connection-dot" /> Synthetic adapters healthy
+          <small>CR-0 → CR-2 · No live connections</small>
+        </div>
+      </aside>
+
+      <main id="main-content" className="main-content">
+        <header className="topbar">
+          <div className="scope-control">
+            <label htmlFor="project-scope">Viewing</label>
+            <select id="project-scope" value={scope} onChange={(event) => setScope(event.target.value as Scope)}>
+              <option value="all">All projects</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.workspaceName} · {project.title}</option>
+              ))}
+            </select>
+          </div>
+          <div className="top-actions">
+            <span className="freshness"><i /> Snapshot 12:30 PM</span>
+            <button className="icon-button" type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
+              {theme === "dark" ? "☼" : "◐"}
+            </button>
+            <button className="avatar-button" type="button" aria-label="Owner account">AF</button>
+          </div>
+        </header>
+
+        <section id="overview" className="hero-section">
+          <div>
+            <p className="eyebrow">Portfolio command view</p>
+            <h1>{scope === "all" ? "Everything moving, in one room." : scopedProjects[0]?.title}</h1>
+            <p className="hero-copy">
+              {scope === "all"
+                ? "Synthetic status across every project, worker, agent, blocker, and allocation decision."
+                : `${scopedProjects[0]?.workspaceName} · ${stateLabel(scopedProjects[0]?.domainState ?? "")}`}
+            </p>
+          </div>
+          <span className="prototype-badge">Synthetic prototype</span>
+        </section>
+
+        <section className="metric-grid" aria-label="Portfolio summary">
+          <article className="metric-card">
+            <span className="metric-icon green">↗</span>
+            <div><small>Average progress</small><strong>{totalProgress}%</strong><em>{scopedProjects.length} project{scopedProjects.length === 1 ? "" : "s"} in scope</em></div>
+          </article>
+          <article className="metric-card">
+            <span className="metric-icon amber">!</span>
+            <div><small>Needs your attention</small><strong>{scopedAttention.length}</strong><em>{scopedBlockers.filter((item) => item.severity === "critical").length} critical blocker</em></div>
+          </article>
+          <article className="metric-card">
+            <span className="metric-icon blue">◫</span>
+            <div><small>Workers connected</small><strong>{activeWorkers}/{workers.length}</strong><em>{workers.reduce((sum, worker) => sum + worker.availableSlots, 0)} slots currently free</em></div>
+          </article>
+          <article className="metric-card">
+            <span className="metric-icon violet">◎</span>
+            <div><small>Running now</small><strong>{running.length}</strong><em>across {new Set(running.map((item) => item.source.projectId)).size} projects</em></div>
+          </article>
+        </section>
+
+        <section id="projects" className="section-block">
+          <div className="section-heading">
+            <div><p className="eyebrow">Portfolio</p><h2>Active projects</h2></div>
+            {scope !== "all" && <button className="text-button" type="button" onClick={() => setScope("all")}>Show all projects</button>}
+          </div>
+          <div className="project-grid">
+            {scopedProjects.map((project) => (
+              <article key={project.id} className={`project-card accent-${projectAccent[project.id]}`}>
+                <div className="project-topline">
+                  <span className="project-monogram">{project.workspaceName.split(" ").map((word) => word[0]).join("").slice(0, 2)}</span>
+                  <span className={`health health-${project.health}`}>{stateLabel(project.health)}</span>
+                </div>
+                <p>{project.workspaceName}</p>
+                <h3>{project.title}</h3>
+                <div className="progress-row"><span><i style={{ width: `${project.progressPercent ?? 0}%` }} /></span><b>{project.progressPercent}%</b></div>
+                <dl className="project-stats">
+                  <div><dt>Authority</dt><dd>{stateLabel(project.authorityMode)}</dd></div>
+                  <div><dt>Attention</dt><dd>{project.attentionCount}</dd></div>
+                  <div><dt>Blockers</dt><dd>{project.blockerCount}</dd></div>
+                </dl>
+                <div className="card-actions">
+                  <button type="button" onClick={() => setScope(project.id as Scope)}>Focus here</button>
+                  <Link href={`/projects/${encodeURIComponent(project.id)}`} prefetch={false}>Open project <span aria-hidden="true">→</span></Link>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <div className="dashboard-columns">
+          <section id="attention" className="section-block panel">
+            <div className="section-heading">
+              <div><p className="eyebrow">Decision queue</p><h2>Needs your attention</h2></div>
+              <span className="count-pill">{scopedAttention.length}</span>
+            </div>
+            <div className="attention-list">
+              {scopedAttention.map((item) => (
+                <article key={item.id} className="attention-item">
+                  <span className={`attention-symbol type-${item.type}`}>{item.type === "decision" ? "?" : item.type === "review" ? "◉" : "!"}</span>
+                  <div>
+                    <small>{projectName(item.source.projectId)} · {stateLabel(item.type)}</small>
+                    <h3>{item.title}</h3>
+                    <p>{item.summary}</p>
+                  </div>
+                  <Link href={`/projects/${encodeURIComponent(item.source.projectId)}`} prefetch={false} aria-label={`Open ${item.title}`}>→</Link>
+                </article>
+              ))}
+              {!scopedAttention.length && <p className="empty-state">Nothing needs your decision in this scope.</p>}
+            </div>
+          </section>
+
+          <section className="section-block panel">
+            <div className="section-heading">
+              <div><p className="eyebrow">Execution</p><h2>Running now</h2></div>
+              <span className="live-label"><i /> Live fixture</span>
+            </div>
+            <div className="running-list">
+              {running.map((item) => {
+                const worker = workers.find((candidate) => candidate.id === item.currentWorkerId);
+                return (
+                  <article key={item.id} className="running-item">
+                    <div className="running-head">
+                      <span className="worker-mini">{worker?.displayName.split(" ").map((word) => word[0]).join("").slice(0, 2) ?? "CR"}</span>
+                      <div><small>{projectName(item.source.projectId)}</small><h3>{item.title}</h3></div>
+                      <b>{item.progressPercent ?? 0}%</b>
+                    </div>
+                    <div className="running-progress"><i style={{ width: `${item.progressPercent ?? 0}%` }} /></div>
+                    <div className="running-meta"><span>{worker?.displayName ?? "Unassigned"}</span><span>{stateLabel(item.domainState)}</span></div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+
+        <section id="capacity" className="section-block capacity-panel">
+          <div className="section-heading">
+            <div><p className="eyebrow">CR-2 deterministic simulator</p><h2>Resolve the transcription bottleneck</h2></div>
+            <span className="simulation-only">Simulation only · no command sent</span>
+          </div>
+          <div className="capacity-layout">
+            <div className="blocker-spotlight">
+              <div className="spotlight-title"><span>!</span><div><small>Critical route conflict</small><h3>Mac is rendering; Content Blooms transcription is waiting</h3></div></div>
+              <p>The preferred verified MLX route has no free slot. Choose how the synthetic broker should respond.</p>
+              <label htmlFor="route-scenario">Placement policy</label>
+              <select
+                id="route-scenario"
+                value={scenarioKey}
+                onChange={(event) => { setScenarioKey(event.target.value as ScenarioKey); setSimulationApplied(false); }}
+              >
+                <option value="automatic">Automatic — best currently eligible route</option>
+                <option value="pinWindows">Pin Windows PC — provisional CUDA</option>
+                <option value="pinVps">Pin VPS — slower local CPU</option>
+                <option value="waitForMac">Wait for Mac — preferred verified MLX</option>
+              </select>
+              <button className="primary-button" type="button" onClick={() => setSimulationApplied(true)}>Run allocation simulation</button>
+            </div>
+            <div className={`decision-card ${simulationApplied ? "decision-applied" : ""}`} aria-live="polite">
+              <div className="decision-top">
+                <span>{scenario.authorityAction === "blocked" ? "Blocked" : stateLabel(scenario.authorityAction)}</span>
+                <b>{scenario.estimatedDurationMinutes ? `${scenario.estimatedDurationMinutes} min` : "No ETA"}</b>
+              </div>
+              <h3>{scenario.selectedWorkerId ? workers.find((worker) => worker.id === scenario.selectedWorkerId)?.displayName : "No eligible worker"}</h3>
+              <p>{scenario.selectedRouteId ? workers.flatMap((worker) => worker.capabilities).find((route) => route.id === scenario.selectedRouteId)?.runtime : "Adjust a hard eligibility constraint."}</p>
+              <ul>{scenario.explanation.map((line) => <li key={line}>{line}</li>)}</ul>
+              <div className="decision-foot">
+                <span>Incremental cost <b>${(scenario.estimatedCostUsd ?? 0).toFixed(2)}</b></span>
+                <span>Rejected routes <b>{scenario.rejected.length}</b></span>
+              </div>
+            </div>
+            <div className="fairness-card">
+              <small>Why Content Blooms is considered next</small>
+              <h3>Weighted fair share, not a greedy queue</h3>
+              {portfolioScheduleScenario.explanation.map((line) => <p key={line}>{line}</p>)}
+            </div>
+          </div>
+        </section>
+
+        <section id="blockers" className="section-block">
+          <div className="section-heading"><div><p className="eyebrow">Constraints</p><h2>Blockers</h2></div><span className="count-pill critical">{scopedBlockers.length}</span></div>
+          <div className="blocker-grid">
+            {scopedBlockers.map((item) => (
+              <article key={item.id} className={`blocker-card severity-${item.severity}`}>
+                <div><span>{stateLabel(item.severity)}</span><small>{projectName(item.source.projectId)}</small></div>
+                <h3>{item.title}</h3>
+                <p>{item.safeRemedy}</p>
+                <footer><span>Owner: {stateLabel(item.responsibleRole)}</span><Link href={`/projects/${encodeURIComponent(item.source.projectId)}`} prefetch={false}>Inspect →</Link></footer>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section id="workers" className="section-block panel table-panel">
+          <div className="section-heading"><div><p className="eyebrow">Global resources</p><h2>Workers</h2></div><span className="live-label"><i /> {activeWorkers} connected</span></div>
+          <div className="worker-table" role="table" aria-label="Synthetic workers">
+            <div className="table-row table-head" role="row"><span>Worker</span><span>Status</span><span>Allocation</span><span>Current work</span><span>Capabilities</span><span /></div>
+            {workers.map((worker) => (
+              <div className="table-row" role="row" key={worker.id}>
+                <span className="worker-cell"><i className={`os-${worker.os}`}>{worker.os === "macos" ? "M" : worker.os === "windows" ? "W" : "L"}</i><b>{worker.displayName}</b><small>{worker.os} · {worker.totalSlots} slots</small></span>
+                <span><em className={`status-dot state-${worker.state}`} />{stateLabel(worker.state)}<small>{relativeHeartbeat(worker.lastHeartbeatAt)}</small></span>
+                <span>{stateLabel(worker.allocationMode)}<small>{worker.preferredProjectIds?.length ? projectName(worker.preferredProjectIds[0]) : "Portfolio pool"}</small></span>
+                <span>{worker.currentWorkItemIds?.length ? workItems.find((item) => item.id === worker.currentWorkItemIds?.[0])?.title : "Ready for work"}<small>{worker.availableSlots} free slots</small></span>
+                <span><b>{worker.capabilities.length}</b><small>{worker.capabilities.filter((route) => route.verification === "verified").length} verified</small></span>
+                <span><Link className="row-link" href={`/workers/${encodeURIComponent(worker.id)}`} prefetch={false} aria-label={`Open ${worker.displayName}`}>→</Link></span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="dashboard-columns lower-columns">
+          <section id="agents" className="section-block panel">
+            <div className="section-heading"><div><p className="eyebrow">Reasoning identities</p><h2>Agents</h2></div><span className="count-pill">{agents.length}</span></div>
+            <div className="agent-grid">
+              {agents.map((agent) => (
+                <article key={agent.id} className="agent-card">
+                  <span className={`agent-avatar agent-${agent.agentType}`}>{agent.displayName.split(" ").map((word) => word[0]).join("").slice(0, 2)}</span>
+                  <div><h3>{agent.displayName}</h3><p>{stateLabel(agent.agentType)} · {stateLabel(agent.state)}</p><small>{agent.projectIds.length} project grants</small></div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section id="activity" className="section-block panel">
+            <div className="section-heading"><div><p className="eyebrow">Append-only view</p><h2>Recent activity</h2></div></div>
+            <ol className="activity-list">
+              {scopedActivity.map((event) => (
+                <li key={event.id}><i className={`event-${event.tone}`} /><time>{event.time}</time><div><b>{event.actor}</b><p>{event.action}</p><small>{projectName(event.projectId)}</small></div></li>
+              ))}
+            </ol>
+          </section>
+        </div>
+
+        <footer className="page-footer">
+          <span>Control Room · {"control-room-project-adapter/v1"}</span>
+          <span>Fixture data only · No production credentials · No live project commands</span>
+        </footer>
+      </main>
+
+      <nav className="mobile-nav" aria-label="Mobile navigation">
+        <a href="#overview"><span>⌂</span>Home</a>
+        <a href="#projects"><span>▦</span>Projects</a>
+        <a href="#attention"><span>◆</span>Needs me</a>
+        <a href="#workers"><span>◫</span>Workers</a>
+      </nav>
+    </div>
+  );
+}
