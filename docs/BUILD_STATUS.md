@@ -14,15 +14,16 @@
 | Research gates | Complete for architecture | Research synthesis; live acceptance checks carried into implementation |
 | CR-3 architecture package | Complete and owner-accepted | CR-3 index and decision package |
 | CR-4A canonical contracts | Complete | Domain types, validators, JSON Schema, state machines, authority-containment tests |
-| CR-4B through CR-10 | Not started | Phased build plan |
+| CR-4B transactional persistence | Complete | Migration 0003, canonical store, delivery store, concurrency/restart/idempotency tests |
+| CR-4C through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Completed: CR-4A — Canonical domain contracts and state machines
-Delivered: 13 canonical domain records, message envelope, runtime validators, generated JSON Schema, transition tables, authority-containment rules, and contract documentation
-Validation: TypeScript clean; 20/20 repository tests passed; generated schema equality tested
-Open risks: Cross-record concurrency and digest verification intentionally move to CR-4B/CR-4C
+Completed: CR-4B — PostgreSQL repositories and transactional lifecycle
+Delivered: normalized canonical schema, tenant-bound lineage, optimistic transitions, atomic job claims, monotonic attempts/lease epochs, renewal/expiry, inbox/outbox, idempotent execution, retry/recovery/dead-letter flow
+Validation: TypeScript clean; 27/27 repository tests passed; migration verification passes with 40 tables
+Open risks: Disposable real-PostgreSQL rehearsal remains required before live deployment; CR-4C must add identity, authorization, policy, approval verification, digest verification, and redaction
 Decision-log changes: none; implementation follows accepted CR-3 decisions
 ```
 
@@ -35,12 +36,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-4B — PostgreSQL repositories and transactional lifecycle
+Block: CR-4C — Identity, authorization, policy, approval, digest verification, and redaction
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: concurrent leases, idempotent inbox/outbox delivery, migrations, and recovery carry data-loss and duplicate-effect risk
-Expected output: forward migrations, repositories, transactional transition functions, lease/epoch enforcement, inbox/outbox, idempotency, and concurrency/restart tests
-Stop before: CR-4C identity, authorization, approvals, and redaction implementation
+Why: this becomes the central privilege and data-exposure boundary before any node or adapter can connect
+Expected output: scoped identities/roles, deterministic policy decisions, exact-operation approval primitives, digest verification, safe errors, and boundary redaction tests
+Stop before: CR-4D audit-chain and operational-error implementation
 ```
 
 ## Update rule

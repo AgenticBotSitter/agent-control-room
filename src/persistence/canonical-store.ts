@@ -1,0 +1,462 @@
+import {
+  approvalTransitions,
+  artifactTransitions,
+  attemptTransitions,
+  checkpointTransitions,
+  domainEntitySchema,
+  effectIntentTransitions,
+  incidentTransitions,
+  jobTransitions,
+  leaseTransitions,
+  nodeTransitions,
+  requestTransitions,
+  scheduleTransitions,
+  serviceTransitions,
+  workflowTransitions,
+  type ActorRef,
+  type AttemptRecord,
+  type DomainEntity,
+  type JobRecord,
+  type LeaseRecord,
+  type TransitionTable,
+} from "../domain/v1";
+import type { DatabaseClient, DatabaseSession } from "./database";
+
+type EntityKind = DomainEntity["kind"];
+type EntityState = DomainEntity["state"];
+
+interface EntityConfig {
+  table: string;
+  transitions: TransitionTable<string>;
+}
+
+const entityConfigs: Record<EntityKind, EntityConfig> = {
+  request: { table: "control_requests", transitions: requestTransitions },
+  workflow: { table: "control_workflows", transitions: workflowTransitions },
+  job: { table: "control_jobs", transitions: jobTransitions },
+  attempt: { table: "control_attempts", transitions: attemptTransitions },
+  lease: { table: "control_leases", transitions: leaseTransitions },
+  checkpoint: { table: "control_checkpoints", transitions: checkpointTransitions },
+  effect_intent: { table: "control_effect_intents", transitions: effectIntentTransitions },
+  approval: { table: "control_approvals", transitions: approvalTransitions },
+  service: { table: "control_services", transitions: serviceTransitions },
+  schedule: { table: "control_schedules", transitions: scheduleTransitions },
+  incident: { table: "control_incidents", transitions: incidentTransitions },
+  artifact_manifest: { table: "control_artifact_manifests", transitions: artifactTransitions },
+  node: { table: "control_nodes", transitions: nodeTransitions },
+};
+
+const initialStates: Record<EntityKind, EntityState> = {
+  request: "draft", workflow: "proposed", job: "proposed", attempt: "offered", lease: "active",
+  checkpoint: "declared", effect_intent: "proposed", approval: "pending", service: "active",
+  schedule: "active", incident: "open", artifact_manifest: "declared", node: "pending_enrollment",
+};
+
+export interface TransitionInput {
+  tenantId: string;
+  kind: EntityKind;
+  entityId: string;
+  expectedVersion: number;
+  toState: EntityState;
+  transitionId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  safeMetadata?: Record<string, unknown>;
+  recordPatch?: Record<string, unknown>;
+}
+
+export interface TransitionResult {
+  entity: DomainEntity;
+  replayed: boolean;
+}
+
+export interface ClaimJobInput {
+  tenantId: string;
+  jobId: string;
+  expectedJobVersion: number;
+  nodeId: string;
+  workerId?: string;
+  attemptId: string;
+  leaseId: string;
+  transitionId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
+export interface ExpireLeaseInput {
+  tenantId: string;
+  leaseId: string;
+  jobId: string;
+  attemptId: string;
+  expectedLeaseVersion: number;
+  expectedJobVersion: number;
+  expectedAttemptVersion: number;
+  epoch: number;
+  transitionId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+}
+
+export interface RenewLeaseInput {
+  tenantId: string;
+  leaseId: string;
+  expectedVersion: number;
+  epoch: number;
+  renewalId: string;
+  idempotencyKey: string;
+  renewedAt: string;
+  expiresAt: string;
+}
+
+const transitionPatchFields: Record<EntityKind, ReadonlySet<string>> = {
+  request: new Set(), workflow: new Set(), job: new Set(),
+  attempt: new Set(["startedAt", "finishedAt", "safeFailureCode"]),
+  lease: new Set(["expiresAt", "renewedAt"]),
+  checkpoint: new Set(["verifiedAt"]),
+  effect_intent: new Set(["destinationReceipt", "safeFailureCode"]),
+  approval: new Set(["decidedBy", "decidedAt", "safeReasonCode"]),
+  service: new Set(["lastObservedAt", "lastHealthyAt", "safeStatusCode"]),
+  schedule: new Set(), incident: new Set(["resolvedAt"]),
+  artifact_manifest: new Set(["opaqueLocator"]),
+  node: new Set(["enrolledAt", "lastSeenAt", "quarantineReasonCode"]),
+};
+
+function json(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function extras(entity: DomainEntity): Array<[string, unknown]> {
+  switch (entity.kind) {
+    case "request": return [["project_id", entity.projectId ?? null], ["idempotency_key", entity.idempotencyKey]];
+    case "workflow": return [["request_id", entity.requestId], ["project_id", entity.projectId], ["definition_digest", entity.definitionDigest]];
+    case "job": return [["workflow_id", entity.workflowId], ["project_id", entity.projectId], ["priority", entity.priority], ["required_capability", entity.requiredCapability], ["authority_digest", entity.authority.digest]];
+    case "attempt": return [["job_id", entity.jobId], ["attempt_number", entity.attemptNumber], ["worker_id", entity.workerId ?? null], ["node_id", entity.nodeId ?? null], ["lease_epoch", entity.leaseEpoch ?? null]];
+    case "lease": return [["job_id", entity.jobId], ["attempt_id", entity.attemptId], ["node_id", entity.nodeId], ["epoch", entity.epoch], ["acquired_at", entity.acquiredAt], ["expires_at", entity.expiresAt], ["renewed_at", entity.renewedAt ?? null]];
+    case "checkpoint": return [["attempt_id", entity.attemptId], ["sequence", entity.sequence], ["payload_digest", entity.payloadDigest]];
+    case "effect_intent": return [["job_id", entity.jobId], ["attempt_id", entity.attemptId], ["approval_id", entity.approvalId ?? null], ["operation_digest", entity.operationDigest], ["destination", entity.destination], ["idempotency_key", entity.idempotencyKey]];
+    case "approval": return [["operation_digest", entity.operationDigest], ["expires_at", entity.expiresAt]];
+    case "service": return [["project_id", entity.projectId]];
+    case "schedule": return [["project_id", entity.projectId], ["next_run_at", entity.nextRunAt ?? null]];
+    case "incident": return [["project_id", entity.projectId ?? null], ["node_id", entity.nodeId ?? null], ["severity", entity.severity]];
+    case "artifact_manifest": return [["project_id", entity.projectId], ["workflow_id", entity.workflowId ?? null], ["job_id", entity.jobId], ["attempt_id", entity.attemptId], ["content_hash", entity.contentHash]];
+    case "node": return [["identity_key_id", entity.identityKeyId]];
+  }
+}
+
+export class CanonicalStore {
+  constructor(private readonly db: DatabaseClient) {}
+
+  async create(entity: DomainEntity): Promise<void> {
+    const validated = domainEntitySchema.parse(entity) as DomainEntity;
+    if (validated.state !== initialStates[validated.kind]) {
+      throw new Error(`${validated.kind} must be created in ${initialStates[validated.kind]} state`);
+    }
+    await this.db.transaction(async (tx) => {
+      await this.insertWith(tx, validated);
+      if (validated.kind === "job") {
+        for (const dependencyId of validated.dependsOnJobIds) {
+          await tx.query(
+            `INSERT INTO control_job_dependencies (tenant_id,job_id,depends_on_job_id) VALUES ($1,$2,$3)`,
+            [validated.tenantId, validated.id, dependencyId],
+          );
+        }
+      }
+    });
+  }
+
+  async get(tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity | undefined> {
+    return this.getWith(this.db, tenantId, kind, id);
+  }
+
+  async transition(input: TransitionInput): Promise<TransitionResult> {
+    return this.db.transaction((tx) => this.transitionWith(tx, input, false));
+  }
+
+  async claimReadyJob(input: ClaimJobInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {
+    return this.db.transaction(async (tx) => {
+      const prior = await tx.query<{ entity_id: string }>(
+        `SELECT entity_id FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='job' AND idempotency_key=$2`,
+        [input.tenantId, input.idempotencyKey],
+      );
+      if (prior.rows.length) {
+        if (prior.rows[0].entity_id !== input.jobId) throw new Error("Idempotency key reused for another job");
+        const job = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+        const attempt = await this.requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+        const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+        return { job, attempt, lease, replayed: true };
+      }
+
+      const jobRow = await tx.query<{ payload: JobRecord }>(
+        `SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+        [input.tenantId, input.jobId],
+      );
+      const job = jobRow.rows[0]?.payload;
+      if (!job) throw new Error("Job not found");
+      if (job.state !== "ready" || job.version !== input.expectedJobVersion) throw new Error("Job is not claimable at expected version");
+
+      const nodeRow = await tx.query<{ state: string }>(
+        `SELECT state FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+        [input.tenantId, input.nodeId],
+      );
+      if (nodeRow.rows[0]?.state !== "active") throw new Error("Node is not active");
+
+      const sequence = await tx.query<{ next_attempt: number; next_epoch: number }>(
+        `SELECT
+          COALESCE((SELECT max(attempt_number)+1 FROM control_attempts WHERE job_id=$1),1)::int AS next_attempt,
+          COALESCE((SELECT max(epoch)+1 FROM control_leases WHERE job_id=$1),1)::int AS next_epoch`,
+        [input.jobId],
+      );
+      const next = sequence.rows[0];
+
+      const attemptOffered: AttemptRecord = {
+        contractVersion: job.contractVersion,
+        kind: "attempt",
+        id: input.attemptId,
+        tenantId: input.tenantId,
+        jobId: input.jobId,
+        attemptNumber: next.next_attempt,
+        state: "offered",
+        version: 0,
+        workerId: input.workerId,
+        nodeId: input.nodeId,
+        leaseEpoch: next.next_epoch,
+        offeredAt: input.acquiredAt,
+        createdAt: input.acquiredAt,
+        updatedAt: input.acquiredAt,
+      };
+      await this.insertWith(tx, attemptOffered);
+
+      const attemptResult = await this.transitionWith(tx, {
+        tenantId: input.tenantId, kind: "attempt", entityId: input.attemptId,
+        expectedVersion: 0, toState: "leased", transitionId: `${input.transitionId}:attempt`,
+        idempotencyKey: `${input.idempotencyKey}:attempt`, actor: input.actor, occurredAt: input.acquiredAt,
+      }, true);
+
+      const lease: LeaseRecord = {
+        contractVersion: job.contractVersion,
+        kind: "lease",
+        id: input.leaseId,
+        tenantId: input.tenantId,
+        jobId: input.jobId,
+        attemptId: input.attemptId,
+        nodeId: input.nodeId,
+        epoch: next.next_epoch,
+        state: "active",
+        version: 0,
+        acquiredAt: input.acquiredAt,
+        expiresAt: input.expiresAt,
+        createdAt: input.acquiredAt,
+        updatedAt: input.acquiredAt,
+      };
+      await this.insertWith(tx, lease);
+
+      const jobResult = await this.transitionWith(tx, {
+        tenantId: input.tenantId, kind: "job", entityId: input.jobId,
+        expectedVersion: input.expectedJobVersion, toState: "leased", transitionId: input.transitionId,
+        idempotencyKey: input.idempotencyKey, actor: input.actor, occurredAt: input.acquiredAt,
+        safeMetadata: { attemptId: input.attemptId, leaseId: input.leaseId, leaseEpoch: next.next_epoch },
+      }, true);
+      return { job: jobResult.entity as JobRecord, attempt: attemptResult.entity as AttemptRecord, lease, replayed: false };
+    });
+  }
+
+  async expireLease(input: ExpireLeaseInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {
+    return this.db.transaction(async (tx) => {
+      const prior = await tx.query<{ entity_id: string }>(
+        `SELECT entity_id FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='lease' AND idempotency_key=$2`,
+        [input.tenantId, input.idempotencyKey],
+      );
+      if (prior.rows.length) {
+        const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+        const attempt = await this.requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+        const job = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+        return { job, attempt, lease, replayed: true };
+      }
+
+      const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+      if (lease.jobId !== input.jobId || lease.attemptId !== input.attemptId || lease.epoch !== input.epoch) {
+        throw new Error("Lease lineage or epoch mismatch");
+      }
+      if (lease.state !== "active" || Date.parse(lease.expiresAt) > Date.parse(input.occurredAt)) {
+        throw new Error("Lease is not eligible for expiry");
+      }
+
+      const leaseResult = await this.transitionWith(tx, {
+        tenantId: input.tenantId, kind: "lease", entityId: input.leaseId,
+        expectedVersion: input.expectedLeaseVersion, toState: "expired", transitionId: input.transitionId,
+        idempotencyKey: input.idempotencyKey, actor: input.actor, occurredAt: input.occurredAt,
+      }, true);
+      const attemptResult = await this.transitionWith(tx, {
+        tenantId: input.tenantId, kind: "attempt", entityId: input.attemptId,
+        expectedVersion: input.expectedAttemptVersion, toState: "orphaned", transitionId: `${input.transitionId}:attempt`,
+        idempotencyKey: `${input.idempotencyKey}:attempt`, actor: input.actor, occurredAt: input.occurredAt,
+        recordPatch: { finishedAt: input.occurredAt },
+      }, true);
+      const currentJob = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+      const nextJobState = currentJob.state === "leased" ? "ready" : "orphaned";
+      const jobResult = await this.transitionWith(tx, {
+        tenantId: input.tenantId, kind: "job", entityId: input.jobId,
+        expectedVersion: input.expectedJobVersion, toState: nextJobState, transitionId: `${input.transitionId}:job`,
+        idempotencyKey: `${input.idempotencyKey}:job`, actor: input.actor, occurredAt: input.occurredAt,
+        safeMetadata: { expiredLeaseId: input.leaseId, leaseEpoch: input.epoch },
+      }, true);
+      return {
+        lease: leaseResult.entity as LeaseRecord,
+        attempt: attemptResult.entity as AttemptRecord,
+        job: jobResult.entity as JobRecord,
+        replayed: false,
+      };
+    });
+  }
+
+  async renewLease(input: RenewLeaseInput): Promise<{ lease: LeaseRecord; replayed: boolean }> {
+    return this.db.transaction(async (tx) => {
+      const prior = await tx.query<{ payload: { leaseId: string } }>(
+        `SELECT payload FROM control_outbox WHERE tenant_id=$1 AND topic='lease.renewed' AND idempotency_key=$2`,
+        [input.tenantId, input.idempotencyKey],
+      );
+      if (prior.rows.length) {
+        if (prior.rows[0].payload.leaseId !== input.leaseId) throw new Error("Renewal idempotency key reused for another lease");
+        return { lease: await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord, replayed: true };
+      }
+
+      const row = await tx.query<{ payload: LeaseRecord }>(
+        `SELECT payload FROM control_leases WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+        [input.tenantId, input.leaseId],
+      );
+      const current = row.rows[0]?.payload;
+      if (!current) throw new Error("Lease not found");
+      if (current.state !== "active" || current.epoch !== input.epoch || current.version !== input.expectedVersion) {
+        throw new Error("Lease renewal has stale state, epoch, or version");
+      }
+      if (Date.parse(input.renewedAt) > Date.parse(current.expiresAt)) throw new Error("Expired leases cannot be renewed");
+      if (Date.parse(input.expiresAt) <= Date.parse(current.expiresAt)) throw new Error("Renewal must extend expiry");
+
+      const next = domainEntitySchema.parse({
+        ...current, expiresAt: input.expiresAt, renewedAt: input.renewedAt,
+        version: current.version + 1, updatedAt: input.renewedAt,
+      }) as LeaseRecord;
+      const updated = await tx.query(
+        `UPDATE control_leases SET version=$1,expires_at=$2,renewed_at=$3,payload=$4::jsonb,updated_at=$3
+         WHERE tenant_id=$5 AND id=$6 AND version=$7 AND state='active' AND epoch=$8 RETURNING id`,
+        [next.version,next.expiresAt,next.renewedAt,json(next),input.tenantId,input.leaseId,current.version,input.epoch],
+      );
+      if (updated.rows.length !== 1) throw new Error("Concurrent lease renewal conflict");
+      await tx.query(
+        `INSERT INTO control_outbox (id,tenant_id,topic,aggregate_type,aggregate_id,idempotency_key,status,available_at,payload)
+         VALUES ($1,$2,'lease.renewed','lease',$3,$4,'pending',$5,$6::jsonb)`,
+        [input.renewalId,input.tenantId,input.leaseId,input.idempotencyKey,input.renewedAt,
+          json({ leaseId: input.leaseId, epoch: input.epoch, expiresAt: input.expiresAt, version: next.version })],
+      );
+      return { lease: next, replayed: false };
+    });
+  }
+
+  private async insertWith(tx: DatabaseSession, entity: DomainEntity): Promise<void> {
+    domainEntitySchema.parse(entity);
+    const config = entityConfigs[entity.kind];
+    const fields: Array<[string, unknown, boolean?]> = [
+      ["id", entity.id], ["tenant_id", entity.tenantId], ["state", entity.state],
+      ["version", entity.version], ["payload", json(entity), true],
+      ["created_at", entity.createdAt], ["updated_at", entity.updatedAt],
+      ...extras(entity).map(([name, value]) => [name, value] as [string, unknown]),
+    ];
+    const placeholders = fields.map((field, index) => `$${index + 1}${field[2] ? "::jsonb" : ""}`);
+    await tx.query(
+      `INSERT INTO ${config.table} (${fields.map(([name]) => name).join(",")}) VALUES (${placeholders.join(",")})`,
+      fields.map(([, value]) => value),
+    );
+  }
+
+  private async getWith(tx: DatabaseSession, tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity | undefined> {
+    const result = await tx.query<{ payload: DomainEntity }>(
+      `SELECT payload FROM ${entityConfigs[kind].table} WHERE tenant_id=$1 AND id=$2`,
+      [tenantId, id],
+    );
+    return result.rows[0] ? domainEntitySchema.parse(result.rows[0].payload) as DomainEntity : undefined;
+  }
+
+  private async requireWith(tx: DatabaseSession, tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity> {
+    const entity = await this.getWith(tx, tenantId, kind, id);
+    if (!entity) throw new Error(`${kind} ${id} not found`);
+    return entity;
+  }
+
+  private async transitionWith(tx: DatabaseSession, input: TransitionInput, coordinated: boolean): Promise<TransitionResult> {
+    const existing = await tx.query<{ entity_id: string; to_state: string }>(
+      `SELECT entity_id,to_state FROM control_transition_events WHERE tenant_id=$1 AND entity_kind=$2 AND idempotency_key=$3`,
+      [input.tenantId, input.kind, input.idempotencyKey],
+    );
+    if (existing.rows.length) {
+      const prior = existing.rows[0];
+      if (prior.entity_id !== input.entityId || prior.to_state !== input.toState) throw new Error("Idempotency key conflicts with a different transition");
+      return { entity: await this.requireWith(tx, input.tenantId, input.kind, input.entityId), replayed: true };
+    }
+
+    const config = entityConfigs[input.kind];
+    const row = await tx.query<{ payload: DomainEntity }>(
+      `SELECT payload FROM ${config.table} WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+      [input.tenantId, input.entityId],
+    );
+    const current = row.rows[0]?.payload;
+    if (!current) throw new Error(`${input.kind} not found`);
+    if (current.version !== input.expectedVersion) throw new Error(`Version conflict: expected ${input.expectedVersion}, found ${current.version}`);
+    if (!config.transitions[current.state]?.includes(input.toState)) throw new Error(`Illegal ${input.kind} transition: ${current.state} -> ${input.toState}`);
+
+    if (!coordinated && (input.kind === "attempt" || input.kind === "lease")) {
+      throw new Error(`${input.kind} transitions require a coordinated repository operation`);
+    }
+    if (!coordinated && input.kind === "job" && current.state !== "proposed") {
+      throw new Error(`Job transition ${current.state} -> ${input.toState} requires a coordinated repository operation`);
+    }
+    if (input.kind === "job" && current.state === "proposed" && input.toState === "ready") {
+      const job = current as JobRecord;
+      if (Date.parse(job.authority.expiresAt) <= Date.parse(input.occurredAt)) throw new Error("Job authority has expired");
+      const blocked = await tx.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM control_job_dependencies d
+         JOIN control_jobs dependency ON dependency.tenant_id=d.tenant_id AND dependency.id=d.depends_on_job_id
+         WHERE d.tenant_id=$1 AND d.job_id=$2 AND dependency.state <> 'succeeded'`,
+        [input.tenantId, input.entityId],
+      );
+      if (blocked.rows[0]?.count !== "0") throw new Error("Job dependencies are not satisfied");
+    }
+
+    for (const key of Object.keys(input.recordPatch ?? {})) {
+      if (!transitionPatchFields[input.kind].has(key)) throw new Error(`Transition patch cannot modify ${input.kind}.${key}`);
+    }
+    const next = domainEntitySchema.parse({
+      ...current,
+      ...(input.recordPatch ?? {}),
+      state: input.toState,
+      version: current.version + 1,
+      updatedAt: input.occurredAt,
+    }) as DomainEntity;
+    const updated = await tx.query<{ payload: DomainEntity }>(
+      `UPDATE ${config.table} SET state=$1,version=$2,payload=$3::jsonb,updated_at=$4
+       WHERE tenant_id=$5 AND id=$6 AND version=$7 AND state=$8 RETURNING payload`,
+      [next.state, next.version, json(next), next.updatedAt, input.tenantId, input.entityId, current.version, current.state],
+    );
+    if (updated.rows.length !== 1) throw new Error("Concurrent transition conflict");
+
+    await tx.query(
+      `INSERT INTO control_transition_events (
+        id,tenant_id,entity_kind,entity_id,from_state,to_state,from_version,to_version,
+        actor_id,actor_type,idempotency_key,safe_metadata,occurred_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13)`,
+      [input.transitionId,input.tenantId,input.kind,input.entityId,current.state,next.state,current.version,next.version,
+        input.actor.actorId,input.actor.actorType,input.idempotencyKey,json(input.safeMetadata ?? {}),input.occurredAt],
+    );
+    await tx.query(
+      `INSERT INTO control_outbox (
+        id,tenant_id,topic,aggregate_type,aggregate_id,idempotency_key,status,available_at,payload
+      ) VALUES ($1,$2,'domain.transition',$3,$4,$5,'pending',$6,$7::jsonb)`,
+      [`outbox:${input.transitionId}`,input.tenantId,input.kind,input.entityId,input.idempotencyKey,input.occurredAt,
+        json({ entityKind: input.kind, entityId: input.entityId, fromState: current.state, toState: next.state, version: next.version })],
+    );
+    return { entity: next, replayed: false };
+  }
+}

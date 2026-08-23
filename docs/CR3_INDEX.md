@@ -17,6 +17,8 @@
 10. [Hermes delegation and GitHub bootstrap playbook](HERMES_DELEGATION_PLAYBOOK.md)
 11. [CR-4A canonical domain contract](CR4A_DOMAIN_CONTRACT.md)
 12. [CR-4A verification](CR4A_VERIFICATION.md)
+13. [CR-4B transaction design](CR4B_TRANSACTION_DESIGN.md)
+14. [CR-4B verification](CR4B_VERIFICATION.md)
 
 ## Proposed owner approvals
 

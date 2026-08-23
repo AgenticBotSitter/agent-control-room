@@ -8,4 +8,10 @@ Creates tenants, workspaces, adapter registry, projects, work items, executions,
 
 Adds allocation policies, benchmark runs, simulator runs, and recommendations. Append-only triggers protect audit events, projection changes, and command receipts from update or deletion.
 
-`pnpm db:verify` applies both migrations to an isolated in-memory PostgreSQL-compatible PGlite database and checks the expected table set. Production migration execution is intentionally not wired in this phase.
+## 0003 — canonical domain and durable delivery
+
+Adds normalized canonical records for nodes, requests, workflows, jobs, attempts, leases, checkpoints, approvals, effect intents, services, schedules, incidents, and artifact manifests. Adds tenant-bound composite lineage, job dependencies, one-active-lease and monotonic-epoch constraints, append-only transition events, inbox/outbox, idempotency records, claim recovery, and dead-letter status.
+
+Payload-mirror triggers ensure the indexed ID, tenant, state, and version cannot disagree with the versioned JSON record. Cross-record operations remain repository transactions; direct SQL state changes fail the mirror trigger and are unsupported.
+
+`pnpm db:verify` applies all migrations to an isolated PostgreSQL-compatible PGlite database and checks the expected table set. A disposable real-PostgreSQL rehearsal remains mandatory before any live deployment.
