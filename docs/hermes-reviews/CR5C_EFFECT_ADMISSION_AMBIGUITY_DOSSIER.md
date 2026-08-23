@@ -59,12 +59,13 @@ J for admission (durable, local, structural 9b), D for resolution (destination t
 
 ## 2. Transitions and durable records per scenario `[P]`
 
-Durable record (bridge journal, new table family): `effect_claims(claim_key PK, message_id, job_id, attempt_id, idempotency_key, operation_digest, state CHECK IN ('claimed','executing','confirmed','failed','ambiguous'), claimed_at, updated_at, destination_receipt_digest?, safe_failure_code?)`. States mirror `effectIntentTransitions` (`state-machines.ts:74-82`) so classification logic stays symmetric with central records.
+Durable record (bridge journal, new table family): `effect_claims(claim_key PK, message_id, job_id, attempt_id, idempotency_key, operation_digest, state CHECK IN ('claimed','executing','confirmed','failed','ambiguous'), claimed_at, updated_at, destination_receipt_digest?, safe_failure_code?)`. States mirror `effectIntentTransitions` (`state-machines.ts:74-82`) so classification logic stays symmetric with central records. `message_id` here is the **delivery-dedup secondary key** (see §3) — the PK is the effect-scoped `claim_key`.
 
 | Scenario | Transition path | Durable record after | Receipt/outcome |
 |---|---|---|---|
 | Normal execute | claimed→executing→confirmed | terminal row + destinationReceiptDigest | ack normal |
 | Duplicate delivery, original terminal | no new claim; gate sees terminal row | unchanged | ack duplicate; **replay stored result as idempotent outcome** (9c) |
+| **Fresh-message re-offer of same effect** (new messageId, same jobId/attemptId/operationDigest) | derived `claim_key` matches existing row ⇒ refused/deferred at gate despite the fresh messageId | first row untouched | same disposition as concurrent duplicate — effect-scoped key makes this structurally identical to 9b |
 | Concurrent duplicate mid-executing (9b) | second frame refused at gate | first row untouched `executing` | defer disposition (LIFECYCLE §5) or refuse-receipt `effect_in_progress` |
 | Pre-effect crash (10a): death between claimed and executing-start | restart finds `claimed`, no executing evidence | re-dispatch under SAME claim_key | safe re-authorize (nothing fired) — I3 |
 | Post-effect/pre-ack crash (10b): death during executing | restart finds `executing`, cannot know if fired | state→**ambiguous**, attention raised | never re-fire; await resolution — I4 |
@@ -77,8 +78,8 @@ Key rule: **restart-time classification is mechanical**: `claimed`+no-executing-
 
 ## 3. Uniqueness / idempotency keys `[P]`
 
-- **`claim_key` = sha256(nodeId ‖ messageId)** — one claim per delivered command instance. Message-level, so redelivery of the same message maps to the same claim row (this is what makes W2 serialize).
-- **`idempotency_key` = server-provided when present** (job/lease bodies carry identity), else derived `sha256(nodeId ‖ jobId ‖ attemptId ‖ operationDigest)`. Passed to destination verbatim so Approach-D resolution works when destinations support it. Digest-binding follows the INV D2 precedent (`digest.ts:67+`).
+- **`claim_key` = sha256(nodeId ‖ jobId ‖ attemptId ‖ operationDigest)** — one claim per *effect* (node, job, attempt, operation), NOT per delivered message. **Message ID is a delivery-dedup secondary key only** (it collapses transport-level redelivery of the same frame); it must never scope the effect claim. A message-scoped claim key (`sha256(nodeId ‖ messageId)`) fails the at-least-once contract: a server legitimately re-offering the same effect under a fresh messageId after a retry/timeout derives a new claim key and slips past the gate — exactly the duplicate-effect hole this dossier exists to close.
+- **`idempotency_key` = server-provided when present** (job/lease bodies carry identity), else derived identically to `claim_key`: `sha256(nodeId ‖ jobId ‖ attemptId ‖ operationDigest)`. Passed to destination verbatim so Approach-D resolution works when destinations support it. Digest-binding follows the INV D2 precedent (`digest.ts:67+`).
 - **Never regenerate keys on retry** — regeneration is indistinguishable from a new effect to the destination.
 - **Receipt safety:** stored receipts keep digests only (`destination_receipt_digest`); full receipts follow ATX case-11 rules (safe vocabulary, secret-guard before persistence).
 
@@ -101,9 +102,13 @@ Key rule: **restart-time classification is mechanical**: `claimed`+no-executing-
 
 Test categories: unit seeds now for transition/classification logic (acceptance-plan U9/U10); property test that claim_key derivation is collision-stable under fuzzed inputs; integration for 9b serialization and 9c replay; kill-boundary rehearsals for each §2 crash row (CR-5Q scope per acceptance-plan impossibility table). No exactly-once claims anywhere in test naming or assertions — packet acceptance requirement honored.
 
+**Symbolic falsification test — fresh-message re-offer `[P]`** (required by audit §10): given an effect with terminal claim row keyed `sha256(N‖J‖A‖D)`, present a NEW frame with a fresh messageId M′ but identical (nodeId=N, jobId=J, attemptId=A, operationDigest=D). Assert: the gate derives the SAME claim_key, finds the terminal row, and refuses/defers rather than executing. The test fails symbolically under any message-scoped key derivation (`sha256(N‖M′)` ≠ `sha256(N‖M)` ⇒ new claim ⇒ duplicate execution) — this is precisely the defect class the effect-scoped key exists to eliminate.
+
+**Retention/GC of terminal claims `[P]`** (decision required, duration NOT invented here): terminal rows (`confirmed`/`failed`/`ambiguous`/`cancelled`) are permanent by default in this contract, which grows the journal without bound. A bounded retention policy is REQUIRED before implementation: Codex must decide (a) the retention window or count bound for terminal claim records, (b) whether GC is periodic-delete vs rolling-partition, and (c) whether expired terminal rows leave a compact tombstone digest (to keep answering duplicate/re-offer probes honestly) or are dropped outright (accepting that very old re-offers re-execute — a policy trade, not a technical given). Non-terminal rows are never GC'd. This decision is deliberately left open here per packet scope; shipping without it would embed unbounded journal growth.
+
 ## 6. Left to Codex
 
-Final approach selection (dossier recommends the J-admission + D-resolution composition); whether `refuse` vs `defer` is the right 9b gate disposition (refuse is louder, defer is gentler — policy choice); ambiguous-effect policy defaults per risk tier (`ambiguousEffectPolicy` precedent types.ts:89 suggests attention for all tiers initially); whether effect_claims belongs in bridge journal vs a sibling store if LIFECYCLE's v2 executor-daemon evolution is chosen.
+Final approach selection (dossier recommends the J-admission + D-resolution composition); whether `refuse` vs `defer` is the right 9b gate disposition (refuse is louder, defer is gentler — policy choice); ambiguous-effect policy defaults per risk tier (`ambiguousEffectPolicy` precedent types.ts:89 suggests attention for all tiers initially); whether effect_claims belongs in bridge journal vs a sibling store if LIFECYCLE's v2 executor-daemon evolution is chosen; **terminal-claim retention/GC policy** (§5 — window/bound, GC mechanism, tombstone-vs-drop trade).
 
 ## Method note
 

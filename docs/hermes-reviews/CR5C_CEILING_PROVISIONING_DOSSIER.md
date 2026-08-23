@@ -23,7 +23,7 @@ The owner's enrollment session (the one moment a human with strong factor is pro
 
 | Dimension | Assessment |
 |---|---|
-| Attacker model | Survives T1 completely: the server never participates in ceiling issuance, only witnesses the digest. Same-UID attacker can read but not forge (integrity via §2). |
+| Attacker model | Survives T1 **conditionally**: the server never participates in ceiling issuance, only witnesses the digest, and a same-UID attacker can read but not forge (integrity via §2). This survival is NOT unconditional — it holds only if (a) the ceiling bytes are **owner-signed within enrollment** and (b) the trust anchor / provisioning-key pin reaches the node **out-of-band** (never relayed by the server). If either condition fails — e.g. the pin itself is delivered over a channel the compromised server controls — T1 containment is not guaranteed: the attacker who controls pin delivery can substitute their own key and re-sign an arbitrary ceiling. |
 | Offline behavior | Perfect — ceiling is local from day one; no server contact needed to know what the machine may do. |
 | Tamper detection | Local copy integrity-protected by §2 mechanisms; mismatch vs enrolled digest ⇒ refuse start (fail closed). |
 | Rollback/downgrade | Version monotonicity enforced by comparing against the enrollment record's version; §2 protects the local version field. Downgrade attempt = tamper. |
@@ -40,7 +40,7 @@ The ceiling lives as a config file `<state-dir>/ceiling.json` carrying an Ed2551
 
 | Dimension | Assessment |
 |---|---|
-| Attacker model | Survives T1 and T2 (worker key ≠ provisioning key). Same-UID attacker without the provisioning private key cannot produce a valid update; without §2 protection they could delete/revert — handled below. |
+| Attacker model | Survives T1 and T2 **conditionally** (worker key ≠ provisioning key; same conditions as Option A apply — owner-signed bytes + out-of-band pin). Same-UID attacker without the provisioning private key cannot produce a valid update; without §2 protection they could delete/revert — handled below. |
 | Offline behavior | Perfect — verification is purely local signature check. |
 | Tamper detection | Signature over canonical serialization (reuse `sha256Digest` sorted-key JSON pattern, OPTS §canonical note citing `policy.ts:89`). Bad signature ⇒ refuse, keep last-good. |
 | Rollback/downgrade | Monotonic `ceilingVersion` checked against durable high-water mark (§2). Re-presenting v3 after v4 fails. |
@@ -104,13 +104,15 @@ Safe error codes (extend TRACE §1 categories): `ceiling_missing`, `ceiling_tamp
 
 - **Rotation:** B rotates by owner-signed increment; A rotates via re-enrollment. Either way the node emits a `ceiling_adopted` audit event carrying `{oldDigest→newDigest, issuerKeyId}`; server-side reconciliation records the witnessed chain. A gap between local chain and server-witnessed chain = attention flag (not auto-block — offline rotation is legitimate).
 - **Recovery:** lost/corrupt ceiling ⇒ fail closed, require re-provisioning by the same issuer class that provisioned originally. Never widen-by-default while waiting (THM T8 lesson).
-- **Why a compromised Control Room cannot widen it:** under A/B/D the ceiling's *authority* derives from a key the server does not hold (owner enrollment factor / provisioning key / OS control plane). The server can relay copies (C-as-transport), request changes, or withhold traffic — but every adoption path checks a signature the compromised key cannot produce, and version monotonicity blocks serving stale-but-valid narrower ceilings as a downgrade attack. The residual risk is availability (server stops relaying updates), not integrity — availability loss is the honest trade ADR-009 accepts ("Some actions pause for stronger confirmation").
+- **Why a compromised Control Room cannot widen it:** under A/B/D the ceiling's *authority* derives from a key the server does not hold (owner enrollment factor / provisioning key / OS control plane). **This guarantee is conditional**: it requires (a) ceiling bytes signed by the owner inside enrollment and (b) the trust pin delivered out-of-band. If either condition fails, T1 containment does not hold. Under those conditions, the server can relay copies (C-as-transport), request changes, or withhold traffic — but every adoption path checks a signature the compromised key cannot produce, and version monotonicity blocks serving stale-but-valid narrower ceilings as a downgrade attack. The residual risk is availability (server stops relaying updates), not integrity — availability loss is the honest trade ADR-009 accepts ("Some actions pause for stronger confirmation").
 
 ## 5. Comparison summary
 
 | Dimension | A Enrollment-bound | B Owner-signed config | C Server-signed | D Platform-bound |
 |---|---|---|---|---|
-| Survives compromised server (T1) | ●●●● | ●●●● | ●○○○ | ●●●● |
+| Survives compromised server (T1) | ●●●● * | ●●●● * | ●○○○ | ●●●● * |
+
+\* Conditional, not absolute: T1 survival holds **iff** the ceiling bytes are owner-signed within enrollment AND the trust pin arrives out-of-band (never over a server-controlled channel). Absent those conditions a compromised server can substitute keys/re-sign ceilings and T1 is not contained. See Option A attacker-model row for the full statement.
 | Same-UID resilience (T6) | ●●●○ | ●●●○ | ●●○○ | ●●●● (platform-dep.) |
 | Rotation ergonomics | ●○○○ | ●●●● | ●●●● | ●●○○ |
 | Fleet portability | ●●●● | ●●●○ | ●●●● | ●○○○ |
