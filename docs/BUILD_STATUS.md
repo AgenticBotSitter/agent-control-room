@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-08-22  
+**Updated:** 2026-08-23
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
 
@@ -20,16 +20,17 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C through CR-10 | Not started | Phased build plan |
+| CR-5C node-local policy and effect enforcement | In progress — contract frozen | `CR5C_FINAL_SECURITY_CONTRACT.md`, ADR-023–ADR-030, independent GLM review and remediations |
+| CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Completed: CR-5B — Portable bridge core, connection loop, heartbeat, and local journal
-Delivered: injected outbound transport/signer/trust seams, deterministic connection and heartbeat state machine, exact duplicate acknowledgement, SQLite WAL journal, crash/restart reconciliation, bounded backpressure, reconnect replay filtering, and queued-command boundary
-Validation: 66/66 tests, TypeScript, lint, nine-migration verification (51 tables), production build, and two rendered-route checks pass
-Open risks: Native protected key storage and server trust persistence, node-local authority ceilings, command/effect enforcement, real WebSocket/TLS packaging, and real PostgreSQL/kill rehearsal remain explicit CR-5C/5Q/CR-6 gates
-Decision-log changes: ADR-022 distinguishes exact delivery duplicates from conflicting replays
+Active: CR-5C — final node-security contract is frozen; implementation has not started
+Delivered this boundary: owner-anchored ceiling + signed lease intersection, separate signing/trust/approval stores, expiry state machine, effect-scoped durable claims, safe receipts, canonical target rules, owner-root trust rotation, implementation order, and acceptance gates
+Validation evidence: two independent research waves, contradiction review, fresh-model GLM audit, and focused remediation merged; normative contract is `docs/CR5C_FINAL_SECURITY_CONTRACT.md`
+Open risks: protected-store platform implementations, Linux unwrap-secret delivery, real timer behavior, real DNS/TLS enforcement, process-kill/concurrency rehearsal, and approval issuance remain explicit CR-5C/5Q/CR-6/CR-8 gates
+Decision-log changes: ADR-023 through ADR-030 freeze the CR-5C security boundary
 ```
 
 ## Parallel build lane
@@ -41,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C — Node-local policy ceilings, key-store interface, and job/effect enforcement
+Block: CR-5C.1 — Canonical CR-5C schemas and signed authority artifacts
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: this is the independent containment boundary against an over-authorized or compromised Control Room server
-Expected output: immutable local ceiling contract, platform key-store/trust interfaces, authority intersection and expiry/target/tool/network/cost checks, denial receipts, and ambiguous-effect protections
-Stop before: CR-5D synthetic executor, artifact flow, and worker UI
+Why: these public types encode the containment boundary and downstream slices must not redefine them
+Expected output: strict schemas/types for signed owner ceiling, complete lease authority, owner-signed trust bundle, approval attestation, normalized local request/decision, and safe receipt vocabulary; generated JSON Schema and adversarial fixtures
+Stop before: persistence, platform key stores, executor admission, effects, or live integrations
 ```
 
 ## Update rule

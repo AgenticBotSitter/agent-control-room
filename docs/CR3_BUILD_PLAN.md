@@ -168,6 +168,8 @@ Why: security boundary against over-authorized or compromised dispatch
 Inputs/approval needed: <none or exact owner action>
 ```
 
+CR-5C's architect-frozen normative input is `docs/CR5C_FINAL_SECURITY_CONTRACT.md` with ADR-023 through ADR-030. Research reports remain supporting evidence. Implementation begins with CR-5C.1 canonical schemas and signed artifacts and must stop before persistence or executor wiring.
+
 If a block does not pass its completion gate, it remains the current block. The report recommends the model/effort for the repair or review rather than advancing the phase prematurely.
 
 ## CR-3 — Architecture approval
