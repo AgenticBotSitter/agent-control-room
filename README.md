@@ -4,7 +4,7 @@ Control Room is a private, project-agnostic operations layer for coordinating pr
 
 ![Abstract Control Room routing preview](public/control-room-preview.png)
 
-This repository currently implements **CR-0 through CR-4Q**:
+This repository currently implements **CR-0 through CR-5A**:
 
 - **CR-0 — Contract:** versioned project-adapter types and schemas, authority boundaries, safe projections, cursors, idempotency, command receipts, and redaction rules.
 - **CR-1 — Read-only interface:** an all-project portfolio, attention queue, running work, blockers, worker and agent views, project drilldowns, worker history, and a deterministic capacity simulator.
@@ -15,6 +15,7 @@ This repository currently implements **CR-0 through CR-4Q**:
 - **CR-4C — Security core:** application identities and scoped grants, deterministic policy decisions, canonical digest verification, secret rejection/redaction, strong exact-operation approval consumption, and production database-role definitions.
 - **CR-4D — Audit and operations core:** per-tenant tamper-evident audit chains, external-anchor interface, safe operational errors, and fail-closed production configuration validation.
 - **CR-4Q — Independent review:** adversarial policy, authority, tenant-lineage, delivery, audit, configuration, and database-privilege review with all high/medium findings remediated.
+- **CR-5A — Node protocol and identity:** strict versioned wire/enrollment schemas, generated JSON Schema, Ed25519 challenge/proof enrollment, immutable public-key identity, signed frame authentication, rate limits, and durable replay/sequence protection.
 
 There are deliberately **no live project adapters, credentials, production commands, Telegram actions, Unreal jobs, or Content Blooms changes** in this phase.
 
@@ -39,6 +40,7 @@ pnpm install
 pnpm check
 pnpm test
 pnpm db:verify
+pnpm protocol:generate
 pnpm dev
 ```
 
@@ -77,8 +79,10 @@ pnpm test:build
 - [CR-4D verification](docs/CR4D_VERIFICATION.md)
 - [CR-4Q security and data-integrity review](docs/CR4Q_SECURITY_DATA_INTEGRITY_REVIEW.md)
 - [CR-4Q real PostgreSQL rehearsal plan](docs/CR4Q_REAL_POSTGRES_REHEARSAL_PLAN.md)
+- [CR-5A node protocol and device identity](docs/CR5A_NODE_PROTOCOL_AND_IDENTITY.md)
 - [Project adapter JSON Schema](contracts/project-adapter-v1.schema.json)
 - [Command receipt JSON Schema](contracts/command-receipt-v1.schema.json)
+- [Signed node frame JSON Schema](contracts/control-room-node-v1-frame.schema.json)
 
 ## Fixture packs
 

@@ -22,7 +22,8 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO control_room_reader, control_room
 
 REVOKE UPDATE, DELETE, TRUNCATE ON
   audit_events, projection_changes, command_receipts, control_transition_events,
-  control_policy_decisions, control_approval_consumptions, control_audit_anchors
+  control_policy_decisions, control_approval_consumptions, control_audit_anchors,
+  node_protocol_replay
   FROM control_room_application, control_room_reader, control_room_backup;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public
   FROM control_room_reader, control_room_backup;

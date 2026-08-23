@@ -10,11 +10,12 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "node --import tsx --test tests/contract.test.ts tests/domain-contract.test.ts tests/scheduler.test.ts tests/persistence.test.ts tests/canonical-persistence.test.ts tests/security.test.ts tests/audit-config.test.ts",
+    "test": "node --import tsx --test tests/contract.test.ts tests/domain-contract.test.ts tests/scheduler.test.ts tests/persistence.test.ts tests/canonical-persistence.test.ts tests/security.test.ts tests/audit-config.test.ts tests/node-protocol.test.ts",
     "test:build": "pnpm run build && node --test tests/rendered-html.test.mjs",
     "check": "tsc --noEmit",
     "db:verify": "tsx scripts/verify-migrations.ts",
     "domain:generate": "tsx scripts/generate-domain-schema.ts",
+    "protocol:generate": "tsx scripts/generate-node-protocol-schema.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {

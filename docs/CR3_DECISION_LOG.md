@@ -246,3 +246,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** The fleet can trail a new release briefly while tests run, and urgent security patches need an accelerated canary path.
 
 **Reevaluate:** Change cadence and automation as conformance coverage improves; never remove rollback or staged promotion.
+
+## ADR-021 — Asymmetric node identity and digested single-use enrollment
+
+**Decision:** Nodes generate Ed25519 keys locally, enroll their public key through a class-scoped maximum-15-minute single-use token and signed challenge, and sign canonical application frames. Control Room persists only the token digest, public key, key lifecycle, and bounded replay state.
+
+**Why:** A public protocol needs identity independent of Hermes, Codex, Claude, operating system, Cloudflare, or a shared VPN credential. Asymmetric keys let one node be revoked without rotating the fleet and keep private material off the VPS.
+
+**Alternatives rejected:** Shared fleet API key; Cloudflare service token as the only identity; central generation/storage of node private keys; unsigned TLS-only application messages.
+
+**Trade-off:** Each platform needs protected private-key storage and rotation packaging, and every message pays canonicalization/signature verification cost.
+
+**Reevaluate:** Algorithms may be added through a new negotiated protocol version. Do not permit in-place key-byte replacement or silent downgrade in v1.

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-room.invalid/contracts/control-room-node-v1-enrollment-proof.schema.json",
+  "title": "Control Room node enrollment proof v1",
+  "type": "object",
+  "properties": {
+    "challengeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+    },
+    "challengeNonce": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 16384,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "nodeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "nodeClass": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+    },
+    "publicKey": {
+      "type": "object",
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "algorithm": {
+          "type": "string",
+          "const": "ed25519"
+        },
+        "spki": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 16384,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "required": [
+        "keyId",
+        "algorithm",
+        "spki"
+      ],
+      "additionalProperties": false
+    },
+    "platformFacts": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": [
+            "windows",
+            "macos",
+            "linux",
+            "cloud"
+          ]
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "hardwareFingerprint": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "softwareFingerprint": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "bridgeVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "attestation": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "required": [
+        "platform",
+        "architecture",
+        "hardwareFingerprint",
+        "softwareFingerprint",
+        "bridgeVersion",
+        "attestation"
+      ],
+      "additionalProperties": false
+    },
+    "supportedProtocols": {
+      "minItems": 1,
+      "maxItems": 16,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 16384,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  },
+  "required": [
+    "challengeId",
+    "challengeNonce",
+    "nodeId",
+    "displayName",
+    "nodeClass",
+    "publicKey",
+    "platformFacts",
+    "supportedProtocols",
+    "signature"
+  ],
+  "additionalProperties": false
+}

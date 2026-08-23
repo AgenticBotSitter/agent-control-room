@@ -68,3 +68,9 @@ Adds versioned fields to `audit_events`, tenant/month chain heads, and append-on
 Tenant-prefixes projection, command, audit, worker/allocation, and recommendation lineage; adds tenant scope to projection cursors/change history; and adds composite workflow/job/attempt lineage for authority-bearing canonical records. It also makes transition idempotency unique per tenant and entity kind.
 
 The migration temporarily removes the projection-change row trigger only while deterministically backfilling `tenant_id` from the immutable adapter registry, then restores the trigger before completion. A populated database containing cross-tenant references intentionally fails migration and requires investigation rather than automatic reassignment.
+
+## 0008 — CR-5A node protocol identity
+
+Adds digest-only, node-class-scoped enrollment tokens; bounded single-use challenges; immutable Ed25519 node public-key identities; direction-specific connection sequence heads; and durable message/nonce/sequence replay rows. Enrollment activation, key insertion, token/challenge consumption, canonical transition, and outbox notification share one transaction.
+
+Private keys and plaintext enrollment tokens are deliberately absent from the schema. Token and challenge identity fields are immutable and terminal states cannot be restored. Replay rows reject update/truncate; a separately privileged maintenance connection may delete expired rows while connection sequence heads remain durable. Key identity bytes cannot change in place, retired keys cannot reactivate, and revoked keys cannot be restored or deleted.
