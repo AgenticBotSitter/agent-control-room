@@ -14,13 +14,16 @@ import {
   serviceTransitions,
   workflowTransitions,
   type ActorRef,
+  type ApprovalRecord,
   type AttemptRecord,
   type DomainEntity,
+  type EffectIntentRecord,
   type JobRecord,
   type LeaseRecord,
   type TransitionTable,
 } from "../domain/v1";
 import type { DatabaseClient, DatabaseSession } from "./database";
+import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDigest } from "../security";
 
 type EntityKind = DomainEntity["kind"];
 type EntityState = DomainEntity["state"];
@@ -112,6 +115,30 @@ export interface RenewLeaseInput {
   expiresAt: string;
 }
 
+export interface ResolveApprovalInput {
+  tenantId: string;
+  approvalId: string;
+  expectedVersion: number;
+  toState: "approved" | "denied" | "revoked";
+  policyDecisionId: string;
+  transitionId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  safeReasonCode?: string;
+}
+
+export interface AuthorizeEffectInput {
+  tenantId: string;
+  effectIntentId: string;
+  expectedVersion: number;
+  policyDecisionId: string;
+  transitionId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+}
+
 const transitionPatchFields: Record<EntityKind, ReadonlySet<string>> = {
   request: new Set(), workflow: new Set(), job: new Set(),
   attempt: new Set(["startedAt", "finishedAt", "safeFailureCode"]),
@@ -152,10 +179,22 @@ export class CanonicalStore {
 
   async create(entity: DomainEntity): Promise<void> {
     const validated = domainEntitySchema.parse(entity) as DomainEntity;
+    assertNoSecretMaterial(validated, `${validated.kind} record`);
     if (validated.state !== initialStates[validated.kind]) {
       throw new Error(`${validated.kind} must be created in ${initialStates[validated.kind]} state`);
     }
     await this.db.transaction(async (tx) => {
+      if (validated.kind === "job") assertAuthorityDigest(validated.authority);
+      if (validated.kind === "effect_intent") {
+        const job = await tx.query<{ project_id: string }>(
+          `SELECT project_id FROM control_jobs WHERE tenant_id=$1 AND id=$2`,
+          [validated.tenantId, validated.jobId],
+        );
+        if (!job.rows[0]) throw new Error("Effect job not found");
+        if (computeEffectOperationDigest(validated, job.rows[0].project_id) !== validated.operationDigest) {
+          throw new Error("Effect operation digest mismatch");
+        }
+      }
       if (validated.kind === "checkpoint") {
         const attempt = await tx.query<{ id: string }>(
           `SELECT id FROM control_attempts WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
@@ -370,6 +409,111 @@ export class CanonicalStore {
     });
   }
 
+  async resolveApproval(input: ResolveApprovalInput): Promise<TransitionResult> {
+    return this.db.transaction(async (tx) => {
+      const approval = await this.requireWith(tx, input.tenantId, "approval", input.approvalId) as ApprovalRecord;
+      const decision = await this.requirePolicyDecision(tx, {
+        tenantId: input.tenantId,
+        decisionId: input.policyDecisionId,
+        identityId: input.actor.actorId,
+        action: "approval.decide",
+        resourceType: "approval",
+        resourceId: input.approvalId,
+        occurredAt: input.occurredAt,
+      });
+      if ((approval.risk === "high" || approval.risk === "critical") && !decision.strong_factor_evidence_id) {
+        throw new Error("High-risk approval requires strong-factor evidence");
+      }
+      return this.transitionWith(tx, {
+        tenantId: input.tenantId,
+        kind: "approval",
+        entityId: input.approvalId,
+        expectedVersion: input.expectedVersion,
+        toState: input.toState,
+        transitionId: input.transitionId,
+        idempotencyKey: input.idempotencyKey,
+        actor: input.actor,
+        occurredAt: input.occurredAt,
+        safeMetadata: { policyDecisionId: input.policyDecisionId },
+        recordPatch: {
+          decidedBy: input.actor,
+          decidedAt: input.occurredAt,
+          ...(input.safeReasonCode ? { safeReasonCode: input.safeReasonCode } : {}),
+        },
+      }, true);
+    });
+  }
+
+  async authorizeEffect(input: AuthorizeEffectInput): Promise<TransitionResult> {
+    return this.db.transaction(async (tx) => {
+      const replay = await tx.query<{ entity_id: string; to_state: string }>(
+        `SELECT entity_id,to_state FROM control_transition_events
+         WHERE tenant_id=$1 AND entity_kind='effect_intent' AND idempotency_key=$2`,
+        [input.tenantId, input.idempotencyKey],
+      );
+      if (replay.rows.length) {
+        if (replay.rows[0].entity_id !== input.effectIntentId || replay.rows[0].to_state !== "authorized") {
+          throw new Error("Idempotency key conflicts with a different effect authorization");
+        }
+        return { entity: await this.requireWith(tx, input.tenantId, "effect_intent", input.effectIntentId), replayed: true };
+      }
+
+      const effectRow = await tx.query<{ payload: EffectIntentRecord }>(
+        `SELECT payload FROM control_effect_intents WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+        [input.tenantId, input.effectIntentId],
+      );
+      const effect = effectRow.rows[0]?.payload;
+      if (!effect) throw new Error("effect_intent not found");
+      const job = await this.requireWith(tx, input.tenantId, "job", effect.jobId) as JobRecord;
+      const decision = await this.requirePolicyDecision(tx, {
+        tenantId: input.tenantId,
+        decisionId: input.policyDecisionId,
+        identityId: input.actor.actorId,
+        action: "effect.authorize",
+        resourceType: "effect_intent",
+        resourceId: input.effectIntentId,
+        projectId: job.projectId,
+        occurredAt: input.occurredAt,
+      });
+      if ((effect.risk === "high" || effect.risk === "critical") && !decision.strong_factor_evidence_id) {
+        throw new Error("High-risk effect authorization requires strong-factor evidence");
+      }
+
+      if (effect.approvalId) {
+        const approvalRow = await tx.query<{ payload: ApprovalRecord }>(
+          `SELECT payload FROM control_approvals WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+          [input.tenantId, effect.approvalId],
+        );
+        const approval = approvalRow.rows[0]?.payload;
+        if (!approval) throw new Error("approval not found");
+        if (approval.state !== "approved") throw new Error("Effect approval is not approved");
+        if (approval.operationDigest !== effect.operationDigest) throw new Error("Effect and approval operation digests differ");
+        if (Date.parse(approval.expiresAt) <= Date.parse(input.occurredAt)) throw new Error("Effect approval has expired");
+        await tx.query(
+          `INSERT INTO control_approval_consumptions
+            (tenant_id,approval_id,effect_intent_id,policy_decision_id,operation_digest,consumed_at)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [input.tenantId, approval.id, effect.id, input.policyDecisionId, effect.operationDigest, input.occurredAt],
+        );
+      } else if (effect.risk === "high" || effect.risk === "critical") {
+        throw new Error("High-risk effect requires an approval");
+      }
+
+      return this.transitionWith(tx, {
+        tenantId: input.tenantId,
+        kind: "effect_intent",
+        entityId: input.effectIntentId,
+        expectedVersion: input.expectedVersion,
+        toState: "authorized",
+        transitionId: input.transitionId,
+        idempotencyKey: input.idempotencyKey,
+        actor: input.actor,
+        occurredAt: input.occurredAt,
+        safeMetadata: { policyDecisionId: input.policyDecisionId, approvalId: effect.approvalId },
+      }, true);
+    });
+  }
+
   private async insertWith(tx: DatabaseSession, entity: DomainEntity): Promise<void> {
     domainEntitySchema.parse(entity);
     const config = entityConfigs[entity.kind];
@@ -400,7 +544,38 @@ export class CanonicalStore {
     return entity;
   }
 
+  private async requirePolicyDecision(tx: DatabaseSession, input: {
+    tenantId: string;
+    decisionId: string;
+    identityId: string;
+    action: string;
+    resourceType: string;
+    resourceId: string;
+    projectId?: string;
+    occurredAt: string;
+  }): Promise<{ strong_factor_evidence_id?: string }> {
+    const result = await tx.query<{
+      identity_id: string; action: string; resource_type: string; resource_id: string; project_id?: string;
+      allowed: boolean; expires_at: string; strong_factor_evidence_id?: string;
+    }>(
+      `SELECT identity_id,action,resource_type,resource_id,project_id,allowed,expires_at,strong_factor_evidence_id
+       FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2`,
+      [input.tenantId, input.decisionId],
+    );
+    const decision = result.rows[0];
+    if (!decision || !decision.allowed) throw new Error("Allowed policy decision not found");
+    if (decision.identity_id !== input.identityId || decision.action !== input.action
+      || decision.resource_type !== input.resourceType || decision.resource_id !== input.resourceId
+      || (input.projectId && decision.project_id !== input.projectId)) {
+      throw new Error("Policy decision is not bound to this actor and operation");
+    }
+    if (Date.parse(decision.expires_at) <= Date.parse(input.occurredAt)) throw new Error("Policy decision has expired");
+    return decision;
+  }
+
   private async transitionWith(tx: DatabaseSession, input: TransitionInput, coordinated: boolean): Promise<TransitionResult> {
+    assertNoSecretMaterial(input.safeMetadata ?? {}, "Transition safe metadata");
+    assertNoSecretMaterial(input.recordPatch ?? {}, "Transition record patch");
     const existing = await tx.query<{ entity_id: string; to_state: string }>(
       `SELECT entity_id,to_state FROM control_transition_events WHERE tenant_id=$1 AND entity_kind=$2 AND idempotency_key=$3`,
       [input.tenantId, input.kind, input.idempotencyKey],
@@ -421,7 +596,7 @@ export class CanonicalStore {
     if (current.version !== input.expectedVersion) throw new Error(`Version conflict: expected ${input.expectedVersion}, found ${current.version}`);
     if (!config.transitions[current.state]?.includes(input.toState)) throw new Error(`Illegal ${input.kind} transition: ${current.state} -> ${input.toState}`);
 
-    if (!coordinated && (input.kind === "attempt" || input.kind === "lease")) {
+    if (!coordinated && (input.kind === "attempt" || input.kind === "lease" || input.kind === "approval" || input.kind === "effect_intent")) {
       throw new Error(`${input.kind} transitions require a coordinated repository operation`);
     }
     if (!coordinated && input.kind === "job" && current.state !== "proposed") {

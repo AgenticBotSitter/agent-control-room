@@ -10,7 +10,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "node --import tsx --test tests/contract.test.ts tests/domain-contract.test.ts tests/scheduler.test.ts tests/persistence.test.ts tests/canonical-persistence.test.ts",
+    "test": "node --import tsx --test tests/contract.test.ts tests/domain-contract.test.ts tests/scheduler.test.ts tests/persistence.test.ts tests/canonical-persistence.test.ts tests/security.test.ts",
     "test:build": "pnpm run build && node --test tests/rendered-html.test.mjs",
     "check": "tsc --noEmit",
     "db:verify": "tsx scripts/verify-migrations.ts",

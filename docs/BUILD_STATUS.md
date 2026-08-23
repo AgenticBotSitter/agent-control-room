@@ -15,15 +15,16 @@
 | CR-3 architecture package | Complete and owner-accepted | CR-3 index and decision package |
 | CR-4A canonical contracts | Complete | Domain types, validators, JSON Schema, state machines, authority-containment tests |
 | CR-4B transactional persistence | Complete | Migrations 0003/0004, canonical store, bounded inbox failure handling, at-least-once delivery proof, qualification reviews |
-| CR-4C through CR-10 | Not started | Phased build plan |
+| CR-4C security core | Complete | Identities/grants, deterministic policy, canonical digests, redaction, strong approval consumption, database-role script |
+| CR-4D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Completed: CR-4B — PostgreSQL repositories and transactional lifecycle
-Delivered: normalized canonical schema, tenant-bound lineage, optimistic transitions, atomic job claims, monotonic attempts/lease epochs/checkpoints, renewal/expiry, bounded poison-message handling, inbox/outbox, idempotent execution, retry/recovery/dead-letter flow, acknowledgement-loss redelivery proof, and review hardening
-Validation: TypeScript clean; 30/30 tests passed; four-migration verification passes with 40 tables
-Open risks: Disposable real-PostgreSQL rehearsal remains required before live deployment; CR-4C must add identity, authorization, policy, approval verification, digest verification, and redaction
+Completed: CR-4C — Identity, authorization, policy, approval primitives, digests, and redaction
+Delivered: provider-neutral verified identity interface, single-use owner bootstrap, scoped grants, append-only policy decisions, canonical digest verification, secret rejection/redaction, exact strong-factor approval consumption, and production database-role definitions
+Validation: TypeScript and lint clean; 36/36 tests passed; five-migration verification passes with 44 tables; production build and rendered-route tests pass
+Open risks: Database-role and approval/revocation concurrency behavior still require disposable real-PostgreSQL rehearsal; provider-specific Cloudflare/WebAuthn/node authentication remains intentionally adapter-scoped
 Decision-log changes: none; implementation follows accepted CR-3 decisions
 ```
 
@@ -36,12 +37,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-4C — Identity, authorization, policy, approval, digest verification, and redaction
-Set model: gpt-5.6-sol
-Set reasoning effort: xhigh
-Why: this becomes the central privilege and data-exposure boundary before any node or adapter can connect
-Expected output: scoped identities/roles, deterministic policy decisions, exact-operation approval primitives, digest verification, safe errors, and boundary redaction tests
-Stop before: CR-4D audit-chain and operational-error implementation
+Block: CR-4D — Audit hash chain, configuration validation, and operational errors
+Set model: gpt-5.6-terra
+Set reasoning effort: high
+Why: contracts and security decisions are settled; this is substantial multi-file implementation with deterministic gates
+Expected output: tamper-evident per-tenant audit chain, external-anchor interface, fail-closed production configuration, and redacted safe operational errors
+Stop before: CR-4Q independent security/data-integrity review
 ```
 
 ## Update rule

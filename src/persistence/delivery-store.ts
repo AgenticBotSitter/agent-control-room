@@ -1,4 +1,5 @@
 import { messageEnvelopeSchema, type MessageEnvelope } from "../domain/v1";
+import { assertDigest, assertNoSecretMaterial } from "../security";
 import type { DatabaseClient, DatabaseSession } from "./database";
 
 function json(value: unknown): string {
@@ -32,8 +33,14 @@ export interface InboxProcessingOptions {
 export class DeliveryStore {
   constructor(private readonly db: DatabaseClient) {}
 
-  async receive(envelope: MessageEnvelope): Promise<{ replayed: boolean }> {
+  async receive(envelope: MessageEnvelope, options: { now?: string; maxFutureSkewSeconds?: number } = {}): Promise<{ replayed: boolean }> {
     const validated = messageEnvelopeSchema.parse(envelope) as MessageEnvelope;
+    const now = Date.parse(options.now ?? new Date().toISOString());
+    const maxFutureSkew = (options.maxFutureSkewSeconds ?? 300) * 1_000;
+    if (Date.parse(validated.expiresAt) <= now) throw new Error("Inbox message has expired");
+    if (Date.parse(validated.sentAt) > now + maxFutureSkew) throw new Error("Inbox message timestamp is too far in the future");
+    assertDigest(validated.body, validated.bodyDigest, "Inbox body");
+    assertNoSecretMaterial(validated.body, "Inbox body");
     return this.db.transaction(async (tx) => {
       const inserted = await tx.query<{ message_id: string }>(
         `INSERT INTO control_inbox (tenant_id,protocol,message_id,body_digest,payload)

@@ -4,7 +4,7 @@ Control Room is a private, project-agnostic operations layer for coordinating pr
 
 ![Abstract Control Room routing preview](public/control-room-preview.png)
 
-This repository currently implements **CR-0 through CR-4B**:
+This repository currently implements **CR-0 through CR-4C**:
 
 - **CR-0 — Contract:** versioned project-adapter types and schemas, authority boundaries, safe projections, cursors, idempotency, command receipts, and redaction rules.
 - **CR-1 — Read-only interface:** an all-project portfolio, attention queue, running work, blockers, worker and agent views, project drilldowns, worker history, and a deterministic capacity simulator.
@@ -12,6 +12,7 @@ This repository currently implements **CR-0 through CR-4B**:
 - **CR-3 — Accepted architecture:** security, durability, protocol, product-surface, deployment, extension, and phased-build decisions.
 - **CR-4A — Canonical domain contract:** versioned records, runtime validators, generated JSON Schema, explicit state machines, and authority-containment rules.
 - **CR-4B — Transactional persistence:** normalized PostgreSQL tables, tenant-bound lineage, optimistic state transitions, lease epochs, inbox/outbox delivery, idempotency, stale-claim recovery, and dead-letter handling.
+- **CR-4C — Security core:** application identities and scoped grants, deterministic policy decisions, canonical digest verification, secret rejection/redaction, strong exact-operation approval consumption, and production database-role definitions.
 
 There are deliberately **no live project adapters, credentials, production commands, Telegram actions, Unreal jobs, or Content Blooms changes** in this phase.
 
@@ -68,6 +69,8 @@ pnpm test:build
 - [CR-4A verification](docs/CR4A_VERIFICATION.md)
 - [CR-4B transaction design](docs/CR4B_TRANSACTION_DESIGN.md)
 - [CR-4B verification](docs/CR4B_VERIFICATION.md)
+- [CR-4C security core](docs/CR4C_SECURITY_CORE.md)
+- [CR-4C verification](docs/CR4C_VERIFICATION.md)
 - [Project adapter JSON Schema](contracts/project-adapter-v1.schema.json)
 - [Command receipt JSON Schema](contracts/command-receipt-v1.schema.json)
 

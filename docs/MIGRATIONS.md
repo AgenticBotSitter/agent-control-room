@@ -52,3 +52,9 @@ These rules intentionally live in repository transactions rather than SQL trigge
 Canonical `project_id` values are native domain identifiers, while the original `projects` table is an adapter projection. They are intentionally not foreign-keyed until an adapter explicitly maps those namespaces.
 
 Migrations have one authorized runner. Re-runnable trigger DDL supports isolated verification, but concurrent migration runners are unsupported.
+
+## 0005 — CR-4C identity and policy
+
+Adds tenant-bound application identities, scoped/expiring/revocable role grants, append-only policy decisions, and append-only single-use approval consumption. Raw authentication subjects are represented only by canonical digests.
+
+Production database privileges are deliberately separate from schema migration. After migrations, the database owner applies `db/roles/production_roles.sql` and grants deployment-specific login roles membership in exactly one NOLOGIN group role. This role script must be rehearsed on disposable real PostgreSQL; PGlite is not considered evidence for privilege behavior.

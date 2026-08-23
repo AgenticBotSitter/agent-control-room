@@ -7,6 +7,7 @@ import { DOMAIN_CONTRACT_VERSION, type ApprovalRecord, type CheckpointRecord, ty
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
 import { adaptPglite, type DatabaseSession } from "../src/persistence/database.ts";
 import { DeliveryStore } from "../src/persistence/delivery-store.ts";
+import { computeAuthorityDigest, sha256Digest } from "../src/security/index.ts";
 
 const t0 = "2026-08-22T18:00:00.000Z";
 const t1 = "2026-08-22T18:01:00.000Z";
@@ -36,15 +37,17 @@ function records(suffix: string) {
     ...common, kind: "workflow", id: `workflow:${suffix}`, requestId: request.id, projectId: `project:${suffix}`,
     definitionVersion: "1.0.0", definitionDigest: hashA, authorityMode: "control_room_native", state: "proposed", jobIds: [`job:${suffix}`],
   };
+  const authority: JobRecord["authority"] = {
+    projectId: workflow.projectId, allowedExecutor: "executor:test", allowedOperations: ["operation:test"],
+    credentialRefs: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none",
+    maxDurationSeconds: 600, expiresAt: t10, digest: hashB,
+  };
+  authority.digest = computeAuthorityDigest(authority);
   const job: JobRecord = {
     ...common, kind: "job", id: `job:${suffix}`, workflowId: workflow.id, projectId: workflow.projectId,
     jobType: "synthetic:test", specVersion: "1.0.0", inputDigest: hashA, state: "proposed", priority: 50,
     requiredCapability: "capability:test", dependsOnJobIds: [],
-    authority: {
-      projectId: workflow.projectId, allowedExecutor: "executor:test", allowedOperations: ["operation:test"],
-      credentialRefs: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none",
-      maxDurationSeconds: 600, expiresAt: t10, digest: hashB,
-    },
+    authority,
     retryPolicy: { maxAttempts: 3, backoffSeconds: 5, retryableFailureCodes: ["temporary"], retryAfterOrphan: true, ambiguousEffectPolicy: "attention" },
   };
   return { request, workflow, job };
@@ -216,10 +219,16 @@ test("checkpoint ordering and live approval uniqueness are enforced", async () =
 test("inbox and operation idempotency prevent duplicate handling", async () => {
   const db = await migratedDatabase();
   const delivery = new DeliveryStore(adaptPglite(db));
-  const envelope: MessageEnvelope = { protocol: "control-room-node/v1", messageId: "message:delivery", correlationId: "correlation:delivery", actorId: "node:synthetic", tenantId: "tenant:owner", sentAt: t0, expiresAt: t10, nonce: "1234567890abcdef", type: "job:event", bodyDigest: hashA, body: { safe: true }, signature: "1234567890abcdef" };
-  assert.equal((await delivery.receive(envelope)).replayed, false);
-  assert.equal((await delivery.receive(envelope)).replayed, true);
-  await assert.rejects(delivery.receive({ ...envelope, bodyDigest: hashB }), /different body digest/);
+  const body = { safe: true };
+  const envelope: MessageEnvelope = { protocol: "control-room-node/v1", messageId: "message:delivery", correlationId: "correlation:delivery", actorId: "node:synthetic", tenantId: "tenant:owner", sentAt: t0, expiresAt: t10, nonce: "1234567890abcdef", type: "job:event", bodyDigest: sha256Digest(body), body, signature: "1234567890abcdef" };
+  assert.equal((await delivery.receive(envelope, { now: t1 })).replayed, false);
+  assert.equal((await delivery.receive(envelope, { now: t1 })).replayed, true);
+  await assert.rejects(delivery.receive({ ...envelope, messageId: "message:tampered", body: { safe: false } }, { now: t1 }), /digest mismatch/);
+  await assert.rejects(delivery.receive({ ...envelope, messageId: "message:expired" }, { now: t10 }), /has expired/);
+  const secretBody = { apiKey: "sk_test_abcdefghijklmnopqrstuvwxyz" };
+  await assert.rejects(delivery.receive({ ...envelope, messageId: "message:secret", body: secretBody, bodyDigest: sha256Digest(secretBody) }, { now: t1 }), /secret material/);
+  const conflictingBody = { safe: false };
+  await assert.rejects(delivery.receive({ ...envelope, body: conflictingBody, bodyDigest: sha256Digest(conflictingBody) }, { now: t1 }), /different body digest/);
 
   let handled = 0;
   const first = await delivery.processOnce({ tenantId: envelope.tenantId, protocol: envelope.protocol, messageId: envelope.messageId }, async () => ++handled);
@@ -240,9 +249,10 @@ test("inbox and operation idempotency prevent duplicate handling", async () => {
 test("inbox handler failures roll back work and park poison messages", async () => {
   const db = await migratedDatabase();
   const delivery = new DeliveryStore(adaptPglite(db));
-  const envelope: MessageEnvelope = { protocol: "control-room-node/v1", messageId: "message:poison", correlationId: "correlation:poison", actorId: "node:synthetic", tenantId: "tenant:owner", sentAt: t0, expiresAt: t10, nonce: "abcdef1234567890", type: "job:event", bodyDigest: hashA, body: { safe: true }, signature: "abcdef1234567890" };
+  const body = { safe: true };
+  const envelope: MessageEnvelope = { protocol: "control-room-node/v1", messageId: "message:poison", correlationId: "correlation:poison", actorId: "node:synthetic", tenantId: "tenant:owner", sentAt: t0, expiresAt: t10, nonce: "abcdef1234567890", type: "job:event", bodyDigest: sha256Digest(body), body, signature: "abcdef1234567890" };
   const ref = { tenantId: envelope.tenantId, protocol: envelope.protocol, messageId: envelope.messageId };
-  await delivery.receive(envelope);
+  await delivery.receive(envelope, { now: t1 });
 
   let handlerRuns = 0;
   const poisonHandler = async (tx: DatabaseSession) => {
