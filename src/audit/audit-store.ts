@@ -39,7 +39,7 @@ function eventMaterial(input: AuditInput) {
 }
 
 type StoredAuditEvent = AuditInput & {
-  chain_sequence: number;
+  chain_sequence: number | string;
   event_digest: string;
   prev_hash: string;
   event_hash: string;
@@ -49,8 +49,48 @@ function chainHash(partition: string, sequence: number, previousHash: string, ev
   return sha256Digest({ chainVersion: 1, partition, sequence, previousHash, eventDigest });
 }
 
+function safeCount(value: number | string, label: string): number {
+  const count = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(count) || count < 0) throw new Error(`${label} is outside the supported safe integer range`);
+  return count;
+}
+
+async function verifyWith(db: DatabaseSession, tenantId: string, chainPartition: string): Promise<AuditVerification> {
+  const events = await db.query<StoredAuditEvent>(
+    `SELECT id,tenant_id as "tenantId",workspace_id as "workspaceId",project_id as "projectId",
+      actor_id as "actorId",actor_type as "actorType",action,target_type as "targetType",target_id as "targetId",
+      correlation_id as "correlationId",idempotency_key as "idempotencyKey",safe_metadata as "safeMetadata",
+      occurred_at as "occurredAt",chain_sequence,event_digest,prev_hash,event_hash FROM audit_events
+     WHERE tenant_id=$1 AND chain_partition=$2 AND chain_version=1 ORDER BY chain_sequence`,
+    [tenantId, chainPartition],
+  );
+  let previousHash = genesisHash;
+  for (let index = 0; index < events.rows.length; index += 1) {
+    const event = events.rows[index];
+    const sequence = safeCount(event.chain_sequence, "Audit sequence");
+    const expectedSequence = index + 1;
+    if (sequence !== expectedSequence || event.prev_hash !== previousHash) {
+      return { valid: false, chainPartition, checkedEvents: index, reasonCode: "chain_link_mismatch" };
+    }
+    if (sha256Digest(eventMaterial(event)) !== event.event_digest) {
+      return { valid: false, chainPartition, checkedEvents: index, reasonCode: "event_digest_mismatch" };
+    }
+    const expectedHash = chainHash(chainPartition, sequence, event.prev_hash, event.event_digest);
+    if (event.event_hash !== expectedHash) return { valid: false, chainPartition, checkedEvents: index, reasonCode: "event_hash_mismatch" };
+    previousHash = event.event_hash;
+  }
+  const head = await db.query<{ head_hash: string; event_count: number | string }>(
+    `SELECT head_hash,event_count FROM control_audit_chain_heads WHERE tenant_id=$1 AND chain_partition=$2`,
+    [tenantId, chainPartition],
+  );
+  if (!head.rows[0] || safeCount(head.rows[0].event_count, "Audit event count") !== events.rows.length || head.rows[0].head_hash !== previousHash) {
+    return { valid: false, chainPartition, checkedEvents: events.rows.length, reasonCode: "head_mismatch" };
+  }
+  return { valid: true, chainPartition, checkedEvents: events.rows.length, headHash: previousHash };
+}
+
 export async function appendAuditWith(tx: DatabaseSession, input: AuditInput): Promise<{ replayed: boolean; eventHash: string }> {
-  assertNoSecretMaterial(input.safeMetadata ?? {}, "Audit metadata");
+  assertNoSecretMaterial(input, "Audit event");
   const normalizedInput = { ...input, occurredAt: normalizeOccurredAt(input.occurredAt) };
   const eventDigest = sha256Digest(eventMaterial(normalizedInput));
   const existing = await tx.query<{ event_digest: string; event_hash: string }>(
@@ -68,14 +108,15 @@ export async function appendAuditWith(tx: DatabaseSession, input: AuditInput): P
      VALUES ($1,$2,$3,0,$4) ON CONFLICT DO NOTHING`,
     [normalizedInput.tenantId, partition, genesisHash, normalizedInput.occurredAt],
   );
-  const head = await tx.query<{ head_hash: string; event_count: number }>(
+  const head = await tx.query<{ head_hash: string; event_count: number | string }>(
     `SELECT head_hash,event_count FROM control_audit_chain_heads
      WHERE tenant_id=$1 AND chain_partition=$2 FOR UPDATE`,
     [normalizedInput.tenantId, partition],
   );
   const current = head.rows[0];
   if (!current) throw new Error("Audit chain head disappeared");
-  const sequence = current.event_count + 1;
+  const currentCount = safeCount(current.event_count, "Audit event count");
+  const sequence = currentCount + 1;
   const eventHash = chainHash(partition, sequence, current.head_hash, eventDigest);
   await tx.query(
     `INSERT INTO audit_events (
@@ -90,7 +131,7 @@ export async function appendAuditWith(tx: DatabaseSession, input: AuditInput): P
     `UPDATE control_audit_chain_heads SET head_hash=$1,event_count=$2,updated_at=$3
      WHERE tenant_id=$4 AND chain_partition=$5 AND head_hash=$6 AND event_count=$7
      RETURNING head_hash`,
-    [eventHash, sequence, normalizedInput.occurredAt, normalizedInput.tenantId, partition, current.head_hash, current.event_count],
+    [eventHash, sequence, normalizedInput.occurredAt, normalizedInput.tenantId, partition, current.head_hash, currentCount],
   );
   if (!updated.rows[0]) throw new Error("Audit chain head changed during append");
   return { replayed: false, eventHash };
@@ -104,47 +145,24 @@ export class AuditStore {
   }
 
   async verify(tenantId: string, chainPartition: string): Promise<AuditVerification> {
-    const events = await this.db.query<StoredAuditEvent>(
-      `SELECT id,tenant_id as "tenantId",workspace_id as "workspaceId",project_id as "projectId",
-        actor_id as "actorId",actor_type as "actorType",action,target_type as "targetType",target_id as "targetId",
-        correlation_id as "correlationId",idempotency_key as "idempotencyKey",safe_metadata as "safeMetadata",
-        occurred_at as "occurredAt",chain_sequence,event_digest,prev_hash,event_hash FROM audit_events
-       WHERE tenant_id=$1 AND chain_partition=$2 AND chain_version=1 ORDER BY chain_sequence`,
-      [tenantId, chainPartition],
-    );
-    let previousHash = genesisHash;
-    for (let index = 0; index < events.rows.length; index += 1) {
-      const event = events.rows[index];
-      const expectedSequence = index + 1;
-      if (event.chain_sequence !== expectedSequence || event.prev_hash !== previousHash) {
-        return { valid: false, chainPartition, checkedEvents: index, reasonCode: "chain_link_mismatch" };
-      }
-      if (sha256Digest(eventMaterial(event)) !== event.event_digest) {
-        return { valid: false, chainPartition, checkedEvents: index, reasonCode: "event_digest_mismatch" };
-      }
-      const expectedHash = chainHash(chainPartition, event.chain_sequence, event.prev_hash, event.event_digest);
-      if (event.event_hash !== expectedHash) return { valid: false, chainPartition, checkedEvents: index, reasonCode: "event_hash_mismatch" };
-      previousHash = event.event_hash;
-    }
-    const head = await this.db.query<{ head_hash: string; event_count: number }>(
-      `SELECT head_hash,event_count FROM control_audit_chain_heads WHERE tenant_id=$1 AND chain_partition=$2`,
-      [tenantId, chainPartition],
-    );
-    if (!head.rows[0] || head.rows[0].event_count !== events.rows.length || head.rows[0].head_hash !== previousHash) {
-      return { valid: false, chainPartition, checkedEvents: events.rows.length, reasonCode: "head_mismatch" };
-    }
-    return { valid: true, chainPartition, checkedEvents: events.rows.length, headHash: previousHash };
+    return verifyWith(this.db, tenantId, chainPartition);
   }
 
   async recordAnchor(anchor: AuditAnchor): Promise<void> {
-    assertNoSecretMaterial(anchor.safeReference ?? null, "Audit anchor reference");
+    assertNoSecretMaterial(anchor, "Audit anchor");
     await this.db.transaction(async (tx) => {
-      const current = await tx.query<{ head_hash: string; event_count: number }>(
+      if (!Number.isSafeInteger(anchor.eventCount) || anchor.eventCount < 1) throw new Error("Audit anchor event count is invalid");
+      const current = await tx.query<{ head_hash: string; event_count: number | string }>(
         `SELECT head_hash,event_count FROM control_audit_chain_heads WHERE tenant_id=$1 AND chain_partition=$2 FOR UPDATE`,
         [anchor.tenantId, anchor.chainPartition],
       );
-      if (!current.rows[0] || current.rows[0].head_hash !== anchor.headHash || current.rows[0].event_count !== anchor.eventCount) {
+      if (!current.rows[0] || current.rows[0].head_hash !== anchor.headHash
+        || safeCount(current.rows[0].event_count, "Audit event count") !== anchor.eventCount) {
         throw new Error("Audit anchor does not match the current chain head");
+      }
+      const verified = await verifyWith(tx, anchor.tenantId, anchor.chainPartition);
+      if (!verified.valid || verified.headHash !== anchor.headHash || verified.checkedEvents !== anchor.eventCount) {
+        throw new Error("Audit anchor does not match a verified chain");
       }
       await tx.query(
         `INSERT INTO control_audit_anchors (id,tenant_id,chain_partition,head_hash,event_count,anchor_kind,safe_reference,anchored_at)

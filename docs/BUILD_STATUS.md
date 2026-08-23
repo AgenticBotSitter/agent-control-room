@@ -17,16 +17,17 @@
 | CR-4B transactional persistence | Complete | Migrations 0003/0004, canonical store, bounded inbox failure handling, at-least-once delivery proof, qualification reviews |
 | CR-4C security core | Complete | Identities/grants, deterministic policy, canonical digests, redaction, strong approval consumption, database-role script |
 | CR-4D audit and operations core | Complete | Migration 0006, per-tenant audit chain, safe errors, fail-closed runtime configuration |
-| CR-4Q through CR-10 | Not started | Phased build plan |
+| CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
+| CR-5 through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Completed: CR-4D — Tamper-evident audit chain, configuration validation, and safe operational errors
-Delivered: canonical per-tenant/month audit hash chains, replay-safe append, durable chain heads, provider-neutral anchor records, projection-store integration, secret-safe errors, and fail-closed production configuration validation
-Validation: TypeScript, lint, migration verification, and 40-test suite pass locally; production build and rendered-route tests remain required before merge
-Open risks: Real PostgreSQL role/concurrency/crash rehearsal and external anchor publisher remain required; provider-specific Cloudflare/WebAuthn/node authentication remains intentionally adapter-scoped
-Decision-log changes: none; implementation follows accepted CR-3 decisions
+Completed: CR-4Q — Independent security and data-integrity review
+Delivered: exact policy/effect binding, authority ceilings, approval-role enforcement, current revocation checks, tenant-composite projection/canonical lineage, tenant-scoped delivery, verified audit anchoring, safe errors/configuration, and fail-closed database defaults
+Validation: 46/46 tests, TypeScript, lint, seven-migration verification (46 tables), production build, and two rendered-route checks pass
+Open risks: Disposable real-PostgreSQL role/concurrency/kill/restore rehearsal, node authentication, executor identity/ceilings, and external anchor publication are explicit CR-5 gates
+Decision-log changes: none; remediations enforce ADR-001, ADR-003, ADR-009, and ADR-017
 ```
 
 ## Parallel build lane
@@ -38,12 +39,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-4Q — Independent security and data-integrity review
+Block: CR-5A — Node protocol schemas, version negotiation, enrollment, and authentication
 Set model: gpt-5.6-sol
-Set reasoning effort: max
-Why: review must challenge the completed implementation independently before additional capability expands the attack surface
-Expected output: bounded findings report, fixes for accepted high/medium findings, and a real-PostgreSQL rehearsal plan
-Stop before: CR-5 live-environment readiness work
+Set reasoning effort: xhigh
+Why: this creates the public protocol and device-identity boundary used by every heterogeneous worker
+Expected output: versioned schemas for enrollment/challenge, authentication, heartbeat, offers, leases, events, cancellation, and reconciliation with replay/expiry/revocation/malformed-frame tests
+Stop before: CR-5B portable bridge implementation
 ```
 
 ## Update rule

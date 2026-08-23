@@ -82,10 +82,10 @@ export class ProjectionStore {
     );
   }
 
-  async getCursor(adapterId: string, stream = "changes"): Promise<string | undefined> {
+  async getCursor(tenantId: string, adapterId: string, stream = "changes"): Promise<string | undefined> {
     const result = await this.db.query<{ cursor_value: string }>(
-      `SELECT cursor_value FROM projection_cursors WHERE adapter_id = $1 AND stream = $2`,
-      [adapterId, stream],
+      `SELECT cursor_value FROM projection_cursors WHERE tenant_id=$1 AND adapter_id=$2 AND stream=$3`,
+      [tenantId, adapterId, stream],
     );
     return result.rows[0]?.cursor_value;
   }
@@ -93,16 +93,27 @@ export class ProjectionStore {
   async applyChangePage(scope: Scope, page: ChangePage, stream = "changes"): Promise<number> {
     assertSafeProjection(page);
     return this.db.transaction(async (tx) => {
+      const adapter = await tx.query<{ id: string }>(
+        `SELECT id FROM adapter_registry WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+        [scope.tenantId, page.adapterId],
+      );
+      if (!adapter.rows[0]) throw new Error("Adapter is not registered for this tenant");
+      const workspace = await tx.query<{ id: string }>(
+        `SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2`,
+        [scope.tenantId, scope.workspaceId],
+      );
+      if (!workspace.rows[0]) throw new Error("Workspace is not registered for this tenant");
       let applied = 0;
       for (const change of page.changes) {
         const inserted = await tx.query<{ sequence: number }>(
           `INSERT INTO projection_changes (
-            adapter_id, stream, sequence, cursor_value, operation, record_kind,
+            tenant_id, adapter_id, stream, sequence, cursor_value, operation, record_kind,
             record_id, source_version, occurred_at, payload
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
           ON CONFLICT DO NOTHING
           RETURNING sequence`,
           [
+            scope.tenantId,
             page.adapterId,
             stream,
             change.sequence,
@@ -118,13 +129,21 @@ export class ProjectionStore {
         if (!inserted.rows.length) continue;
         applied += 1;
         await this.applyChange(tx, scope, page.adapterId, change);
+        if (change.operation === "upsert") {
+          const table = {
+            project: "projects", work_item: "work_items", execution: "executions", blocker: "blockers",
+            attention: "attention_items", worker: "worker_runtimes", agent: "agent_identities",
+          }[change.recordKind];
+          const durable = await tx.query<{ id: string }>(`SELECT id FROM ${table} WHERE tenant_id=$1 AND id=$2`, [scope.tenantId, change.recordId]);
+          if (!durable.rows[0]) throw new Error("Projection record ID collides with another tenant");
+        }
       }
 
       await tx.query(
-        `INSERT INTO projection_cursors (adapter_id, stream, cursor_value)
-         VALUES ($1,$2,$3)
+        `INSERT INTO projection_cursors (tenant_id,adapter_id,stream,cursor_value)
+         VALUES ($1,$2,$3,$4)
          ON CONFLICT (adapter_id, stream) DO UPDATE SET cursor_value = EXCLUDED.cursor_value, updated_at = now()`,
-        [page.adapterId, stream, page.nextCursor],
+        [scope.tenantId, page.adapterId, stream, page.nextCursor],
       );
       if (applied > 0) {
         await appendAuditWith(tx, {

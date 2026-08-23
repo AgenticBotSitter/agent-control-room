@@ -3,17 +3,18 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { DOMAIN_CONTRACT_VERSION, type ApprovalRecord, type CheckpointRecord, type JobRecord, type MessageEnvelope, type NodeRecord, type RequestRecord, type WorkflowRecord } from "../src/domain/v1/index.ts";
+import { DOMAIN_CONTRACT_VERSION, type ApprovalRecord, type AttemptRecord, type CheckpointRecord, type EffectIntentRecord, type JobRecord, type LeaseRecord, type MessageEnvelope, type NodeRecord, type RequestRecord, type WorkflowRecord } from "../src/domain/v1/index.ts";
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
 import { adaptPglite, type DatabaseSession } from "../src/persistence/database.ts";
 import { DeliveryStore } from "../src/persistence/delivery-store.ts";
-import { computeAuthorityDigest, sha256Digest } from "../src/security/index.ts";
+import { computeAuthorityDigest, computeEffectOperationDigest, sha256Digest } from "../src/security/index.ts";
 
 const t0 = "2026-08-22T18:00:00.000Z";
 const t1 = "2026-08-22T18:01:00.000Z";
 const t5 = "2026-08-22T18:05:00.000Z";
 const t10 = "2026-08-22T18:10:00.000Z";
 const t11 = "2026-08-22T18:11:00.000Z";
+const t20 = "2026-08-22T18:20:00.000Z";
 const hashA = `sha256:${"a".repeat(64)}`;
 const hashB = `sha256:${"b".repeat(64)}`;
 const actor = { actorId: "actor:owner", actorType: "human" as const };
@@ -40,7 +41,7 @@ function records(suffix: string) {
   const authority: JobRecord["authority"] = {
     projectId: workflow.projectId, allowedExecutor: "executor:test", allowedOperations: ["operation:test"],
     credentialRefs: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none",
-    maxDurationSeconds: 600, expiresAt: t10, digest: hashB,
+    maxDurationSeconds: 1_200, expiresAt: t20, digest: hashB,
   };
   authority.digest = computeAuthorityDigest(authority);
   const job: JobRecord = {
@@ -169,7 +170,7 @@ test("database constraints reject payload mirror drift and cross-tenant lineage"
   const otherRequest = { ...records("foreign").request, tenantId: "tenant:other", id: "request:foreign", idempotencyKey: "request-key-foreign-0000" };
   await store.create(otherRequest);
   const crossTenantWorkflow = { ...owner.workflow, id: "workflow:cross-tenant", requestId: otherRequest.id };
-  await assert.rejects(store.create(crossTenantWorkflow), /foreign key|violates/i);
+  await assert.rejects(store.create(crossTenantWorkflow), /not found|foreign key|violates/i);
 
   await store.create(owner.workflow);
   await assert.rejects(
@@ -281,31 +282,39 @@ test("outbox claims use claim tokens and support bounded retry", async () => {
   const { request } = records("outbox");
   await store.create(request);
   await store.transition({ tenantId: request.tenantId, kind: "request", entityId: request.id, expectedVersion: 0, toState: "submitted", transitionId: "transition:outbox", idempotencyKey: "idem-outbox-transition", actor, occurredAt: t1 });
-  const claimed = await delivery.claimOutbox({ claimToken: "claim-token-0001", limit: 10, maxAttempts: 3, now: t1 });
+  await db.query(`INSERT INTO tenants (id,display_name) VALUES ('tenant:outbox-other','Other')`);
+  await db.query(
+    `INSERT INTO control_outbox (id,tenant_id,topic,aggregate_type,aggregate_id,idempotency_key,status,available_at,payload)
+     VALUES ('outbox:other','tenant:outbox-other','test','test','test:other','idem-other','pending',$1,'{}'::jsonb)`,
+    [t1],
+  );
+  const claimed = await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-token-0001", limit: 10, maxAttempts: 3, now: t1 });
   assert.equal(claimed.length, 1);
-  await assert.rejects(delivery.markOutboxDelivered(claimed[0].id, "wrong-claim-token", t5), /stale or missing/);
-  await delivery.markOutboxFailed({ id: claimed[0].id, claimToken: "claim-token-0001", availableAt: t5, safeFailureCode: "temporary", maxAttempts: 3 });
-  assert.equal((await delivery.claimOutbox({ claimToken: "claim-token-0002", limit: 10, maxAttempts: 3, now: t1 })).length, 0);
-  const retried = await delivery.claimOutbox({ claimToken: "claim-token-0002", limit: 10, maxAttempts: 3, now: t5 });
+  assert.equal((await db.query<{ status: string }>(`SELECT status FROM control_outbox WHERE id='outbox:other'`)).rows[0].status, "pending");
+  await assert.rejects(delivery.markOutboxDelivered("tenant:outbox-other", claimed[0].id, "claim-token-0001", t5), /stale or missing/);
+  await assert.rejects(delivery.markOutboxDelivered("tenant:owner", claimed[0].id, "wrong-claim-token", t5), /stale or missing/);
+  await delivery.markOutboxFailed({ tenantId: "tenant:owner", id: claimed[0].id, claimToken: "claim-token-0001", availableAt: t5, safeFailureCode: "temporary", maxAttempts: 3 });
+  assert.equal((await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-token-0002", limit: 10, maxAttempts: 3, now: t1 })).length, 0);
+  const retried = await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-token-0002", limit: 10, maxAttempts: 3, now: t5 });
   assert.equal(retried[0].attempts, 2);
-  assert.equal(await delivery.recoverStaleOutbox({ claimedBefore: t10, availableAt: t10, safeFailureCode: "claim_abandoned", maxAttempts: 3 }), 1);
-  await assert.rejects(delivery.markOutboxDelivered(retried[0].id, "claim-token-0002", t10), /stale or missing/);
-  const recovered = await delivery.claimOutbox({ claimToken: "claim-token-0003", limit: 10, maxAttempts: 3, now: t10 });
+  assert.equal(await delivery.recoverStaleOutbox({ tenantId: "tenant:owner", claimedBefore: t10, availableAt: t10, safeFailureCode: "claim_abandoned", maxAttempts: 3 }), 1);
+  await assert.rejects(delivery.markOutboxDelivered("tenant:owner", retried[0].id, "claim-token-0002", t10), /stale or missing/);
+  const recovered = await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-token-0003", limit: 10, maxAttempts: 3, now: t10 });
   assert.equal(recovered[0].attempts, 3);
-  await delivery.markOutboxDelivered(recovered[0].id, "claim-token-0003", t10);
-  await delivery.markOutboxDelivered(recovered[0].id, "claim-token-0003", t10);
-  assert.equal((await delivery.claimOutbox({ claimToken: "claim-token-0004", limit: 10, maxAttempts: 3, now: t10 })).length, 0);
+  await delivery.markOutboxDelivered("tenant:owner", recovered[0].id, "claim-token-0003", t10);
+  await delivery.markOutboxDelivered("tenant:owner", recovered[0].id, "claim-token-0003", t10);
+  assert.equal((await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-token-0004", limit: 10, maxAttempts: 3, now: t10 })).length, 0);
   await db.query(
     `INSERT INTO control_outbox (id,tenant_id,topic,aggregate_type,aggregate_id,idempotency_key,status,attempts,available_at,payload)
      VALUES ('outbox:dead','tenant:owner','test','test','test:1','idem-dead','failed',2,$1,'{}'::jsonb)`,
     [t10],
   );
-  const finalAttempt = await delivery.claimOutbox({ claimToken: "claim-token-dead", limit: 10, maxAttempts: 3, now: t10 });
-  await delivery.markOutboxFailed({ id: finalAttempt[0].id, claimToken: "claim-token-dead", availableAt: t11, safeFailureCode: "permanent", maxAttempts: 3 });
+  const finalAttempt = await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-token-dead", limit: 10, maxAttempts: 3, now: t10 });
+  await delivery.markOutboxFailed({ tenantId: "tenant:owner", id: finalAttempt[0].id, claimToken: "claim-token-dead", availableAt: t11, safeFailureCode: "permanent", maxAttempts: 3 });
   const dead = await db.query<{ status: string }>(`SELECT status FROM control_outbox WHERE id='outbox:dead'`);
   assert.equal(dead.rows[0].status, "dead_letter");
-  assert.equal((await delivery.claimOutbox({ claimToken: "claim-token-dead-again", limit: 10, maxAttempts: 3, now: t11 })).length, 0);
-  assert.equal(await delivery.recoverStaleOutbox({ claimedBefore: t11, availableAt: t11, safeFailureCode: "claim_abandoned", maxAttempts: 3 }), 0);
+  assert.equal((await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-token-dead-again", limit: 10, maxAttempts: 3, now: t11 })).length, 0);
+  assert.equal(await delivery.recoverStaleOutbox({ tenantId: "tenant:owner", claimedBefore: t11, availableAt: t11, safeFailureCode: "claim_abandoned", maxAttempts: 3 }), 0);
   await db.close();
 });
 
@@ -324,15 +333,77 @@ test("acknowledgement loss redelivers while destination idempotency absorbs the 
     if (!destination.has(message.idempotencyKey)) destination.set(message.idempotencyKey, message.payload);
   };
 
-  const first = (await delivery.claimOutbox({ claimToken: "claim-ack-lost", limit: 1, maxAttempts: 3, now: t1 }))[0];
+  const first = (await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-ack-lost", limit: 1, maxAttempts: 3, now: t1 }))[0];
   deliver(first); // The destination commits, but Control Room never receives the acknowledgement.
-  await delivery.recoverStaleOutbox({ claimedBefore: t5, availableAt: t5, safeFailureCode: "ack_lost", maxAttempts: 3 });
-  const second = (await delivery.claimOutbox({ claimToken: "claim-ack-retry", limit: 1, maxAttempts: 3, now: t5 }))[0];
+  await delivery.recoverStaleOutbox({ tenantId: "tenant:owner", claimedBefore: t5, availableAt: t5, safeFailureCode: "ack_lost", maxAttempts: 3 });
+  const second = (await delivery.claimOutbox({ tenantId: "tenant:owner", claimToken: "claim-ack-retry", limit: 1, maxAttempts: 3, now: t5 }))[0];
   deliver(second);
-  await delivery.markOutboxDelivered(second.id, "claim-ack-retry", t5);
+  await delivery.markOutboxDelivered("tenant:owner", second.id, "claim-ack-retry", t5);
 
   assert.equal(deliveryAttempts, 2);
   assert.equal(destination.size, 1);
   assert.equal(first.idempotencyKey, second.idempotencyKey);
+  await db.close();
+});
+
+test("CR-4Q enforces job authority at lease and effect boundaries", async () => {
+  const db = await migratedDatabase();
+  const store = new CanonicalStore(adaptPglite(db));
+  await seedActiveNode(store);
+  const ready = await seedReadyJob(store, "authority-ceiling");
+  await assert.rejects(
+    store.claimReadyJob({ tenantId: ready.tenantId, jobId: ready.id, expectedJobVersion: ready.version, nodeId: node().id, attemptId: "attempt:expired-authority", leaseId: "lease:expired-authority", transitionId: "transition:expired-authority", idempotencyKey: "idem-expired-authority", actor, acquiredAt: t20, expiresAt: "2026-08-22T18:21:00.000Z" }),
+    /authority has expired/,
+  );
+  await assert.rejects(
+    store.claimReadyJob({ tenantId: ready.tenantId, jobId: ready.id, expectedJobVersion: ready.version, nodeId: node().id, attemptId: "attempt:long-authority", leaseId: "lease:long-authority", transitionId: "transition:long-authority", idempotencyKey: "idem-long-authority", actor, acquiredAt: t1, expiresAt: "2026-08-22T18:22:00.000Z" }),
+    /duration exceeds/,
+  );
+
+  const directLease: LeaseRecord = {
+    contractVersion: DOMAIN_CONTRACT_VERSION, kind: "lease", id: "lease:direct", tenantId: ready.tenantId,
+    jobId: ready.id, attemptId: "attempt:any", nodeId: node().id, epoch: 1, state: "active", version: 0,
+    acquiredAt: t1, expiresAt: t5, createdAt: t1, updatedAt: t1,
+  };
+  await assert.rejects(store.create(directLease), /claimReadyJob/);
+
+  const base = records("effect-authority");
+  await store.create(base.request);
+  await store.create(base.workflow);
+  await store.create(base.job);
+  const attempt: AttemptRecord = {
+    contractVersion: DOMAIN_CONTRACT_VERSION, kind: "attempt", id: "attempt:effect-authority", tenantId: base.job.tenantId,
+    jobId: base.job.id, attemptNumber: 1, state: "offered", version: 0, offeredAt: t1, createdAt: t1, updatedAt: t1,
+  };
+  await assert.rejects(store.create(attempt), /claimReadyJob/);
+  const effectReady = await store.transition({ tenantId: base.job.tenantId, kind: "job", entityId: base.job.id, expectedVersion: 0, toState: "ready", transitionId: "transition:effect-authority-ready", idempotencyKey: "idem-effect-authority-ready", actor, occurredAt: t1 });
+  await store.claimReadyJob({ tenantId: base.job.tenantId, jobId: base.job.id, expectedJobVersion: effectReady.entity.version, nodeId: node().id, attemptId: attempt.id, leaseId: "lease:effect-authority", transitionId: "transition:effect-authority-claim", idempotencyKey: "idem-effect-authority-claim", actor, acquiredAt: t1, expiresAt: t5 });
+  const effect: EffectIntentRecord = {
+    contractVersion: DOMAIN_CONTRACT_VERSION, kind: "effect_intent", id: "effect:forbidden", tenantId: base.job.tenantId,
+    jobId: base.job.id, attemptId: attempt.id, operation: "operation:test", operationDigest: hashA,
+    destination: "destination:test", idempotencyKey: "effect-forbidden-0001", risk: "low", state: "proposed",
+    version: 0, createdAt: t1, updatedAt: t1,
+  };
+  effect.operationDigest = computeEffectOperationDigest(effect, base.job.projectId);
+  await assert.rejects(store.create(effect), /forbids external effects/);
+  await db.close();
+});
+
+test("CR-4Q binds claim replay and transition chronology", async () => {
+  const db = await migratedDatabase();
+  const store = new CanonicalStore(adaptPglite(db));
+  await seedActiveNode(store);
+  const ready = await seedReadyJob(store, "replay-binding");
+  await store.claimReadyJob({ tenantId: ready.tenantId, jobId: ready.id, expectedJobVersion: ready.version, nodeId: node().id, attemptId: "attempt:replay-binding", leaseId: "lease:replay-binding", transitionId: "transition:replay-binding", idempotencyKey: "idem-replay-binding", actor, acquiredAt: t1, expiresAt: t5 });
+  await assert.rejects(
+    store.claimReadyJob({ tenantId: ready.tenantId, jobId: ready.id, expectedJobVersion: ready.version, nodeId: node().id, attemptId: "attempt:different", leaseId: "lease:different", transitionId: "ignored", idempotencyKey: "idem-replay-binding", actor, acquiredAt: t1, expiresAt: t5 }),
+    /different lineage/,
+  );
+  const { request } = records("chronology");
+  await store.create(request);
+  await assert.rejects(
+    store.transition({ tenantId: request.tenantId, kind: "request", entityId: request.id, expectedVersion: 0, toState: "submitted", transitionId: "transition:chronology", idempotencyKey: "idem-chronology", actor, occurredAt: "2026-08-22T17:59:00.000Z" }),
+    /precedes current entity state/,
+  );
   await db.close();
 });

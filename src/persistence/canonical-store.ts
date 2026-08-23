@@ -183,16 +183,55 @@ export class CanonicalStore {
     if (validated.state !== initialStates[validated.kind]) {
       throw new Error(`${validated.kind} must be created in ${initialStates[validated.kind]} state`);
     }
+    if (validated.kind === "attempt" || validated.kind === "lease") throw new Error("Attempts and leases must be created by claimReadyJob");
     await this.db.transaction(async (tx) => {
-      if (validated.kind === "job") assertAuthorityDigest(validated.authority);
+      if (validated.kind === "workflow") {
+        const request = await this.requireWith(tx, validated.tenantId, "request", validated.requestId) as DomainEntity & { projectId?: string };
+        if (request.projectId && request.projectId !== validated.projectId) throw new Error("Workflow project does not match its request");
+      }
+      if (validated.kind === "job") {
+        assertAuthorityDigest(validated.authority);
+        const workflow = await this.requireWith(tx, validated.tenantId, "workflow", validated.workflowId) as DomainEntity & { projectId: string };
+        if (workflow.projectId !== validated.projectId || validated.authority.projectId !== validated.projectId) {
+          throw new Error("Job project and authority must match its workflow");
+        }
+      }
       if (validated.kind === "effect_intent") {
-        const job = await tx.query<{ project_id: string }>(
-          `SELECT project_id FROM control_jobs WHERE tenant_id=$1 AND id=$2`,
+        const jobResult = await tx.query<{ payload: JobRecord }>(
+          `SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2`,
           [validated.tenantId, validated.jobId],
         );
-        if (!job.rows[0]) throw new Error("Effect job not found");
-        if (computeEffectOperationDigest(validated, job.rows[0].project_id) !== validated.operationDigest) {
+        const job = jobResult.rows[0]?.payload;
+        if (!job) throw new Error("Effect job not found");
+        const attempt = await this.requireWith(tx, validated.tenantId, "attempt", validated.attemptId) as AttemptRecord;
+        if (attempt.jobId !== job.id) throw new Error("Effect attempt does not belong to its job");
+        if (!["leased", "running", "waiting"].includes(attempt.state)
+          || !["leased", "running", "waiting_approval"].includes(job.state)) {
+          throw new Error("Effect intent requires an active job attempt");
+        }
+        if (computeEffectOperationDigest(validated, job.projectId) !== validated.operationDigest) {
           throw new Error("Effect operation digest mismatch");
+        }
+        if (!job.authority.allowedOperations.includes(validated.operation)) throw new Error("Effect operation exceeds job authority");
+        if (job.authority.effectPolicy === "none") throw new Error("Job authority forbids external effects");
+        if (Date.parse(job.authority.expiresAt) <= Date.parse(validated.createdAt)) throw new Error("Job authority has expired");
+        if (job.authority.networkPolicy === "allowlist" && !job.authority.allowedNetworkDestinations.includes(validated.destination)) {
+          throw new Error("Effect destination exceeds job authority");
+        }
+        if (job.authority.effectPolicy === "approval_required" && !validated.approvalId) throw new Error("Job authority requires effect approval");
+        if (validated.approvalId) {
+          const approval = await this.requireWith(tx, validated.tenantId, "approval", validated.approvalId) as ApprovalRecord;
+          if (approval.operationDigest !== validated.operationDigest || approval.risk !== validated.risk) {
+            throw new Error("Effect approval is not bound to the exact operation and risk");
+          }
+        }
+      }
+      if (validated.kind === "artifact_manifest") {
+        const job = await this.requireWith(tx, validated.tenantId, "job", validated.jobId) as JobRecord;
+        const attempt = await this.requireWith(tx, validated.tenantId, "attempt", validated.attemptId) as AttemptRecord;
+        if (attempt.jobId !== job.id || validated.projectId !== job.projectId
+          || (validated.workflowId && validated.workflowId !== job.workflowId)) {
+          throw new Error("Artifact lineage does not match its job and attempt");
         }
       }
       if (validated.kind === "checkpoint") {
@@ -231,12 +270,13 @@ export class CanonicalStore {
 
   async claimReadyJob(input: ClaimJobInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {
     return this.db.transaction(async (tx) => {
-      const prior = await tx.query<{ entity_id: string }>(
-        `SELECT entity_id FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='job' AND idempotency_key=$2`,
+      const prior = await tx.query<{ entity_id: string; safe_metadata: { attemptId?: string; leaseId?: string } }>(
+        `SELECT entity_id,safe_metadata FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='job' AND idempotency_key=$2`,
         [input.tenantId, input.idempotencyKey],
       );
       if (prior.rows.length) {
-        if (prior.rows[0].entity_id !== input.jobId) throw new Error("Idempotency key reused for another job");
+        if (prior.rows[0].entity_id !== input.jobId || prior.rows[0].safe_metadata.attemptId !== input.attemptId
+          || prior.rows[0].safe_metadata.leaseId !== input.leaseId) throw new Error("Claim idempotency key reused with different lineage");
         const job = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
         const attempt = await this.requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
         const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
@@ -250,6 +290,11 @@ export class CanonicalStore {
       const job = jobRow.rows[0]?.payload;
       if (!job) throw new Error("Job not found");
       if (job.state !== "ready" || job.version !== input.expectedJobVersion) throw new Error("Job is not claimable at expected version");
+      if (Date.parse(job.authority.expiresAt) <= Date.parse(input.acquiredAt)) throw new Error("Job authority has expired");
+      if (Date.parse(input.expiresAt) > Date.parse(job.authority.expiresAt)
+        || Date.parse(input.expiresAt) - Date.parse(input.acquiredAt) > job.authority.maxDurationSeconds * 1_000) {
+        throw new Error("Lease duration exceeds job authority");
+      }
 
       const nodeRow = await tx.query<{ state: string }>(
         `SELECT state FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
@@ -324,7 +369,11 @@ export class CanonicalStore {
         [input.tenantId, input.idempotencyKey],
       );
       if (prior.rows.length) {
+        if (prior.rows[0].entity_id !== input.leaseId) throw new Error("Expiry idempotency key reused for another lease");
         const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+        if (lease.jobId !== input.jobId || lease.attemptId !== input.attemptId || lease.epoch !== input.epoch) {
+          throw new Error("Expiry replay lineage or epoch mismatch");
+        }
         const attempt = await this.requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
         const job = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
         return { job, attempt, lease, replayed: true };
@@ -368,12 +417,13 @@ export class CanonicalStore {
 
   async renewLease(input: RenewLeaseInput): Promise<{ lease: LeaseRecord; replayed: boolean }> {
     return this.db.transaction(async (tx) => {
-      const prior = await tx.query<{ payload: { leaseId: string } }>(
+      const prior = await tx.query<{ payload: { leaseId: string; epoch: number; expiresAt: string } }>(
         `SELECT payload FROM control_outbox WHERE tenant_id=$1 AND topic='lease.renewed' AND idempotency_key=$2`,
         [input.tenantId, input.idempotencyKey],
       );
       if (prior.rows.length) {
-        if (prior.rows[0].payload.leaseId !== input.leaseId) throw new Error("Renewal idempotency key reused for another lease");
+        if (prior.rows[0].payload.leaseId !== input.leaseId || prior.rows[0].payload.epoch !== input.epoch
+          || prior.rows[0].payload.expiresAt !== input.expiresAt) throw new Error("Renewal idempotency key reused with different content");
         return { lease: await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord, replayed: true };
       }
 
@@ -388,6 +438,11 @@ export class CanonicalStore {
       }
       if (Date.parse(input.renewedAt) > Date.parse(current.expiresAt)) throw new Error("Expired leases cannot be renewed");
       if (Date.parse(input.expiresAt) <= Date.parse(current.expiresAt)) throw new Error("Renewal must extend expiry");
+      const job = await this.requireWith(tx, input.tenantId, "job", current.jobId) as JobRecord;
+      if (Date.parse(input.expiresAt) > Date.parse(job.authority.expiresAt)
+        || Date.parse(input.expiresAt) - Date.parse(current.acquiredAt) > job.authority.maxDurationSeconds * 1_000) {
+        throw new Error("Renewal exceeds job authority");
+      }
 
       const next = domainEntitySchema.parse({
         ...current, expiresAt: input.expiresAt, renewedAt: input.renewedAt,
@@ -412,15 +467,29 @@ export class CanonicalStore {
   async resolveApproval(input: ResolveApprovalInput): Promise<TransitionResult> {
     return this.db.transaction(async (tx) => {
       const approval = await this.requireWith(tx, input.tenantId, "approval", input.approvalId) as ApprovalRecord;
+      const linkedEffect = await tx.query<{ project_id: string }>(
+        `SELECT j.project_id FROM control_effect_intents e
+         JOIN control_jobs j ON j.tenant_id=e.tenant_id AND j.id=e.job_id
+         WHERE e.tenant_id=$1 AND e.approval_id=$2`,
+        [input.tenantId, input.approvalId],
+      );
       const decision = await this.requirePolicyDecision(tx, {
         tenantId: input.tenantId,
         decisionId: input.policyDecisionId,
         identityId: input.actor.actorId,
+        actorType: input.actor.actorType,
         action: "approval.decide",
         resourceType: "approval",
         resourceId: input.approvalId,
+        projectId: linkedEffect.rows[0]?.project_id,
+        risk: approval.risk,
+        externalEffect: true,
+        requiredRoleKey: approval.requiredActorType,
         occurredAt: input.occurredAt,
       });
+      if (input.toState === "approved" && Date.parse(approval.expiresAt) <= Date.parse(input.occurredAt)) {
+        throw new Error("Expired approval cannot be approved");
+      }
       if ((approval.risk === "high" || approval.risk === "critical") && !decision.strong_factor_evidence_id) {
         throw new Error("High-risk approval requires strong-factor evidence");
       }
@@ -469,10 +538,13 @@ export class CanonicalStore {
         tenantId: input.tenantId,
         decisionId: input.policyDecisionId,
         identityId: input.actor.actorId,
+        actorType: input.actor.actorType,
         action: "effect.authorize",
         resourceType: "effect_intent",
         resourceId: input.effectIntentId,
         projectId: job.projectId,
+        risk: effect.risk,
+        externalEffect: true,
         occurredAt: input.occurredAt,
       });
       if ((effect.risk === "high" || effect.risk === "critical") && !decision.strong_factor_evidence_id) {
@@ -488,6 +560,7 @@ export class CanonicalStore {
         if (!approval) throw new Error("approval not found");
         if (approval.state !== "approved") throw new Error("Effect approval is not approved");
         if (approval.operationDigest !== effect.operationDigest) throw new Error("Effect and approval operation digests differ");
+        if (approval.risk !== effect.risk) throw new Error("Effect and approval risk classifications differ");
         if (Date.parse(approval.expiresAt) <= Date.parse(input.occurredAt)) throw new Error("Effect approval has expired");
         await tx.query(
           `INSERT INTO control_approval_consumptions
@@ -548,41 +621,69 @@ export class CanonicalStore {
     tenantId: string;
     decisionId: string;
     identityId: string;
+    actorType: ActorRef["actorType"];
     action: string;
     resourceType: string;
     resourceId: string;
     projectId?: string;
+    risk: "low" | "medium" | "high" | "critical";
+    externalEffect: boolean;
+    requiredRoleKey?: "owner" | "operator" | "policy";
     occurredAt: string;
   }): Promise<{ strong_factor_evidence_id?: string }> {
     const result = await tx.query<{
       identity_id: string; action: string; resource_type: string; resource_id: string; project_id?: string;
+      actor_type: string; identity_state: string; risk: string; external_effect: boolean; grant_ids: string[];
       allowed: boolean; expires_at: string; strong_factor_evidence_id?: string;
     }>(
-      `SELECT identity_id,action,resource_type,resource_id,project_id,allowed,expires_at,strong_factor_evidence_id
-       FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2`,
+      `SELECT d.identity_id,d.action,d.resource_type,d.resource_id,d.project_id,d.risk,d.external_effect,
+        d.grant_ids,d.allowed,d.expires_at,d.strong_factor_evidence_id,i.actor_type,i.state AS identity_state
+       FROM control_policy_decisions d
+       JOIN control_identities i ON i.tenant_id=d.tenant_id AND i.id=d.identity_id
+       WHERE d.tenant_id=$1 AND d.id=$2`,
       [input.tenantId, input.decisionId],
     );
     const decision = result.rows[0];
-    if (!decision || !decision.allowed) throw new Error("Allowed policy decision not found");
-    if (decision.identity_id !== input.identityId || decision.action !== input.action
+    if (!decision || !decision.allowed || decision.identity_state !== "active") throw new Error("Allowed policy decision for an active identity not found");
+    if (decision.identity_id !== input.identityId || decision.actor_type !== input.actorType || decision.action !== input.action
       || decision.resource_type !== input.resourceType || decision.resource_id !== input.resourceId
-      || (input.projectId && decision.project_id !== input.projectId)) {
+      || (decision.project_id ?? undefined) !== input.projectId || decision.risk !== input.risk
+      || decision.external_effect !== input.externalEffect) {
       throw new Error("Policy decision is not bound to this actor and operation");
     }
     if (Date.parse(decision.expires_at) <= Date.parse(input.occurredAt)) throw new Error("Policy decision has expired");
+    const roles = await tx.query<{ id: string; role_key: string; expires_at?: string; revoked_at?: string }>(
+      `SELECT id,role_key,expires_at,revoked_at FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2`,
+      [input.tenantId, input.identityId],
+    );
+    const matched = new Set(decision.grant_ids);
+    const activeMatchedRoles = roles.rows.filter((grant) => matched.has(grant.id)
+      && (!grant.expires_at || Date.parse(grant.expires_at) > Date.parse(input.occurredAt))
+      && (!grant.revoked_at || Date.parse(grant.revoked_at) > Date.parse(input.occurredAt)));
+    if (!activeMatchedRoles.length) throw new Error("Policy decision grants are no longer active");
+    if (input.requiredRoleKey) {
+      const acceptedRoles = input.requiredRoleKey === "operator" ? new Set(["operator", "owner"]) : new Set([input.requiredRoleKey]);
+      if (!activeMatchedRoles.some((grant) => acceptedRoles.has(grant.role_key))) {
+        throw new Error("Policy decision does not satisfy the approval role requirement");
+      }
+    }
     return decision;
   }
 
   private async transitionWith(tx: DatabaseSession, input: TransitionInput, coordinated: boolean): Promise<TransitionResult> {
     assertNoSecretMaterial(input.safeMetadata ?? {}, "Transition safe metadata");
     assertNoSecretMaterial(input.recordPatch ?? {}, "Transition record patch");
-    const existing = await tx.query<{ entity_id: string; to_state: string }>(
-      `SELECT entity_id,to_state FROM control_transition_events WHERE tenant_id=$1 AND entity_kind=$2 AND idempotency_key=$3`,
+    const existing = await tx.query<{ entity_id: string; to_state: string; from_version: number; actor_id: string; actor_type: string; occurred_at: string }>(
+      `SELECT entity_id,to_state,from_version,actor_id,actor_type,occurred_at FROM control_transition_events WHERE tenant_id=$1 AND entity_kind=$2 AND idempotency_key=$3`,
       [input.tenantId, input.kind, input.idempotencyKey],
     );
     if (existing.rows.length) {
       const prior = existing.rows[0];
-      if (prior.entity_id !== input.entityId || prior.to_state !== input.toState) throw new Error("Idempotency key conflicts with a different transition");
+      if (prior.entity_id !== input.entityId || prior.to_state !== input.toState || prior.from_version !== input.expectedVersion
+        || prior.actor_id !== input.actor.actorId || prior.actor_type !== input.actor.actorType
+        || new Date(prior.occurred_at).toISOString() !== new Date(input.occurredAt).toISOString()) {
+        throw new Error("Idempotency key conflicts with a different transition");
+      }
       return { entity: await this.requireWith(tx, input.tenantId, input.kind, input.entityId), replayed: true };
     }
 
@@ -593,6 +694,7 @@ export class CanonicalStore {
     );
     const current = row.rows[0]?.payload;
     if (!current) throw new Error(`${input.kind} not found`);
+    if (Date.parse(input.occurredAt) < Date.parse(current.updatedAt)) throw new Error("Transition timestamp precedes current entity state");
     if (current.version !== input.expectedVersion) throw new Error(`Version conflict: expected ${input.expectedVersion}, found ${current.version}`);
     if (!config.transitions[current.state]?.includes(input.toState)) throw new Error(`Illegal ${input.kind} transition: ${current.state} -> ${input.toState}`);
 

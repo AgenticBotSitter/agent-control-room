@@ -9,6 +9,7 @@ import {
   type AttemptRecord,
   type EffectIntentRecord,
   type JobRecord,
+  type NodeRecord,
   type RequestRecord,
   type WorkflowRecord,
 } from "../src/domain/v1/index.ts";
@@ -92,6 +93,24 @@ function effectRecords() {
   return { request, workflow, job, attempt, approval, effect };
 }
 
+async function seedEffectWorkflow(canonical: CanonicalStore, records: ReturnType<typeof effectRecords>) {
+  await canonical.create(records.request);
+  await canonical.create(records.workflow);
+  await canonical.create(records.job);
+  const node: NodeRecord = {
+    contractVersion: DOMAIN_CONTRACT_VERSION, kind: "node", id: "node:security", tenantId: "tenant:owner",
+    displayName: "Security node", state: "pending_enrollment", platform: "linux", architecture: "x64",
+    identityKeyId: "key:security", hardwareFingerprint: hashA, softwareFingerprint: hashB,
+    policyVersion: "1.0.0", minimumProtocolVersion: "control-room-node/v1", version: 0, createdAt: t0, updatedAt: t0,
+  };
+  await canonical.create(node);
+  await canonical.transition({ tenantId: node.tenantId, kind: "node", entityId: node.id, expectedVersion: 0, toState: "active", transitionId: "transition:security-node", idempotencyKey: "idem-security-node", actor: ownerActor, occurredAt: t0, recordPatch: { enrolledAt: t0 } });
+  const ready = await canonical.transition({ tenantId: records.job.tenantId, kind: "job", entityId: records.job.id, expectedVersion: 0, toState: "ready", transitionId: "transition:security-ready", idempotencyKey: "idem-security-ready", actor: ownerActor, occurredAt: t0 });
+  await canonical.claimReadyJob({ tenantId: records.job.tenantId, jobId: records.job.id, expectedJobVersion: ready.entity.version, nodeId: node.id, attemptId: records.attempt.id, leaseId: "lease:security", transitionId: "transition:security-claim", idempotencyKey: "idem-security-claim", actor: ownerActor, acquiredAt: t0, expiresAt: t5 });
+  await canonical.create(records.approval);
+  await canonical.create(records.effect);
+}
+
 test("canonical digests are stable and reject non-JSON or mismatched content", () => {
   assert.equal(sha256Digest({ b: 2, a: [true, "x"] }), sha256Digest({ a: [true, "x"], b: 2 }));
   assert.notEqual(sha256Digest({ value: 1 }), sha256Digest({ value: 2 }));
@@ -124,8 +143,8 @@ test("deterministic policy fails closed for scope, risk, expiry, and missing str
 test("owner bootstrap is single-use and policy decisions are durable append-only records", async () => {
   const db = await migratedDatabase();
   const security = new SecurityStore(adaptPglite(db));
-  await security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner" });
-  await assert.rejects(security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:other", grantId: "grant:other", displayName: "Other" }), /already consumed/);
+  await security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner", now: t1 });
+  await assert.rejects(security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:other", grantId: "grant:other", displayName: "Other", now: t1 }), /already consumed/);
   await assert.rejects(security.authorize({
     decisionId: "decision:forged",
     authentication: { ...ownerAuthentication, subject: "forged-subject" },
@@ -146,14 +165,9 @@ test("approval resolution and effect authorization are exact, strong, and single
   const db = await migratedDatabase();
   const canonical = new CanonicalStore(adaptPglite(db));
   const security = new SecurityStore(adaptPglite(db));
-  await security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner" });
+  await security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner", now: t1 });
   const records = effectRecords();
-  await canonical.create(records.request);
-  await canonical.create(records.workflow);
-  await canonical.create(records.job);
-  await canonical.create(records.attempt);
-  await canonical.create(records.approval);
-  await canonical.create(records.effect);
+  await seedEffectWorkflow(canonical, records);
 
   await assert.rejects(canonical.transition({ tenantId: records.approval.tenantId, kind: "approval", entityId: records.approval.id, expectedVersion: 0, toState: "approved", transitionId: "transition:approval-bypass", idempotencyKey: "idem-approval-bypass", actor: ownerActor, occurredAt: t1, recordPatch: { decidedBy: ownerActor, decidedAt: t1 } }), /coordinated repository operation/);
 
@@ -182,11 +196,9 @@ test("revoked approval cannot authorize a pending consequential effect", async (
   const db = await migratedDatabase();
   const canonical = new CanonicalStore(adaptPglite(db));
   const security = new SecurityStore(adaptPglite(db));
-  await security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner" });
+  await security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner", now: t1 });
   const records = effectRecords();
-  for (const record of [records.request, records.workflow, records.job, records.attempt, records.approval, records.effect]) {
-    await canonical.create(record);
-  }
+  await seedEffectWorkflow(canonical, records);
   await security.authorize({
     decisionId: "decision:approve-before-revoke", authentication: ownerAuthentication,
     request: { tenantId: "tenant:owner", action: "approval.decide", resourceType: "approval", resourceId: records.approval.id, projectId: records.job.projectId, risk: "high", externalEffect: true, occurredAt: t1 },
@@ -203,5 +215,82 @@ test("revoked approval cannot authorize a pending consequential effect", async (
   });
   await assert.rejects(canonical.authorizeEffect({ tenantId: "tenant:owner", effectIntentId: records.effect.id, expectedVersion: 0, policyDecisionId: "decision:effect-after-revoke", transitionId: "transition:effect-after-revoke", idempotencyKey: "idem-effect-after-revoke", actor: ownerActor, occurredAt: t1 }), /not approved/);
   assert.equal((await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_approval_consumptions`)).rows[0].count, "0");
+  await db.close();
+});
+
+test("CR-4Q rejects under-classified policy decisions at consequential-action consumption", async () => {
+  const db = await migratedDatabase();
+  const canonical = new CanonicalStore(adaptPglite(db));
+  const security = new SecurityStore(adaptPglite(db));
+  await security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner", now: t1 });
+  const records = effectRecords();
+  await seedEffectWorkflow(canonical, records);
+
+  await security.authorize({
+    decisionId: "decision:approval-underclassified", authentication: ownerAuthentication,
+    request: { tenantId: "tenant:owner", action: "approval.decide", resourceType: "approval", resourceId: records.approval.id, projectId: records.job.projectId, risk: "low", externalEffect: false, occurredAt: t1 },
+  });
+  await assert.rejects(
+    canonical.resolveApproval({ tenantId: "tenant:owner", approvalId: records.approval.id, expectedVersion: 0, toState: "approved", policyDecisionId: "decision:approval-underclassified", transitionId: "transition:approval-underclassified", idempotencyKey: "idem-approval-underclassified", actor: ownerActor, occurredAt: t1 }),
+    /not bound/,
+  );
+
+  await security.authorize({
+    decisionId: "decision:approval-exact", authentication: ownerAuthentication,
+    request: { tenantId: "tenant:owner", action: "approval.decide", resourceType: "approval", resourceId: records.approval.id, projectId: records.job.projectId, risk: "high", externalEffect: true, occurredAt: t1 },
+  });
+  await canonical.resolveApproval({ tenantId: "tenant:owner", approvalId: records.approval.id, expectedVersion: 0, toState: "approved", policyDecisionId: "decision:approval-exact", transitionId: "transition:approval-exact", idempotencyKey: "idem-approval-exact", actor: ownerActor, occurredAt: t1 });
+  await security.authorize({
+    decisionId: "decision:effect-underclassified", authentication: ownerAuthentication,
+    request: { tenantId: "tenant:owner", action: "effect.authorize", resourceType: "effect_intent", resourceId: records.effect.id, projectId: records.job.projectId, risk: "low", externalEffect: false, occurredAt: t1 },
+  });
+  await assert.rejects(
+    canonical.authorizeEffect({ tenantId: "tenant:owner", effectIntentId: records.effect.id, expectedVersion: 0, policyDecisionId: "decision:effect-underclassified", transitionId: "transition:effect-underclassified", idempotencyKey: "idem-effect-underclassified", actor: ownerActor, occurredAt: t1 }),
+    /not bound/,
+  );
+  await db.close();
+});
+
+test("CR-4Q enforces required approval roles and current grant state", async () => {
+  const db = await migratedDatabase();
+  const canonical = new CanonicalStore(adaptPglite(db));
+  const security = new SecurityStore(adaptPglite(db));
+  await security.bootstrapOwner({ ...ownerAuthentication, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner", now: t1 });
+  const operatorAuthentication: VerifiedAuthentication = { ...ownerAuthentication, subject: "operator-subject" };
+  await db.query(
+    `INSERT INTO control_identities (id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+     VALUES ('identity:operator','tenant:owner','human','Operator',$1,$2,'active',$3,$3)`,
+    [operatorAuthentication.provider, sha256Digest({ provider: operatorAuthentication.provider, subject: operatorAuthentication.subject }), t0],
+  );
+  await db.query(
+    `INSERT INTO control_role_grants (id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+     VALUES ('grant:operator','tenant:owner','identity:operator','operator','["approval.decide"]'::jsonb,'["project:security"]'::jsonb,'high',true,true,$1,$1)`,
+    [t0],
+  );
+  const records = effectRecords();
+  await seedEffectWorkflow(canonical, records);
+  await security.authorize({
+    decisionId: "decision:operator-approval", authentication: operatorAuthentication,
+    request: { tenantId: "tenant:owner", action: "approval.decide", resourceType: "approval", resourceId: records.approval.id, projectId: records.job.projectId, risk: "high", externalEffect: true, occurredAt: t1 },
+  });
+  await assert.rejects(
+    canonical.resolveApproval({ tenantId: "tenant:owner", approvalId: records.approval.id, expectedVersion: 0, toState: "approved", policyDecisionId: "decision:operator-approval", transitionId: "transition:operator-approval", idempotencyKey: "idem-operator-approval", actor: { actorId: "identity:operator", actorType: "human" }, occurredAt: t1 }),
+    /role requirement/,
+  );
+  await db.query(`UPDATE control_role_grants SET revoked_at=$1,updated_at=$1 WHERE id='grant:operator'`, [t1]);
+  await assert.rejects(
+    canonical.resolveApproval({ tenantId: "tenant:owner", approvalId: records.approval.id, expectedVersion: 0, toState: "approved", policyDecisionId: "decision:operator-approval", transitionId: "transition:revoked-operator", idempotencyKey: "idem-revoked-operator", actor: { actorId: "identity:operator", actorType: "human" }, occurredAt: t1 }),
+    /no longer active/,
+  );
+  await db.close();
+});
+
+test("expired authentication cannot bootstrap the owner", async () => {
+  const db = await migratedDatabase();
+  const security = new SecurityStore(adaptPglite(db));
+  await assert.rejects(
+    security.bootstrapOwner({ ...ownerAuthentication, expiresAt: t1, identityId: "identity:owner", grantId: "grant:owner", displayName: "Owner", now: t1 }),
+    /currently valid/,
+  );
   await db.close();
 });

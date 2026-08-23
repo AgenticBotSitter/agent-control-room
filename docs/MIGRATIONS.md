@@ -62,3 +62,9 @@ Production database privileges are deliberately separate from schema migration. 
 ## 0006 — CR-4D audit hash chain
 
 Adds versioned fields to `audit_events`, tenant/month chain heads, and append-only external-anchor records. Version-one events require canonical SHA-256 fields and have a unique tenant/partition sequence. The application advances a locked chain head in the same transaction as the audit insert; migration constraints protect structural integrity, while `AuditStore.verify` recomputes and checks the full chain. Historical non-chain rows remain supported as version zero.
+
+## 0007 — CR-4Q integrity hardening
+
+Tenant-prefixes projection, command, audit, worker/allocation, and recommendation lineage; adds tenant scope to projection cursors/change history; and adds composite workflow/job/attempt lineage for authority-bearing canonical records. It also makes transition idempotency unique per tenant and entity kind.
+
+The migration temporarily removes the projection-change row trigger only while deterministically backfilling `tenant_id` from the immutable adapter registry, then restores the trigger before completion. A populated database containing cross-tenant references intentionally fails migration and requires investigation rather than automatic reassignment.

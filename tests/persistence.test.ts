@@ -51,7 +51,7 @@ test("cursor sync is durable, idempotent, scoped, and adapter-independent", asyn
     assert.equal(first, pack.changes.length);
     const repeated = await store.applyChangePage({ tenantId, workspaceId: project.source.workspaceId }, pageFor(pack));
     assert.equal(repeated, 0);
-    assert.equal(await store.getCursor(pack.manifest.adapterId), pageFor(pack).nextCursor);
+    assert.equal(await store.getCursor(tenantId, pack.manifest.adapterId), pageFor(pack).nextCursor);
   }
 
   const all = await store.listProjects(tenantId);
@@ -59,6 +59,12 @@ test("cursor sync is durable, idempotent, scoped, and adapter-independent", asyn
   const onlyBlooms = await store.listProjects(tenantId, "workspace.content-blooms");
   assert.deepEqual(onlyBlooms.map((project) => project.id), ["project.blooms.content-ops"]);
   assert.equal((await store.listProjects("tenant.someone-else")).length, 0);
+  await store.ensureTenantWorkspace("tenant.other", "workspace.other", "Other workspace");
+  await assert.rejects(
+    store.applyChangePage({ tenantId: "tenant.other", workspaceId: "workspace.other" }, pageFor(wayfarerFixture)),
+    /not registered for this tenant/,
+  );
+  assert.equal(await store.getCursor("tenant.other", wayfarerFixture.manifest.adapterId), undefined);
 
   await db.query(`UPDATE adapter_registry SET status='offline' WHERE id=$1`, [contentBloomsFixture.manifest.adapterId]);
   const website = await store.listProjects(tenantId, "workspace.website-operations");

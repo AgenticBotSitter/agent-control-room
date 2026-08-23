@@ -6,6 +6,9 @@ const secretPatterns = [
   /(?:api[_-]?key|password|passphrase|secret|access[_-]?token|refresh[_-]?token)\s*[:=]\s*[^\s,;]{6,}/i,
   /(?:X-Amz-Signature|X-Amz-Credential)=/i,
   /\b(?:ghp|github_pat|sk_live|sk_test)_[a-z0-9_-]{12,}/i,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/,
+  /https?:\/\/[^\s/:@]+:[^\s/@]+@/i,
 ];
 
 export interface RedactionResult<T = unknown> {

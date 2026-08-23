@@ -24,8 +24,13 @@ export function loadRuntimeConfig(env: Record<string, string | undefined> = proc
     if (!databaseUrl || !/^postgres(?:ql)?:\/\//.test(databaseUrl)) throw new Error("Production requires a PostgreSQL DATABASE_URL");
     if (!publicOrigin) throw new Error("Production requires CONTROL_ROOM_PUBLIC_ORIGIN");
     const origin = new URL(publicOrigin);
-    if (origin.protocol !== "https:" || origin.username || origin.password || origin.search || origin.hash) throw new Error("Production public origin must be a clean HTTPS origin");
+    if (origin.protocol !== "https:" || origin.username || origin.password || origin.search || origin.hash || origin.pathname !== "/") {
+      throw new Error("Production public origin must be a clean HTTPS origin");
+    }
     if (!sessionSecret || sessionSecret.length < 32) throw new Error("Production requires a CONTROL_ROOM_SESSION_SECRET of at least 32 characters");
+    if (/^(.)\1+$/.test(sessionSecret) || /^(?:change[-_ ]?me|password|secret)/i.test(sessionSecret)) {
+      throw new Error("Production CONTROL_ROOM_SESSION_SECRET appears to be a placeholder");
+    }
   }
   return { environment, workspaceId, ...(databaseUrl ? { databaseUrl } : {}), ...(publicOrigin ? { publicOrigin } : {}), ...(sessionSecret ? { sessionSecret } : {}) };
 }

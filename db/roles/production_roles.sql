@@ -22,7 +22,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO control_room_reader, control_room
 
 REVOKE UPDATE, DELETE, TRUNCATE ON
   audit_events, projection_changes, command_receipts, control_transition_events,
-  control_policy_decisions, control_approval_consumptions
+  control_policy_decisions, control_approval_consumptions, control_audit_anchors
   FROM control_room_application, control_room_reader, control_room_backup;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public
   FROM control_room_reader, control_room_backup;
@@ -30,5 +30,6 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES TO control_room_application;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO control_room_reader, control_room_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_application, control_room_reader, control_room_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_application, control_room_reader, control_room_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM control_room_application, control_room_reader, control_room_backup;

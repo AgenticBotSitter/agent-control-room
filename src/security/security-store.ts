@@ -1,5 +1,6 @@
 import type { DatabaseClient } from "../persistence/database";
 import { sha256Digest } from "./digest";
+import { assertNoSecretMaterial } from "./redaction";
 import {
   evaluatePolicy,
   type AuthenticatedPrincipal,
@@ -30,6 +31,7 @@ export interface BootstrapOwnerInput extends VerifiedAuthentication {
   identityId: string;
   grantId: string;
   displayName: string;
+  now: string;
 }
 
 export interface RecordedDecision extends PolicyDecision {
@@ -47,6 +49,12 @@ export class SecurityStore {
 
   /** Deployment-only bootstrap primitive. It is intentionally not exposed by an HTTP route. */
   async bootstrapOwner(input: BootstrapOwnerInput): Promise<void> {
+    const verifiedAt = Date.parse(input.verifiedAt);
+    const expiresAt = Date.parse(input.expiresAt);
+    const now = Date.parse(input.now);
+    if (![verifiedAt, expiresAt, now].every(Number.isFinite) || verifiedAt > now || expiresAt <= now) {
+      throw new Error("Owner bootstrap requires a currently valid verified authentication");
+    }
     await this.db.transaction(async (tx) => {
       await tx.query(`SELECT id FROM tenants WHERE id=$1 FOR UPDATE`, [input.tenantId]);
       const existing = await tx.query<{ count: string }>(
@@ -75,7 +83,11 @@ export class SecurityStore {
     request: AuthorizationRequest;
   }): Promise<RecordedDecision> {
     const { authentication, request } = input;
+    assertNoSecretMaterial(request, "Authorization request");
     if (authentication.tenantId !== request.tenantId) throw new Error("Authentication tenant does not match authorization request");
+    if (![authentication.verifiedAt, authentication.expiresAt, request.occurredAt].every((value) => Number.isFinite(Date.parse(value)))) {
+      throw new Error("Authorization timestamps are invalid");
+    }
     if (Date.parse(authentication.verifiedAt) > Date.parse(request.occurredAt)) throw new Error("Authentication is from the future");
 
     return this.db.transaction(async (tx) => {

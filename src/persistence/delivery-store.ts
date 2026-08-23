@@ -6,6 +6,10 @@ function json(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function assertSafeFailureCode(value: string): void {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(value)) throw new Error("Safe failure code is invalid");
+}
+
 export interface InboxRef {
   tenantId: string;
   protocol: string;
@@ -65,7 +69,7 @@ export class DeliveryStore {
     const maxAttempts = options.maxAttempts ?? 3;
     const safeFailureCode = options.safeFailureCode ?? "handler_failed";
     if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error("Inbox maxAttempts must be a positive integer");
-    if (!safeFailureCode.trim()) throw new Error("Inbox safeFailureCode must not be empty");
+    assertSafeFailureCode(safeFailureCode);
 
     let handlerStarted = false;
     try {
@@ -140,7 +144,10 @@ export class DeliveryStore {
     });
   }
 
-  async claimOutbox(input: { claimToken: string; limit: number; maxAttempts: number; now: string }): Promise<OutboxMessage[]> {
+  async claimOutbox(input: { tenantId: string; claimToken: string; limit: number; maxAttempts: number; now: string }): Promise<OutboxMessage[]> {
+    if (!input.tenantId || input.claimToken.length < 12) throw new Error("Outbox claim scope or token is invalid");
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 1_000) throw new Error("Outbox claim limit is invalid");
+    if (!Number.isInteger(input.maxAttempts) || input.maxAttempts < 1) throw new Error("Outbox maxAttempts is invalid");
     return this.db.transaction(async (tx) => {
       const claimed = await tx.query<{
         id: string; tenant_id: string; topic: string; aggregate_type: string; aggregate_id: string;
@@ -148,13 +155,13 @@ export class DeliveryStore {
       }>(
         `WITH candidates AS (
            SELECT id FROM control_outbox
-           WHERE status IN ('pending','failed') AND available_at <= $1 AND attempts < $4
+           WHERE tenant_id=$5 AND status IN ('pending','failed') AND available_at <= $1 AND attempts < $4
            ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT $2
          )
          UPDATE control_outbox o SET status='processing',claim_token=$3,claimed_at=$1,attempts=o.attempts+1,safe_failure_code=NULL
          FROM candidates c WHERE o.id=c.id
          RETURNING o.id,o.tenant_id,o.topic,o.aggregate_type,o.aggregate_id,o.idempotency_key,o.attempts,o.payload`,
-        [input.now, input.limit, input.claimToken, input.maxAttempts],
+        [input.now, input.limit, input.claimToken, input.maxAttempts, input.tenantId],
       );
       return claimed.rows.map((row) => ({
         id: row.id, tenantId: row.tenant_id, topic: row.topic, aggregateType: row.aggregate_type,
@@ -163,34 +170,36 @@ export class DeliveryStore {
     });
   }
 
-  async markOutboxDelivered(id: string, claimToken: string, deliveredAt: string): Promise<void> {
+  async markOutboxDelivered(tenantId: string, id: string, claimToken: string, deliveredAt: string): Promise<void> {
     const result = await this.db.query(
       `UPDATE control_outbox SET status='delivered',delivered_at=$1,claim_token=NULL
-       WHERE id=$2 AND status='processing' AND claim_token=$3 RETURNING id`,
-      [deliveredAt, id, claimToken],
+       WHERE tenant_id=$2 AND id=$3 AND status='processing' AND claim_token=$4 RETURNING id`,
+      [deliveredAt, tenantId, id, claimToken],
     );
     if (result.rows.length === 1) return;
-    const prior = await this.db.query<{ status: string }>(`SELECT status FROM control_outbox WHERE id=$1`, [id]);
+    const prior = await this.db.query<{ status: string }>(`SELECT status FROM control_outbox WHERE tenant_id=$1 AND id=$2`, [tenantId, id]);
     if (prior.rows[0]?.status !== "delivered") throw new Error("Outbox claim is stale or missing");
   }
 
-  async markOutboxFailed(input: { id: string; claimToken: string; availableAt: string; safeFailureCode: string; maxAttempts: number }): Promise<void> {
+  async markOutboxFailed(input: { tenantId: string; id: string; claimToken: string; availableAt: string; safeFailureCode: string; maxAttempts: number }): Promise<void> {
+    assertSafeFailureCode(input.safeFailureCode);
     const result = await this.db.query(
-      `UPDATE control_outbox SET status=CASE WHEN attempts >= $5 THEN 'dead_letter' ELSE 'failed' END,
+      `UPDATE control_outbox SET status=CASE WHEN attempts >= $6 THEN 'dead_letter' ELSE 'failed' END,
          available_at=$1,safe_failure_code=$2,claim_token=NULL
-       WHERE id=$3 AND status='processing' AND claim_token=$4 RETURNING id`,
-      [input.availableAt, input.safeFailureCode, input.id, input.claimToken, input.maxAttempts],
+       WHERE tenant_id=$3 AND id=$4 AND status='processing' AND claim_token=$5 RETURNING id`,
+      [input.availableAt, input.safeFailureCode, input.tenantId, input.id, input.claimToken, input.maxAttempts],
     );
     if (result.rows.length !== 1) throw new Error("Outbox claim is stale or missing");
   }
 
-  async recoverStaleOutbox(input: { claimedBefore: string; availableAt: string; safeFailureCode: string; maxAttempts: number }): Promise<number> {
+  async recoverStaleOutbox(input: { tenantId: string; claimedBefore: string; availableAt: string; safeFailureCode: string; maxAttempts: number }): Promise<number> {
+    assertSafeFailureCode(input.safeFailureCode);
     const recovered = await this.db.query<{ id: string }>(
       `UPDATE control_outbox SET
          status=CASE WHEN attempts >= $4 THEN 'dead_letter' ELSE 'failed' END,
          available_at=$2,safe_failure_code=$3,claim_token=NULL
-       WHERE status='processing' AND claimed_at <= $1 RETURNING id`,
-      [input.claimedBefore, input.availableAt, input.safeFailureCode, input.maxAttempts],
+       WHERE tenant_id=$5 AND status='processing' AND claimed_at <= $1 RETURNING id`,
+      [input.claimedBefore, input.availableAt, input.safeFailureCode, input.maxAttempts, input.tenantId],
     );
     return recovered.rows.length;
   }
