@@ -9,7 +9,7 @@
 **Primary citations:**
 - **[CR]** = `CR5C_RESEARCH_CONTRADICTION_REVIEW.md` (F2, F6)
 - **[ATX]** = `CR5C_ADVERSARIAL_TEST_MATRIX.md` (cases 2a/2b/9/10)
-- **[LCY]** = `CR5C_BRIDGE_LIFECYCLE_ANALYSIS.md` (#29)
+- **[LCY]** = `CR5C_BRIDGE_EXECUTOR_BOUNDARY_ANALYSIS.md` (#29)
 - **[OPTS]** = `CR5C_LOCAL_POLICY_CONTRACT_OPTIONS.md` (#28)
 - **[OPS]** = `CR5C_PLATFORM_OPERATIONAL_MATRIX.md` (#31)
 - **[5B]** = `docs/CR5B_PORTABLE_NODE_BRIDGE.md`; **[SM]** = `src/domain/v1/state-machines.ts`
