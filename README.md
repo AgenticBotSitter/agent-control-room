@@ -4,7 +4,7 @@ Control Room is a private, project-agnostic operations layer for coordinating pr
 
 ![Abstract Control Room routing preview](public/control-room-preview.png)
 
-This repository currently implements **CR-0 through CR-4C**:
+This repository currently implements **CR-0 through CR-4D**:
 
 - **CR-0 — Contract:** versioned project-adapter types and schemas, authority boundaries, safe projections, cursors, idempotency, command receipts, and redaction rules.
 - **CR-1 — Read-only interface:** an all-project portfolio, attention queue, running work, blockers, worker and agent views, project drilldowns, worker history, and a deterministic capacity simulator.
@@ -13,6 +13,7 @@ This repository currently implements **CR-0 through CR-4C**:
 - **CR-4A — Canonical domain contract:** versioned records, runtime validators, generated JSON Schema, explicit state machines, and authority-containment rules.
 - **CR-4B — Transactional persistence:** normalized PostgreSQL tables, tenant-bound lineage, optimistic state transitions, lease epochs, inbox/outbox delivery, idempotency, stale-claim recovery, and dead-letter handling.
 - **CR-4C — Security core:** application identities and scoped grants, deterministic policy decisions, canonical digest verification, secret rejection/redaction, strong exact-operation approval consumption, and production database-role definitions.
+- **CR-4D — Audit and operations core:** per-tenant tamper-evident audit chains, external-anchor interface, safe operational errors, and fail-closed production configuration validation.
 
 There are deliberately **no live project adapters, credentials, production commands, Telegram actions, Unreal jobs, or Content Blooms changes** in this phase.
 
@@ -71,6 +72,8 @@ pnpm test:build
 - [CR-4B verification](docs/CR4B_VERIFICATION.md)
 - [CR-4C security core](docs/CR4C_SECURITY_CORE.md)
 - [CR-4C verification](docs/CR4C_VERIFICATION.md)
+- [CR-4D audit and operations core](docs/CR4D_AUDIT_AND_OPERATIONS.md)
+- [CR-4D verification](docs/CR4D_VERIFICATION.md)
 - [Project adapter JSON Schema](contracts/project-adapter-v1.schema.json)
 - [Command receipt JSON Schema](contracts/command-receipt-v1.schema.json)
 

@@ -58,3 +58,7 @@ Migrations have one authorized runner. Re-runnable trigger DDL supports isolated
 Adds tenant-bound application identities, scoped/expiring/revocable role grants, append-only policy decisions, and append-only single-use approval consumption. Raw authentication subjects are represented only by canonical digests.
 
 Production database privileges are deliberately separate from schema migration. After migrations, the database owner applies `db/roles/production_roles.sql` and grants deployment-specific login roles membership in exactly one NOLOGIN group role. This role script must be rehearsed on disposable real PostgreSQL; PGlite is not considered evidence for privilege behavior.
+
+## 0006 — CR-4D audit hash chain
+
+Adds versioned fields to `audit_events`, tenant/month chain heads, and append-only external-anchor records. Version-one events require canonical SHA-256 fields and have a unique tenant/partition sequence. The application advances a locked chain head in the same transaction as the audit insert; migration constraints protect structural integrity, while `AuditStore.verify` recomputes and checks the full chain. Historical non-chain rows remain supported as version zero.

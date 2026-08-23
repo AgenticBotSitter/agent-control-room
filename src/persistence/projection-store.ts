@@ -17,27 +17,12 @@ import {
   projectSummarySchema,
   workerSchema,
 } from "@/src/contracts/v1";
+import { appendAuditWith, type AuditInput } from "../audit";
 import type { DatabaseClient, DatabaseSession } from "./database";
 
 interface Scope {
   tenantId: string;
   workspaceId: string;
-}
-
-interface AuditInput {
-  id: string;
-  tenantId: string;
-  workspaceId?: string;
-  projectId?: string;
-  actorId: string;
-  actorType: "human" | "agent" | "worker" | "service" | "adapter";
-  action: string;
-  targetType: string;
-  targetId: string;
-  correlationId?: string;
-  idempotencyKey?: string;
-  safeMetadata?: Record<string, unknown>;
-  occurredAt: string;
 }
 
 function json(value: unknown): string {
@@ -141,19 +126,21 @@ export class ProjectionStore {
          ON CONFLICT (adapter_id, stream) DO UPDATE SET cursor_value = EXCLUDED.cursor_value, updated_at = now()`,
         [page.adapterId, stream, page.nextCursor],
       );
-      await this.appendAuditWith(tx, {
-        id: `audit.sync.${page.adapterId}.${page.nextCursor.replace(/[^a-zA-Z0-9._-]/g, "-")}`,
-        tenantId: scope.tenantId,
-        workspaceId: scope.workspaceId,
-        actorId: page.adapterId,
-        actorType: "adapter",
-        action: "projection_page_applied",
-        targetType: "adapter",
-        targetId: page.adapterId,
-        correlationId: page.nextCursor,
-        safeMetadata: { applied, hasMore: page.hasMore, stream },
-        occurredAt: new Date().toISOString(),
-      });
+      if (applied > 0) {
+        await appendAuditWith(tx, {
+          id: `audit.sync.${page.adapterId}.${page.nextCursor.replace(/[^a-zA-Z0-9._-]/g, "-")}`,
+          tenantId: scope.tenantId,
+          workspaceId: scope.workspaceId,
+          actorId: page.adapterId,
+          actorType: "adapter",
+          action: "projection_page_applied",
+          targetType: "adapter",
+          targetId: page.adapterId,
+          correlationId: page.nextCursor,
+          safeMetadata: { applied, hasMore: page.hasMore, stream },
+          occurredAt: page.changes.at(-1)?.occurredAt ?? "1970-01-01T00:00:00.000Z",
+        });
+      }
       return applied;
     });
   }
@@ -349,18 +336,7 @@ export class ProjectionStore {
 
   async appendAudit(input: AuditInput): Promise<void> {
     assertSafeProjection(input.safeMetadata ?? {});
-    await this.appendAuditWith(this.db, input);
-  }
-
-  private async appendAuditWith(tx: DatabaseSession, input: AuditInput): Promise<void> {
-    await tx.query(
-      `INSERT INTO audit_events (
-        id,tenant_id,workspace_id,project_id,actor_id,actor_type,action,target_type,target_id,
-        correlation_id,idempotency_key,safe_metadata,occurred_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13)
-      ON CONFLICT (id) DO NOTHING`,
-      [input.id,input.tenantId,input.workspaceId??null,input.projectId??null,input.actorId,input.actorType,input.action,input.targetType,input.targetId,input.correlationId??null,input.idempotencyKey??null,json(input.safeMetadata??{}),input.occurredAt],
-    );
+    await this.db.transaction((tx) => appendAuditWith(tx, input));
   }
 
   async recordCommandReceipt(scope: Scope & { projectId: string }, adapterId: string, receipt: CommandReceipt, actor: { id: string; type: "human" | "agent" | "service" }): Promise<void> {
