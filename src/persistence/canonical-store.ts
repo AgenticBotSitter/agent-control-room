@@ -156,6 +156,20 @@ export class CanonicalStore {
       throw new Error(`${validated.kind} must be created in ${initialStates[validated.kind]} state`);
     }
     await this.db.transaction(async (tx) => {
+      if (validated.kind === "checkpoint") {
+        const attempt = await tx.query<{ id: string }>(
+          `SELECT id FROM control_attempts WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+          [validated.tenantId, validated.attemptId],
+        );
+        if (!attempt.rows.length) throw new Error("Checkpoint attempt not found");
+        const latest = await tx.query<{ sequence: number | null }>(
+          `SELECT max(sequence)::int AS sequence FROM control_checkpoints WHERE tenant_id=$1 AND attempt_id=$2`,
+          [validated.tenantId, validated.attemptId],
+        );
+        if (latest.rows[0]?.sequence != null && validated.sequence <= latest.rows[0].sequence) {
+          throw new Error("Checkpoint sequence must increase monotonically");
+        }
+      }
       await this.insertWith(tx, validated);
       if (validated.kind === "job") {
         for (const dependencyId of validated.dependsOnJobIds) {

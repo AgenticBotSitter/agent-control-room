@@ -22,6 +22,13 @@ export interface OutboxMessage {
   payload: unknown;
 }
 
+export interface InboxProcessingOptions {
+  /** Total handler attempts, including the successful attempt if one occurs. */
+  maxAttempts?: number;
+  /** Stable, non-sensitive code recorded when the handler fails. */
+  safeFailureCode?: string;
+}
+
 export class DeliveryStore {
   constructor(private readonly db: DatabaseClient) {}
 
@@ -43,29 +50,52 @@ export class DeliveryStore {
     });
   }
 
-  async processOnce<T>(ref: InboxRef, handler: (tx: DatabaseSession, envelope: MessageEnvelope) => Promise<T>): Promise<{ result?: T; replayed: boolean }> {
-    return this.db.transaction(async (tx) => {
-      const row = await tx.query<{ status: string; payload: MessageEnvelope }>(
-        `SELECT status,payload FROM control_inbox WHERE tenant_id=$1 AND protocol=$2 AND message_id=$3 FOR UPDATE`,
-        [ref.tenantId, ref.protocol, ref.messageId],
-      );
-      if (!row.rows[0]) throw new Error("Inbox message not found");
-      if (row.rows[0].status === "processed") return { replayed: true };
-      if (row.rows[0].status === "processing") throw new Error("Inbox message is already processing");
+  async processOnce<T>(
+    ref: InboxRef,
+    handler: (tx: DatabaseSession, envelope: MessageEnvelope) => Promise<T>,
+    options: InboxProcessingOptions = {},
+  ): Promise<{ result?: T; replayed: boolean }> {
+    const maxAttempts = options.maxAttempts ?? 3;
+    const safeFailureCode = options.safeFailureCode ?? "handler_failed";
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error("Inbox maxAttempts must be a positive integer");
+    if (!safeFailureCode.trim()) throw new Error("Inbox safeFailureCode must not be empty");
 
-      await tx.query(
-        `UPDATE control_inbox SET status='processing',attempts=attempts+1,safe_failure_code=NULL
-         WHERE tenant_id=$1 AND protocol=$2 AND message_id=$3`,
-        [ref.tenantId, ref.protocol, ref.messageId],
-      );
-      const result = await handler(tx, messageEnvelopeSchema.parse(row.rows[0].payload) as MessageEnvelope);
-      await tx.query(
-        `UPDATE control_inbox SET status='processed',processed_at=now()
-         WHERE tenant_id=$1 AND protocol=$2 AND message_id=$3`,
-        [ref.tenantId, ref.protocol, ref.messageId],
-      );
-      return { result, replayed: false };
-    });
+    let handlerStarted = false;
+    try {
+      return await this.db.transaction(async (tx) => {
+        const row = await tx.query<{ status: string; payload: MessageEnvelope }>(
+          `SELECT status,payload FROM control_inbox WHERE tenant_id=$1 AND protocol=$2 AND message_id=$3 FOR UPDATE`,
+          [ref.tenantId, ref.protocol, ref.messageId],
+        );
+        if (!row.rows[0]) throw new Error("Inbox message not found");
+        if (row.rows[0].status === "processed") return { replayed: true };
+        if (row.rows[0].status === "failed") throw new Error("Inbox message is parked after repeated failures");
+        if (row.rows[0].status === "processing") throw new Error("Inbox message is already processing");
+
+        await tx.query(
+          `UPDATE control_inbox SET status='processing',attempts=attempts+1,safe_failure_code=NULL
+           WHERE tenant_id=$1 AND protocol=$2 AND message_id=$3`,
+          [ref.tenantId, ref.protocol, ref.messageId],
+        );
+        handlerStarted = true;
+        const result = await handler(tx, messageEnvelopeSchema.parse(row.rows[0].payload) as MessageEnvelope);
+        await tx.query(
+          `UPDATE control_inbox SET status='processed',processed_at=now()
+           WHERE tenant_id=$1 AND protocol=$2 AND message_id=$3`,
+          [ref.tenantId, ref.protocol, ref.messageId],
+        );
+        return { result, replayed: false };
+      });
+    } catch (error) {
+      if (handlerStarted) {
+        try {
+          await this.recordInboxFailure(ref, maxAttempts, safeFailureCode);
+        } catch (recordError) {
+          throw new AggregateError([error, recordError], "Inbox handler and durable failure recording both failed");
+        }
+      }
+      throw error;
+    }
   }
 
   async executeIdempotent<T>(input: {
@@ -93,6 +123,7 @@ export class DeliveryStore {
       }
 
       const result = await operation(tx);
+      if (result === undefined) throw new Error("Idempotent operations must return a JSON value; undefined is not replayable");
       await tx.query(
         `UPDATE control_idempotency SET status='completed',result=$1::jsonb,completed_at=now()
          WHERE tenant_id=$2 AND operation_scope=$3 AND idempotency_key=$4 AND status='processing'`,
@@ -155,5 +186,21 @@ export class DeliveryStore {
       [input.claimedBefore, input.availableAt, input.safeFailureCode, input.maxAttempts],
     );
     return recovered.rows.length;
+  }
+
+  private async recordInboxFailure(ref: InboxRef, maxAttempts: number, safeFailureCode: string): Promise<void> {
+    const recorded = await this.db.query(
+      `UPDATE control_inbox SET
+         attempts=attempts+1,
+         status=CASE WHEN attempts+1 >= $4 THEN 'failed' ELSE 'received' END,
+         safe_failure_code=$5,
+         processed_at=NULL
+       WHERE tenant_id=$1 AND protocol=$2 AND message_id=$3 AND status='received'
+       RETURNING message_id`,
+      [ref.tenantId, ref.protocol, ref.messageId, maxAttempts, safeFailureCode],
+    );
+    if (recorded.rows.length !== 1) {
+      throw new Error("Inbox failure could not be recorded because message state changed");
+    }
   }
 }

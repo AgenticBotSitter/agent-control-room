@@ -15,3 +15,40 @@ Adds normalized canonical records for nodes, requests, workflows, jobs, attempts
 Payload-mirror triggers ensure the indexed ID, tenant, state, and version cannot disagree with the versioned JSON record. Cross-record operations remain repository transactions; direct SQL state changes fail the mirror trigger and are unsupported.
 
 `pnpm db:verify` applies all migrations to an isolated PostgreSQL-compatible PGlite database and checks the expected table set. A disposable real-PostgreSQL rehearsal remains mandatory before any live deployment.
+
+## 0004 — CR-4B review hardening
+
+Applies the accepted findings from the two independent CR-4B qualification reviews:
+
+- tenant-prefixes attempt, lease, checkpoint, and worker-machine lineage constraints;
+- validates the canonical `sha256:` representation at the database boundary;
+- expands payload-mirror checks to indexed lineage, scheduler, approval, and effect fields;
+- rejects impossible canonical timestamp order;
+- prevents duplicate live approvals for one operation digest and reuse of one approval by multiple effect intents;
+- blocks `TRUNCATE` of transition history in addition to row mutation.
+
+The approval indexes are structural backstops, not the authorization decision. CR-4C must still validate actor, scope, digest, expiry, revocation, and single-use consumption in the transaction that authorizes the effect.
+
+## Transactional-by-design invariants
+
+These rules intentionally live in repository transactions rather than SQL triggers:
+
+1. `CanonicalStore.claimReadyJob` locks the job before allocating a monotonic attempt number and lease epoch; the partial unique active-lease index is the backstop.
+2. Workflow compilation must supply a pre-existing acyclic dependency graph. `proposed → ready` checks that every dependency succeeded, but the database does not attempt recursive cycle detection on each write.
+3. `CanonicalStore.renewLease` and `expireLease` reject stale epochs and versions while holding the relevant transaction boundary.
+4. `CanonicalStore.create` locks the attempt before accepting a checkpoint sequence greater than its durable maximum.
+5. CR-4C's effect authorization transaction will require an unexpired, unrevoked approval with an exact matching operation digest and atomically bind/consume it.
+
+## Delivery operating contract
+
+- Inbox handler work and the processed marker share one transaction. A failed handler rolls back completely; a second transaction increments the durable failure count and parks the message after the configured maximum. Re-entry requires an explicit future operator recovery action.
+- Outbox claim tokens are unique per dispatcher claim batch. Callers must use unpredictable UUID-class values and never reuse a token for independent concurrent batches.
+- Retry/backoff timing is computed by the scheduler; the store enforces the supplied `available_at` time.
+- Consumers must deduplicate on `(tenant_id, topic, idempotency_key)` and use aggregate versions to reject or reorder stale delivery. Outbox delivery is at least once.
+- `processed`, `delivered`, and completed idempotency payloads need a bounded batched-retention policy before production. Idempotency tombstones must outlive their payloads and the maximum replay window. Exact durations remain an owner-configurable operations setting.
+
+## Namespace and runner decisions
+
+Canonical `project_id` values are native domain identifiers, while the original `projects` table is an adapter projection. They are intentionally not foreign-keyed until an adapter explicitly maps those namespaces.
+
+Migrations have one authorized runner. Re-runnable trigger DDL supports isolated verification, but concurrent migration runners are unsupported.

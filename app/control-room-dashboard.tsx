@@ -48,8 +48,9 @@ export function ControlRoomDashboard() {
       : window.matchMedia("(prefers-color-scheme: dark)").matches
         ? "dark"
         : "light";
-    setTheme(initial);
     document.documentElement.dataset.theme = initial;
+    const frame = window.requestAnimationFrame(() => setTheme(initial));
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   const toggleTheme = () => {

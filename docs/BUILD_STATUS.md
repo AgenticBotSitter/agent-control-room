@@ -14,15 +14,15 @@
 | Research gates | Complete for architecture | Research synthesis; live acceptance checks carried into implementation |
 | CR-3 architecture package | Complete and owner-accepted | CR-3 index and decision package |
 | CR-4A canonical contracts | Complete | Domain types, validators, JSON Schema, state machines, authority-containment tests |
-| CR-4B transactional persistence | Complete | Migration 0003, canonical store, delivery store, concurrency/restart/idempotency tests |
+| CR-4B transactional persistence | Complete | Migrations 0003/0004, canonical store, bounded inbox failure handling, at-least-once delivery proof, qualification reviews |
 | CR-4C through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
 Completed: CR-4B — PostgreSQL repositories and transactional lifecycle
-Delivered: normalized canonical schema, tenant-bound lineage, optimistic transitions, atomic job claims, monotonic attempts/lease epochs, renewal/expiry, inbox/outbox, idempotent execution, retry/recovery/dead-letter flow
-Validation: TypeScript clean; 27/27 repository tests passed; migration verification passes with 40 tables
+Delivered: normalized canonical schema, tenant-bound lineage, optimistic transitions, atomic job claims, monotonic attempts/lease epochs/checkpoints, renewal/expiry, bounded poison-message handling, inbox/outbox, idempotent execution, retry/recovery/dead-letter flow, acknowledgement-loss redelivery proof, and review hardening
+Validation: TypeScript clean; 30/30 tests passed; four-migration verification passes with 40 tables
 Open risks: Disposable real-PostgreSQL rehearsal remains required before live deployment; CR-4C must add identity, authorization, policy, approval verification, digest verification, and redaction
 Decision-log changes: none; implementation follows accepted CR-3 decisions
 ```

@@ -38,7 +38,7 @@ Renewal requires the current version and epoch, occurs before expiry, and must e
 
 ## Inbox and idempotency
 
-Inbox identity is `(tenant, protocol, message_id)`. Repeating the same body digest is a replay; reusing the ID with another digest fails. The handler and processed marker share a transaction, so a process/transaction failure returns the message to its prior durable state.
+Inbox identity is `(tenant, protocol, message_id)`. Repeating the same body digest is a replay; reusing the ID with another digest fails. The handler and processed marker share a transaction, so a process/transaction failure rolls back all handler writes. A separate failure-recording transaction increments the durable attempt count and parks a poison message in `failed` after the configured maximum. Parked messages never auto-retry.
 
 `executeIdempotent` binds `(tenant, operation scope, key)` to a request digest and durable result. Same-key/same-digest replays return the stored result. A different digest fails. The callback must contain database work only; external effects must be represented by an effect intent and outbox message.
 
@@ -47,6 +47,8 @@ Inbox identity is `(tenant, protocol, message_id)`. Repeating the same body dige
 Claims use row locking with `SKIP LOCKED`, a claim token, attempt counter, availability timestamp, and batch limit. Only the matching token may acknowledge or fail a claim. Failed messages respect their next availability time. A recovery operation requeues abandoned processing claims. Exceeding the configured maximum attempts produces `dead_letter`, which is not automatically reclaimed.
 
 Delivery is at least once. Destination idempotency or later effect reconciliation handles acknowledgement loss; Control Room does not claim exactly-once delivery across external systems.
+
+Claim tokens identify one dispatcher claim batch and must not be reused across independent concurrent batches. Consumers must deduplicate on `(tenant_id, topic, idempotency_key)` and honor aggregate versions because cross-aggregate global ordering is not promised.
 
 ## Remaining phase gates
 

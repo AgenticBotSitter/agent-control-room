@@ -3,9 +3,9 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { DOMAIN_CONTRACT_VERSION, type JobRecord, type MessageEnvelope, type NodeRecord, type RequestRecord, type WorkflowRecord } from "../src/domain/v1/index.ts";
+import { DOMAIN_CONTRACT_VERSION, type ApprovalRecord, type CheckpointRecord, type JobRecord, type MessageEnvelope, type NodeRecord, type RequestRecord, type WorkflowRecord } from "../src/domain/v1/index.ts";
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
-import { adaptPglite } from "../src/persistence/database.ts";
+import { adaptPglite, type DatabaseSession } from "../src/persistence/database.ts";
 import { DeliveryStore } from "../src/persistence/delivery-store.ts";
 
 const t0 = "2026-08-22T18:00:00.000Z";
@@ -167,6 +167,49 @@ test("database constraints reject payload mirror drift and cross-tenant lineage"
   await store.create(otherRequest);
   const crossTenantWorkflow = { ...owner.workflow, id: "workflow:cross-tenant", requestId: otherRequest.id };
   await assert.rejects(store.create(crossTenantWorkflow), /foreign key|violates/i);
+
+  await store.create(owner.workflow);
+  await assert.rejects(
+    db.query(
+      `UPDATE control_workflows
+       SET definition_digest='not-a-digest',payload=jsonb_set(payload,'{definitionDigest}','"not-a-digest"'::jsonb)
+       WHERE id=$1`,
+      [owner.workflow.id],
+    ),
+    /definition_digest|check constraint/i,
+  );
+  await assert.rejects(db.exec(`TRUNCATE control_transition_events`), /append-only relation/i);
+  await db.close();
+});
+
+test("checkpoint ordering and live approval uniqueness are enforced", async () => {
+  const db = await migratedDatabase();
+  const store = new CanonicalStore(adaptPglite(db));
+  await seedActiveNode(store);
+  const ready = await seedReadyJob(store, "ordering");
+  const claimed = await store.claimReadyJob({ tenantId: ready.tenantId, jobId: ready.id, expectedJobVersion: ready.version, nodeId: node().id, attemptId: "attempt:ordering", leaseId: "lease:ordering", transitionId: "transition:ordering-claim", idempotencyKey: "idem-ordering-claim", actor, acquiredAt: t1, expiresAt: t5 });
+  const checkpoint: CheckpointRecord = {
+    contractVersion: DOMAIN_CONTRACT_VERSION, kind: "checkpoint", id: "checkpoint:ordering-5",
+    tenantId: ready.tenantId, attemptId: claimed.attempt.id, sequence: 5, state: "declared",
+    payloadDigest: hashA, artifactIds: [], version: 0, createdAt: t1, updatedAt: t1,
+  };
+  await store.create(checkpoint);
+  await assert.rejects(
+    store.create({ ...checkpoint, id: "checkpoint:ordering-4", sequence: 4, payloadDigest: hashB }),
+    /increase monotonically/,
+  );
+
+  const approval: ApprovalRecord = {
+    contractVersion: DOMAIN_CONTRACT_VERSION, kind: "approval", id: "approval:ordering-a",
+    tenantId: ready.tenantId, operationDigest: hashA, scope: "effect:ordering", risk: "high",
+    state: "pending", requestedBy: actor, requiredActorType: "owner", expiresAt: t10,
+    version: 0, createdAt: t1, updatedAt: t1,
+  };
+  await store.create(approval);
+  await assert.rejects(
+    store.create({ ...approval, id: "approval:ordering-b" }),
+    /uq_control_approvals_live_operation|unique/i,
+  );
   await db.close();
 });
 
@@ -190,6 +233,34 @@ test("inbox and operation idempotency prevent duplicate handling", async () => {
   const twice = await delivery.executeIdempotent(operation, async () => ({ effect: ++effects }));
   assert.deepEqual({ once: once.result.effect, twice: twice.result.effect, replayed: twice.replayed, effects }, { once: 1, twice: 1, replayed: true, effects: 1 });
   await assert.rejects(delivery.executeIdempotent({ ...operation, requestDigest: hashB }, async () => ({ effect: 9 })), /different request digest/);
+  await assert.rejects(delivery.executeIdempotent({ ...operation, idempotencyKey: "operation-idem-undefined" }, async () => undefined), /undefined is not replayable/);
+  await db.close();
+});
+
+test("inbox handler failures roll back work and park poison messages", async () => {
+  const db = await migratedDatabase();
+  const delivery = new DeliveryStore(adaptPglite(db));
+  const envelope: MessageEnvelope = { protocol: "control-room-node/v1", messageId: "message:poison", correlationId: "correlation:poison", actorId: "node:synthetic", tenantId: "tenant:owner", sentAt: t0, expiresAt: t10, nonce: "abcdef1234567890", type: "job:event", bodyDigest: hashA, body: { safe: true }, signature: "abcdef1234567890" };
+  const ref = { tenantId: envelope.tenantId, protocol: envelope.protocol, messageId: envelope.messageId };
+  await delivery.receive(envelope);
+
+  let handlerRuns = 0;
+  const poisonHandler = async (tx: DatabaseSession) => {
+    handlerRuns += 1;
+    await tx.query(`INSERT INTO tenants (id,display_name) VALUES ('tenant:rolled-back','Must roll back')`);
+    throw new Error("synthetic poison");
+  };
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await assert.rejects(delivery.processOnce(ref, poisonHandler, { maxAttempts: 3, safeFailureCode: "invalid_payload" }), /synthetic poison/);
+    const row = await db.query<{ status: string; attempts: number; safe_failure_code: string }>(
+      `SELECT status,attempts,safe_failure_code FROM control_inbox WHERE tenant_id=$1 AND protocol=$2 AND message_id=$3`,
+      [ref.tenantId, ref.protocol, ref.messageId],
+    );
+    assert.deepEqual(row.rows[0], { status: attempt === 3 ? "failed" : "received", attempts: attempt, safe_failure_code: "invalid_payload" });
+    assert.equal((await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM tenants WHERE id='tenant:rolled-back'`)).rows[0].count, "0");
+  }
+  await assert.rejects(delivery.processOnce(ref, poisonHandler), /parked after repeated failures/);
+  assert.equal(handlerRuns, 3);
   await db.close();
 });
 
@@ -208,6 +279,7 @@ test("outbox claims use claim tokens and support bounded retry", async () => {
   const retried = await delivery.claimOutbox({ claimToken: "claim-token-0002", limit: 10, maxAttempts: 3, now: t5 });
   assert.equal(retried[0].attempts, 2);
   assert.equal(await delivery.recoverStaleOutbox({ claimedBefore: t10, availableAt: t10, safeFailureCode: "claim_abandoned", maxAttempts: 3 }), 1);
+  await assert.rejects(delivery.markOutboxDelivered(retried[0].id, "claim-token-0002", t10), /stale or missing/);
   const recovered = await delivery.claimOutbox({ claimToken: "claim-token-0003", limit: 10, maxAttempts: 3, now: t10 });
   assert.equal(recovered[0].attempts, 3);
   await delivery.markOutboxDelivered(recovered[0].id, "claim-token-0003", t10);
@@ -222,5 +294,35 @@ test("outbox claims use claim tokens and support bounded retry", async () => {
   await delivery.markOutboxFailed({ id: finalAttempt[0].id, claimToken: "claim-token-dead", availableAt: t11, safeFailureCode: "permanent", maxAttempts: 3 });
   const dead = await db.query<{ status: string }>(`SELECT status FROM control_outbox WHERE id='outbox:dead'`);
   assert.equal(dead.rows[0].status, "dead_letter");
+  assert.equal((await delivery.claimOutbox({ claimToken: "claim-token-dead-again", limit: 10, maxAttempts: 3, now: t11 })).length, 0);
+  assert.equal(await delivery.recoverStaleOutbox({ claimedBefore: t11, availableAt: t11, safeFailureCode: "claim_abandoned", maxAttempts: 3 }), 0);
+  await db.close();
+});
+
+test("acknowledgement loss redelivers while destination idempotency absorbs the duplicate", async () => {
+  const db = await migratedDatabase();
+  const store = new CanonicalStore(adaptPglite(db));
+  const delivery = new DeliveryStore(adaptPglite(db));
+  const { request } = records("ack-loss");
+  await store.create(request);
+  await store.transition({ tenantId: request.tenantId, kind: "request", entityId: request.id, expectedVersion: 0, toState: "submitted", transitionId: "transition:ack-loss", idempotencyKey: "idem-ack-loss", actor, occurredAt: t1 });
+
+  const destination = new Map<string, unknown>();
+  let deliveryAttempts = 0;
+  const deliver = (message: Awaited<ReturnType<DeliveryStore["claimOutbox"]>>[number]) => {
+    deliveryAttempts += 1;
+    if (!destination.has(message.idempotencyKey)) destination.set(message.idempotencyKey, message.payload);
+  };
+
+  const first = (await delivery.claimOutbox({ claimToken: "claim-ack-lost", limit: 1, maxAttempts: 3, now: t1 }))[0];
+  deliver(first); // The destination commits, but Control Room never receives the acknowledgement.
+  await delivery.recoverStaleOutbox({ claimedBefore: t5, availableAt: t5, safeFailureCode: "ack_lost", maxAttempts: 3 });
+  const second = (await delivery.claimOutbox({ claimToken: "claim-ack-retry", limit: 1, maxAttempts: 3, now: t5 }))[0];
+  deliver(second);
+  await delivery.markOutboxDelivered(second.id, "claim-ack-retry", t5);
+
+  assert.equal(deliveryAttempts, 2);
+  assert.equal(destination.size, 1);
+  assert.equal(first.idempotencyKey, second.idempotencyKey);
   await db.close();
 });
