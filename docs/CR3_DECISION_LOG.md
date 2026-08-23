@@ -270,3 +270,99 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Replay storage adds a complete-frame digest and the transport must preserve a duplicate-only branch that cannot reach mutation handlers.
 
 **Reevaluate:** Retention may change, but replay tombstones must outlive the maximum accepted frame/retry window.
+
+## ADR-023 — Owner-anchored ceiling intersects server lease authority
+
+**Decision:** A node acts only inside the strict intersection of an owner-signed local ceiling, complete signed lease authority, typed executor capability, and current local gates. The owner provisioning-key pin arrives out-of-band; the Control Room may relay but cannot author or widen the ceiling.
+
+**Why:** Containment of a compromised Control Room is impossible if its own key can define the machine maximum or deliver the sole trust anchor.
+
+**Alternatives rejected:** Server-signed ceiling; unsigned local policy; digest-only lease grants.
+
+**Trade-off:** Enrollment and recovery require an owner-present provisioning ceremony and monotonic local state.
+
+**Reevaluate:** Add fleet provisioning conveniences only when they preserve an independent owner trust path.
+
+## ADR-024 — Private key storage and public trust are separate interfaces
+
+**Decision:** Node private-key signing, server public-key trust, and approval public-key trust use separate interfaces and stores. No general key-store interface also decides protocol trust.
+
+**Why:** Secret protection, online server-key rotation, and owner approval have different compromise and lifecycle boundaries.
+
+**Alternatives rejected:** One `NodeKeyStore` with signing and `verifyTrust`; storing node private keys centrally.
+
+**Trade-off:** Three small adapters replace one superficially simpler abstraction.
+
+**Reevaluate:** Implementations may share a platform backend, but the authority interfaces remain separate.
+
+## ADR-025 — Expiry has a pure decision path and an event monitor
+
+**Decision:** Admission and pre-effect checks are pure functions of an injected clock. A runtime monitor only emits expiry events. The effective deadline is the earliest applicable deadline; expiry cannot be renewed back into execution.
+
+**Why:** One admission-time check misses long-running work, while wall-clock reads inside policy destroy determinism. Post-expiry resurrection widens authority.
+
+**Alternatives rejected:** Admission-only expiry; policy-owned timers; implicit post-expiry grace.
+
+**Trade-off:** Executors need a wrapper and fake-timer tests. Hard stopping can create ambiguous effects.
+
+**Reevaluate:** Add typed no-effect cleanup or measured advisory thresholds without granting new post-expiry effects.
+
+## ADR-026 — Effect identity is independent of delivery identity
+
+**Decision:** Durable effect admission is keyed by tenant/node/project/job/attempt/operation digest. Message ID is delivery deduplication only. A pre-effect marker separates safe re-evaluation from honest ambiguity; ambiguous effects never auto-retry.
+
+**Why:** At-least-once delivery may re-offer the same effect under a fresh message ID. Message-scoped claims can double-fire.
+
+**Alternatives rejected:** Message-scoped claims; in-memory locks alone; exactly-once claims; blind retry after crash.
+
+**Trade-off:** Durable claim/tombstone state and human or destination-assisted ambiguity resolution are required.
+
+**Reevaluate:** Destination-specific evidence can automate settlement but cannot weaken the ambiguous default.
+
+## ADR-027 — Approval-required effects use a separate owner attestation
+
+**Decision:** Approval-required effects need a single-use, digest-bound attestation signed by a separately trusted owner/approval key. An online Control Room assertion alone cannot satisfy this gate.
+
+**Why:** A compromised online server can forge its own statement that a human approved. The node can verify a signed attestation even though it cannot witness the human act.
+
+**Alternatives rejected:** Server-only approval flag; AI approval; unbound reusable approval.
+
+**Trade-off:** Consequential effects remain disabled until the CR-8 approval flow can issue the attestation.
+
+**Reevaluate:** Additional factors may be supported through new attestation versions; never collapse the approval key into ordinary server signing.
+
+## ADR-028 — Canonical target enforcement precedes execution
+
+**Decision:** Filesystem paths and network destinations are canonicalized before authorization. Files stay within real-path roots. General v1 networking is exact HTTPS destinations with TLS hostname verification, connect-time address pinning, and independent redirect authorization.
+
+**Why:** Raw strings permit traversal, symlink escape, redirect inheritance, DNS rebinding, and confusion between an IP and authenticated host identity.
+
+**Alternatives rejected:** Lexical path prefixes; raw URL equality; inherited redirects; IP pinning without TLS verification; opaque executor networking.
+
+**Trade-off:** Non-TLS and opaque networking remain unavailable until a typed weaker class is deliberately designed.
+
+**Reevaluate:** Add network classes only with explicit ceiling vocabulary, executor enforcement, and integration proof.
+
+## ADR-029 — Denial detail stays local
+
+**Decision:** The node keeps detailed denial evidence locally and emits a closed coarse wire vocabulary with rate limiting/coalescing. Wire receipts contain no free text, raw errors, refused arguments, allowlists, or ceiling identifiers/digests.
+
+**Why:** A compromised server can probe local ceilings through detailed differential responses, and raw failures frequently leak secrets or private paths.
+
+**Alternatives rejected:** Rich policy codes on wire; raw exception forwarding; stable ceiling IDs; disabling production denial limits.
+
+**Trade-off:** Remote operators see less detail and may need a protected node-local view for diagnosis.
+
+**Reevaluate:** Add privacy-preserving diagnostics only after a realistic workload corpus proves they do not become an oracle.
+
+## ADR-030 — Server trust rotation is owner-root authorized
+
+**Decision:** Nodes accept only monotonic owner-root-signed server trust bundles anchored by an out-of-band pin. Online server keys cannot authorize their own replacement, revoked keys never reactivate, and a bundle cannot leave zero active keys.
+
+**Why:** Online-key self-rotation does not contain a compromised server. Re-enrollment is too disruptive and crosses the same compromised channel.
+
+**Alternatives rejected:** Online self-rotation; silent replacement; routine re-enrollment; first-slice `valid_until` without a clock-skew contract.
+
+**Trade-off:** Server-key rotation requires an owner step and offline revocation remains bounded by already-held authority deadlines.
+
+**Reevaluate:** Automate owner signing through a protected service only if it remains outside the online Control Room trust boundary.
