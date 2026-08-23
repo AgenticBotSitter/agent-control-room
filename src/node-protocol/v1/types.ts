@@ -189,6 +189,12 @@ export interface ProtocolErrorBody {
   relatedMessageId?: string;
 }
 
+export interface ProtocolAcknowledgementBody {
+  acknowledgedMessageIds: string[];
+  highestContiguousSequence: number;
+  disposition: "accepted" | "duplicate";
+}
+
 export interface NodeMessageBodyMap {
   "connection.hello": ConnectionHelloBody;
   "connection.accepted": ConnectionAcceptedBody;
@@ -202,12 +208,13 @@ export interface NodeMessageBodyMap {
   "job.cancel.ack": CancelAcknowledgementBody;
   "node.reconciliation.request": ReconciliationRequestBody;
   "node.reconciliation.report": ReconciliationReportBody;
+  "protocol.ack": ProtocolAcknowledgementBody;
   "protocol.error": ProtocolErrorBody;
 }
 
 export type NodeMessageType = keyof NodeMessageBodyMap;
 
-export type SignedNodeFrame<TType extends NodeMessageType = NodeMessageType> = {
+export type UnsignedNodeFrame<TType extends NodeMessageType = NodeMessageType> = TType extends NodeMessageType ? {
   protocol: NodeProtocolVersion;
   direction: ProtocolDirection;
   messageId: string;
@@ -223,8 +230,11 @@ export type SignedNodeFrame<TType extends NodeMessageType = NodeMessageType> = {
   expiresAt: string;
   nonce: string;
   type: TType;
-  bodyDigest: string;
   body: NodeMessageBodyMap[TType];
+} : never;
+
+export type SignedNodeFrame<TType extends NodeMessageType = NodeMessageType> = UnsignedNodeFrame<TType> & {
+  bodyDigest: string;
   signature: string;
 };
 
@@ -246,7 +256,7 @@ export interface TrustedKeyResolver {
 }
 
 export interface ReplayGuard {
-  consume(frame: SignedNodeFrame, receivedAt: string): Promise<void>;
+  consume(frame: SignedNodeFrame, receivedAt: string): Promise<"accepted" | "duplicate">;
 }
 
 export interface ProtocolRateLimitGuard {

@@ -74,3 +74,7 @@ The migration temporarily removes the projection-change row trigger only while d
 Adds digest-only, node-class-scoped enrollment tokens; bounded single-use challenges; immutable Ed25519 node public-key identities; direction-specific connection sequence heads; and durable message/nonce/sequence replay rows. Enrollment activation, key insertion, token/challenge consumption, canonical transition, and outbox notification share one transaction.
 
 Private keys and plaintext enrollment tokens are deliberately absent from the schema. Token and challenge identity fields are immutable and terminal states cannot be restored. Replay rows reject update/truncate; a separately privileged maintenance connection may delete expired rows while connection sequence heads remain durable. Key identity bytes cannot change in place, retired keys cannot reactivate, and revoked keys cannot be restored or deleted.
+
+## 0009 — CR-5B protocol delivery semantics
+
+Adds a canonical complete-frame digest to node replay records. New rows always carry the digest. A repeated message ID/nonce is classified as a safe delivery duplicate only when message, nonce, connection, sequence, and complete signed-frame digest all match; any difference remains a replay conflict. Nullable legacy rows intentionally cannot qualify as exact duplicates.

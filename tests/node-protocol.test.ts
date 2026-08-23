@@ -26,6 +26,7 @@ import {
   type NodeMessageType,
   type SignedNodeFrame,
   type VerifyFrameOptions,
+  type UnsignedNodeFrame,
 } from "../src/node-protocol/v1/index.ts";
 
 const t0 = "2026-08-22T18:00:00.000Z";
@@ -81,7 +82,7 @@ async function enroll(db: DatabaseClient, privateKey: KeyObject, spki: string) {
   return { store, issued, challenge, proof, result };
 }
 
-function helloFrame(privateKey: KeyObject, overrides: Partial<SignedNodeFrame> = {}): SignedNodeFrame {
+function helloFrame(privateKey: KeyObject, overrides: Partial<SignedNodeFrame<"connection.hello">> = {}): SignedNodeFrame<"connection.hello"> {
   const body = {
     supportedProtocols: [NODE_PROTOCOL_V1], features: ["reconciliation"], requestedMaxFrameBytes: 65_536,
     lastAcknowledgedServerSequence: 0, unresolvedAttemptIds: [],
@@ -103,10 +104,10 @@ function helloFrame(privateKey: KeyObject, overrides: Partial<SignedNodeFrame> =
     type: "connection.hello",
     body,
     ...overrides,
-  } as Omit<SignedNodeFrame, "signature" | "bodyDigest">, privateKey);
+  } as UnsignedNodeFrame<"connection.hello">, privateKey);
 }
 
-function heartbeatFrame(privateKey: KeyObject, overrides: Partial<SignedNodeFrame> = {}): SignedNodeFrame {
+function heartbeatFrame(privateKey: KeyObject, overrides: Partial<SignedNodeFrame<"node.heartbeat">> = {}): SignedNodeFrame<"node.heartbeat"> {
   return signNodeFrame({
     protocol: NODE_PROTOCOL_V1,
     direction: "node_to_server",
@@ -127,7 +128,7 @@ function heartbeatFrame(privateKey: KeyObject, overrides: Partial<SignedNodeFram
       resources: { freeMemoryMb: 20_000, freeScratchMb: 100_000, cpuUtilizationPercent: 10 },
     },
     ...overrides,
-  } as Omit<SignedNodeFrame, "signature" | "bodyDigest">, privateKey);
+  } as UnsignedNodeFrame<"node.heartbeat">, privateKey);
 }
 
 async function expectAuthCode(promise: Promise<unknown>, code: ProtocolAuthenticationError["code"]) {
@@ -176,6 +177,7 @@ test("every CR-5A connection, heartbeat, offer, lease, event, cancellation, and 
     { type: "job.cancel.ack", direction: "node_to_server", body: { ...lease, reasonCode: "owner_requested", disposition: "accepted" } },
     { type: "node.reconciliation.request", direction: "server_to_node", body: { lastAcknowledgedNodeSequence: 1, requestedAttemptIds: [lease.attemptId] } },
     { type: "node.reconciliation.report", direction: "node_to_server", body: { lastAcknowledgedServerSequence: 1, attempts: [{ attemptId: lease.attemptId, leaseId: lease.leaseId, leaseEpoch: 1, state: "running", lastEventSequence: 1, checkpointIds: [] }] } },
+    { type: "protocol.ack", direction: "server_to_node", body: { acknowledgedMessageIds: ["message:1"], highestContiguousSequence: 1, disposition: "accepted" } },
   ];
   for (const item of cases) {
     const senderKind = item.direction === "node_to_server" ? "node" : "control_room";
@@ -263,10 +265,16 @@ test("authenticated frames bind identity, digest, signature, lifetime, type, and
   await enroll(db, keys.privateKey, keys.spki);
   const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(db), new DatabaseReplayGuard(db), rateLimiter());
   const hello = helloFrame(keys.privateKey);
-  assert.equal((await authenticator.verify(JSON.stringify(hello), verifyOptions())).messageId, hello.messageId);
-  await expectAuthCode(authenticator.verify(JSON.stringify(hello), verifyOptions()), "replayed");
+  const accepted = await authenticator.verify(JSON.stringify(hello), verifyOptions());
+  assert.equal(accepted.frame.messageId, hello.messageId);
+  assert.equal(accepted.delivery, "accepted");
+  assert.equal((await authenticator.verify(JSON.stringify(hello), verifyOptions())).delivery, "duplicate");
+  const conflictingReplay = helloFrame(keys.privateKey, {
+    body: { ...hello.body, features: ["different-signed-content"] },
+  });
+  await expectAuthCode(authenticator.verify(JSON.stringify(conflictingReplay), verifyOptions()), "replayed");
   const heartbeat = heartbeatFrame(keys.privateKey);
-  assert.equal((await authenticator.verify(JSON.stringify(heartbeat), verifyOptions())).sequence, 2);
+  assert.equal((await authenticator.verify(JSON.stringify(heartbeat), verifyOptions())).frame.sequence, 2);
   const gap = heartbeatFrame(keys.privateKey, { messageId: "message:gap:4", sequence: 4, nonce: "nonce_gap_123456789012345678901234" });
   await expectAuthCode(authenticator.verify(JSON.stringify(gap), verifyOptions()), "replayed");
   await raw.close();
@@ -279,7 +287,7 @@ test("forged, expired, tampered, wrong-direction, unknown-version, oversized, an
   const attacker = keyMaterial();
   await enroll(db, keys.privateKey, keys.spki);
   const resolver = new DatabaseNodeKeyResolver(db);
-  const noReplay = { consume: async () => undefined };
+  const noReplay = { consume: async () => "accepted" as const };
   const authenticator = new NodeProtocolAuthenticator(resolver, noReplay, rateLimiter());
   await expectAuthCode(authenticator.verify(JSON.stringify(helloFrame(attacker.privateKey)), verifyOptions()), "unauthenticated");
   await expectAuthCode(authenticator.verify(JSON.stringify(helloFrame(keys.privateKey)), verifyOptions({ receivedAt: "2026-08-22T18:03:00.000Z" })), "expired");
@@ -298,7 +306,7 @@ test("quarantined nodes cannot authenticate", async () => {
   const db = adaptPglite(raw);
   const keys = keyMaterial();
   await enroll(db, keys.privateKey, keys.spki);
-  const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(db), { consume: async () => undefined }, rateLimiter());
+  const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(db), { consume: async () => "accepted" as const }, rateLimiter());
   const row = await raw.query<{ payload: Record<string, unknown> }>(`SELECT payload FROM control_nodes WHERE id='node:mac-mini'`);
   const payload = { ...row.rows[0].payload, state: "quarantined", version: 2, quarantineReasonCode: "security_review", updatedAt: t1 };
   await raw.query(`UPDATE control_nodes SET state='quarantined',version=2,payload=$1::jsonb,updated_at=$2 WHERE id='node:mac-mini'`, [JSON.stringify(payload),t1]);
@@ -311,7 +319,7 @@ test("revoked keys cannot authenticate or be restored", async () => {
   const db = adaptPglite(raw);
   const keys = keyMaterial();
   await enroll(db, keys.privateKey, keys.spki);
-  const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(db), { consume: async () => undefined }, rateLimiter());
+  const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(db), { consume: async () => "accepted" as const }, rateLimiter());
   await raw.query(`UPDATE control_node_keys SET state='revoked',revoked_at=$1 WHERE tenant_id='tenant:owner' AND node_id='node:mac-mini'`, [t1]);
   await expectAuthCode(authenticator.verify(JSON.stringify(helloFrame(keys.privateKey)), verifyOptions()), "forbidden");
   await assert.rejects(raw.query(`UPDATE control_node_keys SET state='active',revoked_at=NULL WHERE tenant_id='tenant:owner' AND node_id='node:mac-mini'`), /cannot be restored/);
@@ -324,7 +332,7 @@ test("transport rate limits fail closed before signature verification", async ()
   const db = adaptPglite(raw);
   const keys = keyMaterial();
   await enroll(db, keys.privateKey, keys.spki);
-  const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(db), { consume: async () => undefined }, rateLimiter(1));
+  const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(db), { consume: async () => "accepted" as const }, rateLimiter(1));
   await authenticator.verify(JSON.stringify(helloFrame(keys.privateKey)), verifyOptions());
   const second = helloFrame(keys.privateKey, {
     messageId: "message:rate:2",

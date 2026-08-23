@@ -266,9 +266,26 @@ export class DatabaseNodeKeyResolver implements TrustedKeyResolver {
 export class DatabaseReplayGuard implements ReplayGuard {
   constructor(private readonly db: DatabaseClient) {}
 
-  async consume(frame: SignedNodeFrame, receivedAt: string): Promise<void> {
+  async consume(frame: SignedNodeFrame, receivedAt: string): Promise<"accepted" | "duplicate"> {
     if (frame.senderKind !== "node") throw new Error("Database replay guard only accepts node principals");
-    await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
+      const frameDigest = sha256Digest(frame);
+      const nonceDigest = opaqueTokenDigest(frame.nonce);
+      const prior = await tx.query<{
+        message_id: string; nonce_digest: string; connection_id: string; sequence: string | number; frame_digest?: string;
+      }>(
+        `SELECT message_id,nonce_digest,connection_id,sequence,frame_digest FROM node_protocol_replay
+         WHERE tenant_id=$1 AND node_id=$2 AND key_id=$3
+           AND (message_id=$4 OR nonce_digest=$5) FOR UPDATE`,
+        [frame.tenantId,frame.actorId,frame.keyId,frame.messageId,nonceDigest],
+      );
+      if (prior.rows.length) {
+        const exact = prior.rows.length === 1 && prior.rows[0].message_id === frame.messageId
+          && prior.rows[0].nonce_digest === nonceDigest && prior.rows[0].connection_id === frame.connectionId
+          && Number(prior.rows[0].sequence) === frame.sequence && prior.rows[0].frame_digest === frameDigest;
+        if (exact) return "duplicate" as const;
+        throw new Error("message or nonce replay conflict");
+      }
       const connection = await tx.query<{ last_sequence: string | number }>(
         `SELECT last_sequence FROM node_protocol_connections
          WHERE tenant_id=$1 AND node_id=$2 AND connection_id=$3 AND direction=$4 FOR UPDATE`,
@@ -292,10 +309,11 @@ export class DatabaseReplayGuard implements ReplayGuard {
       }
       await tx.query(
         `INSERT INTO node_protocol_replay
-         (tenant_id,node_id,key_id,direction,message_id,nonce_digest,connection_id,sequence,received_at,expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [frame.tenantId,frame.actorId,frame.keyId,frame.direction,frame.messageId,opaqueTokenDigest(frame.nonce),frame.connectionId,frame.sequence,receivedAt,frame.expiresAt],
+         (tenant_id,node_id,key_id,direction,message_id,nonce_digest,connection_id,sequence,received_at,expires_at,frame_digest)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [frame.tenantId,frame.actorId,frame.keyId,frame.direction,frame.messageId,nonceDigest,frame.connectionId,frame.sequence,receivedAt,frame.expiresAt,frameDigest],
       );
+      return "accepted" as const;
     });
   }
 

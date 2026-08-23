@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, sign, timingSafeEqual, verify, type KeyObject } from "node:crypto";
 import { canonicalJson, sha256Digest } from "../../security";
 import { enrollmentProofSchema, signedNodeFrameSchema } from "./schemas";
-import type { EnrollmentProof, SignedNodeFrame } from "./types";
+import type { EnrollmentProof, NodeMessageType, SignedNodeFrame, UnsignedNodeFrame } from "./types";
 
 function decodeBase64Url(value: string): Buffer {
   return Buffer.from(value, "base64url");
@@ -42,17 +42,17 @@ export function frameSigningMaterial(frame: SignedNodeFrame): Omit<SignedNodeFra
   return material;
 }
 
-export function signNodeFrame(frame: Omit<SignedNodeFrame, "signature" | "bodyDigest">, privateKey: KeyObject): SignedNodeFrame {
+export function signNodeFrame<TType extends NodeMessageType>(frame: UnsignedNodeFrame<TType>, privateKey: KeyObject): SignedNodeFrame<TType> {
   const withDigest = {
     ...frame,
     bodyDigest: sha256Digest(frame.body),
     signature: Buffer.alloc(64).toString("base64url"),
-  } as SignedNodeFrame;
+  } as SignedNodeFrame<TType>;
   const material = frameSigningMaterial(withDigest);
   return signedNodeFrameSchema.parse({
     ...material,
     signature: sign(null, Buffer.from(canonicalJson(material)), privateKey).toString("base64url"),
-  }) as SignedNodeFrame;
+  }) as unknown as SignedNodeFrame<TType>;
 }
 
 export function verifyNodeFrameSignature(frame: SignedNodeFrame, publicKeySpki: string): boolean {

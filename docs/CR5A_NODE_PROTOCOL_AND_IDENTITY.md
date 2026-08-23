@@ -33,7 +33,7 @@ The authoritative Zod validators live in `src/node-protocol/v1/schemas.ts`. Gene
 8. key validity interval and Ed25519 signature over the canonical complete frame except `signature`;
 9. durable message ID, nonce, connection ID, and monotonic sequence consumption.
 
-Replay state is consumed only after the signature verifies, so an unauthenticated caller cannot poison a legitimate node's nonce or sequence. New node-to-server connections must begin with signed `connection.hello` sequence 1. A bridge reconnect uses a new connection ID and the reconciliation bodies; it does not reset durable message/nonce protection within the bounded replay window.
+Replay state is consumed only after the signature verifies, so an unauthenticated caller cannot poison a legitimate node's nonce or sequence. An exact authenticated retry is classified as a duplicate for acknowledgement without reprocessing; reuse with different content fails as a replay conflict. New node-to-server connections must begin with signed `connection.hello` sequence 1. A bridge reconnect uses a new connection ID and the reconciliation bodies; it does not reset durable message/nonce protection within the bounded replay window.
 
 A `job.offer` is not execution authority. The node may reserve capacity and return `job.offer.decision`, but it starts only after Control Room atomically creates the canonical lease and sends a signed `job.lease.grant` with the exact epoch, expiry, and authority digest. A renewal is similarly explicit and epoch-bound.
 
@@ -84,7 +84,7 @@ The CR-5A suite proves:
 - token digest-only persistence, expiry, class binding, unsupported-version rejection, invalid proof rejection, and irreversible consumption;
 - canonical node/key/transition/outbox creation;
 - valid signature and digest acceptance;
-- forged signature, tampered digest, expired frame, wrong direction, unknown version, oversized frame, malformed JSON, rate overflow, sequence gap, message replay, and cross-connection nonce replay rejection;
+- forged signature, tampered digest, expired frame, wrong direction, unknown version, oversized frame, malformed JSON, rate overflow, sequence gap, conflicting replay, and cross-connection nonce replay rejection, with exact retry classified safely;
 - quarantined-node and revoked-key rejection plus revoked-key non-restoration;
 - bounded replay cleanup.
 

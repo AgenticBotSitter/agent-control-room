@@ -1,0 +1,291 @@
+import { DatabaseSync } from "node:sqlite";
+import { assertNoSecretMaterial, sha256Digest } from "../security";
+import { opaqueTokenDigest, type ReplayGuard, type SignedNodeFrame } from "../node-protocol/v1";
+
+export class BridgeBackpressureError extends Error {
+  constructor() {
+    super("Bridge journal reached its pending-frame ceiling");
+    this.name = "BridgeBackpressureError";
+  }
+}
+
+export interface JournalAttemptSummary {
+  attemptId: string;
+  jobId: string;
+  leaseId: string;
+  leaseEpoch: number;
+  state: "leased" | "running" | "waiting" | "completed" | "failed" | "cancelled";
+  lastEventSequence: number;
+  checkpointIds: string[];
+}
+
+export interface JournalOutboundFrame {
+  frame: SignedNodeFrame;
+  status: "pending" | "sent" | "acknowledged" | "expired";
+  essential: boolean;
+  sendAttempts: number;
+}
+
+export class SqliteBridgeJournal implements ReplayGuard {
+  private readonly db: DatabaseSync;
+
+  constructor(path: string, private readonly maximumPendingFrames = 10_000) {
+    if (!Number.isInteger(maximumPendingFrames) || maximumPendingFrames < 1) throw new Error("Pending-frame ceiling must be positive");
+    this.db = new DatabaseSync(path);
+    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+    this.migrate();
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  nextOutboundSequence(connectionId: string): number {
+    const prior = this.db.prepare(`SELECT last_sequence FROM bridge_sequences WHERE connection_id=? AND direction='node_to_server'`).get(connectionId) as { last_sequence: number } | undefined;
+    return (prior?.last_sequence ?? 0) + 1;
+  }
+
+  stageOutbound(frame: SignedNodeFrame, essential: boolean, createdAt: string): "staged" | "duplicate" | "coalesced" {
+    if (frame.direction !== "node_to_server" || frame.senderKind !== "node") throw new Error("Only node-to-server frames enter the bridge outbox");
+    assertNoSecretMaterial(frame.body, "bridge outbox frame");
+    const frameDigest = sha256Digest(frame);
+    return this.transaction(() => {
+      const prior = this.db.prepare(`SELECT frame_digest FROM bridge_outbox WHERE message_id=?`).get(frame.messageId) as { frame_digest: string } | undefined;
+      if (prior) {
+        if (prior.frame_digest !== frameDigest) throw new Error("Outbound message ID conflicts with different content");
+        return "duplicate" as const;
+      }
+      const count = this.db.prepare(`SELECT count(*) AS count FROM bridge_outbox WHERE status IN ('pending','sent')`).get() as { count: number };
+      if (count.count >= this.maximumPendingFrames && frame.type === "node.heartbeat" && !essential) {
+        const retained = this.db.prepare(
+          `SELECT message_id FROM bridge_outbox WHERE type='node.heartbeat' AND status='pending' AND essential=0 LIMIT 1`,
+        ).get();
+        if (retained) return "coalesced" as const;
+      }
+      const after = this.db.prepare(`SELECT count(*) AS count FROM bridge_outbox WHERE status IN ('pending','sent')`).get() as { count: number };
+      const effectiveLimit = essential ? this.maximumPendingFrames + 64 : this.maximumPendingFrames;
+      if (after.count >= effectiveLimit) throw new BridgeBackpressureError();
+      const sequence = this.db.prepare(
+        `SELECT last_sequence FROM bridge_sequences WHERE connection_id=? AND direction='node_to_server'`,
+      ).get(frame.connectionId) as { last_sequence: number } | undefined;
+      const expectedSequence = (sequence?.last_sequence ?? 0) + 1;
+      if (frame.sequence !== expectedSequence) throw new Error("Outbound frame sequence is not the next journal sequence");
+      this.db.prepare(
+        `INSERT INTO bridge_sequences(connection_id,direction,last_sequence) VALUES (?,'node_to_server',?)
+         ON CONFLICT(connection_id,direction) DO UPDATE SET last_sequence=excluded.last_sequence`,
+      ).run(frame.connectionId,frame.sequence);
+      this.db.prepare(
+        `INSERT INTO bridge_outbox
+         (message_id,connection_id,sequence,type,frame_json,frame_digest,status,essential,send_attempts,created_at,expires_at)
+         VALUES (?,?,?,?,?,?,'pending',?,0,?,?)`,
+      ).run(frame.messageId,frame.connectionId,frame.sequence,frame.type,JSON.stringify(frame),frameDigest,essential ? 1 : 0,createdAt,frame.expiresAt);
+      return "staged" as const;
+    });
+  }
+
+  markSent(messageId: string, sentAt: string): void {
+    const result = this.db.prepare(
+      `UPDATE bridge_outbox SET status='sent',send_attempts=send_attempts+1,last_sent_at=?
+       WHERE message_id=? AND status IN ('pending','sent')`,
+    ).run(sentAt,messageId);
+    if (result.changes !== 1) throw new Error("Outbound frame is not sendable");
+  }
+
+  acknowledge(messageIds: readonly string[], acknowledgedAt: string): number {
+    if (!messageIds.length) return 0;
+    return this.transaction(() => {
+      let changed = 0;
+      const statement = this.db.prepare(
+        `UPDATE bridge_outbox SET status='acknowledged',acknowledged_at=?
+         WHERE message_id=? AND status IN ('pending','sent')`,
+      );
+      for (const messageId of new Set(messageIds)) changed += Number(statement.run(acknowledgedAt,messageId).changes);
+      return changed;
+    });
+  }
+
+  expireBefore(now: string): number {
+    return Number(this.db.prepare(
+      `UPDATE bridge_outbox SET status='expired' WHERE status IN ('pending','sent') AND expires_at<=?`,
+    ).run(now).changes);
+  }
+
+  retireSupersededControlFrames(currentConnectionId: string): number {
+    return Number(this.db.prepare(
+      `UPDATE bridge_outbox SET status='expired'
+       WHERE status IN ('pending','sent') AND connection_id<>?
+         AND type IN ('connection.hello','node.heartbeat','protocol.ack')`,
+    ).run(currentConnectionId).changes);
+  }
+
+  pendingOutbound(excludeConnectionId?: string): JournalOutboundFrame[] {
+    const rows = this.db.prepare(
+      `SELECT frame_json,status,essential,send_attempts FROM bridge_outbox
+       WHERE status IN ('pending','sent') AND (? IS NULL OR connection_id<>?) ORDER BY created_at,sequence`,
+    ).all(excludeConnectionId ?? null,excludeConnectionId ?? null) as Array<{ frame_json: string; status: "pending" | "sent"; essential: number; send_attempts: number }>;
+    return rows.map((row) => ({
+      frame: JSON.parse(row.frame_json) as SignedNodeFrame,
+      status: row.status,
+      essential: row.essential === 1,
+      sendAttempts: row.send_attempts,
+    }));
+  }
+
+  recordCommand(frame: SignedNodeFrame, receivedAt: string): "queued" | "duplicate" {
+    if (frame.direction !== "server_to_node") throw new Error("Only server commands may enter the local command queue");
+    assertNoSecretMaterial(frame.body, "bridge command");
+    const digest = sha256Digest(frame);
+    const prior = this.db.prepare(`SELECT frame_digest FROM bridge_commands WHERE message_id=?`).get(frame.messageId) as { frame_digest: string } | undefined;
+    if (prior) {
+      if (prior.frame_digest !== digest) throw new Error("Command message ID conflicts with different content");
+      return "duplicate";
+    }
+    this.db.prepare(
+      `INSERT INTO bridge_commands(message_id,type,frame_json,frame_digest,state,received_at) VALUES (?,?,?,?,'queued',?)`,
+    ).run(frame.messageId,frame.type,JSON.stringify(frame),digest,receivedAt);
+    return "queued";
+  }
+
+  queuedCommandCount(): number {
+    return (this.db.prepare(`SELECT count(*) AS count FROM bridge_commands WHERE state='queued'`).get() as { count: number }).count;
+  }
+
+  highestInboundSequence(): number {
+    return (this.db.prepare(`SELECT COALESCE(max(sequence),0) AS sequence FROM bridge_inbox`).get() as { sequence: number }).sequence;
+  }
+
+  inboundStatus(messageId: string): "received" | "processed" | undefined {
+    return (this.db.prepare(`SELECT status FROM bridge_inbox WHERE message_id=?`).get(messageId) as { status: "received" | "processed" } | undefined)?.status;
+  }
+
+  markInboundProcessed(messageId: string, processedAt: string): void {
+    const result = this.db.prepare(
+      `UPDATE bridge_inbox SET status='processed',processed_at=? WHERE message_id=? AND status IN ('received','processed')`,
+    ).run(processedAt,messageId);
+    if (result.changes !== 1) throw new Error("Inbound frame is not recorded");
+  }
+
+  upsertAttempt(summary: JournalAttemptSummary, updatedAt: string): void {
+    assertNoSecretMaterial(summary, "attempt summary");
+    this.db.prepare(
+      `INSERT INTO bridge_attempts(attempt_id,job_id,lease_id,lease_epoch,state,last_event_sequence,checkpoint_ids,updated_at)
+       VALUES (?,?,?,?,?,?,?,?)
+       ON CONFLICT(attempt_id) DO UPDATE SET
+         job_id=excluded.job_id,lease_id=excluded.lease_id,lease_epoch=excluded.lease_epoch,state=excluded.state,
+         last_event_sequence=excluded.last_event_sequence,checkpoint_ids=excluded.checkpoint_ids,updated_at=excluded.updated_at`,
+    ).run(summary.attemptId,summary.jobId,summary.leaseId,summary.leaseEpoch,summary.state,summary.lastEventSequence,JSON.stringify(summary.checkpointIds),updatedAt);
+  }
+
+  unresolvedAttempts(): JournalAttemptSummary[] {
+    const rows = this.db.prepare(
+      `SELECT attempt_id,job_id,lease_id,lease_epoch,state,last_event_sequence,checkpoint_ids
+       FROM bridge_attempts WHERE state IN ('leased','running','waiting') ORDER BY attempt_id`,
+    ).all() as Array<{ attempt_id: string; job_id: string; lease_id: string; lease_epoch: number; state: JournalAttemptSummary["state"]; last_event_sequence: number; checkpoint_ids: string }>;
+    return rows.map((row) => ({
+      attemptId: row.attempt_id, jobId: row.job_id, leaseId: row.lease_id, leaseEpoch: row.lease_epoch,
+      state: row.state, lastEventSequence: row.last_event_sequence, checkpointIds: JSON.parse(row.checkpoint_ids) as string[],
+    }));
+  }
+
+  async consume(frame: SignedNodeFrame, receivedAt: string): Promise<"accepted" | "duplicate"> {
+    if (frame.direction !== "server_to_node" || frame.senderKind !== "control_room") throw new Error("Local replay guard accepts only server frames");
+    return this.transaction(() => {
+      const frameDigest = sha256Digest(frame);
+      const nonceDigest = opaqueTokenDigest(frame.nonce);
+      const prior = this.db.prepare(
+        `SELECT message_id,nonce_digest,connection_id,sequence,frame_digest FROM bridge_inbox
+         WHERE message_id=? OR nonce_digest=?`,
+      ).all(frame.messageId,nonceDigest) as Array<{ message_id: string; nonce_digest: string; connection_id: string; sequence: number; frame_digest: string }>;
+      if (prior.length) {
+        const exact = prior.length === 1 && prior[0].message_id === frame.messageId && prior[0].nonce_digest === nonceDigest
+          && prior[0].connection_id === frame.connectionId && prior[0].sequence === frame.sequence && prior[0].frame_digest === frameDigest;
+        if (exact) return "duplicate" as const;
+        throw new Error("Server message or nonce replay conflict");
+      }
+      const sequence = this.db.prepare(`SELECT last_sequence FROM bridge_sequences WHERE connection_id=? AND direction='server_to_node'`).get(frame.connectionId) as { last_sequence: number } | undefined;
+      if (!sequence) {
+        if (frame.sequence !== 1 || !["connection.accepted", "protocol.error"].includes(frame.type)) throw new Error("Server connection must begin at sequence 1");
+        this.db.prepare(`INSERT INTO bridge_sequences(connection_id,direction,last_sequence) VALUES (?,'server_to_node',?)`).run(frame.connectionId,frame.sequence);
+      } else {
+        if (frame.sequence !== sequence.last_sequence + 1) throw new Error("Non-monotonic server sequence");
+        this.db.prepare(`UPDATE bridge_sequences SET last_sequence=? WHERE connection_id=? AND direction='server_to_node'`).run(frame.sequence,frame.connectionId);
+      }
+      this.db.prepare(
+        `INSERT INTO bridge_inbox(message_id,nonce_digest,connection_id,sequence,frame_digest,status,received_at,expires_at)
+         VALUES (?,?,?,?,?,'received',?,?)`,
+      ).run(frame.messageId,nonceDigest,frame.connectionId,frame.sequence,frameDigest,receivedAt,frame.expiresAt);
+      return "accepted" as const;
+    });
+  }
+
+  private transaction<T>(operation: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = operation();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private migrate(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bridge_sequences (
+        connection_id TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK(direction IN ('node_to_server','server_to_node')),
+        last_sequence INTEGER NOT NULL CHECK(last_sequence>0),
+        PRIMARY KEY(connection_id,direction)
+      );
+      CREATE TABLE IF NOT EXISTS bridge_outbox (
+        message_id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK(sequence>0),
+        type TEXT NOT NULL,
+        frame_json TEXT NOT NULL,
+        frame_digest TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','sent','acknowledged','expired')),
+        essential INTEGER NOT NULL CHECK(essential IN (0,1)),
+        send_attempts INTEGER NOT NULL CHECK(send_attempts>=0),
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        last_sent_at TEXT,
+        acknowledged_at TEXT,
+        UNIQUE(connection_id,sequence)
+      );
+      CREATE TABLE IF NOT EXISTS bridge_inbox (
+        message_id TEXT PRIMARY KEY,
+        nonce_digest TEXT NOT NULL UNIQUE,
+        connection_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK(sequence>0),
+        frame_digest TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('received','processed')),
+        received_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        processed_at TEXT,
+        UNIQUE(connection_id,sequence)
+      );
+      CREATE TABLE IF NOT EXISTS bridge_commands (
+        message_id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        frame_json TEXT NOT NULL,
+        frame_digest TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('queued','handled','rejected')),
+        received_at TEXT NOT NULL,
+        handled_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS bridge_attempts (
+        attempt_id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        lease_id TEXT NOT NULL,
+        lease_epoch INTEGER NOT NULL CHECK(lease_epoch>0),
+        state TEXT NOT NULL CHECK(state IN ('leased','running','waiting','completed','failed','cancelled')),
+        last_event_sequence INTEGER NOT NULL CHECK(last_event_sequence>=0),
+        checkpoint_ids TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      PRAGMA user_version=1;
+    `);
+  }
+}

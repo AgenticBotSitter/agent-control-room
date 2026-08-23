@@ -258,3 +258,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Each platform needs protected private-key storage and rotation packaging, and every message pays canonicalization/signature verification cost.
 
 **Reevaluate:** Algorithms may be added through a new negotiated protocol version. Do not permit in-place key-byte replacement or silent downgrade in v1.
+
+## ADR-022 — Exact delivery retry is distinct from conflicting replay
+
+**Decision:** After successful signature verification, an exact repeated frame is acknowledged as a duplicate and never reprocessed. Reuse of its message ID or nonce with any different connection, sequence, signature, or complete-frame digest fails closed as a replay conflict.
+
+**Why:** At-least-once delivery must survive acknowledgement loss without turning a legitimate retry into either a security incident or a duplicate effect. Signature verification alone cannot distinguish exact retry from altered replay without durable frame identity.
+
+**Alternatives rejected:** Reject every repeat with no acknowledgement path; process an exact repeat through ordinary handlers; allow a new body under the same message ID.
+
+**Trade-off:** Replay storage adds a complete-frame digest and the transport must preserve a duplicate-only branch that cannot reach mutation handlers.
+
+**Reevaluate:** Retention may change, but replay tombstones must outlive the maximum accepted frame/retry window.

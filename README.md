@@ -4,7 +4,7 @@ Control Room is a private, project-agnostic operations layer for coordinating pr
 
 ![Abstract Control Room routing preview](public/control-room-preview.png)
 
-This repository currently implements **CR-0 through CR-5A**:
+This repository currently implements **CR-0 through CR-5B**:
 
 - **CR-0 — Contract:** versioned project-adapter types and schemas, authority boundaries, safe projections, cursors, idempotency, command receipts, and redaction rules.
 - **CR-1 — Read-only interface:** an all-project portfolio, attention queue, running work, blockers, worker and agent views, project drilldowns, worker history, and a deterministic capacity simulator.
@@ -16,6 +16,7 @@ This repository currently implements **CR-0 through CR-5A**:
 - **CR-4D — Audit and operations core:** per-tenant tamper-evident audit chains, external-anchor interface, safe operational errors, and fail-closed production configuration validation.
 - **CR-4Q — Independent review:** adversarial policy, authority, tenant-lineage, delivery, audit, configuration, and database-privilege review with all high/medium findings remediated.
 - **CR-5A — Node protocol and identity:** strict versioned wire/enrollment schemas, generated JSON Schema, Ed25519 challenge/proof enrollment, immutable public-key identity, signed frame authentication, rate limits, and durable replay/sequence protection.
+- **CR-5B — Portable bridge core:** outbound connection/reconciliation state machine, acknowledgements, deterministic heartbeat scheduling, SQLite crash journal, backpressure, and safe retry filtering without platform or harness coupling.
 
 There are deliberately **no live project adapters, credentials, production commands, Telegram actions, Unreal jobs, or Content Blooms changes** in this phase.
 
@@ -80,6 +81,7 @@ pnpm test:build
 - [CR-4Q security and data-integrity review](docs/CR4Q_SECURITY_DATA_INTEGRITY_REVIEW.md)
 - [CR-4Q real PostgreSQL rehearsal plan](docs/CR4Q_REAL_POSTGRES_REHEARSAL_PLAN.md)
 - [CR-5A node protocol and device identity](docs/CR5A_NODE_PROTOCOL_AND_IDENTITY.md)
+- [CR-5B portable node bridge core](docs/CR5B_PORTABLE_NODE_BRIDGE.md)
 - [Project adapter JSON Schema](contracts/project-adapter-v1.schema.json)
 - [Command receipt JSON Schema](contracts/command-receipt-v1.schema.json)
 - [Signed node frame JSON Schema](contracts/control-room-node-v1-frame.schema.json)

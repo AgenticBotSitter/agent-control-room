@@ -162,6 +162,11 @@ const protocolError = z.object({
   code: z.enum(["unsupported_version", "malformed_frame", "unauthenticated", "replayed", "expired", "forbidden", "rate_limited"]),
   relatedMessageId: id.optional(),
 }).strict();
+const protocolAcknowledgement = z.object({
+  acknowledgedMessageIds: z.array(id).min(1).max(100),
+  highestContiguousSequence: z.number().int().positive(),
+  disposition: z.enum(["accepted", "duplicate"]),
+}).strict();
 
 const baseFrame = {
   protocol: z.literal(NODE_PROTOCOL_V1),
@@ -199,6 +204,7 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("job.cancel.ack", cancelAck),
   frame("node.reconciliation.request", reconciliationRequest),
   frame("node.reconciliation.report", reconciliationReport),
+  frame("protocol.ack", protocolAcknowledgement),
   frame("protocol.error", protocolError),
 ]).superRefine((value, context) => {
   if (Date.parse(value.expiresAt) <= Date.parse(value.sentAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "frame must expire after sending" });
@@ -206,5 +212,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   if (value.direction === "server_to_node" && value.senderKind !== "control_room") context.addIssue({ code: "custom", path: ["senderKind"], message: "server-to-node frames must be Control Room signed" });
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "protocol.error"]);
-export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "protocol.ack", "protocol.error"]);
+export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "protocol.ack", "protocol.error"]);

@@ -33,6 +33,12 @@ export interface VerifyFrameOptions {
   maxClockSkewSeconds?: number;
   maxLifetimeSeconds?: number;
   transportIdentity: string;
+  expectedConnectionId?: string;
+}
+
+export interface AuthenticatedFrameResult {
+  frame: SignedNodeFrame;
+  delivery: "accepted" | "duplicate";
 }
 
 export class NodeProtocolAuthenticator {
@@ -42,7 +48,7 @@ export class NodeProtocolAuthenticator {
     private readonly rateLimit: ProtocolRateLimitGuard,
   ) {}
 
-  async verify(raw: string | Uint8Array, options: VerifyFrameOptions): Promise<SignedNodeFrame> {
+  async verify(raw: string | Uint8Array, options: VerifyFrameOptions): Promise<AuthenticatedFrameResult> {
     const maxBytes = options.maxFrameBytes ?? NODE_PROTOCOL_MAX_FRAME_BYTES;
     const bytes = typeof raw === "string" ? Buffer.byteLength(raw, "utf8") : raw.byteLength;
     if (bytes > maxBytes) reject("malformed_frame");
@@ -62,6 +68,7 @@ export class NodeProtocolAuthenticator {
     const parsed = signedNodeFrameSchema.safeParse(input);
     if (!parsed.success) reject("malformed_frame");
     const frame = parsed.data as SignedNodeFrame;
+    if (options.expectedConnectionId && frame.connectionId !== options.expectedConnectionId) reject("forbidden");
     if (frame.direction !== options.expectedDirection) reject("forbidden");
     const allowed = frame.direction === "node_to_server" ? nodeToServerTypes : serverToNodeTypes;
     if (!allowed.has(frame.type)) reject("forbidden");
@@ -103,11 +110,12 @@ export class NodeProtocolAuthenticator {
       reject("unauthenticated");
     }
 
+    let delivery: "accepted" | "duplicate";
     try {
-      await this.replay.consume(frame, new Date(receivedMs).toISOString());
+      delivery = await this.replay.consume(frame, new Date(receivedMs).toISOString());
     } catch {
       reject("replayed");
     }
-    return frame;
+    return { frame, delivery };
   }
 }

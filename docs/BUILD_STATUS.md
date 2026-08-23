@@ -19,16 +19,17 @@
 | CR-4D audit and operations core | Complete | Migration 0006, per-tenant audit chain, safe errors, fail-closed runtime configuration |
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
-| CR-5B through CR-10 | Not started | Phased build plan |
+| CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
+| CR-5C through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Completed: CR-5A — Node protocol schemas, version negotiation, enrollment, and authentication
-Delivered: strict signed frame/enrollment schemas and generated JSON Schema, Ed25519 challenge/proof enrollment, immutable public-key registry, exact identity resolution, durable replay/sequence state, explicit transport rate limiting, and bounded cleanup
-Validation: 58/58 tests, TypeScript, lint, eight-migration verification (51 tables), production build, and two rendered-route checks pass
-Open risks: Real PostgreSQL concurrency/privilege rehearsal remains a CR-5Q gate; platform private-key storage, server trust storage, reconnect journal, backpressure, and ingress composition belong to CR-5B/5C
-Decision-log changes: ADR-021 records asymmetric node identity and digested single-use enrollment
+Completed: CR-5B — Portable bridge core, connection loop, heartbeat, and local journal
+Delivered: injected outbound transport/signer/trust seams, deterministic connection and heartbeat state machine, exact duplicate acknowledgement, SQLite WAL journal, crash/restart reconciliation, bounded backpressure, reconnect replay filtering, and queued-command boundary
+Validation: 66/66 tests, TypeScript, lint, nine-migration verification (51 tables), production build, and two rendered-route checks pass
+Open risks: Native protected key storage and server trust persistence, node-local authority ceilings, command/effect enforcement, real WebSocket/TLS packaging, and real PostgreSQL/kill rehearsal remain explicit CR-5C/5Q/CR-6 gates
+Decision-log changes: ADR-022 distinguishes exact delivery duplicates from conflicting replays
 ```
 
 ## Parallel build lane
@@ -40,12 +41,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5B — Portable bridge core, connection loop, heartbeat, and local journal
-Set model: gpt-5.6-terra
-Set reasoning effort: high
-Why: this is substantial cross-platform implementation against the now-settled signed protocol, with CR-5C retaining the higher-risk local authority boundary for Sol
-Expected output: platform-neutral bridge state machine, outbound transport abstraction, durable local journal, heartbeat/backpressure, reconnect and reconciliation behavior, with crash/restart tests
-Stop before: CR-5C node-local policy ceilings, private-key-store implementations, and executor/effect enforcement
+Block: CR-5C — Node-local policy ceilings, key-store interface, and job/effect enforcement
+Set model: gpt-5.6-sol
+Set reasoning effort: xhigh
+Why: this is the independent containment boundary against an over-authorized or compromised Control Room server
+Expected output: immutable local ceiling contract, platform key-store/trust interfaces, authority intersection and expiry/target/tool/network/cost checks, denial receipts, and ambiguous-effect protections
+Stop before: CR-5D synthetic executor, artifact flow, and worker UI
 ```
 
 ## Update rule
