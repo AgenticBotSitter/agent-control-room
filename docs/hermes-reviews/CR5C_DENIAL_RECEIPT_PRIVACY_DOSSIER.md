@@ -45,16 +45,16 @@ Key asymmetry to design around: **the server both needs audit data and is the T1
 
 The wire-level enum is closed in v1 (`OfferDecisionBody.safeReasonCode` has 7 fixed values [PROT types]). Node-local nuance must therefore either ride in digests or wait for v2. Three candidate vocabularies:
 
-**V1 Coarse (reuse v1 enum verbatim).** Every local policy denial maps to existing `policy`; expiry to lifecycle event fields. 
-– Pros: zero wire change; minimal leak surface by construction. 
+**V1 Coarse (reuse v1 enum verbatim).** Every local policy denial maps to existing `policy`; expiry to lifecycle event fields.
+– Pros: zero wire change; minimal leak surface by construction.
 – Cons: server audit can't distinguish failure families; debugging shifts entirely to node-side journals + manual fetch.
 
-**V2 Two-tier (recommended candidate): coarse code on the wire + node-private detail tier.** Wire sees V1-grade codes plus digest set; the *detailed* reason (`operation_not_allowed` vs `risk_class_exceeded` vs `network_destination_not_allowed`) lives in the local audit journal, retrievable by operator action, never auto-transmitted. 
-– Pros: preserves ATX-11 minimality while keeping real auditability locally; matches F3's "rate-limit or coalesce" companion naturally. 
+**V2 Two-tier (recommended candidate): coarse code on the wire + node-private detail tier.** Wire sees V1-grade codes plus digest set; the *detailed* reason (`operation_not_allowed` vs `risk_class_exceeded` vs `network_destination_not_allowed`) lives in the local audit journal, retrievable by operator action, never auto-transmitted.
+– Pros: preserves ATX-11 minimality while keeping real auditability locally; matches F3's "rate-limit or coalesce" companion naturally.
 – Cons: server-side dashboards are blinder than engineers might like — accepted trade.
 
-**V3 Fine-grained extended enum (v2 field).** Add explicit subcode union to protocol. 
-– Pros: richest central telemetry. 
+**V3 Fine-grained extended enum (v2 field).** Add explicit subcode union to protocol.
+– Pros: richest central telemetry.
 – Cons: codifies the enumeration channel F3 warns about into the schema; every new code is a new probing signal. Requires strong rate-limiting to be safe at all.
 
 Recommendation shape (not decided): **V2 now, V3 only if a demonstrated operational need survives the anti-enumeration test suite (§6)** — Decision D-47-A.
@@ -119,8 +119,8 @@ F9 correction adopted as a design constraint: the node cannot *witness* strong-f
 
 Flow options:
 
-- **E1 Digest-match attestation.** Server attaches `{approvalId, effectIntentDigest, serverSig}`. Node verifies signature against trust bundle, checks digest equals its computed intent digest, proceeds/fails-closed. Receipts carry `approvalVerified=true|absent` boolean + `evidenceDigest` — never the artifact. 
-- **E2 Attestation with validity window.** E1 plus expiry inside the attestation, checked under the same injected-clock clamp as authority (B-2a pattern [#44 §2]) — prevents stale approvals being replayed onto new effects. 
+- **E1 Digest-match attestation.** Server attaches `{approvalId, effectIntentDigest, serverSig}`. Node verifies signature against trust bundle, checks digest equals its computed intent digest, proceeds/fails-closed. Receipts carry `approvalVerified=true|absent` boolean + `evidenceDigest` — never the artifact.
+- **E2 Attestation with validity window.** E1 plus expiry inside the attestation, checked under the same injected-clock clamp as authority (B-2a pattern [#44 §2]) — prevents stale approvals being replayed onto new effects.
 
 Candidate: **E2** (superset, same verification cost). Either way the privacy property holds: the human-approval artifact never transits through or resides on the node beyond its signed digest form; INV B1 verification stands offline; INV B3 fail-closed-on-absence maps to `approval_evidence_absent` denial code. Decision D-47-E: adopt E2 wording into the contract-options doc when Codex picks it up.
 
