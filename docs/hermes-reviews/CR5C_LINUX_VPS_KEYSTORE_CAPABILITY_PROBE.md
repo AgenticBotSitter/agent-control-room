@@ -3,7 +3,11 @@
 **Status:** Complete 2026-08-23
 **Worker route:** Johnny5 / Debian 13 VPS (Hostinger, Docker/containerd) / Hermes Agent / provisional qualification route
 **Task class:** Qualification; low risk; report-only.
-**Stop boundary honored:** No secret material persisted (all smoke keys/ciphertexts created in memory or `/tmp` and deleted); no packages installed; no daemon changes; no live integration. All probes read-only except two explicitly noted `/tmp` ciphertext smokes (deleted) and GnuPG's default `~/.gnupg` initialization (empty, 0700).
+**Stop boundary:** No secret material persisted; no packages installed; no daemon changes; no live integration. **This was NOT a strictly no-write probe — filesystem writes occurred**, and are disclosed here in full:
+1. Two temporary ciphertext smokes written under `/tmp` (deleted immediately after each test).
+2. GnuPG initialized a default empty `~/.gnupg` directory (`gpg --list-keys` side effect; empty keyring, mode 0700, left in place).
+3. The report itself was committed to this repo's docs tree.
+All other probes were read-only.
 **Repo state analyzed:** `main` @ `489cd6d` (CR-5B complete).
 
 ## 1. Environment evidence (observed)
