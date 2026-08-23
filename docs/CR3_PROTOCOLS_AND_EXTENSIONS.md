@@ -1,6 +1,6 @@
 # CR-3 protocols and extension architecture
 
-**Status:** Proposed  
+**Status:** Accepted 2026-08-22
 **Goal:** Make projects, harnesses, machines, providers, and user interfaces replaceable without weakening lifecycle or security guarantees.
 
 ## Contract-first rule

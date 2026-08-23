@@ -1,6 +1,6 @@
 # CR-3 consolidated architecture
 
-**Status:** Proposed for owner review  
+**Status:** Accepted 2026-08-22
 **Milestone:** CR-3  
 **Scope:** Architecture and phased build plan only; no live project integration or production credential use
 

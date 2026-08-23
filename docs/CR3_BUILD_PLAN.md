@@ -1,6 +1,6 @@
 # CR-3 phased build plan
 
-**Status:** Proposed  
+**Status:** Accepted; CR-4 implementation active
 **Rule:** A phase authorizes only the changes named in that phase. Passing tests—not elapsed time—advances the build.
 
 ## Delivery strategy

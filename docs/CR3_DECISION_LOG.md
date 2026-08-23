@@ -1,7 +1,7 @@
 # CR-3 architecture decision log
 
 **Purpose:** Preserve what was decided, why, what it costs, and what would justify changing it.  
-**Status:** Proposed decisions become accepted when the CR-3 package is approved.
+**Status:** Accepted 2026-08-22; later changes require a superseding decision record.
 
 ## Decision format
 

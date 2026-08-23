@@ -1,6 +1,6 @@
 # CR-3 architecture package
 
-**Status:** Proposed for owner review  
+**Status:** Accepted 2026-08-22
 **Result:** Research is complete enough to architect; live integration tests are assigned to their implementation phases.
 
 ## Read in this order
@@ -15,6 +15,8 @@
 8. [Research synthesis and build decisions](RESEARCH_SYNTHESIS_AND_BUILD_DECISIONS.md)
 9. [Current build status and next model setting](BUILD_STATUS.md)
 10. [Hermes delegation and GitHub bootstrap playbook](HERMES_DELEGATION_PLAYBOOK.md)
+11. [CR-4A canonical domain contract](CR4A_DOMAIN_CONTRACT.md)
+12. [CR-4A verification](CR4A_VERIFICATION.md)
 
 ## Proposed owner approvals
 

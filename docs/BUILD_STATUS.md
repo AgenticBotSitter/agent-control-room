@@ -12,18 +12,18 @@
 | CR-1 responsive read-only prototype | Complete | Portfolio, project, and worker fixture surfaces |
 | CR-2 persistence and simulator | Complete | PostgreSQL-compatible migrations, projection store, scheduler tests |
 | Research gates | Complete for architecture | Research synthesis; live acceptance checks carried into implementation |
-| CR-3 architecture package | Draft complete; owner acceptance pending | CR-3 index and decision package |
-| CR-4 through CR-10 | Not started | Phased build plan |
+| CR-3 architecture package | Complete and owner-accepted | CR-3 index and decision package |
+| CR-4A canonical contracts | Complete | Domain types, validators, JSON Schema, state machines, authority-containment tests |
+| CR-4B through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Block: CR-3-R — Final owner review of architecture package
-Recommended model: gpt-5.6-sol
-Recommended reasoning effort: high
-Completion signal: owner accepts the CR-3 direction or records requested changes
-Authorized actions: documentation review/change only
-Live integrations: not authorized
+Completed: CR-4A — Canonical domain contracts and state machines
+Delivered: 13 canonical domain records, message envelope, runtime validators, generated JSON Schema, transition tables, authority-containment rules, and contract documentation
+Validation: TypeScript clean; 20/20 repository tests passed; generated schema equality tested
+Open risks: Cross-record concurrency and digest verification intentionally move to CR-4B/CR-4C
+Decision-log changes: none; implementation follows accepted CR-3 decisions
 ```
 
 ## Parallel build lane
@@ -32,15 +32,15 @@ The private GitHub repository is the temporary coordination plane until Control 
 
 Local models are registered as `provisional` until the repository qualification pack establishes which task classes they can perform reliably. A model is not treated as equivalent to Luna, Terra, or Sol based on parameter count or reputation alone.
 
-## Next block after CR-3 acceptance
+## Next block
 
 ```text
-Block: CR-4A — Canonical domain contracts and state machines
+Block: CR-4B — PostgreSQL repositories and transactional lifecycle
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: these schemas and transition rules constrain every later database, node, adapter, UI, and security module
-Expected output: versioned types/schemas, transition specifications, and contract tests
-Stop before: PostgreSQL implementation in CR-4B
+Why: concurrent leases, idempotent inbox/outbox delivery, migrations, and recovery carry data-loss and duplicate-effect risk
+Expected output: forward migrations, repositories, transactional transition functions, lease/epoch enforcement, inbox/outbox, idempotency, and concurrency/restart tests
+Stop before: CR-4C identity, authorization, approvals, and redaction implementation
 ```
 
 ## Update rule

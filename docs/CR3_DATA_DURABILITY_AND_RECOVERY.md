@@ -1,6 +1,6 @@
 # CR-3 data, durability, and recovery architecture
 
-**Status:** Proposed  
+**Status:** Accepted 2026-08-22
 **Decision:** One PostgreSQL authority with encrypted backups and bounded node journals; no multi-writer worker replication
 
 ## PostgreSQL in plain language

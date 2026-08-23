@@ -1,6 +1,6 @@
 # CR-3 security and trust architecture
 
-**Status:** Proposed; security requirements are implementation gates  
+**Status:** Accepted 2026-08-22; security requirements are implementation gates
 **Security premise:** The repository, schemas, endpoints, and algorithms may all be public.
 
 ## Security objective

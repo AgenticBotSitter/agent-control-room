@@ -4,11 +4,13 @@ Control Room is a private, project-agnostic operations layer for coordinating pr
 
 ![Abstract Control Room routing preview](public/control-room-preview.png)
 
-This repository currently implements **CR-0 through CR-2 only**:
+This repository currently implements **CR-0 through CR-4A**:
 
 - **CR-0 — Contract:** versioned project-adapter types and schemas, authority boundaries, safe projections, cursors, idempotency, command receipts, and redaction rules.
 - **CR-1 — Read-only interface:** an all-project portfolio, attention queue, running work, blockers, worker and agent views, project drilldowns, worker history, and a deterministic capacity simulator.
 - **CR-2 — Persistence and simulation:** PostgreSQL migrations, a projection store, adapter registry, cursor ingestion, append-only audit, worker/capability routes, benchmarks, allocation policies, recommendations, and synthetic tests.
+- **CR-3 — Accepted architecture:** security, durability, protocol, product-surface, deployment, extension, and phased-build decisions.
+- **CR-4A — Canonical domain contract:** versioned records, runtime validators, generated JSON Schema, explicit state machines, and authority-containment rules. CR-4B database implementation has not begun.
 
 There are deliberately **no live project adapters, credentials, production commands, Telegram actions, Unreal jobs, or Content Blooms changes** in this phase.
 
@@ -61,6 +63,8 @@ pnpm test:build
 - [CR-3 architecture package](docs/CR3_INDEX.md)
 - [Current build status and next model setting](docs/BUILD_STATUS.md)
 - [Hermes delegation and GitHub bootstrap playbook](docs/HERMES_DELEGATION_PLAYBOOK.md)
+- [CR-4A canonical domain contract](docs/CR4A_DOMAIN_CONTRACT.md)
+- [CR-4A verification](docs/CR4A_VERIFICATION.md)
 - [Project adapter JSON Schema](contracts/project-adapter-v1.schema.json)
 - [Command receipt JSON Schema](contracts/command-receipt-v1.schema.json)
 

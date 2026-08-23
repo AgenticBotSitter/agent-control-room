@@ -1,6 +1,6 @@
 # CR-3 dashboard, review, and operator surfaces
 
-**Status:** Proposed product architecture  
+**Status:** Accepted 2026-08-22
 **Principle:** One control room, many projects and workers; progressive disclosure from portfolio to evidence.
 
 ## Navigation model
