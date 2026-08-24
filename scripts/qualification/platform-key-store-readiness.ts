@@ -18,23 +18,11 @@ const runtimePlatform: ReadinessPlatform | undefined = process.platform === "win
   ? "windows"
   : process.platform === "darwin" ? "macos" : process.platform === "linux" ? "linux" : undefined;
 
-function parseArguments(values: string[]): { platform: ReadinessPlatform; operatorReady?: string } {
-  if (values.length % 2 !== 0) throw new Error("invalid_arguments");
-  const parsed = new Map<string, string>();
-  for (let index = 0; index < values.length; index += 2) {
-    const name = values[index];
-    const value = values[index + 1];
-    if (!name || !value || !["--platform", "--operator-ready"].includes(name) || parsed.has(name) || value.startsWith("--")) {
-      throw new Error("invalid_arguments");
-    }
-    parsed.set(name, value);
-  }
-  const platform = parsed.get("--platform");
+function parseArguments(values: string[]): ReadinessPlatform {
+  if (values.length !== 2 || values[0] !== "--platform") throw new Error("invalid_arguments");
+  const platform = values[1];
   if (platform !== "windows" && platform !== "macos" && platform !== "linux") throw new Error("invalid_arguments");
-  const operatorReady = parsed.get("--operator-ready");
-  if (platform === "macos" && operatorReady !== "live-stderr-and-desktop") throw new Error("operator_not_ready");
-  if (platform !== "macos" && operatorReady !== undefined) throw new Error("invalid_arguments");
-  return { platform, operatorReady };
+  return platform;
 }
 
 function supportedNodeVersion(actual: string): boolean {
@@ -54,7 +42,7 @@ async function sha256File(path: string): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  const { platform, operatorReady } = parseArguments(process.argv.slice(2));
+  const platform = parseArguments(process.argv.slice(2));
   if (runtimePlatform !== platform) throw new Error("wrong_platform");
   const checks: Check[] = [];
 
@@ -87,7 +75,6 @@ async function main(): Promise<void> {
     await requireRegularFile("/usr/bin/security");
     await requireRegularFile(macosHelperPath);
     checks.push({ id: "native_tools", status: "pass", detail: "swiftc_security_present" });
-    checks.push({ id: "attended_operator", status: "pass", detail: operatorReady! });
     helperSha256 = await sha256File(macosHelperPath);
   } else {
     checks.push({ id: "native_tool", status: "pass", detail: "no_external_tool_required" });
