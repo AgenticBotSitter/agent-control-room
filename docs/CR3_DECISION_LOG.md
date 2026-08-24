@@ -366,3 +366,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Server-key rotation requires an owner step and offline revocation remains bounded by already-held authority deadlines.
 
 **Reevaluate:** Automate owner signing through a protected service only if it remains outside the online Control Room trust boundary.
+
+## ADR-031 — Private-key provider selection never silently downgrades
+
+**Decision:** Each deployment explicitly selects exactly one private-key provider. A native-provider failure never causes runtime fallback to encrypted-file mode. Encrypted-file mode is selected directly and requires an operator-configured protected file, file descriptor, or platform secret facility for its unwrap secret. Test-memory mode is structurally unavailable in production.
+
+**Why:** Automatic fallback lets availability failures silently weaken key protection and gives a compromised process influence over its trust level. Environment variables and command-line arguments also expose unwrap material too broadly.
+
+**Alternatives rejected:** Native-first auto-detection; default-on fallback flags; environment-variable or command-line unwrap secrets; production access to the memory fake.
+
+**Trade-off:** A failed native provider requires an explicit operator configuration change. On the probed Linux VPS, encrypted-file is configured as the primary mode rather than discovered as a fallback.
+
+**Reevaluate:** A future owner-signed deployment policy may authorize a planned provider transition, but a node never makes that downgrade autonomously.

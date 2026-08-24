@@ -7,6 +7,8 @@ import {
   externalEffectPolicies,
   keyAvailabilityStates,
   localDenialDetails,
+  nodePrivateKeyModes,
+  nodePrivateKeyProviders,
   riskClasses,
   wireDenialCategories,
 } from "./types";
@@ -241,6 +243,18 @@ export const keyAvailabilitySchema = z.object({
   keyReferenceId: safeId,
   observedAt: isoDate,
 }).strict();
+
+export const keyReferenceSchema = z.object({
+  contractVersion: z.literal(NODE_POLICY_CONTRACT_V1),
+  keyId: safeId,
+  referenceId: safeId,
+  provider: z.enum(nodePrivateKeyProviders),
+  mode: z.enum(nodePrivateKeyModes),
+  algorithm: z.literal("Ed25519"),
+}).strict().superRefine((reference, context) => {
+  const expectedMode = reference.provider === "encrypted_file" ? "encrypted_file" : reference.provider === "memory_test" ? "test" : "native";
+  if (reference.mode !== expectedMode) context.addIssue({ code: "custom", path: ["mode"], message: "provider and mode must agree" });
+});
 
 export const signedNodePolicyArtifactSchema = z.union([
   signedNodeAuthorityCeilingSchema,
