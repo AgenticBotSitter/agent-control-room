@@ -438,3 +438,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Some legitimate aliases, submounts, local hostnames, opaque tools, and IPv6 literal destinations deny in v1. Pre-use object revalidation narrows but cannot alone eliminate the final filesystem race; platform-specific atomic open/delete behavior remains a rehearsal gate.
 
 **Reevaluate:** Add a network or filesystem class only with a new typed ceiling/executor contract and enforcement proof. A future IPv6 literal exception needs an unambiguous bracketed canonical grammar. Destination-specific long-lived DNS policy may change only after measured workloads justify it; it cannot weaken per-connection pins or TLS identity.
+
+## ADR-037 — Effect truth is durable, effect-scoped, and honestly ambiguous
+
+**Decision:** Every external effect receives a node-local claim keyed by tenant, node, project, job, attempt, and normalized operation digest before dispatch. Delivery message IDs are aliases, not effect identity. Immediately before the external boundary, one transaction persists the complete pre-effect marker and executing transition. Recovery may re-evaluate only an unmarked claim; a marker or executing state without terminal truth becomes ambiguous and never auto-retries. Potentially fired effects settle only from destination receipt or affirmative non-execution evidence. Terminal history may compact only after every relevant horizon, and only into a permanent digest tombstone in this slice.
+
+**Why:** Delivery deduplication cannot contain a fresh-message retry of the same effect. A crash after dispatch can make both success and failure plausible; silently choosing failure permits duplicate publication, upload, payment, or mutation. Keeping the exact normalized operation and authority binding beside the pre-effect marker makes recovery mechanical and auditable.
+
+**Alternatives rejected:** Message-scoped claims; in-memory locks; writing the marker after the effect; treating acknowledgement loss as failure; automatic retry from ambiguity; cancellation as proof of non-execution; claiming exactly-once semantics; deleting all terminal history at a fixed local age; caller-assembled claim authority.
+
+**Trade-off:** Ambiguous work can require destination evidence or a human decision and may remain blocked indefinitely. The node retains tombstones without a deletion mechanism, and the separate node-local ledger adds another durable store to operate and back up.
+
+**Reevaluate:** Destination adapters may automate evidence collection when they use the same stable idempotency key and produce verifiable evidence. A future owner policy may authorize tombstone deletion only after it defines and enforces every retention horizon; unknown remains retain. Real process-kill and concurrent-process behavior remains a CR-5Q/CR-6 rehearsal gate.

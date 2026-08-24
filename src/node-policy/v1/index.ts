@@ -15,3 +15,5 @@ export * from "./execution-state-store";
 export * from "./target-guard-errors";
 export * from "./filesystem-target-guard";
 export * from "./network-target-guard";
+export * from "./effect-claim";
+export * from "./effect-claim-store";

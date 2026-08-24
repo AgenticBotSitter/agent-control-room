@@ -20,17 +20,17 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.7 complete | Canonical contracts, durable admission/expiry, and pinned filesystem/HTTPS target plans |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete | Canonical contracts, durable admission/expiry, pinned targets, and restart-safe effect truth |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C — CR-5C.1 through CR-5C.7 complete; durable effect claims and crash ambiguity are next
-Delivered this boundary: platform-dialect real-path containment, volume/object identity pins, separate absent-new-file plans, pre-use filesystem revalidation, Windows alias rejection, strict canonical HTTPS tuples, resolve-once address plans, prohibited-address policy with exact literal exceptions, pinned peer address/port and TLS-host verification, and independent redirect authorization
-Validation evidence: `tests/node-target-guards.test.ts` covers POSIX/Windows path attacks, simulated symlink/junction/mount escape, controlled real-path inspection, revalidation races, URL aliases, private/mixed DNS answers, IPv4/IPv6 scopes, literal exceptions, TLS peer evidence, redirects, and opaque executors; the full 118-test suite, lint, type check, 51-table migration verification, production build, and rendered HTML tests pass; implementation report is `docs/CR5C7_TARGET_GUARDS.md`
-Open risks: atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, effect claims/pre-effect ambiguity, coordinated rollback, platform key providers, process-kill/concurrency rehearsal, and approval issuance remain explicit later gates
-Decision-log changes: ADR-036 requires pinned local target identity plans, independent redirect authorization, and both address/port pins and TLS hostname proof while explicitly retaining platform race and live-network rehearsal gates
+Active: CR-5C — CR-5C.1 through CR-5C.8 complete; platform providers and manual qualification are next
+Delivered this boundary: stable effect identity independent of delivery messages, live execution-authority derivation, atomic unique claims, exact pre-effect markers, fresh-message replay, restart-safe ambiguity, evidence-gated settlement, hash-checked history, and horizon-gated permanent terminal tombstones
+Validation evidence: `tests/node-effect-claims.test.ts` covers identity changes, aliases, two-store serialization, authority and deadline rejection, marker binding, restart windows, ambiguity without automatic retry, destination evidence, terminal replay/compaction, unknown retention horizons, durable restart, and persisted tampering; the full repository gates pass; implementation report is `docs/CR5C8_EFFECT_CLAIMS.md`
+Open risks: atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, coordinated rollback, native platform key providers, process-kill/concurrency rehearsal, destination evidence adapters, and approval issuance remain explicit later gates
+Decision-log changes: ADR-037 makes effect identity independent of delivery, requires atomic pre-effect truth, forbids automatic ambiguity retry, and retains digest tombstones when horizons are unknown
 ```
 
 ## Parallel build lane
@@ -42,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.8 — Durable effect claims, pre-effect markers, ambiguity, and tombstones
+Block: CR-5C.9 — Platform private-key providers and manual qualification rehearsals
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: delivery deduplication cannot prevent two fresh-message offers of one effect, and a crash after an effect may have fired must never silently retry
-Expected output: stable per-effect claim identity, transactional claim/pre-effect states, concurrent duplicate serialization, fresh-message aliases, restart-safe ambiguity classification, terminal tombstones, destination-evidence settlement seams, and injected crash-boundary tests
-Stop before: actual executor side effects, destination-specific live reconciliation, platform key providers, approval issuance UX, real target I/O, or live deployment
+Why: private-key custody and service-context behavior differ materially across macOS, Windows, and headless Linux, and the frozen fail-closed provider-selection contract must be proven without exposing key bytes
+Expected output: thin macOS Keychain and Windows DPAPI CurrentUser adapters, one explicit encrypted-file provider for headless Linux and portable fallback configuration, deterministic provider fakes, safe error taxonomy, no automatic downgrade, and bounded manual qualification packets for each real host
+Stop before: unattended production deployment, actual executor side effects, destination-specific reconciliation, approval issuance UX, or claims that CI substitutes for native prompt/service-context rehearsals
 ```
 
 ## Update rule
