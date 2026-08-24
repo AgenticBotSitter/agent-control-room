@@ -8,12 +8,14 @@ Before reading conclusions, compare the reviewer identity/profile with every aut
 
 1. Verify exact changed paths against the issue.
 2. Compare immutable base/head commits and dependencies.
-3. Reconstruct the packet’s authorization ledger.
-4. Check every effect, including failed attempts, helpers, prompt choices, persistent permissions, installs, downloads, and restarts.
-5. Verify observed/documented/inference/blocked/unsupported labels.
-6. Check cleanup target-by-target, not by a final glob or author assertion.
-7. Reconcile validation commands and actual exit codes.
-8. Compare reports for contradictions and claims that exceed their evidence.
+3. Re-run the execution-contract validator, verify the recorded digest, and confirm the actual scope-check command names the real branch.
+4. Compare chronological actual counts with the contract maxima. The first occurrence consumes budget; do not allow a later successful attempt to be designated retroactively as authorized.
+5. Check every effect, including failed attempts, helpers, prompt choices, persistent permissions, installs, downloads, caches, configuration edits, coordination writes, cleanup methods, and restarts.
+6. Verify observed/documented/inference/blocked/unsupported labels.
+7. Check cleanup target-by-target, not by a final glob or author assertion.
+8. Reconcile validation commands and actual exit codes.
+9. Compare the report, PR body, issue discussion, and latest head for contradictions or withdrawn conclusions.
+10. Compare reports for contradictions and claims that exceed their evidence.
 
 ## Required distinctions
 
@@ -41,3 +43,4 @@ Give exact repair notes and identify whether a new probe is forbidden, unnecessa
 ## Cross-report close recommendation
 
 State which gates are satisfied, which remain blocked, which findings require implementation remediation, and which belong to later deployment/packaging. Name exact PR heads reviewed. A batch cannot close when any required report is self-reviewed, has unresolved authorization deviations, lacks cleanup proof, or overstates blocked evidence.
+

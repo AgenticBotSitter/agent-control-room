@@ -1,6 +1,10 @@
 # CR-5C.9 real-host qualification packets
 
-**Status:** Ready to assign after the stacked branch is published
+**Status:** Retired historical packet text — do not dispatch or reuse
+
+These packets predate `control-room-work-packet/v1` and are not executable contracts. Their prose combined one-item cardinality with multiple fault cases, omitted setup/helper/download budgets, did not state whether fixtures must be reused, and left retry/diagnostic behavior implicit. That ambiguity contributed directly to authorization deviations on all three hosts. The resulting reports remain research evidence, but these packet definitions must not be used for re-qualification.
+
+Any replacement packet must include a validated execution-contract JSON and digest, explicitly map every test case to effect IDs, state whether one artifact is mutated/restored or multiple artifacts are authorized, and stop on the first unbudgeted failure. Author the replacement through `.github/ISSUE_TEMPLATE/hermes-work-packet.yml` and the `control-room-work-packets` execution-contract reference.
 
 These are qualification tasks, not implementation authority. Each worker must use a disposable Ed25519 key generated for this rehearsal, reveal no private bytes or secret values, avoid production identity material, and delete every disposable artifact it creates. Reports may contain safe states, timings, command/tool versions, hashes of public data, and redacted paths only.
 
@@ -54,3 +58,4 @@ Every report must distinguish `observed`, `documented`, and `inference`; state e
 ## Codex review and merge rule
 
 The three PRs remain unmerged until Codex checks them against the same provider commit. A report that proposes code changes, weakens a denial, uses a production key, leaks a secret transport, or substitutes documentation for a required observation is rejected with notes. Accepted reports are documentation evidence only; any necessary provider fix becomes a separate bounded implementation block followed by rerunning all affected host packets.
+

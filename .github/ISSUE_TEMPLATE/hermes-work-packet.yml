@@ -73,6 +73,35 @@ body:
     validations:
       required: true
   - type: textarea
+    id: execution_contract
+    attributes:
+      label: Validated execution contract v1
+      description: Paste the exact control-room-work-packet/v1 JSON. It must enumerate setup, effects, counts, retries, diagnostics, cleanup, and independence; include the validator digest below. A prose-only packet is not dispatchable.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: contract_digest
+    attributes:
+      label: Execution-contract SHA-256
+      description: Exact digest emitted by skills/control-room-work-packets/scripts/validate_execution_contract.py.
+    validations:
+      required: true
+  - type: textarea
+    id: worst_case
+    attributes:
+      label: Worst-case effect walkthrough
+      description: Walk every required step, failure branch, retry, diagnostic, helper, setup action, prompt, and cleanup operation. Show effect IDs and prove the maximum counts cover the worst case.
+    validations:
+      required: true
+  - type: textarea
+    id: prerequisites
+    attributes:
+      label: Pre-existing environment requirements
+      description: State the required checkout, runtime, dependencies, tools, auth mechanism, and OS context. State STOP behavior for every missing prerequisite; do not rely on workers installing or downloading anything implicitly.
+    validations:
+      required: true
+  - type: textarea
     id: acceptance
     attributes:
       label: Acceptance checks
@@ -97,3 +126,8 @@ body:
           required: true
         - label: Codex/Sol review is required before merge.
           required: true
+        - label: The execution-contract validator passes, every required step maps to effect IDs, and worst-case counts include failures and diagnostics.
+          required: true
+        - label: Missing tools, prompts, retries, cleanup failures, and unexpected effects stop the packet unless separately budgeted.
+          required: true
+

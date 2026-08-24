@@ -9,6 +9,7 @@ Use this structure when a packet requires a durable report. Adapt headings to th
 - exact base commit and branch;
 - task class and risk;
 - allowed output paths;
+- execution-contract digest and preflight acknowledgement;
 - disposition: `met`, `partial/blocked`, `not met`, or `rejected — authorization deviation`.
 
 ## Authorization ledger
@@ -21,6 +22,15 @@ Use this structure when a packet requires a durable report. Adapt headings to th
 | Immutable inputs | contract/commit | unchanged/list deviation |
 
 Do not mark a requirement complied merely because the effect was disclosed.
+
+## Planned versus actual effects
+
+List effects in chronological order. The first occurrence consumes the budget; later successes cannot replace earlier failures.
+
+| Sequence | Effect ID | Authorized maximum | Actual count so far | Target | Result |
+|---:|---|---:|---:|---|---|
+
+Include the actual-ledger validator output. Any digest mismatch, unknown effect, unexpected effect, or over-budget count requires `rejected — authorization deviation`.
 
 ## Method and evidence
 
@@ -59,3 +69,6 @@ Record wrapper failures as failures. If underlying commands pass, list them sepa
 - `rejected — authorization deviation`: any unapproved effect occurred, even if the technical test succeeded.
 
 List exact follow-up work without expanding the current packet. End with the stop boundary and confirmation that the PR remains unmerged.
+
+Before handoff, compare the report, PR description, issue comment, and latest head. Remove or explicitly supersede stale conclusions; these four surfaces must agree on disposition, cleanup, blocked evidence, and current commit.
+

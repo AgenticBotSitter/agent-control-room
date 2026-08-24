@@ -25,21 +25,43 @@ Use repository-relative paths and repository-provided commands. Keep OS-, machin
 
 ## Compile the authorization before acting
 
-Before any write or external effect, create a private working ledger with:
+The issue must contain a validated `control-room-work-packet/v1` execution contract. Read [references/execution-contract.md](references/execution-contract.md). If the contract is absent, invalid, not marked `ready`, uses an abbreviated base commit, or does not map every required step to effect IDs, the packet is non-actionable: stop before claiming or writing.
+
+Before any write or external effect:
+
+1. run the contract validator and record its digest;
+2. perform only read-only availability checks allowed by the contract;
+3. build the worst-case occurrence table, including failed attempts, retries, diagnostics, setup, helper programs, prompts, and cleanup;
+4. confirm every occurrence fits an effect ID and maximum count;
+5. confirm the exact OS-native cleanup method can verify type, containment, ownership, and link/reparse state without a glob;
+6. post a preflight acknowledgement containing the digest, real worker route, available tool versions, and `READY` or the exact blocking mismatch.
+
+The architect-authored contract, not the worker's interpretation, controls execution. Workers cannot amend it in a comment or report. Any contract change creates a new digest and requires a fresh preflight. `READY` authorizes only the listed effects; it does not authorize a helpful setup or recovery action.
+
+The contract must encode:
 
 1. exact base commit and required branch;
 2. exact allowed output paths;
-3. authorized effects, including quantity and target boundaries;
-4. forbidden effects and immutable contracts;
-5. required evidence and validation commands;
-6. exact cleanup obligations;
-7. explicit stop conditions and blocked observations.
+3. authorized effects, including quantity, target boundaries, and retry consumption;
+4. environment/setup policy for checkout, dependencies, downloads, network, prompts, restarts, elevation, persistent permissions, temporary files, and helpers;
+5. required steps mapped to effect IDs and stop behavior;
+6. forbidden effects and immutable contracts;
+7. exact cleanup obligations and verification method;
+8. required evidence, validation commands, independence exclusions, and blocked observations.
 
 Cardinality is binding: “one disposable item” does not permit a second item, helper store, alternate account, or retry artifact. An authorized test does not implicitly authorize a reboot, persistent prompt choice, ACL/policy change, service/task, package/tool installation, repository clone, network download, dependency cache, temporary prompt file, or additional credential store. “Documentation only” constrains both committed output and local execution effects; it is not permission to create unrelated local artifacts.
 
 Classify nested actions as effects too. Clicking **Always Allow**, changing a prompt policy, editing a supervisor, restarting a host/container, installing dependencies, creating helper binaries, or retaining diagnostic directories are separate effects even when they help the assigned test.
 
 If a necessary action is absent or ambiguous, stop before it and comment on the issue with the exact additional authority needed. Do not infer permission from the expected outcome, risk label, worker identity, or ability to clean up later.
+
+Run the deterministic validator on the exact JSON copied from the issue:
+
+```text
+python skills/control-room-work-packets/scripts/validate_execution_contract.py <contract.json>
+```
+
+The JSON is non-secret. If the harness needs a temporary file to run the validator, that file must itself be authorized by the contract and deleted before execution. Prefer passing the issue block through an in-memory/stdin facility supported by the harness.
 
 ## Execute a packet
 
@@ -61,6 +83,9 @@ If a necessary action is absent or ambiguous, stop before it and comment on the 
 ### During execution
 
 - Stay within the allowed paths and effect count. Stop when the next step would cross either.
+- Consume occurrences chronologically. The first matching occurrence consumes the budget; a later successful attempt cannot be designated retroactively as the authorized one.
+- A failed attempt consumes its effects. Diagnostics are read-only unless the contract assigns them effect IDs. Never create an extra key, blob, directory, clone, helper, download, cache, or fixture to investigate a failure unless budget remains for that exact effect.
+- Use the contract's `onFailure` behavior. If it says `stop`, report the observed failure; do not repair the test harness, install a missing tool, or try a different representation.
 - Keep secrets out of argv, environment variables, shell history, files, logs, reports, Git, issues, and PR text unless the packet explicitly authorizes a specific protected transport. Ciphertext and public material are not plaintext secrets, but still follow the packet’s handling rules.
 - Map raw platform errors into fixed safe categories before recording them. Do not paste personal paths, account names, SIDs, hostnames, tokens, or raw security diagnostics.
 - Maintain an append-only side-effect ledger as you work. Record failed attempts and diagnostic artifacts, not only the final successful run.
@@ -97,7 +122,7 @@ For a high-risk packet, a second model or agent may perform a read-only quality 
 ### Finish and hand off
 
 1. Reconcile the side-effect ledger. Inspect every created artifact individually and record removed, intentionally retained, blocked, or unknown.
-2. If any unauthorized effect occurred, preserve the evidence and set the packet disposition to **rejected due to authorization deviation**. Do not call it accepted merely because it was disclosed or cleaned up.
+2. Validate the actual occurrence ledger against the original contract digest. If any maximum is exceeded, effect ID is unknown, digest differs, or unexpected effect occurred, preserve the evidence and set the packet disposition to **rejected due to authorization deviation**. Do not call it accepted merely because it was disclosed or cleaned up.
 3. Run the exact required validation commands. If a wrapper fails for a pre-existing reason, report its actual nonzero result; underlying commands may be diagnostic evidence but do not turn the wrapper into a pass. Do not edit configuration to make a gate pass unless authorized.
 4. Run the deterministic scope checker after committing:
 
@@ -108,6 +133,8 @@ For a high-risk packet, a second model or agent may perform a read-only quality 
 5. Inspect the final diff and secret-safe report. Push normally and open one PR for the packet. Check again that no duplicate PR exists. Never self-merge, self-approve, or force-push.
 6. Link the PR from the issue and provide a concise handoff with the PR URL, head commit, changed paths, actual pass/fail/blocked state, cleanup state, and any failed attempts or self-corrections.
 7. If branch history or scope is wrong after push, stop and request architect/owner handling. Do not use `reset --hard`, force-push, or history rewriting from this skill.
+
+The PR description must reflect the current head. Update or supersede any withdrawn conclusion before requesting review; the report, PR body, issue comment, and actual ledger must not disagree.
 
 For multiple packets, repeat the full loop sequentially: refresh the base, create a fresh branch, and open a separate PR for each packet. Read a dependency from its immutable commit or explicitly named PR ref; do not merge or copy unrelated files to obtain it.
 
@@ -131,3 +158,4 @@ Stop and report rather than continue when:
 - a host/security setting, persistent permission, restart, installation, or escalation would be required but is not authorized;
 - independence is violated;
 - cleanup or a required gate fails and no authorized safe recovery exists.
+
