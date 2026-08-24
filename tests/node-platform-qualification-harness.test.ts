@@ -30,6 +30,7 @@ async function scratch(prefix: string): Promise<string> {
 test("qualification harness is pinned to the real provider factory and committed helpers", async () => {
   const source = await readFile(harness, "utf8");
   const swift = await readFile(join(root, "scripts", "qualification", "macos-keychain-fixture.swift"), "utf8");
+  const dispatch = await readFile(join(root, "docs", "CR5C9H_PINNED_QUALIFICATION_HARNESSES.md"), "utf8");
   assert.match(source, /createNodePrivateKeyStore/);
   assert.match(source, /from "\.\.\/\.\.\/src\/node-policy\/v1\/index\.ts"/);
   assert.match(source, /macos-keychain-fixture\.swift/);
@@ -38,6 +39,10 @@ test("qualification harness is pinned to the real provider factory and committed
   assert.match(swift, /standardInput\.readDataToEndOfFile/);
   assert.match(swift, /SecItemAdd/);
   assert.doesNotMatch(swift, /CommandLine\.arguments\[[^\]]+\].*(?:password|secret|private)/i);
+  assert.match(dispatch, /node --import tsx scripts\/qualification\/platform-key-store-harness\.ts --platform windows/);
+  assert.match(dispatch, /node --import tsx scripts\/qualification\/platform-key-store-harness\.ts --platform linux/);
+  assert.match(dispatch, /node --import tsx scripts\/qualification\/platform-key-store-harness\.ts --platform macos/);
+  assert.doesNotMatch(dispatch, /pnpm (?:run |exec )?qualify:keystore/);
 });
 
 test("Windows execute-only harness qualifies CurrentUser DPAPI through the real factory", { skip: process.platform !== "win32" }, async () => {

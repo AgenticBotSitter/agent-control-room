@@ -13,10 +13,12 @@ The macOS fixture helper source is committed at `scripts/qualification/macos-key
 The architect packet supplies an immutable commit, one newly created empty direct child of the OS temporary directory with a `control-room-cr5c9h-` prefix, and the exact command.
 
 ```text
-pnpm qualify:keystore -- --platform windows --scratch <exact-empty-temp-child>
-pnpm qualify:keystore -- --platform linux --scratch <exact-empty-temp-child>
-pnpm qualify:keystore -- --platform macos --scratch <exact-empty-temp-child> --service <packet-id> --account <packet-id>
+node --import tsx scripts/qualification/platform-key-store-harness.ts --platform windows --scratch <exact-empty-temp-child>
+node --import tsx scripts/qualification/platform-key-store-harness.ts --platform linux --scratch <exact-empty-temp-child>
+node --import tsx scripts/qualification/platform-key-store-harness.ts --platform macos --scratch <exact-empty-temp-child> --service <packet-id> --account <packet-id>
 ```
+
+Host packets invoke Node and the pre-existing `tsx` loader directly from the pinned repository root. They must not route qualification through `pnpm run`, `pnpm exec`, a package-manager lifecycle hook, or an agent-authored wrapper: package-manager dependency/build-policy checks can fail before the committed harness starts and consume the one launch attempt without producing platform evidence.
 
 The harness refuses the wrong runtime platform, relative/noncanonical scratch paths, symlink/reparse scratch targets, non-direct temp children, unexpected prefixes, foreign ownership where UID evidence exists, and nonempty scratch directories. It emits one compact JSON result containing categorical cases, counts, a public-key fingerprint, and relative cleanup targets. Raw native diagnostics, private values, ciphertext, absolute scratch paths, account/host identity, and tokens are not emitted.
 
