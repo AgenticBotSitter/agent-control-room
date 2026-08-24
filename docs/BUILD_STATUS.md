@@ -26,10 +26,10 @@
 ## Active block
 
 ```text
-Active: delegation workflow calibration before CR-5C.9H host evidence — #110 and #112 are held unstarted, redundant Windows #111 is cancelled, and the worker ecosystem is moving from one heavy packet format to proportional standard-work, platform-validation, controlled-effect, and independent-review modes
-Delivered this boundary: a light stable worker skill, shared work-order contract, ordinary repair loop, two-phase platform-readiness model, mode-aware independent review, updated GitHub issue form, and updated delegation playbook; strict effect JSON remains available only for controlled effects
-Validation evidence: TypeScript and lint pass; the existing execution-contract validator retains 9/9 tests; skill reference links resolve; #110/#112 had no claims or effects before hold; local real Windows CurrentUser DPAPI evidence makes #111 unnecessary
-Open risks: a repository-owned non-mutating platform readiness command and fresh macOS/Linux observations, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
+Active: CR-5C.9H real-host evidence — replacement platform-validation orders #110 (macOS/Marvin) and #112 (Linux/Johnny5) are READY at base 3c24db7a3991968f2e3fdb8971d16ae961f3907c; redundant Windows #111 remains cancelled because local native evidence already passes
+Delivered this boundary: the proportional delegation workflow plus repository-owned `platform-key-store-readiness.ts`, which verifies cwd, Node/tsx module resolution, required tools, output contract, scratch-parent suitability, and attended macOS acknowledgement without creating scratch, generating keys, invoking a provider, or compiling a helper
+Validation evidence: PR #115 merged; 143/143 repository tests, TypeScript, lint, and the real local Windows CurrentUser DPAPI qualification pass; #110/#112 each allow two non-mutating readiness executions, one native execution, and one report-only correction
+Open risks: fresh macOS/Linux observations, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
 Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
 ```
 
@@ -42,11 +42,11 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.9H — Add a non-mutating readiness command, reissue only macOS/Linux platform-validation orders, then resume architect-owned core build
+Block: CR-5C.9H — Run #110 and #112, review their report-only PRs, accept or return one bounded documentation correction, then resume architect-owned core build
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: delegation should save architect effort or provide otherwise unavailable host evidence; readiness must prove entry/tool/module behavior before any one-shot native effect, while ordinary work needs a practical focused repair loop
-Expected output: a deterministic no-native-effect readiness path plus accepted macOS and Linux reports; Windows remains supported by the already observed local run
+Why: only Marvin and Johnny5 can provide the missing native-host evidence; the merged readiness gate prevents launch/setup failures from consuming their one native attempt
+Expected output: accepted macOS and Linux qualification reports with readiness evidence, one native outcome each, exact cleanup proof, and no authorization deviation
 Stop before: production identities, persistent services/tasks, unattended deployment, CR-6 packaging, or representing a blocked/failed native observation as passing
 ```
 
