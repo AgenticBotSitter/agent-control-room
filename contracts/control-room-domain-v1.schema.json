@@ -366,6 +366,15 @@
                 "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
               }
             },
+            "filesystemRoots": {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
             "networkPolicy": {
               "type": "string",
               "enum": [
@@ -378,9 +387,8 @@
               "type": "array",
               "items": {
                 "type": "string",
-                "minLength": 3,
-                "maxLength": 180,
-                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                "minLength": 1,
+                "maxLength": 300
               }
             },
             "effectPolicy": {
@@ -391,10 +399,24 @@
                 "approval_required"
               ]
             },
+            "maxRisk": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            },
             "maxDurationSeconds": {
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 31536000
+            },
+            "maxConcurrentEffects": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
             },
             "maxCostUsd": {
               "type": "number",
@@ -419,10 +441,13 @@
             "allowedExecutor",
             "allowedOperations",
             "credentialRefs",
+            "filesystemRoots",
             "networkPolicy",
             "allowedNetworkDestinations",
             "effectPolicy",
+            "maxRisk",
             "maxDurationSeconds",
+            "maxConcurrentEffects",
             "expiresAt",
             "digest"
           ],

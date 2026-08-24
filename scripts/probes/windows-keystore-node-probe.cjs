@@ -1,5 +1,6 @@
 // CR5C probe: Node 22 -> DPAPI via PowerShell child process (zero native deps).
 // Observed evidence only; test vector is a constant, nothing persisted.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { execFileSync } = require('child_process');
 const PS = `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 const VECTOR = 'cr5c-node-bridge-vector';

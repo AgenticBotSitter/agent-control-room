@@ -49,10 +49,13 @@ export interface AuthorityEnvelope {
   allowedExecutor: string;
   allowedOperations: string[];
   credentialRefs: string[];
+  filesystemRoots: string[];
   networkPolicy: "none" | "allowlist";
   allowedNetworkDestinations: string[];
   effectPolicy: "none" | "preauthorized" | "approval_required";
+  maxRisk: "low" | "medium" | "high" | "critical";
   maxDurationSeconds: number;
+  maxConcurrentEffects: number;
   maxCostUsd?: number;
   expiresAt: string;
   parentDigest?: string;

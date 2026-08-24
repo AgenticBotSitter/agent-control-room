@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { authorityEnvelopeSchema } from "../../domain/v1";
+import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1";
+import { computeAuthorityDigest } from "../../security";
 import { NODE_PROTOCOL_MAX_FRAME_BYTES, NODE_PROTOCOL_V1 } from "./types";
 
 const id = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -14,6 +16,27 @@ const isoDate = z.string().datetime({ offset: true });
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const base64url = z.string().min(16).max(16_384).regex(/^[A-Za-z0-9_-]+$/);
 const protocolList = z.array(label).min(1).max(16).refine((items) => new Set(items).size === items.length, "protocols must be unique");
+function isSortedUnique(values: string[]): boolean {
+  return new Set(values).size === values.length && values.every((value, index) => index === 0 || values[index - 1] < value);
+}
+
+export const completeAuthorityEnvelopeSchema = authorityEnvelopeSchema.superRefine((authority, context) => {
+  if (computeAuthorityDigest(authority) !== authority.digest) context.addIssue({ code: "custom", path: ["digest"], message: "authority digest mismatch" });
+  for (const [field, values] of [
+    ["allowedOperations", authority.allowedOperations],
+    ["credentialRefs", authority.credentialRefs],
+    ["filesystemRoots", authority.filesystemRoots],
+    ["allowedNetworkDestinations", authority.allowedNetworkDestinations],
+  ] as const) {
+    if (!isSortedUnique(values)) context.addIssue({ code: "custom", path: [field], message: `${field} must be sorted and unique` });
+  }
+  authority.filesystemRoots.forEach((root, index) => {
+    if (!canonicalFilesystemPathSchema.safeParse(root).success) context.addIssue({ code: "custom", path: ["filesystemRoots", index], message: "filesystem root must be canonical" });
+  });
+  authority.allowedNetworkDestinations.forEach((destination, index) => {
+    if (!canonicalNetworkDestinationSchema.safeParse(destination).success) context.addIssue({ code: "custom", path: ["allowedNetworkDestinations", index], message: "network destination must be canonical" });
+  });
+});
 
 export const platformFactsSchema = z.object({
   platform: z.enum(["windows", "macos", "linux", "cloud"]),
@@ -95,6 +118,7 @@ const leaseIdentity = {
 };
 const jobOffer = z.object({
   offerId: id,
+  nodeId: id,
   jobId: id,
   attemptId: id,
   proposedLeaseEpoch: z.number().int().positive(),
@@ -103,7 +127,7 @@ const jobOffer = z.object({
   specVersion: label,
   inputDigest: digest,
   artifactManifestIds: z.array(id).max(1_000),
-  authority: authorityEnvelopeSchema,
+  authority: completeAuthorityEnvelopeSchema,
 }).strict();
 const offerDecision = z.object({
   offerId: id,
@@ -117,16 +141,27 @@ const offerDecision = z.object({
 });
 const leaseGrant = z.object({
   offerId: id,
+  nodeId: id,
   ...leaseIdentity,
   acquiredAt: isoDate,
   expiresAt: isoDate,
   authorityDigest: digest,
-}).strict().refine((value) => Date.parse(value.expiresAt) > Date.parse(value.acquiredAt), { message: "lease must expire after acquisition", path: ["expiresAt"] });
+  authority: completeAuthorityEnvelopeSchema,
+}).strict().superRefine((value, context) => {
+  if (Date.parse(value.expiresAt) <= Date.parse(value.acquiredAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "lease must expire after acquisition" });
+  if (value.authorityDigest !== value.authority.digest) context.addIssue({ code: "custom", path: ["authorityDigest"], message: "lease authority digest must match the complete authority" });
+});
 const leaseRenewed = z.object({
+  nodeId: id,
   ...leaseIdentity,
   renewedAt: isoDate,
   expiresAt: isoDate,
-}).strict().refine((value) => Date.parse(value.expiresAt) > Date.parse(value.renewedAt), { message: "renewed lease must expire after renewal", path: ["expiresAt"] });
+  authorityDigest: digest,
+  authority: completeAuthorityEnvelopeSchema,
+}).strict().superRefine((value, context) => {
+  if (Date.parse(value.expiresAt) <= Date.parse(value.renewedAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "renewed lease must expire after renewal" });
+  if (value.authorityDigest !== value.authority.digest) context.addIssue({ code: "custom", path: ["authorityDigest"], message: "renewed authority digest must match the complete authority" });
+});
 const jobEvent = z.object({
   ...leaseIdentity,
   event: z.enum(["started", "progress", "checkpointed", "waiting", "completed", "failed", "cancelled"]),

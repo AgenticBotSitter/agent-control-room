@@ -40,8 +40,8 @@ function records(suffix: string) {
   };
   const authority: JobRecord["authority"] = {
     projectId: workflow.projectId, allowedExecutor: "executor:test", allowedOperations: ["operation:test"],
-    credentialRefs: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none",
-    maxDurationSeconds: 1_200, expiresAt: t20, digest: hashB,
+    credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none",
+    maxRisk: "low", maxDurationSeconds: 1_200, maxConcurrentEffects: 0, expiresAt: t20, digest: hashB,
   };
   authority.digest = computeAuthorityDigest(authority);
   const job: JobRecord = {

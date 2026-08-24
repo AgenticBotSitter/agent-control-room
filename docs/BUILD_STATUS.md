@@ -20,16 +20,16 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — contract frozen | `CR5C_FINAL_SECURITY_CONTRACT.md`, ADR-023–ADR-030, independent GLM review and remediations |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 complete | Frozen contract plus signed/canonical schemas, complete lease authority, generated JSON Schema, and adversarial fixtures |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C — final node-security contract is frozen; implementation has not started
-Delivered this boundary: owner-anchored ceiling + signed lease intersection, separate signing/trust/approval stores, expiry state machine, effect-scoped durable claims, safe receipts, canonical target rules, owner-root trust rotation, implementation order, and acceptance gates
-Validation evidence: two independent research waves, contradiction review, fresh-model GLM audit, and focused remediation merged; normative contract is `docs/CR5C_FINAL_SECURITY_CONTRACT.md`
-Open risks: protected-store platform implementations, Linux unwrap-secret delivery, real timer behavior, real DNS/TLS enforcement, process-kill/concurrency rehearsal, and approval issuance remain explicit CR-5C/5Q/CR-6/CR-8 gates
+Active: CR-5C — CR-5C.1 canonical security contracts complete; stateful enforcement has not started
+Delivered this boundary: signed owner ceiling, owner-root trust bundle, approval attestation, normalized request/decision and executor capability, safe receipt vocabulary, canonical target grammars, complete node-targeted authority on offers/grants/renewals, generated JSON Schema, and adversarial fixtures
+Validation evidence: `tests/node-policy-contract.test.ts`, regenerated domain/protocol/policy schemas, type/lint/full test/migration/build gates; implementation report is `docs/CR5C1_CANONICAL_SECURITY_CONTRACTS.md`
+Open risks: store persistence and monotonic adoption, protected-store platform implementations, Linux unwrap-secret delivery, policy intersection, effect admission, real timer behavior, real DNS/TLS enforcement, process-kill/concurrency rehearsal, and approval issuance remain explicit later gates
 Decision-log changes: ADR-023 through ADR-030 freeze the CR-5C security boundary
 ```
 
@@ -42,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.1 — Canonical CR-5C schemas and signed authority artifacts
+Block: CR-5C.2 — Protected-store and clock interfaces with deterministic test doubles
 Set model: gpt-5.6-sol
-Set reasoning effort: xhigh
-Why: these public types encode the containment boundary and downstream slices must not redefine them
-Expected output: strict schemas/types for signed owner ceiling, complete lease authority, owner-signed trust bundle, approval attestation, normalized local request/decision, and safe receipt vocabulary; generated JSON Schema and adversarial fixtures
-Stop before: persistence, platform key stores, executor admission, effects, or live integrations
+Set reasoning effort: high
+Why: this separates private signing, server trust, approval trust, and time before any stateful security code depends on them
+Expected output: `NodePrivateKeyStore`, `ServerTrustStore`, `ApprovalTrustStore`, `Clock`, key references/availability, fail-closed provider selection, deterministic in-memory fakes, and lifecycle/secret-nonexposure tests
+Stop before: native platform providers, ceiling/trust persistence, authority evaluation, executor admission, effects, or live integrations
 ```
 
 ## Update rule

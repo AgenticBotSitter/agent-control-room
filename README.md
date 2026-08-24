@@ -4,7 +4,7 @@ Control Room is a private, project-agnostic operations layer for coordinating pr
 
 ![Abstract Control Room routing preview](public/control-room-preview.png)
 
-This repository currently implements **CR-0 through CR-5B**. The CR-5C security contract is architect-frozen, but its enforcement code is not yet implemented:
+This repository currently implements **CR-0 through CR-5B plus CR-5C.1**. The remaining CR-5C enforcement slices are not yet implemented:
 
 - **CR-0 — Contract:** versioned project-adapter types and schemas, authority boundaries, safe projections, cursors, idempotency, command receipts, and redaction rules.
 - **CR-1 — Read-only interface:** an all-project portfolio, attention queue, running work, blockers, worker and agent views, project drilldowns, worker history, and a deterministic capacity simulator.
@@ -18,6 +18,7 @@ This repository currently implements **CR-0 through CR-5B**. The CR-5C security 
 - **CR-5A — Node protocol and identity:** strict versioned wire/enrollment schemas, generated JSON Schema, Ed25519 challenge/proof enrollment, immutable public-key identity, signed frame authentication, rate limits, and durable replay/sequence protection.
 - **CR-5B — Portable bridge core:** outbound connection/reconciliation state machine, acknowledgements, deterministic heartbeat scheduling, SQLite crash journal, backpressure, and safe retry filtering without platform or harness coupling.
 - **CR-5C contract freeze:** owner-anchored node ceilings, complete lease authority, protected key/trust boundaries, expiry, durable effect admission, safe receipts, and canonical target rules are normative in `docs/CR5C_FINAL_SECURITY_CONTRACT.md`.
+- **CR-5C.1 — Canonical security contracts:** strict signed ceiling, trust-bundle, approval, normalized request/decision, executor-capability, safe-receipt, and complete lease-authority schemas with generated JSON Schema and adversarial fixtures.
 
 There are deliberately **no live project adapters, credentials, production commands, Telegram actions, Unreal jobs, or Content Blooms changes** in this phase.
 
@@ -42,7 +43,9 @@ pnpm install
 pnpm check
 pnpm test
 pnpm db:verify
+pnpm domain:generate
 pnpm protocol:generate
+pnpm policy:generate
 pnpm dev
 ```
 
@@ -84,6 +87,7 @@ pnpm test:build
 - [CR-5A node protocol and device identity](docs/CR5A_NODE_PROTOCOL_AND_IDENTITY.md)
 - [CR-5B portable node bridge core](docs/CR5B_PORTABLE_NODE_BRIDGE.md)
 - [CR-5C final node-security contract](docs/CR5C_FINAL_SECURITY_CONTRACT.md)
+- [CR-5C.1 canonical node-security contracts](docs/CR5C1_CANONICAL_SECURITY_CONTRACTS.md)
 - [Project adapter JSON Schema](contracts/project-adapter-v1.schema.json)
 - [Command receipt JSON Schema](contracts/command-receipt-v1.schema.json)
 - [Signed node frame JSON Schema](contracts/control-room-node-v1-frame.schema.json)

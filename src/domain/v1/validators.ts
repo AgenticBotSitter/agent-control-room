@@ -52,10 +52,13 @@ export const authorityEnvelopeSchema = z.object({
   allowedExecutor: safeId,
   allowedOperations: z.array(safeId).min(1).max(100),
   credentialRefs: z.array(safeId).max(50),
+  filesystemRoots: z.array(z.string().min(1).max(1_024)).max(100),
   networkPolicy: z.enum(["none", "allowlist"]),
-  allowedNetworkDestinations: z.array(safeId).max(100),
+  allowedNetworkDestinations: z.array(z.string().min(1).max(300)).max(100),
   effectPolicy: z.enum(["none", "preauthorized", "approval_required"]),
+  maxRisk: z.enum(["low", "medium", "high", "critical"]),
   maxDurationSeconds: z.number().int().positive().max(31_536_000),
+  maxConcurrentEffects: z.number().int().nonnegative().max(10_000),
   maxCostUsd: nonNegativeMoney.optional(),
   expiresAt: isoDate,
   parentDigest: digest.optional(),
@@ -66,6 +69,12 @@ export const authorityEnvelopeSchema = z.object({
   }
   if (authority.networkPolicy === "allowlist" && authority.allowedNetworkDestinations.length === 0) {
     context.addIssue({ code: "custom", message: "allowlist network policy requires a destination", path: ["allowedNetworkDestinations"] });
+  }
+  if (authority.effectPolicy === "none" && authority.maxConcurrentEffects !== 0) {
+    context.addIssue({ code: "custom", message: "effect policy none requires zero concurrent effects", path: ["maxConcurrentEffects"] });
+  }
+  if (authority.effectPolicy !== "none" && authority.maxConcurrentEffects === 0) {
+    context.addIssue({ code: "custom", message: "enabled effects require positive concurrency", path: ["maxConcurrentEffects"] });
   }
 });
 

@@ -102,6 +102,7 @@ export interface HeartbeatBody {
 
 export interface JobOfferBody {
   offerId: string;
+  nodeId: string;
   jobId: string;
   attemptId: string;
   proposedLeaseEpoch: number;
@@ -123,6 +124,7 @@ export interface OfferDecisionBody {
 
 export interface LeaseGrantBody {
   offerId: string;
+  nodeId: string;
   jobId: string;
   attemptId: string;
   leaseId: string;
@@ -130,15 +132,19 @@ export interface LeaseGrantBody {
   acquiredAt: string;
   expiresAt: string;
   authorityDigest: string;
+  authority: AuthorityEnvelope;
 }
 
 export interface LeaseRenewedBody {
+  nodeId: string;
   jobId: string;
   attemptId: string;
   leaseId: string;
   leaseEpoch: number;
   renewedAt: string;
   expiresAt: string;
+  authorityDigest: string;
+  authority: AuthorityEnvelope;
 }
 
 export interface JobEventBody {
