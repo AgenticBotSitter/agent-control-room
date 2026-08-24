@@ -20,17 +20,17 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete | Canonical contracts, durable admission/expiry, pinned targets, and restart-safe effect truth |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented, host qualification pending | Canonical policy/effect enforcement plus explicit platform private-key providers |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C — CR-5C.1 through CR-5C.8 complete; platform providers and manual qualification are next
-Delivered this boundary: stable effect identity independent of delivery messages, live execution-authority derivation, atomic unique claims, exact pre-effect markers, fresh-message replay, restart-safe ambiguity, evidence-gated settlement, hash-checked history, and horizon-gated permanent terminal tombstones
-Validation evidence: `tests/node-effect-claims.test.ts` covers identity changes, aliases, two-store serialization, authority and deadline rejection, marker binding, restart windows, ambiguity without automatic retry, destination evidence, terminal replay/compaction, unknown retention horizons, durable restart, and persisted tampering; the full repository gates pass; implementation report is `docs/CR5C8_EFFECT_CLAIMS.md`
-Open risks: atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, coordinated rollback, native platform key providers, process-kill/concurrency rehearsal, destination evidence adapters, and approval issuance remain explicit later gates
-Decision-log changes: ADR-037 makes effect identity independent of delivery, requires atomic pre-effect truth, forbids automatic ambiguity retry, and retains digest tombstones when horizons are unknown
+Active: CR-5C.9 qualification — provider code is complete; macOS, Windows, and Linux real-host packets must run before CR-5C closes
+Delivered this boundary: shared memory-backed Ed25519 lifecycle, strict AES-256-GCM envelopes, owner-file/inherited-descriptor/platform-secret unwrap sources, Keychain and DPAPI CurrentUser boot readers, bounded no-shell command execution, actual-platform factory enforcement, and permanent refusal to auto-downgrade
+Validation evidence: `tests/node-platform-key-stores.test.ts` uses deterministic OS runners to cover envelope tamper/binding, one-shot descriptors, provider lifecycle, command/stdin boundaries, native safe-error mapping, dependency mismatch, and downgrade refusal; implementation report and bounded host packets are `docs/CR5C9_PLATFORM_KEY_PROVIDERS.md` and `docs/CR5C9_MANUAL_QUALIFICATION_PACKETS.md`
+Open risks: the three real-host provider packets, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
+Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
 ```
 
 ## Parallel build lane
@@ -42,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.9 — Platform private-key providers and manual qualification rehearsals
+Block: CR-5C.9-Q — Real-host platform private-key qualification and Codex review
 Set model: gpt-5.6-sol
-Set reasoning effort: xhigh
-Why: private-key custody and service-context behavior differ materially across macOS, Windows, and headless Linux, and the frozen fail-closed provider-selection contract must be proven without exposing key bytes
-Expected output: thin macOS Keychain and Windows DPAPI CurrentUser adapters, one explicit encrypted-file provider for headless Linux and portable fallback configuration, deterministic provider fakes, safe error taxonomy, no automatic downgrade, and bounded manual qualification packets for each real host
-Stop before: unattended production deployment, actual executor side effects, destination-specific reconciliation, approval issuance UX, or claims that CI substitutes for native prompt/service-context rehearsals
+Set reasoning effort: high
+Why: the implementation is deterministic, but actual Keychain ACL/session behavior, DPAPI profile loading, and Linux container permission/restart behavior can only be accepted from redacted host evidence
+Expected output: three report-only PRs satisfying the packets in `docs/CR5C9_MANUAL_QUALIFICATION_PACKETS.md`, followed by Codex accept/reject notes and any separately scoped remediation
+Stop before: production identities, persistent services/tasks, provider-contract edits inside qualification PRs, unattended deployment, or representing a blocked native observation as passing
 ```
 
 ## Update rule

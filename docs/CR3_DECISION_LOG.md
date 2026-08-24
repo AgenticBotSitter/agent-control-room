@@ -450,3 +450,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Ambiguous work can require destination evidence or a human decision and may remain blocked indefinitely. The node retains tombstones without a deletion mechanism, and the separate node-local ledger adds another durable store to operate and back up.
 
 **Reevaluate:** Destination adapters may automate evidence collection when they use the same stable idempotency key and produce verifiable evidence. A future owner policy may authorize tombstone deletion only after it defines and enforces every retention horizon; unknown remains retain. Real process-kill and concurrent-process behavior remains a CR-5Q/CR-6 rehearsal gate.
+
+## ADR-038 — Private-key providers are explicit boot-unlock adapters with no downgrade
+
+**Decision:** Production selects exactly one provider that must match the actual runtime platform and key-reference mode. macOS reads one Keychain generic-password item, Windows decrypts one DPAPI CurrentUser blob, and the portable provider opens one AES-256-GCM envelope whose 32-byte unwrap secret comes from an owner-only POSIX file, one-shot inherited descriptor, or injected platform facility. Native failures never select encrypted-file mode. OS commands run without a shell; private plaintext uses stdout/stdin only at boot unlock and never an argument. Signing remains in process behind `NodePrivateKeyStore`.
+
+**Why:** Provider discovery and fallback let availability failures silently reduce key protection. Environment variables and command arguments are widely observable. Keychain and DPAPI are viable for boot retrieval but do not supply non-exportable Ed25519 signing on the probed machines, while the headless Linux container has no usable native key store.
+
+**Alternatives rejected:** Native-first auto-detection; automatic native-to-file fallback; environment-variable or argv unwrap secrets; Windows LocalMachine DPAPI; per-frame subprocess signing; storing plaintext PKCS#8; treating POSIX mode bits as Windows ACL evidence; production construction of the memory fake; claiming immediate `KeyObject` zeroization.
+
+**Trade-off:** The Ed25519 key remains in the node process while unlocked and is vulnerable to same-account process compromise. Native provisioning requires a separate safe enrollment helper. Windows service startup depends on a loaded user profile; macOS background access depends on Keychain session and ACL behavior; Linux security depends on the unwrap-secret delivery mechanism.
+
+**Reevaluate:** A vetted native binding may replace either CLI adapter behind the same interface. Secure Enclave P-256 or TPM keys require an explicit protocol algorithm change, not an adapter shortcut. Provider status cannot advance from implemented to qualified until the real macOS, Windows, and Linux packets pass.

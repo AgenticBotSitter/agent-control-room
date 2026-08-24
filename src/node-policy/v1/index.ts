@@ -17,3 +17,7 @@ export * from "./filesystem-target-guard";
 export * from "./network-target-guard";
 export * from "./effect-claim";
 export * from "./effect-claim-store";
+export * from "./private-key-runtime";
+export * from "./encrypted-file-key-store";
+export * from "./native-key-stores";
+export * from "./private-key-store-factory";
