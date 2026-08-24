@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
 const harness = join(root, "scripts", "qualification", "platform-key-store-harness.ts");
+const readiness = join(root, "scripts", "qualification", "platform-key-store-readiness.ts");
 
 interface HarnessResult {
   schema: string;
@@ -43,6 +44,54 @@ test("qualification harness is pinned to the real provider factory and committed
   assert.match(dispatch, /node --import tsx scripts\/qualification\/platform-key-store-harness\.ts --platform linux/);
   assert.match(dispatch, /node --import tsx scripts\/qualification\/platform-key-store-harness\.ts --platform macos/);
   assert.doesNotMatch(dispatch, /pnpm (?:run |exec )?qualify:keystore/);
+});
+
+test("readiness command proves launch prerequisites without native effects", async () => {
+  const source = await readFile(readiness, "utf8");
+  assert.doesNotMatch(source, /node:child_process|generateKeyPair|randomBytes|createNodePrivateKeyStore|NodeSafeCommandRunner/);
+  assert.doesNotMatch(source, /\b(?:writeFile|mkdir|mkdtemp|rm|unlink|chmod|symlink)\b/);
+  const platform = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+  const tail = platform === "macos" ? ["--operator-ready", "live-stderr-and-desktop"] : [];
+  const { stdout, stderr } = await execFileAsync(process.execPath, [
+    "--import", "tsx", readiness, "--platform", platform, ...tail,
+  ], { cwd: root, timeout: 30_000, maxBuffer: 8_192 });
+  assert.equal(stderr, "");
+  const result = JSON.parse(stdout) as {
+    schema: string;
+    platform: string;
+    ready: boolean;
+    checks: Array<{ status: string }>;
+    artifacts: { harnessSha256: string; helperSha256?: string };
+  };
+  assert.equal(result.schema, "control-room.platform-key-store-readiness/v1");
+  assert.equal(result.platform, platform);
+  assert.equal(result.ready, true);
+  assert.ok(result.checks.every((check) => check.status === "pass"));
+  assert.match(result.artifacts.harnessSha256, /^[0-9a-f]{64}$/);
+  if (platform === "macos") assert.match(result.artifacts.helperSha256!, /^[0-9a-f]{64}$/);
+  assert.doesNotMatch(stdout, /(?:Users|home)[\\/]|BEGIN PRIVATE KEY/i);
+});
+
+test("readiness command fails closed for platform, arguments, and unattended macOS", async () => {
+  const platform = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+  const otherPlatform = platform === "windows" ? "linux" : "windows";
+  const cases: Array<{ args: string[]; cwd: string; category: string }> = [
+    { args: ["--platform", otherPlatform], cwd: root, category: "wrong_platform" },
+    { args: ["--platform", platform, "--unknown", "value"], cwd: root, category: "invalid_arguments" },
+    { args: ["--platform", "macos"], cwd: root, category: "operator_not_ready" },
+  ];
+  for (const item of cases) {
+    await assert.rejects(execFileAsync(process.execPath, ["--import", "tsx", readiness, ...item.args], {
+      cwd: item.cwd, timeout: 30_000, maxBuffer: 8_192,
+    }), (error: unknown) => {
+      const stdout = (error as { stdout?: string }).stdout ?? "";
+      assert.deepEqual(JSON.parse(stdout), {
+        schema: "control-room.platform-key-store-readiness-error/v1",
+        category: item.category,
+      });
+      return true;
+    });
+  }
 });
 
 test("Windows execute-only harness qualifies CurrentUser DPAPI through the real factory", { skip: process.platform !== "win32" }, async () => {

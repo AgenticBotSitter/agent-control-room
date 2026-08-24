@@ -10,6 +10,16 @@ The macOS fixture helper source is committed at `scripts/qualification/macos-key
 
 ## Invocation
 
+First run the repository-owned non-mutating readiness command from the repository root:
+
+```text
+node --import tsx scripts/qualification/platform-key-store-readiness.ts --platform windows
+node --import tsx scripts/qualification/platform-key-store-readiness.ts --platform linux
+node --import tsx scripts/qualification/platform-key-store-readiness.ts --platform macos --operator-ready live-stderr-and-desktop
+```
+
+Readiness only reads repository/runtime metadata and existing path permissions. It does not create scratch space, generate a key, invoke PowerShell or Keychain, compile Swift, or construct a key-store provider. A readiness failure is a setup result and does not consume the separately authorized native attempt.
+
 The architect packet supplies an immutable commit, one newly created empty direct child of the OS temporary directory with a `control-room-cr5c9h-` prefix, and the exact command.
 
 ```text
@@ -58,4 +68,4 @@ The adapter's unlock command has a 15-second bound. If the marker or prompt is n
 
 No real-host packet may be issued until the harness commit passes TypeScript, lint, deterministic safety tests, the local Windows real-host test, and independent read-only contradiction review. Platform workers receive execute-only contracts: one pinned command, one attempt, one scratch root, enumerated output targets, exact cleanup, and no harness editing or retry authority.
 
-A launch/module-resolution failure consumes the harness occurrence. A provider failure consumes the relevant provider occurrence. Either path runs only contracted cleanup and stops. Review repairs require a separately budgeted report-repair effect or a new packet; they are never inferred.
+Readiness owns launch, cwd, module-resolution, tool-availability, output-contract, scratch-parent, and attended-operator checks. A readiness failure may use only the packet's bounded readiness correction allowance and never consumes the native occurrence. After readiness passes, a provider/harness failure consumes the native occurrence. That path runs only exact packet-owned cleanup and stops. Review repairs require a separately budgeted report-only correction or a new native packet; they are never inferred.
