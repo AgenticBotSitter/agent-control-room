@@ -3,7 +3,7 @@
   "packetId": "CR-5C.9-Q-linux-encrypted-file-v1",
   "issueNumber": 88,
   "dispatchState": "ready",
-  "baseCommit": "98cb0b695e774c34249c14a71185fd12a69a2985",
+  "baseCommit": "7375d4c7e042ada2b404b8590b5547f58044cc11",
   "branch": "worker/johnny5/88-linux-encrypted-file-requalification",
   "allowedPaths": ["docs/hermes-reviews/CR5C9_LINUX_ENCRYPTED_FILE_REQUALIFICATION_V1.md"],
   "packetAuthors": ["Codex/Sol"],
@@ -64,8 +64,8 @@
     "tag, wrong-key, mode, symlink, missing, and 31/33-byte cases fail closed without fallback or regeneration",
     "the report explicitly labels owner-drift/multi-UID and container-restart behavior deferred to CR-6 rather than observed",
     "the report contains no private value, ciphertext, raw host identity, personal path, or raw native diagnostic",
-    "git diff --check 98cb0b695e774c34249c14a71185fd12a69a2985...HEAD exits 0",
-    "python skills/control-room-work-packets/scripts/verify_scope.py --base 98cb0b695e774c34249c14a71185fd12a69a2985 --branch worker/johnny5/88-linux-encrypted-file-requalification --allow docs/hermes-reviews/CR5C9_LINUX_ENCRYPTED_FILE_REQUALIFICATION_V1.md returns ok=true",
+    "git diff --check 7375d4c7e042ada2b404b8590b5547f58044cc11...HEAD exits 0",
+    "python skills/control-room-work-packets/scripts/verify_scope.py --base 7375d4c7e042ada2b404b8590b5547f58044cc11 --branch worker/johnny5/88-linux-encrypted-file-requalification --allow docs/hermes-reviews/CR5C9_LINUX_ENCRYPTED_FILE_REQUALIFICATION_V1.md returns ok=true",
     "actual-ledger validation returns ok=true with no unexpected effect"
   ],
   "independence": {"required": false, "excludedAuthors": []}

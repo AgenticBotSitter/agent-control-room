@@ -3,7 +3,7 @@
   "packetId": "CR-5C.9-Q-macos-keychain-v1",
   "issueNumber": 86,
   "dispatchState": "ready",
-  "baseCommit": "98cb0b695e774c34249c14a71185fd12a69a2985",
+  "baseCommit": "7375d4c7e042ada2b404b8590b5547f58044cc11",
   "branch": "worker/marvin/86-macos-keychain-requalification",
   "allowedPaths": [
     "docs/hermes-reviews/CR5C9_MACOS_KEYCHAIN_REQUALIFICATION_V1.md"
@@ -177,8 +177,8 @@
     "contract validator returns ok=true and the digest matches issue 86 before any write",
     "one disposable sign/verify succeeds and lock/sign plus post-delete missing-item checks fail closed with fixed safe categories",
     "the report contains no private value, ciphertext, raw host identity, personal path, or raw native diagnostic",
-    "git diff --check 98cb0b695e774c34249c14a71185fd12a69a2985...HEAD exits 0",
-    "python skills/control-room-work-packets/scripts/verify_scope.py --base 98cb0b695e774c34249c14a71185fd12a69a2985 --branch worker/marvin/86-macos-keychain-requalification --allow docs/hermes-reviews/CR5C9_MACOS_KEYCHAIN_REQUALIFICATION_V1.md returns ok=true",
+    "git diff --check 7375d4c7e042ada2b404b8590b5547f58044cc11...HEAD exits 0",
+    "python skills/control-room-work-packets/scripts/verify_scope.py --base 7375d4c7e042ada2b404b8590b5547f58044cc11 --branch worker/marvin/86-macos-keychain-requalification --allow docs/hermes-reviews/CR5C9_MACOS_KEYCHAIN_REQUALIFICATION_V1.md returns ok=true",
     "actual-ledger validation returns ok=true with no unexpected effect"
   ],
   "independence": {"required": false, "excludedAuthors": []}

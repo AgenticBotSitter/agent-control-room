@@ -1,7 +1,7 @@
 # CR-5C.9 validated real-host qualification packets v1
 
 **Status:** Architect-authored and validator-ready for issues #86–#88  
-**Provider base:** `98cb0b695e774c34249c14a71185fd12a69a2985`  
+**Provider and contract-schema base:** `7375d4c7e042ada2b404b8590b5547f58044cc11`
 **Authority:** The exact JSON contract embedded in each GitHub issue controls execution. This document explains the required method but cannot widen a contract.
 
 ## Why these replace the historical packets
@@ -37,7 +37,7 @@ No author or helper model may independently accept the report. No worker may mer
 ## Packet A — macOS Keychain / issue #86
 
 Contract: `docs/qualification-packets/CR5C9Q_MACOS_KEYCHAIN_V1.json`  
-Digest: `94e53c9a85d5665404af37d4a63c989e621483ec12938496e80d4d252995dcdf`  
+Digest: `c0742f563b9fe20f590b19be85e4a466dd23b89d18f77d6dcb841569115ac50e`
 Worker/branch: Marvin / `worker/marvin/86-macos-keychain-requalification`
 
 Required pre-existing tools: Python 3, Node 22+, installed repository dependencies/`tsx`, `swiftc`, Security.framework, `/usr/bin/security`, Git, authenticated GitHub tooling, and the ordinary interactive Hermes/LaunchAgent Keychain context. Missing any item blocks before writes.
@@ -51,7 +51,7 @@ Worst-case maxima: `E-GIT=2`, `E-GITHUB-READ=6`, `E-GITHUB-WRITE=4`, `E-CONTRACT
 ## Packet B — Windows DPAPI CurrentUser / issue #87
 
 Contract: `docs/qualification-packets/CR5C9Q_WINDOWS_DPAPI_V1.json`  
-Digest: `14121596a326f0c33161a1cf9a5e523564addc4ddf1526704354350cef639c92`  
+Digest: `2c1f99337caa7817b363841e277edb34d851455f9f1a7874f36a7b876107504f`
 Worker/branch: Ziggy / `worker/ziggy/87-windows-dpapi-requalification`
 
 Required pre-existing tools: Python 3, Node 22+, installed repository dependencies/`tsx`, Windows PowerShell at the provider's fixed path, .NET `System.Security`, Git, authenticated GitHub tooling, and the ordinary interactive Hermes account with its CurrentUser profile loaded. Missing any item blocks before writes.
@@ -65,7 +65,7 @@ Worst-case maxima: `E-GIT=2`, `E-GITHUB-READ=6`, `E-GITHUB-WRITE=4`, `E-CONTRACT
 ## Packet C — Linux encrypted file / issue #88
 
 Contract: `docs/qualification-packets/CR5C9Q_LINUX_ENCRYPTED_FILE_V1.json`  
-Digest: `8af2320bc6b00865b148373c120989815a2ad12ae79ed5db1cf8e06a7cbc6cc6`  
+Digest: `63af12ff3bf270dd6186496966589a2bf2d0d77f448ffb40ab65520fd5f63390`
 Worker/branch: Johnny5 / `worker/johnny5/88-linux-encrypted-file-requalification`
 
 Required pre-existing tools: Python 3, Node 22+, installed repository dependencies/`tsx`, POSIX mode/symlink support, inherited file descriptors, Git, and authenticated GitHub tooling. The existing checkout and runtime must already satisfy these requirements; downloading a Node tarball or dependencies is forbidden.

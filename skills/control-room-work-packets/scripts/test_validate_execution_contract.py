@@ -156,9 +156,9 @@ class ExecutionContractTests(unittest.TestCase):
     def test_cr5c9_host_contracts_are_valid_and_digest_pinned(self) -> None:
         root = Path(__file__).resolve().parents[3]
         expected = {
-            "CR5C9Q_MACOS_KEYCHAIN_V1.json": "94e53c9a85d5665404af37d4a63c989e621483ec12938496e80d4d252995dcdf",
-            "CR5C9Q_WINDOWS_DPAPI_V1.json": "14121596a326f0c33161a1cf9a5e523564addc4ddf1526704354350cef639c92",
-            "CR5C9Q_LINUX_ENCRYPTED_FILE_V1.json": "8af2320bc6b00865b148373c120989815a2ad12ae79ed5db1cf8e06a7cbc6cc6",
+            "CR5C9Q_MACOS_KEYCHAIN_V1.json": "c0742f563b9fe20f590b19be85e4a466dd23b89d18f77d6dcb841569115ac50e",
+            "CR5C9Q_WINDOWS_DPAPI_V1.json": "2c1f99337caa7817b363841e277edb34d851455f9f1a7874f36a7b876107504f",
+            "CR5C9Q_LINUX_ENCRYPTED_FILE_V1.json": "63af12ff3bf270dd6186496966589a2bf2d0d77f448ffb40ab65520fd5f63390",
         }
         for filename, digest in expected.items():
             contract = json.loads((root / "docs" / "qualification-packets" / filename).read_text(encoding="utf-8"))

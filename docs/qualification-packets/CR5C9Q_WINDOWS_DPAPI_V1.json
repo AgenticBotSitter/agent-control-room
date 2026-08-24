@@ -3,7 +3,7 @@
   "packetId": "CR-5C.9-Q-windows-dpapi-v1",
   "issueNumber": 87,
   "dispatchState": "ready",
-  "baseCommit": "98cb0b695e774c34249c14a71185fd12a69a2985",
+  "baseCommit": "7375d4c7e042ada2b404b8590b5547f58044cc11",
   "branch": "worker/ziggy/87-windows-dpapi-requalification",
   "allowedPaths": ["docs/hermes-reviews/CR5C9_WINDOWS_DPAPI_REQUALIFICATION_V1.md"],
   "packetAuthors": ["Codex/Sol"],
@@ -59,11 +59,11 @@
   ],
   "gates": [
     "contract validator returns ok=true and the digest matches issue 87 before any write",
-    "CurrentUser valid sign/verify succeeds through the real provider at base 98cb0b695e774c34249c14a71185fd12a69a2985",
+    "CurrentUser valid sign/verify succeeds through the real provider at base 7375d4c7e042ada2b404b8590b5547f58044cc11",
     "tampered ciphertext, wrong entropy, missing file, and lock/sign attempts fail closed without fallback",
     "the report contains no private value, ciphertext, raw host identity, personal path, or raw native diagnostic",
-    "git diff --check 98cb0b695e774c34249c14a71185fd12a69a2985...HEAD exits 0",
-    "python skills/control-room-work-packets/scripts/verify_scope.py --base 98cb0b695e774c34249c14a71185fd12a69a2985 --branch worker/ziggy/87-windows-dpapi-requalification --allow docs/hermes-reviews/CR5C9_WINDOWS_DPAPI_REQUALIFICATION_V1.md returns ok=true",
+    "git diff --check 7375d4c7e042ada2b404b8590b5547f58044cc11...HEAD exits 0",
+    "python skills/control-room-work-packets/scripts/verify_scope.py --base 7375d4c7e042ada2b404b8590b5547f58044cc11 --branch worker/ziggy/87-windows-dpapi-requalification --allow docs/hermes-reviews/CR5C9_WINDOWS_DPAPI_REQUALIFICATION_V1.md returns ok=true",
     "actual-ledger validation returns ok=true with no unexpected effect"
   ],
   "independence": {"required": false, "excludedAuthors": []}
