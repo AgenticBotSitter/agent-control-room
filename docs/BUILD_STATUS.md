@@ -26,10 +26,10 @@
 ## Active block
 
 ```text
-Active: CR-5C.9H launch-path repair — issues #101 and #103 exhausted their one attempts in a pnpm dependency-policy gate before the committed harness launched; issue #102 is revoked/held before execution; host packets are being repinned to a direct Node/tsx command
+Active: CR-5C.9H real-host qualification — failed pnpm packets #101–#103 are retired; repaired issues #110–#112 invoke the committed harness directly through the pre-existing Node/tsx loader with fresh bases, branches, digests, and effect budgets
 Delivered this boundary: the pinned harness and accepted independent Linux contradiction review are merged; macOS prompt/stale-queue operator rules are explicit; DPAPI safe-category compression is documented; and Windows-compatible symlink/reparse refusal has a deterministic regression test
-Validation evidence: TypeScript and lint pass; focused platform tests are 15/15; full repository suite is 141/141; the local real Windows CurrentUser DPAPI harness passes; failed #101/#103 launches produced no platform-provider evidence and their scratch cleanup is reported complete
-Open risks: direct-command packet validation and fresh real macOS/Windows/Linux observations, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
+Validation evidence: TypeScript and lint pass; focused platform tests are 15/15; full repository suite is 141/141; the local real Windows CurrentUser DPAPI harness passes; direct-command contracts #110–#112 validate canonically with no contract errors; failed #101/#103 scratch cleanup is accepted
+Open risks: fresh direct-command macOS/Windows/Linux observations, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
 Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
 ```
 
