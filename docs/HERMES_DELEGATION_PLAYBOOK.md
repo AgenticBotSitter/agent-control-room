@@ -34,7 +34,7 @@ GitHub stores source, issues, pull requests, test evidence, and decisions. It mu
 2. Codex chooses one declared mode: `standard-work`, `platform-validation`, `controlled-effect`, or `independent-review`. Most isolated repository work uses `standard-work`; the machine-checkable effect contract is reserved for genuinely high-risk operations.
 3. The issue contains the required work-order fields: objective, worker, exact base/branch, allowed paths, immutable inputs, acceptance commands, repair budget, environment/side-effect boundary, stop conditions, and handoff.
 4. The worker reads the stable skill plus only the selected mode reference, performs preflight, and posts `WORK ORDER READY` or the exact blocker.
-5. Standard work normally receives one focused correction within scope. Platform validation has a non-mutating readiness phase that cannot consume the native attempt. Controlled-effect work uses the validated `control-room-work-packet/v1` JSON, digest, effect ledger, and exact cleanup.
+5. Standard work normally receives one focused correction within scope. Platform validation has stock-Node stage zero plus runtime readiness, neither of which can consume the native attempt. When a native prompt requires the owner, the worker stops at `OWNER ACTION REQUIRED`; a worker-authored acknowledgement cannot substitute for the owner's attached execution. Controlled-effect work uses the validated `control-room-work-packet/v1` JSON, digest, effect ledger, and exact cleanup.
 6. The worker changes only allowed paths, runs the exact checks, preserves failures/corrections, and opens one unmerged PR when the order requests one. A readiness-blocked platform order normally needs only an issue comment.
 7. Codex/Sol reviews scope and claims first, then the mode-specific repair/readiness/effect record, cleanup, test output, and current PR/issue consistency.
 8. Only accepted work is merged. A merged contribution does not advance a CR block unless the architect-owned completion gate passes.
@@ -45,7 +45,8 @@ The architect must answer these before dispatch:
 
 - Is delegation cheaper to implement and review than architect execution, or does the worker provide otherwise unavailable host evidence?
 - Is the mode proportional to the risk, without imposing a controlled-effect ledger on ordinary code work?
-- Can every step run with the required pre-existing tools? For platform work, has a non-mutating readiness command proven the exact entry point before native effects?
+- Can stage zero run with stock Node before dependencies exist, and is any dependency preparation a separate, explicit setup effect? For platform work, has runtime readiness proven the exact entry point before native effects?
+- If a native prompt requires the owner, does the worker stop before scratch/effects and does a repository launcher require an attached interactive owner session rather than accepting the worker's readiness claim?
 - Does the standard repair budget permit a useful focused correction without allowing architecture or scope expansion?
 - For controlled effects, does the worst-case path include each failed attempt, retry, diagnostic, helper, cache, prompt response, coordination write, and cleanup action?
 - If a controlled-effect order says “one,” can all required cases safely reuse that one artifact? If not, the count is wrong before dispatch.

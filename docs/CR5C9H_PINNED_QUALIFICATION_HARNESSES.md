@@ -10,22 +10,32 @@ The macOS fixture helper source is committed at `scripts/qualification/macos-key
 
 ## Invocation
 
-First run the repository-owned non-mutating readiness command from the repository root:
+First run dependency-free stage zero from the repository root. It uses stock Node only and returns either `ready_for_runtime_check` or `setup_required`:
+
+```text
+node scripts/qualification/platform-key-store-stage-zero.mjs --platform windows
+node scripts/qualification/platform-key-store-stage-zero.mjs --platform linux
+node scripts/qualification/platform-key-store-stage-zero.mjs --platform macos
+```
+
+If it reports `setup_required`, dependency preparation is a separate setup action, never an improvised readiness correction. Execute the returned program and arguments with `CI=true`; the default cache-only form is `pnpm install --frozen-lockfile --offline`. `CI=true` makes pnpm noninteractive and disables its global virtual-store layout so the checkout receives ordinary package links. A cache miss stops and requires separate network authorization for the returned form without `--offline`. The pinned `pnpm-workspace.yaml` explicitly denies lifecycle scripts for `esbuild`, `sharp`, and `workerd`, so worker preparation has no package build-script effects and needs no interactive `pnpm approve-builds` decision.
+
+After stage zero reports ready, run repository runtime readiness:
 
 ```text
 node --import tsx scripts/qualification/platform-key-store-readiness.ts --platform windows
 node --import tsx scripts/qualification/platform-key-store-readiness.ts --platform linux
-node --import tsx scripts/qualification/platform-key-store-readiness.ts --platform macos --operator-ready live-stderr-and-desktop
+node --import tsx scripts/qualification/platform-key-store-readiness.ts --platform macos
 ```
 
-Readiness only reads repository/runtime metadata and existing path permissions. It does not create scratch space, generate a key, invoke PowerShell or Keychain, compile Swift, or construct a key-store provider. A readiness failure is a setup result and does not consume the separately authorized native attempt.
+Both readiness stages only read repository/runtime metadata and existing path permissions. They do not create scratch space, generate a key, invoke PowerShell or Keychain, compile Swift, or construct a key-store provider. A readiness failure is a setup result and does not consume the separately authorized native attempt.
 
 The architect packet supplies an immutable commit, one newly created empty direct child of the OS temporary directory with a `control-room-cr5c9h-` prefix, and the exact command.
 
 ```text
 node --import tsx scripts/qualification/platform-key-store-harness.ts --platform windows --scratch <exact-empty-temp-child>
 node --import tsx scripts/qualification/platform-key-store-harness.ts --platform linux --scratch <exact-empty-temp-child>
-node --import tsx scripts/qualification/platform-key-store-harness.ts --platform macos --scratch <exact-empty-temp-child> --service <packet-id> --account <packet-id>
+node scripts/qualification/macos-attended-launcher.mjs --service <packet-id> --account <packet-id>
 ```
 
 Host packets invoke Node and the pre-existing `tsx` loader directly from the pinned repository root. They must not route qualification through `pnpm run`, `pnpm exec`, a package-manager lifecycle hook, or an agent-authored wrapper: package-manager dependency/build-policy checks can fail before the committed harness starts and consume the one launch attempt without producing platform evidence.
@@ -60,7 +70,7 @@ The harness refuses the wrong runtime platform, relative/noncanonical scratch pa
 
 #### macOS operator preconditions
 
-The macOS qualification is an attended live rehearsal, not a launchd, cron, detached SSH, or unattended background job. The invoking session may be an attached terminal or a Hermes gateway only when stderr is delivered to the operator immediately and the operator has confirmed before scratch creation that they are physically present at the Mac desktop and ready for the native prompt. TTY presence alone is neither required nor sufficient. `CONTROL_ROOM_MACOS_ALLOW_ONCE_WINDOW` announces the only authorized prompt window; the operator may choose `Allow`/`Allow Once` only for the packet's exact disposable service and account. `Always Allow`, a delayed response to a stale prompt, and any keychain or ACL settings change are forbidden.
+The macOS qualification is an owner-executed attended rehearsal, not a Hermes-executed assertion, launchd job, cron, detached SSH, or unattended background job. After both readiness stages pass, Marvin posts `OWNER ACTION REQUIRED` with the exact service/account and stops before scratch or native effects. The owner opens an attached Terminal at the pinned repository root and runs the committed `macos-attended-launcher.mjs`. The launcher refuses a non-macOS host, non-TTY stdin/stderr, wrong cwd, or an incorrect typed confirmation before it creates scratch. It owns the exact scratch lifecycle and relays the harness marker directly to the attached terminal. `CONTROL_ROOM_MACOS_ALLOW_ONCE_WINDOW` announces the only authorized prompt window; the owner may choose `Allow`/`Allow Once` only for the displayed disposable service and account. `Always Allow`, a delayed response to a stale prompt, and any keychain or ACL settings change are forbidden.
 
 The adapter's unlock command has a 15-second bound. If the marker or prompt is not observed in the attached session, the prompt arrives after the command has failed, the operator cannot verify the exact item, or cleanup reports a failure, the run fails closed. The operator must dismiss any stale prompt without authorizing it, record whether the prompt appeared and whether one allowed interaction occurred, verify the exact disposable item is absent, perform only the packet's contracted cleanup, and stop. The harness cannot prove native prompt presentation from inside Node, and abrupt process termination can bypass its best-effort cleanup; neither condition may be inferred as passing from source inspection.
 
@@ -68,4 +78,4 @@ The adapter's unlock command has a 15-second bound. If the marker or prompt is n
 
 No real-host packet may be issued until the harness commit passes TypeScript, lint, deterministic safety tests, the local Windows real-host test, and independent read-only contradiction review. Platform workers receive execute-only contracts: one pinned command, one attempt, one scratch root, enumerated output targets, exact cleanup, and no harness editing or retry authority.
 
-Readiness owns launch, cwd, module-resolution, tool-availability, output-contract, scratch-parent, and attended-operator checks. A readiness failure may use only the packet's bounded readiness correction allowance and never consumes the native occurrence. After readiness passes, a provider/harness failure consumes the native occurrence. That path runs only exact packet-owned cleanup and stops. Review repairs require a separately budgeted report-only correction or a new native packet; they are never inferred.
+Stage zero owns dependency presence and pinned build-policy checks. Runtime readiness owns launch, cwd, module-resolution, tool-availability, output-contract, and scratch-parent checks. Neither may claim human attendance. A readiness failure may use only the packet's bounded readiness correction allowance and never consumes the native occurrence. On macOS, only the owner's confirmed attached launcher may cross into scratch/provider effects. After native launch, a provider/harness failure consumes the native occurrence. That path runs only exact packet-owned cleanup and stops. Review repairs require a separately budgeted report-only correction or a new native packet; they are never inferred.

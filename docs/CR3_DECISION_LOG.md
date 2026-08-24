@@ -462,3 +462,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** The Ed25519 key remains in the node process while unlocked and is vulnerable to same-account process compromise. Native provisioning requires a separate safe enrollment helper. Windows service startup depends on a loaded user profile; macOS background access depends on Keychain session and ACL behavior; Linux security depends on the unwrap-secret delivery mechanism.
 
 **Reevaluate:** A vetted native binding may replace either CLI adapter behind the same interface. Secure Enclave P-256 or TPM keys require an explicit protocol algorithm change, not an adapter shortcut. Provider status cannot advance from implemented to qualified until the real macOS, Windows, and Linux packets pass.
+
+## ADR-039 — Host qualification separates checkout preparation from owner-attended effects
+
+**Decision:** Every host qualification starts with a stock-Node stage-zero check. Missing checkout dependencies produce a structured setup requirement rather than an improvised repair. Setup uses the pinned pnpm version and lockfile with `CI=true`, attempts cache-only installation first, requires separate authorization before network access, and executes no package lifecycle scripts. macOS native qualification can begin only from the repository-owned attached-terminal launcher after the owner types the exact one-shot confirmation phrase; a worker-reported token or acknowledgement is not human-presence evidence.
+
+**Why:** A clean Linux checkout could not launch the TypeScript readiness command, while an agent-generated macOS acknowledgement could not prove that a human was available during the Keychain prompt window. Combining setup, readiness, and native effects made a recoverable prerequisite look like a qualification failure and encouraged workers to expand their own authority.
+
+**Alternatives rejected:** Assume every checkout is preinstalled; link another checkout's dependencies; automatically fall back from offline to network; allow pnpm to choose lifecycle scripts interactively; embed shell-specific setup strings; accept a worker-supplied owner token; let a background agent invoke the macOS harness directly; treat preparation success as native-provider qualification.
+
+**Trade-off:** Fresh hosts may require two separately authorized steps before qualification, and macOS qualification cannot be fully unattended. Denying package lifecycle scripts means the full application build relies on distributed platform packages and must remain part of repository validation.
+
+**Reevaluate:** A signed, hermetic qualification bundle could replace dependency preparation after its contents and provenance are independently reproducible. A future OS-native presence primitive may replace typed confirmation, but agent possession of a reusable secret or token remains insufficient.

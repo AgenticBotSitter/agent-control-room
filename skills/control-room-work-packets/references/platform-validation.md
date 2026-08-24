@@ -6,7 +6,7 @@ Use when the value of delegation is evidence from a real macOS, Windows, Linux, 
 
 ### 1. Readiness
 
-Run only the non-mutating readiness commands named by the order. They should prove the exact runtime entry, module resolution, working directory, helper/tool availability, output capture, scratch-parent suitability, and any attended-operator requirement without generating credentials or invoking the native provider.
+Run only the non-mutating readiness commands named by the order. Stage zero must use stock Node only and report whether the pinned repository dependencies are present before any `tsx` entry is attempted. Runtime readiness then proves module resolution, working directory, helper/tool availability, output capture, and scratch-parent suitability without generating credentials or invoking the native provider.
 
 Readiness has its own repair allowance. The order may permit bounded fixes such as selecting the named existing runtime, correcting cwd/PATH for the current process, or refreshing the exact base. It must explicitly say whether a readiness command may be repeated. Readiness attempts never consume the native execution count because they cannot reach native effects.
 
@@ -17,6 +17,8 @@ If readiness cannot pass within its allowance, report `blocked` and stop before 
 ### 2. Native execution
 
 Only after readiness passes, create the exact bounded scratch/resource and run the immutable repository harness using the command in the order. Do not copy or edit it.
+
+When an order declares `owner-action-required`, the worker does **not** create native scratch or run the native command. It posts the exact owner-action boundary and stops. The owner runs the repository launcher from the required attached session; after that captured outcome exists, the worker may resume only the report/cleanup verification explicitly assigned by the order. A worker-supplied token or comment never proves that a human is present.
 
 The order states the native attempt count, cleanup, prompt/operator rules, and safe outcome categories. Once a native effect starts, a failure consumes that attempt. Do not rerun unless a second attempt was expressly budgeted.
 

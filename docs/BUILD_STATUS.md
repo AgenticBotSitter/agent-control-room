@@ -20,17 +20,17 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; CR-5C.9H harness merged and real-host qualification active | Canonical policy/effect enforcement plus explicit platform private-key providers and repository-owned qualification harnesses |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; CR-5C.9H preparation and attended-launch remediation complete; fresh host qualification next | Canonical policy/effect enforcement plus explicit platform private-key providers and repository-owned qualification harnesses |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C.9H host-validation remediation — #110 macOS and #112 Linux are closed rejected, their report/effect history remains on GitHub, and no worker report from this batch was merged; redundant Windows #111 remains cancelled because local native evidence already passes
-Delivered this boundary: the proportional delegation workflow plus repository-owned `platform-key-store-readiness.ts`, which verifies cwd, Node/tsx module resolution, required tools, output contract, scratch-parent suitability, and attended macOS acknowledgement without creating scratch, generating keys, invoking a provider, or compiling a helper
-Validation evidence: PR #115 merged; 143/143 repository tests, TypeScript, lint, and the real local Windows CurrentUser DPAPI qualification pass; #110 preserves one rejected macOS `unavailable_platform` observation with cleanup evidence; #112 produced no native evidence because repository dependencies were absent and its second readiness action exceeded authority
-Open risks: deterministic fresh-checkout dependency preparation, externally verifiable attended-macOS acknowledgement, fresh accepted macOS/Linux observations, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
-Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
+Active: CR-5C.9H fresh host qualification — deterministic checkout preparation and the macOS owner-attended launch boundary are implemented; issue fresh Linux setup/qualification and macOS attended qualification only from the merged contract
+Delivered this boundary: stock-Node stage zero with structured setup instructions, pinned noninteractive checkout-local pnpm preparation, lifecycle-script denial, effect-free runtime readiness, and a repository-owned macOS launcher that refuses background/non-TTY execution and requires an exact one-shot owner phrase before creating scratch or invoking the native harness
+Validation evidence: isolated fresh clone stops correctly on an offline cache miss, succeeds after separately authorized preparation, then passes stage zero, Windows readiness, focused qualification tests, TypeScript, lint, full repository tests, production build/rendered-HTML tests, and all nine PostgreSQL migrations (51 tables)
+Open risks: fresh accepted macOS/Linux observations, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
+Decision-log changes: ADR-039 separates deterministic checkout preparation from runtime qualification and requires owner presence—not an agent-held token—for macOS native effects
 ```
 
 ## Parallel build lane
@@ -42,11 +42,11 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.9H — architect and test fresh-checkout dependency preparation plus an externally confirmed attended-macOS launch gate before issuing any new host-validation order
-Set model: gpt-5.6-sol
-Set reasoning effort: high
-Why: Linux cannot reach the TypeScript readiness command without prepared repository dependencies, while a worker-supplied macOS readiness token cannot prove that the owner can act during the native prompt window
-Expected output: a deterministic, separately validated node-preparation path and an owner-confirmed attended launch protocol; only then fresh macOS/Linux qualification packets
+Block: CR-5C.9H — execute fresh Linux setup/portable-provider qualification and owner-attended macOS Keychain qualification from the merged harness contract
+Set model: gpt-5.6-terra for worker execution; gpt-5.6-sol at high effort for final evidence review
+Set reasoning effort: medium for worker execution; high for architect review
+Why: the remaining work is mostly host-specific observation under a frozen harness, but provider qualification is security-sensitive and its final evidence must be reviewed independently
+Expected output: accepted, cleanup-complete Linux encrypted-file and macOS Keychain observations, or an honestly bounded native failure that identifies the next architect-owned correction
 Stop before: production identities, persistent services/tasks, unattended deployment, CR-6 packaging, or representing a blocked/failed native observation as passing
 ```
 
