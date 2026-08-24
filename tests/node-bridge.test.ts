@@ -358,3 +358,39 @@ test("authenticated-but-unprocessed frame is handled on exact retry before ackno
   await bridge.close();
   journal.close();
 });
+
+test("bridge never processes or acknowledges a command before its admission handler succeeds", async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  let fail = true;
+  let calls = 0;
+  let ids = 0;
+  const bridge = new PortableNodeBridge(
+    { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: [] }, journal,
+    { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
+    new NodeProtocolAuthenticator(serverResolver(serverKeys.spki), journal, new FixedWindowProtocolRateLimiter(100, 60)),
+    () => `admission-order-${++ids}`,
+    { async handle() { calls += 1; if (fail) throw new Error("synthetic admission crash"); return true; } },
+  );
+  const transport = new MemoryTransport();
+  await bridge.open(transport, { now: t1, transportIdentity: "tls:server" });
+  const connectionId = bridge.status().connectionId as string;
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 1, "connection.accepted", {
+    selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: [], maxFrameBytes: 65_536, heartbeatIntervalSeconds: 30, serverTime: t1,
+  }, transport.sent[0].messageId)), t1);
+  const command = serverFrame(serverKeys.privateKey, connectionId, 2, "job.cancel", {
+    jobId: "job:1", attemptId: "attempt:1", leaseId: "lease:1", leaseEpoch: 1, reasonCode: "owner_requested",
+  });
+  const before = transport.sent.length;
+  await assert.rejects(bridge.receive(JSON.stringify(command), t1), /synthetic admission crash/);
+  assert.equal(journal.inboundStatus(command.messageId), "received");
+  assert.equal(transport.sent.length, before);
+  fail = false;
+  await bridge.receive(JSON.stringify(command), t1);
+  assert.equal(calls, 2);
+  assert.equal(journal.inboundStatus(command.messageId), "processed");
+  assert.equal(transport.sent.at(-1)?.type, "protocol.ack");
+  await bridge.close();
+  journal.close();
+});

@@ -402,3 +402,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Every executor adapter must maintain a closed local operation catalogue and version capability changes. An unknown or mismatched operation denies until the local adapter is updated.
 
 **Reevaluate:** A future signed executor manifest may supply the catalogue, but it must be anchored in local deployment trust and must not be mutable by an ordinary online Control Room key.
+
+## ADR-034 — Admission commits before inbound processing and acknowledgement
+
+**Decision:** A bridge command that has a local policy plan is not marked processed or acknowledged until its accepted/refused decision is committed to the durable local admission store. The stable operation key binds tenant, node, project, job, attempt, and normalized operation digest. Multiple delivery message IDs may alias the same exact admission, but only one accepted admission may exist for an operation key.
+
+**Why:** Acknowledging first can lose the only command after a crash. Re-evaluating an exact retry at a later clock instant can produce contradictory history. Keying admissions by delivery message ID alone lets a fresh-message re-offer bypass deduplication.
+
+**Alternatives rejected:** Ack then persist; queue in memory; one admission per message ID; overwrite the prior decision; re-evaluate exact inputs on every retry; permit multiple accepted admissions before effect-claim serialization.
+
+**Trade-off:** A storage failure leaves the authenticated inbox row unprocessed and causes retry/backpressure. A prior refusal may coexist with a later differently authorized admission, but the partial uniqueness constraint still permits at most one accepted admission for the stable operation.
+
+**Reevaluate:** CR-5C effect claims may unify admission and effect identity in one transaction, but it must preserve fresh-message aliases, original-decision replay, and commit-before-ack ordering.

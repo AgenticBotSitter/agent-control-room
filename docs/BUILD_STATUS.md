@@ -20,17 +20,17 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.4 complete | Canonical contracts, protected stores, persistent security state, pure authority intersection, and coarse denial receipts |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.5 complete | Canonical contracts, protected stores, authority intersection, denial privacy, and durable commit-before-ack admission |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C — CR-5C.1 through CR-5C.4 complete; durable local admission/refusal is next
-Delivered this boundary: total deterministic ceiling/lease/request intersection, complete delegated-authority chain checks, local executor-owned effect classification, locally recomputed operation identity, exact cost/capability/time/concurrency limits, scoped approval signature verification, and strict coarse denial receipts
-Validation evidence: `tests/node-policy-evaluator.test.ts` exercises containment and privacy adversarial cases; the full 97-test suite, lint, type check, regenerated policy schema, 51-table migration verification, production build, and rendered HTML tests pass; implementation report is `docs/CR5C4_AUTHORITY_INTERSECTION.md`
-Open risks: durable admission and approval consumption, coordinated rollback by a same-UID/host attacker, platform key providers, expiry monitoring, effect claims/ambiguity, real filesystem and DNS/TLS guards, process-kill/concurrency rehearsal, and approval issuance remain explicit later gates
-Decision-log changes: ADR-033 makes external-effect classification and normalized operation identity local rather than server-controlled
+Active: CR-5C — CR-5C.1 through CR-5C.5 complete; execution-time expiry enforcement is next
+Delivered this boundary: filesystem-backed local admission ledger, stable operation/admission identities, fresh-message delivery aliases, immutable exact-decision replay, one-accepted-admission constraint, deterministic coarse refusal seam, and bridge commit-before-process-before-ack ordering
+Validation evidence: `tests/node-admission.test.ts` and bridge crash-order tests cover restart, aliases, conflicts, original-time replay, refusal privacy, and handler failure/retry; the full 101-test suite, lint, type check, 51-table migration verification, production build, and rendered HTML tests pass; implementation report is `docs/CR5C5_DURABLE_ADMISSION.md`
+Open risks: approval consumption, cost/concurrency reservation, expiry monitoring, effect claims/pre-effect ambiguity, coordinated rollback, platform key providers, real filesystem and DNS/TLS guards, process-kill/concurrency rehearsal, and approval issuance remain explicit later gates
+Decision-log changes: ADR-034 requires durable admission before inbox processing and acknowledgement and aliases fresh messages to stable operation identity
 ```
 
 ## Parallel build lane
@@ -42,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.5 — Durable bridge-to-executor admission and refusal
+Block: CR-5C.6 — Execution-time expiry and cancellation state machine
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: policy decisions must survive duplicate delivery and crashes before any later executor can treat an admission as authoritative
-Expected output: versioned local admission records, unique stable request/operation identity, durable accepted/refused state, exact decision-digest replay, bridge command-handler seam, coarse refusal emission, restart/duplicate/conflict tests, and no executor dispatch before commit
-Stop before: executor side effects, durable effect claims/pre-effect markers, approval issuance, native platform providers, live timers, real filesystem/network I/O guards, or live Control Room deployment
+Why: authority that was valid at admission must not survive a deadline, renewal race, restart, or late server message and begin a new effect
+Expected output: deterministic expiry events and attempt state transitions, earliest-effective-deadline calculation, no resurrection after expiry, cancellation requests for in-flight work, pre-effect recheck seam, fake-clock boundary tests, and durable restart classification
+Stop before: actual executor side effects, durable effect claims/pre-effect markers, native live timers, approval issuance, platform key providers, real filesystem/network I/O guards, or live deployment
 ```
 
 ## Update rule

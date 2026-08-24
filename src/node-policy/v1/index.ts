@@ -9,3 +9,4 @@ export * from "./owner-pins";
 export * from "./persistent-security-state";
 export * from "./policy-evaluator";
 export * from "./denial-receipt";
+export * from "./admission-store";

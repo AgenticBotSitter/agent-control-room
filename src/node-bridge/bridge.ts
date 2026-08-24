@@ -12,6 +12,7 @@ import {
   type UnsignedNodeFrame,
 } from "../node-protocol/v1";
 import { SqliteBridgeJournal } from "./journal";
+import type { BridgeCommandHandler } from "./admission-handler";
 
 export type BridgeState = "stopped" | "connecting" | "authenticating" | "reconciling" | "online" | "backing_off" | "draining";
 
@@ -65,6 +66,7 @@ export class PortableNodeBridge {
     private readonly signer: BridgeFrameSigner,
     private readonly serverAuthenticator: NodeProtocolAuthenticator,
     private readonly idFactory: () => string = randomUUID,
+    private readonly commandHandler?: BridgeCommandHandler,
   ) {}
 
   status(): BridgeStatus {
@@ -164,7 +166,7 @@ export class PortableNodeBridge {
       case "job.lease.grant":
       case "job.lease.renewed":
       case "job.cancel":
-        this.journal.recordCommand(frame, now);
+        if (!this.commandHandler || !await this.commandHandler.handle(frame, now)) this.journal.recordCommand(frame, now);
         break;
       case "protocol.error":
         this.statusValue = { ...this.statusValue, lastSafeErrorCode: "protocol_rejected" };
