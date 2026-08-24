@@ -34,12 +34,32 @@ export const localDenialDetails = [
   "storage_unavailable",
 ] as const;
 export const wireDenialCategories = ["policy", "expired", "approval_required", "effect_in_progress", "ambiguous", "maintenance", "storage"] as const;
+export const nodePrivateKeyProviders = ["macos_keychain", "windows_dpapi_current_user", "encrypted_file", "memory_test"] as const;
+export const nodePrivateKeyModes = ["native", "encrypted_file", "test"] as const;
+export const unwrapSecretSourceKinds = ["protected_file", "file_descriptor", "platform_secret"] as const;
+export const protectedStoreFailureCodes = [
+  "locked",
+  "interaction_required",
+  "missing",
+  "corrupt",
+  "permission_denied",
+  "unavailable_platform",
+  "key_not_unlocked",
+  "disposed",
+  "invalid_configuration",
+  "invalid_bundle",
+  "rollback_detected",
+] as const;
 
 export type RiskClass = (typeof riskClasses)[number];
 export type ExternalEffectPolicy = (typeof externalEffectPolicies)[number];
 export type KeyAvailabilityState = (typeof keyAvailabilityStates)[number];
 export type LocalDenialDetail = (typeof localDenialDetails)[number];
 export type WireDenialCategory = (typeof wireDenialCategories)[number];
+export type NodePrivateKeyProvider = (typeof nodePrivateKeyProviders)[number];
+export type NodePrivateKeyMode = (typeof nodePrivateKeyModes)[number];
+export type UnwrapSecretSourceKind = (typeof unwrapSecretSourceKinds)[number];
+export type ProtectedStoreFailureCode = (typeof protectedStoreFailureCodes)[number];
 
 export interface NodeAuthorityCeilingV1 {
   schema: typeof NODE_CEILING_SCHEMA_V1;
@@ -200,6 +220,15 @@ export interface KeyAvailabilityV1 {
   state: KeyAvailabilityState;
   keyReferenceId: string;
   observedAt: string;
+}
+
+export interface KeyReferenceV1 {
+  contractVersion: typeof NODE_POLICY_CONTRACT_V1;
+  keyId: string;
+  referenceId: string;
+  provider: NodePrivateKeyProvider;
+  mode: NodePrivateKeyMode;
+  algorithm: "Ed25519";
 }
 
 export type SignedNodePolicyArtifactV1 = SignedNodeAuthorityCeilingV1 | OwnerSignedTrustBundleV1 | OwnerApprovalAttestationV1;
