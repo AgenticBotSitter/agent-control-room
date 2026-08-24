@@ -28,25 +28,27 @@ GitHub stores source, issues, pull requests, test evidence, and decisions. It mu
 - If a shared identity is temporarily unavoidable, every commit and pull request must include the worker ID, machine ID, harness, and model route; replace it before live integrations.
 - Branch protection/rulesets should block direct pushes to `main` and require status checks when the account plan supports them. The procedural rule applies even if GitHub cannot enforce it.
 
-## Work-packet lifecycle
+## Work-order lifecycle
 
-1. Codex creates a machine-checkable `control-room-work-packet/v1` execution contract before opening the issue. It maps every required step and failure branch to effect IDs, exact maximum counts, environment policy, and exact cleanup.
-2. Codex runs `skills/control-room-work-packets/scripts/validate_execution_contract.py`, records the digest, and performs a worst-case walkthrough. A prose-only or failing packet is not dispatched.
-3. The issue names one worker, task class, risk, allowed paths, forbidden effects, immutable inputs, acceptance checks, expected artifact, exact prerequisites, validated contract, and digest.
-4. The worker performs read-only preflight, reruns the validator, and posts `CONTRACT READY` with the same digest, real route, tool versions, worst-case counts, and cleanup methods. Any mismatch produces `CONTRACT BLOCKED`; no writes occur.
-5. The worker creates `worker/<worker-id>/<issue-number>-<slug>` and executes chronologically. Failed attempts consume the same budget as successful attempts; unlisted diagnostics and setup are forbidden.
-6. The worker validates the actual occurrence ledger against the original digest, changes only allowed paths, runs required checks, and opens a pull request whose body reflects the current head.
-7. Automated checks run before model review.
-8. Codex/Sol checks scope first, then contract digest, planned-versus-actual counts, cleanup, evidence labels, and PR/report consistency. It accepts, requests a focused report repair, or rejects with evidence.
-9. Only accepted work is merged. Merging an issue does not advance a CR block unless its block completion gate passes.
+1. Codex delegates only when the expected implementation or host-evidence value materially exceeds packet and review cost. Architecture, security boundaries, migrations, cross-module integration, and final acceptance remain architect-owned.
+2. Codex chooses one declared mode: `standard-work`, `platform-validation`, `controlled-effect`, or `independent-review`. Most isolated repository work uses `standard-work`; the machine-checkable effect contract is reserved for genuinely high-risk operations.
+3. The issue contains the required work-order fields: objective, worker, exact base/branch, allowed paths, immutable inputs, acceptance commands, repair budget, environment/side-effect boundary, stop conditions, and handoff.
+4. The worker reads the stable skill plus only the selected mode reference, performs preflight, and posts `WORK ORDER READY` or the exact blocker.
+5. Standard work normally receives one focused correction within scope. Platform validation has a non-mutating readiness phase that cannot consume the native attempt. Controlled-effect work uses the validated `control-room-work-packet/v1` JSON, digest, effect ledger, and exact cleanup.
+6. The worker changes only allowed paths, runs the exact checks, preserves failures/corrections, and opens one unmerged PR when the order requests one. A readiness-blocked platform order normally needs only an issue comment.
+7. Codex/Sol reviews scope and claims first, then the mode-specific repair/readiness/effect record, cleanup, test output, and current PR/issue consistency.
+8. Only accepted work is merged. A merged contribution does not advance a CR block unless the architect-owned completion gate passes.
 
-### Packet author readiness gate
+### Work-order author readiness gate
 
 The architect must answer these before dispatch:
 
-- Can every step run with the explicitly required pre-existing tools? Missing prerequisites must stop, not trigger an install or download.
-- Does the worst-case path include each negative case, failed attempt, retry, diagnostic, helper, cache, prompt response, coordination write, and cleanup action?
-- If the packet says “one,” can all required cases safely reuse that one artifact? If not, the count is wrong and must be increased before dispatch.
+- Is delegation cheaper to implement and review than architect execution, or does the worker provide otherwise unavailable host evidence?
+- Is the mode proportional to the risk, without imposing a controlled-effect ledger on ordinary code work?
+- Can every step run with the required pre-existing tools? For platform work, has a non-mutating readiness command proven the exact entry point before native effects?
+- Does the standard repair budget permit a useful focused correction without allowing architecture or scope expansion?
+- For controlled effects, does the worst-case path include each failed attempt, retry, diagnostic, helper, cache, prompt response, coordination write, and cleanup action?
+- If a controlled-effect order says “one,” can all required cases safely reuse that one artifact? If not, the count is wrong before dispatch.
 - Is every cleanup target or named resource individually knowable before creation, and can the native method prove exact identity, type, ownership/control, absence, and—when filesystem-backed—containment and link/reparse state without a glob or broad selector?
 - Are prompt, restart, elevation, persistent-permission, and security-policy outcomes explicit? An unlisted prompt response is `stop`.
 - Does an independent-review packet exclude every source author by identity/profile rather than only by model name?
@@ -76,7 +78,7 @@ Every pull request records:
 - files changed and why;
 - commands/tests run with results;
 - assumptions, failures, retries and known risks;
-- execution-contract digest plus planned-versus-actual effect counts;
+- declared work mode and repair/readiness iterations; controlled-effect work also records its execution-contract digest and planned-versus-actual effect counts;
 - artifacts by immutable URI/checksum, never embedded secrets;
 - whether a human or elevated approval is required.
 

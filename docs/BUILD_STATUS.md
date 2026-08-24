@@ -26,10 +26,10 @@
 ## Active block
 
 ```text
-Active: CR-5C.9H real-host qualification — failed pnpm packets #101–#103 are retired; repaired issues #110–#112 invoke the committed harness directly through the pre-existing Node/tsx loader with fresh bases, branches, digests, and effect budgets
-Delivered this boundary: the pinned harness and accepted independent Linux contradiction review are merged; macOS prompt/stale-queue operator rules are explicit; DPAPI safe-category compression is documented; and Windows-compatible symlink/reparse refusal has a deterministic regression test
-Validation evidence: TypeScript and lint pass; focused platform tests are 15/15; full repository suite is 141/141; the local real Windows CurrentUser DPAPI harness passes; direct-command contracts #110–#112 validate canonically with no contract errors; failed #101/#103 scratch cleanup is accepted
-Open risks: fresh direct-command macOS/Windows/Linux observations, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
+Active: delegation workflow calibration before CR-5C.9H host evidence — #110 and #112 are held unstarted, redundant Windows #111 is cancelled, and the worker ecosystem is moving from one heavy packet format to proportional standard-work, platform-validation, controlled-effect, and independent-review modes
+Delivered this boundary: a light stable worker skill, shared work-order contract, ordinary repair loop, two-phase platform-readiness model, mode-aware independent review, updated GitHub issue form, and updated delegation playbook; strict effect JSON remains available only for controlled effects
+Validation evidence: TypeScript and lint pass; the existing execution-contract validator retains 9/9 tests; skill reference links resolve; #110/#112 had no claims or effects before hold; local real Windows CurrentUser DPAPI evidence makes #111 unnecessary
+Open risks: a repository-owned non-mutating platform readiness command and fresh macOS/Linux observations, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
 Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
 ```
 
@@ -42,11 +42,11 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.9H — Complete execute-only host qualifications and review every returned report
+Block: CR-5C.9H — Add a non-mutating readiness command, reissue only macOS/Linux platform-validation orders, then resume architect-owned core build
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: host qualification is security-sensitive; effect cardinality, native evidence, prompt behavior, cleanup, report consistency, and first-attempt history must be checked before accepting any platform claim
-Expected output: accepted macOS, Windows, and Linux qualification reports produced only by the pinned repository harness, with exact cleanup and actual-ledger proof
+Why: delegation should save architect effort or provide otherwise unavailable host evidence; readiness must prove entry/tool/module behavior before any one-shot native effect, while ordinary work needs a practical focused repair loop
+Expected output: a deterministic no-native-effect readiness path plus accepted macOS and Linux reports; Windows remains supported by the already observed local run
 Stop before: production identities, persistent services/tasks, unattended deployment, CR-6 packaging, or representing a blocked/failed native observation as passing
 ```
 

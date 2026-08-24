@@ -1,5 +1,5 @@
-name: Hermes work packet
-description: Assign a bounded, reviewable build task to a Hermes or other external worker.
+name: Hermes work order
+description: Assign mode-proportional, reviewable work to a Hermes or other external worker.
 title: "[WORK] "
 labels:
   - work-packet
@@ -23,14 +23,14 @@ body:
     validations:
       required: true
   - type: dropdown
-    id: task_class
+    id: work_mode
     attributes:
-      label: Task class
+      label: Work mode
       options:
-        - qualification
-        - mechanical
-        - bounded_implementation
-        - integration_candidate
+        - standard-work
+        - platform-validation
+        - controlled-effect
+        - independent-review
     validations:
       required: true
   - type: dropdown
@@ -47,8 +47,8 @@ body:
   - type: textarea
     id: objective
     attributes:
-      label: Objective and accepted contract
-      description: State the exact outcome and link the controlling schema, specification, or ADR.
+      label: Objective, delegation value, and accepted contract
+      description: State the exact outcome, why delegation is cheaper or provides otherwise unavailable evidence, and link the controlling schema/specification/ADR.
     validations:
       required: true
   - type: textarea
@@ -73,34 +73,34 @@ body:
     validations:
       required: true
   - type: textarea
+    id: base_branch
+    attributes:
+      label: Immutable base and exact branch
+      description: Give the full 40-character base commit, exact bootstrap fetch if needed, and required fresh worker branch.
+    validations:
+      required: true
+  - type: textarea
+    id: repair_readiness
+    attributes:
+      label: Repair or readiness budget
+      description: Standard work states focused repair iterations. Platform validation states non-mutating readiness commands/attempts separately from native attempts. Controlled-effect work states stop/retry policy.
+    validations:
+      required: true
+  - type: textarea
+    id: environment_boundary
+    attributes:
+      label: Environment and side-effect boundary
+      description: State pre-existing tools, allowed setup/network/temp behavior, native or external effects, cleanup, and exact stop conditions. Missing tools do not imply install authority.
+    validations:
+      required: true
+  - type: textarea
     id: execution_contract
     attributes:
-      label: Validated execution contract v1
-      description: Paste the exact control-room-work-packet/v1 JSON. It must enumerate setup, effects, counts, retries, diagnostics, independence, and a distinct counted cleanup effect for every disposable artifact; include the validator digest below. A prose-only packet is not dispatchable.
+      label: Controlled-effect contract (only for controlled-effect mode)
+      description: For controlled-effect mode, paste the validated control-room-work-packet/v1 JSON and its canonical SHA-256. Leave blank for other modes.
       render: json
     validations:
-      required: true
-  - type: input
-    id: contract_digest
-    attributes:
-      label: Execution-contract SHA-256
-      description: Exact digest emitted by skills/control-room-work-packets/scripts/validate_execution_contract.py.
-    validations:
-      required: true
-  - type: textarea
-    id: worst_case
-    attributes:
-      label: Worst-case effect walkthrough
-      description: Walk every required step, failure branch, retry, diagnostic, helper, setup action, prompt, and cleanup operation. Show effect IDs and prove the maximum counts cover the worst case.
-    validations:
-      required: true
-  - type: textarea
-    id: prerequisites
-    attributes:
-      label: Pre-existing environment requirements
-      description: State the required checkout, runtime, dependencies, tools, auth mechanism, and OS context. State STOP behavior for every missing prerequisite; do not rely on workers installing or downloading anything implicitly.
-    validations:
-      required: true
+      required: false
   - type: textarea
     id: acceptance
     attributes:
@@ -126,8 +126,8 @@ body:
           required: true
         - label: Codex/Sol review is required before merge.
           required: true
-        - label: The execution-contract validator passes, every required step maps to effect IDs, and worst-case counts include failures, diagnostics, and distinct cleanup effects.
+        - label: The declared work mode, repair/readiness budget, environment boundary, and stop conditions are proportional to the actual risk.
           required: true
-        - label: Missing tools, prompts, retries, cleanup failures, and unexpected effects stop the packet unless separately budgeted.
+        - label: Controlled-effect mode includes a passing execution-contract validator digest and complete effect/cleanup accounting; other modes do not imitate that ledger.
           required: true
 

@@ -8,8 +8,8 @@ Before reading conclusions, compare the reviewer identity/profile with every aut
 
 1. Verify exact changed paths against the issue.
 2. Compare immutable base/head commits and dependencies.
-3. Re-run the execution-contract validator, verify the recorded digest, and confirm the actual scope-check command names the real branch.
-4. Compare chronological actual counts with the contract maxima. The first occurrence consumes budget; do not allow a later successful attempt to be designated retroactively as authorized.
+3. Verify the declared work mode and its required order fields. For `controlled-effect`, re-run the execution-contract validator and verify the digest. For other modes, verify the stated repair/readiness budget and exact scope commands.
+4. For `controlled-effect`, compare chronological actual counts with contract maxima. For `standard-work`, verify repair iterations. For `platform-validation`, separate readiness attempts from native attempts and confirm readiness could not reach native effects.
 5. Check every effect, including failed attempts, helpers, prompt choices, persistent permissions, installs, downloads, caches, configuration edits, coordination writes, cleanup methods, and restarts.
 6. Verify observed/documented/inference/blocked/unsupported labels.
 7. Check cleanup target-by-target, not by a final glob or author assertion.
