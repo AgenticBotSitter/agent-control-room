@@ -20,16 +20,16 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; CR-5C.9H pinned harnesses under review | Canonical policy/effect enforcement plus explicit platform private-key providers and repository-owned qualification harnesses |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; CR-5C.9H harness merged and real-host qualification active | Canonical policy/effect enforcement plus explicit platform private-key providers and repository-owned qualification harnesses |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C.9H pinned qualification harnesses — packets #86–#88 did not close the gate because worker-authored harnesses produced authorization deviations, launch defects, or unsupported provider/ledger claims
-Delivered this boundary: a repository-owned execute-only harness imports the real `createNodePrivateKeyStore` factory for Windows, macOS, and Linux; a committed stdin-only macOS fixture helper; strict scratch/argument controls; safe categorical results; and a real local Windows CurrentUser DPAPI rehearsal
-Validation evidence: `tests/node-platform-qualification-harness.test.ts` proves the committed provider-factory import, helper boundary, scratch refusal, argument refusal, wrong-platform failure, and real Windows DPAPI path; full repository suite is 140/140
-Open risks: independent harness contradiction review, real macOS/Linux execution of the pinned harness, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
+Active: CR-5C.9H real-host qualification — merged PR #94 provides the repository-owned execute-only harness; issue #101 routes attended macOS execution, issue #103 routes Linux execution, and reserved issue #102 remains non-actionable until issue #87 confirms exact cleanup of its exhausted Windows v2 scratch tree
+Delivered this boundary: the pinned harness and accepted independent Linux contradiction review are merged; macOS prompt/stale-queue operator rules are explicit; DPAPI safe-category compression is documented; and Windows-compatible symlink/reparse refusal has a deterministic regression test
+Validation evidence: TypeScript and lint pass; focused platform tests are 15/15; full repository suite is 141/141; the local real Windows CurrentUser DPAPI harness passes; issue contracts #101 and #103 validate canonically with no contract errors
+Open risks: fresh real macOS/Linux observations, fresh Windows report after #87 cleanup, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
 Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
 ```
 
@@ -42,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.9H — Review and merge repository-owned platform qualification harnesses, then issue execute-only host packets
+Block: CR-5C.9H — Complete execute-only host qualifications and review every returned report
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: qualification is security-sensitive and the earlier packets proved that worker-authored one-attempt harnesses are too fragile; code and effect cardinality must be reviewed before another host mutation
-Expected output: merged pinned harness plus independent contradiction findings, followed by three fresh execute-only contracts that permit no harness editing or retry
-Stop before: dispatching the new host packets prior to harness review, production identities, persistent services/tasks, unattended deployment, or representing a blocked native observation as passing
+Why: host qualification is security-sensitive; effect cardinality, native evidence, prompt behavior, cleanup, report consistency, and first-attempt history must be checked before accepting any platform claim
+Expected output: accepted macOS, Windows, and Linux qualification reports produced only by the pinned repository harness, with exact cleanup and actual-ledger proof
+Stop before: production identities, persistent services/tasks, unattended deployment, CR-6 packaging, or representing a blocked/failed native observation as passing
 ```
 
 ## Update rule
