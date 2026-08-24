@@ -109,7 +109,7 @@ test("signed owner ceiling validates its canonical digest and Ed25519 signature"
   assert.equal(signedNodeAuthorityCeilingSchema.safeParse(tampered).success, false);
   assert.throws(() => assertArtifactBodyDigest(tampered.body), /digest mismatch/i);
 
-  const forgedSignature = { ...artifact, signature: `${artifact.signature.slice(0, -1)}A` };
+  const forgedSignature = { ...artifact, signature: `${artifact.signature[0] === "A" ? "B" : "A"}${artifact.signature.slice(1)}` };
   assert.equal(verifyArtifactSignature(forgedSignature, keys.spki), false);
   assert.equal(signedNodeAuthorityCeilingSchema.safeParse({ ...artifact, unexpected: true }).success, false);
 });
@@ -204,6 +204,7 @@ test("normalized local requests and executor capabilities fail closed on unenfor
     contractVersion: NODE_POLICY_CONTRACT_V1,
     executorId: "executor:publisher",
     operationIds: ["publish:upload"],
+    externalEffectOperationIds: ["publish:upload"],
     targetKinds: ["network"],
     supportsCancellation: true,
     supportsNetworkIdentityEnforcement: true,

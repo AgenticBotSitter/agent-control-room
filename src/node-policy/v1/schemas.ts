@@ -206,11 +206,15 @@ export const executorCapabilitySchema = z.object({
   contractVersion: z.literal(NODE_POLICY_CONTRACT_V1),
   executorId: safeId,
   operationIds: sortedUnique(safeId, 2_000, 1),
+  externalEffectOperationIds: sortedUnique(safeId, 2_000),
   targetKinds: sortedUnique(z.enum(["none", "filesystem", "network"]), 3, 1),
   supportsCancellation: z.boolean(),
   supportsNetworkIdentityEnforcement: z.boolean(),
   costMeter: z.enum(["none", "monotonic_reservable"]),
 }).strict().superRefine((capability, context) => {
+  if (capability.externalEffectOperationIds.some((operationId) => !capability.operationIds.includes(operationId))) {
+    context.addIssue({ code: "custom", path: ["externalEffectOperationIds"], message: "external-effect operations must be executor operations" });
+  }
   if (capability.targetKinds.includes("network") && !capability.supportsNetworkIdentityEnforcement) {
     context.addIssue({ code: "custom", path: ["supportsNetworkIdentityEnforcement"], message: "network executors must enforce network identity" });
   }

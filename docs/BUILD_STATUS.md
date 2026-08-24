@@ -20,17 +20,17 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.3 complete | Canonical security contracts, protected-store seams, owner pins, and crash-safe monotonic ceiling/server-trust persistence |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.4 complete | Canonical contracts, protected stores, persistent security state, pure authority intersection, and coarse denial receipts |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C — CR-5C.1 through CR-5C.3 complete; pure local authority evaluation is next
-Delivered this boundary: out-of-band owner-pin verification, explicit owner-present bootstrap, separate artifact/high-water SQLite stores, prepared-digest crash recovery, monotonic ceiling and trust adoption, irreversible retired/revoked key history, and countersigned full active-key replacement
-Validation evidence: `tests/node-security-state.test.ts` covers forged artifacts, binding, tamper, rollback, lifecycle, and every write fault boundary; the full 90-test suite, lint, type check, 51-table migration verification, production build, and rendered HTML tests pass; implementation report is `docs/CR5C3_PERSISTENT_SECURITY_STATE.md`
-Open risks: coordinated rollback by a same-UID/host attacker, protected-store platform implementations, protected owner-pin deployment, Linux unwrap-secret delivery, policy intersection, effect admission, real timer behavior, real DNS/TLS enforcement, process-kill/concurrency rehearsal, and approval issuance remain explicit later gates
-Decision-log changes: ADR-032 selects independent prepared high-water persistence and exact-artifact recovery without pretending cross-file atomicity
+Active: CR-5C — CR-5C.1 through CR-5C.4 complete; durable local admission/refusal is next
+Delivered this boundary: total deterministic ceiling/lease/request intersection, complete delegated-authority chain checks, local executor-owned effect classification, locally recomputed operation identity, exact cost/capability/time/concurrency limits, scoped approval signature verification, and strict coarse denial receipts
+Validation evidence: `tests/node-policy-evaluator.test.ts` exercises containment and privacy adversarial cases; the full 97-test suite, lint, type check, regenerated policy schema, 51-table migration verification, production build, and rendered HTML tests pass; implementation report is `docs/CR5C4_AUTHORITY_INTERSECTION.md`
+Open risks: durable admission and approval consumption, coordinated rollback by a same-UID/host attacker, platform key providers, expiry monitoring, effect claims/ambiguity, real filesystem and DNS/TLS guards, process-kill/concurrency rehearsal, and approval issuance remain explicit later gates
+Decision-log changes: ADR-033 makes external-effect classification and normalized operation identity local rather than server-controlled
 ```
 
 ## Parallel build lane
@@ -42,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.4 — Pure authority intersection and denial privacy
+Block: CR-5C.5 — Durable bridge-to-executor admission and refusal
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: this total deterministic evaluator is the core proof that a valid online server signature still cannot widen owner-configured machine authority
-Expected output: strict ceiling/lease/request intersection, exact identity and epoch binding, executor capability and key-availability checks, ordered risk/effect limits, duration/concurrency/measurable-cost enforcement, privacy-safe local-to-wire denial mapping, and exhaustive table/adversarial tests
-Stop before: durable admission, executor dispatch, effect claims, approval issuance, native platform providers, timers, filesystem/network I/O guards, or live integrations
+Why: policy decisions must survive duplicate delivery and crashes before any later executor can treat an admission as authoritative
+Expected output: versioned local admission records, unique stable request/operation identity, durable accepted/refused state, exact decision-digest replay, bridge command-handler seam, coarse refusal emission, restart/duplicate/conflict tests, and no executor dispatch before commit
+Stop before: executor side effects, durable effect claims/pre-effect markers, approval issuance, native platform providers, live timers, real filesystem/network I/O guards, or live Control Room deployment
 ```
 
 ## Update rule

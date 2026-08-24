@@ -390,3 +390,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** A crash after prepare but before artifact commit temporarily locks that security object until the same signed owner artifact is supplied again. A same-UID attacker or coordinated rollback of both database files remains outside this mechanism's guarantee; CR-6 service isolation, ownership, backup, and host-hardening rehearsals must reduce that risk.
 
 **Reevaluate:** Replace the second SQLite store with a stronger platform monotonic primitive when a supported cross-platform mechanism is proven. Preserve the prepared-artifact recovery semantics and never migrate by silently resetting a high-water value.
+
+## ADR-033 — Local executor capability classifies external effects
+
+**Decision:** The node's locally registered executor capability, not a server request flag alone, declares which operation IDs cross an external-effect boundary. A normalized request is invalid unless its `externalEffect` value exactly matches that local classification. The operation digest is recomputed locally over stable job/attempt identity, executor, operation, credentials, normalized target, risk, effect classification, duration, and measurable cost.
+
+**Why:** A compromised online server could otherwise relabel a write, upload, publish, or other consequential operation as non-effectful and bypass approval, concurrency, ambiguity, and effect-policy checks. Trusting an unbound operation digest would create the same bypass with different spelling.
+
+**Alternatives rejected:** Trust the request's boolean; infer effectfulness from a target kind; classify only network operations as effects; let each executor decide after policy admission; accept an opaque server-supplied operation digest.
+
+**Trade-off:** Every executor adapter must maintain a closed local operation catalogue and version capability changes. An unknown or mismatched operation denies until the local adapter is updated.
+
+**Reevaluate:** A future signed executor manifest may supply the catalogue, but it must be anchored in local deployment trust and must not be mutable by an ordinary online Control Room key.

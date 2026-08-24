@@ -1,3 +1,5 @@
+import type { AuthorityEnvelope } from "../../domain/v1/types";
+
 export const NODE_POLICY_CONTRACT_V1 = "control-room-node-policy/v1" as const;
 export const NODE_CEILING_SCHEMA_V1 = "control-room.node-authority-ceiling/v1" as const;
 export const SERVER_TRUST_BUNDLE_SCHEMA_V1 = "control-room.server-trust-bundle/v1" as const;
@@ -181,6 +183,7 @@ export interface ExecutorCapabilityV1 {
   contractVersion: typeof NODE_POLICY_CONTRACT_V1;
   executorId: string;
   operationIds: string[];
+  externalEffectOperationIds: string[];
   targetKinds: Array<NormalizedTargetV1["kind"]>;
   supportsCancellation: boolean;
   supportsNetworkIdentityEnforcement: boolean;
@@ -243,6 +246,35 @@ export interface OwnerPinSetV1 {
   ceilingProvisioningKey: PinnedOwnerKeyV1;
   serverTrustRootKey: PinnedOwnerKeyV1;
   trustShrinkKeys: PinnedOwnerKeyV1[];
+}
+
+export interface VerifiedLeaseAuthorityV1 {
+  tenantId: string;
+  nodeId: string;
+  jobId: string;
+  attemptId: string;
+  leaseId: string;
+  leaseEpoch: number;
+  validFrom: string;
+  expiresAt: string;
+  authorityDigest: string;
+  authority: AuthorityEnvelope;
+  parentAuthorities: AuthorityEnvelope[];
+}
+
+export interface ResolvedApprovalKeyV1 {
+  keyId: string;
+  publicKeySpki: string;
+}
+
+export interface LocalPolicyEvaluationInputV1 {
+  request: NormalizedLocalPolicyRequestV1;
+  ceiling: NodeAuthorityCeilingV1;
+  lease: VerifiedLeaseAuthorityV1;
+  executor: ExecutorCapabilityV1;
+  keyAvailability: KeyAvailabilityV1;
+  approvalKey?: ResolvedApprovalKeyV1;
+  activeExternalEffects: number;
 }
 
 export type SignedNodePolicyArtifactV1 = SignedNodeAuthorityCeilingV1 | OwnerSignedTrustBundleV1 | OwnerApprovalAttestationV1;

@@ -7,3 +7,5 @@ export * from "./clock";
 export * from "./provider-selection";
 export * from "./owner-pins";
 export * from "./persistent-security-state";
+export * from "./policy-evaluator";
+export * from "./denial-receipt";

@@ -26,6 +26,17 @@
         "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
       }
     },
+    "externalEffectOperationIds": {
+      "minItems": 0,
+      "maxItems": 2000,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 180,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      }
+    },
     "targetKinds": {
       "minItems": 1,
       "maxItems": 3,
@@ -57,6 +68,7 @@
     "contractVersion",
     "executorId",
     "operationIds",
+    "externalEffectOperationIds",
     "targetKinds",
     "supportsCancellation",
     "supportsNetworkIdentityEnforcement",
