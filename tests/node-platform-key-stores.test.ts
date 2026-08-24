@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import {
   InjectedUnwrapSecretSource,
   MacOsKeychainNodePrivateKeyStore,
   NodeSafeCommandRunner,
+  BoundedOpaqueBlobFile,
   ProtectedJsonEnvelopeFile,
   ProtectedStoreError,
   WindowsDpapiNodePrivateKeyStore,
@@ -182,6 +183,23 @@ test("Windows DPAPI adapter sends only ciphertext over stdin and signs after one
 
   const locked = new WindowsDpapiNodePrivateKeyStore(ref,clock(),loader,{ runner: new FixedRunner(result(41,"","CONTROL_ROOM_DPAPI_UNPROTECT_FAILED")) });
   await storeError(locked.unlock(),"locked");
+});
+
+test("opaque DPAPI blob loader rejects a symbolic-link or reparse substitution", async () => {
+  const directory = await mkdtemp(join(tmpdir(),"control-room-dpapi-link-"));
+  const target = join(directory,"target");
+  const link = join(directory,"substituted.bin");
+  try {
+    await mkdir(target);
+    await writeFile(join(target,"blob.bin"),Buffer.alloc(32,0x5a));
+    await symlink(target,link,process.platform === "win32" ? "junction" : "dir");
+    assert.equal((await lstat(link)).isSymbolicLink(),true);
+    const loader = new BoundedOpaqueBlobFile(link);
+    assert.equal(await loader.availability(),"corrupt");
+    await storeError(loader.load(),"corrupt");
+  } finally {
+    await rm(directory,{ recursive: true,force: true });
+  }
 });
 
 test("Windows DPAPI adapter interoperates with CurrentUser and non-empty entropy", { skip: process.platform !== "win32" }, async () => {

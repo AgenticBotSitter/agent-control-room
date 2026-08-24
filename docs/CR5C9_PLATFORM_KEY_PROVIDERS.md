@@ -1,6 +1,6 @@
 # CR-5C.9 platform private-key providers
 
-**Status:** Implementation complete, Windows DPAPI defect remediated; validated real-host requalification packets #86–#88 pending
+**Status:** Implementation complete and Windows DPAPI defect remediated; packets #86–#88 did not qualify the hosts, so CR-5C.9H repository-owned execute-only harnesses now precede fresh host packets
 
 **Scope:** Explicit provider construction, memory-only Ed25519 signing, macOS Keychain retrieval, Windows DPAPI CurrentUser retrieval, portable AES-256-GCM envelopes, protected unwrap-secret sources, and safe OS process boundaries
 
@@ -20,7 +20,7 @@ This adapter intentionally does not provision a Keychain item. The `security add
 
 ### Windows DPAPI CurrentUser
 
-`WindowsDpapiNodePrivateKeyStore` reads a bounded opaque DPAPI blob, sends that ciphertext and optional non-secret entropy to Windows PowerShell over stdin, and invokes a fixed encoded script with CurrentUser scope. The script returns base64 PKCS#8 only over stdout. A failed unprotect maps to `locked`; the adapter never tries LocalMachine scope, another account, or encrypted-file mode.
+`WindowsDpapiNodePrivateKeyStore` reads a bounded opaque DPAPI blob, sends that ciphertext and optional non-secret entropy to Windows PowerShell over stdin, and invokes a fixed encoded script with CurrentUser scope. The script returns base64 PKCS#8 only over stdout. Every native unprotect failure deliberately collapses to the fixed safe category `locked`: wrong principal, wrong entropy, corrupt ciphertext, and unavailable native details are not distinguished across the provider boundary. Missing or structurally invalid blob evidence is rejected by the loader before unprotect. The adapter never tries LocalMachine scope, another account, or encrypted-file mode.
 
 The blob loader rejects symlinks, changes between inspection/open, and unreasonable sizes. The blob is already DPAPI ciphertext; private key bytes are never stored there. A service deployment still has to prove that the designated account profile is loaded.
 
@@ -46,8 +46,8 @@ JavaScript and Node cannot guarantee immediate zeroization of `KeyObject` intern
 
 ## Automated verification
 
-`tests/node-platform-key-stores.test.ts` covers exact envelope binding, tag/key/schema drift, lock/sign/dispose lifecycle, one-shot file descriptors, Windows ACL refusal, Keychain command shape and safe failure mapping, DPAPI stdin/argument separation, provider/platform/dependency mismatch, and refusal to downgrade. Every native command is replaced by a deterministic runner in CI; the tests never touch a real OS key store.
+`tests/node-platform-key-stores.test.ts` covers exact envelope binding, tag/key/schema drift, lock/sign/dispose lifecycle, one-shot file descriptors, Windows ACL refusal, opaque-blob symlink refusal, Keychain command shape and safe failure mapping, DPAPI stdin/argument separation, provider/platform/dependency mismatch, and refusal to downgrade. Deterministic adapter tests replace native commands with fixed runners. The separate Windows-only qualification-harness test exercises disposable CurrentUser DPAPI on a real Windows host; macOS Keychain qualification remains an attended execute-only host gate rather than a mocked claim of native prompt behavior.
 
 ## Completion gate
 
-CR-5C.9 and CR-5C remain open until the three machine-validated contracts in `docs/CR5C9_QUALIFICATION_PACKETS_V1.md` return evidence and Codex reviews it. The historical packets are retired and cannot close the gate. These packets qualify the ordinary interactive/runtime provider paths. Locked/non-GUI Keychain identity, Windows service-profile loading, alternate-principal Linux ownership, and sleep/reboot/container/supervisor behavior remain explicit CR-6A packaging gates and cannot be represented as passing here.
+CR-5C.9 and CR-5C remain open. Issues #86–#88 and their returned PRs are audit evidence but did not close the gate: macOS exceeded authority, Windows exhausted its harness attempt before provider execution, and Linux did not prove the real provider or actual-ledger gate. Fresh host work must use the pinned execute-only harness described in `docs/CR5C9H_PINNED_QUALIFICATION_HARNESSES.md`. Locked/non-GUI Keychain identity, Windows service-profile loading, alternate-principal Linux ownership, and sleep/reboot/container/supervisor behavior remain explicit CR-6A packaging gates and cannot be represented as passing here.

@@ -20,16 +20,16 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented, host qualification pending | Canonical policy/effect enforcement plus explicit platform private-key providers |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; CR-5C.9H pinned harnesses under review | Canonical policy/effect enforcement plus explicit platform private-key providers and repository-owned qualification harnesses |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C.9 requalification — the real Windows DPAPI entropy defect is fixed in PR #85; machine-validated macOS, Windows, and Linux contracts #86–#88 must run before CR-5C closes
-Delivered this boundary: shared memory-backed Ed25519 lifecycle, strict AES-256-GCM envelopes, owner-file/inherited-descriptor/platform-secret unwrap sources, Keychain and DPAPI CurrentUser boot readers, bounded no-shell command execution, actual-platform factory enforcement, and permanent refusal to auto-downgrade
-Validation evidence: `tests/node-platform-key-stores.test.ts` now includes a real Windows CurrentUser protect/unlock/sign/verify regression with non-empty entropy in addition to deterministic cross-platform coverage; replacement host contracts and worst-case budgets are `docs/CR5C9_QUALIFICATION_PACKETS_V1.md` and `docs/qualification-packets/CR5C9Q_*_V1.json`
-Open risks: the three validated real-host requalification packets, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
+Active: CR-5C.9H pinned qualification harnesses — packets #86–#88 did not close the gate because worker-authored harnesses produced authorization deviations, launch defects, or unsupported provider/ledger claims
+Delivered this boundary: a repository-owned execute-only harness imports the real `createNodePrivateKeyStore` factory for Windows, macOS, and Linux; a committed stdin-only macOS fixture helper; strict scratch/argument controls; safe categorical results; and a real local Windows CurrentUser DPAPI rehearsal
+Validation evidence: `tests/node-platform-qualification-harness.test.ts` proves the committed provider-factory import, helper boundary, scratch refusal, argument refusal, wrong-platform failure, and real Windows DPAPI path; full repository suite is 140/140
+Open risks: independent harness contradiction review, real macOS/Linux execution of the pinned harness, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
 Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
 ```
 
@@ -42,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.9-Q-v1 — Validated real-host platform private-key requalification and Codex review
+Block: CR-5C.9H — Review and merge repository-owned platform qualification harnesses, then issue execute-only host packets
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the implementation is deterministic, but actual Keychain ACL/session behavior, DPAPI profile loading, and Linux container permission/restart behavior can only be accepted from redacted host evidence
-Expected output: three report-only PRs satisfying issues #86–#88 and their exact execution-contract digests, followed by Codex accept/reject notes and any separately scoped remediation
-Stop before: production identities, persistent services/tasks, provider-contract edits inside qualification PRs, unattended deployment, or representing a blocked native observation as passing
+Why: qualification is security-sensitive and the earlier packets proved that worker-authored one-attempt harnesses are too fragile; code and effect cardinality must be reviewed before another host mutation
+Expected output: merged pinned harness plus independent contradiction findings, followed by three fresh execute-only contracts that permit no harness editing or retry
+Stop before: dispatching the new host packets prior to harness review, production identities, persistent services/tasks, unattended deployment, or representing a blocked native observation as passing
 ```
 
 ## Update rule
