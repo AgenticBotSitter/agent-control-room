@@ -426,3 +426,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Work can stop at a strict boundary and restart classification is conservative. Running work may need cancellation even when it was harmless. Whether an external effect fired remains ambiguous until the effect-claim slice adds durable pre-effect evidence.
 
 **Reevaluate:** Measured deployments may configure an advisory `expiring_soon` threshold, but it cannot alter the effective deadline. A new attempt/effect identity may be admitted after expiry through the normal authority path; the old identity never revives.
+
+## ADR-036 — Target authority produces pinned local identity plans
+
+**Decision:** A canonical target string is necessary but not sufficient for execution. Filesystem targets require real-path, volume, and object-identity evidence under a directory root, with a separate absent-new-file plan and mandatory pre-use revalidation. Network targets remain exact canonical HTTPS host/port tuples. DNS names resolve once into a bounded pinned address set; prohibited address classes deny unless the ceiling exactly names the same canonical IPv4 literal. The connected address and port plus TLS certificate hostname verification must match the plan. Redirects receive new authorization. Executors that cannot expose/control their final destination are ineligible.
+
+**Why:** Lexical prefixes do not contain symlink, junction, reparse, mount, case-alias, device-name, or alternate-stream behavior. Raw URL equality does not contain IDNA/numeric aliases, redirects, DNS rebinding, private-address pivots, or TLS-host confusion. Separating authorization evidence from actual I/O keeps these checks deterministic and reviewable.
+
+**Alternatives rejected:** Lexical path prefixes; canonical-string-only filesystem authorization; overwrite through the new-file path; silent URL normalization; inherited redirect authority; repeated resolution during one connection; IP pinning without TLS hostname verification; allowing opaque/browser networking under the general v1 HTTPS class; live-network unit tests.
+
+**Trade-off:** Some legitimate aliases, submounts, local hostnames, opaque tools, and IPv6 literal destinations deny in v1. Pre-use object revalidation narrows but cannot alone eliminate the final filesystem race; platform-specific atomic open/delete behavior remains a rehearsal gate.
+
+**Reevaluate:** Add a network or filesystem class only with a new typed ceiling/executor contract and enforcement proof. A future IPv6 literal exception needs an unambiguous bracketed canonical grammar. Destination-specific long-lived DNS policy may change only after measured workloads justify it; it cannot weaken per-connection pins or TLS identity.

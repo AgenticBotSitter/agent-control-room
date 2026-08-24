@@ -39,6 +39,11 @@ function isCanonicalFilesystemPath(value: string): boolean {
   const separator = windows ? "\\" : "/";
   const segments = value.split(separator).filter(Boolean);
   if (segments.some((segment) => segment === "." || segment === "..")) return false;
+  if (windows && segments.slice(1).some((segment) => {
+    const device = segment.split(".", 1)[0].toUpperCase();
+    return /[<>:"|?*]/.test(segment) || segment.endsWith(".") || segment.endsWith(" ")
+      || /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(device);
+  })) return false;
   if (value.includes(`${separator}${separator}`)) return false;
   const root = windows ? /^[A-Z]:\\$/.test(value) : value === "/";
   return root || !value.endsWith(separator);
@@ -49,7 +54,13 @@ function isCanonicalNetworkDestination(value: string): boolean {
   if (!match || match[1].includes("..")) return false;
   const labels = match[1].split(".");
   if (labels.some((label) => label.length > 63 || label.startsWith("-") || label.endsWith("-") || !/^[a-z0-9-]+$/.test(label))) return false;
-  return Number(match[2]) <= 65_535;
+  if (Number(match[2]) > 65_535) return false;
+  try {
+    if (new URL(`https://${match[1]}`).hostname !== match[1]) return false;
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 export const canonicalFilesystemPathSchema = z.string().min(1).max(1_024).refine(isCanonicalFilesystemPath, "filesystem path must be absolute and canonical");

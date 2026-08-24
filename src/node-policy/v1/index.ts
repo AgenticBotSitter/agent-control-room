@@ -12,3 +12,6 @@ export * from "./denial-receipt";
 export * from "./admission-store";
 export * from "./execution-authority";
 export * from "./execution-state-store";
+export * from "./target-guard-errors";
+export * from "./filesystem-target-guard";
+export * from "./network-target-guard";
