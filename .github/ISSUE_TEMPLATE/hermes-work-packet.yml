@@ -76,7 +76,7 @@ body:
     id: execution_contract
     attributes:
       label: Validated execution contract v1
-      description: Paste the exact control-room-work-packet/v1 JSON. It must enumerate setup, effects, counts, retries, diagnostics, cleanup, and independence; include the validator digest below. A prose-only packet is not dispatchable.
+      description: Paste the exact control-room-work-packet/v1 JSON. It must enumerate setup, effects, counts, retries, diagnostics, independence, and a distinct counted cleanup effect for every disposable artifact; include the validator digest below. A prose-only packet is not dispatchable.
       render: json
     validations:
       required: true
@@ -126,7 +126,7 @@ body:
           required: true
         - label: Codex/Sol review is required before merge.
           required: true
-        - label: The execution-contract validator passes, every required step maps to effect IDs, and worst-case counts include failures and diagnostics.
+        - label: The execution-contract validator passes, every required step maps to effect IDs, and worst-case counts include failures, diagnostics, and distinct cleanup effects.
           required: true
         - label: Missing tools, prompts, retries, cleanup failures, and unexpected effects stop the packet unless separately budgeted.
           required: true

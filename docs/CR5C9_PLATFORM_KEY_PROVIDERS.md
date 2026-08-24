@@ -1,6 +1,6 @@
 # CR-5C.9 platform private-key providers
 
-**Status:** Implementation complete; three real-host qualification packets remain open
+**Status:** Implementation complete, Windows DPAPI defect remediated; validated real-host requalification packets #86–#88 pending
 
 **Scope:** Explicit provider construction, memory-only Ed25519 signing, macOS Keychain retrieval, Windows DPAPI CurrentUser retrieval, portable AES-256-GCM envelopes, protected unwrap-secret sources, and safe OS process boundaries
 
@@ -50,4 +50,4 @@ JavaScript and Node cannot guarantee immediate zeroization of `KeyObject` intern
 
 ## Completion gate
 
-CR-5C.9 and CR-5C remain open until all three packets in `docs/CR5C9_MANUAL_QUALIFICATION_PACKETS.md` return evidence and Codex reviews it. CI does not substitute for Keychain ACL/prompt context, DPAPI profile loading, Linux container file ownership, or restart behavior.
+CR-5C.9 and CR-5C remain open until the three machine-validated contracts in `docs/CR5C9_QUALIFICATION_PACKETS_V1.md` return evidence and Codex reviews it. The historical packets are retired and cannot close the gate. These packets qualify the ordinary interactive/runtime provider paths. Locked/non-GUI Keychain identity, Windows service-profile loading, alternate-principal Linux ownership, and sleep/reboot/container/supervisor behavior remain explicit CR-6A packaging gates and cannot be represented as passing here.

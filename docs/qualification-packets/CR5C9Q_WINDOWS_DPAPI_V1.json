@@ -1,0 +1,70 @@
+{
+  "contractVersion": "control-room-work-packet/v1",
+  "packetId": "CR-5C.9-Q-windows-dpapi-v1",
+  "issueNumber": 87,
+  "dispatchState": "ready",
+  "baseCommit": "98cb0b695e774c34249c14a71185fd12a69a2985",
+  "branch": "worker/ziggy/87-windows-dpapi-requalification",
+  "allowedPaths": ["docs/hermes-reviews/CR5C9_WINDOWS_DPAPI_REQUALIFICATION_V1.md"],
+  "packetAuthors": ["Codex/Sol"],
+  "environment": {
+    "checkout": {"policy": "preexisting-only", "effectIds": []},
+    "dependencies": {"policy": "preexisting-only", "effectIds": []},
+    "toolDownloads": {"policy": "forbidden", "effectIds": []},
+    "network": {"policy": "authorized", "effectIds": ["E-GITHUB-READ", "E-GITHUB-WRITE"]},
+    "prompts": {"policy": "forbidden", "effectIds": []},
+    "restarts": {"policy": "forbidden", "effectIds": []},
+    "privilegeEscalation": {"policy": "forbidden", "effectIds": []},
+    "persistentPermissions": {"policy": "forbidden", "effectIds": []},
+    "temporaryFiles": {"policy": "authorized", "effectIds": ["E-WIN-SCRATCH", "E-WIN-SCRATCH-CLEANUP"]},
+    "helperPrograms": {"policy": "authorized", "effectIds": ["E-CONTRACT-VALIDATOR", "E-SCOPE-VALIDATOR", "E-WIN-HARNESS", "E-WIN-PROTECT"]}
+  },
+  "attemptPolicy": {"maxTotalAttempts": 1, "onExhaustion": "stop", "diagnostics": "read-only"},
+  "effects": [
+    {"id": "E-GIT", "action": "create the required worker branch once and create one report commit", "maxOccurrences": 2, "targets": ["worker/ziggy/87-windows-dpapi-requalification", "the one allowed report path"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-GITHUB-READ", "action": "perform bounded logical reads of issue 87, active claims/branches, open PRs, and the created PR confirmation", "maxOccurrences": 6, "targets": ["issue 87", "repository branches", "repository pull requests"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-GITHUB-WRITE", "action": "post one CONTRACT READY acknowledgement, push once, open one PR, and link it once from issue 87", "maxOccurrences": 4, "targets": ["issue 87", "the required branch", "one pull request"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-CONTRACT-VALIDATOR", "action": "run the repository execution-contract validator once at preflight and once against the actual ledger before cleanup", "maxOccurrences": 2, "targets": ["the exact issue contract and packet actual ledger"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-SCOPE-VALIDATOR", "action": "run the repository scope validator exactly once after the report commit", "maxOccurrences": 1, "targets": ["the exact base, branch, and allowed report path"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-WIN-KEY", "action": "generate exactly one disposable Ed25519 keypair in memory and derive exactly one non-secret entropy value", "maxOccurrences": 1, "targets": ["one rehearsal-only in-memory keypair and entropy value"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {
+      "id": "E-WIN-SCRATCH",
+      "action": "create one packet-prefixed OS temporary directory containing one harness, valid/tampered ciphertext files, exact contract copy, and actual-ledger JSON; no plaintext key file",
+      "maxOccurrences": 1,
+      "targets": ["one generated child of the OS temporary directory and its five enumerated descendants"],
+      "retryPolicy": "stop",
+      "createsArtifact": true,
+      "cleanup": {"effectId": "E-WIN-SCRATCH-CLEANUP", "method": "exact-target-native", "verify": ["resolved", "contained", "expected-type", "owned", "not-link-or-reparse", "absent"]}
+    },
+    {"id": "E-WIN-SCRATCH-CLEANUP", "action": "enumerate, validate, delete, and verify absence of the one exact packet scratch directory", "maxOccurrences": 1, "targets": ["the exact directory created by E-WIN-SCRATCH"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-WIN-HARNESS", "action": "run one self-contained Node harness once; it performs every required case and emits only safe categorical evidence", "maxOccurrences": 1, "targets": ["the one harness inside the packet scratch directory"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-WIN-PROTECT", "action": "invoke one fixed noninteractive PowerShell CurrentUser DPAPI protection helper with plaintext only on stdin and ciphertext only on stdout", "maxOccurrences": 1, "targets": ["one disposable in-memory key and the current interactive user profile"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-WIN-ADAPTER", "action": "perform exactly three real adapter unprotect invocations: valid ciphertext, tampered ciphertext, and valid ciphertext with wrong entropy", "maxOccurrences": 3, "targets": ["the two packet ciphertext files and the exact non-secret entropy inputs"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-REPORT", "action": "write the one allowed redacted qualification report", "maxOccurrences": 1, "targets": ["docs/hermes-reviews/CR5C9_WINDOWS_DPAPI_REQUALIFICATION_V1.md"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null}
+  ],
+  "steps": [
+    {"id": "S1", "description": "read issue/claim state, validate the issue contract from memory/stdin, check exact base/clean tree/tool versions, and post one combined CONTRACT READY acknowledgement", "effectIds": ["E-GITHUB-READ", "E-CONTRACT-VALIDATOR", "E-GITHUB-WRITE"], "onFailure": "stop"},
+    {"id": "S2", "description": "create the required branch and the one bounded scratch directory", "effectIds": ["E-GIT", "E-WIN-SCRATCH"], "onFailure": "cleanup-then-stop"},
+    {"id": "S3", "description": "run the single harness, which generates one key and entropy, invokes CurrentUser protection once, writes valid/tampered ciphertext files, performs valid unlock/sign/verify, audits argv/stdin boundaries, and checks lock/sign refusal", "effectIds": ["E-WIN-HARNESS", "E-WIN-KEY", "E-WIN-PROTECT", "E-WIN-ADAPTER"], "onFailure": "cleanup-then-stop"},
+    {"id": "S4", "description": "within the same harness attempt, exercise tampered ciphertext, wrong entropy, missing-file availability, and no-fallback behavior without creating another key, directory, helper, or ciphertext file", "effectIds": ["E-WIN-ADAPTER"], "onFailure": "cleanup-then-stop"},
+    {"id": "S5", "description": "write the exact contract copy and chronological actual ledger inside scratch and validate them once", "effectIds": ["E-CONTRACT-VALIDATOR"], "onFailure": "cleanup-then-stop"},
+    {"id": "S6", "description": "enumerate and clean the exact scratch directory after checking type, containment, ownership, and reparse state", "effectIds": ["E-WIN-SCRATCH-CLEANUP"], "onFailure": "stop"},
+    {"id": "S7", "description": "write the redacted report, commit it once, and run diff plus the one exact scope-validator invocation", "effectIds": ["E-REPORT", "E-GIT", "E-SCOPE-VALIDATOR"], "onFailure": "stop"},
+    {"id": "S8", "description": "read duplicate-PR state, push once, open one PR, link it from issue 87, and confirm the created PR", "effectIds": ["E-GITHUB-READ", "E-GITHUB-WRITE"], "onFailure": "stop"}
+  ],
+  "forbiddenEffects": [
+    "LocalMachine DPAPI, another Windows account/profile, production identity material, or private bytes in argv, files, logs, GitHub, or report text",
+    "service/task registration, profile changes, ACL/policy changes, elevation, prompts, restarts, installs, downloads, retries, or a second key/helper/scratch directory",
+    "provider source changes, broad cleanup, self-review, self-merge, or force-push"
+  ],
+  "gates": [
+    "contract validator returns ok=true and the digest matches issue 87 before any write",
+    "CurrentUser valid sign/verify succeeds through the real provider at base 98cb0b695e774c34249c14a71185fd12a69a2985",
+    "tampered ciphertext, wrong entropy, missing file, and lock/sign attempts fail closed without fallback",
+    "the report contains no private value, ciphertext, raw host identity, personal path, or raw native diagnostic",
+    "git diff --check 98cb0b695e774c34249c14a71185fd12a69a2985...HEAD exits 0",
+    "python skills/control-room-work-packets/scripts/verify_scope.py --base 98cb0b695e774c34249c14a71185fd12a69a2985 --branch worker/ziggy/87-windows-dpapi-requalification --allow docs/hermes-reviews/CR5C9_WINDOWS_DPAPI_REQUALIFICATION_V1.md returns ok=true",
+    "actual-ledger validation returns ok=true with no unexpected effect"
+  ],
+  "independence": {"required": false, "excludedAuthors": []}
+}

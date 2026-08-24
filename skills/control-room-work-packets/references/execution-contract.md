@@ -40,9 +40,19 @@ The architect writes this JSON before dispatch and validates it. The worker copi
       "retryPolicy": "stop",
       "createsArtifact": true,
       "cleanup": {
+        "effectId": "E-SCRATCH-CLEANUP",
         "method": "exact-target-native",
         "verify": ["resolved", "contained", "expected-type", "owned", "not-link-or-reparse", "absent"]
       }
+    },
+    {
+      "id": "E-SCRATCH-CLEANUP",
+      "action": "delete and verify the one scratch directory",
+      "maxOccurrences": 1,
+      "targets": ["the packet-created OS temporary child"],
+      "retryPolicy": "stop",
+      "createsArtifact": false,
+      "cleanup": null
     },
     {
       "id": "E-GITHUB",
@@ -59,6 +69,12 @@ The architect writes this JSON before dispatch and validates it. The worker copi
       "id": "S1",
       "description": "perform the bounded rehearsal once",
       "effectIds": ["E-SCRATCH"],
+      "onFailure": "cleanup-then-stop"
+    },
+    {
+      "id": "S2",
+      "description": "remove and verify the bounded rehearsal scratch directory",
+      "effectIds": ["E-SCRATCH-CLEANUP"],
       "onFailure": "stop"
     }
   ],
@@ -76,6 +92,9 @@ The architect writes this JSON before dispatch and validates it. The worker copi
 - Count the worst case, not the hoped-for successful path. If three fault cases require three separately created files, authorize three. Prefer one artifact mutated and restored when that is safe, explicit, and supported by the step mapping.
 - A retry never receives a free budget. Use `retryPolicy: stop` unless a bounded retry is genuinely required and included in `maxOccurrences` and `maxTotalAttempts`.
 - List the cleanup method before dispatch. `exact-target-native` means no wildcard and an OS-native link/reparse check.
+- Every disposable artifact's cleanup object names a distinct cleanup effect ID. That effect has its own maximum occurrence, creates no artifact, appears in a cleanup step, and is executed even after a producing/test step marked `cleanup-then-stop` fails.
+- Use `exact-target-native` only for filesystem artifacts; its verification set is exactly `resolved`, `contained`, `expected-type`, `owned`, `not-link-or-reparse`, and `absent`.
+- Use `exact-resource-native` for a named external resource such as a disposable Keychain item; its verification set is exactly `identified`, `expected-type`, `controlled`, `no-broad-selector`, and `absent`. The delete command/API must address the complete packet-generated identifier, never a prefix or search result.
 - If a test might prompt, state which one-time response is authorized. `Always Allow`, policy edits, and restarts are forbidden unless they have their own effect IDs.
 - An independent review lists every excluded source author. A reviewer matching any excluded author stops.
 
@@ -105,6 +124,7 @@ At handoff, validate a JSON object with the original digest and chronological co
   "contractDigest": "<validator sha256>",
   "occurrences": [
     {"effectId": "E-SCRATCH", "count": 1},
+    {"effectId": "E-SCRATCH-CLEANUP", "count": 1},
     {"effectId": "E-GITHUB", "count": 4}
   ],
   "unexpectedEffects": []

@@ -1,0 +1,72 @@
+{
+  "contractVersion": "control-room-work-packet/v1",
+  "packetId": "CR-5C.9-Q-linux-encrypted-file-v1",
+  "issueNumber": 88,
+  "dispatchState": "ready",
+  "baseCommit": "98cb0b695e774c34249c14a71185fd12a69a2985",
+  "branch": "worker/johnny5/88-linux-encrypted-file-requalification",
+  "allowedPaths": ["docs/hermes-reviews/CR5C9_LINUX_ENCRYPTED_FILE_REQUALIFICATION_V1.md"],
+  "packetAuthors": ["Codex/Sol"],
+  "environment": {
+    "checkout": {"policy": "preexisting-only", "effectIds": []},
+    "dependencies": {"policy": "preexisting-only", "effectIds": []},
+    "toolDownloads": {"policy": "forbidden", "effectIds": []},
+    "network": {"policy": "authorized", "effectIds": ["E-GITHUB-READ", "E-GITHUB-WRITE"]},
+    "prompts": {"policy": "forbidden", "effectIds": []},
+    "restarts": {"policy": "forbidden", "effectIds": []},
+    "privilegeEscalation": {"policy": "forbidden", "effectIds": []},
+    "persistentPermissions": {"policy": "forbidden", "effectIds": []},
+    "temporaryFiles": {"policy": "authorized", "effectIds": ["E-LINUX-SCRATCH", "E-LINUX-SCRATCH-CLEANUP", "E-LINUX-MODE", "E-LINUX-SYMLINK"]},
+    "helperPrograms": {"policy": "authorized", "effectIds": ["E-CONTRACT-VALIDATOR", "E-SCOPE-VALIDATOR", "E-LINUX-HARNESS", "E-LINUX-CHILD"]}
+  },
+  "attemptPolicy": {"maxTotalAttempts": 1, "onExhaustion": "stop", "diagnostics": "read-only"},
+  "effects": [
+    {"id": "E-GIT", "action": "create the required worker branch once and create one report commit", "maxOccurrences": 2, "targets": ["worker/johnny5/88-linux-encrypted-file-requalification", "the one allowed report path"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-GITHUB-READ", "action": "perform bounded logical reads of issue 88, active claims/branches, open PRs, and the created PR confirmation", "maxOccurrences": 6, "targets": ["issue 88", "repository branches", "repository pull requests"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-GITHUB-WRITE", "action": "post one CONTRACT READY acknowledgement, push once, open one PR, and link it once from issue 88", "maxOccurrences": 4, "targets": ["issue 88", "the required branch", "one pull request"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-CONTRACT-VALIDATOR", "action": "run the repository execution-contract validator once at preflight and once against the actual ledger before cleanup", "maxOccurrences": 2, "targets": ["the exact issue contract and packet actual ledger"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-SCOPE-VALIDATOR", "action": "run the repository scope validator exactly once after the report commit", "maxOccurrences": 1, "targets": ["the exact base, branch, and allowed report path"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-LINUX-KEYS", "action": "generate exactly one disposable Ed25519 keypair and one 32-byte wrap key in memory; derive the mismatch buffer by copying and changing one byte", "maxOccurrences": 1, "targets": ["one rehearsal-only keypair, wrap key, and derived mismatch buffer"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {
+      "id": "E-LINUX-SCRATCH",
+      "action": "create one packet-prefixed OS temporary directory at mode 0700 containing one harness, valid/tampered envelopes, one 0600 wrap file, 31/33-byte descriptor fixtures, one contained symlink, exact contract copy, and actual-ledger JSON",
+      "maxOccurrences": 1,
+      "targets": ["one generated child of the OS temporary directory and its explicitly enumerated descendants"],
+      "retryPolicy": "stop",
+      "createsArtifact": true,
+      "cleanup": {"effectId": "E-LINUX-SCRATCH-CLEANUP", "method": "exact-target-native", "verify": ["resolved", "contained", "expected-type", "owned", "not-link-or-reparse", "absent"]}
+    },
+    {"id": "E-LINUX-SCRATCH-CLEANUP", "action": "enumerate without traversal, validate, delete, and verify absence of the one exact packet scratch directory", "maxOccurrences": 1, "targets": ["the exact directory created by E-LINUX-SCRATCH"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-LINUX-MODE", "action": "change the exact wrap file from 0600 to 0644 once and restore it to 0600 once", "maxOccurrences": 2, "targets": ["the exact packet-created wrap-secret file"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-LINUX-SYMLINK", "action": "materialize exactly one already-budgeted child symlink inside the E-LINUX-SCRATCH tree; the root artifact owns its cleanup", "maxOccurrences": 1, "targets": ["one exact packet-contained symlink pointing to the packet wrap file"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-LINUX-HARNESS", "action": "run one self-contained parent Node harness once; it performs every required case and emits only safe categorical evidence", "maxOccurrences": 1, "targets": ["the one harness inside the packet scratch directory"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-LINUX-CHILD", "action": "spawn exactly one fresh Node child process with one inherited descriptor for the wrap secret and no secret argv or environment value", "maxOccurrences": 1, "targets": ["one fresh-process inherited-descriptor rehearsal"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
+    {"id": "E-REPORT", "action": "write the one allowed redacted qualification report", "maxOccurrences": 1, "targets": ["docs/hermes-reviews/CR5C9_LINUX_ENCRYPTED_FILE_REQUALIFICATION_V1.md"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null}
+  ],
+  "steps": [
+    {"id": "S1", "description": "read issue/claim state, validate the issue contract from memory/stdin, check exact base/clean tree/tool versions, and post one combined CONTRACT READY acknowledgement", "effectIds": ["E-GITHUB-READ", "E-CONTRACT-VALIDATOR", "E-GITHUB-WRITE"], "onFailure": "stop"},
+    {"id": "S2", "description": "create the required branch and the one bounded 0700 scratch tree", "effectIds": ["E-GIT", "E-LINUX-SCRATCH"], "onFailure": "cleanup-then-stop"},
+    {"id": "S3", "description": "run the one parent harness, which generates one keypair/wrap key, seals the envelopes, proves protected-file unlock/sign/verify, and proves one fresh child inherited-descriptor unlock/sign/verify", "effectIds": ["E-LINUX-HARNESS", "E-LINUX-KEYS", "E-LINUX-CHILD"], "onFailure": "cleanup-then-stop"},
+    {"id": "S4", "description": "within the same attempt, exercise tag tamper, derived wrong wrap key, mode drift and restoration, one symlink substitution, missing secret, and exact 31/33-byte descriptor refusals", "effectIds": ["E-LINUX-MODE", "E-LINUX-SYMLINK"], "onFailure": "cleanup-then-stop"},
+    {"id": "S5", "description": "write the exact contract copy and chronological actual ledger inside scratch and validate them once", "effectIds": ["E-CONTRACT-VALIDATOR"], "onFailure": "cleanup-then-stop"},
+    {"id": "S6", "description": "enumerate without following the contained symlink and clean the exact scratch directory after checking type, containment, ownership, and link state", "effectIds": ["E-LINUX-SCRATCH-CLEANUP"], "onFailure": "stop"},
+    {"id": "S7", "description": "write the redacted report, commit it once, and run diff plus the one exact scope-validator invocation", "effectIds": ["E-REPORT", "E-GIT", "E-SCOPE-VALIDATOR"], "onFailure": "stop"},
+    {"id": "S8", "description": "read duplicate-PR state, push once, open one PR, link it from issue 88, and confirm the created PR", "effectIds": ["E-GITHUB-READ", "E-GITHUB-WRITE"], "onFailure": "stop"}
+  ],
+  "forbiddenEffects": [
+    "production identities, secret values in argv/environment/logs/GitHub/report, a second generated keypair/wrap key/scratch directory, or any automatic regeneration",
+    "owner drift/chown, another UID, container or host restart, systemd/Docker changes, capability/seccomp changes, elevation, installs, downloads, prompts, retries, or persistent configuration",
+    "provider source changes, cleanup that follows the symlink, broad cleanup, self-review, self-merge, or force-push"
+  ],
+  "gates": [
+    "contract validator returns ok=true and the digest matches issue 88 before any write",
+    "protected-file and one fresh-process inherited-descriptor sign/verify paths succeed through the real provider",
+    "tag, wrong-key, mode, symlink, missing, and 31/33-byte cases fail closed without fallback or regeneration",
+    "the report explicitly labels owner-drift/multi-UID and container-restart behavior deferred to CR-6 rather than observed",
+    "the report contains no private value, ciphertext, raw host identity, personal path, or raw native diagnostic",
+    "git diff --check 98cb0b695e774c34249c14a71185fd12a69a2985...HEAD exits 0",
+    "python skills/control-room-work-packets/scripts/verify_scope.py --base 98cb0b695e774c34249c14a71185fd12a69a2985 --branch worker/johnny5/88-linux-encrypted-file-requalification --allow docs/hermes-reviews/CR5C9_LINUX_ENCRYPTED_FILE_REQUALIFICATION_V1.md returns ok=true",
+    "actual-ledger validation returns ok=true with no unexpected effect"
+  ],
+  "independence": {"required": false, "excludedAuthors": []}
+}

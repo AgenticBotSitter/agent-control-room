@@ -2,6 +2,8 @@
 
 **Status:** Retired historical packet text — do not dispatch or reuse
 
+Replacement contracts are defined in `docs/CR5C9_QUALIFICATION_PACKETS_V1.md` and `docs/qualification-packets/CR5C9Q_*_V1.json` for reserved issues #86–#88. Only the exact validated JSON embedded in those issues is dispatch authority.
+
 These packets predate `control-room-work-packet/v1` and are not executable contracts. Their prose combined one-item cardinality with multiple fault cases, omitted setup/helper/download budgets, did not state whether fixtures must be reused, and left retry/diagnostic behavior implicit. That ambiguity contributed directly to authorization deviations on all three hosts. The resulting reports remain research evidence, but these packet definitions must not be used for re-qualification.
 
 Any replacement packet must include a validated execution-contract JSON and digest, explicitly map every test case to effect IDs, state whether one artifact is mutated/restored or multiple artifacts are authorized, and stop on the first unbudgeted failure. Author the replacement through `.github/ISSUE_TEMPLATE/hermes-work-packet.yml` and the `control-room-work-packets` execution-contract reference.

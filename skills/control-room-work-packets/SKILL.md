@@ -33,7 +33,7 @@ Before any write or external effect:
 2. perform only read-only availability checks allowed by the contract;
 3. build the worst-case occurrence table, including failed attempts, retries, diagnostics, setup, helper programs, prompts, and cleanup;
 4. confirm every occurrence fits an effect ID and maximum count;
-5. confirm the exact OS-native cleanup method can verify type, containment, ownership, and link/reparse state without a glob;
+5. confirm the exact native cleanup method can verify identity, type, ownership/control, absence, and—when filesystem-backed—containment and link/reparse state without a glob or broad selector;
 6. post a preflight acknowledgement containing the digest, real worker route, available tool versions, and `READY` or the exact blocking mismatch.
 
 The architect-authored contract, not the worker's interpretation, controls execution. Workers cannot amend it in a comment or report. Any contract change creates a new digest and requires a fresh preflight. `READY` authorizes only the listed effects; it does not authorize a helpful setup or recovery action.
@@ -85,7 +85,7 @@ The JSON is non-secret. If the harness needs a temporary file to run the validat
 - Stay within the allowed paths and effect count. Stop when the next step would cross either.
 - Consume occurrences chronologically. The first matching occurrence consumes the budget; a later successful attempt cannot be designated retroactively as the authorized one.
 - A failed attempt consumes its effects. Diagnostics are read-only unless the contract assigns them effect IDs. Never create an extra key, blob, directory, clone, helper, download, cache, or fixture to investigate a failure unless budget remains for that exact effect.
-- Use the contract's `onFailure` behavior. If it says `stop`, report the observed failure; do not repair the test harness, install a missing tool, or try a different representation.
+- Use the contract's `onFailure` behavior. `cleanup-then-stop` executes only the cleanup effect IDs attached to artifacts already created, then stops; it does not authorize diagnosis or retry. If it says `stop`, report the observed failure; do not repair the test harness, install a missing tool, or try a different representation.
 - Keep secrets out of argv, environment variables, shell history, files, logs, reports, Git, issues, and PR text unless the packet explicitly authorizes a specific protected transport. Ciphertext and public material are not plaintext secrets, but still follow the packet’s handling rules.
 - Map raw platform errors into fixed safe categories before recording them. Do not paste personal paths, account names, SIDs, hostnames, tokens, or raw security diagnostics.
 - Maintain an append-only side-effect ledger as you work. Record failed attempts and diagnostic artifacts, not only the final successful run.

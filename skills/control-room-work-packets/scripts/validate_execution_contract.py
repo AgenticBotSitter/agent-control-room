@@ -27,14 +27,23 @@ CONTROL_NAMES = {
 }
 POLICIES = {"forbidden", "preexisting-only", "authorized"}
 RETRY_POLICIES = {"stop", "reuse-same", "consume-budget"}
-FAILURE_POLICIES = {"stop", "reuse-same", "consume-budget"}
-VERIFY_TOKENS = {
-    "resolved",
-    "contained",
-    "expected-type",
-    "owned",
-    "not-link-or-reparse",
-    "absent",
+FAILURE_POLICIES = {"stop", "cleanup-then-stop", "reuse-same", "consume-budget"}
+VERIFY_TOKENS_BY_METHOD = {
+    "exact-target-native": {
+        "resolved",
+        "contained",
+        "expected-type",
+        "owned",
+        "not-link-or-reparse",
+        "absent",
+    },
+    "exact-resource-native": {
+        "identified",
+        "expected-type",
+        "controlled",
+        "no-broad-selector",
+        "absent",
+    },
 }
 
 
@@ -178,15 +187,34 @@ def validate_contract(contract: dict[str, Any]) -> list[str]:
                 errors.append(f"{prefix}:createsArtifact_invalid")
             cleanup = effect.get("cleanup")
             if effect.get("createsArtifact"):
-                if not isinstance(cleanup, dict) or set(cleanup) != {"method", "verify"}:
+                if not isinstance(cleanup, dict) or set(cleanup) != {"effectId", "method", "verify"}:
                     errors.append(f"{prefix}:cleanup_required")
-                elif cleanup.get("method") != "exact-target-native" or set(cleanup.get("verify", [])) != VERIFY_TOKENS:
-                    errors.append(f"{prefix}:cleanup_not_exact_or_complete")
+                else:
+                    cleanup_effect_id = cleanup.get("effectId")
+                    method = cleanup.get("method")
+                    verify = cleanup.get("verify")
+                    if not isinstance(cleanup_effect_id, str) or not re.fullmatch(r"E-[A-Z0-9][A-Z0-9-]*", cleanup_effect_id):
+                        errors.append(f"{prefix}:cleanup_effect_invalid")
+                    if method not in VERIFY_TOKENS_BY_METHOD or not isinstance(verify, list) or set(verify) != VERIFY_TOKENS_BY_METHOD.get(method):
+                        errors.append(f"{prefix}:cleanup_not_exact_or_complete")
             elif cleanup is not None:
                 errors.append(f"{prefix}:cleanup_must_be_null")
 
     for effect_id in sorted(effect_ids_from_environment - effect_map.keys()):
         errors.append(f"environment:unknown_effect:{effect_id}")
+
+    for effect_id, effect in effect_map.items():
+        cleanup = effect.get("cleanup")
+        if not isinstance(cleanup, dict):
+            continue
+        cleanup_effect_id = cleanup.get("effectId")
+        cleanup_effect = effect_map.get(cleanup_effect_id)
+        if cleanup_effect_id == effect_id:
+            errors.append(f"effects:cleanup_self_reference:{effect_id}")
+        elif cleanup_effect is None:
+            errors.append(f"effects:cleanup_unknown_effect:{effect_id}:{cleanup_effect_id}")
+        elif cleanup_effect.get("createsArtifact") is not False or cleanup_effect.get("cleanup") is not None:
+            errors.append(f"effects:cleanup_effect_must_not_create_artifact:{effect_id}:{cleanup_effect_id}")
 
     steps = contract.get("steps")
     referenced_effects = set(effect_ids_from_environment)

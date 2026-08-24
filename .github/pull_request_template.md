@@ -40,6 +40,7 @@
 - [ ] Codex/Sol semantic review is still required.
 - [ ] The original execution-contract digest matches the actual ledger and every effect stayed within budget.
 - [ ] Failed attempts, diagnostics, setup, prompts, and cleanup actions are included in actual counts.
+- [ ] Every disposable artifact's separately budgeted cleanup effect ran or is reported as blocked; cleanup was not inferred from the creation effect.
 
 ## Reviewer disposition
 

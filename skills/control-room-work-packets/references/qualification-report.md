@@ -32,6 +32,8 @@ List effects in chronological order. The first occurrence consumes the budget; l
 
 Include the actual-ledger validator output. Any digest mismatch, unknown effect, unexpected effect, or over-budget count requires `rejected — authorization deviation`.
 
+Show each disposable artifact's creation effect and distinct cleanup effect as separate chronological rows. `cleanup-then-stop` does not combine or hide those counts.
+
 ## Method and evidence
 
 Describe the real adapter/path used, disposable material boundaries, and what was intentionally not exercised. Label each result `observed`, `documented`, `inference`, `blocked`, or `unsupported`.

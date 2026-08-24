@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
+from pathlib import Path
 
 from validate_execution_contract import canonical_digest, validate_actual, validate_contract
 
@@ -46,12 +48,25 @@ def valid_contract() -> dict:
                 "retryPolicy": "stop",
                 "createsArtifact": True,
                 "cleanup": {
+                    "effectId": "E-SCRATCH-CLEANUP",
                     "method": "exact-target-native",
                     "verify": ["resolved", "contained", "expected-type", "owned", "not-link-or-reparse", "absent"],
                 },
-            }
+            },
+            {
+                "id": "E-SCRATCH-CLEANUP",
+                "action": "delete and verify the one scratch directory",
+                "maxOccurrences": 1,
+                "targets": ["the packet-created OS temporary child"],
+                "retryPolicy": "stop",
+                "createsArtifact": False,
+                "cleanup": None,
+            },
         ],
-        "steps": [{"id": "S1", "description": "run once", "effectIds": ["E-SCRATCH"], "onFailure": "stop"}],
+        "steps": [
+            {"id": "S1", "description": "run once", "effectIds": ["E-SCRATCH"], "onFailure": "cleanup-then-stop"},
+            {"id": "S2", "description": "clean once", "effectIds": ["E-SCRATCH-CLEANUP"], "onFailure": "stop"},
+        ],
         "forbiddenEffects": ["everything not listed"],
         "gates": ["git diff --check must exit 0"],
         "independence": {"required": False, "excludedAuthors": []},
@@ -116,6 +131,39 @@ class ExecutionContractTests(unittest.TestCase):
         contract["attemptPolicy"]["maxTotalAttempts"] = 2
         contract["effects"][0]["maxOccurrences"] = 2
         self.assertEqual(validate_contract(contract), [])
+
+    def test_exact_named_resource_cleanup_is_distinct_from_filesystem_cleanup(self) -> None:
+        contract = valid_contract()
+        contract["effects"][0]["cleanup"] = {
+            "effectId": "E-SCRATCH-CLEANUP",
+            "method": "exact-resource-native",
+            "verify": ["identified", "expected-type", "controlled", "no-broad-selector", "absent"],
+        }
+        self.assertEqual(validate_contract(contract), [])
+
+        contract["effects"][0]["cleanup"]["verify"].remove("no-broad-selector")
+        self.assertIn("effects:0:cleanup_not_exact_or_complete", validate_contract(contract))
+
+    def test_cleanup_requires_a_separate_non_artifact_effect(self) -> None:
+        contract = valid_contract()
+        contract["effects"][0]["cleanup"]["effectId"] = "E-MISSING"
+        self.assertIn("effects:cleanup_unknown_effect:E-SCRATCH:E-MISSING", validate_contract(contract))
+
+        contract = valid_contract()
+        contract["effects"][0]["cleanup"]["effectId"] = "E-SCRATCH"
+        self.assertIn("effects:cleanup_self_reference:E-SCRATCH", validate_contract(contract))
+
+    def test_cr5c9_host_contracts_are_valid_and_digest_pinned(self) -> None:
+        root = Path(__file__).resolve().parents[3]
+        expected = {
+            "CR5C9Q_MACOS_KEYCHAIN_V1.json": "94e53c9a85d5665404af37d4a63c989e621483ec12938496e80d4d252995dcdf",
+            "CR5C9Q_WINDOWS_DPAPI_V1.json": "14121596a326f0c33161a1cf9a5e523564addc4ddf1526704354350cef639c92",
+            "CR5C9Q_LINUX_ENCRYPTED_FILE_V1.json": "8af2320bc6b00865b148373c120989815a2ad12ae79ed5db1cf8e06a7cbc6cc6",
+        }
+        for filename, digest in expected.items():
+            contract = json.loads((root / "docs" / "qualification-packets" / filename).read_text(encoding="utf-8"))
+            self.assertEqual(validate_contract(contract), [], filename)
+            self.assertEqual(canonical_digest(contract), digest, filename)
 
 
 if __name__ == "__main__":

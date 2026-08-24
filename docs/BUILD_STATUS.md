@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-08-23
+**Updated:** 2026-08-24
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
 
@@ -26,10 +26,10 @@
 ## Active block
 
 ```text
-Active: CR-5C.9 qualification — provider code is complete; macOS, Windows, and Linux real-host packets must run before CR-5C closes
+Active: CR-5C.9 requalification — the real Windows DPAPI entropy defect is fixed in PR #85; machine-validated macOS, Windows, and Linux contracts #86–#88 must run before CR-5C closes
 Delivered this boundary: shared memory-backed Ed25519 lifecycle, strict AES-256-GCM envelopes, owner-file/inherited-descriptor/platform-secret unwrap sources, Keychain and DPAPI CurrentUser boot readers, bounded no-shell command execution, actual-platform factory enforcement, and permanent refusal to auto-downgrade
-Validation evidence: `tests/node-platform-key-stores.test.ts` uses deterministic OS runners to cover envelope tamper/binding, one-shot descriptors, provider lifecycle, command/stdin boundaries, native safe-error mapping, dependency mismatch, and downgrade refusal; implementation report and bounded host packets are `docs/CR5C9_PLATFORM_KEY_PROVIDERS.md` and `docs/CR5C9_MANUAL_QUALIFICATION_PACKETS.md`
-Open risks: the three real-host provider packets, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
+Validation evidence: `tests/node-platform-key-stores.test.ts` now includes a real Windows CurrentUser protect/unlock/sign/verify regression with non-empty entropy in addition to deterministic cross-platform coverage; replacement host contracts and worst-case budgets are `docs/CR5C9_QUALIFICATION_PACKETS_V1.md` and `docs/qualification-packets/CR5C9Q_*_V1.json`
+Open risks: the three validated real-host requalification packets, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
 Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
 ```
 
@@ -42,11 +42,11 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.9-Q — Real-host platform private-key qualification and Codex review
+Block: CR-5C.9-Q-v1 — Validated real-host platform private-key requalification and Codex review
 Set model: gpt-5.6-sol
 Set reasoning effort: high
 Why: the implementation is deterministic, but actual Keychain ACL/session behavior, DPAPI profile loading, and Linux container permission/restart behavior can only be accepted from redacted host evidence
-Expected output: three report-only PRs satisfying the packets in `docs/CR5C9_MANUAL_QUALIFICATION_PACKETS.md`, followed by Codex accept/reject notes and any separately scoped remediation
+Expected output: three report-only PRs satisfying issues #86–#88 and their exact execution-contract digests, followed by Codex accept/reject notes and any separately scoped remediation
 Stop before: production identities, persistent services/tasks, provider-contract edits inside qualification PRs, unattended deployment, or representing a blocked native observation as passing
 ```
 

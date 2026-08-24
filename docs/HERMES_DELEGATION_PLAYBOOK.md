@@ -47,7 +47,7 @@ The architect must answer these before dispatch:
 - Can every step run with the explicitly required pre-existing tools? Missing prerequisites must stop, not trigger an install or download.
 - Does the worst-case path include each negative case, failed attempt, retry, diagnostic, helper, cache, prompt response, coordination write, and cleanup action?
 - If the packet says “one,” can all required cases safely reuse that one artifact? If not, the count is wrong and must be increased before dispatch.
-- Is every cleanup target individually knowable before creation, and can the named OS-native method prove containment, type, ownership, and link/reparse state without a glob?
+- Is every cleanup target or named resource individually knowable before creation, and can the native method prove exact identity, type, ownership/control, absence, and—when filesystem-backed—containment and link/reparse state without a glob or broad selector?
 - Are prompt, restart, elevation, persistent-permission, and security-policy outcomes explicit? An unlisted prompt response is `stop`.
 - Does an independent-review packet exclude every source author by identity/profile rather than only by model name?
 
