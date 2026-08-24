@@ -1,6 +1,6 @@
 # CR-5C.9 platform private-key providers
 
-**Status:** Implementation complete, Windows DPAPI defect remediated; validated real-host requalification packets #86–#88 pending
+**Status:** Implementation complete and Windows DPAPI defect remediated; packets #86–#88 did not qualify the hosts, so CR-5C.9H repository-owned execute-only harnesses now precede fresh host packets
 
 **Scope:** Explicit provider construction, memory-only Ed25519 signing, macOS Keychain retrieval, Windows DPAPI CurrentUser retrieval, portable AES-256-GCM envelopes, protected unwrap-secret sources, and safe OS process boundaries
 
@@ -50,4 +50,4 @@ JavaScript and Node cannot guarantee immediate zeroization of `KeyObject` intern
 
 ## Completion gate
 
-CR-5C.9 and CR-5C remain open until the three machine-validated contracts in `docs/CR5C9_QUALIFICATION_PACKETS_V1.md` return evidence and Codex reviews it. The historical packets are retired and cannot close the gate. These packets qualify the ordinary interactive/runtime provider paths. Locked/non-GUI Keychain identity, Windows service-profile loading, alternate-principal Linux ownership, and sleep/reboot/container/supervisor behavior remain explicit CR-6A packaging gates and cannot be represented as passing here.
+CR-5C.9 and CR-5C remain open. Issues #86–#88 and their returned PRs are audit evidence but did not close the gate: macOS exceeded authority, Windows exhausted its harness attempt before provider execution, and Linux did not prove the real provider or actual-ledger gate. Fresh host work must use the pinned execute-only harness described in `docs/CR5C9H_PINNED_QUALIFICATION_HARNESSES.md`. Locked/non-GUI Keychain identity, Windows service-profile loading, alternate-principal Linux ownership, and sleep/reboot/container/supervisor behavior remain explicit CR-6A packaging gates and cannot be represented as passing here.
