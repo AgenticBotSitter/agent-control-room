@@ -414,3 +414,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** A storage failure leaves the authenticated inbox row unprocessed and causes retry/backpressure. A prior refusal may coexist with a later differently authorized admission, but the partial uniqueness constraint still permits at most one accepted admission for the stable operation.
 
 **Reevaluate:** CR-5C effect claims may unify admission and effect identity in one transaction, but it must preserve fresh-message aliases, original-decision replay, and commit-before-ack ordering.
+
+## ADR-035 — Runtime authority expires at the earliest immutable clamp
+
+**Decision:** Every admitted execution persists one effective deadline equal to the earliest ceiling/authority duration deadline, authority expiry, lease expiry, approval expiry, and executor-reservation expiry. Deadline equality is expired. A pre-expiry lease renewal may replace only the lease-expiry component under a strictly increasing epoch and the same authority digest. Expiry is locally terminal for new work and effects; in-flight work also records a cancellation request. No late renewal or server message can resurrect the same execution identity.
+
+**Why:** Admission-time validity does not prove execution-time authority. Restart, clock boundaries, delayed renewal, and server disconnection must not extend a grant implicitly. Persisting the contributing clamps makes the decision deterministic and auditable after restart.
+
+**Alternatives rejected:** Admission-only expiry checks; server timers as authority; grace after expiry; last-arriving deadline wins; replacing authority on renewal; reviving an expired attempt; relying on an in-memory timer; treating cancellation delivery as proof that an effect did not fire.
+
+**Trade-off:** Work can stop at a strict boundary and restart classification is conservative. Running work may need cancellation even when it was harmless. Whether an external effect fired remains ambiguous until the effect-claim slice adds durable pre-effect evidence.
+
+**Reevaluate:** Measured deployments may configure an advisory `expiring_soon` threshold, but it cannot alter the effective deadline. A new attempt/effect identity may be admitted after expiry through the normal authority path; the old identity never revives.

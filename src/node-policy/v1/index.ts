@@ -10,3 +10,5 @@ export * from "./persistent-security-state";
 export * from "./policy-evaluator";
 export * from "./denial-receipt";
 export * from "./admission-store";
+export * from "./execution-authority";
+export * from "./execution-state-store";
