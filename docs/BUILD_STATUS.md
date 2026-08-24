@@ -26,9 +26,9 @@
 ## Active block
 
 ```text
-Active: CR-5C.9H real-host qualification — merged PR #94 provides the repository-owned execute-only harness; issue #101 routes attended macOS execution, issue #103 routes Linux execution, and reserved issue #102 remains non-actionable until issue #87 confirms exact cleanup of its exhausted Windows v2 scratch tree
+Active: CR-5C.9H real-host qualification — merged PR #94 provides the repository-owned execute-only harness; issue #101 routes attended macOS execution, issue #102 routes fresh Windows DPAPI execution after accepted #87 cleanup, and issue #103 routes Linux execution
 Delivered this boundary: the pinned harness and accepted independent Linux contradiction review are merged; macOS prompt/stale-queue operator rules are explicit; DPAPI safe-category compression is documented; and Windows-compatible symlink/reparse refusal has a deterministic regression test
-Validation evidence: TypeScript and lint pass; focused platform tests are 15/15; full repository suite is 141/141; the local real Windows CurrentUser DPAPI harness passes; issue contracts #101 and #103 validate canonically with no contract errors
+Validation evidence: TypeScript and lint pass; focused platform tests are 15/15; full repository suite is 141/141; the local real Windows CurrentUser DPAPI harness passes; issue contracts #101–#103 validate canonically with no contract errors
 Open risks: fresh real macOS/Linux observations, fresh Windows report after #87 cleanup, atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
 Decision-log changes: ADR-038 fixes explicit platform-bound boot-unlock providers, forbids silent fallback and secret argv/environment sources, and keeps native host behavior unqualified until observed
 ```
