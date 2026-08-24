@@ -29,12 +29,13 @@ The issue must contain a validated `control-room-work-packet/v1` execution contr
 
 Before any write or external effect:
 
-1. run the contract validator and record its digest;
-2. perform only read-only availability checks allowed by the contract;
-3. build the worst-case occurrence table, including failed attempts, retries, diagnostics, setup, helper programs, prompts, and cleanup;
-4. confirm every occurrence fits an effect ID and maximum count;
-5. confirm the exact native cleanup method can verify identity, type, ownership/control, absence, and—when filesystem-backed—containment and link/reparse state without a glob or broad selector;
-6. post a preflight acknowledgement containing the digest, real worker route, available tool versions, and `READY` or the exact blocking mismatch.
+1. if the pinned commits are not already reachable, run only an explicitly contracted bootstrap-fetch effect; a generic GitHub-read allowance does not authorize `git fetch`;
+2. run the contract validator and record its digest; the digest is over parsed, canonically serialized JSON, not Markdown formatting or line endings;
+3. perform only read-only availability checks allowed by the contract;
+4. build the worst-case occurrence table, including failed attempts, retries, diagnostics, setup, helper programs, prompts, and cleanup;
+5. confirm every occurrence fits an effect ID and maximum count;
+6. confirm the exact native cleanup method can verify identity, type, ownership/control, absence, and—when filesystem-backed—containment and link/reparse state without a glob or broad selector;
+7. post a preflight acknowledgement containing the digest, real worker route, available tool versions, and `READY` or the exact blocking mismatch.
 
 The architect-authored contract, not the worker's interpretation, controls execution. Workers cannot amend it in a comment or report. Any contract change creates a new digest and requires a fresh preflight. `READY` authorizes only the listed effects; it does not authorize a helpful setup or recovery action.
 
@@ -62,6 +63,8 @@ python skills/control-room-work-packets/scripts/validate_execution_contract.py <
 ```
 
 The JSON is non-secret. If the harness needs a temporary file to run the validator, that file must itself be authorized by the contract and deleted before execution. Prefer passing the issue block through an in-memory/stdin facility supported by the harness.
+
+The validator parses the JSON and hashes its canonical serialization (`sort_keys=True`, compact separators, UTF-8). Do not hash the raw fenced block: indentation and CRLF/LF normalization must not change the digest.
 
 ## Execute a packet
 

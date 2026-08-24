@@ -1,6 +1,6 @@
 {
   "contractVersion": "control-room-work-packet/v1",
-  "packetId": "CR-5C.9-Q-windows-dpapi-v1",
+  "packetId": "CR-5C.9-Q-windows-dpapi-v2",
   "issueNumber": 87,
   "dispatchState": "ready",
   "baseCommit": "7375d4c7e042ada2b404b8590b5547f58044cc11",
@@ -8,10 +8,10 @@
   "allowedPaths": ["docs/hermes-reviews/CR5C9_WINDOWS_DPAPI_REQUALIFICATION_V1.md"],
   "packetAuthors": ["Codex/Sol"],
   "environment": {
-    "checkout": {"policy": "preexisting-only", "effectIds": []},
+    "checkout": {"policy": "authorized", "effectIds": ["E-GIT-SYNC", "E-GIT"]},
     "dependencies": {"policy": "preexisting-only", "effectIds": []},
     "toolDownloads": {"policy": "forbidden", "effectIds": []},
-    "network": {"policy": "authorized", "effectIds": ["E-GITHUB-READ", "E-GITHUB-WRITE"]},
+    "network": {"policy": "authorized", "effectIds": ["E-GIT-SYNC", "E-GITHUB-READ", "E-GITHUB-WRITE"]},
     "prompts": {"policy": "forbidden", "effectIds": []},
     "restarts": {"policy": "forbidden", "effectIds": []},
     "privilegeEscalation": {"policy": "forbidden", "effectIds": []},
@@ -21,6 +21,7 @@
   },
   "attemptPolicy": {"maxTotalAttempts": 1, "onExhaustion": "stop", "diagnostics": "read-only"},
   "effects": [
+    {"id": "E-GIT-SYNC", "action": "run exactly one git fetch --no-tags origin main, then verify the pinned base and contract-definition commits are reachable and on origin/main", "maxOccurrences": 1, "targets": ["origin main", "7375d4c7e042ada2b404b8590b5547f58044cc11", "c2c4bccd0347244a10a4f38a98532e7ee0fd8eb4"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
     {"id": "E-GIT", "action": "create the required worker branch once and create one report commit", "maxOccurrences": 2, "targets": ["worker/ziggy/87-windows-dpapi-requalification", "the one allowed report path"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
     {"id": "E-GITHUB-READ", "action": "perform bounded logical reads of issue 87, active claims/branches, open PRs, and the created PR confirmation", "maxOccurrences": 6, "targets": ["issue 87", "repository branches", "repository pull requests"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
     {"id": "E-GITHUB-WRITE", "action": "post one CONTRACT READY acknowledgement, push once, open one PR, and link it once from issue 87", "maxOccurrences": 4, "targets": ["issue 87", "the required branch", "one pull request"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null},
@@ -43,7 +44,7 @@
     {"id": "E-REPORT", "action": "write the one allowed redacted qualification report", "maxOccurrences": 1, "targets": ["docs/hermes-reviews/CR5C9_WINDOWS_DPAPI_REQUALIFICATION_V1.md"], "retryPolicy": "stop", "createsArtifact": false, "cleanup": null}
   ],
   "steps": [
-    {"id": "S1", "description": "read issue/claim state, validate the issue contract from memory/stdin, check exact base/clean tree/tool versions, and post one combined CONTRACT READY acknowledgement", "effectIds": ["E-GITHUB-READ", "E-CONTRACT-VALIDATOR", "E-GITHUB-WRITE"], "onFailure": "stop"},
+    {"id": "S1", "description": "read issue and authoritative GitHub state, run exactly git fetch --no-tags origin main, verify both pinned commits are reachable and on origin/main, reproduce the digest by parsing and canonically serializing the exact inline JSON with the validator loaded from the pinned base entirely through Git/in-memory pipes, check clean tree, identity, branch availability, and tool versions, then post one combined CONTRACT READY acknowledgement", "effectIds": ["E-GITHUB-READ", "E-GIT-SYNC", "E-CONTRACT-VALIDATOR", "E-GITHUB-WRITE"], "onFailure": "stop"},
     {"id": "S2", "description": "create the required branch and the one bounded scratch directory", "effectIds": ["E-GIT", "E-WIN-SCRATCH"], "onFailure": "cleanup-then-stop"},
     {"id": "S3", "description": "run the single harness, which generates one key and entropy, invokes CurrentUser protection once, writes valid/tampered ciphertext files, performs valid unlock/sign/verify, audits argv/stdin boundaries, and checks lock/sign refusal", "effectIds": ["E-WIN-HARNESS", "E-WIN-KEY", "E-WIN-PROTECT", "E-WIN-ADAPTER"], "onFailure": "cleanup-then-stop"},
     {"id": "S4", "description": "within the same harness attempt, exercise tampered ciphertext, wrong entropy, missing-file availability, and no-fallback behavior without creating another key, directory, helper, or ciphertext file", "effectIds": ["E-WIN-ADAPTER"], "onFailure": "cleanup-then-stop"},
@@ -55,10 +56,11 @@
   "forbiddenEffects": [
     "LocalMachine DPAPI, another Windows account/profile, production identity material, or private bytes in argv, files, logs, GitHub, or report text",
     "service/task registration, profile changes, ACL/policy changes, elevation, prompts, restarts, installs, downloads, retries, or a second key/helper/scratch directory",
-    "provider source changes, broad cleanup, self-review, self-merge, or force-push"
+    "provider source changes, broad cleanup, any fetch other than the single exact origin/main fetch, self-review, self-merge, or force-push"
   ],
   "gates": [
-    "contract validator returns ok=true and the digest matches issue 87 before any write",
+    "after the single exact origin/main fetch, both pinned commits are reachable and GitHub reports PRs 85, 89, and 90 merged",
+    "contract validator loaded from the pinned base returns ok=true and its canonical digest matches issue 87 before branch creation or host mutation; whitespace and CRLF are not hashed directly",
     "CurrentUser valid sign/verify succeeds through the real provider at base 7375d4c7e042ada2b404b8590b5547f58044cc11",
     "tampered ciphertext, wrong entropy, missing file, and lock/sign attempts fail closed without fallback",
     "the report contains no private value, ciphertext, raw host identity, personal path, or raw native diagnostic",

@@ -157,7 +157,7 @@ class ExecutionContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         expected = {
             "CR5C9Q_MACOS_KEYCHAIN_V1.json": "c0742f563b9fe20f590b19be85e4a466dd23b89d18f77d6dcb841569115ac50e",
-            "CR5C9Q_WINDOWS_DPAPI_V1.json": "2c1f99337caa7817b363841e277edb34d851455f9f1a7874f36a7b876107504f",
+            "CR5C9Q_WINDOWS_DPAPI_V1.json": "a1ccc72c5bf478ec8b12964b2e3edd43ec65527e95e15ad92be0e17163fbc04e",
             "CR5C9Q_LINUX_ENCRYPTED_FILE_V1.json": "63af12ff3bf270dd6186496966589a2bf2d0d77f448ffb40ab65520fd5f63390",
         }
         for filename, digest in expected.items():

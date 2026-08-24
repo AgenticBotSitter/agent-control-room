@@ -51,7 +51,8 @@ Worst-case maxima: `E-GIT=2`, `E-GITHUB-READ=6`, `E-GITHUB-WRITE=4`, `E-CONTRACT
 ## Packet B — Windows DPAPI CurrentUser / issue #87
 
 Contract: `docs/qualification-packets/CR5C9Q_WINDOWS_DPAPI_V1.json`  
-Digest: `2c1f99337caa7817b363841e277edb34d851455f9f1a7874f36a7b876107504f`
+Packet revision: `CR-5C.9-Q-windows-dpapi-v2` (adds an exact stale-clone bootstrap fetch and canonical-digest instructions)
+Digest: `a1ccc72c5bf478ec8b12964b2e3edd43ec65527e95e15ad92be0e17163fbc04e`
 Worker/branch: Ziggy / `worker/ziggy/87-windows-dpapi-requalification`
 
 Required pre-existing tools: Python 3, Node 22+, installed repository dependencies/`tsx`, Windows PowerShell at the provider's fixed path, .NET `System.Security`, Git, authenticated GitHub tooling, and the ordinary interactive Hermes account with its CurrentUser profile loaded. Missing any item blocks before writes.

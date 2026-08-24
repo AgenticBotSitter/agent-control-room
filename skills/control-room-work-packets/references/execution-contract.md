@@ -2,6 +2,8 @@
 
 The architect writes this JSON before dispatch and validates it. The worker copies it exactly, records the validator digest, and does not act if any required effect is absent. This contract prevents setup, retries, diagnostics, and cleanup from being inferred after the fact.
 
+The digest is SHA-256 of the parsed JSON object re-serialized with sorted keys, compact separators, UTF-8, and no ASCII escaping. It is not a hash of fenced Markdown, whitespace, indentation, or CRLF/LF bytes.
+
 ## Required shape
 
 ```json
@@ -87,6 +89,7 @@ The architect writes this JSON before dispatch and validates it. The worker copi
 ## Authoring rules
 
 - Write a full 40-character immutable base commit.
+- If a worker clone may have stale remote-tracking refs, include a separate bootstrap-fetch effect naming the exact remote/ref, occurrence maximum, and immutable commits that must become reachable. A generic GitHub-read effect does not authorize a fetch.
 - Give every mutable or external action an effect ID. This includes coordination writes, checkout creation, dependencies, downloads, caches, helper source/binaries, generated keys, files, prompts, persistent choices, restarts, diagnostics, and cleanup.
 - Set environment controls explicitly to `forbidden`, `preexisting-only`, or `authorized`. `authorized` requires effect IDs; the other policies forbid effect IDs.
 - Count the worst case, not the hoped-for successful path. If three fault cases require three separately created files, authorize three. Prefer one artifact mutated and restored when that is safe, explicit, and supported by the step mapping.
