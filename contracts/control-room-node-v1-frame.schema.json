@@ -637,6 +637,12 @@
               "maxLength": 160,
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
             },
+            "nodeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
             "jobId": {
               "type": "string",
               "minLength": 1,
@@ -720,6 +726,15 @@
                     "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
                   }
                 },
+                "filesystemRoots": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
                 "networkPolicy": {
                   "type": "string",
                   "enum": [
@@ -732,9 +747,8 @@
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "minLength": 3,
-                    "maxLength": 180,
-                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    "minLength": 1,
+                    "maxLength": 300
                   }
                 },
                 "effectPolicy": {
@@ -745,10 +759,24 @@
                     "approval_required"
                   ]
                 },
+                "maxRisk": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "critical"
+                  ]
+                },
                 "maxDurationSeconds": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 31536000
+                },
+                "maxConcurrentEffects": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
                 },
                 "maxCostUsd": {
                   "type": "number",
@@ -773,10 +801,13 @@
                 "allowedExecutor",
                 "allowedOperations",
                 "credentialRefs",
+                "filesystemRoots",
                 "networkPolicy",
                 "allowedNetworkDestinations",
                 "effectPolicy",
+                "maxRisk",
                 "maxDurationSeconds",
+                "maxConcurrentEffects",
                 "expiresAt",
                 "digest"
               ],
@@ -785,6 +816,7 @@
           },
           "required": [
             "offerId",
+            "nodeId",
             "jobId",
             "attemptId",
             "proposedLeaseEpoch",
@@ -1095,6 +1127,12 @@
               "maxLength": 160,
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
             },
+            "nodeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
             "jobId": {
               "type": "string",
               "minLength": 1,
@@ -1131,17 +1169,142 @@
             "authorityDigest": {
               "type": "string",
               "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "authority": {
+              "type": "object",
+              "properties": {
+                "projectId": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 180,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "allowedExecutor": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 180,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "allowedOperations": {
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 180,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                  }
+                },
+                "credentialRefs": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 180,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                  }
+                },
+                "filesystemRoots": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "networkPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "allowlist"
+                  ]
+                },
+                "allowedNetworkDestinations": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  }
+                },
+                "effectPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "preauthorized",
+                    "approval_required"
+                  ]
+                },
+                "maxRisk": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "critical"
+                  ]
+                },
+                "maxDurationSeconds": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 31536000
+                },
+                "maxConcurrentEffects": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "maxCostUsd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "parentDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "projectId",
+                "allowedExecutor",
+                "allowedOperations",
+                "credentialRefs",
+                "filesystemRoots",
+                "networkPolicy",
+                "allowedNetworkDestinations",
+                "effectPolicy",
+                "maxRisk",
+                "maxDurationSeconds",
+                "maxConcurrentEffects",
+                "expiresAt",
+                "digest"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
             "offerId",
+            "nodeId",
             "jobId",
             "attemptId",
             "leaseId",
             "leaseEpoch",
             "acquiredAt",
             "expiresAt",
-            "authorityDigest"
+            "authorityDigest",
+            "authority"
           ],
           "additionalProperties": false
         }
@@ -1268,6 +1431,12 @@
         "body": {
           "type": "object",
           "properties": {
+            "nodeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
             "jobId": {
               "type": "string",
               "minLength": 1,
@@ -1300,15 +1469,145 @@
               "type": "string",
               "format": "date-time",
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "authorityDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "authority": {
+              "type": "object",
+              "properties": {
+                "projectId": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 180,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "allowedExecutor": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 180,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "allowedOperations": {
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 180,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                  }
+                },
+                "credentialRefs": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 180,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                  }
+                },
+                "filesystemRoots": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "networkPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "allowlist"
+                  ]
+                },
+                "allowedNetworkDestinations": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  }
+                },
+                "effectPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "preauthorized",
+                    "approval_required"
+                  ]
+                },
+                "maxRisk": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "critical"
+                  ]
+                },
+                "maxDurationSeconds": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 31536000
+                },
+                "maxConcurrentEffects": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "maxCostUsd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "parentDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "projectId",
+                "allowedExecutor",
+                "allowedOperations",
+                "credentialRefs",
+                "filesystemRoots",
+                "networkPolicy",
+                "allowedNetworkDestinations",
+                "effectPolicy",
+                "maxRisk",
+                "maxDurationSeconds",
+                "maxConcurrentEffects",
+                "expiresAt",
+                "digest"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
+            "nodeId",
             "jobId",
             "attemptId",
             "leaseId",
             "leaseEpoch",
             "renewedAt",
-            "expiresAt"
+            "expiresAt",
+            "authorityDigest",
+            "authority"
           ],
           "additionalProperties": false
         }

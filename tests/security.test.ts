@@ -66,7 +66,7 @@ function effectRecords() {
     definitionVersion: "1.0.0", definitionDigest: hashA, authorityMode: "control_room_native", state: "proposed",
     jobIds: ["job:security"],
   };
-  const authority: JobRecord["authority"] = { projectId: workflow.projectId, allowedExecutor: "executor:synthetic", allowedOperations: ["publish:draft"], credentialRefs: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "approval_required", maxDurationSeconds: 300, expiresAt: t10, digest: hashB };
+  const authority: JobRecord["authority"] = { projectId: workflow.projectId, allowedExecutor: "executor:synthetic", allowedOperations: ["publish:draft"], credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "approval_required", maxRisk: "high", maxDurationSeconds: 300, maxConcurrentEffects: 1, expiresAt: t10, digest: hashB };
   authority.digest = computeAuthorityDigest(authority);
   const job: JobRecord = {
     ...common, kind: "job", id: "job:security", workflowId: workflow.id, projectId: workflow.projectId,

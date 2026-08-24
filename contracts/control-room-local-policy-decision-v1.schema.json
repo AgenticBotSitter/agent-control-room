@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-room.invalid/contracts/control-room-local-policy-decision-v1.schema.json",
+  "title": "Control Room local policy decision v1",
+  "description": "Generated from control-room-node-policy/v1 strict validators. Cryptographic digest/signature and cross-artifact invariants are enforced by contract code and tests.",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "type": "string",
+          "const": "control-room-node-policy/v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 180,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "requestDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "ceilingDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "authorityDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        "accepted": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "contractVersion",
+        "requestId",
+        "requestDigest",
+        "ceilingDigest",
+        "authorityDigest",
+        "decidedAt",
+        "accepted"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "type": "string",
+          "const": "control-room-node-policy/v1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 180,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "requestDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "ceilingDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "authorityDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        "accepted": {
+          "type": "boolean",
+          "const": false
+        },
+        "detail": {
+          "type": "string",
+          "enum": [
+            "ceiling_missing",
+            "ceiling_tampered",
+            "ceiling_rollback",
+            "authority_invalid",
+            "authority_expired",
+            "authority_not_yet_valid",
+            "executor_not_allowed",
+            "operation_not_allowed",
+            "credential_not_allowed",
+            "filesystem_target_not_allowed",
+            "network_destination_not_allowed",
+            "risk_exceeded",
+            "effect_policy_exceeded",
+            "approval_missing",
+            "approval_invalid",
+            "approval_expired",
+            "duration_exceeded",
+            "cost_unmeasurable",
+            "cost_exceeded",
+            "concurrency_exceeded",
+            "keystore_unavailable",
+            "paused",
+            "effect_in_progress",
+            "effect_ambiguous",
+            "storage_unavailable"
+          ]
+        },
+        "wireCategory": {
+          "type": "string",
+          "enum": [
+            "policy",
+            "expired",
+            "approval_required",
+            "effect_in_progress",
+            "ambiguous",
+            "maintenance",
+            "storage"
+          ]
+        }
+      },
+      "required": [
+        "contractVersion",
+        "requestId",
+        "requestDigest",
+        "ceilingDigest",
+        "authorityDigest",
+        "decidedAt",
+        "accepted",
+        "detail",
+        "wireCategory"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

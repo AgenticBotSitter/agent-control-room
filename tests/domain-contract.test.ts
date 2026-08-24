@@ -47,10 +47,13 @@ const authority = {
   allowedExecutor: "executor:test",
   allowedOperations: ["operation:read"],
   credentialRefs: [],
+  filesystemRoots: [],
   networkPolicy: "none" as const,
   allowedNetworkDestinations: [],
   effectPolicy: "none" as const,
+  maxRisk: "low" as const,
   maxDurationSeconds: 300,
+  maxConcurrentEffects: 0,
   expiresAt: later,
   digest: digestA,
 };
@@ -111,10 +114,10 @@ test("delegated authority may narrow but cannot expand its parent", () => {
   const narrowed = { ...authority, allowedOperations: ["operation:read"], maxDurationSeconds: 120, parentDigest: authority.digest, digest: digestB };
   assert.deepEqual(compareDelegatedAuthority(authority, narrowed), { allowed: true, violations: [] });
 
-  const expanded = { ...narrowed, networkPolicy: "allowlist" as const, allowedNetworkDestinations: ["destination:new"], credentialRefs: ["credential:new"], maxDurationSeconds: 600 };
+  const expanded = { ...narrowed, networkPolicy: "allowlist" as const, allowedNetworkDestinations: ["destination:new"], credentialRefs: ["credential:new"], filesystemRoots: ["/outside"], maxRisk: "high" as const, maxDurationSeconds: 600, maxConcurrentEffects: 1 };
   const comparison = compareDelegatedAuthority(authority, expanded);
   assert.equal(comparison.allowed, false);
-  assert.deepEqual(comparison.violations.sort(), ["credential_scope_expanded", "duration_expanded", "network_destination_expanded", "network_scope_expanded"]);
+  assert.deepEqual(comparison.violations.sort(), ["concurrency_expanded", "credential_scope_expanded", "duration_expanded", "filesystem_scope_expanded", "network_destination_expanded", "network_scope_expanded", "risk_expanded"]);
 });
 
 test("validators reject mismatched authority and unsafe effect/artifact records", () => {

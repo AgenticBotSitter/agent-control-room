@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite, type DatabaseClient } from "../src/persistence/database.ts";
-import { sha256Digest } from "../src/security/index.ts";
+import { computeAuthorityDigest, sha256Digest } from "../src/security/index.ts";
 import {
   DatabaseNodeKeyResolver,
   DatabaseReplayGuard,
@@ -162,16 +162,17 @@ test("every CR-5A connection, heartbeat, offer, lease, event, cancellation, and 
   const lease = { jobId: "job:1", attemptId: "attempt:1", leaseId: "lease:1", leaseEpoch: 1 };
   const authority = {
     projectId: "project:1", allowedExecutor: "executor:synthetic", allowedOperations: ["synthetic:run"], credentialRefs: [],
-    networkPolicy: "none" as const, allowedNetworkDestinations: [], effectPolicy: "none" as const,
-    maxDurationSeconds: 300, expiresAt: t2, digest: hashA,
+    filesystemRoots: [], networkPolicy: "none" as const, allowedNetworkDestinations: [], effectPolicy: "none" as const,
+    maxRisk: "low" as const, maxDurationSeconds: 300, maxConcurrentEffects: 0, expiresAt: t2, digest: hashA,
   };
+  authority.digest = computeAuthorityDigest(authority);
   const cases: Array<{ type: NodeMessageType; direction: "node_to_server" | "server_to_node"; body: unknown }> = [
     { type: "connection.accepted", direction: "server_to_node", body: { selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: ["reconciliation"], maxFrameBytes: 65_536, heartbeatIntervalSeconds: 30, serverTime: t1 } },
     { type: "node.heartbeat", direction: "node_to_server", body: { observedAt: t1, health: "healthy", policyVersion: "policy:v1", activeAttemptIds: [], resources: { freeMemoryMb: 1, freeScratchMb: 1, cpuUtilizationPercent: 1 } } },
-    { type: "job.offer", direction: "server_to_node", body: { offerId: "offer:1", jobId: lease.jobId, attemptId: lease.attemptId, proposedLeaseEpoch: 1, offerExpiresAt: t2, jobType: "synthetic:test", specVersion: "1.0.0", inputDigest: hashA, artifactManifestIds: [], authority } },
+    { type: "job.offer", direction: "server_to_node", body: { offerId: "offer:1", nodeId: "node:mac-mini", jobId: lease.jobId, attemptId: lease.attemptId, proposedLeaseEpoch: 1, offerExpiresAt: t2, jobType: "synthetic:test", specVersion: "1.0.0", inputDigest: hashA, artifactManifestIds: [], authority } },
     { type: "job.offer.decision", direction: "node_to_server", body: { offerId: "offer:1", jobId: lease.jobId, attemptId: lease.attemptId, decision: "accepted" } },
-    { type: "job.lease.grant", direction: "server_to_node", body: { offerId: "offer:1", ...lease, acquiredAt: t1, expiresAt: t2, authorityDigest: hashA } },
-    { type: "job.lease.renewed", direction: "server_to_node", body: { ...lease, renewedAt: t1, expiresAt: t2 } },
+    { type: "job.lease.grant", direction: "server_to_node", body: { offerId: "offer:1", nodeId: "node:mac-mini", ...lease, acquiredAt: t1, expiresAt: t2, authorityDigest: authority.digest, authority } },
+    { type: "job.lease.renewed", direction: "server_to_node", body: { nodeId: "node:mac-mini", ...lease, renewedAt: t1, expiresAt: t2, authorityDigest: authority.digest, authority } },
     { type: "job.event", direction: "node_to_server", body: { ...lease, event: "started", sequence: 1, occurredAt: t1, artifactManifestIds: [] } },
     { type: "job.cancel", direction: "server_to_node", body: { ...lease, reasonCode: "owner_requested" } },
     { type: "job.cancel.ack", direction: "node_to_server", body: { ...lease, reasonCode: "owner_requested", disposition: "accepted" } },

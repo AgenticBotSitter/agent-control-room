@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-room.invalid/contracts/control-room-executor-capability-v1.schema.json",
+  "title": "Control Room executor capability v1",
+  "description": "Generated from control-room-node-policy/v1 strict validators. Cryptographic digest/signature and cross-artifact invariants are enforced by contract code and tests.",
+  "type": "object",
+  "properties": {
+    "contractVersion": {
+      "type": "string",
+      "const": "control-room-node-policy/v1"
+    },
+    "executorId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 180,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+    },
+    "operationIds": {
+      "minItems": 1,
+      "maxItems": 2000,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 180,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      }
+    },
+    "targetKinds": {
+      "minItems": 1,
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "none",
+          "filesystem",
+          "network"
+        ]
+      }
+    },
+    "supportsCancellation": {
+      "type": "boolean"
+    },
+    "supportsNetworkIdentityEnforcement": {
+      "type": "boolean"
+    },
+    "costMeter": {
+      "type": "string",
+      "enum": [
+        "none",
+        "monotonic_reservable"
+      ]
+    }
+  },
+  "required": [
+    "contractVersion",
+    "executorId",
+    "operationIds",
+    "targetKinds",
+    "supportsCancellation",
+    "supportsNetworkIdentityEnforcement",
+    "costMeter"
+  ],
+  "additionalProperties": false
+}
