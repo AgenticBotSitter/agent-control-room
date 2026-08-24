@@ -184,6 +184,70 @@ test("Windows DPAPI adapter sends only ciphertext over stdin and signs after one
   await storeError(locked.unlock(),"locked");
 });
 
+test("Windows DPAPI adapter interoperates with CurrentUser and non-empty entropy", { skip: process.platform !== "win32" }, async () => {
+  const keys = generateKeyPairSync("ed25519");
+  const pkcs8 = Buffer.from(keys.privateKey.export({ format: "der",type: "pkcs8" }) as Buffer);
+  const entropy = Buffer.from("control-room-disposable-dpapi-entropy","utf8");
+  const protectInput = Buffer.from(JSON.stringify({
+    plain: pkcs8.toString("base64"),
+    entropy: entropy.toString("base64"),
+  }),"utf8");
+  const protectScript = `$ErrorActionPreference='Stop'
+$plain=$null
+$entropy=$null
+$blob=$null
+try {
+  Add-Type -AssemblyName System.Security
+  $payload=[Console]::In.ReadToEnd() | ConvertFrom-Json
+  $plain=[byte[]]([Convert]::FromBase64String([string]$payload.plain))
+  $entropy=[byte[]]([Convert]::FromBase64String([string]$payload.entropy))
+  $blob=[Security.Cryptography.ProtectedData]::Protect($plain,$entropy,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+  [Console]::Out.Write([Convert]::ToBase64String($blob))
+} catch {
+  [Console]::Error.Write('CONTROL_ROOM_DPAPI_PROTECT_FAILED')
+  exit 41
+} finally {
+  if ($null -ne $plain) {[Array]::Clear($plain,0,$plain.Length)}
+  if ($null -ne $entropy) {[Array]::Clear($entropy,0,$entropy.Length)}
+  if ($null -ne $blob) {[Array]::Clear($blob,0,$blob.Length)}
+}`;
+  const runner = new NodeSafeCommandRunner();
+  let ciphertext: Buffer | undefined;
+  let store: WindowsDpapiNodePrivateKeyStore | undefined;
+  try {
+    const protectedResult = await runner.run({
+      executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      args: ["-NoLogo","-NoProfile","-NonInteractive","-EncodedCommand",Buffer.from(protectScript,"utf16le").toString("base64")],
+      stdin: protectInput,
+      timeoutMilliseconds: 30_000,
+      maxOutputBytes: 32_768,
+    });
+    try {
+      assert.equal(protectedResult.exitCode,0);
+      ciphertext = Buffer.from(Buffer.from(protectedResult.stdout).toString("utf8").trim(),"base64");
+    } finally {
+      protectedResult.stdout.fill(0);
+      protectedResult.stderr.fill(0);
+    }
+    assert.ok(ciphertext.byteLength >= 16);
+    const loader: OpaqueBlobLoaderV1 = { availability: async () => "available",load: async () => Uint8Array.from(ciphertext!) };
+    const ref = reference("windows_dpapi_current_user","native");
+    store = new WindowsDpapiNodePrivateKeyStore(ref,clock(),loader,{ entropyLoader: async () => Uint8Array.from(entropy),runner });
+    await store.unlock();
+    const message = Buffer.from("real CurrentUser DPAPI signer");
+    assert.equal(verify(null,message,keys.publicKey,await store.sign(message)),true);
+  } finally {
+    try {
+      await store?.dispose();
+    } finally {
+      ciphertext?.fill(0);
+      protectInput.fill(0);
+      entropy.fill(0);
+      pkcs8.fill(0);
+    }
+  }
+});
+
 test("real command runner is no-shell, output-bounded, and maps process failures safely", async () => {
   const runner = new NodeSafeCommandRunner();
   const completed = await runner.run({

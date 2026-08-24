@@ -218,8 +218,8 @@ const dpapiUnprotectScript = `$ErrorActionPreference='Stop'
 try {
   Add-Type -AssemblyName System.Security
   $payload=[Console]::In.ReadToEnd() | ConvertFrom-Json
-  $blob=[Convert]::FromBase64String([string]$payload.blob)
-  $entropy=if ($null -eq $payload.entropy) {$null} else {[Convert]::FromBase64String([string]$payload.entropy)}
+  $blob=[byte[]]([Convert]::FromBase64String([string]$payload.blob))
+  $entropy=if ($null -eq $payload.entropy) {$null} else {[byte[]]([Convert]::FromBase64String([string]$payload.entropy))}
   $plain=[Security.Cryptography.ProtectedData]::Unprotect($blob,$entropy,[Security.Cryptography.DataProtectionScope]::CurrentUser)
   [Console]::Out.Write([Convert]::ToBase64String($plain))
   [Array]::Clear($plain,0,$plain.Length)
