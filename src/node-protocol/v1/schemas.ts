@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { authorityEnvelopeSchema } from "../../domain/v1";
-import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1";
+import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
 import { computeAuthorityDigest } from "../../security";
 import { NODE_PROTOCOL_MAX_FRAME_BYTES, NODE_PROTOCOL_V1 } from "./types";
 

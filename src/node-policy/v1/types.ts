@@ -49,6 +49,7 @@ export const protectedStoreFailureCodes = [
   "invalid_configuration",
   "invalid_bundle",
   "rollback_detected",
+  "recovery_required",
 ] as const;
 
 export type RiskClass = (typeof riskClasses)[number];
@@ -229,6 +230,19 @@ export interface KeyReferenceV1 {
   provider: NodePrivateKeyProvider;
   mode: NodePrivateKeyMode;
   algorithm: "Ed25519";
+}
+
+export interface PinnedOwnerKeyV1 {
+  keyId: string;
+  algorithm: "ed25519";
+  spki: string;
+  fingerprint: string;
+}
+
+export interface OwnerPinSetV1 {
+  ceilingProvisioningKey: PinnedOwnerKeyV1;
+  serverTrustRootKey: PinnedOwnerKeyV1;
+  trustShrinkKeys: PinnedOwnerKeyV1[];
 }
 
 export type SignedNodePolicyArtifactV1 = SignedNodeAuthorityCeilingV1 | OwnerSignedTrustBundleV1 | OwnerApprovalAttestationV1;

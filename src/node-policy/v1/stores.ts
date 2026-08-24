@@ -13,6 +13,7 @@ const safeMessages: Record<ProtectedStoreFailureCode, string> = {
   invalid_configuration: "Protected store configuration is invalid",
   invalid_bundle: "Signed trust bundle is invalid",
   rollback_detected: "Protected store rollback was detected",
+  recovery_required: "Protected store recovery requires the pending owner artifact",
 };
 
 export class ProtectedStoreError extends Error {

@@ -125,7 +125,9 @@ export const serverTrustBundleBodySchema = z.object({
 }).strict().superRefine((bundle, context) => {
   if (computeArtifactBodyDigest(bundle) !== bundle.bodyDigest) context.addIssue({ code: "custom", path: ["bodyDigest"], message: "trust bundle body digest mismatch" });
   const keyIds = bundle.keys.map((key) => key.keyId);
+  const publicKeys = bundle.keys.map((key) => key.spki);
   if (new Set(keyIds).size !== keyIds.length) context.addIssue({ code: "custom", path: ["keys"], message: "trust key IDs must be unique" });
+  if (new Set(publicKeys).size !== publicKeys.length) context.addIssue({ code: "custom", path: ["keys"], message: "trust public keys must be unique" });
   if (bundle.keys.every((key) => key.state !== "active")) context.addIssue({ code: "custom", path: ["keys"], message: "trust bundle requires an active key" });
   if (keyIds.some((keyId, index) => index > 0 && keyIds[index - 1] > keyId)) context.addIssue({ code: "custom", path: ["keys"], message: "trust keys must be sorted by keyId" });
 });
@@ -254,6 +256,23 @@ export const keyReferenceSchema = z.object({
 }).strict().superRefine((reference, context) => {
   const expectedMode = reference.provider === "encrypted_file" ? "encrypted_file" : reference.provider === "memory_test" ? "test" : "native";
   if (reference.mode !== expectedMode) context.addIssue({ code: "custom", path: ["mode"], message: "provider and mode must agree" });
+});
+
+export const pinnedOwnerKeySchema = z.object({
+  keyId: safeId,
+  algorithm: z.literal("ed25519"),
+  spki: base64url,
+  fingerprint: digest,
+}).strict();
+
+export const ownerPinSetSchema = z.object({
+  ceilingProvisioningKey: pinnedOwnerKeySchema,
+  serverTrustRootKey: pinnedOwnerKeySchema,
+  trustShrinkKeys: z.array(pinnedOwnerKeySchema).min(1).max(16),
+}).strict().superRefine((pins, context) => {
+  const keyIds = pins.trustShrinkKeys.map((key) => key.keyId);
+  if (new Set(keyIds).size !== keyIds.length) context.addIssue({ code: "custom", path: ["trustShrinkKeys"], message: "trust shrink key IDs must be unique" });
+  if (keyIds.some((keyId, index) => index > 0 && keyIds[index - 1] > keyId)) context.addIssue({ code: "custom", path: ["trustShrinkKeys"], message: "trust shrink keys must be sorted by keyId" });
 });
 
 export const signedNodePolicyArtifactSchema = z.union([

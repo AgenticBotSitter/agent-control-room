@@ -378,3 +378,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** A failed native provider requires an explicit operator configuration change. On the probed Linux VPS, encrypted-file is configured as the primary mode rather than discovered as a fallback.
 
 **Reevaluate:** A future owner-signed deployment policy may authorize a planned provider transition, but a node never makes that downgrade autonomously.
+
+## ADR-032 — Security artifact adoption uses an independent prepared high-water store
+
+**Decision:** A node persists the current signed ceiling and server-trust bundle in one SQLite database and their monotonic high-water records in a distinct SQLite database path. Adoption follows `verify -> prepare high-water -> commit artifact -> commit high-water -> acknowledge`. A prepared record names the exact signed-body digest. Initial provisioning is a separate owner-present operation. Operational adoption cannot create missing trust state.
+
+**Why:** Updating only the mutable artifact permits replay after rollback. Pretending two SQLite files share an atomic transaction would create a crash window. A durable prepared record instead converts every crash boundary into either deterministic completion or a fail-closed state that requires the exact pending owner artifact.
+
+**Alternatives rejected:** One mutable file with an adjacent version field; automatic regeneration when high-water state is missing; accepting the highest file found; server-directed bootstrap; online-key self-rotation; treating two databases as one atomic commit.
+
+**Trade-off:** A crash after prepare but before artifact commit temporarily locks that security object until the same signed owner artifact is supplied again. A same-UID attacker or coordinated rollback of both database files remains outside this mechanism's guarantee; CR-6 service isolation, ownership, backup, and host-hardening rehearsals must reduce that risk.
+
+**Reevaluate:** Replace the second SQLite store with a stronger platform monotonic primitive when a supported cross-platform mechanism is proven. Preserve the prepared-artifact recovery semantics and never migrate by silently resetting a high-water value.

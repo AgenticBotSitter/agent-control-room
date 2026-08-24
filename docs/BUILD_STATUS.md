@@ -20,17 +20,17 @@
 | CR-4Q independent review | Complete | 11 remediated high/medium findings, migration 0007, 46-test adversarial suite |
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
-| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1/5C.2 complete | Canonical security schemas plus separated protected-store/clock contracts, explicit provider selection, fakes, and bridge signing seam |
+| CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.3 complete | Canonical security contracts, protected-store seams, owner pins, and crash-safe monotonic ceiling/server-trust persistence |
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
 
 ```text
-Active: CR-5C — CR-5C.1 and CR-5C.2 complete; persistent monotonic security state is next
-Delivered this boundary: separate private-signing/server-trust/approval-trust interfaces, opaque key references and availability, fixed safe errors, explicit no-downgrade provider selection, injected system/test clocks, deterministic non-production fakes, and a key-ID-bound CR-5B frame signer
-Validation evidence: `tests/node-protected-stores.test.ts` plus policy/protocol/bridge regression suites and the full repository gate; implementation report is `docs/CR5C2_PROTECTED_STORE_CONTRACTS.md`
-Open risks: ceiling/trust persistence and monotonic adoption, protected-store platform implementations, Linux unwrap-secret delivery, policy intersection, effect admission, real timer behavior, real DNS/TLS enforcement, process-kill/concurrency rehearsal, and approval issuance remain explicit later gates
-Decision-log changes: ADR-031 forbids silent private-key-provider downgrade and unsafe unwrap-secret transports
+Active: CR-5C — CR-5C.1 through CR-5C.3 complete; pure local authority evaluation is next
+Delivered this boundary: out-of-band owner-pin verification, explicit owner-present bootstrap, separate artifact/high-water SQLite stores, prepared-digest crash recovery, monotonic ceiling and trust adoption, irreversible retired/revoked key history, and countersigned full active-key replacement
+Validation evidence: `tests/node-security-state.test.ts` covers forged artifacts, binding, tamper, rollback, lifecycle, and every write fault boundary; the full 90-test suite, lint, type check, 51-table migration verification, production build, and rendered HTML tests pass; implementation report is `docs/CR5C3_PERSISTENT_SECURITY_STATE.md`
+Open risks: coordinated rollback by a same-UID/host attacker, protected-store platform implementations, protected owner-pin deployment, Linux unwrap-secret delivery, policy intersection, effect admission, real timer behavior, real DNS/TLS enforcement, process-kill/concurrency rehearsal, and approval issuance remain explicit later gates
+Decision-log changes: ADR-032 selects independent prepared high-water persistence and exact-artifact recovery without pretending cross-file atomicity
 ```
 
 ## Parallel build lane
@@ -42,12 +42,12 @@ Local models are registered as `provisional` until the repository qualification 
 ## Next block
 
 ```text
-Block: CR-5C.3 — Crash-safe ceiling and server-trust persistence
+Block: CR-5C.4 — Pure authority intersection and denial privacy
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: rollback resistance, owner-root pinning, atomic bundle adoption, and recovery behavior are the persistent containment boundary against a compromised server
-Expected output: crash-safe local ceiling/trust repositories, independent monotonic high-water state, owner-pin verification seams, irreversible key lifecycle checks, recovery fixtures, and tamper/rollback tests
-Stop before: native platform private-key providers, authority evaluation, executor admission, effects, timers, target guards, or live integrations
+Why: this total deterministic evaluator is the core proof that a valid online server signature still cannot widen owner-configured machine authority
+Expected output: strict ceiling/lease/request intersection, exact identity and epoch binding, executor capability and key-availability checks, ordered risk/effect limits, duration/concurrency/measurable-cost enforcement, privacy-safe local-to-wire denial mapping, and exhaustive table/adversarial tests
+Stop before: durable admission, executor dispatch, effect claims, approval issuance, native platform providers, timers, filesystem/network I/O guards, or live integrations
 ```
 
 ## Update rule
