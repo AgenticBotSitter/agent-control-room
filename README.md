@@ -4,7 +4,7 @@ Control Room is a private, project-agnostic operations layer for coordinating pr
 
 ![Abstract Control Room routing preview](public/control-room-preview.png)
 
-This repository currently implements **CR-0 through CR-5B plus CR-5C.1 and CR-5C.2**. The remaining CR-5C enforcement slices are not yet implemented:
+This repository currently implements **CR-0 through CR-5B plus CR-5C.1 through CR-5C.9**; CR-5C.9H real-host qualification remains active. The phase summary below is architectural orientation. [Current build status](docs/BUILD_STATUS.md) is authoritative for completed slices, accepted evidence, and the next block.
 
 - **CR-0 — Contract:** versioned project-adapter types and schemas, authority boundaries, safe projections, cursors, idempotency, command receipts, and redaction rules.
 - **CR-1 — Read-only interface:** an all-project portfolio, attention queue, running work, blockers, worker and agent views, project drilldowns, worker history, and a deterministic capacity simulator.
@@ -74,6 +74,7 @@ pnpm test:build
 - [Research synthesis and build decisions](docs/RESEARCH_SYNTHESIS_AND_BUILD_DECISIONS.md)
 - [CR-3 architecture package](docs/CR3_INDEX.md)
 - [Current build status and next model setting](docs/BUILD_STATUS.md)
+- [Mac Codex handoff](docs/CODEX_MAC_HANDOFF.md)
 - [Hermes delegation and GitHub bootstrap playbook](docs/HERMES_DELEGATION_PLAYBOOK.md)
 - [CR-4A canonical domain contract](docs/CR4A_DOMAIN_CONTRACT.md)
 - [CR-4A verification](docs/CR4A_VERIFICATION.md)
