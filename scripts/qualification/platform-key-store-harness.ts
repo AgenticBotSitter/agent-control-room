@@ -31,6 +31,16 @@ import {
 
 type HarnessPlatform = "windows" | "macos" | "linux";
 type CaseStatus = "pass" | "fail" | "blocked";
+type MacosQualificationStage =
+  | "platform_guard"
+  | "fixture_compile"
+  | "fixture_add"
+  | "availability_probe"
+  | "key_unlock"
+  | "sign_verify"
+  | "primary_delete"
+  | "missing_probe"
+  | "cleanup_delete";
 
 interface CaseResultV1 {
   id: string;
@@ -55,6 +65,7 @@ const FIXED_MESSAGE = Buffer.from("control-room CR-5C.9H qualification", "utf8")
 const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptDirectory = resolve(fileURLToPath(new URL(".", import.meta.url)));
+let macosQualificationStage: MacosQualificationStage | undefined;
 
 const dpapiProtectScript = `$ErrorActionPreference='Stop'
 $plain=$null
@@ -427,6 +438,7 @@ async function linuxQualification(scratch: string): Promise<QualificationResultV
 }
 
 async function macosQualification(scratch: string, service: string, account: string): Promise<QualificationResultV1> {
+  macosQualificationStage = "platform_guard";
   if (process.platform !== "darwin") throw new ProtectedStoreError("unavailable_platform");
   const helperSource = join(scriptDirectory, "macos-keychain-fixture.swift");
   const helperBinary = join(scratch, "macos-keychain-fixture");
@@ -438,7 +450,9 @@ async function macosQualification(scratch: string, service: string, account: str
   let itemCreated = false;
   let result: QualificationResultV1 | undefined;
   let failure: unknown;
+  let failureStage: MacosQualificationStage | undefined;
   try {
+    macosQualificationStage = "fixture_compile";
     const compile = await new NodeSafeCommandRunner().run({
       executable: "/usr/bin/swiftc",
       args: [helperSource, "-framework", "Security", "-o", helperBinary],
@@ -451,6 +465,7 @@ async function macosQualification(scratch: string, service: string, account: str
       compile.stdout.fill(0);
       compile.stderr.fill(0);
     }
+    macosQualificationStage = "fixture_add";
     const add = await new NodeSafeCommandRunner().run({
       executable: helperBinary,
       args: ["add", service, account],
@@ -470,15 +485,19 @@ async function macosQualification(scratch: string, service: string, account: str
     const store = createNodePrivateKeyStore({
       platform: "darwin", provider: "macos_keychain", runtimeMode: "production", reference: ref,
     }, { clock: new SystemClock(), macos: { service, account, runner } });
+    macosQualificationStage = "availability_probe";
     const state = (await store.availability()).state;
     cases.push({ id: "availability", status: state === "available" ? "pass" : "fail", category: state });
     process.stderr.write("CONTROL_ROOM_MACOS_ALLOW_ONCE_WINDOW\n");
+    macosQualificationStage = "key_unlock";
     await store.unlock();
+    macosQualificationStage = "sign_verify";
     cases.push({ id: "sign_verify", status: verify(null, FIXED_MESSAGE, keys.publicKey, await store.sign(FIXED_MESSAGE)) ? "pass" : "fail", category: "ed25519" });
     await store.lock();
     cases.push({ ...(await expectStoreError(store.sign(FIXED_MESSAGE), "key_not_unlocked")), id: "lock_sign_refusal" });
     await store.dispose();
 
+    macosQualificationStage = "primary_delete";
     const deletion = await new NodeSafeCommandRunner().run({
       executable: "/usr/bin/security",
       args: ["delete-generic-password", "-s", service, "-a", account],
@@ -495,6 +514,7 @@ async function macosQualification(scratch: string, service: string, account: str
     const missing = createNodePrivateKeyStore({
       platform: "darwin", provider: "macos_keychain", runtimeMode: "production", reference: ref,
     }, { clock: new SystemClock(), macos: { service, account, runner } });
+    macosQualificationStage = "missing_probe";
     const missingState = (await missing.availability()).state;
     cases.push({ id: "missing_mapping", status: missingState === "missing" ? "pass" : "fail", category: missingState });
     await missing.dispose();
@@ -518,10 +538,12 @@ async function macosQualification(scratch: string, service: string, account: str
     };
   } catch (error) {
     failure = error;
+    failureStage = macosQualificationStage;
   }
   try {
     secret.fill(0);
     if (itemCreated) {
+      macosQualificationStage = "cleanup_delete";
       const cleanup = await new NodeSafeCommandRunner().run({
         executable: "/usr/bin/security",
         args: ["delete-generic-password", "-s", service, "-a", account],
@@ -530,13 +552,21 @@ async function macosQualification(scratch: string, service: string, account: str
       });
       cleanup.stdout.fill(0);
       cleanup.stderr.fill(0);
-      if (cleanup.exitCode !== 0) failure = new ProtectedStoreError("permission_denied");
+      if (cleanup.exitCode !== 0) {
+        failure = new ProtectedStoreError("permission_denied");
+        failureStage = "cleanup_delete";
+      }
     }
   } catch {
     failure = new ProtectedStoreError("permission_denied");
+    failureStage = "cleanup_delete";
   }
-  if (failure) throw failure;
+  if (failure) {
+    macosQualificationStage = failureStage;
+    throw failure;
+  }
   if (!result) throw new ProtectedStoreError("unavailable_platform");
+  macosQualificationStage = undefined;
   return result;
 }
 
@@ -589,6 +619,7 @@ main().catch((error: unknown) => {
   process.stdout.write(`${JSON.stringify({
     schema: "control-room.platform-key-store-qualification-error/v1",
     category: safeCategory(error),
+    ...(macosQualificationStage === undefined ? {} : { qualificationStage: macosQualificationStage }),
   })}\n`);
   process.exitCode = 1;
 });

@@ -37,6 +37,11 @@ test("qualification harness is pinned to the real provider factory and committed
   assert.match(source, /createNodePrivateKeyStore/);
   assert.match(source, /from "\.\.\/\.\.\/src\/node-policy\/v1\/index\.ts"/);
   assert.match(source, /macos-keychain-fixture\.swift/);
+  assert.match(source, /qualificationStage: macosQualificationStage/);
+  for (const stage of [
+    "platform_guard", "fixture_compile", "fixture_add", "availability_probe", "key_unlock",
+    "sign_verify", "primary_delete", "missing_probe", "cleanup_delete",
+  ]) assert.match(source, new RegExp(`macosQualificationStage = "${stage}"`));
   assert.doesNotMatch(source, /Always Allow/i);
   assert.doesNotMatch(source, /\.\.\/\.\.\/src\/node-policy\/v1\/native-key-stores/);
   assert.match(swift, /standardInput\.readDataToEndOfFile/);
