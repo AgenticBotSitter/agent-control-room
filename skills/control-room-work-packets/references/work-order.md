@@ -1,6 +1,6 @@
 # Work-order contract
 
-The architect writes task-specific instructions in the GitHub issue. The worker does not fill in missing authority or rewrite the order to fit the host.
+The architect commits task-specific instructions as a V2 capsule and may mirror them in a GitHub issue. The capsule controls when the issue differs. The worker does not fill in missing authority or rewrite the order to fit the host.
 
 ## Required fields
 
@@ -9,14 +9,15 @@ Every actionable order states:
 - **Mode:** `standard-work`, `platform-validation`, `controlled-effect`, or `independent-review`.
 - **Objective:** one concrete deliverable and why it is delegated.
 - **Owner:** named worker/machine route.
-- **Base and branch:** full immutable base commit and exact fresh branch.
-- **Allowed paths:** exact committed paths or a narrow directory boundary.
+- **Wave and status:** named frozen wave and a capsule status of `ready` or `assigned`.
+- **Base and branches:** full immutable product-base commit, exact `integration/<block>` target, and exact fresh `agent/<route>/<capsule>` branch.
+- **Allowed paths:** exact committed product paths; directory boundaries and globs are invalid in V2.
 - **Owned inputs:** immutable files, PR heads, schemas, harnesses, fixtures, or references.
 - **Acceptance:** observable results and exact validation commands.
 - **Repair budget:** what may be corrected, how many iterations, and what requires architect return.
 - **Environment boundary:** pre-existing tools, allowed setup, network, dependencies, temporary files, and external effects.
 - **Stop boundary:** actions and outcomes that end the assignment.
-- **Handoff:** required PR/report/evidence and reviewer.
+- **Handoff:** canonical result-manifest path, separate implementation and metadata-only commits, required PR/report/evidence, and verifier.
 
 The issue may link a repository runbook or executable harness for complex mechanics. Keep reusable behavior in the skill, job facts in the order, and fragile procedures in versioned repository code. Do not create a new skill per job.
 
@@ -26,9 +27,10 @@ Post a concise response before branch creation:
 
 ```text
 WORK ORDER READY
+wave/capsule/status: <exact>
 mode: <declared mode>
 worker/model/host class: <actual>
-base/branch: <exact>
+product base/integration target/producer branch: <exact>
 allowed paths: <exact>
 readiness or validation tools: <versions/status>
 repair budget: <exact>
@@ -43,4 +45,3 @@ If a required value differs, post `WORK ORDER BLOCKED` with the mismatch and sto
 - `not met` — the task ran within authority but an acceptance check failed.
 - `blocked` — a prerequisite or external state prevented safe execution.
 - `rejected — authorization deviation` — work crossed a path, effect, identity, independence, or retry boundary.
-

@@ -1,5 +1,5 @@
-name: Hermes work order
-description: Assign mode-proportional, reviewable work to a Hermes or other external worker.
+name: Agent build capsule view
+description: Human-readable view of a Codex-authored V2 capsule. This form alone never authorizes work.
 title: "[WORK] "
 labels:
   - work-packet
@@ -7,7 +7,14 @@ body:
   - type: markdown
     attributes:
       value: |
-        Do not include secrets, tokens, private production data, or mutable artifact URLs. One worker and one isolated branch per packet.
+        Codex authors this issue from a committed V2 capsule. Agents must not self-assign or start from this form alone. Do not include secrets, tokens, private production data, or mutable artifact URLs. One producer, one isolated branch, and a separate verifier when required.
+  - type: input
+    id: v2_capsule
+    attributes:
+      label: V2 capsule path and wave
+      description: Exact committed coordination/agent-build/capsules/<id>.json path and wave ID. Capsule status must be ready.
+    validations:
+      required: true
   - type: input
     id: cr_block
     attributes:
@@ -75,8 +82,8 @@ body:
   - type: textarea
     id: base_branch
     attributes:
-      label: Immutable base and exact branch
-      description: Give the full 40-character base commit, exact bootstrap fetch if needed, and required fresh worker branch.
+      label: Immutable product base, integration target, and producer branch
+      description: Give the full 40-character product-base commit, integration/<block> target, exact bootstrap fetch if needed, and agent/<route>/<capsule> producer branch.
     validations:
       required: true
   - type: textarea
@@ -126,8 +133,9 @@ body:
           required: true
         - label: Codex/Sol review is required before merge.
           required: true
+        - label: The result will use separate implementation and metadata-only commits and will target the capsule's integration branch, never main.
+          required: true
         - label: The declared work mode, repair/readiness budget, environment boundary, and stop conditions are proportional to the actual risk.
           required: true
         - label: Controlled-effect mode includes a passing execution-contract validator digest and complete effect/cleanup accounting; other modes do not imitate that ledger.
           required: true
-

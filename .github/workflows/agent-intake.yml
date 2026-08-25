@@ -1,0 +1,42 @@
+name: Agent intake gate
+
+on:
+  pull_request:
+    branches:
+      - "integration/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-agent-result:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted intake gate from target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          path: trusted-base
+      - name: Check out candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: candidate
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+      - name: Validate capsule and result
+        working-directory: candidate
+        env:
+          TARGET_BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          TARGET_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: >-
+          node ../trusted-base/scripts/validate-agent-intake.mjs
+          --discover-base "$TARGET_BASE"
+          --head "$HEAD_SHA"
+          --branch "$HEAD_BRANCH"
+          --target "$TARGET_BRANCH"
