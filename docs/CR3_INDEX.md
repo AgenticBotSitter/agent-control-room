@@ -1,6 +1,6 @@
 # CR-3 architecture package
 
-**Status:** Accepted 2026-08-22
+**Status:** Accepted 2026-08-22; operator-workflow amendment accepted 2026-08-24
 **Result:** Research is complete enough to architect; live integration tests are assigned to their implementation phases.
 
 ## Read in this order
@@ -13,12 +13,14 @@
 6. [Architecture decision log](CR3_DECISION_LOG.md)
 7. [Phased build plan](CR3_BUILD_PLAN.md)
 8. [Research synthesis and build decisions](RESEARCH_SYNTHESIS_AND_BUILD_DECISIONS.md)
-9. [Current build status and next model setting](BUILD_STATUS.md)
-10. [Hermes delegation and GitHub bootstrap playbook](HERMES_DELEGATION_PLAYBOOK.md)
-11. [CR-4A canonical domain contract](CR4A_DOMAIN_CONTRACT.md)
-12. [CR-4A verification](CR4A_VERIFICATION.md)
-13. [CR-4B transaction design](CR4B_TRANSACTION_DESIGN.md)
-14. [CR-4B verification](CR4B_VERIFICATION.md)
+9. [Zide and Devin workflow research amendment](COMPETITOR_WORKFLOW_RESEARCH_ZIDE_DEVIN.md)
+10. [Source provenance and repository completeness](CONTROL_ROOM_SOURCE_PROVENANCE.md)
+11. [Current build status and next model setting](BUILD_STATUS.md)
+12. [Hermes delegation and GitHub bootstrap playbook](HERMES_DELEGATION_PLAYBOOK.md)
+13. [CR-4A canonical domain contract](CR4A_DOMAIN_CONTRACT.md)
+14. [CR-4A verification](CR4A_VERIFICATION.md)
+15. [CR-4B transaction design](CR4B_TRANSACTION_DESIGN.md)
+16. [CR-4B verification](CR4B_VERIFICATION.md)
 
 ## Proposed owner approvals
 
@@ -37,6 +39,12 @@ Approving CR-3 accepts these directions, not a live deployment:
 - independent project, harness, executor, and infrastructure adapters;
 - typed executors rather than a default general remote shell;
 - synthetic cross-machine proof before live project integrations.
+- one cross-harness Action Inbox and Session Watch projection;
+- workflow preview before fan-out;
+- review, verification, revision, preference, and exact-operation approval as distinct concepts;
+- bounded Completion Gates with independent review and claim-bound evidence;
+- versioned procedure and knowledge registries that cannot grant authority;
+- proprietary agent products integrated only through adapter/client boundaries.
 
 ## Information not required yet
 

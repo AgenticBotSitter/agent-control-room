@@ -142,6 +142,8 @@ The manifest declares:
 
 Unsupported verbs are explicit, never simulated deceptively.
 
+Each started native session maps to a normalized harness run beneath one attempt. The run retains the opaque native session identifier, lifecycle state, safe structured events, usage, resumability, cancellation state, parent/fork lineage, and protected deep link. Raw transcripts and unrestricted tool output remain harness-local unless a project explicitly authorizes a redacted artifact.
+
 ### Hermes v1 seam
 
 - Spawn a pinned Hermes process and speak `tui_gateway` newline-delimited JSON-RPC over stdio for the execution lifecycle.
@@ -197,6 +199,18 @@ The existing `control-room-project-adapter/v1` remains valid for projections and
 
 A project pack never receives core database access or silently expands node policy. Its workflow output is validated before activation.
 
+## Procedure and knowledge package contract
+
+Procedure packages and knowledge bundles use a shared signed/digested package envelope but different schemas:
+
+- procedures declare steps, expected outputs, checks, correction guidance, and compatible capabilities;
+- knowledge declares facts, references, provenance, scope, and freshness;
+- both declare immutable version, body digest, publisher, trust state, harness compatibility, and dependencies;
+- neither carries credentials, grants, policy overrides, or authority;
+- promotion, rollback, deprecation, and run usage are auditable.
+
+Harness adapters map an accepted package to the native skill, playbook, instruction-file, or context mechanism and report unsupported semantics rather than silently dropping them.
+
 ## Northbound MCP contract
 
 Initial tools should remain small and typed:
@@ -210,6 +224,10 @@ Initial tools should remain small and typed:
 - `jobs.delegate`
 - `jobs.status`
 - `attention.list`
+- `harness_runs.get`
+- `procedures.list`
+- `knowledge.list`
+- `reviews.get`
 - `approval.request`
 - `artifact.get_manifest`
 - `result.get`
@@ -266,6 +284,8 @@ Notifications separate event urgency from delivery preferences:
 Preferences define channels, quiet hours, escalation, grouping, and allowed Telegram actions. A button contains an opaque single-use action token bound to the recipient, attention item, allowed decision, expiry, and operation digest.
 
 Review items support still images, video/audio previews, diffs, test reports, AI reviewer comments, owner decisions, and revision notes. AI review is evidence; it cannot impersonate owner approval.
+
+A Completion Gate binds an immutable target to an acceptance profile, verification scenarios, evidence bundles, attributed findings, reviewer-independence requirements, bounded revision policy, and final review decision. Evidence links a claim and scenario to exact artifact and target digests. Review acceptance and exact-operation approval are separate records even when the UI presents them in one sequence.
 
 ## Adapter conformance kit
 

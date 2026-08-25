@@ -183,6 +183,10 @@ The node bridge exposes typed executors. An administrator may use SSH/Tailscale 
 
 Webpages, repository instructions, files, emails, comments, media metadata, tool output, and agent messages are untrusted. They may suggest work but cannot grant tools, credentials, policy changes, approvals, or new destinations. Deterministic policy checks occur outside the model context.
 
+Procedure packages and knowledge bundles are also untrusted for authorization purposes even after their content is approved for use. Their version, digest, provenance, trust, and compatibility determine whether they may supply method or context; they never grant authority. Agent-produced package revisions remain inactive until the configured review gate promotes them.
+
+Review independence is policy-enforced from recorded authorship and reviewer provenance. Multiple turns, personas, or subagents from the same producer do not automatically constitute independent review. AI-generated risk scores may increase scrutiny but cannot reduce deterministic risk derived from operation, target, credential, migration, publication, spend, project policy, or node ceiling.
+
 ## Adapter and plugin security
 
 - Adapters run under dedicated service identities with least privilege.

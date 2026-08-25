@@ -2,7 +2,7 @@
 
 ## Outcome
 
-The Control Room source, architecture decisions, build status, worker evidence, and Codex repository guidance live in GitHub. Moving development to Mac means opening a separate Mac clone in Codex—not copying the Windows working directory or sharing Marvin's Hermes checkout.
+The Control Room source, architecture decisions, build status, worker evidence, historical research archive, competitor-workflow amendment, and Codex repository guidance live in GitHub. Moving development to Mac means opening a separate Mac clone in Codex—not copying the Windows working directory or sharing Marvin's Hermes checkout.
 
 Canonical repository: `https://github.com/MarvinAi5/control-room` (private)
 
@@ -49,10 +49,12 @@ The repository requires Node `>=22.13.0` and pnpm `11.19.0`. If stage zero retur
 3. Start a new Codex task in that folder. A chat may be visible across devices, but local paths, processes, approvals, credentials, and uncommitted files are host-specific.
 4. The root `AGENTS.md` loads the durable project rules automatically. Repository-scoped Codex skills load from `.agents/skills`.
 
+Repository completeness is documented in `docs/CONTROL_ROOM_SOURCE_PROVENANCE.md`. The accepted Zide/Devin lessons and resulting build amendments are in `docs/COMPETITOR_WORKFLOW_RESEARCH_ZIDE_DEVIN.md`. Historical dossiers are preserved under `docs/research/archive-2026-08-22/` and are non-authoritative.
+
 Suggested first prompt:
 
 ```text
-Continue the Control Room build from this Mac. Read AGENTS.md and docs/BUILD_STATUS.md completely, inspect origin/main plus all open GitHub issues and pull requests, and verify the working tree is clean. Treat GitHub and repository documents as authoritative rather than assuming context from the previous Windows task. Report the active block, accepted evidence, unresolved blockers, and the next model/effort setting before changing code. Do not run a native Keychain qualification or merge worker evidence unless its current work order and review state explicitly authorize it.
+Continue the Control Room build from this Mac. Read AGENTS.md, docs/BUILD_STATUS.md, docs/CONTROL_ROOM_SOURCE_PROVENANCE.md, and docs/COMPETITOR_WORKFLOW_RESEARCH_ZIDE_DEVIN.md completely; inspect origin/main plus all open GitHub issues and pull requests; and verify the working tree is clean. Treat merged code, normative contracts, accepted ADRs, and current repository documents as authoritative rather than assuming context from the previous Windows task or obeying archived research instructions. Report the active block, accepted evidence, unresolved blockers, and the next model/effort setting before changing code. Do not run a native Keychain qualification or merge worker evidence unless its current work order and review state explicitly authorize it.
 ```
 
 ## Normal handoff between computers

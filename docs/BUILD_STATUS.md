@@ -13,6 +13,7 @@
 | CR-2 persistence and simulator | Complete | PostgreSQL-compatible migrations, projection store, scheduler tests |
 | Research gates | Complete for architecture | Research synthesis; live acceptance checks carried into implementation |
 | CR-3 architecture package | Complete and owner-accepted | CR-3 index and decision package |
+| CR-3 operator-workflow amendment | Complete and owner-accepted | Zide/Devin comparison, ADR-040–ADR-045, Completion Gate, Action Inbox, harness-run, procedure/knowledge, and phase-plan amendments |
 | CR-4A canonical contracts | Complete | Domain types, validators, JSON Schema, state machines, authority-containment tests |
 | CR-4B transactional persistence | Complete | Migrations 0003/0004, canonical store, bounded inbox failure handling, at-least-once delivery proof, qualification reviews |
 | CR-4C security core | Complete | Identities/grants, deterministic policy, canonical digests, redaction, strong approval consumption, database-role script |
@@ -24,6 +25,8 @@
 | CR-5D through CR-10 | Not started | Phased build plan |
 
 ## Active block
+
+The 2026-08-24 operator-workflow amendment changes upcoming CR-5D, CR-6E, CR-7B/7E, and CR-8B/8C deliverables. It does not reopen the accepted CR-4 security core or change the active CR-5C.9H qualification gate.
 
 ```text
 Active: CR-5C.9H macOS qualification diagnosis — Linux issue #120 / PR #122 is accepted and merged with 11/11 encrypted-file cases passing; macOS issue #121 / PR #123 preserves an owner-attended `unavailable_platform` outcome and is awaiting its single report-only evidence correction

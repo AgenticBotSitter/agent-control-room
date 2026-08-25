@@ -1,7 +1,7 @@
 # CR-3 consolidated architecture
 
 **Status:** Accepted 2026-08-22
-**Milestone:** CR-3  
+**Milestone:** CR-3
 **Scope:** Architecture and phased build plan only; no live project integration or production credential use
 
 ## Outcome
@@ -149,21 +149,68 @@ Request
   -> Workflow
       -> Job
           -> Attempt
+              -> Harness run
               -> Lease
               -> Checkpoints
               -> Artifact manifests
+              -> Verification runs / evidence bundles
               -> Outcome
-      -> Approval / Question / Review
-      -> Decision
+      -> Question / Attention
+      -> Review / Finding / Revision
+      -> Approval / Decision
 ```
 
 - A **request** may be a short one-off instruction or an ongoing project objective.
 - A **workflow** is a versioned graph created from a project pack, template, or manager proposal.
 - A **job** is the schedulable unit with immutable authority and requirement envelopes.
 - An **attempt** records one placement and execution history.
+- A **harness run** normalizes one native Hermes, Codex, Claude, Devin, or future session beneath an attempt without making raw transcripts authoritative.
 - An **approval** is bound to an exact operation digest, scope, expiry, and actor.
+- A **review** decides whether an immutable result meets an acceptance profile; it never grants effect authority.
+- A **verification run** evaluates named scenarios and binds claims to evidence artifacts.
+- A **revision** creates explicit lineage from reviewed findings to corrected work; it is not a transport retry.
 - A **service** represents continuously desired state and observations rather than a job that completes forever.
 - A **schedule** creates finite attempts or service checks without flooding the main board.
+
+### Operator work loop amendment
+
+Control Room's secure job machinery is surfaced through one consistent human loop:
+
+```text
+request
+  -> workflow preview
+  -> activate
+  -> execute and observe
+  -> submit result
+  -> deterministic verification
+  -> independent review where required
+  -> bounded revision
+  -> evidence-backed completion decision
+  -> separately authorized consequential effect, if any
+```
+
+The workflow preview exposes the proposed graph, worker routes, fallback paths, cost/time/resource reservations, credential references, external effects, review requirements, and unresolved questions before fan-out. A manager agent may explain or propose this plan, but structured policy determines what may activate.
+
+The Action Inbox is the canonical projection of work needing human or manager attention. It includes questions, review, approval, failure, ambiguity, incident, expiring authority, and native harness sessions waiting for direction. Each item states why it needs attention, what it blocks, available actions, evidence, age/expiry, and delivery status.
+
+The Completion Gate is project-neutral. Code, media, documents, and operational changes specialize their verification scenarios and preview types through acceptance profiles; they do not replace the common review, finding, revision, evidence, and decision lineage.
+
+### Procedures, knowledge, policy, and authority
+
+These inputs remain separate:
+
+- a **procedure package** describes a repeatable method and its expected checks;
+- a **knowledge bundle** supplies versioned project facts and reference context;
+- a **policy** determines eligibility, review, budgets, and allowed behavior;
+- an **authority envelope** grants the exact bounded operations for one job.
+
+Procedures and knowledge have immutable versions, digests, provenance, trust state, compatibility declarations, and promotion history. Neither can grant permission. Run analysis may propose a new version, but only the configured review gate can promote it.
+
+### Reviewer independence and advisory risk
+
+Review policy can require a reviewer different from the producer by worker, agent profile, harness, or model family. Joint authors can review individual portions but are not an independent final reviewer of their combined result. Deterministic checks run before semantic review whenever practical.
+
+Model-generated risk or quality scores are advisory. They may raise review priority but cannot lower the deterministic risk floor derived from effects, credentials, destinations, migrations, publication, spend, project policy, or node ceilings.
 
 ### Job lifecycle
 

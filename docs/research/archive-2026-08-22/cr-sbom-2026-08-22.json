@@ -1,0 +1,51 @@
+{
+  "inventory_date": "2026-08-22",
+  "note": "Package-level SBOM for control-room reuse candidates. Versions = latest observed at fetch time (hermes deps = exact pins from pyproject.toml v0.20.4). Licenses from registry metadata; 'license_verified_from_file' marked only where LICENSE file was fetched this session-set.",
+  "components": [
+    {"component":"hermes-agent","package":"NousResearch/hermes-agent","version":"v0.20.4","registry":"github","license_declared":"MIT","license_verified_from_file":true,"spdx_or_custom":"MIT","notice_obligations":"none","allowed_use_classes":["internal","redistribution","hosted-service"],"source_url":"https://github.com/NousResearch/hermes-agent"},
+    {"component":"codex-cli","package":"@openai/codex (npm)","version":"0.149.0","registry":"npm","license_declared":"Apache-2.0","license_verified_from_file":true,"spdx_or_custom":"Apache-2.0","notice_obligations":"NOTICE retention on redistribution","allowed_use_classes":["internal","redistribution","hosted-service","external-integration"],"source_url":"https://www.npmjs.com/package/@openai/codex"},
+    {"component":"claude-code-cli","package":"@anthropic-ai/claude-code (npm)","version":"2.1.240","registry":"npm","license_declared":"SEE LICENSE IN README.md","license_verified_from_file":true,"spdx_or_custom":"proprietary (Commercial ToS)","notice_obligations":"none usable — no redistribution rights","allowed_use_classes":["internal"],"source_url":"https://www.npmjs.com/package/@anthropic-ai/claude-code"},
+    {"component":"claude-agent-sdk-ts","package":"@anthropic-ai/claude-agent-sdk (npm)","version":"0.3.240","registry":"npm","license_declared":"SEE LICENSE IN README.md","license_verified_from_file":false,"spdx_or_custom":"presumed proprietary-same-as-CLI [verify before vendoring]","notice_obligations":"TBD","allowed_use_classes":["internal"],"source_url":"https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk"},
+    {"component":"claude-agent-sdk-python","package":"claude-agent-sdk (PyPI)","version":"0.2.144","registry":"pypi","license_declared":"MIT","license_verified_from_file":false,"spdx_or_custom":"MIT (repo spdx MIT, 7953 stars)","notice_obligations":"copyright header retention","allowed_use_classes":["internal","redistribution","hosted-service","external-integration"],"source_url":"https://pypi.org/project/claude-agent-sdk/"},
+    {"component":"hatchet-server","package":"hatchet-dev/hatchet","version":"main @ 2026-08-22","registry":"github","license_declared":"MIT","license_verified_from_file":true,"spdx_or_custom":"MIT","notice_obligations":"none","allowed_use_classes":["internal","redistribution","hosted-service"],"source_url":"https://github.com/hatchet-dev/hatchet"},
+    {"component":"hatchet-sdk-python","package":"hatchet-sdk (PyPI)","version":"1.37.5","registry":"pypi","license_declared":"MIT","license_verified_from_file":false,"spdx_or_custom":"MIT","notice_obligations":"none","allowed_use_classes":["internal","redistribution","hosted-service"],"source_url":"https://pypi.org/project/hatchet-sdk/"},
+    {"component":"temporal-sdk-python","package":"temporalio (PyPI)","version":"1.31.0","registry":"pypi","license_declared":"(empty field; repo is MIT)","license_verified_from_file":false,"spdx_or_custom":"MIT per repo [confirm classifier]","notice_obligations":"none","allowed_use_classes":["internal","redistribution","hosted-service"],"source_url":"https://pypi.org/project/temporalio/"},
+    {"component":"bitwarden-secrets-cli","package":"bitwarden bws binary","version":"2.x (auto-installed by hermes)","registry":"github releases","license_declared":"GPL-3.0 (clients) / server AGPL","license_verified_from_file":false,"spdx_or_custom":"GPL-3.0-or-later [binary use internal = fine]","notice_obligations":"GPL applies if redistributed","allowed_use_classes":["internal"],"source_url":"https://github.com/bitwarden/sdk-internal"},
+    {"component":"bitwarden-clients","package":"bitwarden/clients","version":"main @ 2026-08-22","registry":"github","license_declared":"NOASSERTION (GPL-3.0 per docs)","license_verified_from_file":false,"spdx_or_custom":"GPL-3.0-or-later","notice_obligations":"GPL source-offer if distributed","allowed_use_classes":["internal"],"source_url":"https://github.com/bitwarden/clients"},
+    {"component":"onepassword-connect","package":"1Password/connect","version":"main @ 2026-06-06 push","registry":"github","license_declared":"none in API (Apache-2.0 per repo history) [verify file]","license_verified_from_file":false,"spdx_or_custom":"[unverified]","notice_obligations":"TBD","allowed_use_classes":["internal [pending verify]"],"source_url":"https://github.com/1Password/connect"},
+    {"component":"uptime-kuma","package":"louislam/uptime-kuma docker image","version":"1.x","registry":"docker hub / github","license_declared":"MIT","license_verified_from_file":false,"spdx_or_custom":"MIT","notice_obligations":"none","allowed_use_classes":["internal","redistribution","hosted-service"],"source_url":"https://github.com/louislam/uptime-kuma"},
+    {"component":"beszel","package":"henrygd/beszel","version":"main @ 2026-08-21","registry":"github","license_declared":"MIT","license_verified_from_file":false,"spdx_or_custom":"MIT","notice_obligations":"none","allowed_use_classes":["internal","redistribution","hosted-service"],"source_url":"https://github.com/henrygd/beszel"},
+    {"component":"vector-log-agent","package":"vectordotdev/vector","version":"main @ 2026-08-22","registry":"github","license_declared":"MPL-2.0","license_verified_from_file":false,"spdx_or_custom":"MPL-2.0 (file-level copyleft)","notice_obligations":"source-disclosure only for modified files","allowed_use_classes":["internal","redistribution","hosted-service"],"source_url":"https://github.com/vectordotdev/vector"}
+  ],
+  "hermes_runtime_deps_exact_pins_v0_20_4": [
+    {"package":"openai","pin":"2.24.0","license":"Apache-2.0 (classifiers)"},
+    {"package":"certifi","pin":"2026.5.20","license":"MPL-2.0"},
+    {"package":"python-dotenv","pin":"1.2.2","license":"BSD-3-Clause"},
+    {"package":"fire","pin":"0.7.1","license":"Apache-2.0"},
+    {"package":"httpx[socks]","pin":"0.28.1","license":"BSD-3-Clause"},
+    {"package":"rich","pin":"14.3.3","license":"MIT"},
+    {"package":"tenacity","pin":"9.1.4","license":"Apache-2.0"},
+    {"package":"pyyaml","pin":"6.0.3","license":"MIT"},
+    {"package":"ruamel.yaml","pin":"0.18.17","license":"MIT"},
+    {"package":"requests","pin":"2.33.0","license":"Apache-2.0"},
+    {"package":"jinja2","pin":"3.1.6","license":"BSD-3-Clause"},
+    {"package":"pydantic","pin":"2.13.4","license":"MIT"},
+    {"package":"prompt_toolkit","pin":"3.0.52","license":"BSD-3-Clause"},
+    {"package":"croniter","pin":"6.0.0","license":"MIT"},
+    {"package":"packaging","pin":"26.0","license":"Apache-2.0/BSD"},
+    {"package":"Markdown","pin":"3.10.2","license":"BSD-3-Clause"},
+    {"package":"PyJWT[crypto]","pin":"2.13.0","license":"MIT"},
+    {"package":"cryptography","pin":"50.0.0","license":"Apache-2.0/BSD (dual)"},
+    {"package":"psutil","pin":"7.2.2","license":"BSD-3-Clause"},
+    {"package":"websockets","pin":"15.0.1","license":"BSD-3-Clause"},
+    {"package":"pathspec","pin":"1.1.1","license":"MPL-2.0"},
+    {"package":"Pillow","pin":"12.3.0","license":"MIT-CMU (HPND)"},
+    {"package":"aiohttp","pin":"3.14.3","license":"Apache-2.0 AND MIT parts"},
+    {"package":"anthropic","pin":"0.87.0","license":"MIT"}
+  ],
+  "corrections_to_prior_matrix": {
+    "claim_checked": "TL;DR said '18 of 21 permissive; four need care'",
+    "finding": "Counting the matrix rows: restrictive = khoj(AGPL), superset-sh(ELv2), forge-orchestrator(FSL), AutoGPT-platform-split(Polyform), inngest(SSPL), restate(BSL) = SIX restricted-of-21, not four. TL;DR undercounted by two.",
+    "corrected_statement": "15 of 21 fully permissive at repo level; 6 carry restrictions (khoj, superset-sh, forge, autogpt-platform-parts, inngest, restate)."
+  }
+}

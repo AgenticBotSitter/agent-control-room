@@ -72,6 +72,8 @@ pnpm test:build
 - [Migration notes](docs/MIGRATIONS.md)
 - [CR-0 through CR-2 verification](docs/CR2_VERIFICATION.md)
 - [Research synthesis and build decisions](docs/RESEARCH_SYNTHESIS_AND_BUILD_DECISIONS.md)
+- [Zide and Devin workflow research](docs/COMPETITOR_WORKFLOW_RESEARCH_ZIDE_DEVIN.md)
+- [Source provenance and repository completeness](docs/CONTROL_ROOM_SOURCE_PROVENANCE.md)
 - [CR-3 architecture package](docs/CR3_INDEX.md)
 - [Current build status and next model setting](docs/BUILD_STATUS.md)
 - [Mac Codex handoff](docs/CODEX_MAC_HANDOFF.md)

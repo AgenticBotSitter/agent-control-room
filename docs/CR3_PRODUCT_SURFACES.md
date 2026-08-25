@@ -36,6 +36,8 @@ The default page answers:
 
 The page uses compact summaries and links to evidence. It does not display raw agent transcripts.
 
+An **Owner Focus** strip lets the owner pin a deliberately small set of `P0` or `Today` outcomes. These pins influence declared priority but never bypass project allocation, fairness, eligibility, authority, or approval policy.
+
 ## Projects
 
 Portfolio view shows health, authority mode, progress, attention, current bottleneck, recent throughput, forecast, and allocated capacity.
@@ -123,6 +125,8 @@ Suggestions state confidence and assumptions. The owner can simulate a change be
 
 One queue combines questions, approvals, reviews, decisions, security events, and recovery ambiguities. It supports urgency, project, risk, due time, quiet-hour exception, and delivery status.
 
+It also provides the cross-harness **Session Watch** projection: running, waiting for input, blocked, failed, ready for review, and expiring sessions appear together even though their native Hermes, Codex, Claude, Zide, or future interfaces differ.
+
 Attention items show:
 
 - exactly what is being requested;
@@ -133,6 +137,8 @@ Attention items show:
 - allowed responses;
 - expiry and consequences;
 - whether Telegram is sufficient or strong dashboard approval is required.
+
+Items support acknowledge, answer, approve where authorized, deny, request changes, delegate, snooze, cancel, and open-native-session actions according to policy. Snooze changes presentation only; it never extends a lease, approval, authority, deadline, or effect reservation.
 
 ## Review surface
 
@@ -149,6 +155,33 @@ Review supports:
 Approval and aesthetic preference remain different records. “I like version B” does not automatically authorize publishing it.
 
 Rejected work returns to the workflow with structured notes and revision lineage. The original artifact remains auditable and may be retained/quarantined according to policy.
+
+### Completion Gate
+
+Every reviewable result enters a project-neutral Completion Gate:
+
+1. deterministic checks run against an immutable target;
+2. required independent reviewers examine the result and evidence;
+3. blocking findings create a bounded revision request;
+4. the corrected result explicitly resolves or disputes each finding;
+5. verification scenarios produce pass/fail/blocked/inconclusive results;
+6. the owner or configured low-risk policy accepts, rejects, or requests changes;
+7. any consequential effect is authorized separately.
+
+The review screen groups an **evidence bundle** by claim. A video or screenshot states which scenario it demonstrates; a test result names its target digest and environment; an AI observation shows model, agent, worker, and run provenance. Unattached media remains a preview rather than proof.
+
+Review policy can require a different worker, agent profile, harness, or model family from the producer. When several agents jointly authored the target, cross-review among those authors does not satisfy an independent-final-review requirement.
+
+Automatic correction cycles have a configured maximum. Exhaustion, conflicting reviewers, inconclusive verification, or unresolved blocking findings create attention instead of an indefinite self-repair loop.
+
+## Procedures and knowledge
+
+The control surface maintains two distinct reusable libraries:
+
+- **Procedures:** repeatable methods, expected outputs, checks, and correction guidance.
+- **Knowledge:** project facts, conventions, architecture references, and approved context.
+
+Every entry shows version, digest, source/provenance, trust state, compatible harnesses/capabilities, usage history, outcome metrics, and promotion history. Policy and authority are displayed separately. A session analysis may propose an updated procedure or knowledge entry, but it cannot activate that version without the configured review gate.
 
 ## Services and schedules
 

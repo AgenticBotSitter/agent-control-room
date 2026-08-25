@@ -1,6 +1,6 @@
 # CR-3 phased build plan
 
-**Status:** Accepted; CR-4 implementation active
+**Status:** Accepted; operator-workflow amendment accepted 2026-08-24; CR-5 implementation active
 **Rule:** A phase authorizes only the changes named in that phase. Passing tests—not elapsed time—advances the build.
 
 ## Delivery strategy
@@ -15,10 +15,10 @@ GitHub is the **bootstrap coordination plane** while Control Room is being built
 |---|---|---|
 | CR-3 | Accepted architecture and decision package | No |
 | CR-4 | Secure core domain and persistence foundation | No |
-| CR-5 | Enrolled synthetic node and durable cross-machine job slice | Disposable only |
-| CR-6 | Fleet discovery, scheduling, workers, bottlenecks, services | Synthetic/local checks |
-| CR-7 | Hermes and Codex adapters plus northbound MCP | Bounded disposable tests |
-| CR-8 | Claude, approvals, review, Telegram, secrets | Bounded disposable tests |
+| CR-5 | Enrolled synthetic node, evidence bundle, and durable cross-machine job slice | Disposable only |
+| CR-6 | Fleet discovery, scheduling, workers, bottlenecks, services, and Action Inbox | Synthetic/local checks |
+| CR-7 | Hermes and Codex adapters, normalized harness runs, procedure/knowledge registry, and northbound MCP | Bounded disposable tests |
+| CR-8 | Claude, Completion Gate, approvals, review/revision, Telegram, and secrets | Bounded disposable tests |
 | CR-9 | First project adapters: Content Blooms and Wayfarer | Separate per-project approval |
 | CR-10 | Operational hardening and public-ready packaging | Deployment maintenance only |
 
@@ -68,16 +68,17 @@ Marvin's Qwen 3.8 27B route is therefore a strong candidate for early qualificat
 | CR-4A–CR-4C | Fixtures, negative-test tables, documentation, generated types after schemas settle | State machines, concurrency semantics, identity, authorization, approval and redaction design |
 | CR-4D | Most contract-driven implementation and tests | Audit/security review and final integration |
 | CR-5A–CR-5C | Protocol fixtures, portability helpers, reconnect tests | Protocol, enrollment, authentication and node policy ceilings |
-| CR-5D | Synthetic executor, artifact UI, deterministic tests | Vertical-slice acceptance and threat review |
+| CR-5D | Synthetic executor, evidence-bundle foundation, artifact UI, deterministic tests | Vertical-slice acceptance and threat review |
 | CR-6A–CR-6B | Native-machine probes, service packaging, telemetry and benchmark implementations | Capability semantics, trust levels and cross-platform acceptance |
 | CR-6C | Simulation cases, property-test generators and analysis fixtures | Scheduler/fairness algorithm and safety invariants |
-| CR-6D–CR-6E | Services, schedules, dashboard components, accessibility tests | Domain integration and owner-facing acceptance |
+| CR-6D–CR-6E | Services, schedules, Action Inbox/Owner Focus, dashboard components, accessibility tests | Domain integration and owner-facing acceptance |
 | CR-7A | Hermes lifecycle recordings, pinned fixtures and bounded adapter code | Hermes authority mapping and adapter acceptance |
 | CR-7B–CR-7C | Test fixtures and client examples | Codex lifecycle, sandbox semantics and northbound MCP authority |
 | CR-7D | SDK extraction, examples and conformance implementations | Public contract review |
+| CR-7E | Procedure/knowledge fixtures, compatibility cases, and registry UI | Procedure promotion, trust, authority separation, and lifecycle semantics |
 | CR-8A | Recorded Claude fixtures after authenticated discovery | Claude authority and lifecycle mapping |
-| CR-8B | Test cases and non-authoritative UI fixtures | Approval domain and consequential-action policy |
-| CR-8C–CR-8D | Review UI, Telegram presentation, callback fixtures | Approval binding, webhook security and final integration |
+| CR-8B | Test cases and non-authoritative UI fixtures | Separate approval, review, verification, revision, and consequential-action policy |
+| CR-8C–CR-8D | Completion Gate UI, evidence previews, Telegram presentation, callback fixtures | Review independence, approval binding, webhook security and final integration |
 | CR-8E | Provider fixtures and documentation only | Secret-broker interfaces, least privilege and canary review |
 | CR-9 | Project fixtures, ordinary adapters, media workflow components | Source-authority preservation, live rehearsal and rollback acceptance |
 | CR-10 | Packaging, docs, inventories, clean-room tests and platform runbooks | Release security, deployment recovery and final public gate |
@@ -104,8 +105,8 @@ These are planning ranges, not promises. They assume one Codex/Sol owner, one or
 | CR-4 secure core | 12–18 | 9–14 | 2–4 weeks |
 | CR-5 synthetic cross-machine slice | 12–18 | 9–14 | 2–4 weeks |
 | CR-6 fleet and dashboard | 15–24 | 10–17 | 3–5 weeks |
-| CR-7 Hermes/Codex/MCP | 12–20 | 9–15 | 2–4 weeks |
-| CR-8 approvals/Telegram/secrets | 15–24 | 11–18 | 3–5 weeks |
+| CR-7 Hermes/Codex/MCP/procedure registry | 15–24 | 11–18 | 3–5 weeks |
+| CR-8 Completion Gate/approvals/Telegram/secrets | 18–28 | 13–21 | 3–6 weeks |
 | First CR-9 project integration | 10–20 | 8–15 | 2–4 weeks |
 
 The first genuinely useful private system is the CR-5 vertical slice, roughly **4–8 calendar weeks** under these assumptions. A useful multi-harness system through CR-7 is roughly **8–14 weeks**. The first bounded live project integration is more realistically **12–22 weeks**. Parallel workers reduce implementation time, but architecture, review, physical-machine validation, and owner approvals remain serial bottlenecks. Actual throughput data replaces these ranges after the first three delegated pull requests.
@@ -123,25 +124,26 @@ The first genuinely useful private system is the CR-5 vertical slice, roughly **
 | CR-5A | Node protocol schemas, version negotiation, enrollment, authentication | `gpt-5.6-sol` | `xhigh` | Public protocol and device-identity boundary | Replay, expiry, revocation, malformed-frame tests pass |
 | CR-5B | Portable bridge core, connection loop, heartbeat, local journal | `gpt-5.6-terra` | `high` | Substantial implementation with defined protocol | Reconnect/backpressure/journal recovery tests pass |
 | CR-5C | Node-local policy ceilings, key-store interface, job/effect enforcement | `gpt-5.6-sol` | `xhigh` | Contains a compromised server and agent | Over-authority and ambiguous-effect tests fail safely |
-| CR-5D | Synthetic executor, artifact flow, initial worker UI | `gpt-5.6-terra` | `high` | Full vertical slice with moderate UI work | Synthetic cross-machine job completes with audit/artifact |
+| CR-5D | Synthetic executor, artifact/evidence flow, initial worker UI | `gpt-5.6-terra` | `high` | Full vertical slice with moderate UI work | Synthetic cross-machine job completes with audit, evidence claims, and artifact verification |
 | CR-5Q | Crash, restore, adversarial protocol, and secret-canary review | `gpt-5.6-sol` | `max` | First real end-to-end security/durability gate | Clean restore/reconcile and attack suite pass |
 | CR-6A | macOS, Windows, and Linux service packaging | `gpt-5.6-terra` | `high` | Platform-specific implementation and diagnostics | Start/restart/cancel/sleep/reboot checks pass per OS |
 | CR-6B | Discovery, telemetry, capability probes, benchmarks | `gpt-5.6-terra` | `high` | Many deterministic integrations and schemas | Change detection, expiration, resource-threshold tests pass |
 | CR-6C | Cross-project scheduler, fairness, semaphores, bottlenecks | `gpt-5.6-sol` | `xhigh` | Algorithmic correctness and starvation/resource risk | Simulation/property tests and evidence explanations pass |
 | CR-6D | Services, schedules, incidents, reconciliation | `gpt-5.6-terra` | `high` | Stateful but contract-driven feature work | Recurrence, deduplication, incident and recovery tests pass |
-| CR-6E | Portfolio/project/worker/bottleneck dashboard | `gpt-5.6-terra` | `high` | Balanced implementation plus frontend judgment | Responsive/accessibility/render tests and owner review pass |
+| CR-6E | Portfolio/project/worker/bottleneck dashboard plus Action Inbox and Owner Focus | `gpt-5.6-terra` | `high` | Balanced implementation plus frontend judgment | Attention reason/action/blocking, responsive/accessibility/render tests, and owner review pass |
 | CR-6Q | Fleet/scheduler architecture review | `gpt-5.6-sol` | `xhigh` | Checks policy bypass, starvation, and platform drift | Findings closed and acceptance matrix complete |
 | CR-7A | Hermes execution/read adapter and fixtures | `gpt-5.6-sol` | `high` | Large, version-sensitive foreign interface | Canonical lifecycle suite and pinned fixtures pass |
-| CR-7B | Codex worker adapter and worktree/result mapping | `gpt-5.6-sol` | `high` | Agentic coding lifecycle and sandbox correctness | Start/stream/cancel/resume/change/test/result suite passes |
+| CR-7B | Codex worker adapter, normalized harness run, and worktree/result mapping | `gpt-5.6-sol` | `high` | Agentic coding lifecycle, safe event projection, and sandbox correctness | Start/stream/steer/cancel/resume/change/test/result/usage suite passes |
 | CR-7C | Northbound Control Room MCP server | `gpt-5.6-sol` | `xhigh` | New agent-facing authority surface | Scope, approval, replay, redaction, and delegation tests pass |
 | CR-7D | Adapter SDK and conformance-kit extraction | `gpt-5.6-terra` | `high` | Generalization after two real harness mappings | Hermes/Codex pass the same public conformance suite |
+| CR-7E | Versioned procedure and knowledge registry | `gpt-5.6-sol` | `high` | Reusable agent instructions must remain distinct from facts, policy, and authority | Digest/provenance/compatibility/promotion/rollback tests pass; no package grants authority |
 | CR-7Q | Harness/MCP security and compatibility review | `gpt-5.6-sol` | `xhigh` | Ensures harnesses cannot bypass core authority | Findings closed or adapters remain disabled |
 | CR-8A | Authenticated Claude adapter | `gpt-5.6-sol` | `high` | Version-sensitive lifecycle integration | Authenticated lifecycle and usage/worktree tests pass |
-| CR-8B | Strong approval and review domain/backend | `gpt-5.6-sol` | `xhigh` | Consequential-action authorization | Operation-binding, expiry, replay, step-up tests pass |
-| CR-8C | Review UI and media/diff preview surfaces | `gpt-5.6-terra` | `high` | Frontend and artifact interaction | Mobile/accessibility/preview/decision-lineage tests pass |
+| CR-8B | Separate approval, review, verification, finding, and revision domain/backend | `gpt-5.6-sol` | `xhigh` | Quality decisions and consequential authorization must not be conflated | Operation-binding plus review-target, independence, bounded-revision, supersession, expiry, replay, and step-up tests pass |
+| CR-8C | Completion Gate UI and evidence/media/diff preview surfaces | `gpt-5.6-terra` | `high` | Frontend, evidence interpretation, and correction interaction | Mobile/accessibility/claim-to-evidence/annotated-change/decision-lineage tests pass |
 | CR-8D | Telegram notification and action adapter | `gpt-5.6-terra` | `high` | External callbacks with bounded authority | Signature/allowlist/idempotency/quiet-hour/risk tests pass |
 | CR-8E | Bitwarden and 1Password node-local brokers | `gpt-5.6-sol` | `xhigh` | Secret-exposure and privilege risk | Secret canary, scope, rotate/revoke/failure tests pass |
-| CR-8Q | Approval/secrets adversarial review | `gpt-5.6-sol` | `max` | Last gate before project credentials | No central plaintext path or approval bypass remains |
+| CR-8Q | Approval/review/secrets adversarial review | `gpt-5.6-sol` | `max` | Last gate before project credentials | No central plaintext path, approval bypass, self-review acceptance, or AI risk downgrade remains |
 | CR-9A | Content Blooms source-scheduled adapter | `gpt-5.6-sol` | `high` | Must preserve foreign lease/authority semantics | Read-only then bounded command receipts pass |
 | CR-9B | Lo-Fi Wayfarer project pack and media workflow | `gpt-5.6-terra` | `high` | Larger domain implementation under settled core | Synthetic media/QC/review/assembly flow passes |
 | CR-9C | First bounded live integration rehearsal | `gpt-5.6-sol` | `xhigh` | Cross-system rollback and production-risk review | Owner-approved rehearsal, rollback, and audit pass |
@@ -226,8 +228,8 @@ No real node enrollment or production Cloudflare/PostgreSQL change without a CR-
 1. Define node enrollment, challenge/response, version negotiation, heartbeat, job offer, lease, event, cancellation, and reconciliation schemas.
 2. Implement the portable bridge core and one native Linux service package for a disposable environment.
 3. Implement local key store abstraction, local policy ceiling, SQLite journal, redacted event spool, and retry/backoff.
-4. Implement a synthetic typed executor that sleeps, checkpoints, produces a text artifact manifest, accepts cancellation, and can simulate crashes.
-5. Add node/worker dashboard pages and quarantine/drain controls.
+4. Implement a synthetic typed executor that sleeps, checkpoints, produces a text artifact manifest plus claim-bound verification evidence, accepts cancellation, and can simulate crashes.
+5. Add node/worker dashboard pages, an initial evidence view, and quarantine/drain controls.
 6. Deploy a disposable Control Room/PostgreSQL/tunnel environment or isolated namespace.
 
 ### Security tests
@@ -251,7 +253,7 @@ No real node enrollment or production Cloudflare/PostgreSQL change without a CR-
 
 ### Exit criteria
 
-One synthetic job travels dashboard/API → PostgreSQL → remote node → artifact → review/result with complete audit and restart recovery.
+One synthetic job travels dashboard/API → PostgreSQL → remote node → artifact/evidence bundle → review/result with complete audit and restart recovery. The slice proves that an artifact locator and a verification claim are distinct.
 
 ## CR-6 — Fleet, scheduler, services, and bottlenecks
 
@@ -267,6 +269,8 @@ One synthetic job travels dashboard/API → PostgreSQL → remote node → artif
 8. Bottleneck calculations and evidence-backed recommendations.
 9. Continuous service, schedule, incident, and reconciliation models.
 10. Portfolio/project/worker/history/capability/resource/bottleneck UI.
+11. Universal Action Inbox for sessions/jobs waiting on input, review, approval, failure handling, ambiguity, incident response, or expiring authority.
+12. Owner Focus pins (`P0`/`Today`) as a simple human priority projection above deterministic scheduler policy.
 
 ### Tests
 
@@ -277,6 +281,8 @@ One synthetic job travels dashboard/API → PostgreSQL → remote node → artif
 - manual/exclusive/preferred/shared/opportunistic modes behave deterministically;
 - service schedules do not flood the ordinary job board;
 - offline nodes remain visible with reason/remedy.
+- every attention item states the requested action, reason, blocked work, legal responses, age/expiry, evidence, and delivery status;
+- owner focus changes priority intent without bypassing fairness, authority, or project allocation.
 
 ### Platform onboarding gates
 
@@ -303,16 +309,35 @@ One synthetic job travels dashboard/API → PostgreSQL → remote node → artif
 - thread, event, usage, file, test, patch/commit, cancel, and resume mapping;
 - SDK comparison only after the wrapper passes.
 
+### Normalized harness runs
+
+- map every Hermes and Codex execution into a safe harness-run record beneath its attempt;
+- retain opaque native session/thread ID, lifecycle state, timestamps, usage, structured tool/file/test activity, resumability, cancellation, and protected native link;
+- preserve parent/child and fork/supersession lineage without importing raw transcripts or unrestricted command output by default;
+- expose a session-watch projection showing running, waiting, blocked, failed, and ready-for-review work across projects;
+- distinguish adapter transport retry from a new review-requested revision.
+
 ### Northbound MCP
 
 - authenticated/scoped request, project, worker, job, attention, and artifact tools;
 - a Codex task can propose/delegate work and later inspect results;
 - MCP cannot issue secrets or bypass approvals.
 
+### Procedure and knowledge registry
+
+- procedures describe repeatable methods and acceptance steps;
+- knowledge bundles carry project facts and reference context;
+- policy and authority remain separate and cannot be granted by either package;
+- packages have immutable versions, digests, provenance, trust state, compatibility declarations, and promotion/rollback history;
+- run outcomes may propose package revisions, but activation requires the configured review gate;
+- capability eligibility records which verified package versions a worker can execute.
+
 ### Exit criteria
 
 - Hermes and Codex each pass the same canonical lifecycle suite or declare unsupported verbs;
 - a Codex project task delegates a synthetic job through MCP and reviews the returned result;
+- Session Watch reconstructs the safe state of both harnesses without treating either native UI as authority;
+- one reviewed procedure revision is promoted while a rejected revision leaves the prior version active;
 - no production repository/project mutation without separate approval.
 
 ## CR-8 — Claude, approval/review, Telegram, and secrets
@@ -328,9 +353,16 @@ One synthetic job travels dashboard/API → PostgreSQL → remote node → artif
 
 - exact-operation approval digests;
 - strong-factor step-up path for consequential actions;
-- review items with image/video/audio/diff/report previews;
+- approval, review, verification, finding, revision, and preference are separate records and state machines;
+- immutable review targets and acceptance profiles;
+- review items with image/video/audio/diff/report previews and claim-bound evidence bundles;
+- deterministic verification scenarios with pass/fail/blocked/inconclusive results;
 - AI pre-review comments clearly attributed and non-authoritative;
-- request changes/retry/revise workflow.
+- reviewer-independence constraints using author, worker, agent profile, harness, and model-family provenance;
+- deterministic risk floors that AI scoring may raise but never lower;
+- bounded request-changes/revise cycles with explicit finding resolution and supersession lineage;
+- Completion Gate profiles for code, media, documents, and operational changes;
+- automatic low-risk disposition only when deterministic policy explicitly permits it.
 
 ### Telegram
 
@@ -350,7 +382,7 @@ One synthetic job travels dashboard/API → PostgreSQL → remote node → artif
 
 ### Exit criteria
 
-One disposable workflow can ask a question, request approval, receive a Telegram response where permitted, resolve a node-local scratch credential, produce review media, and complete without secret leakage.
+One disposable workflow can ask a question, request approval, receive a Telegram response where permitted, resolve a node-local scratch credential, produce claim-bound review evidence, pass through an independent bounded revision cycle, and complete without secret leakage or confusing quality acceptance with effect authorization.
 
 ## CR-9 — First real project integrations
 

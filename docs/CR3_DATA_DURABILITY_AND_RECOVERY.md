@@ -41,6 +41,8 @@ The value the user identified—recovering after a server failure—is real. It 
 |---|---|---|
 | Identity, grants, policies, approvals | PostgreSQL | Restore from database backup/WAL; never infer from workers |
 | Requests, workflows, jobs, attempts, leases | PostgreSQL | Restore then reconcile node journals |
+| Harness runs, attention, reviews, findings, verification, and revision lineage | PostgreSQL | Restore structured state; reconnect native sessions by opaque reference where supported |
+| Procedure and knowledge versions/promotion history | PostgreSQL plus immutable package artifacts | Restore metadata and verify package digests before reactivation |
 | Audit and command/event history | PostgreSQL plus external audit anchors | Restore and verify hash chain/anchors |
 | Source-scheduled project truth | Source project | Re-project through adapter after restore |
 | Worker capabilities and recent telemetry | PostgreSQL projection | Re-discover/re-benchmark from nodes |
@@ -77,6 +79,7 @@ CR-0 through CR-2 remain the projection foundation. Later migrations add—not s
 - `jobs`
 - `job_dependencies`
 - `job_attempts`
+- normalized `harness_runs` and safe harness-run events
 - `job_leases`
 - `job_checkpoints`
 - `effect_intents`
@@ -87,7 +90,12 @@ CR-0 through CR-2 remain the projection foundation. Later migrations add—not s
 - `actors`, `roles`, and scoped grants
 - `node_enrollments`, node keys, rotations, and revocations
 - `policy_sets` and immutable policy versions
-- `approvals`, questions, reviews, and decisions
+- `attention_items` and delivery state
+- `approvals` and exact-operation consumption
+- `review_cases`, attributed findings, review decisions, and revision lineage
+- `verification_plans`, verification runs, scenarios, and evidence claims
+- procedure and knowledge packages, immutable versions, compatibility, trust, and promotion history
+- questions, preferences, and decisions
 - `credential_references` containing metadata only
 
 ### Fleet and services
@@ -103,6 +111,7 @@ CR-0 through CR-2 remain the projection foundation. Later migrations add—not s
 - inbox messages and deduplication keys
 - transactional outbox and delivery attempts
 - artifact manifests, locations, hashes, producers, retention, and quarantine
+- evidence bundles linking claims/scenarios to exact target and artifact digests
 - notification preferences, destinations, quiet hours, and escalations
 
 Every migration is forward-only, reversible through a documented restore or compensating migration, and tested on an isolated database before deployment.

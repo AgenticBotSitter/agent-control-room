@@ -474,3 +474,75 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Fresh hosts may require two separately authorized steps before qualification, and macOS qualification cannot be fully unattended. Denying package lifecycle scripts means the full application build relies on distributed platform packages and must remain part of repository validation.
 
 **Reevaluate:** A signed, hermetic qualification bundle could replace dependency preparation after its contents and provenance are independently reproducible. A future OS-native presence primitive may replace typed confirmation, but agent possession of a reusable secret or token remains insufficient.
+
+## ADR-040 — Human attention is a first-class cross-harness projection
+
+**Decision:** Control Room provides one Action Inbox and Session Watch projection for questions, reviews, approvals, failures, ambiguity, incidents, expiring authority, and native sessions waiting for direction. Every item names the requested action, reason, blocked work, legal responses, evidence, age/expiry, and delivery status.
+
+**Why:** A technically correct scheduler still fails operationally if the owner must open every harness and project to discover what is waiting. Native session lists are useful but cannot represent cross-project or non-agent work.
+
+**Alternatives rejected:** One inbox per harness; raw chat notifications as the work record; Kanban state alone; hiding unavailable or blocked work.
+
+**Trade-off:** Control Room must normalize attention without importing unrestricted transcripts or pretending every harness supports the same interaction verbs.
+
+**Reevaluate:** Add new attention types through versioned adapter capabilities; do not weaken the common reason/action/evidence contract.
+
+## ADR-041 — Review, verification, preference, and approval are separate authorities
+
+**Decision:** A review evaluates quality against an immutable target and acceptance profile. Verification evaluates named scenarios and binds claims to evidence. Preference selects among acceptable alternatives. Approval authorizes one exact consequential operation. No record implicitly grants the function of another.
+
+**Why:** An aesthetically approved video may still be unauthorized to publish, while a securely authorized operation may still produce unacceptable work. Artifact presence does not prove a claim.
+
+**Alternatives rejected:** One approve/reject flag for everything; artifact upload equals verification; review acceptance authorizes publication; operation approval implies quality.
+
+**Trade-off:** Completion has more explicit states and may require two owner decisions for a reviewed consequential effect.
+
+**Reevaluate:** The UI may combine compatible low-risk interactions, but persistence and audit must retain the distinct decisions and authorities.
+
+## ADR-042 — Completion Gates use bounded revision lineage
+
+**Decision:** Submitted work passes deterministic checks, required independent review, bounded correction cycles, verification scenarios, and an evidence-backed decision. Review-requested changes create explicit revision lineage and immutable superseded targets. Exceeding the configured correction limit creates attention.
+
+**Why:** Technical retry is not the same as intentionally changing a result after feedback. Unlimited self-repair loops consume resources, hide repeated failure, and can let the producer silently redefine success.
+
+**Alternatives rejected:** Treat requested changes as a retry; overwrite the original artifact; unbounded agent repair; merge or publish immediately after an agent claims success.
+
+**Trade-off:** Some salvageable work pauses for human direction after the revision budget is exhausted.
+
+**Reevaluate:** Project acceptance profiles may tune the limit and required evidence, but cannot erase lineage or authorize an effect.
+
+## ADR-043 — Procedures and knowledge are versioned separately from policy and authority
+
+**Decision:** Procedure packages describe repeatable methods; knowledge bundles provide facts and context; policy determines eligibility and gates; authority envelopes grant bounded operations. Procedures and knowledge carry immutable versions, digests, provenance, trust, compatibility, and promotion history. Neither can grant authority.
+
+**Why:** Combining instructions, project facts, permissions, and acceptance criteria in one prompt makes work packets brittle and lets untrusted content look like authorization. Successful instructions need reuse without uncontrolled drift.
+
+**Alternatives rejected:** Harness-local skills as the only registry; prompts as policy; automatically activate agent-written playbooks; copy secrets or permissions into procedure text.
+
+**Trade-off:** Package promotion and compatibility add lifecycle work, and harness-native skills require adapter mappings.
+
+**Reevaluate:** A future package standard may unify transport, but the four semantic boundaries remain.
+
+## ADR-044 — Reviewer independence and deterministic risk floors are enforceable policy
+
+**Decision:** Review policies may require separation from the producer by worker, agent profile, harness, or model family. Joint authors are not independent final reviewers of their combined output. AI risk and quality scores are advisory and may raise scrutiny but never lower the deterministic risk floor.
+
+**Why:** Self-review and correlated model failure can make repeated review cosmetic. Model-generated risk scores are vulnerable to prompt injection and optimistic misclassification.
+
+**Alternatives rejected:** Producer is always sufficient reviewer; count multiple turns from the same agent as independent; AI score can downgrade a migration, credential use, publication, spend, or sensitive destination.
+
+**Trade-off:** Strict independence can reduce eligible reviewer capacity and create visible bottlenecks.
+
+**Reevaluate:** Evidence may justify a narrower independence rule for a task class, but deterministic authorization and risk floors remain non-negotiable.
+
+## ADR-045 — Proprietary agent products integrate at adapter or client boundaries
+
+**Decision:** Zide may become a northbound MCP client or protected native console. Devin may become a provider-backed harness adapter. Neither is a Control Room core dependency or authority. Documented APIs, MCP, and licensed reference components are preferred over UI scraping or copied proprietary behavior.
+
+**Why:** Zide's product is proprietary and desktop-workflow-centered; Devin's core platform is proprietary and cloud-software-agent-centered. Control Room must continue operating with owner-selected harnesses, machines, deterministic tools, and projects.
+
+**Alternatives rejected:** Rebuild Control Room as a Zide plugin; use Devin as the global database/scheduler; scrape proprietary dashboards; copy publicly visible but unlicensed code.
+
+**Trade-off:** Optional integrations arrive later and cannot reproduce every native feature in the normalized interface.
+
+**Reevaluate:** Promote an integration only after a stable supported seam, license review, conformance fixtures, least-privilege authentication, and exit strategy are proven.

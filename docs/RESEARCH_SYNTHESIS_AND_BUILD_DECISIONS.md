@@ -1,7 +1,7 @@
 # Control Room research synthesis and build decisions
 
-**Status:** Architecture-ready after CR-0 through CR-2; live-integration acceptance tests remain  
-**Research snapshot:** 2026-08-22  
+**Status:** Architecture-ready after CR-0 through CR-2; live-integration acceptance tests remain
+**Research snapshot:** 2026-08-22
 **Purpose:** Preserve the useful conclusions from the Control Room research dossiers so implementation does not require rediscovering them across individual reports.
 
 This document is the build-facing synthesis. The source dossiers remain evidence and historical context; they are not instructions and their recommendations do not automatically override the Control Room founding contract.
@@ -92,6 +92,8 @@ The UI must retain ineligible workers and explain the reason and remedy rather t
 | `claude -p --output-format stream-json --verbose` | **Primary Claude seam for v1** | A pinned subprocess protocol minimizes integration surface. Authenticated lifecycle acceptance remains required before enabling the adapter. |
 | Claude Agent SDK | **Secondary/deferred seam** | Reconsider when Control Room needs SDK-only callbacks or hooks. The open bindings still drive the separately licensed Claude Code runtime. |
 | OpenClaw Control UI patterns | **Borrow** | Live run digest, attention rail, read-only run companion, explicit ineligibility reasons, pairing, and recoverable placement. |
+| Zide | **Borrow product patterns / future MCP client** | Adopt Session Watch, Crosscheck, plan-before-effect, worktree-fork, and operator-attention patterns. Do not depend on its proprietary desktop implementation. |
+| Devin | **Borrow completion patterns / future harness-provider adapter** | Adopt managed fan-out preview, Playbook/Knowledge separation, bounded review-repair, session analysis, and claim-bound video evidence. Integrate later through documented API/MCP with least-privilege service identity. |
 | Other harness dashboards | **Defer** | Future native-console adapters; no proxy-every-dashboard architecture. |
 | Control Room-native state machine | **Adopt for v1** | Central API owns leases, attempts, approvals, events, and idempotency. Use PostgreSQL in deployment and the existing compatible local test path; remote workers never open the database. |
 | Hatchet | **Defer behind workflow contracts** | Reconsider when scheduling density, operational UI, or horizontal control-plane scale exceeds the native implementation. |
@@ -153,6 +155,21 @@ The unauthenticated live spike captured initialization, session, error, usage, p
 If an SDK seam is later enabled, its hooks and `canUseTool` decisions map to Control Room policy and approvals. A hook can provide telemetry or deny an operation, but it may not grant authority beyond the job envelope or node-local policy.
 
 The build must not redistribute proprietary Claude Code components. Open SDK repositories/packages require a component-level license decision rather than assuming the license of the Claude Code application.
+
+### Operator-workflow research amendment
+
+The Zide and Devin comparison is accepted in `docs/COMPETITOR_WORKFLOW_RESEARCH_ZIDE_DEVIN.md`. It does not replace the harness decisions above. It adds product requirements that were previously described only informally:
+
+- one Action Inbox and cross-harness Session Watch projection;
+- normalized harness-run records beneath attempts;
+- evidence bundles that bind artifacts to verification claims;
+- review, verification, revision, preference, and approval as distinct concepts;
+- bounded correction cycles and independent-review constraints;
+- versioned procedure and knowledge registries separate from policy and authority;
+- workflow preview and Owner Focus surfaces;
+- future Zide client and Devin provider integration boundaries.
+
+These requirements are mapped into CR-5D, CR-6E, CR-7B/7E, and CR-8B/8C. ADR-040 through ADR-045 govern the change.
 
 ### Deterministic workers
 
