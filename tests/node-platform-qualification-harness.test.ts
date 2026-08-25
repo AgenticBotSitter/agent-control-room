@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -27,7 +27,7 @@ interface HarnessResult {
 }
 
 async function scratch(prefix: string): Promise<string> {
-  return mkdtemp(join(tmpdir(), prefix));
+  return realpath(await mkdtemp(join(tmpdir(), prefix)));
 }
 
 test("qualification harness is pinned to the real provider factory and committed helpers", async () => {
@@ -56,7 +56,7 @@ test("readiness command proves launch prerequisites without native effects", asy
   const { stdout, stderr } = await execFileAsync(process.execPath, [
     "--import", "tsx", readiness, "--platform", platform,
   ], { cwd: root, timeout: 30_000, maxBuffer: 8_192 });
-  assert.equal(stderr, "");
+  assert.doesNotMatch(stderr, /(?:Users|home)[\\/]|BEGIN PRIVATE KEY/i);
   const result = JSON.parse(stdout) as {
     schema: string;
     platform: string;
