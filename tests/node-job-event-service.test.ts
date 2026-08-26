@@ -122,6 +122,11 @@ test("authenticated job events bind the exact lease, retain lineage, append audi
     assert.deepEqual(evidence.rows[0], { lineage_digest: lineage.lineageDigest, independent_verification_state: "not_run" });
     const audit = await db.query<{ action: string }>(`SELECT action FROM audit_events WHERE target_id='attempt:ingest' ORDER BY occurred_at`);
     assert.deepEqual(audit.rows.map((row) => row.action), ["node.job_event.started", "node.job_event.completed"]);
+    const projected = await db.query<{ attempt_state: string; job_state: string; started_at: string; finished_at: string }>(
+      `SELECT a.state AS attempt_state,j.state AS job_state,a.payload->>'startedAt' AS started_at,a.payload->>'finishedAt' AS finished_at
+       FROM control_attempts a JOIN control_jobs j ON j.tenant_id=a.tenant_id AND j.id=a.job_id WHERE a.id='attempt:ingest'`,
+    );
+    assert.deepEqual(projected.rows[0], { attempt_state: "succeeded", job_state: "succeeded", started_at: t2, finished_at: t3 });
 
     const wrongLease = frame({ ...started.body, leaseId: "lease:other" }, "message:ingest:wrong");
     await assert.rejects(service.ingestAuthenticated(wrongLease, t3), (error: unknown) => error instanceof NodeJobEventError && error.safeCode === "identity_mismatch");

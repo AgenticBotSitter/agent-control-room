@@ -1,4 +1,5 @@
 import { appendAuditWith } from "../audit";
+import { domainEntitySchema, type AttemptRecord, type JobRecord } from "../domain/v1";
 import { DeliveryStore } from "../persistence/delivery-store";
 import type { DatabaseClient, DatabaseSession } from "../persistence/database";
 import { assertDigest, assertNoSecretMaterial } from "../security";
@@ -83,10 +84,13 @@ export class NodeJobEventService {
     recordedAt: string,
   ): Promise<IngestedNodeJobEventV1> {
     const authority = await tx.query<{
-      attempt_id: string; node_id: string | null; job_id: string; project_id: string; workflow_id: string;
+      attempt_id: string; node_id: string | null; attempt_state: AttemptRecord["state"]; attempt_version: number; attempt_payload: AttemptRecord;
+      job_id: string; project_id: string; workflow_id: string; job_state: JobRecord["state"]; job_version: number; job_payload: JobRecord;
       lease_id: string; lease_epoch: number | string; lease_node_id: string;
     }>(
-      `SELECT a.id AS attempt_id,a.node_id,a.job_id,j.project_id,j.workflow_id,l.id AS lease_id,l.epoch AS lease_epoch,l.node_id AS lease_node_id
+      `SELECT a.id AS attempt_id,a.node_id,a.state AS attempt_state,a.version AS attempt_version,a.payload AS attempt_payload,
+              a.job_id,j.project_id,j.workflow_id,j.state AS job_state,j.version AS job_version,j.payload AS job_payload,
+              l.id AS lease_id,l.epoch AS lease_epoch,l.node_id AS lease_node_id
        FROM control_attempts a JOIN control_jobs j ON j.tenant_id=a.tenant_id AND j.id=a.job_id
        JOIN control_leases l ON l.tenant_id=a.tenant_id AND l.attempt_id=a.id
        WHERE a.tenant_id=$1 AND a.id=$2 FOR UPDATE`,
@@ -126,6 +130,7 @@ export class NodeJobEventService {
       [frame.tenantId,event.attemptId,event.sequence,frame.messageId,frame.actorId,event.jobId,event.leaseId,event.leaseEpoch,
         event.event,event.occurredAt,frame.bodyDigest,event.safeReasonCode ?? null,lineage?.artifactId ?? null,JSON.stringify(event),recordedAt],
     );
+    await this.applyLifecycleProjection(tx, frame, event, bound);
     await appendAuditWith(tx, {
       id: `audit:${frame.messageId}`, tenantId: frame.tenantId, projectId: bound.project_id, actorId: frame.actorId, actorType: "worker",
       action: `node.job_event.${event.event}`, targetType: "attempt", targetId: event.attemptId,
@@ -134,6 +139,83 @@ export class NodeJobEventService {
       occurredAt: event.occurredAt,
     });
     return { event: event.event, attemptId: event.attemptId, sequence: event.sequence, replayed: false };
+  }
+
+  private async applyLifecycleProjection(
+    tx: DatabaseSession,
+    frame: SignedNodeFrame<"job.event">,
+    event: JobEventBody,
+    bound: {
+      attempt_id: string; attempt_state: AttemptRecord["state"]; attempt_version: number; attempt_payload: AttemptRecord;
+      job_id: string; job_state: JobRecord["state"]; job_version: number; job_payload: JobRecord;
+    },
+  ): Promise<void> {
+    const eventIndex = event.sequence - 1;
+    if (eventIndex === 0 && event.event !== "started" && event.event !== "cancelled") throw new NodeJobEventError("invalid_event");
+    const attemptTarget = (() => {
+      if (event.event === "started" && bound.attempt_state === "leased") return "running" as const;
+      if (event.event === "waiting" && bound.attempt_state === "running") return "waiting" as const;
+      if (event.event === "completed" && ["running", "waiting"].includes(bound.attempt_state)) return "succeeded" as const;
+      if (event.event === "failed" && ["running", "waiting"].includes(bound.attempt_state)) return "failed" as const;
+      if (event.event === "cancelled" && ["leased", "running", "waiting"].includes(bound.attempt_state)) return "cancelled" as const;
+      if (["progress", "checkpointed"].includes(event.event) && bound.attempt_state === "running") return undefined;
+      throw new NodeJobEventError("invalid_event");
+    })();
+    const jobTarget = (() => {
+      if (event.event === "started" && bound.job_state === "leased") return "running" as const;
+      if (event.event === "completed" && bound.job_state === "running") return "succeeded" as const;
+      if (event.event === "failed" && bound.job_state === "running") return "failed" as const;
+      if (event.event === "cancelled" && ["leased", "running", "waiting_approval"].includes(bound.job_state)) return "cancelled" as const;
+      if (["progress", "checkpointed", "waiting"].includes(event.event) && bound.job_state === "running") return undefined;
+      throw new NodeJobEventError("invalid_event");
+    })();
+    if (attemptTarget) {
+      const next = domainEntitySchema.parse({
+        ...bound.attempt_payload, state: attemptTarget, version: bound.attempt_version + 1, updatedAt: event.occurredAt,
+        ...(event.event === "started" ? { startedAt: event.occurredAt } : {}),
+        ...(["completed", "failed", "cancelled"].includes(event.event) ? { finishedAt: event.occurredAt } : {}),
+        ...(event.event === "failed" && event.safeReasonCode ? { safeFailureCode: event.safeReasonCode } : {}),
+      }) as AttemptRecord;
+      await this.updateProjection(tx, "attempt", next, bound.attempt_state, bound.attempt_version, frame, event);
+    }
+    if (jobTarget) {
+      const next = domainEntitySchema.parse({
+        ...bound.job_payload, state: jobTarget, version: bound.job_version + 1, updatedAt: event.occurredAt,
+      }) as JobRecord;
+      await this.updateProjection(tx, "job", next, bound.job_state, bound.job_version, frame, event);
+    }
+  }
+
+  private async updateProjection(
+    tx: DatabaseSession,
+    kind: "attempt" | "job",
+    next: AttemptRecord | JobRecord,
+    fromState: string,
+    priorVersion: number,
+    frame: SignedNodeFrame<"job.event">,
+    event: JobEventBody,
+  ): Promise<void> {
+    const table = kind === "attempt" ? "control_attempts" : "control_jobs";
+    const updated = await tx.query<{ id: string }>(
+      `UPDATE ${table} SET state=$1,version=$2,payload=$3::jsonb,updated_at=$4 WHERE tenant_id=$5 AND id=$6 AND version=$7 AND state=$8 RETURNING id`,
+      [next.state,next.version,JSON.stringify(next),next.updatedAt,frame.tenantId,next.id,priorVersion,fromState],
+    );
+    if (updated.rows.length !== 1) throw new NodeJobEventError("sequence_conflict");
+    const transitionId = `transition:node-event:${frame.messageId}:${kind}`;
+    const idempotencyKey = `node-event:${frame.messageId}:${kind}`;
+    const safeMetadata = { messageId: frame.messageId, event: event.event, eventSequence: event.sequence, leaseEpoch: event.leaseEpoch };
+    await tx.query(
+      `INSERT INTO control_transition_events
+       (id,tenant_id,entity_kind,entity_id,from_state,to_state,from_version,to_version,actor_id,actor_type,idempotency_key,safe_metadata,occurred_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'node',$10,$11::jsonb,$12)`,
+      [transitionId,frame.tenantId,kind,next.id,fromState,next.state,priorVersion,next.version,frame.actorId,idempotencyKey,JSON.stringify(safeMetadata),event.occurredAt],
+    );
+    await tx.query(
+      `INSERT INTO control_outbox(id,tenant_id,topic,aggregate_type,aggregate_id,idempotency_key,status,available_at,payload)
+       VALUES ($1,$2,'domain.transition',$3,$4,$5,'pending',$6,$7::jsonb)`,
+      [`outbox:${transitionId}`,frame.tenantId,kind,next.id,idempotencyKey,event.occurredAt,
+        JSON.stringify({ entityKind: kind, entityId: next.id, fromState, toState: next.state, version: next.version })],
+    );
   }
 
   private async persistLineage(tx: DatabaseSession, tenantId: string, workflowId: string, lineage: ArtifactLineageBody, recordedAt: string): Promise<void> {
