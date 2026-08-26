@@ -1,9 +1,9 @@
 # CR-5D admitted synthetic execution and storage contract
 
-**Status:** Architect-frozen for CR5D-INT-001 through CR5D-INT-003 and CR5D-STOR-001
+**Status:** Architect-frozen for CR5D-INT-001 through CR5D-INT-003 and CR5D-STOR-001/002
 **Decision date:** 2026-08-26  
-**Scope:** Effect-free coordination of an already-admitted synthetic execution and bounded in-memory artifact storage  
-**Authority:** This contract does not authorize a live node, filesystem/object-store write, credential, deployment, external effect, or production mutation.
+**Scope:** Effect-free coordination of an already-admitted synthetic execution and bounded memory or owner-created disposable artifact storage
+**Authority:** This contract does not authorize a live node, live filesystem/object-store namespace, credential, deployment, external effect, or production mutation.
 
 ## Required boundary
 
@@ -42,6 +42,8 @@ The node-local terminal attempt projection, artifact lineage record, and pending
 The storage port accepts an artifact ID and immutable bytes and returns an opaque locator, exact byte count, and SHA-256 content hash. Reusing an artifact ID with identical bytes is idempotent. Reusing it with different bytes is a conflict. Capacity is bounded by configured artifact count and total bytes.
 
 The first adapter is memory-only and test-safe. It clones bytes on write and read, performs no filesystem, network, environment, credential, timer, subprocess, platform, or persistent-state operation, and uses only `memory://artifact/<encoded-id>` locators. A filesystem or object adapter requires a separate containment, atomicity, ambiguity, cleanup, and owner-authority contract.
+
+CR5D-STOR-002 adds the separately frozen `CR5D_DISPOSABLE_ARTIFACT_STORAGE_CONTRACT.md`. Its local adapter accepts only a pre-existing private canonical root, publishes exact bytes without overwrite, returns a path-free opaque locator, and fails closed on root replacement, aliases, links, unexpected entries, or crash debris. Tests create and remove only their exact temporary roots. Selecting any live root remains owner-controlled.
 
 ## Acceptance
 
