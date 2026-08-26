@@ -75,6 +75,8 @@ Before publishing a jobber, Codex runs `pnpm agent:capsule -- --capsule <path>` 
 | `/blocked <route> <reason/evidence>` | Active claim after work, an attempt, ambiguity, or exhausted repair budget | Moves to `BLOCKED`, releases capacity, and waits for Codex triage |
 | `/submitted <route> <PR URL>` | Open PR from the exact producer branch to exact integration target | Moves to `REVIEW` and releases capacity immediately |
 
+Every queue transition comment contains exactly one command and no trailing explanation. A malformed command-like comment is rejected visibly and cannot silently succeed. The result manifest's `baseCommit` is copied byte-for-byte from the capsule; it is the product-base ancestry pin and is not replaced by the integration branch's current head.
+
 A route may hold several independent claims up to the capsule's declared limit. Submission releases a slot before review finishes, so agents can continue through a prepared wave while Codex and verifier cells review in batches. Dependencies still serialize work that truly depends on an accepted predecessor.
 
 `BLOCKED` work is not silently offered to another route. Codex reviews the preserved branch/evidence and closes, safely amends before any attempt, or issues a new capsule identity pinned to the appropriate base. An untouched release is the only automatic return to the ready pool.
