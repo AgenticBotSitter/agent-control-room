@@ -8,9 +8,9 @@ Every actionable order states:
 
 - **Mode:** `standard-work`, `platform-validation`, `controlled-effect`, or `independent-review`.
 - **Objective:** one concrete deliverable and why it is delegated.
-- **Owner:** named worker/machine route.
-- **Wave and status:** named frozen wave and a capsule status of `ready` or `assigned`.
-- **Base and branches:** full immutable product-base commit, exact `integration/<block>` target, and exact fresh `agent/<route>/<capsule>` branch.
+- **Eligibility:** platform, eligible routes, authorized GitHub claimants, required tools, and per-route concurrency.
+- **Wave and status:** named frozen wave and a capsule status of `ready`.
+- **Base and branches:** full immutable product-base commit and exact `integration/<block>` target; the accepted claim derives `agent/<route>/<capsule>`.
 - **Allowed paths:** exact committed product paths; directory boundaries and globs are invalid in V2.
 - **Owned inputs:** immutable files, PR heads, schemas, harnesses, fixtures, or references.
 - **Acceptance:** observable results and exact validation commands.
@@ -27,6 +27,7 @@ Post a concise response before branch creation:
 
 ```text
 WORK ORDER READY
+accepted claim comment: <URL>
 wave/capsule/status: <exact>
 mode: <declared mode>
 worker/model/host class: <actual>
@@ -38,6 +39,8 @@ blocked mismatches: none
 ```
 
 If a required value differs, post `WORK ORDER BLOCKED` with the mismatch and stop. Owner conversation may clarify intent but cannot silently amend the GitHub order; material changes belong in an edited order with an explicit new-ready disposition.
+
+For V2 jobbers, use the exact `/release`, `/blocked`, and `/submitted` transitions in `../../agent-build-worker/SKILL.md`; do not simulate them with assignment edits or informal comments.
 
 ## Outcome language
 

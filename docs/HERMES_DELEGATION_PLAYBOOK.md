@@ -34,10 +34,10 @@ GitHub stores source, issues, pull requests, test evidence, and decisions. It mu
 
 1. Codex delegates only when the expected implementation or host-evidence value materially exceeds packet and review cost. Architecture, security boundaries, migrations, cross-module integration, and final acceptance remain architect-owned.
 2. Codex chooses one declared mode: `standard-work`, `platform-validation`, `controlled-effect`, or `independent-review`. Most isolated repository work uses `standard-work`; the machine-checkable effect contract is reserved for genuinely high-risk operations.
-3. The issue contains the required work-order fields: objective, worker, exact base/branch, allowed paths, immutable inputs, acceptance commands, repair budget, environment/side-effect boundary, stop conditions, and handoff.
-4. The worker reads the stable skill plus only the selected mode reference, performs preflight, and posts `WORK ORDER READY` or the exact blocker.
+3. The committed capsule contains the required work-order fields: objective, platform and route eligibility, exact base/integration target, allowed paths, immutable inputs, acceptance commands, repair budget, environment/side-effect boundary, stop conditions, and handoff. The issue is its title-rich queue view.
+4. The worker reads `skills/agent-build-worker/SKILL.md`, claims through the serialized controller, then reads only the selected mode reference and posts `WORK ORDER READY` or the exact blocker.
 5. Standard work normally receives one focused correction within scope. Platform validation has stock-Node stage zero plus runtime readiness, neither of which can consume the native attempt. When a native prompt requires the owner, the worker stops at `OWNER ACTION REQUIRED`; a worker-authored acknowledgement cannot substitute for the owner's attached execution. Controlled-effect work uses the validated `control-room-work-packet/v1` JSON, digest, effect ledger, and exact cleanup.
-6. The worker changes only allowed paths, runs the exact checks, preserves failures/corrections, and opens one unmerged PR targeting the capsule's `integration/<block>` branch when the order requests one. A readiness-blocked platform order normally needs only an issue comment.
+6. The worker changes only allowed paths, runs the exact checks, preserves failures/corrections, and opens one unmerged PR targeting the capsule's `integration/<block>` branch when the order requests one. `/submitted` releases route capacity so independent jobbers can continue while review waits. A readiness-blocked platform order normally needs only a blocked issue transition.
 7. Codex/Sol reviews scope and claims first, then the mode-specific repair/readiness/effect record, cleanup, test output, and current PR/issue consistency.
 8. Only accepted work is merged. A merged contribution does not advance a CR block unless the architect-owned completion gate passes.
 
@@ -58,7 +58,7 @@ The architect must answer these before dispatch:
 
 If any answer is uncertain, the packet remains draft. The worker is not responsible for resolving an architect-authored ambiguity during execution.
 
-Workers do not self-assign any new work, expand scope, merge their own changes, edit branch protections, modify credentials, or run live integrations. Only a V2 capsule with status `ready` is claimable.
+Workers do not assign themselves outside the serialized V2 `/claim` controller, expand scope, merge their own changes, edit branch protections, modify credentials, or run live integrations. Only a V2 capsule with status `ready` is claimable.
 
 ## Suitable early packets
 

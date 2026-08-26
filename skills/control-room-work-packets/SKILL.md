@@ -5,6 +5,8 @@ description: Execute or review a Control Room GitHub work order using the order'
 
 # Control Room work orders
 
+For V2 GitHub jobber claiming, continuous work, submission, release, and blocked handoff, start with `../agent-build-worker/SKILL.md`. This skill retains the detailed mode boundaries used after a claim.
+
 Treat the committed `control-room.agent-build-capsule/v2` document as the task-specific source of truth. The GitHub issue is a human-readable view and cannot authorize work by itself. This skill supplies stable operating behavior; it does not repeat the task's implementation instructions.
 
 ## Choose the declared mode
@@ -20,7 +22,7 @@ Every mode also uses [references/work-order.md](references/work-order.md). If th
 
 ## Shared boundaries
 
-- Work from the exact integration base and producer branch named by the capsule. Never work on or target `main`, another worker branch, or an earlier packet branch.
+- Work from the current exact integration target and deterministic producer branch returned by the accepted claim. Never work on or target `main`, another worker branch, or an earlier packet branch.
 - Change only allowed paths. Do not modify the work order, harness, accepted contract, or architecture unless that is the assigned deliverable.
 - Use only existing authenticated Git/GitHub tooling. Never extract, copy, print, or transfer credentials.
 - Never place secrets, private material, production data, raw host identity, personal paths, or raw native diagnostics in commits, issues, PRs, or reports.

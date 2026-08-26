@@ -16,15 +16,20 @@ function documents(overrides = {}) {
     capsuleId: "CR5D-PILOT-001",
     waveId: "CR5D-PILOT",
     block: "CR-5D",
+    summary: "Add one frozen fixture",
+    platform: "any",
     status: "ready",
     mode: "standard-work",
     taskClass: "T0-mechanical",
     risk: "low",
     baseCommit: base,
     integrationBranch: "integration/cr5d-pilot",
-    producerBranch: "agent/marvin/cr5d-pilot-001",
-    producerRoute: "marvin-hermes-provisional",
-    verification: { required: true, excludedRoutes: ["marvin-hermes-provisional"] },
+    eligibleRoutes: ["marvin-hermes-provisional"],
+    routeClaimants: { "marvin-hermes-provisional": ["MarvinAi5"] },
+    dependencies: [],
+    requiredTools: ["node >=22.13.0"],
+    maxConcurrentClaimsPerRoute: 3,
+    verification: { required: true, independence: "route" },
     objective: "Add one frozen fixture.",
     contractRefs: ["docs/CR3_BUILD_PLAN.md"],
     allowedPaths: ["tests/fixtures/example.json"],
@@ -44,7 +49,7 @@ function documents(overrides = {}) {
     waveId: capsule.waveId,
     baseCommit: capsule.baseCommit,
     implementationCommit: head,
-    producerRoute: capsule.producerRoute,
+    producerRoute: capsule.eligibleRoutes[0],
     changedFiles: [{ path: "tests/fixtures/example.json", additions: 5, deletions: 0 }],
     commands: [{ command: "node --test tests/example.test.mjs", exitCode: 0 }],
     repairIterations: 0,
@@ -97,10 +102,38 @@ test("failed acceptance command is quarantined", () => {
   assert.ok(report.errors.includes("acceptance_command_failed:node --test tests/example.test.mjs"));
 });
 
-test("producer cannot be eligible as its own required verifier", () => {
-  const { completed, report } = run({ capsule: { verification: { required: true, excludedRoutes: [] } } });
+test("required verification must declare an independence boundary", () => {
+  const { completed, report } = run({ capsule: { verification: { required: true, independence: "none" } } });
   assert.equal(completed.status, 1);
-  assert.ok(report.errors.includes("producer_not_excluded_from_verification"));
+  assert.ok(report.errors.includes("required_verification_not_independent"));
+});
+
+test("an ineligible producer route is quarantined", () => {
+  const { completed, report } = run({ result: { producerRoute: "ziggy-windows" } });
+  assert.equal(completed.status, 1);
+  assert.ok(report.errors.includes("producer_route_ineligible"));
+});
+
+test("ready capsule can be validated before a jobber is published", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "control-room-capsule-"));
+  const capsulePath = path.join(directory, "capsule.json");
+  const { capsule } = documents();
+  writeFileSync(capsulePath, JSON.stringify(capsule));
+  const completed = spawnSync(process.execPath, [validator, "--mode", "capsule", "--capsule", capsulePath], { encoding: "utf8" });
+  const report = JSON.parse(completed.stdout);
+  assert.equal(completed.status, 0);
+  assert.equal(report.disposition, "claimable");
+});
+
+test("capsule claimant map must exactly cover eligible routes", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "control-room-capsule-"));
+  const capsulePath = path.join(directory, "capsule.json");
+  const { capsule } = documents({ capsule: { eligibleRoutes: ["marvin-hermes-provisional", "ziggy-windows"] } });
+  writeFileSync(capsulePath, JSON.stringify(capsule));
+  const completed = spawnSync(process.execPath, [validator, "--mode", "capsule", "--capsule", capsulePath], { encoding: "utf8" });
+  const report = JSON.parse(completed.stdout);
+  assert.equal(completed.status, 1);
+  assert.ok(report.errors.includes("route_claimants_mismatch"));
 });
 
 test("git intake reconstructs isolated implementation and metadata commits", () => {
@@ -125,7 +158,8 @@ test("git intake reconstructs isolated implementation and metadata commits", () 
   git(directory, "commit", "-m", "dispatch capsule");
   const targetBase = git(directory, "rev-parse", "HEAD");
 
-  git(directory, "switch", "-c", capsule.producerBranch);
+  const producerBranch = `agent/${result.producerRoute}/${capsule.capsuleId.toLowerCase()}`;
+  git(directory, "switch", "-c", producerBranch);
   mkdirSync(path.join(directory, "tests/fixtures"), { recursive: true });
   writeFileSync(path.join(directory, "tests/fixtures/example.json"), "{}\n");
   git(directory, "add", "tests/fixtures/example.json");
@@ -143,7 +177,7 @@ test("git intake reconstructs isolated implementation and metadata commits", () 
     validator,
     "--discover-base", targetBase,
     "--head", observedHead,
-    "--branch", capsule.producerBranch,
+    "--branch", producerBranch,
     "--target", capsule.integrationBranch
   ], { cwd: directory, encoding: "utf8" });
   const report = JSON.parse(completed.stdout);

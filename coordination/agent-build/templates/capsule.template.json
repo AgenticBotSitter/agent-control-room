@@ -3,17 +3,24 @@
   "capsuleId": "EXAMPLE-WAVE-001",
   "waveId": "EXAMPLE-WAVE",
   "block": "CR-X",
+  "summary": "Add one exact example fixture",
+  "platform": "any",
   "status": "draft",
   "mode": "standard-work",
   "taskClass": "T0-mechanical",
   "risk": "low",
   "baseCommit": "0000000000000000000000000000000000000000",
   "integrationBranch": "integration/example-wave",
-  "producerBranch": "agent/example/example-wave-001",
-  "producerRoute": "example-provisional-route",
+  "eligibleRoutes": ["example-provisional-route"],
+  "routeClaimants": {
+    "example-provisional-route": ["ExampleGitHubLogin"]
+  },
+  "dependencies": [],
+  "requiredTools": ["node >=22.13.0"],
+  "maxConcurrentClaimsPerRoute": 3,
   "verification": {
     "required": true,
-    "excludedRoutes": ["example-provisional-route"]
+    "independence": "route"
   },
   "objective": "Replace this with one bounded deliverable under a frozen contract.",
   "contractRefs": ["docs/AGENT_BUILD_SYSTEM_V2.md"],

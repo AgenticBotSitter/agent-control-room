@@ -18,27 +18,37 @@
     "capsule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema", "capsuleId", "waveId", "block", "status", "mode", "taskClass", "risk", "baseCommit", "integrationBranch", "producerBranch", "producerRoute", "verification", "objective", "contractRefs", "allowedPaths", "forbiddenPrefixes", "acceptanceCommands", "semanticAcceptance", "limits", "effects", "stopConditions", "resultManifestPath"],
+      "required": ["schema", "capsuleId", "waveId", "block", "summary", "platform", "status", "mode", "taskClass", "risk", "baseCommit", "integrationBranch", "eligibleRoutes", "routeClaimants", "dependencies", "requiredTools", "maxConcurrentClaimsPerRoute", "verification", "objective", "contractRefs", "allowedPaths", "forbiddenPrefixes", "acceptanceCommands", "semanticAcceptance", "limits", "effects", "stopConditions", "resultManifestPath"],
       "properties": {
         "schema": { "const": "control-room.agent-build-capsule/v2" },
         "capsuleId": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9._-]{2,63}$" },
         "waveId": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9._-]{2,63}$" },
         "block": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "platform": { "enum": ["any", "macos", "windows", "linux"] },
         "status": { "enum": ["draft", "ready", "assigned", "submitted", "verified", "accepted", "quarantined", "closed"] },
         "mode": { "enum": ["standard-work", "platform-validation", "controlled-effect", "independent-review"] },
         "taskClass": { "enum": ["T0-mechanical", "T1-bounded-implementation", "T2-integration-candidate", "T3-platform-validation", "architect-only"] },
         "risk": { "enum": ["low", "medium", "high", "critical"] },
         "baseCommit": { "$ref": "#/$defs/sha" },
         "integrationBranch": { "type": "string", "pattern": "^integration/[a-z0-9][a-z0-9._/-]*$" },
-        "producerBranch": { "type": "string", "pattern": "^agent/[a-z0-9][a-z0-9._/-]*$" },
-        "producerRoute": { "type": "string", "minLength": 1 },
+        "eligibleRoutes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,47}$" } },
+        "routeClaimants": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._-]{1,47}$" },
+          "additionalProperties": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9-]{1,39}$" } }
+        },
+        "dependencies": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9._-]{2,63}$" } },
+        "requiredTools": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 100 } },
+        "maxConcurrentClaimsPerRoute": { "type": "integer", "minimum": 1, "maximum": 5 },
         "verification": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["required", "excludedRoutes"],
+          "required": ["required", "independence"],
           "properties": {
             "required": { "type": "boolean" },
-            "excludedRoutes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+            "independence": { "enum": ["none", "route", "profile", "harness", "model-family"] }
           }
         },
         "objective": { "type": "string", "minLength": 1 },

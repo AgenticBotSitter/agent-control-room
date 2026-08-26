@@ -11,6 +11,7 @@ const INTEGRATION_BRANCH = /^integration\/[a-z0-9][a-z0-9._/-]*$/;
 const PRODUCER_BRANCH = /^agent\/[a-z0-9][a-z0-9._/-]*$/;
 const CAPSULE_SCHEMA = "control-room.agent-build-capsule/v2";
 const RESULT_SCHEMA = "control-room.agent-build-result/v2";
+const ROUTE = /^[a-z0-9][a-z0-9._-]{1,47}$/;
 
 function parseArgs(argv) {
   const args = {};
@@ -55,17 +56,30 @@ function validateCapsule(capsule) {
   add(errors, ID.test(capsule?.capsuleId ?? ""), "capsule_id_invalid");
   add(errors, ID.test(capsule?.waveId ?? ""), "wave_id_invalid");
   add(errors, typeof capsule?.block === "string" && capsule.block.length > 0, "block_missing");
-  add(errors, ["ready", "assigned"].includes(capsule?.status), "capsule_not_claimable");
+  add(errors, typeof capsule?.summary === "string" && capsule.summary.length > 0 && capsule.summary.length <= 100, "summary_invalid");
+  add(errors, ["any", "macos", "windows", "linux"].includes(capsule?.platform), "platform_invalid");
+  add(errors, capsule?.status === "ready", "capsule_not_claimable");
   add(errors, ["standard-work", "platform-validation", "controlled-effect", "independent-review"].includes(capsule?.mode), "mode_invalid");
   add(errors, ["T0-mechanical", "T1-bounded-implementation", "T2-integration-candidate", "T3-platform-validation"].includes(capsule?.taskClass), "task_class_not_delegable");
   add(errors, ["low", "medium", "high", "critical"].includes(capsule?.risk), "risk_invalid");
   add(errors, SHA.test(capsule?.baseCommit ?? ""), "base_commit_invalid");
   add(errors, INTEGRATION_BRANCH.test(capsule?.integrationBranch ?? ""), "integration_branch_invalid");
-  add(errors, PRODUCER_BRANCH.test(capsule?.producerBranch ?? ""), "producer_branch_invalid");
-  add(errors, typeof capsule?.producerRoute === "string" && capsule.producerRoute.length > 0, "producer_route_missing");
+  add(errors, arrayOf(capsule?.eligibleRoutes, (item) => ROUTE.test(item), { nonempty: true, unique: true }), "eligible_routes_invalid");
+  const routeClaimants = capsule?.routeClaimants;
+  add(errors, routeClaimants !== null && typeof routeClaimants === "object" && !Array.isArray(routeClaimants), "route_claimants_invalid");
+  const claimantRoutes = routeClaimants && typeof routeClaimants === "object" ? Object.keys(routeClaimants) : [];
+  add(errors, JSON.stringify([...claimantRoutes].sort()) === JSON.stringify([...(capsule?.eligibleRoutes ?? [])].sort()), "route_claimants_mismatch");
+  for (const route of claimantRoutes) {
+    add(errors, arrayOf(routeClaimants[route], (login) => /^[A-Za-z0-9-]{1,39}$/.test(login), { nonempty: true, unique: true }), `route_claimants_invalid:${route}`);
+  }
+  add(errors, arrayOf(capsule?.dependencies, (item) => ID.test(item), { unique: true }), "dependencies_invalid");
+  add(errors, !(capsule?.dependencies ?? []).includes(capsule?.capsuleId), "capsule_depends_on_itself");
+  add(errors, arrayOf(capsule?.requiredTools, (item) => typeof item === "string" && item.length > 0 && item.length <= 100, { unique: true }), "required_tools_invalid");
+  add(errors, Number.isInteger(capsule?.maxConcurrentClaimsPerRoute) && capsule.maxConcurrentClaimsPerRoute >= 1 && capsule.maxConcurrentClaimsPerRoute <= 5, "claim_limit_invalid");
   add(errors, typeof capsule?.verification?.required === "boolean", "verification_rule_invalid");
-  add(errors, arrayOf(capsule?.verification?.excludedRoutes, (item) => typeof item === "string" && item.length > 0, { unique: true }), "verification_exclusions_invalid");
-  add(errors, !capsule?.verification?.required || capsule.verification.excludedRoutes.includes(capsule.producerRoute), "producer_not_excluded_from_verification");
+  add(errors, ["none", "route", "profile", "harness", "model-family"].includes(capsule?.verification?.independence), "verification_independence_invalid");
+  add(errors, capsule?.verification?.required || capsule?.verification?.independence === "none", "unneeded_verification_independence");
+  add(errors, !capsule?.verification?.required || capsule?.verification?.independence !== "none", "required_verification_not_independent");
   add(errors, typeof capsule?.objective === "string" && capsule.objective.length > 0, "objective_missing");
   add(errors, arrayOf(capsule?.contractRefs, isRepoPath, { nonempty: true, unique: true }), "contract_refs_invalid");
   add(errors, arrayOf(capsule?.allowedPaths, isRepoPath, { nonempty: true, unique: true }), "allowed_paths_invalid");
@@ -95,7 +109,7 @@ function validateResult(result, capsule) {
   add(errors, result?.waveId === capsule?.waveId, "wave_id_mismatch");
   add(errors, result?.baseCommit === capsule?.baseCommit, "base_commit_mismatch");
   add(errors, SHA.test(result?.implementationCommit ?? ""), "implementation_commit_invalid");
-  add(errors, result?.producerRoute === capsule?.producerRoute, "producer_route_mismatch");
+  add(errors, ROUTE.test(result?.producerRoute ?? "") && capsule?.eligibleRoutes?.includes(result.producerRoute), "producer_route_ineligible");
   add(errors, Array.isArray(result?.changedFiles) && result.changedFiles.length > 0, "changed_files_missing");
   const changedPaths = [];
   for (const file of result?.changedFiles ?? []) {
@@ -136,7 +150,8 @@ function validateGit(capsule, result, args) {
   const errors = [];
   add(errors, SHA.test(args?.head ?? ""), "observed_head_invalid");
   add(errors, SHA.test(args?.["target-base"] ?? ""), "observed_target_base_invalid");
-  add(errors, args.branch === capsule.producerBranch, "observed_branch_mismatch");
+  const expectedProducerBranch = `agent/${result.producerRoute}/${capsule.capsuleId.toLowerCase()}`;
+  add(errors, PRODUCER_BRANCH.test(args?.branch ?? "") && args.branch === expectedProducerBranch, "observed_branch_mismatch");
   add(errors, args.target === capsule.integrationBranch, "observed_target_mismatch");
   add(errors, git(["merge-base", "--is-ancestor", capsule.baseCommit, args["target-base"]]).status === 0, "product_base_not_ancestor_of_target");
   add(errors, git(["merge-base", "--is-ancestor", args["target-base"], result.implementationCommit]).status === 0, "target_base_not_ancestor_of_implementation");
@@ -168,6 +183,21 @@ function main() {
   let args;
   try {
     args = parseArgs(process.argv.slice(2));
+    if (args.mode === "capsule") {
+      if (!args.capsule) throw new Error("capsule mode requires --capsule");
+      const capsule = readJson(args.capsule);
+      const errors = validateCapsule(capsule);
+      const report = {
+        schema: "control-room.agent-build-capsule-validation/v2",
+        ok: errors.length === 0,
+        disposition: errors.length === 0 ? "claimable" : "draft-or-invalid",
+        capsuleId: capsule.capsuleId ?? null,
+        waveId: capsule.waveId ?? null,
+        errors: [...new Set(errors)].sort()
+      };
+      console.log(JSON.stringify(report, null, 2));
+      return report.ok ? 0 : 1;
+    }
     if (args["discover-base"]) {
       if (!SHA.test(args["discover-base"]) || !SHA.test(args?.head ?? "")) throw new Error("discovery requires valid --discover-base and --head commits");
       const discovered = git(["diff", "--name-only", "--diff-filter=ACMRDTUXB", `${args["discover-base"]}...${args.head}`, "--", "coordination/agent-build/results"]);

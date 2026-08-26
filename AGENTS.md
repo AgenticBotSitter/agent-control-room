@@ -12,7 +12,7 @@ Control Room is a harness-agnostic orchestration system for projects, workers, s
 ## Authority
 
 - Codex owns architecture, security boundaries, normative contracts, acceptance criteria, final review, and integration.
-- Hermes workers contribute through bounded GitHub work orders. For creating or reviewing those packets, use the repository skill at `.agents/skills/control-room-delegation-review/SKILL.md`.
+- Hermes and other external workers contribute through V2 GitHub jobbers. Workers must follow `skills/agent-build-worker/SKILL.md` and may start only after the serialized queue controller records `CLAIM ACCEPTED`. For authoring capsules or reviewing results, Codex uses `.agents/skills/control-room-delegation-review/SKILL.md`.
 - Worker output is evidence, not architectural authority. Never self-merge worker PRs or convert blocked/negative evidence into a pass.
 - Secrets, credentials, raw host identity, private infrastructure details, and production artifacts do not belong in commits, issues, PRs, fixtures, or logs.
 - Installs, downloads, live integrations, native credential-store operations, persistent services, destructive cleanup, and production effects require explicit scoped authority.

@@ -1,18 +1,58 @@
 name: Agent build capsule view
 description: Human-readable view of a Codex-authored V2 capsule. This form alone never authorizes work.
-title: "[WORK] "
+title: "[READY][PLATFORM][TIER][CR-BLOCK][CAPSULE-ID] "
 labels:
   - work-packet
+  - jobber-ready
 body:
   - type: markdown
     attributes:
       value: |
         Codex authors this issue from a committed V2 capsule. Agents must not self-assign or start from this form alone. Do not include secrets, tokens, private production data, or mutable artifact URLs. One producer, one isolated branch, and a separate verifier when required.
+        Before publishing, replace the title with: `[READY][ANY|MACOS|WINDOWS|LINUX][T0|T1|T2|T3][CR-BLOCK][CAPSULE-ID] summary` and add the `jobber-ready` label.
   - type: input
     id: v2_capsule
     attributes:
-      label: V2 capsule path and wave
-      description: Exact committed coordination/agent-build/capsules/<id>.json path and wave ID. Capsule status must be ready.
+      label: V2 capsule marker
+      description: Enter exactly Capsule followed by a colon and the committed path in backticks. Capsule status must be ready.
+      placeholder: "Capsule: `coordination/agent-build/capsules/CR5D-W1-001.json`"
+    validations:
+      required: true
+  - type: input
+    id: integration_marker
+    attributes:
+      label: Integration marker
+      description: Enter exactly Integration followed by a colon and the capsule integration branch in backticks.
+      placeholder: "Integration: `integration/cr5d-w1`"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform eligibility
+      options:
+        - ANY
+        - MACOS
+        - WINDOWS
+        - LINUX
+    validations:
+      required: true
+  - type: textarea
+    id: claim_commands
+    attributes:
+      label: Queue commands
+      value: |
+        Claim: `/claim <route-id>`
+        Untouched return: `/release <route-id> --no-work-started <reason>`
+        Blocked handoff: `/blocked <route-id> <reason and evidence reference>`
+        Submission: `/submitted <route-id> <pull-request-url>`
+    validations:
+      required: true
+  - type: textarea
+    id: required_tools
+    attributes:
+      label: Required tools and pre-claim completion check
+      description: Copy requiredTools and state anything the worker must verify before claiming. Missing tools do not imply install authority.
     validations:
       required: true
   - type: input
@@ -25,8 +65,8 @@ body:
   - type: input
     id: worker_route
     attributes:
-      label: Worker route
-      description: Worker ID, machine, harness, and model. Use provisional when not yet qualified.
+      label: Eligible routes and claimants
+      description: Copy the capsule route IDs, authorized GitHub logins, qualification state, and concurrency limit. A route chooses itself only through /claim.
     validations:
       required: true
   - type: dropdown
