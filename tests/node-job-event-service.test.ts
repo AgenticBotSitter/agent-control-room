@@ -1,0 +1,174 @@
+import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
+import { readFile, readdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import test from "node:test";
+import { PGlite } from "@electric-sql/pglite";
+import { NodeJobEventError, NodeJobEventIngress, NodeJobEventService } from "../src/node-control";
+import { buildArtifactLineageRecord, buildTextArtifactBundle } from "../src/node-executor";
+import {
+  DatabaseNodeKeyResolver,
+  DatabaseReplayGuard,
+  FixedWindowProtocolRateLimiter,
+  NODE_PROTOCOL_V1,
+  NodeProtocolAuthenticator,
+  publicKeyFingerprint,
+  signNodeFrame,
+  type JobEventBody,
+  type SignedNodeFrame,
+  type UnsignedNodeFrame,
+} from "../src/node-protocol/v1";
+import { CanonicalStore } from "../src/persistence/canonical-store";
+import { adaptPglite } from "../src/persistence/database";
+import { computeAuthorityDigest } from "../src/security";
+import { DOMAIN_CONTRACT_VERSION, type JobRecord, type NodeRecord, type RequestRecord, type WorkflowRecord } from "../src/domain/v1";
+
+const t0 = "2026-08-26T12:00:00.000Z";
+const t1 = "2026-08-26T12:01:00.000Z";
+const t2 = "2026-08-26T12:02:00.000Z";
+const t3 = "2026-08-26T12:03:00.000Z";
+const hashA = `sha256:${"a".repeat(64)}`;
+const hashB = `sha256:${"b".repeat(64)}`;
+
+async function fixture() {
+  const db = new PGlite();
+  for (const file of (await readdir(resolve("db/migrations"))).filter((file) => file.endsWith(".sql")).sort()) {
+    await db.exec(await readFile(resolve("db/migrations", file), "utf8"));
+  }
+  await db.query(`INSERT INTO tenants (id,display_name) VALUES ('tenant:owner','Owner')`);
+  await db.query(`INSERT INTO workspaces(id,tenant_id,display_name) VALUES ('workspace:ingest','tenant:owner','Ingest')`);
+  await db.query(
+    `INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,redaction_policy_version,cursor_retention_days)
+     VALUES ('adapter:ingest','tenant:owner','fixture','1.0.0','control_room_native','1.0.0',1)`,
+  );
+  await db.query(
+    `INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload)
+     VALUES ('project:ingest','tenant:owner','workspace:ingest','adapter:ingest','source:ingest','1','Ingest','ready','ready','healthy','control_room_native',$1,'{}'::jsonb)`, [t0],
+  );
+  const store = new CanonicalStore(adaptPglite(db));
+  const projectId = "project:ingest";
+  const common = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: "tenant:owner", version: 0, createdAt: t0, updatedAt: t0 } as const;
+  const request: RequestRecord = {
+    ...common, kind: "request", id: "request:ingest", projectId, title: "Ingest", objective: "Ingest signed node evidence",
+    state: "draft", priority: 50, requestedBy: { actorId: "identity:owner", actorType: "human" }, idempotencyKey: "request-ingest-0001",
+  };
+  const workflow: WorkflowRecord = {
+    ...common, kind: "workflow", id: "workflow:ingest", requestId: request.id, projectId,
+    definitionVersion: "1.0.0", definitionDigest: hashA, authorityMode: "control_room_native", state: "proposed", jobIds: ["job:ingest"],
+  };
+  const authority: JobRecord["authority"] = {
+    projectId, allowedExecutor: "executor:synthetic", allowedOperations: ["operation:synthetic"],
+    credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none",
+    maxRisk: "low", maxDurationSeconds: 3_600, maxConcurrentEffects: 0, expiresAt: "2026-08-26T13:00:00.000Z", digest: hashB,
+  };
+  authority.digest = computeAuthorityDigest(authority);
+  const job: JobRecord = {
+    ...common, kind: "job", id: "job:ingest", workflowId: workflow.id, projectId, jobType: "synthetic", specVersion: "1.0.0",
+    inputDigest: hashA, state: "proposed", priority: 50, requiredCapability: "capability:synthetic", dependsOnJobIds: [], authority,
+    retryPolicy: { maxAttempts: 1, backoffSeconds: 1, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" },
+  };
+  const node: NodeRecord = {
+    ...common, kind: "node", id: "node:ingest", displayName: "Ingest node", state: "pending_enrollment", platform: "linux", architecture: "x64",
+    identityKeyId: "key:ingest", hardwareFingerprint: hashA, softwareFingerprint: hashB, policyVersion: "1.0.0", minimumProtocolVersion: NODE_PROTOCOL_V1,
+  };
+  await store.create(request);
+  await store.create(workflow);
+  await store.create(job);
+  await store.create(node);
+  const actor = { actorId: "identity:owner", actorType: "human" as const };
+  const active = await store.transition({ tenantId: node.tenantId, kind: "node", entityId: node.id, expectedVersion: 0, toState: "active", transitionId: "node-active", idempotencyKey: "node-active-0001", actor, occurredAt: t1, recordPatch: { enrolledAt: t1 } });
+  const ready = await store.transition({ tenantId: job.tenantId, kind: "job", entityId: job.id, expectedVersion: 0, toState: "ready", transitionId: "job-ready", idempotencyKey: "job-ready-0001", actor, occurredAt: t1 });
+  await store.claimReadyJob({ tenantId: job.tenantId, jobId: job.id, expectedJobVersion: ready.entity.version, nodeId: node.id, attemptId: "attempt:ingest", leaseId: "lease:ingest", transitionId: "job-lease", idempotencyKey: "job-lease-0001", actor, acquiredAt: t1, expiresAt: "2026-08-26T12:30:00.000Z" });
+  assert.equal(active.entity.state, "active");
+  return { db, service: new NodeJobEventService(adaptPglite(db)) };
+}
+
+function frame(
+  body: JobEventBody,
+  messageId: string,
+  privateKey = generateKeyPairSync("ed25519").privateKey,
+  connectionId = "connection:ingest",
+  protocolSequence = body.sequence,
+): SignedNodeFrame<"job.event"> {
+  return signNodeFrame({
+    protocol: NODE_PROTOCOL_V1, direction: "node_to_server", messageId, correlationId: "correlation:ingest", tenantId: "tenant:owner",
+    actorId: "node:ingest", senderKind: "node", keyId: "key:ingest", connectionId, sequence: protocolSequence,
+    sentAt: t2, expiresAt: "2026-08-26T12:06:00.000Z", nonce: `nonce_ingest_${body.sequence}_12345678901234567890`, type: "job.event", body,
+  } as UnsignedNodeFrame<"job.event">, privateKey);
+}
+
+test("authenticated job events bind the exact lease, retain lineage, append audit, and replay safely", async () => {
+  const { db, service } = await fixture();
+  try {
+    const started = frame({ jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "started", sequence: 1, occurredAt: t2, artifactManifestIds: [] }, "message:ingest:1");
+    assert.deepEqual(await service.ingestAuthenticated(started, t2), { event: "started", attemptId: "attempt:ingest", sequence: 1, replayed: false });
+
+    const bundle = buildTextArtifactBundle({
+      artifactId: "artifact:ingest", claimId: "claim:ingest", tenantId: "tenant:owner", projectId: "project:ingest", workflowId: "workflow:ingest",
+      jobId: "job:ingest", attemptId: "attempt:ingest", producerId: "node:ingest", logicalRole: "synthetic-result", schemaVersion: "1.0.0",
+      storageClass: "local", retentionClass: "test", opaqueLocator: "memory://artifact/artifact%3Aingest", text: "result\n", createdAt: t3,
+    });
+    const lineage = buildArtifactLineageRecord(bundle);
+    const completed = frame({
+      jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "completed", sequence: 2,
+      occurredAt: t3, artifactManifestIds: [lineage.artifactId], artifactLineage: lineage,
+    }, "message:ingest:2");
+    assert.deepEqual(await service.ingestAuthenticated(completed, t3), { event: "completed", attemptId: "attempt:ingest", sequence: 2, replayed: false });
+    assert.equal((await service.ingestAuthenticated(completed, t3)).replayed, true);
+
+    const events = await db.query<{ event_kind: string; artifact_id: string | null }>(`SELECT event_kind,artifact_id FROM control_node_job_events ORDER BY event_sequence`);
+    assert.deepEqual(events.rows, [{ event_kind: "started", artifact_id: null }, { event_kind: "completed", artifact_id: "artifact:ingest" }]);
+    const evidence = await db.query<{ lineage_digest: string; independent_verification_state: string }>(`SELECT lineage_digest,independent_verification_state FROM control_artifact_lineage`);
+    assert.deepEqual(evidence.rows[0], { lineage_digest: lineage.lineageDigest, independent_verification_state: "not_run" });
+    const audit = await db.query<{ action: string }>(`SELECT action FROM audit_events WHERE target_id='attempt:ingest' ORDER BY occurred_at`);
+    assert.deepEqual(audit.rows.map((row) => row.action), ["node.job_event.started", "node.job_event.completed"]);
+
+    const wrongLease = frame({ ...started.body, leaseId: "lease:other" }, "message:ingest:wrong");
+    await assert.rejects(service.ingestAuthenticated(wrongLease, t3), (error: unknown) => error instanceof NodeJobEventError && error.safeCode === "identity_mismatch");
+  } finally {
+    await db.close();
+  }
+});
+
+test("ingress authenticates raw frames before retaining job evidence and only then acknowledges them", async () => {
+  const { db, service } = await fixture();
+  try {
+    const keys = generateKeyPairSync("ed25519");
+    const spki = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+    await db.query(
+      `INSERT INTO control_node_keys (id,tenant_id,node_id,algorithm,public_key_spki,fingerprint,state,valid_from,created_at)
+       VALUES ('key:ingest','tenant:owner','node:ingest','ed25519',$1,$2,'active',$3,$3)`,
+      [spki, publicKeyFingerprint(spki), t0],
+    );
+    const authenticator = new NodeProtocolAuthenticator(
+      new DatabaseNodeKeyResolver(adaptPglite(db)),
+      new DatabaseReplayGuard(adaptPglite(db)),
+      new FixedWindowProtocolRateLimiter(20, 60),
+    );
+    const ingress = new NodeJobEventIngress(authenticator, service);
+    const connectionId = "connection:central-ingest";
+    const hello = signNodeFrame({
+      protocol: NODE_PROTOCOL_V1, direction: "node_to_server", messageId: "message:ingress:hello", correlationId: "correlation:ingest",
+      tenantId: "tenant:owner", actorId: "node:ingest", senderKind: "node", keyId: "key:ingest", connectionId, sequence: 1,
+      sentAt: t2, expiresAt: "2026-08-26T12:06:00.000Z", nonce: "nonce_ingress_hello_12345678901234567890", type: "connection.hello",
+      body: { supportedProtocols: [NODE_PROTOCOL_V1], features: [], requestedMaxFrameBytes: 4096, lastAcknowledgedServerSequence: 0, unresolvedAttemptIds: [] },
+    }, keys.privateKey);
+    await authenticator.verify(JSON.stringify(hello), { expectedDirection: "node_to_server", transportIdentity: "transport:fixture", receivedAt: t2 });
+
+    const started = frame(
+      { jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "started", sequence: 1, occurredAt: t2, artifactManifestIds: [] },
+      "message:ingress:started", keys.privateKey, connectionId, 2,
+    );
+    const accepted = await ingress.receive(JSON.stringify(started), { transportIdentity: "transport:fixture", receivedAt: t2, expectedConnectionId: connectionId });
+    assert.equal(accepted.event.replayed, false);
+    assert.deepEqual(accepted.acknowledgement, { acknowledgedMessageIds: [started.messageId], highestContiguousSequence: 2, disposition: "accepted" });
+
+    const duplicate = await ingress.receive(JSON.stringify(started), { transportIdentity: "transport:fixture", receivedAt: t2, expectedConnectionId: connectionId });
+    assert.equal(duplicate.event.replayed, true);
+    assert.equal(duplicate.acknowledgement.disposition, "duplicate");
+    const events = await db.query<{ message_id: string }>(`SELECT message_id FROM control_node_job_events`);
+    assert.deepEqual(events.rows, [{ message_id: "message:ingress:started" }]);
+  } finally {
+    await db.close();
+  }
+});

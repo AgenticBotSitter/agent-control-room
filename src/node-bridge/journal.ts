@@ -78,6 +78,9 @@ function assertEventShape(event: JobEventBody): void {
   if (event.event !== "completed" && event.artifactManifestIds.length) {
     throw new Error("Only completed events may expose artifact manifest IDs");
   }
+  if (event.event !== "completed" && event.artifactLineage) {
+    throw new Error("Only completed events may expose artifact lineage");
+  }
 }
 
 function assertArtifactLineage(event: JobEventBody, lineage: ArtifactLineageRecordV1 | undefined): void {
@@ -99,6 +102,11 @@ function assertArtifactLineage(event: JobEventBody, lineage: ArtifactLineageReco
     throw new Error("Completed event artifact lineage is inconsistent");
   }
   assertNoSecretMaterial(lineage, "durable artifact lineage");
+}
+
+function deliveryEvent(event: JobEventBody, lineage: ArtifactLineageRecordV1 | undefined): JobEventBody {
+  if (!lineage) return event;
+  return { ...event, artifactLineage: structuredClone(lineage) };
 }
 
 export class SqliteBridgeJournal implements ReplayGuard {
@@ -229,7 +237,8 @@ export class SqliteBridgeJournal implements ReplayGuard {
     assertNoSecretMaterial(event, "durable job event");
     assertEventShape(event);
     assertArtifactLineage(event, artifactLineage);
-    const eventDigest = sha256Digest(event);
+    const durableEvent = deliveryEvent(event, artifactLineage);
+    const eventDigest = sha256Digest(durableEvent);
     return this.transaction(() => {
       const duplicate = this.db.prepare(
         `SELECT event_digest,artifact_lineage_digest FROM bridge_job_events WHERE attempt_id=? AND event_sequence=?`,
@@ -279,7 +288,7 @@ export class SqliteBridgeJournal implements ReplayGuard {
          (attempt_id,event_sequence,event_json,event_digest,status,delivery_attempt,recorded_at,artifact_id,artifact_lineage_digest)
          VALUES (?,?,?,?,'pending',0,?,?,?)`,
       ).run(
-        event.attemptId,event.sequence,JSON.stringify(event),eventDigest,recordedAt,
+        event.attemptId,event.sequence,JSON.stringify(durableEvent),eventDigest,recordedAt,
         artifactLineage?.artifactId ?? null,artifactLineage?.lineageDigest ?? null,
       );
       return "recorded" as const;

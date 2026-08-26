@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { authorityEnvelopeSchema } from "../../domain/v1";
+import { artifactManifestRecordSchema, authorityEnvelopeSchema } from "../../domain/v1";
 import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
-import { computeAuthorityDigest } from "../../security";
+import { computeAuthorityDigest, sha256Digest } from "../../security";
 import { NODE_PROTOCOL_MAX_FRAME_BYTES, NODE_PROTOCOL_V1 } from "./types";
 
 const id = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -162,6 +162,49 @@ const leaseRenewed = z.object({
   if (Date.parse(value.expiresAt) <= Date.parse(value.renewedAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "renewed lease must expire after renewal" });
   if (value.authorityDigest !== value.authority.digest) context.addIssue({ code: "custom", path: ["authorityDigest"], message: "renewed authority digest must match the complete authority" });
 });
+const artifactLineage = z.object({
+  schema: z.literal("control-room.artifact-lineage/v1"),
+  artifactId: id,
+  tenantId: id,
+  projectId: id,
+  jobId: id,
+  attemptId: id,
+  producerId: id,
+  manifest: artifactManifestRecordSchema,
+  producerClaim: z.object({
+    schema: z.literal("control-room.artifact-verification-claim/v1"),
+    claimId: id,
+    artifactId: id,
+    tenantId: id,
+    projectId: id,
+    jobId: id,
+    attemptId: id,
+    producerId: id,
+    claim: z.literal("content_hash_matches_exact_bytes"),
+    contentHash: digest,
+    manifestDigest: digest,
+    createdAt: isoDate,
+    claimDigest: digest,
+  }).strict(),
+  independentVerification: z.object({ status: z.literal("not_run") }).strict(),
+  recordedAt: isoDate,
+  lineageDigest: digest,
+}).strict().superRefine((lineage, context) => {
+  const { lineageDigest, ...unsigned } = lineage;
+  if (sha256Digest(unsigned) !== lineageDigest) context.addIssue({ code: "custom", path: ["lineageDigest"], message: "artifact lineage digest mismatch" });
+  if (lineage.manifest.id !== lineage.artifactId || lineage.producerClaim.artifactId !== lineage.artifactId
+    || lineage.manifest.tenantId !== lineage.tenantId || lineage.producerClaim.tenantId !== lineage.tenantId
+    || lineage.manifest.projectId !== lineage.projectId || lineage.producerClaim.projectId !== lineage.projectId
+    || lineage.manifest.jobId !== lineage.jobId || lineage.producerClaim.jobId !== lineage.jobId
+    || lineage.manifest.attemptId !== lineage.attemptId || lineage.producerClaim.attemptId !== lineage.attemptId
+    || lineage.manifest.producerId !== lineage.producerId || lineage.producerClaim.producerId !== lineage.producerId
+    || lineage.manifest.contentHash !== lineage.producerClaim.contentHash
+    || sha256Digest(lineage.manifest) !== lineage.producerClaim.manifestDigest) {
+    context.addIssue({ code: "custom", message: "artifact lineage identity or producer claim mismatch" });
+  }
+  const { claimDigest, ...claimUnsigned } = lineage.producerClaim;
+  if (sha256Digest(claimUnsigned) !== claimDigest) context.addIssue({ code: "custom", path: ["producerClaim", "claimDigest"], message: "producer claim digest mismatch" });
+});
 const jobEvent = z.object({
   ...leaseIdentity,
   event: z.enum(["started", "progress", "checkpointed", "waiting", "completed", "failed", "cancelled"]),
@@ -170,8 +213,15 @@ const jobEvent = z.object({
   progressPercent: z.number().min(0).max(100).optional(),
   checkpointId: id.optional(),
   artifactManifestIds: z.array(id).max(1_000),
+  artifactLineage: artifactLineage.optional(),
   safeReasonCode: id.optional(),
-}).strict();
+}).strict().superRefine((event, context) => {
+  if (event.event !== "completed" && event.artifactLineage) context.addIssue({ code: "custom", path: ["artifactLineage"], message: "only completed events may carry artifact lineage" });
+  if (event.artifactLineage && (event.artifactManifestIds.length !== 1 || event.artifactManifestIds[0] !== event.artifactLineage.artifactId
+    || event.jobId !== event.artifactLineage.jobId || event.attemptId !== event.artifactLineage.attemptId)) {
+    context.addIssue({ code: "custom", path: ["artifactLineage"], message: "artifact lineage must match the completed event" });
+  }
+});
 const cancelRequest = z.object({ ...leaseIdentity, reasonCode: z.enum(["owner_requested", "policy_changed", "lease_revoked", "shutdown"]) }).strict();
 const cancelAck = z.object({
   ...leaseIdentity,
