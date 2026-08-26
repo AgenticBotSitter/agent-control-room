@@ -1,0 +1,63 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR5D-UI-002",
+  "waveId": "CR5D-EXEC-1",
+  "block": "CR-5D",
+  "summary": "Build the synthetic execution timeline",
+  "platform": "any",
+  "status": "ready",
+  "mode": "standard-work",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "medium",
+  "baseCommit": "b523d9f6237b7d4161b70cf7524a8f683b683ac4",
+  "integrationBranch": "integration/cr5d-synthetic-executor-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "repository dependencies", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Implement the production synthetic execution timeline and deterministic render tests exactly as frozen in docs/CR5D_INITIAL_WORKER_UI_CONTRACT.md section 2.",
+  "contractRefs": [
+    "docs/CR5D_INITIAL_WORKER_UI_CONTRACT.md",
+    "docs/CR5D_SYNTHETIC_EXECUTOR_CONTRACT.md",
+    "docs/CR3_BUILD_PLAN.md"
+  ],
+  "allowedPaths": [
+    "app/components/synthetic-execution-timeline.tsx",
+    "tests/synthetic-execution-timeline.test.tsx"
+  ],
+  "forbiddenPrefixes": [".github", "coordination/agent-build/capsules", "db", "docs", "src", "app/api", "app/control-room-dashboard.tsx", "app/globals.css"],
+  "acceptanceCommands": [
+    "node --import tsx --test tests/synthetic-execution-timeline.test.tsx",
+    "node node_modules/typescript/bin/tsc --noEmit",
+    "git diff --check integration/cr5d-synthetic-executor-1...HEAD"
+  ],
+  "semanticAcceptance": [
+    "The component matches contract section 2, preserves supplied event order, and distinguishes progress, checkpoints, completion, and cancellation without inventing lifecycle state.",
+    "Render tests cover every event kind, an empty timeline, applicable event fields, semantic ordered-list structure, deterministic output, and safe text escaping.",
+    "The implementation performs no sorting, polling, retry, cancellation, time calculation, state mutation, effect, or dashboard integration."
+  ],
+  "limits": {
+    "maxChangedFiles": 2,
+    "maxChangedLines": 420,
+    "maxRepairIterations": 2
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop if the contract requires editing any path outside allowedPaths or importing a not-yet-integrated worker module.",
+    "Stop before changing CSS, dashboard pages, backend routes, domain state, policy, protocol, persistence, dependencies, or architecture.",
+    "Stop before any install, download, native command, service, credential access, external effect, or production mutation."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR5D-UI-002.json"
+}

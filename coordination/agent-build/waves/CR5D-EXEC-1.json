@@ -7,7 +7,10 @@
   "integrationBranch": "integration/cr5d-synthetic-executor-1",
   "capsules": [
     "coordination/agent-build/capsules/CR5D-EXEC-001.json",
-    "coordination/agent-build/capsules/CR5D-EXEC-002.json"
+    "coordination/agent-build/capsules/CR5D-EXEC-002.json",
+    "coordination/agent-build/capsules/CR5D-UI-001.json",
+    "coordination/agent-build/capsules/CR5D-UI-002.json",
+    "coordination/agent-build/capsules/CR5D-UI-003.json"
   ],
   "ownerEffectAuthority": "none"
 }

@@ -570,3 +570,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** A route may fail on its first real task and consume bounded review capacity. Capsules must therefore remain small, non-overlapping, and architect-frozen, and higher-risk work still requires stronger evidence or owner authority.
 
 **Reevaluate:** When Control Room has measured per-route task outcomes, scheduling may use those records to rank eligible routes. It must not reintroduce make-work qualification or turn model reputation into authority.
+
+## ADR-048 — The remaining build runs from one dependency graph and a continuous production queue
+
+**Decision:** `docs/CONTROL_ROOM_COMPLETION_PROGRAM.md` is the architect-owned execution graph from CR-5D through CR-10. Codex retains architecture, security, authority, migrations, cross-module integration, adversarial acceptance, and release decisions. External workers receive every non-overlapping, contract-ready production slice in batches, may continue claiming independent work while earlier submissions are reviewed, and do not wait for the owner to relay ordinary job messages. Codex promotes accepted dependencies and publishes newly unlocked capsules. Only credentials, installs, native-host actions, live infrastructure, consequential effects, and required integration/release approvals return to the owner.
+
+**Why:** Tiny sequential waves underused available workers and turned the owner into a message bus. Publishing speculative future implementations would be equally wasteful because workers would have to invent contracts or rebuild against changed foundations. A complete dependency graph makes all remaining work visible while allowing the ready frontier to expand continuously as real contracts and integrations land.
+
+**Alternatives rejected:** One capsule followed by one review followed by another capsule; asking the owner to forward every claim and result; opening every future phase as immediately claimable; delegating security or integration to increase apparent parallelism; rebuilding the entire product in one shared branch.
+
+**Trade-off:** Codex must actively keep the ready frontier stocked, batch reviews, and resolve dependencies. Some serial gates remain unavoidable, but they are named before work begins and do not block unrelated effect-free production.
+
+**Reevaluate:** When CR-7 northbound MCP and Control Room scheduling are operational, import this graph and capsule/result history into canonical jobs, attempts, evidence, and integration gates. Preserve the ownership split, frozen contracts, dependency checks, and owner-effect boundaries.
