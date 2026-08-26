@@ -17,10 +17,10 @@ jobs:
   transition:
     if: >-
       !github.event.issue.pull_request &&
-      (startsWith(github.event.comment.body, '/claim ') ||
-       startsWith(github.event.comment.body, '/release ') ||
-       startsWith(github.event.comment.body, '/blocked ') ||
-       startsWith(github.event.comment.body, '/submitted '))
+      (startsWith(github.event.comment.body, '/claim') ||
+       startsWith(github.event.comment.body, '/release') ||
+       startsWith(github.event.comment.body, '/blocked') ||
+       startsWith(github.event.comment.body, '/submitted'))
     runs-on: ubuntu-latest
     steps:
       - name: Check out trusted queue controller
