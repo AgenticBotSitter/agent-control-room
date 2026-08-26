@@ -1,6 +1,7 @@
 export * from "./fingerprint";
 export * from "./freshness";
 export * from "./capability-probe-runner";
+export * from "./benchmark-runner";
 export * from "./inventory-manifest";
 export * from "./schemas";
 export * from "./static-discovery";

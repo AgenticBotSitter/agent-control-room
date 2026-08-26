@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
+import { BenchmarkRunner, CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const discovery = {
@@ -71,4 +71,15 @@ test("telemetry port accepts only a fixed bounded resource vector with a short e
   assert.equal(normalized.expiresAt, "2026-08-26T00:05:00.000Z");
   assert.deepEqual(Object.keys(normalized.payload).sort(), ["availableMemoryBytes", "availableStorageBytes", "cpuUtilizationPercent", "networkClass", "powerState", "samplingIntervalSeconds", "thermalState"]);
   assert.throws(() => normalizeTelemetrySample({ ...normalized.payload, observedAt: "invalid" }));
+});
+
+test("benchmark runner requires explicit owner authorization and binds scores to one environment", async () => {
+  let invoked = 0;
+  const runner = new BenchmarkRunner({ platform: "macos", benchmarks: [{ id: "benchmark.synthetic", version: "1.0.0", workloadDigest: digest, supportedPlatforms: ["macos"], requiredPrivilege: "none", run: async () => { invoked += 1; return { outcome: "pass", reasonCode: "benchmark_completed", normalizedScore: 99, scoreUnit: "synthetic_points", evidenceDigest: digest }; } }] });
+  const denied = await runner.run({ benchmarkId: "benchmark.synthetic", environmentFingerprint: digest, ownerAuthorized: false, observedAt: "2026-08-26T00:00:00.000Z" });
+  assert.equal(denied.payload.reasonCode, "owner_authorization_required");
+  const completed = await runner.run({ benchmarkId: "benchmark.synthetic", environmentFingerprint: digest, ownerAuthorized: true, observedAt: "2026-08-26T00:00:00.000Z" });
+  assert.equal(completed.payload.normalizedScore, 99);
+  assert.equal(completed.expiresAt, "2026-09-25T00:00:00.000Z");
+  assert.equal(invoked, 1);
 });

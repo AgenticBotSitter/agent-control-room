@@ -61,6 +61,7 @@ export const benchmarkPayloadSchema = z.object({
   benchmarkVersion: label,
   workloadDigest: digest,
   outcome: z.enum(["pass", "fail", "blocked", "unavailable"]),
+  reasonCode: id,
   normalizedScore: z.number().finite().nonnegative().optional(),
   scoreUnit: id.optional(),
   environmentFingerprint: digest,
