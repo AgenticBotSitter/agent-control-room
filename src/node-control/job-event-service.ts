@@ -86,11 +86,11 @@ export class NodeJobEventService {
     const authority = await tx.query<{
       attempt_id: string; node_id: string | null; attempt_state: AttemptRecord["state"]; attempt_version: number; attempt_payload: AttemptRecord;
       job_id: string; project_id: string; workflow_id: string; job_state: JobRecord["state"]; job_version: number; job_payload: JobRecord;
-      lease_id: string; lease_epoch: number | string; lease_node_id: string;
+      lease_id: string; lease_epoch: number | string; lease_node_id: string; lease_state: string;
     }>(
       `SELECT a.id AS attempt_id,a.node_id,a.state AS attempt_state,a.version AS attempt_version,a.payload AS attempt_payload,
               a.job_id,j.project_id,j.workflow_id,j.state AS job_state,j.version AS job_version,j.payload AS job_payload,
-              l.id AS lease_id,l.epoch AS lease_epoch,l.node_id AS lease_node_id
+              l.id AS lease_id,l.epoch AS lease_epoch,l.node_id AS lease_node_id,l.state AS lease_state
        FROM control_attempts a JOIN control_jobs j ON j.tenant_id=a.tenant_id AND j.id=a.job_id
        JOIN control_leases l ON l.tenant_id=a.tenant_id AND l.attempt_id=a.id
        WHERE a.tenant_id=$1 AND a.id=$2 FOR UPDATE`,
@@ -116,11 +116,16 @@ export class NodeJobEventService {
       if (prior.rows[0].body_digest !== frame.bodyDigest) throw new NodeJobEventError("sequence_conflict");
       return { event: event.event, attemptId: event.attemptId, sequence: event.sequence, replayed: true };
     }
-    const last = await tx.query<{ event_sequence: number }>(
-      `SELECT event_sequence FROM control_node_job_events WHERE tenant_id=$1 AND attempt_id=$2 ORDER BY event_sequence DESC LIMIT 1 FOR UPDATE`,
+    if (bound.lease_state !== "active") throw new NodeJobEventError("identity_mismatch");
+    if (Date.parse(event.occurredAt) > Date.parse(frame.sentAt)) throw new NodeJobEventError("invalid_event");
+    const last = await tx.query<{ event_sequence: number; occurred_at: string | Date }>(
+      `SELECT event_sequence,occurred_at FROM control_node_job_events WHERE tenant_id=$1 AND attempt_id=$2 ORDER BY event_sequence DESC LIMIT 1 FOR UPDATE`,
       [frame.tenantId,event.attemptId],
     );
     if (event.sequence !== (last.rows[0]?.event_sequence ?? 0) + 1) throw new NodeJobEventError("sequence_conflict");
+    if (last.rows[0] && Date.parse(event.occurredAt) < Date.parse(new Date(last.rows[0].occurred_at).toISOString())) {
+      throw new NodeJobEventError("sequence_conflict");
+    }
 
     if (lineage) await this.persistLineage(tx, frame.tenantId, bound.workflow_id, lineage, recordedAt);
     await tx.query(

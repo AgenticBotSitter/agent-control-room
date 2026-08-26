@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { PortableNodeBridge, SqliteBridgeJournal, type BridgeTransport } from "../src/node-bridge";
-import { NodeJobEventError, NodeJobEventIngress, NodeJobEventService } from "../src/node-control";
+import { NodeJobEventIngress } from "../src/node-control";
+import { NodeJobEventError, NodeJobEventService } from "../src/node-control/job-event-service";
 import { buildArtifactLineageRecord, buildTextArtifactBundle } from "../src/node-executor";
 import {
   DatabaseNodeKeyResolver,
@@ -82,7 +83,7 @@ async function fixture() {
   const ready = await store.transition({ tenantId: job.tenantId, kind: "job", entityId: job.id, expectedVersion: 0, toState: "ready", transitionId: "job-ready", idempotencyKey: "job-ready-0001", actor, occurredAt: t1 });
   await store.claimReadyJob({ tenantId: job.tenantId, jobId: job.id, expectedJobVersion: ready.entity.version, nodeId: node.id, attemptId: "attempt:ingest", leaseId: "lease:ingest", transitionId: "job-lease", idempotencyKey: "job-lease-0001", actor, acquiredAt: t1, expiresAt: "2026-08-26T12:30:00.000Z" });
   assert.equal(active.entity.state, "active");
-  return { db, service: new NodeJobEventService(adaptPglite(db)) };
+  return { db, store, service: new NodeJobEventService(adaptPglite(db)) };
 }
 
 function frame(
@@ -95,7 +96,7 @@ function frame(
   return signNodeFrame({
     protocol: NODE_PROTOCOL_V1, direction: "node_to_server", messageId, correlationId: "correlation:ingest", tenantId: "tenant:owner",
     actorId: "node:ingest", senderKind: "node", keyId: "key:ingest", connectionId, sequence: protocolSequence,
-    sentAt: t2, expiresAt: "2026-08-26T12:06:00.000Z", nonce: `nonce_ingest_${body.sequence}_12345678901234567890`, type: "job.event", body,
+    sentAt: body.occurredAt, expiresAt: "2026-08-26T12:06:00.000Z", nonce: `nonce_ingest_${body.sequence}_12345678901234567890`, type: "job.event", body,
   } as UnsignedNodeFrame<"job.event">, privateKey);
 }
 
@@ -138,7 +139,7 @@ test("authenticated job events bind the exact lease, retain lineage, append audi
 });
 
 test("ingress authenticates raw frames before retaining job evidence and only then acknowledges them", async () => {
-  const { db, service } = await fixture();
+  const { db } = await fixture();
   try {
     const keys = generateKeyPairSync("ed25519");
     const spki = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
@@ -152,7 +153,7 @@ test("ingress authenticates raw frames before retaining job evidence and only th
       new DatabaseReplayGuard(adaptPglite(db)),
       new FixedWindowProtocolRateLimiter(20, 60),
     );
-    const ingress = new NodeJobEventIngress(authenticator, service);
+    const ingress = new NodeJobEventIngress(authenticator, adaptPglite(db));
     const connectionId = "connection:central-ingest";
     const hello = signNodeFrame({
       protocol: NODE_PROTOCOL_V1, direction: "node_to_server", messageId: "message:ingress:hello", correlationId: "correlation:ingest",
@@ -180,8 +181,46 @@ test("ingress authenticates raw frames before retaining job evidence and only th
   }
 });
 
+test("inactive leases, malformed bodies, future claims, and backwards event time fail without partial truth", async () => {
+  const first = await fixture();
+  try {
+    await first.store.expireLease({
+      tenantId: "tenant:owner", leaseId: "lease:ingest", jobId: "job:ingest", attemptId: "attempt:ingest",
+      expectedLeaseVersion: 0, expectedJobVersion: 2, expectedAttemptVersion: 1, epoch: 1,
+      transitionId: "lease-expired:review", idempotencyKey: "lease-expired-review-0001",
+      actor: { actorId: "identity:owner", actorType: "human" }, occurredAt: "2026-08-26T12:31:00.000Z",
+    });
+    const late = frame({ jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "started", sequence: 1, occurredAt: t2, artifactManifestIds: [] }, "message:late");
+    await assert.rejects(first.service.ingestAuthenticated(late, t3), (error: unknown) => error instanceof NodeJobEventError && error.safeCode === "identity_mismatch");
+    assert.equal((await first.db.query(`SELECT 1 FROM control_node_job_events`)).rows.length, 0);
+  } finally {
+    await first.db.close();
+  }
+
+  const second = await fixture();
+  try {
+    const started = frame({ jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "started", sequence: 1, occurredAt: t2, artifactManifestIds: [] }, "message:ordered:1");
+    await second.service.ingestAuthenticated(started, t2);
+    assert.throws(() => frame({ ...started.body, event: "progress", sequence: 2 }, "message:malformed"));
+    const backwards = frame({ ...started.body, event: "progress", sequence: 2, occurredAt: t1, progressPercent: 50 }, "message:ordered:2");
+    await assert.rejects(second.service.ingestAuthenticated(backwards, t3), (error: unknown) => error instanceof NodeJobEventError && error.safeCode === "sequence_conflict");
+    const future = signNodeFrame({
+      protocol: NODE_PROTOCOL_V1, direction: "node_to_server", messageId: "message:future", correlationId: "correlation:ingest",
+      tenantId: "tenant:owner", actorId: "node:ingest", senderKind: "node", keyId: "key:ingest", connectionId: "connection:future", sequence: 2,
+      sentAt: t2, expiresAt: "2026-08-26T12:06:00.000Z", nonce: "nonce_future_123456789012345678901234", type: "job.event",
+      body: { ...started.body, event: "progress", sequence: 2, occurredAt: t3, progressPercent: 50 },
+    }, generateKeyPairSync("ed25519").privateKey);
+    await assert.rejects(second.service.ingestAuthenticated(future, t3), (error: unknown) => error instanceof NodeJobEventError && error.safeCode === "invalid_event");
+    const retained = await second.db.query<{ event_kind: string }>(`SELECT event_kind FROM control_node_job_events ORDER BY event_sequence`);
+    assert.deepEqual(retained.rows, [{ event_kind: "started" }]);
+    assert.equal((await second.db.query<{ state: string }>(`SELECT state FROM control_jobs WHERE id='job:ingest'`)).rows[0].state, "running");
+  } finally {
+    await second.db.close();
+  }
+});
+
 test("a completed durable bridge event reaches central truth before its signed acknowledgement retires it", async () => {
-  const { db, service } = await fixture();
+  const { db } = await fixture();
   const journal = new SqliteBridgeJournal(":memory:");
   try {
     const nodeKeys = generateKeyPairSync("ed25519");
@@ -194,7 +233,7 @@ test("a completed durable bridge event reaches central truth before its signed a
     const centralAuthenticator = new NodeProtocolAuthenticator(
       new DatabaseNodeKeyResolver(adaptPglite(db)), new DatabaseReplayGuard(adaptPglite(db)), new FixedWindowProtocolRateLimiter(50, 60),
     );
-    const ingress = new NodeJobEventIngress(centralAuthenticator, service);
+    const ingress = new NodeJobEventIngress(centralAuthenticator, adaptPglite(db));
     const serverKeys = generateKeyPairSync("ed25519");
     const serverSpki = serverKeys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
     const serverResolver: TrustedKeyResolver = { async resolve(input) {
@@ -219,26 +258,26 @@ test("a completed durable bridge event reaches central truth before its signed a
     journal.appendJobEvent({ jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "started", sequence: 1, occurredAt: t2, artifactManifestIds: [] }, t2);
     journal.appendJobEvent({ jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "completed", sequence: 2, occurredAt: t3, artifactManifestIds: [lineage.artifactId], artifactLineage: lineage }, t3, lineage);
 
-    await bridge.open(transport, { now: t2, transportIdentity: "tls:central" });
+    await bridge.open(transport, { now: t3, transportIdentity: "tls:central" });
     const connectionId = bridge.status().connectionId as string;
-    await centralAuthenticator.verify(JSON.stringify(sent[0]), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t2 });
+    await centralAuthenticator.verify(JSON.stringify(sent[0]), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t3 });
     const serverFrame = (sequence: number, type: "connection.accepted" | "node.reconciliation.request" | "protocol.ack", body: SignedNodeFrame["body"]): SignedNodeFrame => signNodeFrame({
       protocol: NODE_PROTOCOL_V1, direction: "server_to_node", messageId: `message:server:${sequence}`, correlationId: "correlation:e2e",
       tenantId: "tenant:owner", actorId: "control-room:server", senderKind: "control_room", keyId: "server-key:1", connectionId, sequence,
-      sentAt: t2, expiresAt: "2026-08-26T12:06:00.000Z", nonce: `nonce_server_${sequence}_12345678901234567890`, type, body,
+      sentAt: t3, expiresAt: "2026-08-26T12:06:00.000Z", nonce: `nonce_server_${sequence}_12345678901234567890`, type, body,
     } as UnsignedNodeFrame, serverKeys.privateKey);
     await bridge.receive(JSON.stringify(serverFrame(1, "connection.accepted", {
       selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: [], maxFrameBytes: 65_536, heartbeatIntervalSeconds: 30, serverTime: t2,
-    })), t2);
-    await centralAuthenticator.verify(JSON.stringify(sent[1]), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t2 });
-    await bridge.receive(JSON.stringify(serverFrame(2, "node.reconciliation.request", { lastAcknowledgedNodeSequence: 1, requestedAttemptIds: ["attempt:ingest"] })), t2);
+    })), t3);
+    await centralAuthenticator.verify(JSON.stringify(sent[1]), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t3 });
+    await bridge.receive(JSON.stringify(serverFrame(2, "node.reconciliation.request", { lastAcknowledgedNodeSequence: 1, requestedAttemptIds: ["attempt:ingest"] })), t3);
     const report = sent.find((candidate) => candidate.type === "node.reconciliation.report");
     assert.ok(report);
-    await centralAuthenticator.verify(JSON.stringify(report), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t2 });
+    await centralAuthenticator.verify(JSON.stringify(report), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t3 });
     const jobFrames = sent.filter((candidate): candidate is SignedNodeFrame<"job.event"> => candidate.type === "job.event");
     assert.equal(jobFrames.length, 2);
-    const started = await ingress.receive(JSON.stringify(jobFrames[0]), { transportIdentity: "tls:node", receivedAt: t2, expectedConnectionId: connectionId });
-    await bridge.receive(JSON.stringify(serverFrame(3, "protocol.ack", started.acknowledgement)), t2);
+    const started = await ingress.receive(JSON.stringify(jobFrames[0]), { transportIdentity: "tls:node", receivedAt: t3, expectedConnectionId: connectionId });
+    await bridge.receive(JSON.stringify(serverFrame(3, "protocol.ack", started.acknowledgement)), t3);
     const completed = await ingress.receive(JSON.stringify(jobFrames[1]), { transportIdentity: "tls:node", receivedAt: t3, expectedConnectionId: connectionId });
     assert.equal(journal.jobEventStatus("attempt:ingest", 2), "staged", "the completed record stays durable until its acknowledgement arrives");
     await bridge.receive(JSON.stringify(serverFrame(4, "protocol.ack", completed.acknowledgement)), t3);

@@ -3,6 +3,7 @@ import {
   type ProtocolAcknowledgementBody,
   type SignedNodeFrame,
 } from "../node-protocol/v1";
+import type { DatabaseClient } from "../persistence/database";
 import { NodeJobEventError, NodeJobEventService, type IngestedNodeJobEventV1 } from "./job-event-service";
 
 export interface ReceiveNodeJobEventOptions {
@@ -24,10 +25,14 @@ export interface ReceivedNodeJobEvent {
  * responsible for signing and delivering the returned acknowledgement.
  */
 export class NodeJobEventIngress {
+  private readonly events: NodeJobEventService;
+
   constructor(
     private readonly authenticator: NodeProtocolAuthenticator,
-    private readonly events: NodeJobEventService,
-  ) {}
+    db: DatabaseClient,
+  ) {
+    this.events = new NodeJobEventService(db);
+  }
 
   async receive(raw: string | Uint8Array, options: ReceiveNodeJobEventOptions): Promise<ReceivedNodeJobEvent> {
     const verified = await this.authenticator.verify(raw, {

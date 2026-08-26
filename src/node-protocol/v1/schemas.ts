@@ -208,7 +208,7 @@ const artifactLineage = z.object({
 const jobEvent = z.object({
   ...leaseIdentity,
   event: z.enum(["started", "progress", "checkpointed", "waiting", "completed", "failed", "cancelled"]),
-  sequence: z.number().int().nonnegative(),
+  sequence: z.number().int().positive(),
   occurredAt: isoDate,
   progressPercent: z.number().min(0).max(100).optional(),
   checkpointId: id.optional(),
@@ -216,6 +216,10 @@ const jobEvent = z.object({
   artifactLineage: artifactLineage.optional(),
   safeReasonCode: id.optional(),
 }).strict().superRefine((event, context) => {
+  if ((event.event === "progress") !== (event.progressPercent !== undefined)) context.addIssue({ code: "custom", path: ["progressPercent"], message: "only progress events require progressPercent" });
+  if ((event.event === "checkpointed") !== (event.checkpointId !== undefined)) context.addIssue({ code: "custom", path: ["checkpointId"], message: "only checkpointed events require checkpointId" });
+  if ((event.event === "failed" || event.event === "cancelled") !== (event.safeReasonCode !== undefined)) context.addIssue({ code: "custom", path: ["safeReasonCode"], message: "failed and cancelled events require a safe reason code" });
+  if (event.event !== "completed" && event.artifactManifestIds.length) context.addIssue({ code: "custom", path: ["artifactManifestIds"], message: "only completed events may identify artifacts" });
   if (event.event !== "completed" && event.artifactLineage) context.addIssue({ code: "custom", path: ["artifactLineage"], message: "only completed events may carry artifact lineage" });
   if (event.artifactLineage && (event.artifactManifestIds.length !== 1 || event.artifactManifestIds[0] !== event.artifactLineage.artifactId
     || event.jobId !== event.artifactLineage.jobId || event.attemptId !== event.artifactLineage.attemptId)) {
