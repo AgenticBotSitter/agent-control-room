@@ -22,7 +22,7 @@
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
 | CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; Windows and Linux providers qualified; macOS native qualification remains blocked after accepted negative evidence | Canonical policy/effect enforcement, explicit platform private-key providers, repository-owned qualification harnesses, and bounded macOS failure-stage diagnostics |
-| CR-5D | Architect contract and first production wave ready; implementation not yet integrated | Synthetic executor/evidence contract, initial worker UI contract, five real V2 capsules, completion program |
+| CR-5D | In progress — all five first-wave production slices integrated; architect-owned vertical integration next | Synthetic executor, artifact/evidence builder, three initial UI components, deterministic tests, and completion program |
 | CR-6 through CR-10 | Dependency-mapped; implementation not started | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -31,8 +31,8 @@ The effect-free active build lane is CR-5D. The unresolved macOS CR-5C.9H native
 
 ```text
 Active: CR-5D synthetic executor, artifact/evidence flow, and initial worker UI
-Delivered this boundary: architect-frozen executor/evidence and initial UI contracts; five non-overlapping effect-free production capsules; one CR-5D-to-CR-10 completion dependency graph and continuous queue policy
-Validation required before integration: every capsule claimable; focused tests on every returned module/component; TypeScript, ESLint, full test suite, rendered build tests, database verification where applicable, then Codex vertical integration and CR-5Q threat/recovery review
+Delivered this boundary: all five first-wave effect-free production slices are on integration/cr5d-synthetic-executor-1: the synthetic executor, artifact/evidence builder, artifact evidence card, execution timeline, and worker operation request panel. Their tests are part of the normal suite. The queue controller repair is live, all five jobbers are closed, and the full test, type, lint, and rendered-build gates pass.
+Validation required before promotion: Codex must complete the admitted execution coordinator, durable protocol delivery, transactional attempt/checkpoint/artifact lineage, bounded storage port, safe worker command path, UI wiring, restart acceptance, and CR-5Q threat/recovery review.
 Open risks: the macOS provider remains unqualified and its original failure stage remains unproven; atomic platform file semantics, live DNS/TLS and rebinding, timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill rehearsal, destination evidence, approval issuance, disposable deployment, and CR-6 service isolation remain explicit downstream gates
 Owner input required now: none for effect-free CR-5D worker implementation; exact approval remains required before a new macOS native attempt, install, credential, disposable deployment, live integration, or consequential effect
 Decision-log changes: ADR-048 adopts one completion graph and continuous production queue; ADR-039 and ADR-047 remain controlling
@@ -53,11 +53,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR-5D — implement and integrate the synthetic executor, artifact/evidence path, and initial worker UI
-Set model: gpt-5.6-terra for bounded worker implementation; gpt-5.6-sol for Codex security/integration review
+Block: CR-5D — connect the accepted executor, evidence, and UI slices through the authority-controlled bridge and durable stores
+Set model: gpt-5.6-sol for Codex security/integration review; gpt-5.6-terra only for newly frozen bounded worker slices
 Set reasoning effort: high
-Why: five isolated product slices can run in parallel while the authority-sensitive bridge, persistence, storage, and vertical acceptance remain architect-owned
-Expected output: accepted executor/evidence/UI modules on the CR-5D integration branch, admitted bridge integration, restart/reconciliation evidence, initial worker/artifact surfaces, and a passing CR-5Q gate
+Why: the five isolated product slices are integrated; the remaining critical path defines authority, cancellation, durable delivery, storage, recovery, and safe command behavior and therefore remains architect-owned
+Expected output: admitted bridge integration, restart/reconciliation evidence, initial worker/artifact surfaces, and a passing CR-5Q gate
 Stop before: live deployment, a new macOS native attempt, credentials, production identities, unapproved external effects, treating producer claims as verification, or allowing client UI to decide node authority
 ```
 
