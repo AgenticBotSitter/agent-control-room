@@ -1,6 +1,6 @@
 # CR-5D admitted synthetic execution and storage contract
 
-**Status:** Architect-frozen for CR5D-INT-001 and CR5D-STOR-001  
+**Status:** Architect-frozen for CR5D-INT-001, CR5D-INT-002, and CR5D-STOR-001
 **Decision date:** 2026-08-26  
 **Scope:** Effect-free coordination of an already-admitted synthetic execution and bounded in-memory artifact storage  
 **Authority:** This contract does not authorize a live node, filesystem/object-store write, credential, deployment, external effect, or production mutation.
@@ -23,6 +23,14 @@ The coordinator:
 
 An execution already in progress after restart is not silently resumed by this coordinator. The existing durable recovery classifier remains controlling and requests cancellation for an unresolved in-flight execution.
 
+## Durable event delivery
+
+Every lifecycle event is first appended to the node-local SQLite journal in the same transaction that advances its attempt and checkpoint projection. The journal accepts an exact duplicate as idempotent, rejects conflicting content at the same attempt sequence, rejects a changed job/lease/epoch identity, and rejects events after a terminal outcome.
+
+A pending event is atomically linked to one signed `job.event` outbox frame before transport. Transport success alone does not retire it. Only an authenticated protocol acknowledgement moves both the outbox frame and linked event to acknowledged. An unexpired unacknowledged frame is resent after reconciliation with its original signed identity. An expired frame returns the event to the pending queue and the next delivery attempt receives a new signed message ID. This is at-least-once delivery with idempotent event identity; it is not exactly-once execution or exactly-once transport.
+
+The reconciliation report is built from the same durable attempt projection. Pending lifecycle delivery starts only after connection authentication and reconciliation complete. Signing failure cannot consume a sequence or alter the event record, and transport failure leaves the signed frame durable.
+
 ## Storage port
 
 The storage port accepts an artifact ID and immutable bytes and returns an opaque locator, exact byte count, and SHA-256 content hash. Reusing an artifact ID with identical bytes is idempotent. Reusing it with different bytes is a conflict. Capacity is bounded by configured artifact count and total bytes.
@@ -37,4 +45,5 @@ The first adapter is memory-only and test-safe. It clones bytes on write and rea
 - Executor crash and storage failure produce one fixed-code failed outcome.
 - Storage idempotency, conflict, capacity, byte cloning, and hash checks are deterministic.
 - Restart classification remains conservative and never claims exactly-once execution.
+- Lifecycle records, attempt/checkpoint projections, signed outbox linkage, acknowledgement, expiry, and retry survive a local bridge restart.
 - Focused tests, TypeScript, ESLint, full tests, and rendered build pass.

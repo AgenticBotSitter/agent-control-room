@@ -5,6 +5,7 @@ import {
   NodeProtocolAuthenticator,
   type ConnectionAcceptedBody,
   type HeartbeatBody,
+  type JobEventBody,
   type NodeMessageBodyMap,
   type NodeMessageType,
   type ReconciliationReportBody,
@@ -161,6 +162,7 @@ export class PortableNodeBridge {
             : {}),
         };
         await this.flushPriorConnections(now);
+        await this.flushJobEvents(now);
         break;
       case "job.offer":
       case "job.lease.grant":
@@ -181,6 +183,18 @@ export class PortableNodeBridge {
   async heartbeat(body: HeartbeatBody, now: string): Promise<"staged" | "duplicate" | "coalesced"> {
     if (this.statusValue.state !== "online" && this.statusValue.state !== "draining") throw new Error("Bridge is not online");
     return this.sendBody("node.heartbeat", body, false, now);
+  }
+
+  async flushJobEvents(now: string): Promise<number> {
+    if (this.statusValue.state !== "online" && this.statusValue.state !== "draining") throw new Error("Bridge is not online");
+    return this.serializeSend(async () => {
+      let sent = 0;
+      for (const pending of this.journal.pendingJobEvents()) {
+        await this.sendJobEventNow(pending.event, pending.messageId, now);
+        sent += 1;
+      }
+      return sent;
+    });
   }
 
   async tick(now: string, snapshot: () => Promise<HeartbeatBody>): Promise<boolean> {
@@ -306,6 +320,37 @@ export class PortableNodeBridge {
       this.journal.markSent(frame.messageId, now);
       if (!trackAcknowledgement) this.journal.acknowledge([frame.messageId], now);
       return disposition;
+    } catch (error) {
+      this.failTransport();
+      throw error;
+    }
+  }
+
+  private async sendJobEventNow(event: JobEventBody, messageId: string, now: string): Promise<void> {
+    const connectionId = this.requireConnection();
+    const sequence = this.journal.nextOutboundSequence(connectionId);
+    const unsigned: UnsignedNodeFrame<"job.event"> = {
+      protocol: NODE_PROTOCOL_V1,
+      direction: "node_to_server",
+      messageId,
+      correlationId: `correlation:attempt:${event.attemptId}`,
+      tenantId: this.identity.tenantId,
+      actorId: this.identity.nodeId,
+      senderKind: "node",
+      keyId: this.identity.keyId,
+      connectionId,
+      sequence,
+      sentAt: now,
+      expiresAt: addSeconds(now, 300),
+      nonce: randomBytes(24).toString("base64url"),
+      type: "job.event",
+      body: event,
+    };
+    const frame = await this.signer.sign(unsigned) as SignedNodeFrame<"job.event">;
+    this.journal.stageJobEventOutbound(frame, event.attemptId, event.sequence, now);
+    try {
+      await this.requireTransport().send(JSON.stringify(frame));
+      this.journal.markSent(frame.messageId, now);
     } catch (error) {
       this.failTransport();
       throw error;

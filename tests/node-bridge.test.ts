@@ -11,6 +11,7 @@ import {
   NodeProtocolAuthenticator,
   signNodeFrame,
   type SignedNodeFrame,
+  type JobEventBody,
   type TrustedKeyResolver,
   type UnsignedNodeFrame,
 } from "../src/node-protocol/v1/index.ts";
@@ -129,6 +130,20 @@ function nodeJobEvent(privateKey: KeyObject, messageId: string, connectionId: st
   }, privateKey);
 }
 
+function durableJobEvent(overrides: Partial<JobEventBody> = {}): JobEventBody {
+  return {
+    jobId: "job:durable",
+    attemptId: "attempt:durable",
+    leaseId: "lease:durable",
+    leaseEpoch: 2,
+    event: "started",
+    sequence: 1,
+    occurredAt: t1,
+    artifactManifestIds: [],
+    ...overrides,
+  };
+}
+
 test("portable bridge performs signed hello, reconciliation, command queueing, acknowledgements, and heartbeat", async () => {
   const nodeKeys = keys();
   const serverKeys = keys();
@@ -210,6 +225,109 @@ test("SQLite journal survives restart with unacknowledged frames and attempt rec
   assert.deepEqual(restarted.unresolvedAttempts().map((attempt) => attempt.attemptId), ["attempt:persisted"]);
   restarted.close();
   await rm(directory, { recursive: true });
+});
+
+test("durable job events survive restart and advance the attempt projection exactly once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "control-room-events-"));
+  const path = join(directory, "bridge.sqlite");
+  const started = durableJobEvent();
+  const checkpointed = durableJobEvent({ event: "checkpointed", sequence: 2, checkpointId: "checkpoint:durable" });
+  const first = new SqliteBridgeJournal(path);
+  assert.equal(first.appendJobEvent(started, t1), "recorded");
+  assert.equal(first.appendJobEvent(started, t1), "duplicate");
+  assert.equal(first.appendJobEvent(checkpointed, t1), "recorded");
+  assert.throws(
+    () => first.appendJobEvent({ ...checkpointed, checkpointId: "checkpoint:conflict" }, t1),
+    /conflicts with different content/,
+  );
+  first.close();
+
+  const restarted = new SqliteBridgeJournal(path);
+  assert.deepEqual(restarted.pendingJobEvents().map((row) => row.event.sequence), [1, 2]);
+  assert.deepEqual(restarted.unresolvedAttempts(), [{
+    attemptId: "attempt:durable",
+    jobId: "job:durable",
+    leaseId: "lease:durable",
+    leaseEpoch: 2,
+    state: "running",
+    lastEventSequence: 2,
+    checkpointIds: ["checkpoint:durable"],
+  }]);
+  assert.throws(
+    () => restarted.appendJobEvent(durableJobEvent({ sequence: 3, leaseEpoch: 3 }), t1),
+    /authority conflicts/,
+  );
+  restarted.close();
+  await rm(directory, { recursive: true });
+});
+
+test("bridge sends durable job events after reconciliation and retires them only after server acknowledgement", async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  const event = durableJobEvent();
+  journal.appendJobEvent(event, t1);
+  let id = 0;
+  const bridge = new PortableNodeBridge(
+    { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: ["reconciliation"] }, journal,
+    { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
+    new NodeProtocolAuthenticator(serverResolver(serverKeys.spki), journal, new FixedWindowProtocolRateLimiter(100, 60)),
+    () => `durable-${++id}`,
+  );
+  const transport = new MemoryTransport();
+  await bridge.open(transport, { now: t1, transportIdentity: "tls:server" });
+  const connectionId = bridge.status().connectionId as string;
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 1, "connection.accepted", {
+    selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: ["reconciliation"], maxFrameBytes: 65_536,
+    heartbeatIntervalSeconds: 30, serverTime: t1,
+  }, transport.sent[0].messageId)), t1);
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 2, "node.reconciliation.request", {
+    lastAcknowledgedNodeSequence: 0, requestedAttemptIds: [event.attemptId],
+  })), t1);
+  const delivered = transport.sent.find((frame) => frame.type === "job.event") as SignedNodeFrame<"job.event">;
+  assert.deepEqual(delivered.body, event);
+  assert.equal(journal.jobEventStatus(event.attemptId, event.sequence), "staged");
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 3, "protocol.ack", {
+    acknowledgedMessageIds: [delivered.messageId], highestContiguousSequence: delivered.sequence, disposition: "accepted",
+  })), t1);
+  assert.equal(journal.jobEventStatus(event.attemptId, event.sequence), "acknowledged");
+  assert.equal(journal.pendingOutbound().some((row) => row.frame.messageId === delivered.messageId), false);
+  await bridge.close();
+  journal.close();
+});
+
+test("expired job-event frames return to the durable retry queue with a new delivery identity", () => {
+  const nodeKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  const event = durableJobEvent();
+  journal.appendJobEvent(event, t1);
+  const pending = journal.pendingJobEvents()[0];
+  const frame = signNodeFrame({
+    protocol: NODE_PROTOCOL_V1,
+    direction: "node_to_server",
+    messageId: pending.messageId,
+    correlationId: `correlation:attempt:${event.attemptId}`,
+    tenantId: "tenant:owner",
+    actorId: "node:mac-mini",
+    senderKind: "node",
+    keyId: "node-key:1",
+    connectionId: "connection:expired-event",
+    sequence: 1,
+    sentAt: t1,
+    expiresAt: t2,
+    nonce: "expired_job_event_nonce_12345678901234567890",
+    type: "job.event",
+    body: event,
+  }, nodeKeys.privateKey);
+  journal.stageJobEventOutbound(frame, event.attemptId, event.sequence, t1);
+  journal.markSent(frame.messageId, t1);
+  assert.equal(journal.jobEventStatus(event.attemptId, event.sequence), "staged");
+  assert.equal(journal.expireBefore(t2), 1);
+  const retry = journal.pendingJobEvents()[0];
+  assert.equal(retry.deliveryAttempt, 1);
+  assert.notEqual(retry.messageId, pending.messageId);
+  assert.equal(journal.jobEventStatus(event.attemptId, event.sequence), "pending");
+  journal.close();
 });
 
 test("journal coalesces unsent heartbeats, preserves essential reserve, and fails closed for other overflow", () => {
