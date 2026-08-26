@@ -57,10 +57,10 @@ Work within a block runs in parallel where dependencies permit. Security and int
 | CR5D-INT-002 | Codex | Map lifecycle events to protocol events and durable bridge delivery | COMPLETE |
 | CR5D-INT-003 | Codex | Persist attempts, checkpoints, terminal state, and artifact lineage transactionally | COMPLETE |
 | CR5D-STOR-001 | Codex | Freeze and implement bounded artifact storage port plus in-memory adapter | COMPLETE |
-| CR5D-STOR-002 | Codex | Disposable filesystem/object adapter with containment, atomicity, hashes, and ambiguity handling | STOR-001; OWNER for live namespace |
+| CR5D-STOR-002 | Codex | Disposable filesystem/object adapter with containment, atomicity, hashes, and ambiguity handling | CODEX ACTIVE; OWNER for live namespace |
 | CR5D-CTRL-001 | Codex | Quarantine/drain command authority, version binding, idempotency, audit, and API | COMPLETE |
 | CR5D-UI-004 | Codex integration | Integrate accepted components into worker/artifact pages and safe command receipts | COMPLETE |
-| CR5D-REC-001 | Codex | Deterministic kill/restart/reconciliation scenarios | CODEX ACTIVE |
+| CR5D-REC-001 | Codex | Deterministic kill/restart/reconciliation scenarios | COMPLETE |
 | CR5D-ENV-001 | Codex + Owner | Isolated PostgreSQL/control-plane/node namespace and teardown | OWNER |
 | CR5D-ACC-001 | Codex | Dashboard/API to DB to node to evidence/review end-to-end acceptance | All CR5D outputs |
 | CR5Q-001 | Codex + independent review | Crash, restore, replay, redaction, secret-canary, and threat disposition | ACC-001 |

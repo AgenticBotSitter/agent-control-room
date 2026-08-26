@@ -53,4 +53,5 @@ The first adapter is memory-only and test-safe. It clones bytes on write and rea
 - Restart classification remains conservative and never claims exactly-once execution.
 - Lifecycle records, attempt/checkpoint projections, signed outbox linkage, acknowledgement, expiry, and retry survive a local bridge restart.
 - Completed attempt projection, manifest, producer claim, explicit independent-verification state, and terminal delivery record commit together and survive restart.
+- An abrupt process exit after local completion but before delivery preserves the completed authority record, all seven ordered lifecycle records, and the digest-bound lineage record. A second interruption after send but before acknowledgement resends the same delivery identities; an authenticated acknowledgement retires them, and the next reconciliation sends no lifecycle duplicates.
 - Focused tests, TypeScript, ESLint, full tests, and rendered build pass.
