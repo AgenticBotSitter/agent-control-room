@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery } from "../src/node-fleet/v1";
+import { CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const discovery = {
@@ -60,4 +60,15 @@ test("capability probe runner executes only registered, no-privilege, platform-c
   assert.equal((await runner.run("probe.native")).reasonCode, "native_evidence_required");
   assert.equal((await runner.run("probe.linux")).reasonCode, "platform_unsupported");
   assert.equal(invoked, 1);
+});
+
+test("telemetry port accepts only a fixed bounded resource vector with a short expiry", () => {
+  const normalized = normalizeTelemetrySample({
+    observedAt: "2026-08-26T00:00:00.000Z", samplingIntervalSeconds: 120,
+    cpuUtilizationPercent: { quality: "observed", value: 32.5 }, availableMemoryBytes: { quality: "observed", value: 2_000 }, availableStorageBytes: { quality: "observed", value: 3_000 },
+    networkClass: "unmetered", powerState: "ac", thermalState: "nominal",
+  });
+  assert.equal(normalized.expiresAt, "2026-08-26T00:05:00.000Z");
+  assert.deepEqual(Object.keys(normalized.payload).sort(), ["availableMemoryBytes", "availableStorageBytes", "cpuUtilizationPercent", "networkClass", "powerState", "samplingIntervalSeconds", "thermalState"]);
+  assert.throws(() => normalizeTelemetrySample({ ...normalized.payload, observedAt: "invalid" }));
 });
