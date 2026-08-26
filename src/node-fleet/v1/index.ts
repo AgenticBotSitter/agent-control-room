@@ -3,6 +3,7 @@ export * from "./freshness";
 export * from "./capability-probe-runner";
 export * from "./benchmark-runner";
 export * from "./inventory-manifest";
+export * from "./rediscovery";
 export * from "./schemas";
 export * from "./static-discovery";
 export * from "./telemetry-port";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BenchmarkRunner, CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
+import { BenchmarkRunner, CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, decideRediscovery, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const discovery = {
@@ -82,4 +82,12 @@ test("benchmark runner requires explicit owner authorization and binds scores to
   assert.equal(completed.payload.normalizedScore, 99);
   assert.equal(completed.expiresAt, "2026-09-25T00:00:00.000Z");
   assert.equal(invoked, 1);
+});
+
+test("rediscovery is triggered by material or trust-continuity changes, never volatile telemetry", () => {
+  const baseline = { currentFingerprint: digest, currentExpiresAt: "2026-08-27T00:00:00.000Z", candidateFingerprint: digest, now: "2026-08-26T00:00:00.000Z" };
+  assert.deepEqual(decideRediscovery(baseline), { required: false, reason: "not_required" });
+  assert.deepEqual(decideRediscovery({ ...baseline, candidateFingerprint: `sha256:${"b".repeat(64)}` }), { required: true, reason: "material_change" });
+  assert.deepEqual(decideRediscovery({ ...baseline, supervisorContinuityKnown: false }), { required: true, reason: "supervisor_continuity_unknown" });
+  assert.deepEqual(decideRediscovery({ ...baseline, currentExpiresAt: "2026-08-26T00:00:00.000Z" }), { required: true, reason: "discovery_expired" });
 });
