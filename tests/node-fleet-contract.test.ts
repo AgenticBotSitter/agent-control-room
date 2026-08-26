@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeDiscoveryFingerprint, createInventoryManifest, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery } from "../src/node-fleet/v1";
+import { CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery } from "../src/node-fleet/v1";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const discovery = {
@@ -44,4 +44,20 @@ test("inventory manifests are explicit, sorted, and reject ambiguous duplicate i
     { kind: "tool", id: "tool.typescript", version: "5.9.3" },
     { kind: "tool", id: "tool.typescript", version: "6.0.0" },
   ]));
+});
+
+test("capability probe runner executes only registered, no-privilege, platform-compatible probes", async () => {
+  let invoked = 0;
+  const runner = new CapabilityProbeRunner({
+    platform: "macos",
+    probes: [
+      { id: "probe.safe", version: "1.0.0", supportedPlatforms: ["macos"], requiredPrivilege: "none", evaluate: async () => { invoked += 1; return { outcome: "pass", reasonCode: "probe_passed", evidenceDigest: digest }; } },
+      { id: "probe.native", version: "1.0.0", supportedPlatforms: ["macos"], requiredPrivilege: "native_evidence_required", evaluate: async () => { invoked += 1; return { outcome: "pass", reasonCode: "incorrect" }; } },
+      { id: "probe.linux", version: "1.0.0", supportedPlatforms: ["linux"], requiredPrivilege: "none", evaluate: async () => { invoked += 1; return { outcome: "pass", reasonCode: "incorrect" }; } },
+    ],
+  });
+  assert.equal((await runner.run("probe.safe")).outcome, "pass");
+  assert.equal((await runner.run("probe.native")).reasonCode, "native_evidence_required");
+  assert.equal((await runner.run("probe.linux")).reasonCode, "platform_unsupported");
+  assert.equal(invoked, 1);
 });
