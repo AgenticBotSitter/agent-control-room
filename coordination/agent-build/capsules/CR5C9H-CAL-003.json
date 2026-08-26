@@ -1,0 +1,58 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR5C9H-CAL-003",
+  "waveId": "CR5C9H-CAL-1",
+  "block": "CR-5C.9H",
+  "summary": "Audit the macOS Allow Once observation boundary",
+  "platform": "any",
+  "status": "ready",
+  "mode": "standard-work",
+  "taskClass": "T0-mechanical",
+  "risk": "low",
+  "baseCommit": "0478e06433550d6b54cb7616b7942629c04afbba",
+  "integrationBranch": "integration/cr5c9h-calibration-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Audit the current CONTROL_ROOM_MACOS_ALLOW_ONCE_WINDOW observation boundary from committed source and accepted evidence. Map when the marker is emitted, which operation and timeout surround it, what the launcher relays, what only the owner can observe, and which v3 claims remain unverified. Do not define a new prompt policy or run macOS commands.",
+  "contractRefs": [
+    "docs/BUILD_STATUS.md",
+    "docs/CR5C9H_PINNED_QUALIFICATION_HARNESSES.md",
+    "docs/hermes-reviews/CR5C9H_MACOS_PLATFORM_VALIDATION_V3.md",
+    "scripts/qualification/platform-key-store-harness.ts",
+    "scripts/qualification/macos-attended-launcher.mjs"
+  ],
+  "allowedPaths": ["docs/hermes-reviews/CR5C9H_MACOS_ALLOW_ONCE_OBSERVATION_AUDIT.md"],
+  "forbiddenPrefixes": [".github", "coordination/agent-build/capsules", "db/migrations", "scripts", "src", "tests"],
+  "acceptanceCommands": ["git diff --check integration/cr5c9h-calibration-1...HEAD"],
+  "semanticAcceptance": [
+    "The report separates source-observable marker and process behavior from owner-observable native prompt behavior.",
+    "The marker, adapter timeout, launcher stdio relay, stale-prompt rule, v3 double-prompt observation, and missing timing evidence are source-linked.",
+    "The report makes no conformance pass, no new policy decision, no native diagnosis, and no recommendation that widens owner or worker authority."
+  ],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 220,
+    "maxRepairIterations": 1
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop if a claim depends on uncommitted issue evidence or direct observation of a native prompt.",
+    "Stop before running readiness, the attended launcher, the native harness, Keychain commands, installs, downloads, or external effects.",
+    "Stop if completing the audit would require changing prompt, timeout, ACL, launcher, or provider semantics."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR5C9H-CAL-003.json"
+}

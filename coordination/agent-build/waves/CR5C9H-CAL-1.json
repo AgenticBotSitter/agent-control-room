@@ -1,0 +1,15 @@
+{
+  "schema": "control-room.agent-build-wave/v2",
+  "waveId": "CR5C9H-CAL-1",
+  "block": "CR-5C.9H",
+  "status": "ready",
+  "baseCommit": "0478e06433550d6b54cb7616b7942629c04afbba",
+  "integrationBranch": "integration/cr5c9h-calibration-1",
+  "capsules": [
+    "coordination/agent-build/capsules/CR5C9H-CAL-001.json",
+    "coordination/agent-build/capsules/CR5C9H-CAL-002.json",
+    "coordination/agent-build/capsules/CR5C9H-CAL-003.json",
+    "coordination/agent-build/capsules/CR5C9H-CAL-004.json"
+  ],
+  "ownerEffectAuthority": "none"
+}

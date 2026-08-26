@@ -1,0 +1,56 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR5C9H-CAL-001",
+  "waveId": "CR5C9H-CAL-1",
+  "block": "CR-5C.9H",
+  "summary": "Audit the accepted macOS evidence chronology",
+  "platform": "any",
+  "status": "ready",
+  "mode": "standard-work",
+  "taskClass": "T0-mechanical",
+  "risk": "low",
+  "baseCommit": "0478e06433550d6b54cb7616b7942629c04afbba",
+  "integrationBranch": "integration/cr5c9h-calibration-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Produce a source-linked chronology of the accepted macOS v3 qualification evidence. Record stage zero, readiness, both attended launches, authorization evidence, prompt observations, harness and shell exits, and cleanup as separate events with evidence class and unresolved contradiction. Do not reconcile unknowns or design the retest.",
+  "contractRefs": [
+    "docs/BUILD_STATUS.md",
+    "docs/hermes-reviews/CR5C9H_MACOS_PLATFORM_VALIDATION_V3.md",
+    "docs/CR5C9H_PINNED_QUALIFICATION_HARNESSES.md"
+  ],
+  "allowedPaths": ["docs/hermes-reviews/CR5C9H_MACOS_EVIDENCE_CHRONOLOGY_AUDIT.md"],
+  "forbiddenPrefixes": [".github", "coordination/agent-build/capsules", "db/migrations", "scripts", "src", "tests"],
+  "acceptanceCommands": ["git diff --check integration/cr5c9h-calibration-1...HEAD"],
+  "semanticAcceptance": [
+    "Every event identifies its source and labels the evidence as observed, owner-observed, documented, inferred, blocked, or unsupported.",
+    "The two-launch history, absent contemporaneous authorization proof, harness exit 1, reported shell exit 0, double prompt, and cleanup evidence remain explicit rather than being converted into a pass.",
+    "The report contains no new platform claim, retest design, secret, raw host identity, absolute personal path, or native diagnostic output."
+  ],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 220,
+    "maxRepairIterations": 1
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop if any required event cannot be sourced from committed repository evidence.",
+    "Stop before running readiness, the attended launcher, the native harness, Keychain commands, installs, downloads, or other external effects.",
+    "Stop if completing the report would require choosing policy, changing an accepted disposition, or inferring owner presence."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR5C9H-CAL-001.json"
+}
