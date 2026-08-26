@@ -22,7 +22,7 @@
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
 | CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; Windows and Linux providers qualified; macOS native qualification remains blocked after accepted negative evidence | Canonical policy/effect enforcement, explicit platform private-key providers, repository-owned qualification harnesses, and bounded macOS failure-stage diagnostics |
-| CR-5D | In progress — execution, delivery, lineage, safe node controls, UI integration, recovery, and disposable storage complete; local vertical acceptance next | Synthetic executor, evidence builder, coordinator, private disposable storage, restart-safe SQLite event/outbox/lineage/control delivery, integrated worker controls and evidence, abrupt-exit recovery, and deterministic tests |
+| CR-5D | In progress — local vertical acceptance complete; independent CR-5Q threat/recovery review next | Synthetic executor, evidence builder, coordinator, private disposable storage, restart-safe SQLite event/outbox/lineage/control delivery, authenticated central job-event intake, central lifecycle projection, signed acknowledgement retirement, integrated worker controls and evidence, abrupt-exit recovery, and deterministic tests |
 | CR-6 through CR-10 | Dependency-mapped; implementation not started | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -30,9 +30,9 @@
 The effect-free active build lane is CR-5D. The unresolved macOS CR-5C.9H native gate remains an explicit owner-controlled security risk; it is not converted into a pass and is not allowed to halt unrelated effect-free product implementation.
 
 ```text
-Active: CR-5D full local vertical acceptance
-Delivered this boundary: CR5D-INT-001 through CR5D-INT-003 add exact admission binding, cancellation, restart-safe lifecycle delivery, and transactional artifact lineage. CR5D-STOR-001 and STOR-002 provide bounded memory storage plus a private disposable-filesystem adapter with no-overwrite atomic publication, exact hashing, capacity bounds, root identity checks, and honest crash ambiguity. CR5D-CTRL-001 is complete: authenticated version-bound requests, atomic audit plus outbox, strict protocol bodies, acknowledgement-gated central state, durable node-local drain/quarantine before reply, closed admission/renewal gates, restart-safe cancellation obligations, and signed semantic acknowledgement delivery. CR5D-UI-004 is complete: worker views use explicit node identity/version/state, operation requests require confirmation and distinguish requested from signed-node-confirmed state, and synthetic timeline plus artifact lineage render producer claims separately from independent verification. CR5D-REC-001 proves an actual abrupt process exit after local completion, SQLite recovery of execution and lineage, resend after a second interruption before acknowledgement, authenticated retirement, and no post-ack redelivery.
-Validation required before promotion: Codex must complete full local vertical acceptance and CR-5Q threat/recovery review.
+Active: CR-5D independent CR-5Q threat/recovery review
+Delivered this boundary: CR5D-INT-001 through CR5D-INT-003 add exact admission binding, cancellation, restart-safe lifecycle delivery, and transactional artifact lineage. CR5D-STOR-001 and STOR-002 provide bounded memory storage plus a private disposable-filesystem adapter with no-overwrite atomic publication, exact hashing, capacity bounds, root identity checks, and honest crash ambiguity. CR5D-CTRL-001 is complete: authenticated version-bound requests, atomic audit plus outbox, strict protocol bodies, acknowledgement-gated central state, durable node-local drain/quarantine before reply, closed admission/renewal gates, restart-safe cancellation obligations, and signed semantic acknowledgement delivery. CR5D-UI-004 is complete: worker views use explicit node identity/version/state, operation requests require confirmation and distinguish requested from signed-node-confirmed state, and synthetic timeline plus artifact lineage render producer claims separately from independent verification. CR5D-REC-001 proves an actual abrupt process exit after local completion, SQLite recovery of execution and lineage, resend after a second interruption before acknowledgement, authenticated retirement, and no post-ack redelivery. CR5D-ACC-001 now proves raw signed job-event authentication before central persistence, exact lease/lineage binding, replay-safe central evidence and lifecycle projections, and a completed node-local record that remains durable until a signed central acknowledgement is received.
+Validation required before promotion: Codex must complete the independent CR-5Q threat/recovery review.
 Open risks: the macOS provider remains unqualified and its original failure stage remains unproven; atomic platform file semantics, live DNS/TLS and rebinding, timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill rehearsal, destination evidence, approval issuance, disposable deployment, and CR-6 service isolation remain explicit downstream gates
 Owner input required now: none for effect-free CR-5D implementation or temp-directory storage tests; exact approval remains required before a new macOS native attempt, install, credential, live artifact namespace, disposable deployment, live integration, or consequential effect
 Decision-log changes: ADR-048 adopts one completion graph and continuous production queue; ADR-039 and ADR-047 remain controlling
@@ -53,12 +53,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR-5D — integrate worker operations, lifecycle, and artifact evidence into live page models
-Set model: gpt-5.6-sol for Codex security/integration review; gpt-5.6-terra only for newly frozen bounded worker slices
-Set reasoning effort: high
-Why: execution, delivery, lineage, and safe node controls are complete behind typed boundaries; the next critical path is replacing disconnected fixture-only components with request/confirmed UI states backed by those contracts
-Expected output: integrated worker and artifact surfaces, broader restart evidence, and a passing CR-5Q gate
-Stop before: live deployment, a new macOS native attempt, credentials, production identities, unapproved external effects, treating producer claims as verification, or allowing client UI to decide node authority
+Block: CR-5Q — independent CR-5D threat and recovery review
+Set model: gpt-5.6-sol
+Set reasoning effort: max
+Why: the completed local path crosses signature validation, replay state, durable evidence, lifecycle projection, and signed acknowledgement retirement; adversarial review needs maximum care at those boundaries.
+Expected output: a documented pass or remediated findings proving no unauthenticated, conflicting, out-of-order, or acknowledgement-loss path can create false central success or prematurely retire node-local evidence.
+Stop before: live deployment, a new macOS native attempt, credentials, production identities, unapproved external effects, treating producer claims as verification, or allowing client UI to decide node authority.
 ```
 
 ## Update rule
