@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { PortableNodeBridge, SqliteBridgeJournal, BridgeBackpressureError, type BridgeIncomingTransport, type BridgeTransport } from "../src/node-bridge/index.ts";
+import { DurableNodeOperationHandler, PortableNodeBridge, SqliteBridgeJournal, BridgeBackpressureError, type BridgeIncomingTransport, type BridgeTransport } from "../src/node-bridge/index.ts";
 import {
   FixedWindowProtocolRateLimiter,
   NODE_PROTOCOL_V1,
@@ -64,7 +64,7 @@ function serverFrame(
   privateKey: KeyObject,
   connectionId: string,
   sequence: number,
-  type: "connection.accepted" | "node.reconciliation.request" | "job.cancel" | "protocol.ack",
+  type: "connection.accepted" | "node.reconciliation.request" | "job.cancel" | "node.operation.request" | "protocol.ack",
   body: SignedNodeFrame["body"],
   causationId?: string,
 ): SignedNodeFrame {
@@ -142,6 +142,17 @@ function durableJobEvent(overrides: Partial<JobEventBody> = {}): JobEventBody {
     occurredAt: t1,
     artifactManifestIds: [],
     ...overrides,
+  };
+}
+
+function nodeOperationRequest() {
+  return {
+    requestId: "node-operation:local-1",
+    nodeId: "node:mac-mini",
+    operation: "request_drain" as const,
+    desiredState: "draining" as const,
+    expectedNodeVersion: 4,
+    requestDigest: `sha256:${"a".repeat(64)}`,
   };
 }
 
@@ -557,6 +568,88 @@ test("bridge never processes or acknowledges a command before its admission hand
   await bridge.receive(JSON.stringify(command), t1);
   assert.equal(calls, 2);
   assert.equal(journal.inboundStatus(command.messageId), "processed");
+  assert.equal(transport.sent.at(-1)?.type, "protocol.ack");
+  await bridge.close();
+  journal.close();
+});
+
+test("node operation is durable before cancellation and exact replay never applies it twice", async () => {
+  const journal = new SqliteBridgeJournal(":memory:");
+  journal.initializeNodeControlState({ nodeId: "node:mac-mini", nodeVersion: 4, state: "active", updatedAt: t0 });
+  const cancellations: string[] = [];
+  const handler = new DurableNodeOperationHandler("node:mac-mini", journal, {
+    requestRunningCancellation(input) { cancellations.push(input.requestId); },
+  });
+  const serverKeys = keys();
+  const frame = serverFrame(serverKeys.privateKey, "connection:control", 1, "node.operation.request", nodeOperationRequest());
+  assert.equal(await handler.handle(frame, t1), true);
+  assert.equal(handler.admissionAllowed(), false);
+  assert.equal(handler.renewalAllowed(), false);
+  assert.deepEqual(journal.nodeControlState("node:mac-mini"), {
+    nodeId: "node:mac-mini", nodeVersion: 5, state: "draining", updatedAt: t1,
+  });
+  assert.equal(handler.response(frame.messageId)?.disposition, "applied");
+  assert.deepEqual(cancellations, ["node-operation:local-1"]);
+  assert.equal(await handler.handle(frame, t1), true);
+  assert.deepEqual(cancellations, ["node-operation:local-1"]);
+  assert.deepEqual(journal.pendingNodeControlCancellations(), []);
+  journal.close();
+});
+
+test("crash after local drain persists the safety gate and recovers owed cancellation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "control-room-node-control-"));
+  const path = join(directory, "bridge.sqlite");
+  const serverKeys = keys();
+  const frame = serverFrame(serverKeys.privateKey, "connection:control", 1, "node.operation.request", nodeOperationRequest());
+  const first = new SqliteBridgeJournal(path);
+  first.initializeNodeControlState({ nodeId: "node:mac-mini", nodeVersion: 4, state: "active", updatedAt: t0 });
+  const crashing = new DurableNodeOperationHandler("node:mac-mini", first, {
+    requestRunningCancellation() { throw new Error("synthetic cancellation crash"); },
+  });
+  await assert.rejects(crashing.handle(frame, t1), /synthetic cancellation crash/);
+  assert.equal(first.nodeControlState("node:mac-mini")?.state, "draining");
+  assert.deepEqual(first.pendingNodeControlCancellations().map((row) => row.requestId), ["node-operation:local-1"]);
+  first.close();
+
+  const restarted = new SqliteBridgeJournal(path);
+  const recovered: string[] = [];
+  const handler = new DurableNodeOperationHandler("node:mac-mini", restarted, {
+    requestRunningCancellation(input) { recovered.push(input.requestId); },
+  });
+  assert.equal(handler.admissionAllowed(), false);
+  assert.equal(await handler.recoverPendingCancellations(t2), 1);
+  assert.deepEqual(recovered, ["node-operation:local-1"]);
+  assert.deepEqual(restarted.pendingNodeControlCancellations(), []);
+  restarted.close();
+  await rm(directory, { recursive: true });
+});
+
+test("bridge emits semantic node acknowledgement only after the durable local operation", async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  journal.initializeNodeControlState({ nodeId: "node:mac-mini", nodeVersion: 4, state: "active", updatedAt: t0 });
+  const handler = new DurableNodeOperationHandler("node:mac-mini", journal, { requestRunningCancellation() {} });
+  let id = 0;
+  const bridge = new PortableNodeBridge(
+    { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: [] }, journal,
+    { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
+    new NodeProtocolAuthenticator(serverResolver(serverKeys.spki), journal, new FixedWindowProtocolRateLimiter(100, 60)),
+    () => `node-control-${++id}`,
+    handler,
+  );
+  const transport = new MemoryTransport();
+  await bridge.open(transport, { now: t1, transportIdentity: "tls:server" });
+  const connectionId = bridge.status().connectionId as string;
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 1, "connection.accepted", {
+    selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: [], maxFrameBytes: 65_536, heartbeatIntervalSeconds: 30, serverTime: t1,
+  }, transport.sent[0].messageId)), t1);
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 2, "node.operation.request", nodeOperationRequest())), t1);
+  const semantic = transport.sent.find((frame) => frame.type === "node.operation.ack") as SignedNodeFrame<"node.operation.ack">;
+  assert.equal(semantic.body.disposition, "applied");
+  assert.equal(semantic.body.resultingNodeVersion, 5);
+  assert.equal(bridge.status().state, "draining");
+  assert.equal(journal.nodeControlState("node:mac-mini")?.state, "draining");
   assert.equal(transport.sent.at(-1)?.type, "protocol.ack");
   await bridge.close();
   journal.close();

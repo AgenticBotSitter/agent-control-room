@@ -22,7 +22,7 @@
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
 | CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; Windows and Linux providers qualified; macOS native qualification remains blocked after accepted negative evidence | Canonical policy/effect enforcement, explicit platform private-key providers, repository-owned qualification harnesses, and bounded macOS failure-stage diagnostics |
-| CR-5D | In progress — durable lifecycle delivery and transactional artifact lineage complete; safe worker command handling next | Synthetic executor, evidence builder, coordinator, storage boundary, restart-safe SQLite event/outbox/lineage delivery, three initial UI components, and deterministic tests |
+| CR-5D | In progress — execution, delivery, lineage, and safe node controls complete; UI integration next | Synthetic executor, evidence builder, coordinator, storage boundary, restart-safe SQLite event/outbox/lineage/control delivery, three initial UI components, and deterministic tests |
 | CR-6 through CR-10 | Dependency-mapped; implementation not started | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -31,8 +31,8 @@ The effect-free active build lane is CR-5D. The unresolved macOS CR-5C.9H native
 
 ```text
 Active: CR-5D synthetic executor, artifact/evidence flow, and initial worker UI
-Delivered this boundary: all five first-wave effect-free production slices are integrated. CR5D-INT-001 through CR5D-INT-003 and CR5D-STOR-001 add exact admission binding, cancellation, restart-safe lifecycle delivery, bounded storage, and transactional artifact lineage. CR5D-CTRL-001 now has its control-plane half: authenticated version-bound drain/resume/quarantine requests, one pending request per node, atomic audit plus outbox creation, strict signed protocol bodies, a no-false-success API, and acknowledgement-gated central state changes.
-Validation required before promotion: Codex must complete node-local control application and bridge acknowledgement delivery, UI wiring, broader kill/restart acceptance, and CR-5Q threat/recovery review.
+Delivered this boundary: CR5D-INT-001 through CR5D-INT-003 and CR5D-STOR-001 add exact admission binding, cancellation, restart-safe lifecycle delivery, bounded storage, and transactional artifact lineage. CR5D-CTRL-001 is complete: authenticated version-bound requests, atomic audit plus outbox, strict protocol bodies, acknowledgement-gated central state, durable node-local drain/quarantine before reply, closed admission/renewal gates, restart-safe cancellation obligations, and signed semantic acknowledgement delivery.
+Validation required before promotion: Codex must complete UI wiring, broader kill/restart acceptance, and CR-5Q threat/recovery review.
 Open risks: the macOS provider remains unqualified and its original failure stage remains unproven; atomic platform file semantics, live DNS/TLS and rebinding, timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill rehearsal, destination evidence, approval issuance, disposable deployment, and CR-6 service isolation remain explicit downstream gates
 Owner input required now: none for effect-free CR-5D worker implementation; exact approval remains required before a new macOS native attempt, install, credential, disposable deployment, live integration, or consequential effect
 Decision-log changes: ADR-048 adopts one completion graph and continuous production queue; ADR-039 and ADR-047 remain controlling
@@ -53,11 +53,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR-5D — add authenticated, idempotent quarantine and drain command handling
+Block: CR-5D — integrate worker operations, lifecycle, and artifact evidence into live page models
 Set model: gpt-5.6-sol for Codex security/integration review; gpt-5.6-terra only for newly frozen bounded worker slices
 Set reasoning effort: high
-Why: admission, cancellation, storage, lifecycle delivery, and artifact lineage now survive disconnects and restarts; the next critical boundary is ensuring operator commands are authenticated, version-bound, auditable, and fail closed
-Expected output: safe worker command receipts, integrated worker/artifact surfaces, broader restart evidence, and a passing CR-5Q gate
+Why: execution, delivery, lineage, and safe node controls are complete behind typed boundaries; the next critical path is replacing disconnected fixture-only components with request/confirmed UI states backed by those contracts
+Expected output: integrated worker and artifact surfaces, broader restart evidence, and a passing CR-5Q gate
 Stop before: live deployment, a new macOS native attempt, credentials, production identities, unapproved external effects, treating producer claims as verification, or allowing client UI to decide node authority
 ```
 

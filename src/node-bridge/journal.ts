@@ -1,6 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
 import { assertNoSecretMaterial, sha256Digest } from "../security";
-import { opaqueTokenDigest, type JobEventBody, type ReplayGuard, type SignedNodeFrame } from "../node-protocol/v1";
+import {
+  opaqueTokenDigest,
+  type JobEventBody,
+  type NodeOperationAcknowledgementBody,
+  type NodeOperationRequestBody,
+  type ReplayGuard,
+  type SignedNodeFrame,
+} from "../node-protocol/v1";
 import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
 
 export class BridgeBackpressureError extends Error {
@@ -33,6 +40,20 @@ export interface JournalJobEvent {
   deliveryAttempt: number;
   messageId: string;
   status: "pending" | "staged" | "acknowledged";
+}
+
+export interface JournalNodeControlState {
+  nodeId: string;
+  nodeVersion: number;
+  state: "active" | "draining" | "quarantined";
+  safeReasonCode?: string;
+  updatedAt: string;
+}
+
+export interface JournalNodeOperationResult {
+  acknowledgement: NodeOperationAcknowledgementBody;
+  cancellationRequired: boolean;
+  replayed: boolean;
 }
 
 const terminalEvents = new Set<JobEventBody["event"]>(["completed", "failed", "cancelled"]);
@@ -92,6 +113,107 @@ export class SqliteBridgeJournal implements ReplayGuard {
 
   close(): void {
     this.db.close();
+  }
+
+  initializeNodeControlState(state: JournalNodeControlState): "initialized" | "duplicate" {
+    assertNoSecretMaterial(state, "local node control state");
+    if (!Number.isInteger(state.nodeVersion) || state.nodeVersion < 0) throw new Error("Local node version must be nonnegative");
+    return this.transaction(() => {
+      const prior = this.db.prepare(
+        `SELECT node_version,state,safe_reason_code,updated_at FROM bridge_node_control_state WHERE node_id=?`,
+      ).get(state.nodeId) as { node_version: number; state: JournalNodeControlState["state"]; safe_reason_code: string | null; updated_at: string } | undefined;
+      if (prior) {
+        const exact = prior.node_version === state.nodeVersion && prior.state === state.state
+          && prior.safe_reason_code === (state.safeReasonCode ?? null) && prior.updated_at === state.updatedAt;
+        if (!exact) throw new Error("Local node control state is already initialized differently");
+        return "duplicate" as const;
+      }
+      this.db.prepare(
+        `INSERT INTO bridge_node_control_state(node_id,node_version,state,safe_reason_code,updated_at) VALUES (?,?,?,?,?)`,
+      ).run(state.nodeId,state.nodeVersion,state.state,state.safeReasonCode ?? null,state.updatedAt);
+      return "initialized" as const;
+    });
+  }
+
+  nodeControlState(nodeId: string): JournalNodeControlState | undefined {
+    const row = this.db.prepare(
+      `SELECT node_id,node_version,state,safe_reason_code,updated_at FROM bridge_node_control_state WHERE node_id=?`,
+    ).get(nodeId) as { node_id: string; node_version: number; state: JournalNodeControlState["state"]; safe_reason_code: string | null; updated_at: string } | undefined;
+    return row ? { nodeId: row.node_id, nodeVersion: row.node_version, state: row.state,
+      ...(row.safe_reason_code ? { safeReasonCode: row.safe_reason_code } : {}), updatedAt: row.updated_at } : undefined;
+  }
+
+  applyNodeOperation(command: NodeOperationRequestBody, appliedAt: string): JournalNodeOperationResult {
+    assertNoSecretMaterial(command, "local node operation command");
+    const commandDigest = sha256Digest(command);
+    return this.transaction(() => {
+      const prior = this.db.prepare(
+        `SELECT command_digest,acknowledgement_json,cancellation_required,cancellation_recorded_at
+         FROM bridge_node_operation_receipts WHERE request_id=?`,
+      ).get(command.requestId) as { command_digest: string; acknowledgement_json: string; cancellation_required: number; cancellation_recorded_at: string | null } | undefined;
+      if (prior) {
+        if (prior.command_digest !== commandDigest) throw new Error("Node operation request ID conflicts with different content");
+        return { acknowledgement: JSON.parse(prior.acknowledgement_json) as NodeOperationAcknowledgementBody,
+          cancellationRequired: prior.cancellation_required === 1 && prior.cancellation_recorded_at === null, replayed: true };
+      }
+      const local = this.db.prepare(
+        `SELECT node_version,state FROM bridge_node_control_state WHERE node_id=?`,
+      ).get(command.nodeId) as { node_version: number; state: JournalNodeControlState["state"] } | undefined;
+      if (!local) throw new Error("Local node control state is not initialized");
+      const allowed = (command.operation === "request_drain" && local.state === "active")
+        || (command.operation === "request_resume" && local.state === "draining")
+        || (command.operation === "request_quarantine" && local.state !== "quarantined");
+      const canApply = local.node_version === command.expectedNodeVersion && allowed;
+      const resultingNodeVersion = canApply ? local.node_version + 1 : undefined;
+      const acknowledgement: NodeOperationAcknowledgementBody = canApply ? {
+        requestId: command.requestId,
+        nodeId: command.nodeId,
+        operation: command.operation,
+        expectedNodeVersion: command.expectedNodeVersion,
+        disposition: "applied",
+        acknowledgementId: `ack:${command.requestDigest.slice("sha256:".length)}`,
+        resultingNodeVersion: resultingNodeVersion as number,
+      } : {
+        requestId: command.requestId,
+        nodeId: command.nodeId,
+        operation: command.operation,
+        expectedNodeVersion: command.expectedNodeVersion,
+        disposition: "rejected",
+        acknowledgementId: `ack:${command.requestDigest.slice("sha256:".length)}`,
+        safeResultCode: local.node_version === command.expectedNodeVersion ? "local_state_conflict" : "stale_node_version",
+      };
+      const cancellationRequired = canApply && command.operation !== "request_resume";
+      if (canApply) {
+        this.db.prepare(
+          `UPDATE bridge_node_control_state SET node_version=?,state=?,safe_reason_code=?,updated_at=? WHERE node_id=? AND node_version=?`,
+        ).run(resultingNodeVersion as number,command.desiredState,command.safeReasonCode ?? null,appliedAt,command.nodeId,local.node_version);
+      }
+      this.db.prepare(
+        `INSERT INTO bridge_node_operation_receipts
+         (request_id,request_digest,command_json,command_digest,acknowledgement_json,disposition,cancellation_required,recorded_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      ).run(command.requestId,command.requestDigest,JSON.stringify(command),commandDigest,JSON.stringify(acknowledgement),
+        acknowledgement.disposition,cancellationRequired ? 1 : 0,appliedAt);
+      return { acknowledgement, cancellationRequired, replayed: false };
+    });
+  }
+
+  pendingNodeControlCancellations(): Array<{ requestId: string; operation: NodeOperationRequestBody["operation"] }> {
+    return (this.db.prepare(
+      `SELECT request_id,command_json FROM bridge_node_operation_receipts
+       WHERE cancellation_required=1 AND cancellation_recorded_at IS NULL ORDER BY recorded_at`,
+    ).all() as Array<{ request_id: string; command_json: string }>).map((row) => ({
+      requestId: row.request_id,
+      operation: (JSON.parse(row.command_json) as NodeOperationRequestBody).operation,
+    }));
+  }
+
+  markNodeControlCancellationRequested(requestId: string, recordedAt: string): void {
+    const changed = this.db.prepare(
+      `UPDATE bridge_node_operation_receipts SET cancellation_recorded_at=?
+       WHERE request_id=? AND cancellation_required=1 AND cancellation_recorded_at IS NULL`,
+    ).run(recordedAt,requestId).changes;
+    if (changed !== 1) throw new Error("Node control cancellation is not pending");
   }
 
   nextOutboundSequence(connectionId: string): number {
@@ -492,6 +614,25 @@ export class SqliteBridgeJournal implements ReplayGuard {
         received_at TEXT NOT NULL,
         handled_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS bridge_node_control_state (
+        node_id TEXT PRIMARY KEY,
+        node_version INTEGER NOT NULL CHECK(node_version>=0),
+        state TEXT NOT NULL CHECK(state IN ('active','draining','quarantined')),
+        safe_reason_code TEXT,
+        updated_at TEXT NOT NULL,
+        CHECK((state='quarantined' AND safe_reason_code IS NOT NULL) OR state<>'quarantined')
+      );
+      CREATE TABLE IF NOT EXISTS bridge_node_operation_receipts (
+        request_id TEXT PRIMARY KEY,
+        request_digest TEXT NOT NULL UNIQUE,
+        command_json TEXT NOT NULL,
+        command_digest TEXT NOT NULL,
+        acknowledgement_json TEXT NOT NULL,
+        disposition TEXT NOT NULL CHECK(disposition IN ('applied','rejected')),
+        cancellation_required INTEGER NOT NULL CHECK(cancellation_required IN (0,1)),
+        cancellation_recorded_at TEXT,
+        recorded_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS bridge_attempts (
         attempt_id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL,
@@ -537,6 +678,6 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
     if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
     if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
-    this.db.exec("PRAGMA user_version=3;");
+    this.db.exec("PRAGMA user_version=4;");
   }
 }

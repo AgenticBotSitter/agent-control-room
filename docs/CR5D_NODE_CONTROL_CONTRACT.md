@@ -1,6 +1,6 @@
 # CR-5D node control request contract
 
-**Status:** Architect-frozen control-plane half of CR5D-CTRL-001
+**Status:** Architect-frozen and implemented CR5D-CTRL-001
 **Decision date:** 2026-08-26
 **Scope:** Authenticated drain, resume, and quarantine intents, durable delivery, and confirmed central state change
 **Authority:** This contract does not authorize a live node, deployment, credential, or production effect.
@@ -19,6 +19,10 @@ The signed protocol defines separate `node.operation.request` and `node.operatio
 
 The central state changes only while consuming an exact authenticated acknowledgement. Applied acknowledgement updates the node state, payload mirror, and monotonic version together with the request and audit record. A rejection leaves the node unchanged. If central version changed while the command was in flight, an apparent applied acknowledgement is recorded as rejected with `stale_node_version`; it never overwrites newer truth.
 
-## Remaining integration
+## Node-local application
 
-The control-plane request, outbox, protocol, API, acknowledgement consumer, and tests are complete. The node-local handler still must persist local drain/quarantine state before acknowledgement, block new admission and renewal, request typed cancellation for running work, and connect its acknowledgement to the live bridge sender. UI wiring must show requested and confirmed states separately.
+The node initializes an exact local node/version/state projection. A signed request addressed to another node is rejected. An allowed request atomically advances the local version and state and stores a deterministic semantic acknowledgement before cancellation or transport occurs. Drain and quarantine immediately make both admission and renewal gates false. They also create a durable, idempotency-keyed cancellation obligation for running work.
+
+If cancellation dispatch crashes, the safety gate remains closed and the obligation survives restart. Recovery reissues the typed cancellation under the original request identity. An exact command replay returns the original acknowledgement without advancing state or requesting cancellation twice. Stale or locally illegal commands return fixed rejections and do not alter local state.
+
+The bridge sends the semantic `node.operation.ack` only after local persistence and cancellation dispatch succeed. That signed acknowledgement itself enters the durable bridge outbox before transport. UI wiring remains separate under CR5D-UI-004 and must show requested and confirmed states distinctly.

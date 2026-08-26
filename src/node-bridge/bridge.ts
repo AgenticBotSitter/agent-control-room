@@ -168,9 +168,22 @@ export class PortableNodeBridge {
       case "job.lease.grant":
       case "job.lease.renewed":
       case "job.cancel":
-      case "node.operation.request":
         if (!this.commandHandler || !await this.commandHandler.handle(frame, now)) this.journal.recordCommand(frame, now);
         break;
+      case "node.operation.request": {
+        const handled = this.commandHandler && await this.commandHandler.handle(frame, now);
+        if (!handled) {
+          this.journal.recordCommand(frame, now);
+          break;
+        }
+        const response = this.commandHandler?.response?.(frame.messageId);
+        if (!response) throw new Error("Handled node operation did not produce a durable acknowledgement");
+        await this.sendBody("node.operation.ack", response, true, now, frame.correlationId, frame.messageId);
+        if (response.disposition === "applied") {
+          this.statusValue = { ...this.statusValue, state: response.operation === "request_resume" ? "online" : "draining" };
+        }
+        break;
+      }
       case "protocol.error":
         this.statusValue = { ...this.statusValue, lastSafeErrorCode: "protocol_rejected" };
         break;
