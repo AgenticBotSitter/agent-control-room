@@ -43,6 +43,8 @@ The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repos
 
 The first intake pilot quarantined open PRs #127–#129 because they predated V2, targeted `main`, lacked capsules/result manifests, and proposed work outside the active CR-5C.9H gate. PR #83 is superseded by later accepted qualification evidence. This coordination change does not authorize or consume a macOS native attempt.
 
+The first claimable V2 calibration wave is `CR5C9H-CAL-1`, pinned to product base `0478e06433550d6b54cb7616b7942629c04afbba` and integration branch `integration/cr5c9h-calibration-1`. It contains four independent, effect-free T0 evidence audits for the accepted macOS chronology, fixed qualification-stage coverage, the Allow Once observation boundary, and attended-launcher exit propagation. The registered provisional routes `marvin-macos`, `johnny5-linux`, and `ziggy-windows` may each hold up to three concurrent claims through the serialized queue. All four results require verification by a different route before Codex integration; none authorizes readiness, a native launch, Keychain access, policy changes, installs, downloads, or a retest.
+
 Local models are registered as `provisional` until the repository qualification pack establishes which task classes they can perform reliably. A model is not treated as equivalent to Luna, Terra, or Sol based on parameter count or reputation alone.
 
 ## Next block

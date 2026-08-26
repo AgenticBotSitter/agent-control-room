@@ -1,0 +1,57 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR5C9H-CAL-004",
+  "waveId": "CR5C9H-CAL-1",
+  "block": "CR-5C.9H",
+  "summary": "Audit attended-launcher exit propagation paths",
+  "platform": "any",
+  "status": "ready",
+  "mode": "standard-work",
+  "taskClass": "T0-mechanical",
+  "risk": "low",
+  "baseCommit": "0478e06433550d6b54cb7616b7942629c04afbba",
+  "integrationBranch": "integration/cr5c9h-calibration-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Trace every committed attended-launcher exit path from child spawn and close through JSON parsing, cleanup, normal process.exitCode propagation, and catch handling. Compare those paths with deterministic tests and the accepted v3 report's shell-exit contradiction. Identify coverage gaps and symbolic test cases without editing code or asserting the cause of the historical observation.",
+  "contractRefs": [
+    "docs/BUILD_STATUS.md",
+    "docs/hermes-reviews/CR5C9H_MACOS_PLATFORM_VALIDATION_V3.md",
+    "scripts/qualification/macos-attended-launcher.mjs",
+    "tests/node-platform-qualification-harness.test.ts"
+  ],
+  "allowedPaths": ["docs/hermes-reviews/CR5C9H_MACOS_LAUNCHER_EXIT_PATH_AUDIT.md"],
+  "forbiddenPrefixes": [".github", "coordination/agent-build/capsules", "db/migrations", "scripts", "src", "tests"],
+  "acceptanceCommands": ["git diff --check integration/cr5c9h-calibration-1...HEAD"],
+  "semanticAcceptance": [
+    "The report enumerates normal child exit, null child exit, spawn error, output overflow, invalid JSON, cleanup failure, preflight refusal, and top-level catch paths with exact source citations.",
+    "For each path, the report records launcher JSON shape, intended shell exit behavior, cleanup behavior, and current direct, indirect, or absent deterministic test coverage.",
+    "The historical shell-exit discrepancy remains unresolved; proposed tests are symbolic and do not modify code, execute the native harness, or claim a diagnosis."
+  ],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 240,
+    "maxRepairIterations": 1
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop if an exit path cannot be established from committed launcher source and tests.",
+    "Stop before running readiness, the attended launcher, the native harness, platform commands, installs, downloads, or external effects.",
+    "Stop if the task would require repairing the launcher, choosing new error semantics, or explaining the historical shell result without evidence."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR5C9H-CAL-004.json"
+}

@@ -1,0 +1,57 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR5C9H-CAL-002",
+  "waveId": "CR5C9H-CAL-1",
+  "block": "CR-5C.9H",
+  "summary": "Map macOS qualification stages to deterministic coverage",
+  "platform": "any",
+  "status": "ready",
+  "mode": "standard-work",
+  "taskClass": "T0-mechanical",
+  "risk": "low",
+  "baseCommit": "0478e06433550d6b54cb7616b7942629c04afbba",
+  "integrationBranch": "integration/cr5c9h-calibration-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Create a mechanical coverage map for every committed fixed macOS qualificationStage value. Link each value to the exact harness transition that sets it, the emitted error path, and current deterministic test evidence. Mark missing or indirect coverage without proposing new stages or changing code.",
+  "contractRefs": [
+    "docs/BUILD_STATUS.md",
+    "docs/CR5C9H_PINNED_QUALIFICATION_HARNESSES.md",
+    "scripts/qualification/platform-key-store-harness.ts",
+    "tests/node-platform-qualification-harness.test.ts"
+  ],
+  "allowedPaths": ["docs/hermes-reviews/CR5C9H_MACOS_QUALIFICATION_STAGE_COVERAGE.md"],
+  "forbiddenPrefixes": [".github", "coordination/agent-build/capsules", "db/migrations", "scripts", "src", "tests"],
+  "acceptanceCommands": ["git diff --check integration/cr5c9h-calibration-1...HEAD"],
+  "semanticAcceptance": [
+    "The report inventories every fixed qualificationStage value present in the committed harness and cites exact source locations.",
+    "Each stage is mapped to its preceding operation, failure category, emitted JSON field, and direct, indirect, or absent deterministic test coverage.",
+    "Gaps are recorded as evidence gaps only; the report does not add stage names, alter error semantics, or claim native macOS qualification."
+  ],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 220,
+    "maxRepairIterations": 1
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop if the stage inventory cannot be derived entirely from committed source and tests.",
+    "Stop before running readiness, the attended launcher, the native harness, platform commands, installs, downloads, or external effects.",
+    "Stop if the task would require production or test edits, new error semantics, or a platform diagnosis."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR5C9H-CAL-002.json"
+}
