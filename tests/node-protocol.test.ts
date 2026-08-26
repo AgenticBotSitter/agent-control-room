@@ -178,6 +178,8 @@ test("every CR-5A connection, heartbeat, offer, lease, event, cancellation, and 
     { type: "job.cancel.ack", direction: "node_to_server", body: { ...lease, reasonCode: "owner_requested", disposition: "accepted" } },
     { type: "node.reconciliation.request", direction: "server_to_node", body: { lastAcknowledgedNodeSequence: 1, requestedAttemptIds: [lease.attemptId] } },
     { type: "node.reconciliation.report", direction: "node_to_server", body: { lastAcknowledgedServerSequence: 1, attempts: [{ attemptId: lease.attemptId, leaseId: lease.leaseId, leaseEpoch: 1, state: "running", lastEventSequence: 1, checkpointIds: [] }] } },
+    { type: "node.operation.request", direction: "server_to_node", body: { requestId: "node-operation:1", nodeId: "node:mac-mini", operation: "request_drain", desiredState: "draining", expectedNodeVersion: 4, requestDigest: hashA } },
+    { type: "node.operation.ack", direction: "node_to_server", body: { requestId: "node-operation:1", nodeId: "node:mac-mini", operation: "request_drain", expectedNodeVersion: 4, disposition: "applied", acknowledgementId: "ack:node-operation:1", resultingNodeVersion: 5 } },
     { type: "protocol.ack", direction: "server_to_node", body: { acknowledgedMessageIds: ["message:1"], highestContiguousSequence: 1, disposition: "accepted" } },
   ];
   for (const item of cases) {

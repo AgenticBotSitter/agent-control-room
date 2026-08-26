@@ -202,6 +202,35 @@ const protocolAcknowledgement = z.object({
   highestContiguousSequence: z.number().int().positive(),
   disposition: z.enum(["accepted", "duplicate"]),
 }).strict();
+const nodeOperationRequest = z.object({
+  requestId: id,
+  nodeId: id,
+  operation: z.enum(["request_drain", "request_resume", "request_quarantine"]),
+  desiredState: z.enum(["active", "draining", "quarantined"]),
+  expectedNodeVersion: z.number().int().nonnegative(),
+  requestDigest: digest,
+  safeReasonCode: id.optional(),
+}).strict().superRefine((value, context) => {
+  const expectedState = value.operation === "request_drain" ? "draining" : value.operation === "request_resume" ? "active" : "quarantined";
+  if (value.desiredState !== expectedState) context.addIssue({ code: "custom", path: ["desiredState"], message: "operation and desired state must match" });
+  if (value.operation === "request_quarantine" ? !value.safeReasonCode : value.safeReasonCode !== undefined) {
+    context.addIssue({ code: "custom", path: ["safeReasonCode"], message: "only quarantine requires a safe reason code" });
+  }
+});
+const nodeOperationAcknowledgement = z.object({
+  requestId: id,
+  nodeId: id,
+  operation: z.enum(["request_drain", "request_resume", "request_quarantine"]),
+  expectedNodeVersion: z.number().int().nonnegative(),
+  disposition: z.enum(["applied", "rejected"]),
+  acknowledgementId: id,
+  safeResultCode: id.optional(),
+  resultingNodeVersion: z.number().int().nonnegative().optional(),
+}).strict().superRefine((value, context) => {
+  if (value.disposition === "applied" ? value.resultingNodeVersion === undefined || value.safeResultCode !== undefined : !value.safeResultCode || value.resultingNodeVersion !== undefined) {
+    context.addIssue({ code: "custom", path: ["disposition"], message: "operation acknowledgement fields do not match disposition" });
+  }
+});
 
 const baseFrame = {
   protocol: z.literal(NODE_PROTOCOL_V1),
@@ -239,6 +268,8 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("job.cancel.ack", cancelAck),
   frame("node.reconciliation.request", reconciliationRequest),
   frame("node.reconciliation.report", reconciliationReport),
+  frame("node.operation.request", nodeOperationRequest),
+  frame("node.operation.ack", nodeOperationAcknowledgement),
   frame("protocol.ack", protocolAcknowledgement),
   frame("protocol.error", protocolError),
 ]).superRefine((value, context) => {
@@ -247,5 +278,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   if (value.direction === "server_to_node" && value.senderKind !== "control_room") context.addIssue({ code: "custom", path: ["senderKind"], message: "server-to-node frames must be Control Room signed" });
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "protocol.ack", "protocol.error"]);
-export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);

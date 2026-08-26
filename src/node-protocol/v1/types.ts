@@ -201,6 +201,27 @@ export interface ProtocolAcknowledgementBody {
   disposition: "accepted" | "duplicate";
 }
 
+export interface NodeOperationRequestBody {
+  requestId: string;
+  nodeId: string;
+  operation: "request_drain" | "request_resume" | "request_quarantine";
+  desiredState: "active" | "draining" | "quarantined";
+  expectedNodeVersion: number;
+  requestDigest: string;
+  safeReasonCode?: string;
+}
+
+export interface NodeOperationAcknowledgementBody {
+  requestId: string;
+  nodeId: string;
+  operation: NodeOperationRequestBody["operation"];
+  expectedNodeVersion: number;
+  disposition: "applied" | "rejected";
+  acknowledgementId: string;
+  safeResultCode?: string;
+  resultingNodeVersion?: number;
+}
+
 export interface NodeMessageBodyMap {
   "connection.hello": ConnectionHelloBody;
   "connection.accepted": ConnectionAcceptedBody;
@@ -214,6 +235,8 @@ export interface NodeMessageBodyMap {
   "job.cancel.ack": CancelAcknowledgementBody;
   "node.reconciliation.request": ReconciliationRequestBody;
   "node.reconciliation.report": ReconciliationReportBody;
+  "node.operation.request": NodeOperationRequestBody;
+  "node.operation.ack": NodeOperationAcknowledgementBody;
   "protocol.ack": ProtocolAcknowledgementBody;
   "protocol.error": ProtocolErrorBody;
 }

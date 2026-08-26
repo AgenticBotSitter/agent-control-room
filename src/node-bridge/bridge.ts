@@ -168,6 +168,7 @@ export class PortableNodeBridge {
       case "job.lease.grant":
       case "job.lease.renewed":
       case "job.cancel":
+      case "node.operation.request":
         if (!this.commandHandler || !await this.commandHandler.handle(frame, now)) this.journal.recordCommand(frame, now);
         break;
       case "protocol.error":
