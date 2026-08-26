@@ -1,0 +1,64 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR5D-UI-003",
+  "waveId": "CR5D-EXEC-1",
+  "block": "CR-5D",
+  "summary": "Build the worker operation request panel",
+  "platform": "any",
+  "status": "ready",
+  "mode": "standard-work",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "medium",
+  "baseCommit": "b523d9f6237b7d4161b70cf7524a8f683b683ac4",
+  "integrationBranch": "integration/cr5d-synthetic-executor-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "repository dependencies", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Implement the production worker operation request panel and deterministic render tests exactly as frozen in docs/CR5D_INITIAL_WORKER_UI_CONTRACT.md section 3. The component requests intent only and may not imply that an operation was authorized or applied.",
+  "contractRefs": [
+    "docs/CR5D_INITIAL_WORKER_UI_CONTRACT.md",
+    "docs/CR3_BUILD_PLAN.md",
+    "src/contracts/v1/types.ts",
+    "src/domain/v1/state-machines.ts"
+  ],
+  "allowedPaths": [
+    "app/components/worker-operation-panel.tsx",
+    "tests/worker-operation-panel.test.tsx"
+  ],
+  "forbiddenPrefixes": [".github", "coordination/agent-build/capsules", "db", "docs", "src", "app/api", "app/control-room-dashboard.tsx", "app/globals.css"],
+  "acceptanceCommands": [
+    "node --import tsx --test tests/worker-operation-panel.test.tsx",
+    "node node_modules/typescript/bin/tsc --noEmit",
+    "git diff --check integration/cr5d-synthetic-executor-1...HEAD"
+  ],
+  "semanticAcceptance": [
+    "The component matches contract section 3, renders only server-supplied request choices, preserves disabled choices and reasons, and labels every operation as a request.",
+    "Render tests cover worker state and reason, all three operation labels, disabled controls, authority/confirmation text, semantic structure, and safe escaping.",
+    "The implementation performs no authority decision, optimistic state change, command construction, approval, authentication, audit, network request, effect, or dashboard integration."
+  ],
+  "limits": {
+    "maxChangedFiles": 2,
+    "maxChangedLines": 440,
+    "maxRepairIterations": 2
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop if the contract requires editing any path outside allowedPaths or inventing client-side authority rules.",
+    "Stop before changing CSS, dashboard pages, backend routes, domain state, policy, protocol, persistence, dependencies, or architecture.",
+    "Stop before any install, download, native command, service, credential access, external effect, or production mutation."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR5D-UI-003.json"
+}

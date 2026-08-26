@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-08-25
+**Updated:** 2026-08-26
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
 
@@ -22,19 +22,20 @@
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
 | CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; Windows and Linux providers qualified; macOS native qualification remains blocked after accepted negative evidence | Canonical policy/effect enforcement, explicit platform private-key providers, repository-owned qualification harnesses, and bounded macOS failure-stage diagnostics |
-| CR-5D through CR-10 | Not started | Phased build plan |
+| CR-5D | Architect contract and first production wave ready; implementation not yet integrated | Synthetic executor/evidence contract, initial worker UI contract, five real V2 capsules, completion program |
+| CR-6 through CR-10 | Dependency-mapped; implementation not started | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-The 2026-08-24 operator-workflow amendment changes upcoming CR-5D, CR-6E, CR-7B/7E, and CR-8B/8C deliverables. It does not reopen the accepted CR-4 security core or change the active CR-5C.9H qualification gate.
+The effect-free active build lane is CR-5D. The unresolved macOS CR-5C.9H native gate remains an explicit owner-controlled security risk; it is not converted into a pass and is not allowed to halt unrelated effect-free product implementation.
 
 ```text
-Active: CR-5C.9H fresh macOS diagnostic retest design and owner authorization — issue #121 is closed after PR #123 merged the corrected partial/blocked report; the provider remains unqualified after the owner-attended harness returned `unavailable_platform`
-Delivered this boundary: PR #130 fixed canonical macOS scratch-path and safe runtime-warning test behavior; PR #131 added fixed, non-sensitive `qualificationStage` values to macOS error JSON without changing provider, ACL, timeout, prompt, retry, or fallback behavior
-Validation evidence: the architect branches passed TypeScript, ESLint, focused qualification tests, and the full suite with 143 passed, 0 failed, and 2 platform skips; post-merge TypeScript and the focused suite passed with 17 passed, 0 failed, and 2 platform skips; no native or Keychain effect was run
-Open risks: the original failure stage and two-prompt chronology remain unproven; strict `CONTROL_ROOM_MACOS_ALLOW_ONCE_WINDOW` conformance and the launcher shell-exit discrepancy remain unresolved; atomic platform file-open/delete semantics, live DNS/TLS enforcement and rebinding rehearsal, actual timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill/concurrency rehearsal, destination evidence adapters, approval issuance, and CR-6 service isolation remain explicit gates
-Owner input required: explicitly authorize a new bounded owner-attended macOS work order and its single fresh native attempt; no prior authorization carries forward
-Decision-log changes: no new normative platform decision; ADR-039 remains controlling and the macOS provider status remains unqualified
+Active: CR-5D synthetic executor, artifact/evidence flow, and initial worker UI
+Delivered this boundary: architect-frozen executor/evidence and initial UI contracts; five non-overlapping effect-free production capsules; one CR-5D-to-CR-10 completion dependency graph and continuous queue policy
+Validation required before integration: every capsule claimable; focused tests on every returned module/component; TypeScript, ESLint, full test suite, rendered build tests, database verification where applicable, then Codex vertical integration and CR-5Q threat/recovery review
+Open risks: the macOS provider remains unqualified and its original failure stage remains unproven; atomic platform file semantics, live DNS/TLS and rebinding, timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill rehearsal, destination evidence, approval issuance, disposable deployment, and CR-6 service isolation remain explicit downstream gates
+Owner input required now: none for effect-free CR-5D worker implementation; exact approval remains required before a new macOS native attempt, install, credential, disposable deployment, live integration, or consequential effect
+Decision-log changes: ADR-048 adopts one completion graph and continuous production queue; ADR-039 and ADR-047 remain controlling
 ```
 
 ## Parallel build lane
@@ -43,19 +44,21 @@ The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repos
 
 The first intake pilot quarantined open PRs #127–#129 because they predated V2, targeted `main`, lacked capsules/result manifests, and proposed work outside the active CR-5C.9H gate. PR #83 is superseded by later accepted qualification evidence. This coordination change does not authorize or consume a macOS native attempt.
 
-The first claimable V2 calibration wave is `CR5C9H-CAL-1`, pinned to product base `0478e06433550d6b54cb7616b7942629c04afbba` and integration branch `integration/cr5c9h-calibration-1`. It contains four independent, effect-free T0 evidence audits for the accepted macOS chronology, fixed qualification-stage coverage, the Allow Once observation boundary, and attended-launcher exit propagation. The registered provisional routes `marvin-macos`, `johnny5-linux`, and `ziggy-windows` may each hold up to three concurrent claims through the serialized queue. All four results require verification by a different route before Codex integration; none authorizes readiness, a native launch, Keychain access, policy changes, installs, downloads, or a retest.
+Wave `CR5C9H-CAL-1` is closed by owner direction with all four report PRs unmerged. No more qualification-only or instruction-following jobbers will be issued. Route eligibility is now decided per real bounded task using its contract, risk, platform, tools, and independent-review requirements; passing a calibration report is not a prerequisite for useful implementation work.
 
-Local models are registered as `provisional` until the repository qualification pack establishes which task classes they can perform reliably. A model is not treated as equivalent to Luna, Terra, or Sol based on parameter count or reputation alone.
+The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `b523d9f6237b7d4161b70cf7524a8f683b683ac4` and integration branch `integration/cr5d-synthetic-executor-1`. It contains five independent T1 production slices: the deterministic synthetic executor, the text artifact/claim-bound evidence builder, the artifact evidence card, the synthetic lifecycle timeline, and the worker operation request panel. All are effect-free code plus tests, require independent-route verification, and may proceed in parallel without asserting that the unresolved CR-5C.9H macOS gate passed. Promotion to `main` remains a Codex integration and security decision.
+
+`docs/CONTROL_ROOM_COMPLETION_PROGRAM.md` records the complete CR-5D through CR-10 dependency graph. Codex keeps the ready frontier stocked and reviews/integrates results in batches. Workers claim directly from GitHub, may hold several independent jobs within the route limit, and continue after submission without waiting for owner relay or per-job review. Only real product work is published.
 
 ## Next block
 
 ```text
-Block: CR-5C.9H — design and review a fresh owner-attended macOS qualification packet against merged main, then stop for explicit owner authorization before its single native attempt
-Set model: gpt-5.6-sol
+Block: CR-5D — implement and integrate the synthetic executor, artifact/evidence path, and initial worker UI
+Set model: gpt-5.6-terra for bounded worker implementation; gpt-5.6-sol for Codex security/integration review
 Set reasoning effort: high
-Why: the negative report and bounded stage diagnostics are merged, but the exact failing native stage remains unknown and only a newly authorized owner-attended attempt can resolve it
-Expected output: one execute-only work order pinned to the merged harness, explicit owner authorization, one bounded JSON outcome containing `qualificationStage` on failure, exact cleanup evidence, and a separate review disposition
-Stop before: launching the attended harness without fresh owner authorization, changing Keychain ACL/policy, using Always Allow, retrying the native attempt, production identities, persistent services/tasks, unattended deployment, CR-6 packaging, or representing a blocked/failed native observation as passing
+Why: five isolated product slices can run in parallel while the authority-sensitive bridge, persistence, storage, and vertical acceptance remain architect-owned
+Expected output: accepted executor/evidence/UI modules on the CR-5D integration branch, admitted bridge integration, restart/reconciliation evidence, initial worker/artifact surfaces, and a passing CR-5Q gate
+Stop before: live deployment, a new macOS native attempt, credentials, production identities, unapproved external effects, treating producer claims as verification, or allowing client UI to decide node authority
 ```
 
 ## Update rule
