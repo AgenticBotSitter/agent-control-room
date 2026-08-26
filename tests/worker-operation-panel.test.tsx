@@ -5,7 +5,6 @@ import { createElement } from "react";
 import {
   WorkerOperationPanel,
   type WorkerOperationPanelModelV1,
-  type WorkerOperationRequestV1,
 } from "../app/components/worker-operation-panel";
 
 function baseModel(overrides: Partial<WorkerOperationPanelModelV1> = {}): WorkerOperationPanelModelV1 {
