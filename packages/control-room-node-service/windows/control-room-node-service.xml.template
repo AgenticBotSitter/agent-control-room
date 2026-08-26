@@ -1,3 +1,4 @@
+<!-- Platform: windows-user-context-wrapper; profile loading and Job Object enforcement require owner-run native evidence. -->
 <service>
   <id>control-room-node</id>
   <name>Control Room Node Bridge</name>

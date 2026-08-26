@@ -42,11 +42,15 @@ export async function verifyServicePackages(): Promise<ServicePackageConformance
   requireText(linux, "NoNewPrivileges=true", "linux no-new-privileges", results[0].checks);
   requireText(linux, "KillMode=control-group", "linux process-group cancellation", results[0].checks);
   requireText(linux, "RestartSec=5", "linux bounded restart", results[0].checks);
+  requireText(linux, "Platform: linux-systemd", "linux platform marker", results[0].checks);
   requireText(macos, "LimitLoadToSessionType", "macOS Aqua session guard", results[1].checks);
   requireText(macos, "<string>Aqua</string>", "macOS excludes LaunchDaemon context", results[1].checks);
   requireText(macos, "ThrottleInterval", "macOS bounded restart", results[1].checks);
+  requireText(macos, "Platform: macos-launchd", "macOS platform marker", results[1].checks);
   requireText(windows, "<id>control-room-node</id>", "windows stable identity", results[2].checks);
   requireText(windows, "<stoptimeout>30sec</stoptimeout>", "windows bounded stop", results[2].checks);
-  await readPackage("windows/JOB_OBJECT_CANCELLATION.md");
+  requireText(windows, "Platform: windows-user-context-wrapper", "windows platform marker", results[2].checks);
+  const jobObjectContract = await readPackage("windows/JOB_OBJECT_CANCELLATION.md");
+  requireText(jobObjectContract, "kill-on-close enabled", "windows job-object cancellation contract", results[2].checks);
   return results;
 }
