@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeDiscoveryFingerprint, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema } from "../src/node-fleet/v1";
+import { computeDiscoveryFingerprint, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery } from "../src/node-fleet/v1";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const discovery = {
@@ -24,4 +24,11 @@ test("fleet signals require node-bound sequence, safe trust, and non-expired fre
   assert.deepEqual(evaluateFleetSignalFreshness(signal, "2026-08-26T12:00:00.000Z"), { eligible: true, code: "eligible" });
   assert.deepEqual(evaluateFleetSignalFreshness(signal, "2026-08-28T00:00:00.000Z"), { eligible: false, code: "signal_expired" });
   assert.equal(fleetSignalEnvelopeSchema.safeParse({ ...signal, trust: "verified" }).success, false);
+});
+
+test("static discovery normalizes only approved aggregate facts and is deterministic", () => {
+  const result = normalizeStaticDiscovery({ ...discovery, gpuClasses: ["apple-gpu", "apple-gpu"], inventory: [...discovery.inventory].reverse() });
+  assert.deepEqual(Object.keys(result.payload).sort(), ["architecture", "cpuLogicalCores", "executorManifestDigest", "gpuClasses", "inventory", "memoryBytes", "networkClass", "platform", "storage"]);
+  assert.equal(result.fingerprint, computeDiscoveryFingerprint(result.payload));
+  assert.throws(() => normalizeStaticDiscovery({ ...discovery, architecture: "arm64\nprivate-host" }));
 });
