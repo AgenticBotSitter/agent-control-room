@@ -11,6 +11,9 @@ function baseModel(overrides: Partial<WorkerOperationPanelModelV1> = {}): Worker
   return {
     schema: "control-room.worker-operation-panel/v1",
     workerId: "worker.ziggy.01",
+    nodeId: "node.ziggy.01",
+    nodeVersion: 4,
+    nodeState: "active",
     displayName: "Ziggy Windows",
     platform: "windows",
     state: "online",
@@ -36,6 +39,8 @@ test("renders identity, platform, state, reason, and heartbeat exactly as suppli
   );
   assert.match(html, /Ziggy Windows/);
   assert.match(html, /worker\.ziggy\.01/);
+  assert.match(html, /node\.ziggy\.01/);
+  assert.match(html, />4</);
   assert.match(html, />windows</);
   assert.match(html, /online/);
   assert.match(html, /Heartbeat latency above threshold\./);

@@ -14,6 +14,9 @@ export interface WorkerOperationRequestChoiceV1 {
 export interface WorkerOperationPanelModelV1 {
   schema: "control-room.worker-operation-panel/v1";
   workerId: string;
+  nodeId: string;
+  nodeVersion: number;
+  nodeState: "active" | "draining" | "offline" | "quarantined" | "revoked";
   displayName: string;
   platform: "macos" | "windows" | "linux" | "cloud";
   state:
@@ -73,6 +76,12 @@ export function WorkerOperationPanel(props: {
         <dd>{model.workerId}</dd>
         <dt>Platform</dt>
         <dd>{model.platform}</dd>
+        <dt>Node</dt>
+        <dd>{model.nodeId}</dd>
+        <dt>Node version</dt>
+        <dd>{model.nodeVersion}</dd>
+        <dt>Node state</dt>
+        <dd>{model.nodeState}</dd>
         <dt>State</dt>
         <dd>{model.state}</dd>
         {model.stateReason === undefined ? null : (

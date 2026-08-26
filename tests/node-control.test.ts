@@ -60,6 +60,13 @@ test("authenticated intent is version-bound, audited, and does not claim the nod
   const created = await service.request(request());
   assert.equal(created.state, "requested");
   assert.equal(created.replayed, false);
+  assert.equal((await service.status({
+    tenantId: "tenant:owner", nodeId: "node:controlled", requestId: created.requestId, actorId: "identity:owner",
+  })).state, "requested");
+  await assert.rejects(
+    service.status({ tenantId: "tenant:owner", nodeId: "node:controlled", requestId: created.requestId, actorId: "identity:other" }),
+    (error: unknown) => error instanceof NodeControlError && error.safeCode === "node_not_found",
+  );
   const node = await db.query<{ state: string; version: number }>(
     `SELECT state,version FROM control_nodes WHERE id='node:controlled'`,
   );
@@ -145,6 +152,11 @@ test("only an exact node acknowledgement applies the requested state and version
     replayed: false,
   });
   assert.deepEqual(await service.acknowledge(acknowledgement), { ...applied, replayed: true });
+  const confirmed = await service.status({
+    tenantId: "tenant:owner", nodeId: "node:controlled", requestId: requested.requestId, actorId: "identity:owner",
+  });
+  assert.equal(confirmed.state, "applied");
+  assert.equal(confirmed.resultingNodeVersion, 5);
   await assert.rejects(
     service.acknowledge({ ...acknowledgement, acknowledgementId: "ack:changed:0002" }),
     (error: unknown) => error instanceof NodeControlError && error.safeCode === "idempotency_conflict",

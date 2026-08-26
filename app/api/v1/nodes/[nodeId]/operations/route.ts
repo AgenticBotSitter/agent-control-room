@@ -47,8 +47,39 @@ export async function POST(request: Request, context: { params: Promise<{ nodeId
       operation: result.operation,
       state: result.state,
       replayed: result.replayed,
-      applied: false,
+      applied: result.state === "applied",
+      ...(result.safeResultCode ? { safeResultCode: result.safeResultCode } : {}),
+      ...(result.resultingNodeVersion === undefined ? {} : { resultingNodeVersion: result.resultingNodeVersion }),
     }, { status: result.replayed ? 200 : 202, headers: { "cache-control": "no-store" } });
+  } catch (error) {
+    const safe = safeError(error);
+    return Response.json({ error: safe.code }, { status: safe.status, headers: { "cache-control": "no-store" } });
+  } finally {
+    await close();
+  }
+}
+
+export async function GET(request: Request, context: { params: Promise<{ nodeId: string }> }) {
+  const actorId = request.headers.get("oai-authenticated-user-id");
+  if (!actorId) return Response.json({ error: "authentication_required" }, { status: 401 });
+  const tenantId = process.env.CONTROL_ROOM_TENANT_ID;
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!tenantId || !databaseUrl) return Response.json({ error: "operation_request_unavailable" }, { status: 503 });
+  const requestId = new URL(request.url).searchParams.get("request_id");
+  if (!requestId) return Response.json({ error: "invalid_request" }, { status: 400 });
+  const { nodeId } = await context.params;
+  const { client, close } = createPostgresClient(databaseUrl);
+  try {
+    const result = await new NodeControlService(client).status({ tenantId, nodeId, requestId, actorId });
+    return Response.json({
+      requestId: result.requestId,
+      nodeId: result.nodeId,
+      operation: result.operation,
+      state: result.state,
+      applied: result.state === "applied",
+      ...(result.safeResultCode ? { safeResultCode: result.safeResultCode } : {}),
+      ...(result.resultingNodeVersion === undefined ? {} : { resultingNodeVersion: result.resultingNodeVersion }),
+    }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const safe = safeError(error);
     return Response.json({ error: safe.code }, { status: safe.status, headers: { "cache-control": "no-store" } });

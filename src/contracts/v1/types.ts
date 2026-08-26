@@ -200,6 +200,9 @@ export interface WorkerProjection {
   displayName: string;
   machineId: string;
   runtimeId: string;
+  nodeId: string;
+  nodeVersion: number;
+  nodeState: "active" | "draining" | "offline" | "quarantined" | "revoked";
   os: "windows" | "macos" | "linux" | "cloud";
   state: WorkerState;
   stateReason?: string;

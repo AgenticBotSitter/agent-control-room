@@ -25,4 +25,4 @@ The node initializes an exact local node/version/state projection. A signed requ
 
 If cancellation dispatch crashes, the safety gate remains closed and the obligation survives restart. Recovery reissues the typed cancellation under the original request identity. An exact command replay returns the original acknowledgement without advancing state or requesting cancellation twice. Stale or locally illegal commands return fixed rejections and do not alter local state.
 
-The bridge sends the semantic `node.operation.ack` only after local persistence and cancellation dispatch succeed. That signed acknowledgement itself enters the durable bridge outbox before transport. UI wiring remains separate under CR5D-UI-004 and must show requested and confirmed states distinctly.
+The bridge sends the semantic `node.operation.ack` only after local persistence and cancellation dispatch succeed. That signed acknowledgement itself enters the durable bridge outbox before transport. CR5D-UI-004 exposes this boundary as separate requested and node-confirmed states; it never presents request acceptance as completed node application.

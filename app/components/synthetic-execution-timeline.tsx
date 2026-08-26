@@ -3,12 +3,12 @@ import type { JSX } from "react";
 export interface SyntheticExecutionTimelineEventV1 {
   sequence: number;
   occurredAt: string;
-  event: "started" | "progress" | "checkpointed" | "completed" | "cancelled";
+  event: "started" | "progress" | "checkpointed" | "waiting" | "completed" | "failed" | "cancelled";
   completedSteps?: number;
   totalSteps?: number;
   progressPercent?: number;
   checkpointId?: string;
-  safeReasonCode?: "cancelled";
+  safeReasonCode?: string;
 }
 
 export interface SyntheticExecutionTimelineModelV1 {
@@ -22,7 +22,9 @@ const EVENT_LABELS: Record<SyntheticExecutionTimelineEventV1["event"], string> =
   started: "Started",
   progress: "Progress",
   checkpointed: "Checkpoint",
+  waiting: "Waiting",
   completed: "Completed",
+  failed: "Failed",
   cancelled: "Cancelled",
 };
 

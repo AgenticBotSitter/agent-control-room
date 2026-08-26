@@ -2,6 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { projects, workers, workItems } from "@/src/fixtures/data";
+import { WorkerOperationControl } from "@/app/components/worker-operation-control";
+import type { WorkerOperationPanelModelV1, WorkerOperationRequestChoiceV1 } from "@/app/components/worker-operation-panel";
+import type { WorkerProjection } from "@/src/contracts/v1";
+import { ArtifactEvidenceCard } from "@/app/components/artifact-evidence-card";
+import { SyntheticExecutionTimeline } from "@/app/components/synthetic-execution-timeline";
+import { cr5dArtifactFixture, cr5dTimelineFixture } from "@/app/fixtures/cr5d-ui";
 
 export function generateStaticParams() {
   return workers.map((worker) => ({ workerId: worker.id }));
@@ -17,6 +23,41 @@ function label(value: string) {
 }
 
 const historyBars = [42, 68, 58, 83, 77, 35, 92, 88, 63, 71, 46, 95, 79, 66];
+
+function operationModel(worker: WorkerProjection): WorkerOperationPanelModelV1 {
+  const requests: WorkerOperationRequestChoiceV1[] = [
+    {
+      operation: "request_drain",
+      enabled: worker.nodeState === "active",
+      reason: worker.nodeState === "active" ? "Stop new work and cancel or drain running work safely." : "Node is not active.",
+    },
+    {
+      operation: "request_resume",
+      enabled: worker.nodeState === "draining",
+      reason: worker.nodeState === "draining" ? "Allow new work after the node confirms resume." : "Node is not draining.",
+    },
+    {
+      operation: "request_quarantine",
+      enabled: ["active", "draining", "offline"].includes(worker.nodeState),
+      reason: ["active", "draining", "offline"].includes(worker.nodeState)
+        ? "Block new work and require security review."
+        : "Node is already quarantined or revoked.",
+    },
+  ];
+  return {
+    schema: "control-room.worker-operation-panel/v1",
+    workerId: worker.id,
+    nodeId: worker.nodeId,
+    nodeVersion: worker.nodeVersion,
+    nodeState: worker.nodeState,
+    displayName: worker.displayName,
+    platform: worker.os,
+    state: worker.state,
+    ...(worker.stateReason ? { stateReason: worker.stateReason } : {}),
+    lastHeartbeatAt: worker.lastHeartbeatAt,
+    requests,
+  };
+}
 
 export default async function WorkerDetail({ params }: { params: Promise<{ workerId: string }> }) {
   const { workerId } = await params;
@@ -77,6 +118,19 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
             ))}
           </div>
         </section>
+
+        <section className="detail-card section-block">
+          <WorkerOperationControl model={operationModel(worker)} />
+        </section>
+
+        {worker.id === "worker.mac-m4" ? (
+          <section className="detail-card section-block" aria-label="CR-5D synthetic execution evidence fixture">
+            <h2>CR-5D execution evidence</h2>
+            <p className="hero-copy">Deterministic fixture backed by the same manifest, claim, lineage, and lifecycle contracts used by the node path.</p>
+            <SyntheticExecutionTimeline model={cr5dTimelineFixture} />
+            <ArtifactEvidenceCard model={cr5dArtifactFixture} />
+          </section>
+        ) : null}
       </main>
     </div>
   );

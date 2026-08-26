@@ -22,7 +22,7 @@
 | CR-5A node protocol and identity | Complete | Versioned schemas, Ed25519 enrollment/authentication, durable replay, migration 0008, 58-test suite |
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
 | CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; Windows and Linux providers qualified; macOS native qualification remains blocked after accepted negative evidence | Canonical policy/effect enforcement, explicit platform private-key providers, repository-owned qualification harnesses, and bounded macOS failure-stage diagnostics |
-| CR-5D | In progress — execution, delivery, lineage, and safe node controls complete; UI integration next | Synthetic executor, evidence builder, coordinator, storage boundary, restart-safe SQLite event/outbox/lineage/control delivery, three initial UI components, and deterministic tests |
+| CR-5D | In progress — execution, delivery, lineage, safe node controls, and UI integration complete; recovery acceptance next | Synthetic executor, evidence builder, coordinator, storage boundary, restart-safe SQLite event/outbox/lineage/control delivery, integrated worker controls and evidence, and deterministic tests |
 | CR-6 through CR-10 | Dependency-mapped; implementation not started | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -30,9 +30,9 @@
 The effect-free active build lane is CR-5D. The unresolved macOS CR-5C.9H native gate remains an explicit owner-controlled security risk; it is not converted into a pass and is not allowed to halt unrelated effect-free product implementation.
 
 ```text
-Active: CR-5D synthetic executor, artifact/evidence flow, and initial worker UI
-Delivered this boundary: CR5D-INT-001 through CR5D-INT-003 and CR5D-STOR-001 add exact admission binding, cancellation, restart-safe lifecycle delivery, bounded storage, and transactional artifact lineage. CR5D-CTRL-001 is complete: authenticated version-bound requests, atomic audit plus outbox, strict protocol bodies, acknowledgement-gated central state, durable node-local drain/quarantine before reply, closed admission/renewal gates, restart-safe cancellation obligations, and signed semantic acknowledgement delivery.
-Validation required before promotion: Codex must complete UI wiring, broader kill/restart acceptance, and CR-5Q threat/recovery review.
+Active: CR-5D deterministic restart and reconciliation acceptance
+Delivered this boundary: CR5D-INT-001 through CR5D-INT-003 and CR5D-STOR-001 add exact admission binding, cancellation, restart-safe lifecycle delivery, bounded storage, and transactional artifact lineage. CR5D-CTRL-001 is complete: authenticated version-bound requests, atomic audit plus outbox, strict protocol bodies, acknowledgement-gated central state, durable node-local drain/quarantine before reply, closed admission/renewal gates, restart-safe cancellation obligations, and signed semantic acknowledgement delivery. CR5D-UI-004 is complete: worker views use explicit node identity/version/state, operation requests require confirmation and distinguish requested from signed-node-confirmed state, and synthetic timeline plus artifact lineage render producer claims separately from independent verification.
+Validation required before promotion: Codex must complete broader kill/restart acceptance and CR-5Q threat/recovery review.
 Open risks: the macOS provider remains unqualified and its original failure stage remains unproven; atomic platform file semantics, live DNS/TLS and rebinding, timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill rehearsal, destination evidence, approval issuance, disposable deployment, and CR-6 service isolation remain explicit downstream gates
 Owner input required now: none for effect-free CR-5D worker implementation; exact approval remains required before a new macOS native attempt, install, credential, disposable deployment, live integration, or consequential effect
 Decision-log changes: ADR-048 adopts one completion graph and continuous production queue; ADR-039 and ADR-047 remain controlling

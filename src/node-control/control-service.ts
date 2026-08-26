@@ -28,6 +28,7 @@ export interface NodeOperationRequestV1 {
   safeReasonCode?: string;
   requestedAt: string;
   resultingNodeVersion?: number;
+  safeResultCode?: string;
   replayed: boolean;
 }
 
@@ -106,9 +107,9 @@ export class NodeControlService {
     return this.db.transaction(async (tx) => {
       const replay = await tx.query<{
         id: string; request_digest: string; desired_state: NodeOperationRequestV1["desiredState"];
-        state: NodeOperationRequestV1["state"]; resulting_node_version: number | null;
+        state: NodeOperationRequestV1["state"]; resulting_node_version: number | null; safe_result_code: string | null;
       }>(
-        `SELECT id,request_digest,desired_state,state,resulting_node_version FROM control_node_operation_requests
+        `SELECT id,request_digest,desired_state,state,resulting_node_version,safe_result_code FROM control_node_operation_requests
          WHERE tenant_id=$1 AND requested_by=$2 AND idempotency_key=$3`,
         [input.tenantId,input.actorId,input.idempotencyKey],
       );
@@ -117,6 +118,7 @@ export class NodeControlService {
         return { requestId: replay.rows[0].id, tenantId: input.tenantId, nodeId: input.nodeId, operation: input.operation,
           desiredState: replay.rows[0].desired_state, expectedNodeVersion: input.expectedNodeVersion,
           state: replay.rows[0].state, ...(input.safeReasonCode ? { safeReasonCode: input.safeReasonCode } : {}), requestedAt,
+          ...(replay.rows[0].safe_result_code ? { safeResultCode: replay.rows[0].safe_result_code } : {}),
           ...(replay.rows[0].resulting_node_version === null ? {} : { resultingNodeVersion: replay.rows[0].resulting_node_version }), replayed: true };
       }
       const node = await tx.query<{ state: NodeRecord["state"]; version: number }>(
@@ -162,6 +164,31 @@ export class NodeControlService {
         desiredState: desiredState[input.operation], expectedNodeVersion: input.expectedNodeVersion,
         state: "requested", ...(input.safeReasonCode ? { safeReasonCode: input.safeReasonCode } : {}), requestedAt, replayed: false };
     });
+  }
+
+  async status(input: { tenantId: string; nodeId: string; requestId: string; actorId: string }): Promise<NodeOperationRequestV1> {
+    for (const value of [input.tenantId,input.nodeId,input.requestId,input.actorId]) requireSafeIdentifier(value);
+    const row = await this.db.query<{
+      id: string; tenant_id: string; node_id: string; operation: NodeControlOperationV1;
+      desired_state: NodeOperationRequestV1["desiredState"]; expected_node_version: number;
+      state: NodeOperationRequestV1["state"]; safe_reason_code: string | null; safe_result_code: string | null;
+      requested_at: string | Date; resulting_node_version: number | null;
+    }>(
+      `SELECT id,tenant_id,node_id,operation,desired_state,expected_node_version,state,safe_reason_code,safe_result_code,
+       requested_at,resulting_node_version FROM control_node_operation_requests
+       WHERE tenant_id=$1 AND node_id=$2 AND id=$3 AND requested_by=$4`,
+      [input.tenantId,input.nodeId,input.requestId,input.actorId],
+    );
+    const result = row.rows[0];
+    if (!result) throw new NodeControlError("node_not_found");
+    return {
+      requestId: result.id, tenantId: result.tenant_id, nodeId: result.node_id, operation: result.operation,
+      desiredState: result.desired_state, expectedNodeVersion: result.expected_node_version, state: result.state,
+      ...(result.safe_reason_code ? { safeReasonCode: result.safe_reason_code } : {}),
+      ...(result.safe_result_code ? { safeResultCode: result.safe_result_code } : {}),
+      requestedAt: new Date(result.requested_at).toISOString(),
+      ...(result.resulting_node_version === null ? {} : { resultingNodeVersion: result.resulting_node_version }), replayed: false,
+    };
   }
 
   async acknowledge(input: AcknowledgeNodeOperationInputV1): Promise<NodeOperationAcknowledgementV1> {

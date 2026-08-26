@@ -34,5 +34,11 @@ test("server-renders project and worker drill-down routes", async () => {
 
   const worker = await render("/workers/worker.mac-m4");
   assert.equal(worker.status, 200);
-  assert.match(await worker.text(), /M4 Wayfarer/);
+  const workerHtml = await worker.text();
+  assert.match(workerHtml, /M4 Wayfarer/);
+  assert.match(workerHtml, /Request drain/);
+  assert.match(workerHtml, /node\.mac-m4/);
+  assert.match(workerHtml, /CR-5D execution evidence/);
+  assert.match(workerHtml, /Synthetic execution timeline/);
+  assert.match(workerHtml, /Independent verification has not been performed/);
 });
