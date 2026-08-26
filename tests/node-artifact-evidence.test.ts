@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createHash } from "node:crypto";
-import { buildTextArtifactBundle, type TextArtifactBundleInputV1 } from "../src/node-executor/artifact-evidence.ts";
+import { sha256Digest } from "../src/security/digest.ts";
+import { buildArtifactLineageRecord, buildTextArtifactBundle, type TextArtifactBundleInputV1 } from "../src/node-executor/artifact-evidence.ts";
 
 function validInput(overrides: Partial<TextArtifactBundleInputV1> = {}): TextArtifactBundleInputV1 {
   return {
@@ -87,6 +88,19 @@ test("claim is separated from manifest: no verified/accepted/approval fields", (
   // locator never copied into claim
   const withLocator = buildTextArtifactBundle(validInput({ opaqueLocator: "repo://bucket/path/file.txt" }));
   assert.equal(JSON.stringify(withLocator.verificationClaim).includes("repo://"), false);
+});
+
+test("artifact lineage binds manifest and producer claim while keeping independent verification not run", () => {
+  const bundle = buildTextArtifactBundle(validInput({ opaqueLocator: "repo://artifacts/result.txt" }));
+  const lineage = buildArtifactLineageRecord(bundle);
+  assert.equal(lineage.artifactId, bundle.manifest.id);
+  assert.equal(lineage.producerClaim.claimDigest, bundle.verificationClaim.claimDigest);
+  assert.deepEqual(lineage.independentVerification, { status: "not_run" });
+  assert.equal(lineage.manifest.opaqueLocator, "repo://artifacts/result.txt");
+  assert.equal("opaqueLocator" in lineage.producerClaim, false);
+  const { lineageDigest, ...unsigned } = lineage;
+  assert.equal(lineageDigest, sha256Digest(unsigned));
+  assert.equal("bytes" in lineage, false);
 });
 
 test("opaqueLocator lands on the manifest but never on the claim", () => {

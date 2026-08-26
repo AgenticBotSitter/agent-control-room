@@ -1,6 +1,6 @@
 # CR-5D admitted synthetic execution and storage contract
 
-**Status:** Architect-frozen for CR5D-INT-001, CR5D-INT-002, and CR5D-STOR-001
+**Status:** Architect-frozen for CR5D-INT-001 through CR5D-INT-003 and CR5D-STOR-001
 **Decision date:** 2026-08-26  
 **Scope:** Effect-free coordination of an already-admitted synthetic execution and bounded in-memory artifact storage  
 **Authority:** This contract does not authorize a live node, filesystem/object-store write, credential, deployment, external effect, or production mutation.
@@ -31,6 +31,12 @@ A pending event is atomically linked to one signed `job.event` outbox frame befo
 
 The reconciliation report is built from the same durable attempt projection. Pending lifecycle delivery starts only after connection authentication and reconciliation complete. Signing failure cannot consume a sequence or alter the event record, and transport failure leaves the signed frame durable.
 
+## Transactional artifact lineage
+
+The successful terminal event carries exactly one artifact manifest ID. Before that event enters the delivery queue, Control Room constructs a digest-bound lineage record containing the manifest, its opaque storage locator, the producer's content-hash claim, and an explicit independent-verification state of `not_run`. Raw artifact bytes are not copied into this journal record, and the opaque locator is not copied into the producer claim.
+
+The node-local terminal attempt projection, artifact lineage record, and pending completed event commit in one SQLite transaction. Any lineage mismatch, reused artifact identity, conflicting digest, or interrupted write rolls the entire transaction back. Reading lineage rechecks its digest. The local restart contract therefore cannot expose a terminal completion without its corresponding lineage record. The separate execution-authority journal remains the controlling source for whether execution was admitted and may not be inferred from artifact evidence.
+
 ## Storage port
 
 The storage port accepts an artifact ID and immutable bytes and returns an opaque locator, exact byte count, and SHA-256 content hash. Reusing an artifact ID with identical bytes is idempotent. Reusing it with different bytes is a conflict. Capacity is bounded by configured artifact count and total bytes.
@@ -46,4 +52,5 @@ The first adapter is memory-only and test-safe. It clones bytes on write and rea
 - Storage idempotency, conflict, capacity, byte cloning, and hash checks are deterministic.
 - Restart classification remains conservative and never claims exactly-once execution.
 - Lifecycle records, attempt/checkpoint projections, signed outbox linkage, acknowledgement, expiry, and retry survive a local bridge restart.
+- Completed attempt projection, manifest, producer claim, explicit independent-verification state, and terminal delivery record commit together and survive restart.
 - Focused tests, TypeScript, ESLint, full tests, and rendered build pass.

@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { assertNoSecretMaterial, sha256Digest } from "../security";
 import { opaqueTokenDigest, type JobEventBody, type ReplayGuard, type SignedNodeFrame } from "../node-protocol/v1";
+import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -58,6 +59,27 @@ function assertEventShape(event: JobEventBody): void {
   }
 }
 
+function assertArtifactLineage(event: JobEventBody, lineage: ArtifactLineageRecordV1 | undefined): void {
+  if (event.event !== "completed") {
+    if (lineage) throw new Error("Only a completed event may carry artifact lineage");
+    return;
+  }
+  if (!lineage || event.artifactManifestIds.length !== 1) throw new Error("Completed event requires exactly one artifact lineage record");
+  const { lineageDigest, ...unsigned } = lineage;
+  if (
+    lineageDigest !== sha256Digest(unsigned) ||
+    lineage.artifactId !== event.artifactManifestIds[0] ||
+    lineage.jobId !== event.jobId ||
+    lineage.attemptId !== event.attemptId ||
+    lineage.manifest.id !== lineage.artifactId ||
+    lineage.producerClaim.artifactId !== lineage.artifactId ||
+    lineage.independentVerification.status !== "not_run"
+  ) {
+    throw new Error("Completed event artifact lineage is inconsistent");
+  }
+  assertNoSecretMaterial(lineage, "durable artifact lineage");
+}
+
 export class SqliteBridgeJournal implements ReplayGuard {
   private readonly db: DatabaseSync;
 
@@ -81,16 +103,19 @@ export class SqliteBridgeJournal implements ReplayGuard {
     return this.transaction(() => this.stageOutboundWithinTransaction(frame, essential, createdAt));
   }
 
-  appendJobEvent(event: JobEventBody, recordedAt: string): "recorded" | "duplicate" {
+  appendJobEvent(event: JobEventBody, recordedAt: string, artifactLineage?: ArtifactLineageRecordV1): "recorded" | "duplicate" {
     assertNoSecretMaterial(event, "durable job event");
     assertEventShape(event);
+    assertArtifactLineage(event, artifactLineage);
     const eventDigest = sha256Digest(event);
     return this.transaction(() => {
       const duplicate = this.db.prepare(
-        `SELECT event_digest FROM bridge_job_events WHERE attempt_id=? AND event_sequence=?`,
-      ).get(event.attemptId,event.sequence) as { event_digest: string } | undefined;
+        `SELECT event_digest,artifact_lineage_digest FROM bridge_job_events WHERE attempt_id=? AND event_sequence=?`,
+      ).get(event.attemptId,event.sequence) as { event_digest: string; artifact_lineage_digest: string | null } | undefined;
       if (duplicate) {
-        if (duplicate.event_digest !== eventDigest) throw new Error("Job event sequence conflicts with different content");
+        if (duplicate.event_digest !== eventDigest || duplicate.artifact_lineage_digest !== (artifactLineage?.lineageDigest ?? null)) {
+          throw new Error("Job event sequence conflicts with different content");
+        }
         return "duplicate" as const;
       }
       const prior = this.db.prepare(
@@ -117,13 +142,46 @@ export class SqliteBridgeJournal implements ReplayGuard {
          ON CONFLICT(attempt_id) DO UPDATE SET state=excluded.state,last_event_sequence=excluded.last_event_sequence,
            checkpoint_ids=excluded.checkpoint_ids,updated_at=excluded.updated_at`,
       ).run(event.attemptId,event.jobId,event.leaseId,event.leaseEpoch,attemptState(event.event),event.sequence,JSON.stringify(checkpointIds),recordedAt);
+      if (artifactLineage) {
+        this.db.prepare(
+          `INSERT INTO bridge_artifact_lineage
+           (artifact_id,attempt_id,lineage_json,lineage_digest,manifest_digest,claim_digest,verification_state,recorded_at)
+           VALUES (?,?,?,?,?,?,'not_run',?)`,
+        ).run(
+          artifactLineage.artifactId,event.attemptId,JSON.stringify(artifactLineage),artifactLineage.lineageDigest,
+          artifactLineage.producerClaim.manifestDigest,artifactLineage.producerClaim.claimDigest,recordedAt,
+        );
+      }
       this.db.prepare(
         `INSERT INTO bridge_job_events
-         (attempt_id,event_sequence,event_json,event_digest,status,delivery_attempt,recorded_at)
-         VALUES (?,?,?,?,'pending',0,?)`,
-      ).run(event.attemptId,event.sequence,JSON.stringify(event),eventDigest,recordedAt);
+         (attempt_id,event_sequence,event_json,event_digest,status,delivery_attempt,recorded_at,artifact_id,artifact_lineage_digest)
+         VALUES (?,?,?,?,'pending',0,?,?,?)`,
+      ).run(
+        event.attemptId,event.sequence,JSON.stringify(event),eventDigest,recordedAt,
+        artifactLineage?.artifactId ?? null,artifactLineage?.lineageDigest ?? null,
+      );
       return "recorded" as const;
     });
+  }
+
+  artifactLineage(artifactId: string): ArtifactLineageRecordV1 | undefined {
+    const row = this.db.prepare(
+      `SELECT lineage_json,lineage_digest FROM bridge_artifact_lineage WHERE artifact_id=?`,
+    ).get(artifactId) as { lineage_json: string; lineage_digest: string } | undefined;
+    if (!row) return undefined;
+    const lineage = JSON.parse(row.lineage_json) as ArtifactLineageRecordV1;
+    if (lineage.lineageDigest !== row.lineage_digest) throw new Error("Durable artifact lineage digest mismatch");
+    assertArtifactLineage({
+      jobId: lineage.jobId,
+      attemptId: lineage.attemptId,
+      leaseId: "durable-read-validation",
+      leaseEpoch: 1,
+      event: "completed",
+      sequence: 1,
+      occurredAt: lineage.recordedAt,
+      artifactManifestIds: [lineage.artifactId],
+    }, lineage);
+    return structuredClone(lineage);
   }
 
   pendingJobEvents(): JournalJobEvent[] {
@@ -444,6 +502,17 @@ export class SqliteBridgeJournal implements ReplayGuard {
         checkpoint_ids TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS bridge_artifact_lineage (
+        artifact_id TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL,
+        lineage_json TEXT NOT NULL,
+        lineage_digest TEXT NOT NULL UNIQUE,
+        manifest_digest TEXT NOT NULL,
+        claim_digest TEXT NOT NULL,
+        verification_state TEXT NOT NULL CHECK(verification_state IN ('not_run')),
+        recorded_at TEXT NOT NULL,
+        FOREIGN KEY(attempt_id) REFERENCES bridge_attempts(attempt_id)
+      );
       CREATE TABLE IF NOT EXISTS bridge_job_events (
         row_id INTEGER PRIMARY KEY AUTOINCREMENT,
         attempt_id TEXT NOT NULL,
@@ -456,12 +525,18 @@ export class SqliteBridgeJournal implements ReplayGuard {
         recorded_at TEXT NOT NULL,
         staged_at TEXT,
         acknowledged_at TEXT,
+        artifact_id TEXT,
+        artifact_lineage_digest TEXT,
         UNIQUE(attempt_id,event_sequence),
-        FOREIGN KEY(attempt_id) REFERENCES bridge_attempts(attempt_id)
+        FOREIGN KEY(attempt_id) REFERENCES bridge_attempts(attempt_id),
+        FOREIGN KEY(artifact_id) REFERENCES bridge_artifact_lineage(artifact_id)
       );
       CREATE UNIQUE INDEX IF NOT EXISTS bridge_job_events_outbound_message
         ON bridge_job_events(outbound_message_id) WHERE outbound_message_id IS NOT NULL;
-      PRAGMA user_version=2;
     `);
+    const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
+    if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
+    if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
+    this.db.exec("PRAGMA user_version=3;");
   }
 }

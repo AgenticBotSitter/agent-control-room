@@ -7,12 +7,14 @@ import {
   type DurableExecutionCreationV1,
 } from "../src/node-policy/v1";
 import type { JobEventBody } from "../src/node-protocol/v1";
+import { DurableBridgeJobEventRecorder, SqliteBridgeJournal } from "../src/node-bridge/index.ts";
 import {
   ArtifactStorageError,
   InMemoryArtifactStorage,
   SyntheticCoordinatorError,
   runAdmittedSyntheticExecution,
   type ArtifactStoragePortV1,
+  type ArtifactLineageRecordV1,
   type SyntheticCoordinatorInputV1,
 } from "../src/node-executor";
 
@@ -99,13 +101,20 @@ function clock(startSeconds = 1): { now(): string; set(seconds: number): void } 
 test("an exact admitted operation completes with stored bytes, manifest, claim, and one terminal event", async () => {
   const { store, input } = fixture();
   const artifacts = new InMemoryArtifactStorage();
+  const journal = new SqliteBridgeJournal(":memory:");
   const events: JobEventBody[] = [];
+  const lineages: ArtifactLineageRecordV1[] = [];
   const time = clock();
+  const recorder = new DurableBridgeJobEventRecorder(journal, time.now);
   try {
     const result = await runAdmittedSyntheticExecution(input, {
       authority: store,
       artifacts,
-      events: { append: (event) => { events.push(event); } },
+      events: { append: (event, lineage) => {
+        events.push(event);
+        if (lineage) lineages.push(lineage);
+        recorder.append(event, lineage);
+      } },
       now: time.now,
       sleep: async () => {},
     });
@@ -130,7 +139,14 @@ test("an exact admitted operation completes with stored bytes, manifest, claim, 
     assert.equal(result.bundle.manifest.createdAt, events.at(-1)?.occurredAt);
     assert.equal(result.bundle.verificationClaim.artifactId, result.bundle.manifest.id);
     assert.equal("verified" in result.bundle.verificationClaim, false);
+    assert.equal(lineages.length, 1);
+    assert.equal(lineages[0].artifactId, result.bundle.manifest.id);
+    assert.deepEqual(lineages[0].independentVerification, { status: "not_run" });
+    assert.deepEqual(journal.artifactLineage(result.bundle.manifest.id), lineages[0]);
+    assert.deepEqual(journal.unresolvedAttempts(), []);
+    assert.deepEqual(journal.pendingJobEvents().map((row) => row.event.sequence), [1, 2, 3, 4, 5, 6, 7]);
   } finally {
+    journal.close();
     store.close();
   }
 });

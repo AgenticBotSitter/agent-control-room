@@ -42,6 +42,21 @@ export interface TextArtifactBundleV1 {
   verificationClaim: ArtifactVerificationClaimV1;
 }
 
+export interface ArtifactLineageRecordV1 {
+  schema: "control-room.artifact-lineage/v1";
+  artifactId: string;
+  tenantId: string;
+  projectId: string;
+  jobId: string;
+  attemptId: string;
+  producerId: string;
+  manifest: ArtifactManifestRecord;
+  producerClaim: ArtifactVerificationClaimV1;
+  independentVerification: { status: "not_run" };
+  recordedAt: string;
+  lineageDigest: string;
+}
+
 const MAX_IDENTIFIER_LENGTH = 200;
 const MAX_TEXT_UTF8_BYTES = 65_536;
 
@@ -198,4 +213,37 @@ export function buildTextArtifactBundle(rawInput: TextArtifactBundleInputV1): Te
   assertNoSecretMaterial(sealedClaim, "artifact verification claim");
 
   return { bytes, manifest, verificationClaim: sealedClaim };
+}
+
+export function buildArtifactLineageRecord(bundle: TextArtifactBundleV1): ArtifactLineageRecordV1 {
+  const { manifest, verificationClaim: producerClaim } = bundle;
+  if (
+    producerClaim.artifactId !== manifest.id ||
+    producerClaim.tenantId !== manifest.tenantId ||
+    producerClaim.projectId !== manifest.projectId ||
+    producerClaim.jobId !== manifest.jobId ||
+    producerClaim.attemptId !== manifest.attemptId ||
+    producerClaim.producerId !== manifest.producerId ||
+    producerClaim.contentHash !== manifest.contentHash ||
+    producerClaim.manifestDigest !== sha256Digest(manifest)
+  ) {
+    throw new ArtifactEvidenceError("artifact lineage does not match its manifest and producer claim");
+  }
+  const { claimDigest, ...unsignedClaim } = producerClaim;
+  if (claimDigest !== sha256Digest(unsignedClaim)) throw new ArtifactEvidenceError("producer claim digest is invalid");
+  const unsigned: Omit<ArtifactLineageRecordV1, "lineageDigest"> = {
+    schema: "control-room.artifact-lineage/v1",
+    artifactId: manifest.id,
+    tenantId: manifest.tenantId,
+    projectId: manifest.projectId,
+    jobId: manifest.jobId,
+    attemptId: manifest.attemptId,
+    producerId: manifest.producerId,
+    manifest,
+    producerClaim,
+    independentVerification: { status: "not_run" },
+    recordedAt: manifest.createdAt,
+  };
+  assertNoSecretMaterial(unsigned, "artifact lineage");
+  return { ...unsigned, lineageDigest: sha256Digest(unsigned) };
 }

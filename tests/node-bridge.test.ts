@@ -15,6 +15,7 @@ import {
   type TrustedKeyResolver,
   type UnsignedNodeFrame,
 } from "../src/node-protocol/v1/index.ts";
+import { buildArtifactLineageRecord, buildTextArtifactBundle } from "../src/node-executor/artifact-evidence.ts";
 
 const t0 = "2026-08-22T18:00:00.000Z";
 const t1 = "2026-08-22T18:01:00.000Z";
@@ -257,6 +258,54 @@ test("durable job events survive restart and advance the attempt projection exac
     () => restarted.appendJobEvent(durableJobEvent({ sequence: 3, leaseEpoch: 3 }), t1),
     /authority conflicts/,
   );
+  restarted.close();
+  await rm(directory, { recursive: true });
+});
+
+test("completed event and artifact lineage commit together and survive restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "control-room-lineage-"));
+  const path = join(directory, "bridge.sqlite");
+  const journal = new SqliteBridgeJournal(path);
+  journal.appendJobEvent(durableJobEvent(), t1);
+  const lineage = buildArtifactLineageRecord(buildTextArtifactBundle({
+    artifactId: "artifact:durable",
+    claimId: "claim:durable",
+    tenantId: "tenant:owner",
+    projectId: "project:control-room",
+    jobId: "job:durable",
+    attemptId: "attempt:durable",
+    producerId: "node:mac-mini",
+    logicalRole: "synthetic-result",
+    schemaVersion: "1.0.0",
+    storageClass: "local",
+    retentionClass: "test-memory",
+    opaqueLocator: "memory://artifact/artifact%3Adurable",
+    text: "durable result\n",
+    createdAt: t1,
+  }));
+  const completed = durableJobEvent({
+    event: "completed",
+    sequence: 2,
+    artifactManifestIds: [lineage.artifactId],
+  });
+  assert.throws(
+    () => journal.appendJobEvent(completed, t1, { ...lineage, attemptId: "attempt:other" }),
+    /lineage is inconsistent/,
+  );
+  assert.equal(journal.jobEventStatus(completed.attemptId, completed.sequence), undefined);
+  assert.equal(journal.artifactLineage(lineage.artifactId), undefined);
+  assert.equal(journal.unresolvedAttempts()[0].lastEventSequence, 1);
+
+  assert.equal(journal.appendJobEvent(completed, t1, lineage), "recorded");
+  assert.deepEqual(journal.artifactLineage(lineage.artifactId), lineage);
+  assert.deepEqual(journal.unresolvedAttempts(), []);
+  assert.equal(journal.appendJobEvent(completed, t1, lineage), "duplicate");
+  journal.close();
+
+  const restarted = new SqliteBridgeJournal(path);
+  assert.deepEqual(restarted.artifactLineage(lineage.artifactId), lineage);
+  assert.equal(restarted.jobEventStatus(completed.attemptId, completed.sequence), "pending");
+  assert.deepEqual(restarted.unresolvedAttempts(), []);
   restarted.close();
   await rm(directory, { recursive: true });
 });

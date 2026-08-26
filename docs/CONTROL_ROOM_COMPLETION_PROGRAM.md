@@ -55,10 +55,10 @@ Work within a block runs in parallel where dependencies permit. Security and int
 | CR5D-UI-001/002/003 | Bot | Evidence, timeline, and worker-operation components | COMPLETE |
 | CR5D-INT-001 | Codex | Admitted execution coordinator; cancel on lease/authority expiry; one terminal outcome | COMPLETE |
 | CR5D-INT-002 | Codex | Map lifecycle events to protocol events and durable bridge delivery | COMPLETE |
-| CR5D-INT-003 | Codex | Persist attempts, checkpoints, terminal state, and artifact lineage transactionally | CODEX ACTIVE |
+| CR5D-INT-003 | Codex | Persist attempts, checkpoints, terminal state, and artifact lineage transactionally | COMPLETE |
 | CR5D-STOR-001 | Codex | Freeze and implement bounded artifact storage port plus in-memory adapter | COMPLETE |
 | CR5D-STOR-002 | Codex | Disposable filesystem/object adapter with containment, atomicity, hashes, and ambiguity handling | STOR-001; OWNER for live namespace |
-| CR5D-CTRL-001 | Codex | Quarantine/drain command authority, version binding, idempotency, audit, and API | CR5C security core |
+| CR5D-CTRL-001 | Codex | Quarantine/drain command authority, version binding, idempotency, audit, and API | CODEX ACTIVE |
 | CR5D-UI-004 | Codex integration | Integrate accepted components into worker/artifact pages and safe command receipts | UI-001/002/003, CTRL-001 |
 | CR5D-REC-001 | Bot | Deterministic kill/restart/reconciliation scenarios | INT-001/002/003, STOR-001 |
 | CR5D-ENV-001 | Codex + Owner | Isolated PostgreSQL/control-plane/node namespace and teardown | OWNER |

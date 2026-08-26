@@ -7,6 +7,8 @@ import {
 } from "../node-policy/v1";
 import {
   buildTextArtifactBundle,
+  buildArtifactLineageRecord,
+  type ArtifactLineageRecordV1,
   type TextArtifactBundleInputV1,
   type TextArtifactBundleV1,
 } from "./artifact-evidence";
@@ -30,7 +32,7 @@ export interface ExecutionAuthorityStorePortV1 {
 }
 
 export interface JobEventRecorderPortV1 {
-  append(event: JobEventBody): void | Promise<void>;
+  append(event: JobEventBody, artifactLineage?: ArtifactLineageRecordV1): void | Promise<void>;
 }
 
 export interface SyntheticCoordinatorInputV1 {
@@ -111,9 +113,9 @@ export async function runAdmittedSyntheticExecution(
   let lastSequence = 0;
   let reservedTerminalSequence: number | undefined;
 
-  const append = async (event: JobEventBody): Promise<void> => {
+  const append = async (event: JobEventBody, artifactLineage?: ArtifactLineageRecordV1): Promise<void> => {
     try {
-      await ports.events.append(event);
+      await ports.events.append(event, artifactLineage);
     } catch {
       throw new SyntheticCoordinatorError("event_recording_failed");
     }
@@ -294,7 +296,7 @@ export async function runAdmittedSyntheticExecution(
       kind: "completed",
       occurredAt,
     });
-    await append({
+    const completedEvent: JobEventBody = {
       jobId: input.spec.jobId,
       attemptId: input.spec.attemptId,
       leaseId: input.leaseId,
@@ -303,7 +305,8 @@ export async function runAdmittedSyntheticExecution(
       sequence,
       occurredAt,
       artifactManifestIds: [bundle.manifest.id],
-    });
+    };
+    await append(completedEvent, buildArtifactLineageRecord(bundle));
     return { state: "completed", executionId: input.executionId, bundle };
   } catch (error) {
     if (error instanceof SyntheticCoordinatorError) throw error;
