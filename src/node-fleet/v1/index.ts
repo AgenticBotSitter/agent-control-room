@@ -1,4 +1,5 @@
 export * from "./fingerprint";
+export * from "./fleet-signal-store";
 export * from "./freshness";
 export * from "./capability-probe-runner";
 export * from "./benchmark-runner";

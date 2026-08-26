@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
+import { PGlite } from "@electric-sql/pglite";
 import { BenchmarkRunner, CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, decideRediscovery, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
+import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
+import { adaptPglite } from "../src/persistence/database";
+import { CanonicalStore } from "../src/persistence/canonical-store";
+import { DOMAIN_CONTRACT_VERSION, type NodeRecord } from "../src/domain/v1";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const discovery = {
@@ -90,4 +97,21 @@ test("rediscovery is triggered by material or trust-continuity changes, never vo
   assert.deepEqual(decideRediscovery({ ...baseline, candidateFingerprint: `sha256:${"b".repeat(64)}` }), { required: true, reason: "material_change" });
   assert.deepEqual(decideRediscovery({ ...baseline, supervisorContinuityKnown: false }), { required: true, reason: "supervisor_continuity_unknown" });
   assert.deepEqual(decideRediscovery({ ...baseline, currentExpiresAt: "2026-08-26T00:00:00.000Z" }), { required: true, reason: "discovery_expired" });
+});
+
+test("fleet history is tenant-bound, append-only by sequence, and exact-replay safe", async () => {
+  const raw = new PGlite();
+  for (const file of (await readdir(resolve("db/migrations"))).filter((file) => file.endsWith(".sql")).sort()) await raw.exec(await readFile(resolve("db/migrations", file), "utf8"));
+  try {
+    await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:fleet','Fleet')`);
+    const node: NodeRecord = { contractVersion: DOMAIN_CONTRACT_VERSION, kind: "node", id: "node:fleet", tenantId: "tenant:fleet", displayName: "Fleet node", state: "pending_enrollment", version: 0, platform: "macos", architecture: "arm64", identityKeyId: "key:fleet", hardwareFingerprint: digest, softwareFingerprint: digest, policyVersion: "1.0.0", minimumProtocolVersion: "control-room-node/v1", createdAt: "2026-08-26T00:00:00.000Z", updatedAt: "2026-08-26T00:00:00.000Z" };
+    await new CanonicalStore(adaptPglite(raw)).create(node);
+    await raw.query(`UPDATE control_nodes SET state='active',version=1,payload=$1::jsonb,updated_at=$2 WHERE tenant_id='tenant:fleet' AND id='node:fleet'`, [JSON.stringify({ ...node, state: "active", version: 1, enrolledAt: "2026-08-26T00:00:00.000Z", updatedAt: "2026-08-26T00:00:00.000Z" }), "2026-08-26T00:00:00.000Z"]);
+    const signal = fleetSignalEnvelopeSchema.parse({ schemaVersion: "1.0.0", tenantId: "tenant:fleet", nodeId: "node:fleet", kind: "discovery", source: "static_collector", sequence: 1, observedAt: "2026-08-26T00:00:00.000Z", expiresAt: "2026-08-27T00:00:00.000Z", trust: "reported", fingerprint: digest, payload: discovery });
+    const store = new FleetSignalStore(adaptPglite(raw));
+    assert.deepEqual(await store.ingestAuthenticated(signal, signal.observedAt), { replayed: false });
+    assert.deepEqual(await store.ingestAuthenticated(signal, signal.observedAt), { replayed: true });
+    await assert.rejects(store.ingestAuthenticated({ ...signal, fingerprint: `sha256:${"b".repeat(64)}` }, signal.observedAt));
+    assert.equal((await raw.query<{ signal_sequence: number }>(`SELECT signal_sequence FROM control_node_fleet_current WHERE tenant_id='tenant:fleet'`)).rows[0]?.signal_sequence, 1);
+  } finally { await raw.close(); }
 });
