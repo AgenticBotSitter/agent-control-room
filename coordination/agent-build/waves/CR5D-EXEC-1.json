@@ -1,0 +1,13 @@
+{
+  "schema": "control-room.agent-build-wave/v2",
+  "waveId": "CR5D-EXEC-1",
+  "block": "CR-5D",
+  "status": "ready",
+  "baseCommit": "b523d9f6237b7d4161b70cf7524a8f683b683ac4",
+  "integrationBranch": "integration/cr5d-synthetic-executor-1",
+  "capsules": [
+    "coordination/agent-build/capsules/CR5D-EXEC-001.json",
+    "coordination/agent-build/capsules/CR5D-EXEC-002.json"
+  ],
+  "ownerEffectAuthority": "none"
+}

@@ -1,0 +1,64 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR5D-EXEC-001",
+  "waveId": "CR5D-EXEC-1",
+  "block": "CR-5D",
+  "summary": "Implement the deterministic synthetic executor",
+  "platform": "any",
+  "status": "ready",
+  "mode": "standard-work",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "medium",
+  "baseCommit": "b523d9f6237b7d4161b70cf7524a8f683b683ac4",
+  "integrationBranch": "integration/cr5d-synthetic-executor-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "repository dependencies", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Implement the complete effect-free synthetic executor and its deterministic unit suite exactly as frozen in docs/CR5D_SYNTHETIC_EXECUTOR_CONTRACT.md section 1. This is production CR-5D code, not a proposal, audit, or qualification exercise.",
+  "contractRefs": [
+    "docs/CR5D_SYNTHETIC_EXECUTOR_CONTRACT.md",
+    "docs/CR3_BUILD_PLAN.md",
+    "src/node-protocol/v1/types.ts",
+    "src/security/redaction.ts"
+  ],
+  "allowedPaths": [
+    "src/node-executor/synthetic-executor.ts",
+    "tests/node-synthetic-executor.test.ts"
+  ],
+  "forbiddenPrefixes": [".github", "coordination/agent-build/capsules", "db/migrations", "docs", "src/domain", "src/node-bridge", "src/node-policy", "src/node-protocol", "src/persistence", "src/security"],
+  "acceptanceCommands": [
+    "node --import tsx --test tests/node-synthetic-executor.test.ts",
+    "node node_modules/typescript/bin/tsc --noEmit",
+    "git diff --check integration/cr5d-synthetic-executor-1...HEAD"
+  ],
+  "semanticAcceptance": [
+    "The public types and runSyntheticExecution behavior match every normative rule in contract section 1 without adding integration responsibilities.",
+    "Tests prove validation has zero port calls, exact event order and sequence, checkpoint cadence, cancellation before start and after sleep, the crash boundary, success bytes, secret rejection, and no direct I/O or wall-clock dependency.",
+    "The implementation changes no existing production module, protocol, policy, persistence, package, workflow, or architecture file."
+  ],
+  "limits": {
+    "maxChangedFiles": 2,
+    "maxChangedLines": 520,
+    "maxRepairIterations": 2
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop if the frozen contract is contradictory or requires editing any path outside allowedPaths.",
+    "Stop before adding bridge, journal, policy, persistence, UI, package, timer, filesystem, network, subprocess, credential, or platform behavior.",
+    "Stop before any install, download, native command, service, external effect, or production mutation."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR5D-EXEC-001.json"
+}

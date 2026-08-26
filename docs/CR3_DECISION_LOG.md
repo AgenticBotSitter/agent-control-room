@@ -558,3 +558,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Codex must keep enough ready, non-overlapping capsules in each wave, and accepted worker commits may wait for a block integration window. GitHub issue comments temporarily serialize claims until Control Room can perform atomic scheduling itself. Small tasks with high packet cost remain architect-owned.
 
 **Reevaluate:** When Control Room can schedule itself, replace GitHub wave metadata with the canonical job/attempt/result records while preserving frozen inputs, exact authority, producer/verifier separation, quarantine, and architect-owned integration.
+
+## ADR-047 — Worker capacity builds product; it does not earn work through calibration queues
+
+**Decision:** External routes receive only real bounded implementation, test, integration-candidate, platform-evidence, or necessary product-documentation work. Control Room does not issue qualification-only or instruction-following capsules as a prerequisite to useful work. Eligibility is evaluated per capsule from the frozen contract, risk, platform, required tools, prior observed behavior where available, and independent-review boundary. Effect-free work for the next block may proceed on an isolated integration branch while a platform-specific gate remains unresolved, but it cannot change the current block's disposition or reach `main` without Codex's completion-gate decision.
+
+**Why:** Calibration packets consumed worker and review time without materially advancing the executable system. The V2 intake contract already constrains scope, commits, effects, and review. Real code with deterministic acceptance supplies better capability evidence while also building the product.
+
+**Alternatives rejected:** Repeated T0 calibration waves; model-reputation promotion; allowing unbounded real work to avoid qualification overhead; treating parallel future-block work as proof that the prior block passed; removing result manifests or independent review.
+
+**Trade-off:** A route may fail on its first real task and consume bounded review capacity. Capsules must therefore remain small, non-overlapping, and architect-frozen, and higher-risk work still requires stronger evidence or owner authority.
+
+**Reevaluate:** When Control Room has measured per-route task outcomes, scheduling may use those records to rank eligible routes. It must not reintroduce make-work qualification or turn model reputation into authority.

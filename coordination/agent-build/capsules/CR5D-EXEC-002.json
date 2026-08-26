@@ -1,0 +1,65 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR5D-EXEC-002",
+  "waveId": "CR5D-EXEC-1",
+  "block": "CR-5D",
+  "summary": "Implement text artifact manifests and evidence claims",
+  "platform": "any",
+  "status": "ready",
+  "mode": "standard-work",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "medium",
+  "baseCommit": "b523d9f6237b7d4161b70cf7524a8f683b683ac4",
+  "integrationBranch": "integration/cr5d-synthetic-executor-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "repository dependencies", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Implement the text artifact manifest and claim-bound evidence builder plus its deterministic unit suite exactly as frozen in docs/CR5D_SYNTHETIC_EXECUTOR_CONTRACT.md section 2. This is production CR-5D code, not a proposal, audit, or qualification exercise.",
+  "contractRefs": [
+    "docs/CR5D_SYNTHETIC_EXECUTOR_CONTRACT.md",
+    "docs/CR3_BUILD_PLAN.md",
+    "src/domain/v1/types.ts",
+    "src/security/digest.ts",
+    "src/security/redaction.ts"
+  ],
+  "allowedPaths": [
+    "src/node-executor/artifact-evidence.ts",
+    "tests/node-artifact-evidence.test.ts"
+  ],
+  "forbiddenPrefixes": [".github", "coordination/agent-build/capsules", "db/migrations", "docs", "src/domain", "src/node-bridge", "src/node-policy", "src/node-protocol", "src/persistence", "src/security"],
+  "acceptanceCommands": [
+    "node --import tsx --test tests/node-artifact-evidence.test.ts",
+    "node node_modules/typescript/bin/tsc --noEmit",
+    "git diff --check integration/cr5d-synthetic-executor-1...HEAD"
+  ],
+  "semanticAcceptance": [
+    "The public types and buildTextArtifactBundle behavior match every normative rule in contract section 2 and reuse the existing domain manifest and canonical digest utilities.",
+    "Tests prove exact UTF-8 byte hashing, canonical manifest and claim digests, locator/claim separation, secret rejection, canonical time and identifier validation, size limits, input immutability, and the absence of verification or approval claims.",
+    "The implementation performs no storage, signing, database, filesystem, network, approval, or verification decision and changes no existing production module."
+  ],
+  "limits": {
+    "maxChangedFiles": 2,
+    "maxChangedLines": 500,
+    "maxRepairIterations": 2
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop if the frozen contract is contradictory or requires editing any path outside allowedPaths.",
+    "Stop before adding storage adapters, bridge, journal, policy, persistence, UI, package, signing, approval, or independent-verification behavior.",
+    "Stop before any install, download, native command, service, external effect, or production mutation."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR5D-EXEC-002.json"
+}
