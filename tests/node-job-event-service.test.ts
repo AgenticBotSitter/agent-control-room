@@ -4,6 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import { PortableNodeBridge, SqliteBridgeJournal, type BridgeTransport } from "../src/node-bridge";
 import { NodeJobEventError, NodeJobEventIngress, NodeJobEventService } from "../src/node-control";
 import { buildArtifactLineageRecord, buildTextArtifactBundle } from "../src/node-executor";
 import {
@@ -16,6 +17,7 @@ import {
   signNodeFrame,
   type JobEventBody,
   type SignedNodeFrame,
+  type TrustedKeyResolver,
   type UnsignedNodeFrame,
 } from "../src/node-protocol/v1";
 import { CanonicalStore } from "../src/persistence/canonical-store";
@@ -174,6 +176,77 @@ test("ingress authenticates raw frames before retaining job evidence and only th
     const events = await db.query<{ message_id: string }>(`SELECT message_id FROM control_node_job_events`);
     assert.deepEqual(events.rows, [{ message_id: "message:ingress:started" }]);
   } finally {
+    await db.close();
+  }
+});
+
+test("a completed durable bridge event reaches central truth before its signed acknowledgement retires it", async () => {
+  const { db, service } = await fixture();
+  const journal = new SqliteBridgeJournal(":memory:");
+  try {
+    const nodeKeys = generateKeyPairSync("ed25519");
+    const nodeSpki = nodeKeys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+    await db.query(
+      `INSERT INTO control_node_keys (id,tenant_id,node_id,algorithm,public_key_spki,fingerprint,state,valid_from,created_at)
+       VALUES ('key:ingest','tenant:owner','node:ingest','ed25519',$1,$2,'active',$3,$3)`,
+      [nodeSpki, publicKeyFingerprint(nodeSpki), t0],
+    );
+    const centralAuthenticator = new NodeProtocolAuthenticator(
+      new DatabaseNodeKeyResolver(adaptPglite(db)), new DatabaseReplayGuard(adaptPglite(db)), new FixedWindowProtocolRateLimiter(50, 60),
+    );
+    const ingress = new NodeJobEventIngress(centralAuthenticator, service);
+    const serverKeys = generateKeyPairSync("ed25519");
+    const serverSpki = serverKeys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+    const serverResolver: TrustedKeyResolver = { async resolve(input) {
+      if (input.tenantId !== "tenant:owner" || input.actorId !== "control-room:server" || input.senderKind !== "control_room" || input.keyId !== "server-key:1") return undefined;
+      return { tenantId: input.tenantId, actorId: input.actorId, senderKind: input.senderKind, keyId: input.keyId,
+        algorithm: "ed25519", publicKeySpki: serverSpki, state: "active", principalState: "active", validFrom: t0 };
+    } };
+    const sent: SignedNodeFrame[] = [];
+    const transport: BridgeTransport = { async send(raw) { sent.push(JSON.parse(raw) as SignedNodeFrame); }, async close() {} };
+    const bridge = new PortableNodeBridge(
+      { tenantId: "tenant:owner", nodeId: "node:ingest", keyId: "key:ingest", features: [] }, journal,
+      { async sign(unsigned) { return signNodeFrame(unsigned, nodeKeys.privateKey); } },
+      new NodeProtocolAuthenticator(serverResolver, journal, new FixedWindowProtocolRateLimiter(50, 60)),
+      (() => { let value = 0; return () => `bridge-${++value}`; })(),
+    );
+    const bundle = buildTextArtifactBundle({
+      artifactId: "artifact:e2e", claimId: "claim:e2e", tenantId: "tenant:owner", projectId: "project:ingest", workflowId: "workflow:ingest",
+      jobId: "job:ingest", attemptId: "attempt:ingest", producerId: "node:ingest", logicalRole: "synthetic-result", schemaVersion: "1.0.0",
+      storageClass: "local", retentionClass: "test", opaqueLocator: "memory://artifact/artifact%3Ae2e", text: "end-to-end\n", createdAt: t3,
+    });
+    const lineage = buildArtifactLineageRecord(bundle);
+    journal.appendJobEvent({ jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "started", sequence: 1, occurredAt: t2, artifactManifestIds: [] }, t2);
+    journal.appendJobEvent({ jobId: "job:ingest", attemptId: "attempt:ingest", leaseId: "lease:ingest", leaseEpoch: 1, event: "completed", sequence: 2, occurredAt: t3, artifactManifestIds: [lineage.artifactId], artifactLineage: lineage }, t3, lineage);
+
+    await bridge.open(transport, { now: t2, transportIdentity: "tls:central" });
+    const connectionId = bridge.status().connectionId as string;
+    await centralAuthenticator.verify(JSON.stringify(sent[0]), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t2 });
+    const serverFrame = (sequence: number, type: "connection.accepted" | "node.reconciliation.request" | "protocol.ack", body: SignedNodeFrame["body"]): SignedNodeFrame => signNodeFrame({
+      protocol: NODE_PROTOCOL_V1, direction: "server_to_node", messageId: `message:server:${sequence}`, correlationId: "correlation:e2e",
+      tenantId: "tenant:owner", actorId: "control-room:server", senderKind: "control_room", keyId: "server-key:1", connectionId, sequence,
+      sentAt: t2, expiresAt: "2026-08-26T12:06:00.000Z", nonce: `nonce_server_${sequence}_12345678901234567890`, type, body,
+    } as UnsignedNodeFrame, serverKeys.privateKey);
+    await bridge.receive(JSON.stringify(serverFrame(1, "connection.accepted", {
+      selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: [], maxFrameBytes: 65_536, heartbeatIntervalSeconds: 30, serverTime: t2,
+    })), t2);
+    await centralAuthenticator.verify(JSON.stringify(sent[1]), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t2 });
+    await bridge.receive(JSON.stringify(serverFrame(2, "node.reconciliation.request", { lastAcknowledgedNodeSequence: 1, requestedAttemptIds: ["attempt:ingest"] })), t2);
+    const report = sent.find((candidate) => candidate.type === "node.reconciliation.report");
+    assert.ok(report);
+    await centralAuthenticator.verify(JSON.stringify(report), { expectedDirection: "node_to_server", transportIdentity: "tls:node", receivedAt: t2 });
+    const jobFrames = sent.filter((candidate): candidate is SignedNodeFrame<"job.event"> => candidate.type === "job.event");
+    assert.equal(jobFrames.length, 2);
+    const started = await ingress.receive(JSON.stringify(jobFrames[0]), { transportIdentity: "tls:node", receivedAt: t2, expectedConnectionId: connectionId });
+    await bridge.receive(JSON.stringify(serverFrame(3, "protocol.ack", started.acknowledgement)), t2);
+    const completed = await ingress.receive(JSON.stringify(jobFrames[1]), { transportIdentity: "tls:node", receivedAt: t3, expectedConnectionId: connectionId });
+    assert.equal(journal.jobEventStatus("attempt:ingest", 2), "staged", "the completed record stays durable until its acknowledgement arrives");
+    await bridge.receive(JSON.stringify(serverFrame(4, "protocol.ack", completed.acknowledgement)), t3);
+    assert.equal(journal.jobEventStatus("attempt:ingest", 2), "acknowledged");
+    const state = await db.query<{ state: string }>(`SELECT state FROM control_jobs WHERE id='job:ingest'`);
+    assert.equal(state.rows[0].state, "succeeded");
+  } finally {
+    journal.close();
     await db.close();
   }
 });
