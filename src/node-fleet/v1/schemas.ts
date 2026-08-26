@@ -8,6 +8,8 @@ const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const capacityBytes = z.number().int().nonnegative().max(9_007_199_254_740_991);
 const trustSchema = z.enum(["reported", "verified", "blocked", "unavailable"]);
 
+export const inventoryEntrySchema = z.object({ kind: z.enum(["bridge", "harness", "executor", "tool"]), id, version: label, manifestDigest: digest }).strict();
+
 export const discoveryPayloadSchema = z.object({
   platform: z.enum(["windows", "macos", "linux", "cloud"]),
   architecture: label,
@@ -16,7 +18,7 @@ export const discoveryPayloadSchema = z.object({
   gpuClasses: z.array(label).max(32),
   storage: z.array(z.object({ capacityBytes, availableBytes: capacityBytes, scratchEligible: z.boolean(), encryptionReported: z.boolean() }).strict()).min(1).max(64),
   networkClass: z.enum(["offline", "limited", "metered", "unmetered"]),
-  inventory: z.array(z.object({ kind: z.enum(["bridge", "harness", "executor", "tool"]), id, version: label, manifestDigest: digest }).strict()).max(512),
+  inventory: z.array(inventoryEntrySchema).max(512),
   executorManifestDigest: digest,
 }).strict().superRefine((value, context) => {
   value.storage.forEach((volume, index) => {

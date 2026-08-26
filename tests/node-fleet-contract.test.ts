@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeDiscoveryFingerprint, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery } from "../src/node-fleet/v1";
+import { computeDiscoveryFingerprint, createInventoryManifest, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery } from "../src/node-fleet/v1";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const discovery = {
@@ -31,4 +31,17 @@ test("static discovery normalizes only approved aggregate facts and is determini
   assert.deepEqual(Object.keys(result.payload).sort(), ["architecture", "cpuLogicalCores", "executorManifestDigest", "gpuClasses", "inventory", "memoryBytes", "networkClass", "platform", "storage"]);
   assert.equal(result.fingerprint, computeDiscoveryFingerprint(result.payload));
   assert.throws(() => normalizeStaticDiscovery({ ...discovery, architecture: "arm64\nprivate-host" }));
+});
+
+test("inventory manifests are explicit, sorted, and reject ambiguous duplicate identities", () => {
+  const manifest = createInventoryManifest([
+    { kind: "tool", id: "tool.typescript", version: "5.9.3" },
+    { kind: "bridge", id: "bridge.control-room", version: "1.0.0" },
+  ]);
+  assert.deepEqual(manifest.entries.map((entry) => entry.kind), ["bridge", "tool"]);
+  assert.ok(manifest.entries.every((entry) => entry.manifestDigest === manifest.manifestDigest));
+  assert.throws(() => createInventoryManifest([
+    { kind: "tool", id: "tool.typescript", version: "5.9.3" },
+    { kind: "tool", id: "tool.typescript", version: "6.0.0" },
+  ]));
 });
