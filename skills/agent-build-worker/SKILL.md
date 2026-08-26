@@ -43,6 +43,8 @@ agent/<route-id>/<lowercase-capsule-id>
 
 Do not work in `main`, the integration checkout, another capsule's checkout, or another agent's branch.
 
+The capsule's `baseCommit` and the integration branch head have different meanings. `baseCommit` is the immutable product-ancestry pin recorded by Codex; the integration head is where the producer branch starts. Never replace the capsule's `baseCommit` with the current integration HEAD.
+
 ## Perform
 
 Read only the accepted contracts needed by the capsule and change only `allowedPaths`. Use the declared mode:
@@ -60,7 +62,7 @@ Keep working on other already-ready independent jobbers while earlier submitted 
 
 1. Run every acceptance command and inspect the final scope.
 2. Commit only the product changes. Record this immutable implementation commit.
-3. Fill `coordination/agent-build/results/<CAPSULE-ID>.json` from the V2 result template with exact paths, line counts, exit codes, repairs, failures, assumptions, and effects.
+3. Fill `coordination/agent-build/results/<CAPSULE-ID>.json` from the V2 result template with exact paths, line counts, exit codes, repairs, failures, assumptions, and effects. Copy `baseCommit` exactly from the capsule. Do not use the integration-branch HEAD, merge commit, branch point, or implementation commit in that field.
 4. Commit only that result manifest in a second metadata commit.
 5. Push the exact producer branch and open a PR targeting the exact `integration/<block>` branch. Never target `main`.
 6. Comment on the jobber with `gh issue comment <issue-number> --body "/submitted <route-id> <pull-request-url>"`:
@@ -70,6 +72,8 @@ Keep working on other already-ready independent jobbers while earlier submitted 
 ```
 
 Wait for the controller to accept the submission. Your route capacity is then released immediately. You may claim the next ready independent jobber without waiting for review.
+
+The queue comment must contain only the exact command line. Do not append a correction note, explanation, Markdown, or another line. If a prior comment was malformed, post a new exact command as a new one-line comment.
 
 Do not approve or merge the PR. Automated intake establishes only `eligible` or `quarantined`; a verifier and Codex decide acceptance.
 

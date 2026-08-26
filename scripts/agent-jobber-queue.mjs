@@ -28,6 +28,10 @@ export function parseJobberCommand(value) {
   return null;
 }
 
+export function looksLikeJobberCommand(value) {
+  return /^\/(claim|release|blocked|submitted)(?:\s|$)/.test(value.trim());
+}
+
 function oneLine(value) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -218,12 +222,16 @@ async function submitted({ api, issue, capsule, markers, command, login, reposit
 
 export async function processJobberEvent({ event, api, repository }) {
   if (event.issue?.pull_request) return;
-  const command = parseJobberCommand(event.comment?.body ?? "");
-  if (!command) return;
   const issue = event.issue;
   const login = event.sender?.login ?? "";
   try {
     if (!TRUSTED_ASSOCIATIONS.has(event.comment?.author_association)) throw new Error("commenter is not a repository collaborator");
+    const rawCommand = event.comment?.body ?? "";
+    const command = parseJobberCommand(rawCommand);
+    if (!command) {
+      if (!looksLikeJobberCommand(rawCommand)) return;
+      throw new Error("command syntax is invalid; post exactly one supported command with no explanation or trailing text");
+    }
     const markers = issueMarkers(issue.body);
     if (!markers) throw new Error("issue lacks canonical Capsule and Integration markers");
     const capsule = await repositoryJson(api, markers.capsule, markers.integration);

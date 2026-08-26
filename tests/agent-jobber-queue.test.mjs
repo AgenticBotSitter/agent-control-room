@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { issueMarkers, jobberTitle, parseJobberCommand, processJobberEvent, producerBranch, pullNumber } from "../scripts/agent-jobber-queue.mjs";
+import { issueMarkers, jobberTitle, looksLikeJobberCommand, parseJobberCommand, processJobberEvent, producerBranch, pullNumber } from "../scripts/agent-jobber-queue.mjs";
 import { renderJobber } from "../scripts/render-agent-jobber.mjs";
 
 const capsule = {
@@ -18,6 +18,36 @@ test("parses the four exact worker queue commands", () => {
   assert.deepEqual(parseJobberCommand("/blocked ziggy-windows tests still fail after repair"), { action: "blocked", route: "ziggy-windows", reason: "tests still fail after repair" });
   assert.deepEqual(parseJobberCommand("/submitted ziggy-windows https://github.com/MarvinAi5/control-room/pull/200"), { action: "submitted", route: "ziggy-windows", pullUrl: "https://github.com/MarvinAi5/control-room/pull/200" });
   assert.equal(parseJobberCommand("please claim ziggy-windows"), null);
+  assert.equal(parseJobberCommand("/submitted ziggy-windows https://github.com/MarvinAi5/control-room/pull/200\n\ncorrection"), null);
+  assert.equal(looksLikeJobberCommand("/submitted ziggy-windows "), true);
+  assert.equal(looksLikeJobberCommand("/claim"), true);
+  assert.equal(looksLikeJobberCommand("ordinary discussion"), false);
+});
+
+test("queue controller rejects malformed command-like comments instead of silently succeeding", async () => {
+  const comments = [];
+  const event = {
+    issue: { number: 203, title: "[CLAIMED] example", body: "" },
+    comment: {
+      body: "/submitted ziggy-windows https://github.com/MarvinAi5/control-room/pull/200\n\ncorrection of prior comment",
+      author_association: "OWNER"
+    },
+    sender: { login: "MarvinAi5" }
+  };
+  const api = async (method, endpoint, body) => {
+    if (method === "POST" && endpoint === "/issues/203/comments") {
+      comments.push(body.body);
+      return { id: 3, body: body.body };
+    }
+    throw new Error(`unexpected ${method} ${endpoint}`);
+  };
+  await assert.rejects(
+    () => processJobberEvent({ event, api, repository: "MarvinAi5/control-room" }),
+    /command syntax is invalid/
+  );
+  assert.equal(comments.length, 1);
+  assert.match(comments[0], /JOBBER COMMAND REJECTED: command syntax is invalid/);
+  assert.match(comments[0], /exactly one supported command/);
 });
 
 test("issue markers require canonical capsule and integration paths", () => {
