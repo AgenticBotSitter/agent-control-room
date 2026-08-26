@@ -1,0 +1,33 @@
+{
+  "schema": "control-room.agent-build-result/v2",
+  "capsulePath": "coordination/agent-build/capsules/EXAMPLE-WAVE-001.json",
+  "capsuleId": "EXAMPLE-WAVE-001",
+  "waveId": "EXAMPLE-WAVE",
+  "baseCommit": "0000000000000000000000000000000000000000",
+  "implementationCommit": "1111111111111111111111111111111111111111",
+  "producerRoute": "example-provisional-route",
+  "changedFiles": [
+    {
+      "path": "tests/fixtures/example.json",
+      "additions": 1,
+      "deletions": 0
+    }
+  ],
+  "commands": [
+    {
+      "command": "node --test tests/example.test.mjs",
+      "exitCode": 0
+    }
+  ],
+  "repairIterations": 0,
+  "failures": [],
+  "assumptions": [],
+  "effectCount": 0,
+  "safety": {
+    "secretsAbsent": true,
+    "privateHostDataAbsent": true,
+    "workerDidNotApproveOrMerge": true,
+    "scopeNotExpanded": true
+  },
+  "disposition": "ready-for-intake"
+}

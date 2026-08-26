@@ -1,13 +1,60 @@
-name: Hermes work order
-description: Assign mode-proportional, reviewable work to a Hermes or other external worker.
-title: "[WORK] "
+name: Agent build capsule view
+description: Human-readable view of a Codex-authored V2 capsule. This form alone never authorizes work.
+title: "[READY][PLATFORM][TIER][CR-BLOCK][CAPSULE-ID] "
 labels:
   - work-packet
+  - jobber-ready
 body:
   - type: markdown
     attributes:
       value: |
-        Do not include secrets, tokens, private production data, or mutable artifact URLs. One worker and one isolated branch per packet.
+        Codex authors this issue from a committed V2 capsule. Agents must not self-assign or start from this form alone. Do not include secrets, tokens, private production data, or mutable artifact URLs. One producer, one isolated branch, and a separate verifier when required.
+        Before publishing, replace the title with: `[READY][ANY|MACOS|WINDOWS|LINUX][T0|T1|T2|T3][CR-BLOCK][CAPSULE-ID] summary` and add the `jobber-ready` label.
+  - type: input
+    id: v2_capsule
+    attributes:
+      label: V2 capsule marker
+      description: Enter exactly Capsule followed by a colon and the committed path in backticks. Capsule status must be ready.
+      placeholder: "Capsule: `coordination/agent-build/capsules/CR5D-W1-001.json`"
+    validations:
+      required: true
+  - type: input
+    id: integration_marker
+    attributes:
+      label: Integration marker
+      description: Enter exactly Integration followed by a colon and the capsule integration branch in backticks.
+      placeholder: "Integration: `integration/cr5d-w1`"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform eligibility
+      options:
+        - ANY
+        - MACOS
+        - WINDOWS
+        - LINUX
+    validations:
+      required: true
+  - type: textarea
+    id: claim_commands
+    attributes:
+      label: Queue commands
+      value: |
+        Claim: `/claim <route-id>`
+        Untouched return: `/release <route-id> --no-work-started <reason>`
+        Blocked handoff: `/blocked <route-id> <reason and evidence reference>`
+        Submission: `/submitted <route-id> <pull-request-url>`
+    validations:
+      required: true
+  - type: textarea
+    id: required_tools
+    attributes:
+      label: Required tools and pre-claim completion check
+      description: Copy requiredTools and state anything the worker must verify before claiming. Missing tools do not imply install authority.
+    validations:
+      required: true
   - type: input
     id: cr_block
     attributes:
@@ -18,8 +65,8 @@ body:
   - type: input
     id: worker_route
     attributes:
-      label: Worker route
-      description: Worker ID, machine, harness, and model. Use provisional when not yet qualified.
+      label: Eligible routes and claimants
+      description: Copy the capsule route IDs, authorized GitHub logins, qualification state, and concurrency limit. A route chooses itself only through /claim.
     validations:
       required: true
   - type: dropdown
@@ -75,8 +122,8 @@ body:
   - type: textarea
     id: base_branch
     attributes:
-      label: Immutable base and exact branch
-      description: Give the full 40-character base commit, exact bootstrap fetch if needed, and required fresh worker branch.
+      label: Immutable product base, integration target, and producer branch
+      description: Give the full 40-character product-base commit, integration/<block> target, exact bootstrap fetch if needed, and agent/<route>/<capsule> producer branch.
     validations:
       required: true
   - type: textarea
@@ -126,8 +173,9 @@ body:
           required: true
         - label: Codex/Sol review is required before merge.
           required: true
+        - label: The result will use separate implementation and metadata-only commits and will target the capsule's integration branch, never main.
+          required: true
         - label: The declared work mode, repair/readiness budget, environment boundary, and stop conditions are proportional to the actual risk.
           required: true
         - label: Controlled-effect mode includes a passing execution-contract validator digest and complete effect/cleanup accounting; other modes do not imitate that ledger.
           required: true
-

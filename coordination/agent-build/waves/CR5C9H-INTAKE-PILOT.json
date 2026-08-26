@@ -1,0 +1,10 @@
+{
+  "schema": "control-room.agent-build-wave/v2",
+  "waveId": "CR5C9H-INTAKE-PILOT",
+  "block": "CR-5C.9H",
+  "status": "intake-only",
+  "baseCommit": "6ed04d17ed93b175b119d6243c06bb41899d2e35",
+  "integrationBranch": "integration/cr5c9h-intake-pilot",
+  "capsules": [],
+  "ownerEffectAuthority": "none"
+}

@@ -1,5 +1,11 @@
 ## Work packet
 
+- V2 capsule path (required for agent results):
+- Jobber issue and `CLAIM ACCEPTED` comment:
+- Claimed route and platform:
+- Target integration branch (agent results must not target `main`):
+- Immutable implementation commit:
+- Result manifest path:
 - Issue:
 - CR block:
 - Worker ID / machine:
@@ -44,10 +50,11 @@
 
 ## Reviewer disposition
 
+- [ ] Automated intake eligible (agent results only)
+- [ ] Independent verification complete or not required by capsule
 - [ ] Accepted
 - [ ] Accepted with follow-up
 - [ ] Changes requested
 - [ ] Rejected
 
 Reviewer notes:
-

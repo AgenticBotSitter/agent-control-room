@@ -1,0 +1,10 @@
+{
+  "schema": "control-room.agent-build-wave/v2",
+  "waveId": "EXAMPLE-WAVE",
+  "block": "CR-X",
+  "status": "draft",
+  "baseCommit": "0000000000000000000000000000000000000000",
+  "integrationBranch": "integration/example-wave",
+  "capsules": ["coordination/agent-build/capsules/EXAMPLE-WAVE-001.json"],
+  "ownerEffectAuthority": "none"
+}

@@ -546,3 +546,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Optional integrations arrive later and cannot reproduce every native feature in the normalized interface.
 
 **Reevaluate:** Promote an integration only after a stable supported seam, license review, conformance fixtures, least-privilege authentication, and exit strategy are proven.
+
+## ADR-046 — External agents submit bounded candidates into frozen integration waves
+
+**Decision:** Codex freezes non-overlapping task capsules in a versioned build wave. Eligible agents acquire ready capsules through a globally serialized GitHub claim transition, may hold several independent claims within a route limit, submit machine-described results to the named `integration/<block>` branch, and never target `main`. Submission releases route capacity before review so production can continue. Untouched work may return to ready; started or attempted work becomes blocked for triage. Automated intake can quarantine a result but cannot accept it. An independent verifier evaluates meaningful producer output, Codex promotes accepted commits, and one Codex-owned block pull request reaches `main`.
+
+**Why:** A large legacy issue queue allowed stale, speculative, overlapping, and direct-to-main work to accumulate. Each worker pull request became an unplanned architecture and integration decision, so review cost grew faster than accepted output. Frozen contracts and mechanical intake move scope failures ahead of semantic review while preserving external implementation capacity.
+
+**Alternatives rejected:** Agent self-assignment from a standing backlog; one worker PR per integration decision on `main`; shared live checkouts; accepting a passing worker test suite as merge authority; allowing producers to verify or merge their own work; keeping speculative future scaffolds merge-ready.
+
+**Trade-off:** Codex must keep enough ready, non-overlapping capsules in each wave, and accepted worker commits may wait for a block integration window. GitHub issue comments temporarily serialize claims until Control Room can perform atomic scheduling itself. Small tasks with high packet cost remain architect-owned.
+
+**Reevaluate:** When Control Room can schedule itself, replace GitHub wave metadata with the canonical job/attempt/result records while preserving frozen inputs, exact authority, producer/verifier separation, quarantine, and architect-owned integration.

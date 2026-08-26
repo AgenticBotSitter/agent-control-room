@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-room.local/contracts/agent-build-v2.schema.json",
+  "title": "Control Room agent build coordination v2",
+  "oneOf": [
+    { "$ref": "#/$defs/capsule" },
+    { "$ref": "#/$defs/result" },
+    { "$ref": "#/$defs/wave" }
+  ],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "repoPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!\\./)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*[*?\\[\\]])[^\\\\]+$"
+    },
+    "command": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "capsule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "capsuleId", "waveId", "block", "summary", "platform", "status", "mode", "taskClass", "risk", "baseCommit", "integrationBranch", "eligibleRoutes", "routeClaimants", "dependencies", "requiredTools", "maxConcurrentClaimsPerRoute", "verification", "objective", "contractRefs", "allowedPaths", "forbiddenPrefixes", "acceptanceCommands", "semanticAcceptance", "limits", "effects", "stopConditions", "resultManifestPath"],
+      "properties": {
+        "schema": { "const": "control-room.agent-build-capsule/v2" },
+        "capsuleId": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9._-]{2,63}$" },
+        "waveId": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9._-]{2,63}$" },
+        "block": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "platform": { "enum": ["any", "macos", "windows", "linux"] },
+        "status": { "enum": ["draft", "ready", "assigned", "submitted", "verified", "accepted", "quarantined", "closed"] },
+        "mode": { "enum": ["standard-work", "platform-validation", "controlled-effect", "independent-review"] },
+        "taskClass": { "enum": ["T0-mechanical", "T1-bounded-implementation", "T2-integration-candidate", "T3-platform-validation", "architect-only"] },
+        "risk": { "enum": ["low", "medium", "high", "critical"] },
+        "baseCommit": { "$ref": "#/$defs/sha" },
+        "integrationBranch": { "type": "string", "pattern": "^integration/[a-z0-9][a-z0-9._/-]*$" },
+        "eligibleRoutes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,47}$" } },
+        "routeClaimants": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._-]{1,47}$" },
+          "additionalProperties": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9-]{1,39}$" } }
+        },
+        "dependencies": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9._-]{2,63}$" } },
+        "requiredTools": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 100 } },
+        "maxConcurrentClaimsPerRoute": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required", "independence"],
+          "properties": {
+            "required": { "type": "boolean" },
+            "independence": { "enum": ["none", "route", "profile", "harness", "model-family"] }
+          }
+        },
+        "objective": { "type": "string", "minLength": 1 },
+        "contractRefs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/repoPath" } },
+        "allowedPaths": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/repoPath" } },
+        "forbiddenPrefixes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/repoPath" } },
+        "acceptanceCommands": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/command" } },
+        "semanticAcceptance": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxChangedFiles", "maxChangedLines", "maxRepairIterations"],
+          "properties": {
+            "maxChangedFiles": { "type": "integer", "minimum": 1 },
+            "maxChangedLines": { "type": "integer", "minimum": 1 },
+            "maxRepairIterations": { "type": "integer", "minimum": 0, "maximum": 3 }
+          }
+        },
+        "effects": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["level", "maxCount"],
+          "properties": {
+            "level": { "enum": ["none", "bounded", "owner-attended"] },
+            "maxCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "stopConditions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "resultManifestPath": { "$ref": "#/$defs/repoPath" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "capsulePath", "capsuleId", "waveId", "baseCommit", "implementationCommit", "producerRoute", "changedFiles", "commands", "repairIterations", "failures", "assumptions", "effectCount", "safety", "disposition"],
+      "properties": {
+        "schema": { "const": "control-room.agent-build-result/v2" },
+        "capsulePath": { "$ref": "#/$defs/repoPath" },
+        "capsuleId": { "type": "string" },
+        "waveId": { "type": "string" },
+        "baseCommit": { "$ref": "#/$defs/sha" },
+        "implementationCommit": { "$ref": "#/$defs/sha" },
+        "producerRoute": { "type": "string", "minLength": 1 },
+        "changedFiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "additions", "deletions"],
+            "properties": {
+              "path": { "$ref": "#/$defs/repoPath" },
+              "additions": { "type": "integer", "minimum": 0 },
+              "deletions": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "exitCode"],
+            "properties": {
+              "command": { "$ref": "#/$defs/command" },
+              "exitCode": { "type": "integer" }
+            }
+          }
+        },
+        "repairIterations": { "type": "integer", "minimum": 0 },
+        "failures": { "type": "array", "items": { "type": "string" } },
+        "assumptions": { "type": "array", "items": { "type": "string" } },
+        "effectCount": { "type": "integer", "minimum": 0 },
+        "safety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["secretsAbsent", "privateHostDataAbsent", "workerDidNotApproveOrMerge", "scopeNotExpanded"],
+          "properties": {
+            "secretsAbsent": { "const": true },
+            "privateHostDataAbsent": { "const": true },
+            "workerDidNotApproveOrMerge": { "const": true },
+            "scopeNotExpanded": { "const": true }
+          }
+        },
+        "disposition": { "enum": ["ready-for-intake", "blocked", "failed"] }
+      }
+    },
+    "wave": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "waveId", "block", "status", "baseCommit", "integrationBranch", "capsules", "ownerEffectAuthority"],
+      "properties": {
+        "schema": { "const": "control-room.agent-build-wave/v2" },
+        "waveId": { "type": "string" },
+        "block": { "type": "string" },
+        "status": { "enum": ["draft", "ready", "active", "paused", "intake-only", "complete", "closed"] },
+        "baseCommit": { "$ref": "#/$defs/sha" },
+        "integrationBranch": { "type": "string", "pattern": "^integration/" },
+        "capsules": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/repoPath" } },
+        "ownerEffectAuthority": { "enum": ["none", "separately-required"] }
+      }
+    }
+  }
+}

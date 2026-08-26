@@ -1,0 +1,42 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "EXAMPLE-WAVE-001",
+  "waveId": "EXAMPLE-WAVE",
+  "block": "CR-X",
+  "summary": "Add one exact example fixture",
+  "platform": "any",
+  "status": "draft",
+  "mode": "standard-work",
+  "taskClass": "T0-mechanical",
+  "risk": "low",
+  "baseCommit": "0000000000000000000000000000000000000000",
+  "integrationBranch": "integration/example-wave",
+  "eligibleRoutes": ["example-provisional-route"],
+  "routeClaimants": {
+    "example-provisional-route": ["ExampleGitHubLogin"]
+  },
+  "dependencies": [],
+  "requiredTools": ["node >=22.13.0"],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": true,
+    "independence": "route"
+  },
+  "objective": "Replace this with one bounded deliverable under a frozen contract.",
+  "contractRefs": ["docs/AGENT_BUILD_SYSTEM_V2.md"],
+  "allowedPaths": ["tests/fixtures/example.json"],
+  "forbiddenPrefixes": ["db/migrations", "src/security"],
+  "acceptanceCommands": ["node --test tests/example.test.mjs"],
+  "semanticAcceptance": ["Replace this with an observable contract-level condition."],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 100,
+    "maxRepairIterations": 1
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": ["Stop if the contract, scope, dependency, or effect boundary is ambiguous."],
+  "resultManifestPath": "coordination/agent-build/results/EXAMPLE-WAVE-001.json"
+}

@@ -1,0 +1,36 @@
+name: Agent jobber queue
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: agent-jobber-global-claim-queue
+  cancel-in-progress: false
+
+jobs:
+  transition:
+    if: >-
+      !github.event.issue.pull_request &&
+      (startsWith(github.event.comment.body, '/claim ') ||
+       startsWith(github.event.comment.body, '/release ') ||
+       startsWith(github.event.comment.body, '/blocked ') ||
+       startsWith(github.event.comment.body, '/submitted '))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted queue controller
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+      - name: Apply serialized claim transition
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/agent-jobber-queue.mjs
