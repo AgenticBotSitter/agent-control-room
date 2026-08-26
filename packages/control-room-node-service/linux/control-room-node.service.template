@@ -1,0 +1,24 @@
+[Unit]
+Description=Control Room Node Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{CONTROL_ROOM_NODE_USER}}
+Group={{CONTROL_ROOM_NODE_GROUP}}
+WorkingDirectory={{CONTROL_ROOM_NODE_RELEASE_DIR}}
+ExecStart={{CONTROL_ROOM_NODE_RUNTIME}} {{CONTROL_ROOM_NODE_RELEASE_DIR}}/node-service.js --config {{CONTROL_ROOM_NODE_CONFIG_PATH}}
+EnvironmentFile={{CONTROL_ROOM_NODE_ENV_REFERENCE_PATH}}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{CONTROL_ROOM_NODE_STATE_ROOT}} {{CONTROL_ROOM_NODE_LOG_ROOT}}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.control-room.node</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{CONTROL_ROOM_NODE_RUNTIME}}</string>
+    <string>{{CONTROL_ROOM_NODE_RELEASE_DIR}}/node-service.js</string>
+    <string>--config</string>
+    <string>{{CONTROL_ROOM_NODE_CONFIG_PATH}}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{CONTROL_ROOM_NODE_RELEASE_DIR}}</string>
+  <key>StandardOutPath</key>
+  <string>{{CONTROL_ROOM_NODE_LOG_ROOT}}/bridge.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{CONTROL_ROOM_NODE_LOG_ROOT}}/bridge.stderr.log</string>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
