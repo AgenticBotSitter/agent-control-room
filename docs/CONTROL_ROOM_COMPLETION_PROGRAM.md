@@ -23,11 +23,11 @@ All five items below are effect-free CR-5D production work on non-overlapping pa
 
 | ID | Owner | Product output | Dependency | State |
 |---|---|---|---|---|
-| CR5D-EXEC-001 | Bot | Deterministic synthetic executor, checkpoints, cancellation, and crash simulation | Frozen executor contract | READY NOW |
-| CR5D-EXEC-002 | Bot | Text artifact manifest and separate producer evidence claim | Frozen executor contract | READY NOW |
-| CR5D-UI-001 | Bot | Accessible artifact/evidence card that never confuses a producer claim with verification | Frozen initial UI contract | READY NOW |
-| CR5D-UI-002 | Bot | Accessible synthetic execution event timeline | Frozen initial UI contract | READY NOW |
-| CR5D-UI-003 | Bot | Worker drain/resume/quarantine request panel with no client-side authority | Frozen initial UI contract | READY NOW |
+| CR5D-EXEC-001 | Bot | Deterministic synthetic executor, checkpoints, cancellation, and crash simulation | Frozen executor contract | COMPLETE |
+| CR5D-EXEC-002 | Bot | Text artifact manifest and separate producer evidence claim | Frozen executor contract | COMPLETE |
+| CR5D-UI-001 | Bot | Accessible artifact/evidence card that never confuses a producer claim with verification | Frozen initial UI contract | COMPLETE |
+| CR5D-UI-002 | Bot | Accessible synthetic execution event timeline | Frozen initial UI contract | COMPLETE |
+| CR5D-UI-003 | Bot | Worker drain/resume/quarantine request panel with no client-side authority | Frozen initial UI contract | COMPLETE |
 
 ## Critical path
 
@@ -51,12 +51,12 @@ Work within a block runs in parallel where dependencies permit. Security and int
 
 | ID | Owner | Deliverable | Gate |
 |---|---|---|---|
-| CR5D-EXEC-001/002 | Bot | Executor and artifact/evidence modules | READY NOW |
-| CR5D-UI-001/002/003 | Bot | Evidence, timeline, and worker-operation components | READY NOW |
-| CR5D-INT-001 | Codex | Admitted execution coordinator; cancel on lease/authority expiry; one terminal outcome | EXEC-001/002 |
-| CR5D-INT-002 | Codex | Map lifecycle events to protocol events and durable bridge delivery | INT-001 |
+| CR5D-EXEC-001/002 | Bot | Executor and artifact/evidence modules | COMPLETE |
+| CR5D-UI-001/002/003 | Bot | Evidence, timeline, and worker-operation components | COMPLETE |
+| CR5D-INT-001 | Codex | Admitted execution coordinator; cancel on lease/authority expiry; one terminal outcome | COMPLETE |
+| CR5D-INT-002 | Codex | Map lifecycle events to protocol events and durable bridge delivery | CODEX ACTIVE |
 | CR5D-INT-003 | Codex | Persist attempts, checkpoints, terminal state, and artifact lineage transactionally | INT-001/002 |
-| CR5D-STOR-001 | Codex | Freeze and implement bounded artifact storage port plus in-memory adapter | EXEC-002 |
+| CR5D-STOR-001 | Codex | Freeze and implement bounded artifact storage port plus in-memory adapter | COMPLETE |
 | CR5D-STOR-002 | Codex | Disposable filesystem/object adapter with containment, atomicity, hashes, and ambiguity handling | STOR-001; OWNER for live namespace |
 | CR5D-CTRL-001 | Codex | Quarantine/drain command authority, version binding, idempotency, audit, and API | CR5C security core |
 | CR5D-UI-004 | Codex integration | Integrate accepted components into worker/artifact pages and safe command receipts | UI-001/002/003, CTRL-001 |
