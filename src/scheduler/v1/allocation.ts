@@ -1,6 +1,7 @@
+import { evaluateSchedulingConstraintsV1, type SchedulingConstraintsV1 } from "./constraints";
 import { placementRejectionV1, type PlacementConstraintV1 } from "./placement";
 
-export type AllocationRejection = "dependency_unsatisfied" | "fleet_ineligible" | "route_unavailable" | "maintenance" | "budget_exhausted" | "resource_unavailable" | "resource_draining" | "exclusive_resource_owned" | "preferred_resource_reserved" | "opportunistic_work_deferred" | "manual_assignment_required" | "invalid_candidate";
+export type AllocationRejection = "dependency_unsatisfied" | "fleet_ineligible" | "route_unavailable" | "maintenance" | "budget_exhausted" | "cost_limit_exceeded" | "privacy_denied" | "quality_insufficient" | "deadline_missed" | "resource_unavailable" | "resource_draining" | "exclusive_resource_owned" | "preferred_resource_reserved" | "opportunistic_work_deferred" | "manual_assignment_required" | "invalid_candidate";
 
 export interface AllocationCandidateV1 {
   projectId: string;
@@ -13,6 +14,7 @@ export interface AllocationCandidateV1 {
   downstreamUnlockCount: number;
   deadlineRisk: number;
   estimatedCostUsd: number;
+  constraints?: SchedulingConstraintsV1;
   placement?: PlacementConstraintV1;
   exclusions?: AllocationRejection[];
 }
@@ -45,7 +47,7 @@ export function chooseAllocationV1(candidates: AllocationCandidateV1[]): Allocat
     : undefined;
   const reasons = (candidate: AllocationCandidateV1): AllocationRejection[] => invalid(candidate)
     ? ["invalid_candidate"]
-    : [...new Set([...(candidate.exclusions ?? []), placementReason(candidate)].filter((reason): reason is AllocationRejection => reason !== undefined))].sort();
+    : [...new Set([...(candidate.exclusions ?? []), ...(candidate.constraints ? evaluateSchedulingConstraintsV1(candidate.constraints) : []), placementReason(candidate)].filter((reason): reason is AllocationRejection => reason !== undefined))].sort();
   const rejected = candidates.filter((candidate) => reasons(candidate).length > 0).map((candidate) => ({
     projectId: candidate.projectId, workItemId: candidate.workItemId, routeId: candidate.routeId, reasons: reasons(candidate),
   })).sort((a, b) => `${a.projectId}:${a.workItemId}:${a.routeId}`.localeCompare(`${b.projectId}:${b.workItemId}:${b.routeId}`));

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseAllocationV1, placementRejectionV1, STARVATION_BOUND_MINUTES_V1 } from "../src/scheduler/v1";
+import { chooseAllocationV1, evaluateSchedulingConstraintsV1, placementRejectionV1, STARVATION_BOUND_MINUTES_V1 } from "../src/scheduler/v1";
 
 test("CR6C chooses a deprived eligible project but never scores through a hard exclusion", () => {
   const result = chooseAllocationV1([
@@ -62,4 +62,30 @@ test("CR6C allocation cannot score through a placement rejection", () => {
   ]);
   assert.equal(result.selected?.workItemId, "work.allowed");
   assert.deepEqual(result.rejected, [{ projectId: "project.borrower", workItemId: "work.blocked", routeId: "route.gpu", reasons: ["exclusive_resource_owned"] }]);
+});
+
+test("CR6C evaluates cost, privacy, quality, deadlines, and resource state as hard constraints", () => {
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ cost: { estimatedMicrousd: 11, limitMicrousd: 10 } }), ["cost_limit_exceeded"]);
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ privacy: { privacyClass: "approved_provider", allowedPrivacyClasses: ["local", "private_tenant"] } }), ["privacy_denied"]);
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ quality: { observed: "provisional", minimum: "verified" } }), ["quality_insufficient"]);
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ deadline: { predictedFinishAt: "2026-08-28T00:01:00.000Z", deadlineAt: "2026-08-28T00:00:00.000Z", enforcement: "hard" } }), ["deadline_missed"]);
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ deadline: { predictedFinishAt: "2026-08-28T00:01:00.000Z", deadlineAt: "2026-08-28T00:00:00.000Z", enforcement: "soft" } }), []);
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ resourceState: "maintenance" }), ["maintenance"]);
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ resourceState: "draining" }), ["resource_draining"]);
+});
+
+test("CR6C constraint facts fail closed when malformed", () => {
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ cost: { estimatedMicrousd: -1, limitMicrousd: 10 } }), ["invalid_candidate"]);
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ privacy: { privacyClass: "local", allowedPrivacyClasses: [] } }), ["invalid_candidate"]);
+  assert.deepEqual(evaluateSchedulingConstraintsV1({ deadline: { predictedFinishAt: "tomorrow", deadlineAt: "2026-08-28T00:00:00.000Z", enforcement: "hard" } }), ["invalid_candidate"]);
+});
+
+test("CR6C allocation cannot score through policy constraints", () => {
+  const base = { targetShare: 100, recentShareUsed: 0, priority: 100, queueAgeMinutes: 10_000, downstreamUnlockCount: 10, deadlineRisk: 1, estimatedCostUsd: 0 };
+  const result = chooseAllocationV1([
+    { ...base, projectId: "project.denied", workItemId: "work.denied", routeId: "route.provider", constraints: { privacy: { privacyClass: "approved_provider", allowedPrivacyClasses: ["local"] } } },
+    { ...base, targetShare: 0, priority: 0, queueAgeMinutes: 0, downstreamUnlockCount: 0, deadlineRisk: 0, projectId: "project.allowed", workItemId: "work.allowed", routeId: "route.local", constraints: { privacy: { privacyClass: "local", allowedPrivacyClasses: ["local"] } } },
+  ]);
+  assert.equal(result.selected?.workItemId, "work.allowed");
+  assert.deepEqual(result.rejected, [{ projectId: "project.denied", workItemId: "work.denied", routeId: "route.provider", reasons: ["privacy_denied"] }]);
 });
