@@ -3,7 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { BenchmarkRunner, CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, decideRediscovery, discoveryPayloadSchema, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
+import { BenchmarkRunner, CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, decideRediscovery, discoveryPayloadSchema, evaluateFleetEligibility, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import { adaptPglite } from "../src/persistence/database";
 import { CanonicalStore } from "../src/persistence/canonical-store";
@@ -114,4 +114,10 @@ test("fleet history is tenant-bound, append-only by sequence, and exact-replay s
     await assert.rejects(store.ingestAuthenticated({ ...signal, fingerprint: `sha256:${"b".repeat(64)}` }, signal.observedAt));
     assert.equal((await raw.query<{ signal_sequence: number }>(`SELECT signal_sequence FROM control_node_fleet_current WHERE tenant_id='tenant:fleet'`)).rows[0]?.signal_sequence, 1);
   } finally { await raw.close(); }
+});
+
+test("fleet eligibility reports stable, actionable reasons instead of guessing", () => {
+  const telemetry = fleetSignalEnvelopeSchema.parse({ schemaVersion: "1.0.0", tenantId: "tenant:1", nodeId: "node:1", kind: "telemetry", source: "telemetry_port", sequence: 1, observedAt: "2026-08-26T00:00:00.000Z", expiresAt: "2026-08-26T00:05:00.000Z", trust: "reported", fingerprint: digest, payload: { samplingIntervalSeconds: 60, cpuUtilizationPercent: { quality: "observed", value: 20 }, availableMemoryBytes: { quality: "observed", value: 10_000 }, availableStorageBytes: { quality: "observed", value: 500 }, networkClass: "unmetered", powerState: "ac", thermalState: "nominal" } });
+  assert.deepEqual(evaluateFleetEligibility({ now: "2026-08-26T00:01:00.000Z", signals: [telemetry], requiredScratchBytes: 1_000, requiredCapabilityProbeId: "probe:gpu", requiredBenchmarkId: "benchmark:render" }), { eligible: false, reasons: ["scratch_insufficient", "capability_missing", "benchmark_missing"] });
+  assert.deepEqual(evaluateFleetEligibility({ now: "2026-08-26T00:06:00.000Z", signals: [telemetry], requiredScratchBytes: 1 }), { eligible: false, reasons: ["telemetry_stale"] });
 });
