@@ -1,4 +1,4 @@
-export type AllocationRejection = "dependency_unsatisfied" | "fleet_ineligible" | "route_unavailable" | "maintenance" | "budget_exhausted" | "resource_unavailable" | "manual_assignment_required";
+export type AllocationRejection = "dependency_unsatisfied" | "fleet_ineligible" | "route_unavailable" | "maintenance" | "budget_exhausted" | "resource_unavailable" | "manual_assignment_required" | "invalid_candidate";
 
 export interface AllocationCandidateV1 {
   projectId: string;
@@ -21,12 +21,24 @@ export interface AllocationDecisionV1 {
   rejected: Array<Pick<AllocationCandidateV1, "projectId" | "workItemId" | "routeId"> & { reasons: AllocationRejection[] }>;
 }
 
+const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/;
+function invalid(candidate: AllocationCandidateV1): boolean {
+  return ![candidate.projectId, candidate.workItemId, candidate.routeId].every((value) => safeId.test(value))
+    || !Number.isFinite(candidate.targetShare) || candidate.targetShare < 0 || candidate.targetShare > 100
+    || !Number.isFinite(candidate.recentShareUsed) || candidate.recentShareUsed < 0 || candidate.recentShareUsed > 1_000
+    || !Number.isInteger(candidate.priority) || candidate.priority < 0 || candidate.priority > 100
+    || !Number.isFinite(candidate.queueAgeMinutes) || candidate.queueAgeMinutes < 0
+    || !Number.isSafeInteger(candidate.downstreamUnlockCount) || candidate.downstreamUnlockCount < 0
+    || !Number.isFinite(candidate.deadlineRisk) || candidate.deadlineRisk < 0 || candidate.deadlineRisk > 1
+    || !Number.isFinite(candidate.estimatedCostUsd) || candidate.estimatedCostUsd < 0;
+}
+
 /** Pure, stable allocation order. Authority and atomic reservations remain downstream boundaries. */
 export function chooseAllocationV1(candidates: AllocationCandidateV1[]): AllocationDecisionV1 {
-  const rejected = candidates.filter((candidate) => candidate.exclusions?.length).map((candidate) => ({
-    projectId: candidate.projectId, workItemId: candidate.workItemId, routeId: candidate.routeId, reasons: [...(candidate.exclusions ?? [])].sort(),
+  const rejected = candidates.filter((candidate) => invalid(candidate) || candidate.exclusions?.length).map((candidate) => ({
+    projectId: candidate.projectId, workItemId: candidate.workItemId, routeId: candidate.routeId, reasons: invalid(candidate) ? ["invalid_candidate" as const] : [...(candidate.exclusions ?? [])].sort(),
   })).sort((a, b) => `${a.projectId}:${a.workItemId}:${a.routeId}`.localeCompare(`${b.projectId}:${b.workItemId}:${b.routeId}`));
-  const eligible = candidates.filter((candidate) => !candidate.exclusions?.length).map((candidate) => {
+  const eligible = candidates.filter((candidate) => !invalid(candidate) && !candidate.exclusions?.length).map((candidate) => {
     const fairShareDebt = Math.max(0, candidate.targetShare - candidate.recentShareUsed);
     const score = fairShareDebt * 2 + candidate.priority * 1.5 + Math.min(candidate.queueAgeMinutes, 1_440) * 0.02
       + candidate.downstreamUnlockCount * 4 + candidate.deadlineRisk * 10 - candidate.estimatedCostUsd * 20;

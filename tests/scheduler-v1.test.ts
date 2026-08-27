@@ -16,3 +16,9 @@ test("CR6C produces a stable order and an honest no-eligible explanation", () =>
   assert.equal(chooseAllocationV1(tied).selected?.projectId, "project.a");
   assert.deepEqual(chooseAllocationV1([{ ...tied[0], exclusions: ["maintenance"] }]).explanation, ["No candidate satisfies the hard scheduling rules."]);
 });
+
+test("CR6C rejects malformed numeric inputs before they can distort scoring", () => {
+  const candidate = { projectId: "project.a", workItemId: "work.a", routeId: "route.a", targetShare: 10, recentShareUsed: 0, priority: 1, queueAgeMinutes: 0, downstreamUnlockCount: 0, deadlineRisk: 0, estimatedCostUsd: 0 };
+  assert.deepEqual(chooseAllocationV1([{ ...candidate, estimatedCostUsd: Number.NaN }]).rejected[0]?.reasons, ["invalid_candidate"]);
+  assert.deepEqual(chooseAllocationV1([{ ...candidate, queueAgeMinutes: -1 }]).rejected[0]?.reasons, ["invalid_candidate"]);
+});
