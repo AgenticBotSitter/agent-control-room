@@ -1,4 +1,7 @@
+"use client";
+
 import type { JSX } from "react";
+import { useMemo, useState } from "react";
 import type { ActionInboxItemV1 } from "@/src/operator-surfaces/v1";
 
 function label(value: string): string {
@@ -18,15 +21,26 @@ function responseStatus(response: ActionInboxItemV1["legalResponses"][number]): 
 /** Presents declared response options only; it never submits, approves, or performs an operation. */
 export function ActionInbox(props: { items: readonly ActionInboxItemV1[]; title?: string }): JSX.Element {
   const { items, title = "Action Inbox" } = props;
+  const [kind, setKind] = useState<"all" | ActionInboxItemV1["kind"]>("all");
+  const [state, setState] = useState<"all" | ActionInboxItemV1["state"]>("all");
+  const filtered = useMemo(() => items.filter((item) => (kind === "all" || item.kind === kind) && (state === "all" || item.state === state)), [items, kind, state]);
+  const kinds = [...new Set(items.map((item) => item.kind))].sort();
+  const states = [...new Set(items.map((item) => item.state))].sort();
   return (
     <section className="action-inbox" aria-label={title}>
       <header>
         <h2>{title}</h2>
         <p>Items remain visible until their recorded state changes. Response choices are not actions.</p>
       </header>
-      {items.length === 0 ? <p className="empty-state">No action items match this view.</p> : (
+      <fieldset className="action-inbox-filters">
+        <legend>Filter displayed items</legend>
+        <label>Kind <select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}><option value="all">All kinds</option>{kinds.map((value) => <option key={value} value={value}>{label(value)}</option>)}</select></label>
+        <label>State <select value={state} onChange={(event) => setState(event.target.value as typeof state)}><option value="all">All states</option>{states.map((value) => <option key={value} value={value}>{label(value)}</option>)}</select></label>
+        <output aria-live="polite">{filtered.length} item{filtered.length === 1 ? "" : "s"} shown</output>
+      </fieldset>
+      {filtered.length === 0 ? <p className="empty-state">No action items match this view.</p> : (
         <ol className="action-inbox-list">
-          {items.map((item) => (
+          {filtered.map((item) => (
             <li key={item.id}>
               <article className="action-inbox-item">
                 <p className="action-inbox-meta">{label(item.kind)} · {label(item.state)} · Delivery: {label(item.deliveryState)}</p>

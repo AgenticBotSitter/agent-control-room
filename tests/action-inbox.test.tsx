@@ -27,6 +27,8 @@ test("renders the complete, safe attention record without pretending it took an 
   assert.match(html, /Confirmation required/);
   assert.match(html, /Unavailable: Approval Not Issued/);
   assert.match(html, /Response choices are not actions/);
+  assert.match(html, /Filter displayed items/);
+  assert.match(html, /1 item shown/);
   assert.ok(!html.toLowerCase().includes("success"));
 });
 
