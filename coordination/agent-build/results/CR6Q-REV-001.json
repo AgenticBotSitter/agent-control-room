@@ -1,0 +1,47 @@
+{
+  "schema": "control-room.agent-build-result/v2",
+  "capsulePath": "coordination/agent-build/capsules/CR6Q-REV-001.json",
+  "capsuleId": "CR6Q-REV-001",
+  "waveId": "CR6Q-REVIEW-1",
+  "baseCommit": "c5dcb81cd1167caa4804b5f3c2483d3503b70946",
+  "implementationCommit": "fd4de06776b587b639cd5162f085e2e4c1a7658a",
+  "producerRoute": "ziggy-windows",
+  "changedFiles": [
+    {
+      "path": "docs/hermes-reviews/CR6Q_FLEET_SCHEDULER_INDEPENDENT_REVIEW.md",
+      "additions": 77,
+      "deletions": 0
+    }
+  ],
+  "commands": [
+    {
+      "command": "npm run test:cr6q",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run check",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check integration/cr5d-synthetic-executor-1...HEAD",
+      "exitCode": 0
+    }
+  ],
+  "repairIterations": 0,
+  "failures": [],
+  "assumptions": [
+    "Producer branch agent/ziggy-windows/cr6q-rev-001 created in an isolated worktree from origin/integration/cr5d-synthetic-executor-1 at head 3fdcce9c08bf60ed4e880a3350b1ece691e5f344; baseCommit copied exactly from the capsule.",
+    "Dependencies installed with pnpm install --frozen-lockfile --offline (warm store, no network download) as the capsule's repository-dependencies tool prerequisite; no other setup effect occurred.",
+    "Acceptance commands executed exactly as declared; git diff --check ran after creating a local tracking branch for the integration ref inside the isolated worktree.",
+    "Independence verified before reading any review conclusions: all commits on the reviewed head are authored by Alastair Fraser (Codex); this reviewer profile authored none of them.",
+    "Full npm test (339 tests per the acceptance record), production build, rendered-route verification, and migration verification were not re-run by this reviewer and remain Codex-side evidence per docs/CR6Q_ACCEPTANCE.md."
+  ],
+  "effectCount": 0,
+  "safety": {
+    "secretsAbsent": true,
+    "privateHostDataAbsent": true,
+    "workerDidNotApproveOrMerge": true,
+    "scopeNotExpanded": true
+  },
+  "disposition": "ready-for-intake"
+}
