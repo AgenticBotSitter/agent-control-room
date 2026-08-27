@@ -320,8 +320,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .action-inbox-item h4 { margin: 10px 0 5px; color: var(--faint); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
 .action-inbox-responses { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
 .action-inbox-responses li { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; }
-.action-inbox-responses button { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--green); padding: 4px 6px; font-size: 9px; font-weight: 700; }
-.action-inbox-responses button:disabled { color: var(--faint); cursor: not-allowed; }
+.action-inbox-response { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--green); padding: 4px 6px; font-size: 9px; font-weight: 700; }.action-inbox-response.unavailable { color: var(--faint); }
 .service-incident-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
 .service-incident { border: 1px solid var(--border); border-left-width: 4px; border-radius: 10px; background: var(--surface-2); padding: 11px; }
 .service-incident.severity-critical { border-left-color: var(--red); }.service-incident.severity-warning { border-left-color: var(--amber); }

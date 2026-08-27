@@ -36,7 +36,7 @@ Saving Owner Focus uses a separate protected route. The server assigns the tenan
 
 The protected Bottleneck surface renders declared resource pressure, bounded work-item identifiers, and a redacted explanation. It is a read-only capacity projection: it never offers a capacity release, reservation, or dispatch action.
 
-Action Inbox filters are local display controls for kind and recorded state. They do not change the server query, hide records durably, submit a response, or alter authority.
+Action Inbox filters are local display controls for kind and recorded state. Legal response choices are read-only labels until a separately authorized response workflow exists. Neither changes the server query, hides records durably, submits a response, or alters authority.
 
 The protected active-work surface renders only canonical jobs observed in `leased`, `running`, or `waiting_approval` state. It includes stable job/project identifiers, job type, priority, required capability, and last update time. It does not infer progress, a worker reservation, completion, or dispatch authority.
 

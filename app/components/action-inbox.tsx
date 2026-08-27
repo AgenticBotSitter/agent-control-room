@@ -18,7 +18,7 @@ function responseStatus(response: ActionInboxItemV1["legalResponses"][number]): 
   return response.available ? confirmation : `Unavailable: ${label(response.unavailableReasonCode ?? "not_available")}. ${confirmation}`;
 }
 
-/** Presents declared response options only; it never submits, approves, or performs an operation. */
+/** Presents declared response options as read-only facts; it never submits, approves, or performs an operation. */
 export function ActionInbox(props: { items: readonly ActionInboxItemV1[]; title?: string }): JSX.Element {
   const { items, title = "Action Inbox" } = props;
   const [kind, setKind] = useState<"all" | ActionInboxItemV1["kind"]>("all");
@@ -55,7 +55,7 @@ export function ActionInbox(props: { items: readonly ActionInboxItemV1[]; title?
                 <ul className="action-inbox-responses">
                   {item.legalResponses.map((response) => (
                     <li key={response.id}>
-                      <button type="button" disabled={!response.available}>{response.label}</button>
+                      <span className={`action-inbox-response ${response.available ? "available" : "unavailable"}`}>{response.label}</span>
                       <span>{responseStatus(response)}</span>
                     </li>
                   ))}

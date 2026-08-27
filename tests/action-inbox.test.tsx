@@ -32,9 +32,10 @@ test("renders the complete, safe attention record without pretending it took an 
   assert.ok(!html.toLowerCase().includes("success"));
 });
 
-test("renders disabled unavailable responses and a clear empty state", () => {
+test("renders response choices as read-only facts and a clear empty state", () => {
   const html = render([item]);
-  assert.match(html, /<button[^>]*disabled[^>]*>Approve exact operation/);
+  assert.match(html, /action-inbox-response unavailable[^>]*>Approve exact operation/);
+  assert.doesNotMatch(html, /<button/);
   assert.match(render([]), /No action items match this view\./);
 });
 
