@@ -1,6 +1,6 @@
 # CR-6Q fleet and scheduler architecture review
 
-**Status:** Codex adversarial review and remediation complete; a clean independent review remains required before CR-6Q closes.
+**Status:** Complete. Codex adversarial review, clean independent review, finding disposition, and remediation are accepted.
 **Scope:** Effect-free CR-6A through CR-6E contracts and implementation at the recorded review head. This record does not qualify a native host, deployment identity boundary, or live resource.
 
 ## Acceptance matrix
@@ -15,7 +15,7 @@
 | Isolation | Fleet storage and reads bind tenant/node; the pure eligibility boundary now rejects a mixed tenant/node signal set instead of combining evidence across machines | Codex pass after identity fix |
 | Redaction and bounded effects | Secret canaries, unsafe display text, host-private material, browser tenant selection, scheduling overrides, outbox emission, and direct operational controls remain rejected or absent | Codex pass |
 | Regression coverage | The normal full-suite command now includes the protected operator API/UI, Owner Focus, target guards, and platform qualification safety tests that it previously omitted | Codex pass after suite fix |
-| Independent review | Jobber #155 produced a useful independent report, preserved in PR #156, but its reviewer ran an offline install despite an explicit stop condition. Codex accepted it as research only. Replacement jobber #157 requires a different profile and pre-existing dependencies. | Ready for direct claim |
+| Independent review | Jobber #157 was claimed through the queue controller by an independent Mac reviewer. PR #158 changed only the authorized report path, passed intake, used pre-existing dependencies without installing, and supplied reproducible command evidence. | Codex accepted |
 
 ## Closed findings
 
@@ -24,13 +24,15 @@
 3. **Administrative state presented as live state.** An enrolled `active` node appeared online even with missing or stale telemetry. It now appears degraded with `telemetry_missing` or `telemetry_stale` until fresh usable telemetry exists.
 4. **Future-time acceptance.** A future-granted read scope and a future-starting resource reservation were accepted. Both boundaries now reject a time that has not occurred.
 5. **Incomplete default regression suite.** Thirteen effect-free security, protected-API, and operator-surface test files were outside `npm test`. They are now part of the default full suite; rendered HTML remains in the separate post-build check.
+6. **Unbounded signal lifetime.** The signal contract named maximum lifetimes, but an envelope could claim a longer validity window. Schema validation and defensive freshness evaluation now enforce 24 hours for discovery, 5 minutes for telemetry, 7 days for capability, and 30 days for benchmark evidence. The operator projection also rejects overlong legacy telemetry and capability rows.
+7. **Replay after reservation termination.** An exact acquire replay could report success for a released or expired reservation, especially after clock regression. Exact replay now succeeds only while the recorded reservation remains active; terminated reservations fail closed as unavailable.
 
 ## Automated evidence
 
-- `npm run test:cr6q`: 41 passed, 0 failed.
-- `npm test`: 339 tests, 337 passed, 0 failed, 2 intentional platform skips.
+- `npm run test:cr6q`: 42 passed, 0 failed.
+- `npm test`: 340 tests, 338 passed, 0 failed, 2 intentional platform skips.
 - Type checking and ESLint pass.
-- Production build and rendered-route verification pass at integration commit `4d813ab832446c835cacb10bc14d26bbbada946c`; migration verification applies 0001 through 0019 and verifies 66 PostgreSQL tables. The smallest relevant checks run again after the clean report is integrated.
+- Production build and both rendered-route tests pass. Migration verification applies 0001 through 0019 and verifies 66 PostgreSQL tables.
 
 ## Retained gates
 
@@ -42,6 +44,6 @@
 
 ## Independent-review disposition
 
-PR #156 is retained because its source analysis found no policy, starvation, capacity, platform-drift, stale-evidence, isolation, or redaction defect and correctly found the test-count documentation error above. It does not close the gate: the reviewer ran `pnpm install --frozen-lockfile --offline` after capsule `CR6Q-REV-001` said to stop before any install. Cleanup or a corrected report cannot erase that historical authorization deviation. The telemetry reason-code overlap it noted is retained as non-blocking contract hygiene for the next consumer contract; no unsafe behavior was demonstrated.
+PR #156 is retained as research evidence only because its reviewer ran an offline install after capsule `CR6Q-REV-001` required a stop before any install. Replacement jobber #157 and PR #158 satisfy the independent-review gate without repeating that deviation.
 
-CR-7 must not begin until the independent reviewer reports a disposition and Codex closes or explicitly retains every finding.
+Codex accepted both substantive findings in PR #158 and remediated them as closed findings 6 and 7 above. The reported telemetry reason-code vocabulary overlap is retained as non-blocking contract hygiene because it demonstrated no unsafe behavior. CR-6Q is closed and CR-7 may begin; retained native, deployment, and owner-acceptance gates remain unchanged.

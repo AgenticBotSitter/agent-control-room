@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FLEET_SIGNAL_CONTRACT_V1 } from "./types";
+import { FLEET_SIGNAL_CONTRACT_V1, FLEET_SIGNAL_MAX_AGE_MS_V1 } from "./types";
 
 const id = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const label = z.string().min(1).max(120).regex(/^[a-zA-Z0-9][a-zA-Z0-9._: -]*$/);
@@ -92,7 +92,9 @@ export const fleetSignalEnvelopeSchema = z.discriminatedUnion("kind", [
   baseSignalSchema.extend({ kind: z.literal("capability"), source: z.literal("probe_runner"), payload: capabilityPayloadSchema }),
   baseSignalSchema.extend({ kind: z.literal("benchmark"), source: z.literal("benchmark_runner"), payload: benchmarkPayloadSchema }),
 ]).superRefine((value, context) => {
-  if (Date.parse(value.expiresAt) <= Date.parse(value.observedAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "signal expiry must be after observation" });
+  const lifetime = Date.parse(value.expiresAt) - Date.parse(value.observedAt);
+  if (lifetime <= 0) context.addIssue({ code: "custom", path: ["expiresAt"], message: "signal expiry must be after observation" });
+  else if (lifetime > FLEET_SIGNAL_MAX_AGE_MS_V1[value.kind]) context.addIssue({ code: "custom", path: ["expiresAt"], message: "signal lifetime exceeds the contract maximum" });
   if (value.trust === "verified") context.addIssue({ code: "custom", path: ["trust"], message: "node-submitted signals cannot self-report verified trust" });
 });
 

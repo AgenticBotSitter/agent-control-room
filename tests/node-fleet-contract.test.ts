@@ -33,6 +33,20 @@ test("fleet signals require node-bound sequence, safe trust, and non-expired fre
   assert.equal(fleetSignalEnvelopeSchema.safeParse({ ...signal, trust: "verified" }).success, false);
 });
 
+test("fleet signals enforce the contract maximum lifetime for every signal kind", () => {
+  const base = { schemaVersion: "1.0.0" as const, tenantId: "tenant:1", nodeId: "node:1", sequence: 1, observedAt: "2026-08-26T00:00:00.000Z", trust: "reported" as const, fingerprint: digest };
+  const signals = [
+    { ...base, kind: "discovery" as const, source: "static_collector" as const, expiresAt: "2026-08-27T00:00:00.001Z", payload: discovery },
+    { ...base, kind: "telemetry" as const, source: "telemetry_port" as const, expiresAt: "2026-08-26T00:05:00.001Z", payload: { samplingIntervalSeconds: 60, cpuUtilizationPercent: { quality: "observed" as const, value: 20 }, availableMemoryBytes: { quality: "observed" as const, value: 10_000 }, availableStorageBytes: { quality: "observed" as const, value: 500 }, networkClass: "unmetered" as const, powerState: "ac" as const, thermalState: "nominal" as const } },
+    { ...base, kind: "capability" as const, source: "probe_runner" as const, expiresAt: "2026-09-02T00:00:00.001Z", payload: { probeId: "probe.gpu", probeVersion: "1.0.0", outcome: "pass" as const, reasonCode: "passed" } },
+    { ...base, kind: "benchmark" as const, source: "benchmark_runner" as const, expiresAt: "2026-09-25T00:00:00.001Z", payload: { benchmarkId: "benchmark.render", benchmarkVersion: "1.0.0", workloadDigest: digest, outcome: "pass" as const, reasonCode: "completed", normalizedScore: 1, scoreUnit: "points", environmentFingerprint: digest } },
+  ];
+  for (const signal of signals) {
+    assert.equal(fleetSignalEnvelopeSchema.safeParse(signal).success, false, signal.kind);
+    assert.deepEqual(evaluateFleetSignalFreshness(signal, "2026-08-26T00:01:00.000Z"), { eligible: false, code: "signal_lifetime_exceeded" }, signal.kind);
+  }
+});
+
 test("static discovery normalizes only approved aggregate facts and is deterministic", () => {
   const result = normalizeStaticDiscovery({ ...discovery, gpuClasses: ["apple-gpu", "apple-gpu"], inventory: [...discovery.inventory].reverse() });
   assert.deepEqual(Object.keys(result.payload).sort(), ["architecture", "cpuLogicalCores", "executorManifestDigest", "gpuClasses", "inventory", "memoryBytes", "networkClass", "platform", "storage"]);

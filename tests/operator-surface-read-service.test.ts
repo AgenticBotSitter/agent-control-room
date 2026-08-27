@@ -122,7 +122,8 @@ test("CR6Q fleet projection never turns stale, future, failed, or blocked eviden
     const canonical = new CanonicalStore(client);
     const signals = new FleetSignalStore(client);
     const digest = `sha256:${"f".repeat(64)}`;
-    const nodes = ["fresh", "expired", "future", "blocked"];
+    const signalNodes = ["fresh", "expired", "future", "blocked"];
+    const nodes = [...signalNodes, "overlong"];
     for (const suffix of nodes) {
       const id = `node:${suffix}`;
       const node: NodeRecord = {
@@ -147,18 +148,22 @@ test("CR6Q fleet projection never turns stale, future, failed, or blocked eviden
       future: ["2026-08-27T12:01:00.000Z", "2026-08-27T12:06:00.000Z"],
       blocked: ["2026-08-27T11:59:00.000Z", "2026-08-27T12:04:00.000Z"],
     } as const;
-    for (const suffix of nodes) {
+    for (const suffix of signalNodes) {
       const [observedAt, expiresAt] = timing[suffix as keyof typeof timing];
       const trust = suffix === "blocked" ? "blocked" as const : "reported" as const;
       await signals.ingestAuthenticated({ schemaVersion: "1.0.0", tenantId: "tenant:1", nodeId: `node:${suffix}`, kind: "telemetry", sequence: 1, observedAt, expiresAt, trust, fingerprint: digest, source: "telemetry_port", payload: telemetryPayload }, now);
       await signals.ingestAuthenticated({ schemaVersion: "1.0.0", tenantId: "tenant:1", nodeId: `node:${suffix}`, kind: "capability", sequence: 1, observedAt, expiresAt, trust, fingerprint: digest, source: "probe_runner", payload: { probeId: "probe:render", probeVersion: "1.0.0", outcome: suffix === "blocked" ? "blocked" : "pass", reasonCode: suffix === "blocked" ? "probe_blocked" : "probe_passed", evidenceDigest: digest } }, now);
     }
+    const overlongTelemetry = { schemaVersion: "1.0.0", tenantId: "tenant:1", nodeId: "node:overlong", kind: "telemetry", sequence: 1, observedAt: "2026-08-27T11:59:00.000Z", expiresAt: "2027-08-27T11:59:00.000Z", trust: "reported", fingerprint: digest, source: "telemetry_port", payload: telemetryPayload };
+    const overlongCapability = { schemaVersion: "1.0.0", tenantId: "tenant:1", nodeId: "node:overlong", kind: "capability", sequence: 1, observedAt: "2026-08-27T11:59:00.000Z", expiresAt: "2027-08-27T11:59:00.000Z", trust: "reported", fingerprint: digest, source: "probe_runner", payload: { probeId: "probe:render", probeVersion: "1.0.0", outcome: "pass", reasonCode: "probe_passed", evidenceDigest: digest } };
+    await raw.query(`INSERT INTO control_node_fleet_current (tenant_id,node_id,signal_kind,signal_subject_id,signal_sequence,fingerprint,trust,observed_at,expires_at,payload) VALUES ('tenant:1','node:overlong','telemetry','node',1,$1,'reported',$2,$3,$4::jsonb),('tenant:1','node:overlong','capability','probe:render',1,$1,'reported',$2,$3,$5::jsonb)`, [digest,overlongTelemetry.observedAt,overlongTelemetry.expiresAt,JSON.stringify(overlongTelemetry),JSON.stringify(overlongCapability)]);
     const fleet = await new DatabaseOperatorFleetReadSourceV1(client).fleet({ tenantId: "tenant:1", now });
     const byId = new Map(fleet.map((worker) => [worker.workerId, worker]));
     assert.deepEqual({ state: byId.get("node:fresh")?.state, reason: byId.get("node:fresh")?.stateReasonCode, telemetry: byId.get("node:fresh")?.telemetryState, capability: byId.get("node:fresh")?.capabilityState }, { state: "online", reason: undefined, telemetry: "fresh", capability: "provisional" });
     assert.deepEqual({ state: byId.get("node:expired")?.state, reason: byId.get("node:expired")?.stateReasonCode, telemetry: byId.get("node:expired")?.telemetryState, capability: byId.get("node:expired")?.capabilityState }, { state: "degraded", reason: "telemetry_stale", telemetry: "stale", capability: "expired" });
     assert.deepEqual({ state: byId.get("node:future")?.state, reason: byId.get("node:future")?.stateReasonCode, telemetry: byId.get("node:future")?.telemetryState, capability: byId.get("node:future")?.capabilityState }, { state: "degraded", reason: "telemetry_stale", telemetry: "stale", capability: "unavailable" });
     assert.deepEqual({ state: byId.get("node:blocked")?.state, reason: byId.get("node:blocked")?.stateReasonCode, telemetry: byId.get("node:blocked")?.telemetryState, capability: byId.get("node:blocked")?.capabilityState }, { state: "degraded", reason: "telemetry_missing", telemetry: "missing", capability: "unavailable" });
+    assert.deepEqual({ state: byId.get("node:overlong")?.state, reason: byId.get("node:overlong")?.stateReasonCode, telemetry: byId.get("node:overlong")?.telemetryState, capability: byId.get("node:overlong")?.capabilityState }, { state: "degraded", reason: "telemetry_missing", telemetry: "missing", capability: "unavailable" });
     assert.deepEqual(await new DatabaseOperatorFleetReadSourceV1(client).fleet({ tenantId: "tenant:2", now }), []);
   } finally { await raw.close(); }
 });

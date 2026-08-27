@@ -36,12 +36,12 @@ export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourc
       fresh_capability_count: number; verified_capability_count: number; expired_capability_count: number;
     }>(
       `SELECT n.id,n.state,n.payload,n.updated_at,
-        MAX(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') AND f.observed_at <= $2::timestamptz THEN f.observed_at ELSE NULL END) AS valid_telemetry_observed_at,
-        COUNT(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') THEN 1 ELSE NULL END)::int AS usable_telemetry_count,
-        COUNT(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS fresh_telemetry_count,
-        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust IN ('reported','verified') AND f.payload->'payload'->>'outcome'='pass' AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS fresh_capability_count,
-        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust='verified' AND f.payload->'payload'->>'outcome'='pass' AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS verified_capability_count,
-        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust IN ('reported','verified') AND f.payload->'payload'->>'outcome'='pass' AND f.observed_at <= $2::timestamptz AND f.expires_at <= $2::timestamptz THEN 1 ELSE NULL END)::int AS expired_capability_count
+        MAX(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') AND f.expires_at <= f.observed_at + INTERVAL '5 minutes' AND f.observed_at <= $2::timestamptz THEN f.observed_at ELSE NULL END) AS valid_telemetry_observed_at,
+        COUNT(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') AND f.expires_at <= f.observed_at + INTERVAL '5 minutes' THEN 1 ELSE NULL END)::int AS usable_telemetry_count,
+        COUNT(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') AND f.expires_at <= f.observed_at + INTERVAL '5 minutes' AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS fresh_telemetry_count,
+        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust IN ('reported','verified') AND f.payload->'payload'->>'outcome'='pass' AND f.expires_at <= f.observed_at + INTERVAL '7 days' AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS fresh_capability_count,
+        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust='verified' AND f.payload->'payload'->>'outcome'='pass' AND f.expires_at <= f.observed_at + INTERVAL '7 days' AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS verified_capability_count,
+        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust IN ('reported','verified') AND f.payload->'payload'->>'outcome'='pass' AND f.expires_at <= f.observed_at + INTERVAL '7 days' AND f.observed_at <= $2::timestamptz AND f.expires_at <= $2::timestamptz THEN 1 ELSE NULL END)::int AS expired_capability_count
        FROM control_nodes n
        LEFT JOIN control_node_fleet_current f ON f.tenant_id=n.tenant_id AND f.node_id=n.id
        WHERE n.tenant_id=$1

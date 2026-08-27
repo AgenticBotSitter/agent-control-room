@@ -21,8 +21,10 @@ test("CR6C reservations serialize capacity, exact replay, release, and expiry wi
     assert.equal((await store.acquire(request, at)).replayed, true);
     await assert.rejects(store.acquire({ ...request, id: "reservation.2", projectId: "project:two" }, at), (error: unknown) => error instanceof ResourceReservationError && error.safeCode === "resource_unavailable");
     assert.equal((await store.release({ tenantId: request.tenantId, id: request.id, releasedAt: "2026-08-27T00:01:00.000Z" })).state, "released");
+    await assert.rejects(store.acquire(request, "2026-08-27T00:02:00.000Z"), (error: unknown) => error instanceof ResourceReservationError && error.safeCode === "resource_unavailable");
     assert.equal((await store.acquire({ ...request, id: "reservation.2", projectId: "project:two" }, "2026-08-27T00:01:00.000Z")).replayed, false);
     assert.equal((await store.acquire({ ...request, id: "reservation.3", projectId: "project:three", acquiredAt: "2026-08-27T00:06:00.000Z", expiresAt: "2026-08-27T00:07:00.000Z" }, "2026-08-27T00:06:00.000Z")).replayed, false);
+    await assert.rejects(store.acquire({ ...request, id: "reservation.2", projectId: "project:two" }, "2026-08-27T00:04:00.000Z"), (error: unknown) => error instanceof ResourceReservationError && error.safeCode === "resource_unavailable");
   } finally { await raw.close(); }
 });
 

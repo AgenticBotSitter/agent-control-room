@@ -64,6 +64,7 @@ export class ResourceReservationStore {
       if (existing.rows[0]) {
         const reservation = rowToReservation(existing.rows[0], input.capacityUnits);
         if (!sameReservation(reservation, input)) throw new ResourceReservationError("reservation_conflict");
+        if (reservation.state !== "active") throw new ResourceReservationError("resource_unavailable");
         return { reservation, replayed: true };
       }
       const used = await tx.query<{ used_units: number }>(`SELECT COALESCE(SUM(units),0)::bigint AS used_units FROM control_resource_reservations WHERE tenant_id=$1 AND resource_key=$2 AND state='active' AND expires_at > $3`, [input.tenantId,input.resourceKey,now]);
