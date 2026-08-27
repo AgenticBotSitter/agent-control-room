@@ -1,6 +1,6 @@
 # CR-6D service, schedule, incident, and reconciliation contract
 
-**Status:** Active, effect-free implementation contract.
+**Status:** Complete for effect-free implementation.
 
 ## Scheduling rules
 
@@ -17,6 +17,7 @@
 2. Reconciliation compares declared desired state with observed evidence and creates a safe proposal or incident projection. It does not start, stop, or repair a service.
 3. An incident is keyed by the tenant, source type, source identity, and correlation key. Repeated evidence updates one open incident; recovery evidence resolves it only after the contract-defined recovery condition.
    A later recurrence creates a new generation, preserving the resolved record. Opening and resolving an incident each write a tenant-bound idempotent outbox proposal.
+   Every open incident carries a stable safe remedy code (for example, inspect the declared service or refresh stale observation evidence); it never invents a machine-changing repair.
 4. All persistence and dispatch work is transactional and idempotent. An outbox message names the exact occurrence or incident projection and is retried through existing delivery boundaries.
    An occurrence becomes dispatched only after that exact outbox row is marked delivered. Startup reconciliation repairs a delivered-outbox/pending-occurrence mismatch without producing another occurrence.
 
