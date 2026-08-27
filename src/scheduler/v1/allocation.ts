@@ -1,4 +1,6 @@
-export type AllocationRejection = "dependency_unsatisfied" | "fleet_ineligible" | "route_unavailable" | "maintenance" | "budget_exhausted" | "resource_unavailable" | "manual_assignment_required" | "invalid_candidate";
+import { placementRejectionV1, type PlacementConstraintV1 } from "./placement";
+
+export type AllocationRejection = "dependency_unsatisfied" | "fleet_ineligible" | "route_unavailable" | "maintenance" | "budget_exhausted" | "resource_unavailable" | "resource_draining" | "exclusive_resource_owned" | "preferred_resource_reserved" | "opportunistic_work_deferred" | "manual_assignment_required" | "invalid_candidate";
 
 export interface AllocationCandidateV1 {
   projectId: string;
@@ -11,6 +13,7 @@ export interface AllocationCandidateV1 {
   downstreamUnlockCount: number;
   deadlineRisk: number;
   estimatedCostUsd: number;
+  placement?: PlacementConstraintV1;
   exclusions?: AllocationRejection[];
 }
 
@@ -37,10 +40,16 @@ function invalid(candidate: AllocationCandidateV1): boolean {
 
 /** Pure, stable allocation order. Authority and atomic reservations remain downstream boundaries. */
 export function chooseAllocationV1(candidates: AllocationCandidateV1[]): AllocationDecisionV1 {
-  const rejected = candidates.filter((candidate) => invalid(candidate) || candidate.exclusions?.length).map((candidate) => ({
-    projectId: candidate.projectId, workItemId: candidate.workItemId, routeId: candidate.routeId, reasons: invalid(candidate) ? ["invalid_candidate" as const] : [...(candidate.exclusions ?? [])].sort(),
+  const placementReason = (candidate: AllocationCandidateV1): AllocationRejection | undefined => candidate.placement
+    ? placementRejectionV1(candidate, candidate.placement)
+    : undefined;
+  const reasons = (candidate: AllocationCandidateV1): AllocationRejection[] => invalid(candidate)
+    ? ["invalid_candidate"]
+    : [...new Set([...(candidate.exclusions ?? []), placementReason(candidate)].filter((reason): reason is AllocationRejection => reason !== undefined))].sort();
+  const rejected = candidates.filter((candidate) => reasons(candidate).length > 0).map((candidate) => ({
+    projectId: candidate.projectId, workItemId: candidate.workItemId, routeId: candidate.routeId, reasons: reasons(candidate),
   })).sort((a, b) => `${a.projectId}:${a.workItemId}:${a.routeId}`.localeCompare(`${b.projectId}:${b.workItemId}:${b.routeId}`));
-  const eligible = candidates.filter((candidate) => !invalid(candidate) && !candidate.exclusions?.length).map((candidate) => {
+  const eligible = candidates.filter((candidate) => reasons(candidate).length === 0).map((candidate) => {
     const fairShareDebt = Math.max(0, candidate.targetShare - candidate.recentShareUsed);
     const score = fairShareDebt * 2 + candidate.priority * 1.5 + Math.min(candidate.queueAgeMinutes, 1_440) * 0.02
       + candidate.downstreamUnlockCount * 4 + candidate.deadlineRisk * 10 - candidate.estimatedCostUsd * 20;

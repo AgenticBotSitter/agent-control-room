@@ -12,6 +12,7 @@
 5. A reservation is a separate atomic operation. It must bind tenant, project, work item, route, resource key, capacity units, a bounded expiry, and a decision digest. A lost or expired reservation is not an execution permission.
 6. Resource contention, lease loss, and recovery are visible as stable reason codes. The scheduler reports why each candidate was excluded and which limiting resource is the bottleneck; it never invents a remedy or raw host detail.
 7. Manual, exclusive, and draining resources are not borrowed. Preferred resources may be borrowed only when their preferred project has no eligible waiting work.
+   Shared resources accept any otherwise eligible project. Opportunistic resources defer whenever normal eligible work is waiting. Manual placement requires an exact project/work/route assignment. Missing facts fail closed instead of silently making a constrained resource shareable.
 
 ## Effect boundary
 

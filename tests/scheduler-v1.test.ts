@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseAllocationV1, STARVATION_BOUND_MINUTES_V1 } from "../src/scheduler/v1";
+import { chooseAllocationV1, placementRejectionV1, STARVATION_BOUND_MINUTES_V1 } from "../src/scheduler/v1";
 
 test("CR6C chooses a deprived eligible project but never scores through a hard exclusion", () => {
   const result = chooseAllocationV1([
@@ -32,4 +32,34 @@ test("CR6C gives the oldest eligible work a hard starvation bound without bypass
   ]);
   assert.equal(result.selected?.workItemId, "work:old");
   assert.match(result.explanation.join(" "), /starvation bound/i);
+});
+
+test("CR6C placement modes enforce ownership, preference, sharing, and draining before scoring", () => {
+  const subject = { projectId: "project.borrower", workItemId: "work.1", routeId: "route.gpu" };
+  assert.equal(placementRejectionV1(subject, { resourceKey: "gpu.1", mode: "exclusive", exclusiveProjectId: "project.owner" }), "exclusive_resource_owned");
+  assert.equal(placementRejectionV1({ ...subject, projectId: "project.owner" }, { resourceKey: "gpu.1", mode: "exclusive", exclusiveProjectId: "project.owner" }), undefined);
+  assert.equal(placementRejectionV1(subject, { resourceKey: "gpu.1", mode: "preferred", preferredProjectIds: ["project.owner"], projectsWithEligibleWaitingWork: ["project.owner"] }), "preferred_resource_reserved");
+  assert.equal(placementRejectionV1(subject, { resourceKey: "gpu.1", mode: "preferred", preferredProjectIds: ["project.owner"], projectsWithEligibleWaitingWork: [] }), undefined);
+  assert.equal(placementRejectionV1(subject, { resourceKey: "gpu.1", mode: "shared" }), undefined);
+  assert.equal(placementRejectionV1(subject, { resourceKey: "gpu.1", mode: "shared", draining: true }), "resource_draining");
+});
+
+test("CR6C opportunistic and manual placement require explicit safe scheduling facts", () => {
+  const subject = { projectId: "project.a", workItemId: "work.a", routeId: "route.a" };
+  assert.equal(placementRejectionV1(subject, { resourceKey: "worker.a", mode: "opportunistic", normalEligibleWorkWaiting: true }), "opportunistic_work_deferred");
+  assert.equal(placementRejectionV1(subject, { resourceKey: "worker.a", mode: "opportunistic", normalEligibleWorkWaiting: false }), undefined);
+  assert.equal(placementRejectionV1(subject, { resourceKey: "worker.a", mode: "opportunistic" }), "invalid_candidate");
+  assert.equal(placementRejectionV1(subject, { resourceKey: "worker.a", mode: "manual" }), "manual_assignment_required");
+  assert.equal(placementRejectionV1(subject, { resourceKey: "worker.a", mode: "manual", manualAssignment: subject }), undefined);
+  assert.equal(placementRejectionV1(subject, { resourceKey: "worker.a", mode: "manual", manualAssignment: { ...subject, workItemId: "work.other" } }), "manual_assignment_required");
+});
+
+test("CR6C allocation cannot score through a placement rejection", () => {
+  const base = { targetShare: 100, recentShareUsed: 0, priority: 100, queueAgeMinutes: 10_000, downstreamUnlockCount: 10, deadlineRisk: 1, estimatedCostUsd: 0 };
+  const result = chooseAllocationV1([
+    { ...base, projectId: "project.borrower", workItemId: "work.blocked", routeId: "route.gpu", placement: { resourceKey: "gpu.1", mode: "exclusive", exclusiveProjectId: "project.owner" } },
+    { ...base, targetShare: 0, priority: 0, queueAgeMinutes: 0, downstreamUnlockCount: 0, deadlineRisk: 0, projectId: "project.owner", workItemId: "work.allowed", routeId: "route.gpu", placement: { resourceKey: "gpu.1", mode: "exclusive", exclusiveProjectId: "project.owner" } },
+  ]);
+  assert.equal(result.selected?.workItemId, "work.allowed");
+  assert.deepEqual(result.rejected, [{ projectId: "project.borrower", workItemId: "work.blocked", routeId: "route.gpu", reasons: ["exclusive_resource_owned"] }]);
 });
