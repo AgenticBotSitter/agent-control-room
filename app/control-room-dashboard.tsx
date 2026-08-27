@@ -12,6 +12,8 @@ import {
   workItems,
 } from "@/src/fixtures/data";
 import { portfolioScheduleScenario, transcriptionScenarios } from "@/src/simulator/scenarios";
+import { cr6eActionInboxFixture } from "./fixtures/cr6e-ui";
+import { ActionInbox } from "./components/action-inbox";
 
 type Scope = "all" | (typeof projects)[number]["id"];
 type ScenarioKey = keyof typeof transcriptionScenarios;
@@ -66,6 +68,7 @@ export function ControlRoomDashboard() {
   );
   const scopedIds = new Set(scopedProjects.map((project) => project.id));
   const scopedAttention = attentionItems.filter((item) => scopedIds.has(item.source.projectId));
+  const scopedActionInbox = cr6eActionInboxFixture.filter((item) => !item.projectId || scopedIds.has(item.projectId));
   const scopedBlockers = blockers.filter((item) => scopedIds.has(item.source.projectId));
   const scopedWork = workItems.filter((item) => scopedIds.has(item.source.projectId));
   const scopedActivity = recentActivity.filter((item) => scopedIds.has(item.projectId));
@@ -188,22 +191,9 @@ export function ControlRoomDashboard() {
           <section id="attention" className="section-block panel">
             <div className="section-heading">
               <div><p className="eyebrow">Decision queue</p><h2>Needs your attention</h2></div>
-              <span className="count-pill">{scopedAttention.length}</span>
+              <span className="count-pill">{scopedActionInbox.length}</span>
             </div>
-            <div className="attention-list">
-              {scopedAttention.map((item) => (
-                <article key={item.id} className="attention-item">
-                  <span className={`attention-symbol type-${item.type}`}>{item.type === "decision" ? "?" : item.type === "review" ? "◉" : "!"}</span>
-                  <div>
-                    <small>{projectName(item.source.projectId)} · {stateLabel(item.type)}</small>
-                    <h3>{item.title}</h3>
-                    <p>{item.summary}</p>
-                  </div>
-                  <Link href={`/projects/${encodeURIComponent(item.source.projectId)}`} prefetch={false} aria-label={`Open ${item.title}`}>→</Link>
-                </article>
-              ))}
-              {!scopedAttention.length && <p className="empty-state">Nothing needs your decision in this scope.</p>}
-            </div>
+            <ActionInbox items={scopedActionInbox} title="Needs your attention" />
           </section>
 
           <section className="section-block panel">

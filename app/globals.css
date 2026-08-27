@@ -291,6 +291,21 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .attention-item h3, .running-item h3 { margin: 2px 0 0; font-size: 12px; font-weight: 730; }
 .attention-item p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
 .attention-item > a { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 8px; background: var(--surface-2); color: var(--green); }
+.action-inbox > header > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.action-inbox > header > p { margin: 0 0 10px; color: var(--muted); font-size: 10px; }
+.action-inbox-list { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.action-inbox-item { border-top: 1px solid var(--border); padding-top: 11px; }
+.action-inbox-list > li:first-child .action-inbox-item { border-top: 0; padding-top: 0; }
+.action-inbox-meta { margin: 0; color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.action-inbox-item h3 { margin: 4px 0 9px; font-size: 12px; }
+.action-inbox-item dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin: 0; color: var(--muted); font-size: 9px; }
+.action-inbox-item dt { color: var(--faint); font-weight: 750; }
+.action-inbox-item dd { margin: 0; overflow-wrap: anywhere; }
+.action-inbox-item h4 { margin: 10px 0 5px; color: var(--faint); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+.action-inbox-responses { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.action-inbox-responses li { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; }
+.action-inbox-responses button { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--green); padding: 4px 6px; font-size: 9px; font-weight: 700; }
+.action-inbox-responses button:disabled { color: var(--faint); cursor: not-allowed; }
 .empty-state { color: var(--muted); font-size: 12px; text-align: center; }
 .live-label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; font-weight: 700; }
 .running-item { border-top: 1px solid var(--border); padding: 14px 0; }

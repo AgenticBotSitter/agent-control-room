@@ -19,17 +19,17 @@ function responseStatus(response: ActionInboxItemV1["legalResponses"][number]): 
 export function ActionInbox(props: { items: readonly ActionInboxItemV1[]; title?: string }): JSX.Element {
   const { items, title = "Action Inbox" } = props;
   return (
-    <section aria-label={title}>
+    <section className="action-inbox" aria-label={title}>
       <header>
         <h2>{title}</h2>
         <p>Items remain visible until their recorded state changes. Response choices are not actions.</p>
       </header>
-      {items.length === 0 ? <p>No action items match this view.</p> : (
-        <ol>
+      {items.length === 0 ? <p className="empty-state">No action items match this view.</p> : (
+        <ol className="action-inbox-list">
           {items.map((item) => (
             <li key={item.id}>
-              <article>
-                <p>{label(item.kind)} · {label(item.state)} · Delivery: {label(item.deliveryState)}</p>
+              <article className="action-inbox-item">
+                <p className="action-inbox-meta">{label(item.kind)} · {label(item.state)} · Delivery: {label(item.deliveryState)}</p>
                 <h3>{item.requestedAction}</h3>
                 <dl>
                   <dt>Reason</dt><dd>{label(item.reasonCode)}</dd>
@@ -38,7 +38,7 @@ export function ActionInbox(props: { items: readonly ActionInboxItemV1[]; title?
                   <dt>Timing</dt><dd>Created {item.createdAt}. {expiry(item)}</dd>
                 </dl>
                 <h4>Legal responses</h4>
-                <ul>
+                <ul className="action-inbox-responses">
                   {item.legalResponses.map((response) => (
                     <li key={response.id}>
                       <button type="button" disabled={!response.available}>{response.label}</button>

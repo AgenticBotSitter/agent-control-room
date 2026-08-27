@@ -24,6 +24,7 @@ test("server-renders the Control Room portfolio", async () => {
   assert.match(html, /Website Operations/);
   assert.match(html, /Simulation only/);
   assert.match(html, /No live connections/);
+  assert.match(html, /Needs Me/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
