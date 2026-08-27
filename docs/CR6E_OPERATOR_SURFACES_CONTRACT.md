@@ -40,4 +40,6 @@ The protected active-work surface renders only canonical jobs observed in `lease
 
 The protected portfolio surface derives project status only from canonical workflows and jobs. It exposes a stable project identifier, counts of workflows, active/waiting/failed jobs, and the last recorded activity. It excludes request titles, objectives, progress estimates, authority envelopes, and assignment claims, and it cannot schedule, retry, or dispatch work.
 
+Detail pages that have not yet received an individually scoped protected read are explicitly labelled synthetic fixtures. They provide a keyboard skip link and never claim that fixture status, history, assignments, capacity, or capabilities are protected observations.
+
 The protected services and schedules surface renders only tenant-bound durable status: stable identifiers, project, safe state/type/status codes, observation times, schedule target metadata, timezone, recorded next run, and bounded idempotency window. It deliberately excludes desired-state hashes and schedule expressions. It is read-only: a displayed next run is not a dispatch promise, and the surface cannot start, pause, repair, or alter a service or schedule.

@@ -32,7 +32,8 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
 
   return (
     <div className="detail-shell">
-      <main className="detail-main">
+      <a className="skip-link" href="#project-detail">Skip to project details</a>
+      <main id="project-detail" className="detail-main" tabIndex={-1}>
         <Link className="detail-back" href="/" prefetch={false}>← Back to all projects</Link>
         <header className="detail-hero">
           <div>
@@ -43,7 +44,8 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
           <span className={`health health-${project.health}`}>{label(project.health)}</span>
         </header>
 
-        <section className="metric-grid section-block" aria-label="Project summary">
+        <p className="operator-data-status unavailable" role="status">This project detail is a synthetic fixture. Protected project status is available on the portfolio dashboard.</p>
+        <section className="metric-grid section-block" aria-label="Synthetic project summary">
           <article className="metric-card"><span className="metric-icon green">↗</span><div><small>Progress</small><strong>{project.progressPercent}%</strong><em>{label(project.domainState)}</em></div></article>
           <article className="metric-card"><span className="metric-icon amber">!</span><div><small>Blockers</small><strong>{project.blockerCount}</strong><em>{project.attentionCount} need attention</em></div></article>
           <article className="metric-card"><span className="metric-icon blue">◫</span><div><small>Workers</small><strong>{projectWorkers.length}</strong><em>visible to project</em></div></article>
@@ -52,7 +54,7 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
 
         <div className="detail-grid">
           <section className="detail-card">
-            <h2>Work and status</h2>
+            <h2>Fixture work and status</h2>
             <div className="detail-list">
               {projectWork.map((item) => (
                 <article key={item.id}>
@@ -83,7 +85,7 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
         </div>
 
         <section className="detail-card section-block">
-          <h2>Safe blockers</h2>
+          <h2>Fixture blockers</h2>
           <div className="blocker-grid">
             {projectBlockers.map((item) => <article key={item.id} className={`blocker-card severity-${item.severity}`}><div><span>{label(item.severity)}</span><small>{label(item.responsibleRole)}</small></div><h3>{item.title}</h3><p>{item.safeRemedy}</p></article>)}
             {!projectBlockers.length && <p className="empty-state">No blockers in this fixture snapshot.</p>}

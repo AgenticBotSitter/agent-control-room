@@ -31,7 +31,10 @@ test("server-renders the Control Room portfolio", async () => {
 test("server-renders project and worker drill-down routes", async () => {
   const project = await render("/projects/project.wayfarer.lazy-river");
   assert.equal(project.status, 200);
-  assert.match(await project.text(), /Lazy River Pilot/);
+  const projectHtml = await project.text();
+  assert.match(projectHtml, /Lazy River Pilot/);
+  assert.match(projectHtml, /Skip to project details/);
+  assert.match(projectHtml, /synthetic fixture/i);
 
   const worker = await render("/workers/worker.mac-m4");
   assert.equal(worker.status, 200);
@@ -42,4 +45,6 @@ test("server-renders project and worker drill-down routes", async () => {
   assert.match(workerHtml, /CR-5D execution evidence/);
   assert.match(workerHtml, /Synthetic execution timeline/);
   assert.match(workerHtml, /Independent verification has not been performed/);
+  assert.match(workerHtml, /Skip to worker details/);
+  assert.match(workerHtml, /Protected fleet status is available/);
 });

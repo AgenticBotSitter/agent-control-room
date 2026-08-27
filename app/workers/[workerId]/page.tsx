@@ -69,18 +69,20 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
 
   return (
     <div className="detail-shell">
-      <main className="detail-main">
+      <a className="skip-link" href="#worker-detail">Skip to worker details</a>
+      <main id="worker-detail" className="detail-main" tabIndex={-1}>
         <Link className="detail-back" href="/#workers" prefetch={false}>← Back to workers</Link>
         <header className="detail-hero">
           <div>
-            <p className="eyebrow">Worker runtime · {worker.os}</p>
+            <p className="eyebrow">Worker runtime · {worker.os} · Synthetic fixture</p>
             <h1>{worker.displayName}</h1>
             <p>{worker.machineId} · {worker.runtimeId}</p>
           </div>
           <span className={`health ${worker.state === "idle" ? "health-healthy" : "health-watch"}`}>{label(worker.state)}</span>
         </header>
 
-        <section className="metric-grid section-block" aria-label="Worker summary">
+        <p className="operator-data-status unavailable" role="status">This worker detail is a synthetic fixture. Protected fleet status is available on the portfolio dashboard.</p>
+        <section className="metric-grid section-block" aria-label="Synthetic worker summary">
           <article className="metric-card"><span className="metric-icon green">◫</span><div><small>Free slots</small><strong>{worker.availableSlots}/{worker.totalSlots}</strong><em>{label(worker.allocationMode)}</em></div></article>
           <article className="metric-card"><span className="metric-icon blue">⌁</span><div><small>Capability routes</small><strong>{worker.capabilities.length}</strong><em>{worker.capabilities.filter((route) => route.verification === "verified").length} verified</em></div></article>
           <article className="metric-card"><span className="metric-icon amber">▤</span><div><small>Scratch</small><strong>{label(worker.scratchClass)}</strong><em>live availability class</em></div></article>
@@ -89,7 +91,7 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
 
         <div className="detail-grid">
           <section className="detail-card">
-            <h2>Fourteen-period utilization history</h2>
+            <h2>Synthetic fourteen-period utilization history</h2>
             <div className="history-chart" aria-label="Synthetic utilization history">
               {historyBars.map((height, index) => <i key={`${height}-${index}`} style={{ height: `${height}%` }} title={`Period ${index + 1}: ${height}%`} />)}
             </div>
@@ -97,7 +99,7 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
           </section>
 
           <section className="detail-card">
-            <h2>Current assignment</h2>
+            <h2>Fixture current assignment</h2>
             <div className="capability-list">
               {currentWork.map((item) => <article key={item.id}><h3>{item.title}</h3><p>{label(item.domainState)} · {item.progressPercent}%</p><small>{projects.find((project) => project.id === item.source.projectId)?.workspaceName}</small></article>)}
               {!currentWork.length && <article><h3>Ready for compatible work</h3><p>{worker.availableSlots} free slots</p><small>{worker.stateReason}</small></article>}
