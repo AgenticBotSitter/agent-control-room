@@ -107,6 +107,30 @@ export interface ActiveWorkProjectionV1 {
   updatedAt: string;
 }
 
+/** Read-only service health facts. Desired-state hashes and service control are deliberately excluded. */
+export interface ServiceProjectionV1 {
+  serviceId: string;
+  projectId: string;
+  serviceType: string;
+  state: "active" | "degraded" | "paused" | "failed" | "retired";
+  statusCode?: string;
+  lastObservedAt?: string;
+  lastHealthyAt?: string;
+}
+
+/** Read-only schedule status. The schedule expression and any dispatch authority stay server-side. */
+export interface ScheduleProjectionV1 {
+  scheduleId: string;
+  projectId: string;
+  state: "active" | "paused" | "disabled";
+  scheduleType: "cron" | "interval" | "once";
+  targetType: "workflow" | "job" | "service_check";
+  targetId: string;
+  timezone: string;
+  nextRunAt?: string;
+  idempotencyWindowSeconds: number;
+}
+
 /** A human priority projection. It is intentionally separate from scheduling policy and authority. */
 export interface OwnerFocusPinV1 {
   id: string;
@@ -157,6 +181,8 @@ export interface OperatorSurfaceSnapshotV1 {
   fleet: FleetWorkerSummaryV1[];
   bottlenecks: BottleneckProjectionV1[];
   activeWork: ActiveWorkProjectionV1[];
+  services: ServiceProjectionV1[];
+  schedules: ScheduleProjectionV1[];
   serviceIncidents: ServiceIncidentProjectionV1[];
   actionInbox: ActionInboxItemV1[];
   ownerFocus: OwnerFocusPinV1[];

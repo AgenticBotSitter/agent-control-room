@@ -4,7 +4,7 @@ import { fetchOperatorSurfaceSnapshotV1, OPERATOR_SURFACES_CONTRACT_V1, saveOwne
 
 const snapshot = {
   contractVersion: OPERATOR_SURFACES_CONTRACT_V1, tenantId: "tenant:1", generatedAt: "2026-08-27T12:00:00.000Z",
-  fleet: [], bottlenecks: [], activeWork: [], serviceIncidents: [], actionInbox: [], ownerFocus: [],
+  fleet: [], bottlenecks: [], activeWork: [], services: [], schedules: [], serviceIncidents: [], actionInbox: [], ownerFocus: [],
 };
 
 test("CR6E browser reader requests the protected route without a tenant parameter", async () => {

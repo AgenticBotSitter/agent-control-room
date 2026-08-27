@@ -1,10 +1,10 @@
 import type { ServiceIncidentV1 } from "../../services/v1/incident-store";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
 import type { DatabaseClient } from "../../persistence/database";
-import { jobRecordSchema, nodeRecordSchema } from "../../domain/v1/validators";
+import { jobRecordSchema, nodeRecordSchema, scheduleRecordSchema, serviceRecordSchema } from "../../domain/v1/validators";
 import { OperatorSurfaceStoreV1 } from "./store";
 import { buildOperatorSurfaceSnapshotV1, filterActionInboxV1 } from "./projections";
-import type { ActionInboxFilterV1, ActiveWorkProjectionV1, BottleneckProjectionV1, FleetWorkerSummaryV1, OperatorSurfaceSnapshotV1 } from "./types";
+import type { ActionInboxFilterV1, ActiveWorkProjectionV1, BottleneckProjectionV1, FleetWorkerSummaryV1, OperatorSurfaceSnapshotV1, ScheduleProjectionV1, ServiceProjectionV1 } from "./types";
 import { OPERATOR_SURFACES_CONTRACT_V1 } from "./types";
 
 const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/;
@@ -19,6 +19,8 @@ export interface OperatorFleetReadSourceV1 {
   fleet(input: { tenantId: string; now: string }): Promise<FleetWorkerSummaryV1[]>;
   bottlenecks(input: { tenantId: string; now: string }): Promise<BottleneckProjectionV1[]>;
   activeWork(input: { tenantId: string; now: string }): Promise<ActiveWorkProjectionV1[]>;
+  services(input: { tenantId: string; now: string }): Promise<ServiceProjectionV1[]>;
+  schedules(input: { tenantId: string; now: string }): Promise<ScheduleProjectionV1[]>;
 }
 
 export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourceV1 {
@@ -77,6 +79,54 @@ export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourc
       return { jobId: job.data.id, projectId: job.data.projectId, state: job.data.state, jobType: job.data.jobType, priority: job.data.priority, requiredCapability: job.data.requiredCapability, updatedAt: new Date(row.updated_at).toISOString() };
     });
   }
+
+  /** Projects persisted health/status facts only; the desired state and its digest never leave the server. */
+  async services(input: { tenantId: string; now: string }): Promise<ServiceProjectionV1[]> {
+    if (!safeId.test(input.tenantId) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
+    const result = await this.db.query<{ id: string; project_id: string; state: string; payload: unknown }>(
+      `SELECT id,project_id,state,payload FROM control_services WHERE tenant_id=$1 ORDER BY project_id,id LIMIT 1000`,
+      [input.tenantId],
+    );
+    return result.rows.map((row) => {
+      const service = serviceRecordSchema.safeParse(row.payload);
+      if (!service.success || service.data.tenantId !== input.tenantId || service.data.id !== row.id || service.data.projectId !== row.project_id || service.data.state !== row.state) throw new OperatorSurfaceReadError("invalid_read_scope");
+      return {
+        serviceId: service.data.id,
+        projectId: service.data.projectId,
+        serviceType: service.data.serviceType,
+        state: service.data.state,
+        ...(service.data.safeStatusCode ? { statusCode: service.data.safeStatusCode } : {}),
+        ...(service.data.lastObservedAt ? { lastObservedAt: service.data.lastObservedAt } : {}),
+        ...(service.data.lastHealthyAt ? { lastHealthyAt: service.data.lastHealthyAt } : {}),
+      };
+    });
+  }
+
+  /** Projects schedule status only. The expression is intentionally absent because this screen cannot run it. */
+  async schedules(input: { tenantId: string; now: string }): Promise<ScheduleProjectionV1[]> {
+    if (!safeId.test(input.tenantId) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
+    const result = await this.db.query<{ id: string; project_id: string; state: string; next_run_at: string | Date | null; payload: unknown }>(
+      `SELECT id,project_id,state,next_run_at,payload FROM control_schedules WHERE tenant_id=$1 ORDER BY next_run_at NULLS LAST,id LIMIT 1000`,
+      [input.tenantId],
+    );
+    return result.rows.map((row) => {
+      const schedule = scheduleRecordSchema.safeParse(row.payload);
+      if (!schedule.success || schedule.data.tenantId !== input.tenantId || schedule.data.id !== row.id || schedule.data.projectId !== row.project_id || schedule.data.state !== row.state) throw new OperatorSurfaceReadError("invalid_read_scope");
+      const nextRunAt = row.next_run_at ? new Date(row.next_run_at).toISOString() : undefined;
+      if (nextRunAt !== schedule.data.nextRunAt) throw new OperatorSurfaceReadError("invalid_read_scope");
+      return {
+        scheduleId: schedule.data.id,
+        projectId: schedule.data.projectId,
+        state: schedule.data.state,
+        scheduleType: schedule.data.scheduleType,
+        targetType: schedule.data.targetType,
+        targetId: schedule.data.targetId,
+        timezone: schedule.data.timezone,
+        ...(nextRunAt ? { nextRunAt } : {}),
+        idempotencyWindowSeconds: schedule.data.idempotencyWindowSeconds,
+      };
+    });
+  }
 }
 
 export interface OperatorSurfaceReadModelV1 {
@@ -99,10 +149,12 @@ export class OperatorSurfaceReadServiceV1 {
   async read(input: { scope: AuthorizedOperatorReadScopeV1; now: string; inboxFilter?: Omit<ActionInboxFilterV1, "now">; incidentState?: ServiceIncidentV1["state"] }): Promise<OperatorSurfaceReadModelV1> {
     if (!safeId.test(input.scope.tenantId) || !safeId.test(input.scope.actorId) || !instant(input.scope.grantedAt) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
     const tenantId = input.scope.tenantId;
-    const [fleet, bottlenecks, activeWork, inbox, ownerFocus, serviceIncidents] = await Promise.all([
+    const [fleet, bottlenecks, activeWork, services, schedules, inbox, ownerFocus, serviceIncidents] = await Promise.all([
       this.fleetSource.fleet({ tenantId, now: input.now }),
       this.fleetSource.bottlenecks({ tenantId, now: input.now }),
       this.fleetSource.activeWork({ tenantId, now: input.now }),
+      this.fleetSource.services({ tenantId, now: input.now }),
+      this.fleetSource.schedules({ tenantId, now: input.now }),
       this.surfaces.listInbox({ tenantId, limit: 500 }),
       this.surfaces.listOwnerFocus({ tenantId, now: input.now }),
       this.incidents.list({ tenantId, state: input.incidentState, limit: 500 }),
@@ -117,6 +169,8 @@ export class OperatorSurfaceReadServiceV1 {
         fleet,
         bottlenecks,
         activeWork,
+        services,
+        schedules,
         serviceIncidents: serviceIncidents.map((incident) => ({
           id: incident.id,
           serviceId: incident.serviceId,

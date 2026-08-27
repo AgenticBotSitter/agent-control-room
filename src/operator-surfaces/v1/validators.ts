@@ -105,6 +105,28 @@ export const activeWorkProjectionSchemaV1 = z.object({
   updatedAt: isoDate,
 });
 
+export const serviceProjectionSchemaV1 = z.object({
+  serviceId: safeId,
+  projectId: safeId,
+  serviceType: safeId,
+  state: z.enum(["active", "degraded", "paused", "failed", "retired"]),
+  statusCode: safeId.optional(),
+  lastObservedAt: isoDate.optional(),
+  lastHealthyAt: isoDate.optional(),
+});
+
+export const scheduleProjectionSchemaV1 = z.object({
+  scheduleId: safeId,
+  projectId: safeId,
+  state: z.enum(["active", "paused", "disabled"]),
+  scheduleType: z.enum(["cron", "interval", "once"]),
+  targetType: z.enum(["workflow", "job", "service_check"]),
+  targetId: safeId,
+  timezone: z.string().min(1).max(100).refine((value) => !/[\r\n]/.test(value), "timezone must be one line"),
+  nextRunAt: isoDate.optional(),
+  idempotencyWindowSeconds: z.number().int().positive().max(31_536_000),
+});
+
 export const ownerFocusPinSchemaV1 = z.object({
   id: safeId,
   tenantId: safeId,
@@ -138,6 +160,8 @@ export const operatorSurfaceSnapshotSchemaV1 = z.object({
   fleet: z.array(fleetWorkerSummarySchemaV1).max(1_000),
   bottlenecks: z.array(bottleneckProjectionSchemaV1).max(100),
   activeWork: z.array(activeWorkProjectionSchemaV1).max(1_000),
+  services: z.array(serviceProjectionSchemaV1).max(1_000),
+  schedules: z.array(scheduleProjectionSchemaV1).max(1_000),
   serviceIncidents: z.array(serviceIncidentProjectionSchemaV1).max(1_000),
   actionInbox: z.array(actionInboxItemSchemaV1).max(1_000),
   ownerFocus: z.array(ownerFocusPinSchemaV1).max(100),
@@ -145,6 +169,8 @@ export const operatorSurfaceSnapshotSchemaV1 = z.object({
   for (const [name, ids] of [
     ["fleet", value.fleet.map((worker) => worker.workerId)],
     ["active work", value.activeWork.map((work) => work.jobId)],
+    ["services", value.services.map((service) => service.serviceId)],
+    ["schedules", value.schedules.map((schedule) => schedule.scheduleId)],
     ["service incidents", value.serviceIncidents.map((incident) => incident.id)],
     ["action inbox", value.actionInbox.map((item) => item.id)],
     ["owner focus", value.ownerFocus.map((pin) => pin.id)],

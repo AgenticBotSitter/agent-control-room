@@ -37,3 +37,5 @@ Saving Owner Focus uses a separate protected route. The server assigns the tenan
 The protected Bottleneck surface renders declared resource pressure, bounded work-item identifiers, and a redacted explanation. It is a read-only capacity projection: it never offers a capacity release, reservation, or dispatch action.
 
 The protected active-work surface renders only canonical jobs observed in `leased`, `running`, or `waiting_approval` state. It includes stable job/project identifiers, job type, priority, required capability, and last update time. It does not infer progress, a worker reservation, completion, or dispatch authority.
+
+The protected services and schedules surface renders only tenant-bound durable status: stable identifiers, project, safe state/type/status codes, observation times, schedule target metadata, timezone, recorded next run, and bounded idempotency window. It deliberately excludes desired-state hashes and schedule expressions. It is read-only: a displayed next run is not a dispatch promise, and the surface cannot start, pause, repair, or alter a service or schedule.

@@ -29,6 +29,8 @@ test("CR6E snapshot is tenant-bound, bounded, and rejects unsafe display materia
     fleet: [{ workerId: "worker:1", platform: "macos", state: "degraded", stateReasonCode: "telemetry_stale", lastObservedAt: now, capacityState: "reported", availableSlots: 0, totalSlots: 2, capabilityState: "verified", telemetryState: "stale" }],
     bottlenecks: [{ resourceKey: "gpu:local", utilizationPercent: 100, blockedWorkItemIds: ["work:1"], explanation: "Declared capacity is fully reserved." }],
     activeWork: [{ jobId: "job:1", projectId: "project:1", state: "running", jobType: "synthetic:render", priority: 80, requiredCapability: "capability:render", updatedAt: now }],
+    services: [{ serviceId: "service:1", projectId: "project:1", serviceType: "service:backup", state: "degraded", statusCode: "backup_stale", lastObservedAt: now }],
+    schedules: [{ scheduleId: "schedule:1", projectId: "project:1", state: "active", scheduleType: "cron", targetType: "service_check", targetId: "service:1", timezone: "UTC", idempotencyWindowSeconds: 60 }],
     serviceIncidents: [{ id: "incident:1", serviceId: "service:1", severity: "warning", state: "open", reasonCode: "service_degraded", remedyCode: "inspect_service", openedAt: now, lastObservedAt: now }],
     actionInbox: [item], ownerFocus: [{ id: "focus:1", tenantId: "tenant:1", projectId: "project:1", level: "today", reason: "Owner wants visibility", createdAt: now }],
   });
@@ -77,6 +79,6 @@ test("CR6E read projections are deterministic, keep failed delivery visible, and
     { id: "focus:today", tenantId: "tenant:1", projectId: "project:1", level: "today", reason: "Today", createdAt: now },
     { id: "focus:p0", tenantId: "tenant:1", projectId: "project:1", level: "p0", reason: "P0", createdAt: now },
   ], now), [{ projectId: "project:1", level: "p0", reasonCode: "owner_focus", canOverrideFairness: false, canOverrideAuthority: false, canReserveCapacity: false }]);
-  const snapshot = buildOperatorSurfaceSnapshotV1({ contractVersion: OPERATOR_SURFACES_CONTRACT_V1, tenantId: "tenant:1", generatedAt: now, fleet: [], bottlenecks: [], activeWork: [], serviceIncidents: [], actionInbox: [openSoon, item], ownerFocus: [] });
+  const snapshot = buildOperatorSurfaceSnapshotV1({ contractVersion: OPERATOR_SURFACES_CONTRACT_V1, tenantId: "tenant:1", generatedAt: now, fleet: [], bottlenecks: [], activeWork: [], services: [], schedules: [], serviceIncidents: [], actionInbox: [openSoon, item], ownerFocus: [] });
   assert.deepEqual(snapshot.actionInbox.map((entry) => entry.id), ["attention:1", "attention:soon"]);
 });

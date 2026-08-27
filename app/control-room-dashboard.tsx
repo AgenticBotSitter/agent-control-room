@@ -18,6 +18,7 @@ import { FleetProjection } from "./components/fleet-projection";
 import { ServiceIncidentList } from "./components/service-incident-list";
 import { BottleneckList } from "./components/bottleneck-list";
 import { ActiveWorkList } from "./components/active-work-list";
+import { ServiceScheduleList } from "./components/service-schedule-list";
 import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
 
 type Scope = "all" | (typeof projects)[number]["id"];
@@ -144,6 +145,7 @@ export function ControlRoomDashboard() {
           <a href="#projects"><span aria-hidden="true">▦</span> Projects</a>
           <a href="#attention"><span aria-hidden="true">◆</span> Needs Me <b>{scopedActionInbox.length}</b></a>
           <a href="#workers"><span aria-hidden="true">◫</span> Workers</a>
+          {operatorSnapshot && <a href="#services"><span aria-hidden="true">◌</span> Services</a>}
           <a href="#agents"><span aria-hidden="true">◎</span> Agents</a>
           <a href="#capacity"><span aria-hidden="true">⌁</span> Capacity</a>
           <a href="#activity"><span aria-hidden="true">≡</span> Activity</a>
@@ -349,6 +351,11 @@ export function ControlRoomDashboard() {
         {operatorSnapshot && <section className="section-block panel">
           <div className="section-heading"><div><p className="eyebrow">Protected service records</p><h2>Service incidents</h2></div><span className="count-pill critical">{operatorSnapshot.serviceIncidents.filter((incident) => incident.state === "open").length}</span></div>
           <ServiceIncidentList incidents={operatorSnapshot.serviceIncidents} />
+        </section>}
+
+        {operatorSnapshot && <section id="services" className="section-block panel">
+          <div className="section-heading"><div><p className="eyebrow">Protected service and schedule status</p><h2>Services and schedules</h2></div><span className="live-label"><i /> Read-only observation</span></div>
+          <ServiceScheduleList services={operatorSnapshot.services} schedules={operatorSnapshot.schedules} />
         </section>}
 
         <div className="dashboard-columns lower-columns">

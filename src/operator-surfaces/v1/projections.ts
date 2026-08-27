@@ -51,6 +51,8 @@ export function buildOperatorSurfaceSnapshotV1(input: OperatorSurfaceSnapshotV1)
     fleet: [...parsed.fleet].sort((left, right) => left.workerId.localeCompare(right.workerId)),
     bottlenecks: [...parsed.bottlenecks].sort((left, right) => right.utilizationPercent - left.utilizationPercent || left.resourceKey.localeCompare(right.resourceKey)),
     activeWork: [...parsed.activeWork].sort((left, right) => right.priority - left.priority || Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.jobId.localeCompare(right.jobId)),
+    services: [...parsed.services].sort((left, right) => left.projectId.localeCompare(right.projectId) || left.serviceId.localeCompare(right.serviceId)),
+    schedules: [...parsed.schedules].sort((left, right) => (left.nextRunAt ?? "\uffff").localeCompare(right.nextRunAt ?? "\uffff") || left.scheduleId.localeCompare(right.scheduleId)),
     serviceIncidents: [...parsed.serviceIncidents].sort((left, right) => Date.parse(right.lastObservedAt) - Date.parse(left.lastObservedAt) || left.id.localeCompare(right.id)),
     actionInbox: [...parsed.actionInbox].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) || left.id.localeCompare(right.id)),
     ownerFocus: [...parsed.ownerFocus].sort((left, right) => left.level.localeCompare(right.level) || left.projectId.localeCompare(right.projectId)),
