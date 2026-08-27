@@ -22,7 +22,7 @@ import { ServiceScheduleList } from "./components/service-schedule-list";
 import { PortfolioProjection } from "./components/portfolio-projection";
 import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
 
-type Scope = "all" | (typeof projects)[number]["id"];
+type Scope = "all" | string;
 type ScenarioKey = keyof typeof transcriptionScenarios;
 
 const projectAccent: Record<string, string> = {
@@ -98,21 +98,23 @@ export function ControlRoomDashboard() {
         : "Owner Focus could not be saved. No change was made.");
   };
 
-  const scopedProjects = useMemo(
-    () => scope === "all" ? projects : projects.filter((project) => project.id === scope),
-    [scope],
-  );
-  const scopedIds = new Set(scopedProjects.map((project) => project.id));
   const operatorSnapshot = operatorData.state === "available" ? operatorData.snapshot : undefined;
+  const scopeOptions = operatorSnapshot
+    ? operatorSnapshot.portfolio.map((project) => ({ id: project.projectId, label: project.projectId }))
+    : projects.map((project) => ({ id: project.id, label: `${project.workspaceName} · ${project.title}` }));
+  const scopedProjects = useMemo(() => scope === "all" ? projects : projects.filter((project) => project.id === scope), [scope]);
+  const scopedIds = new Set(operatorSnapshot ? (scope === "all" ? operatorSnapshot.portfolio.map((project) => project.projectId) : [scope]) : scopedProjects.map((project) => project.id));
+  const scopedPortfolio = operatorSnapshot?.portfolio.filter((project) => scopedIds.has(project.projectId));
   const actionInbox = operatorSnapshot?.actionInbox ?? cr6eActionInboxFixture;
   const ownerFocus = operatorSnapshot?.ownerFocus ?? cr6eOwnerFocusFixture;
   const scopedActionInbox = actionInbox.filter((item) => !item.projectId || scopedIds.has(item.projectId));
   const scopedOwnerFocus = ownerFocus.filter((pin) => scopedIds.has(pin.projectId));
-  const focusProjects = scopedProjects.map((project) => ({ id: project.id, label: project.workspaceName }));
+  const focusProjects = operatorSnapshot ? operatorSnapshot.portfolio.filter((project) => scopedIds.has(project.projectId)).map((project) => ({ id: project.projectId, label: project.projectId })) : scopedProjects.map((project) => ({ id: project.id, label: project.workspaceName }));
   const scopedBlockers = blockers.filter((item) => scopedIds.has(item.source.projectId));
   const scopedWork = workItems.filter((item) => scopedIds.has(item.source.projectId));
   const scopedActivity = recentActivity.filter((item) => scopedIds.has(item.projectId));
   const running = scopedWork.filter((item) => item.normalizedState === "running");
+  const protectedActiveWork = operatorSnapshot?.activeWork.filter((item) => scopedIds.has(item.projectId));
   const scenario = transcriptionScenarios[scenarioKey];
 
   const totalProgress = Math.round(
@@ -164,8 +166,8 @@ export function ControlRoomDashboard() {
             <label htmlFor="project-scope">Viewing</label>
             <select id="project-scope" value={scope} onChange={(event) => setScope(event.target.value as Scope)}>
               <option value="all">All projects</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>{project.workspaceName} · {project.title}</option>
+              {scopeOptions.map((project) => (
+                <option key={project.id} value={project.id}>{project.label}</option>
               ))}
             </select>
           </div>
@@ -181,11 +183,11 @@ export function ControlRoomDashboard() {
         <section id="overview" className="hero-section">
           <div>
             <p className="eyebrow">Portfolio command view</p>
-            <h1>{scope === "all" ? "Everything moving, in one room." : scopedProjects[0]?.title}</h1>
+            <h1>{scope === "all" ? "Everything moving, in one room." : operatorSnapshot ? scope : scopedProjects[0]?.title}</h1>
             <p className="hero-copy">
               {scope === "all"
                 ? "Portfolio status across every project, worker, agent, blocker, and allocation decision."
-                : `${scopedProjects[0]?.workspaceName} · ${stateLabel(scopedProjects[0]?.domainState ?? "")}`}
+                : operatorSnapshot ? `Protected status for ${scope}.` : `${scopedProjects[0]?.workspaceName} · ${stateLabel(scopedProjects[0]?.domainState ?? "")}`}
             </p>
             <p className={`operator-data-status ${operatorData.state}`} aria-live="polite">{operatorDataMessage}</p>
           </div>
@@ -197,11 +199,11 @@ export function ControlRoomDashboard() {
         <section className="metric-grid" aria-label="Portfolio summary">
           <article className="metric-card">
             <span className="metric-icon green">↗</span>
-            <div><small>Average progress</small><strong>{totalProgress}%</strong><em>{scopedProjects.length} project{scopedProjects.length === 1 ? "" : "s"} in scope</em></div>
+            <div><small>{operatorSnapshot ? "Protected workflows" : "Average progress"}</small><strong>{operatorSnapshot ? scopedPortfolio?.reduce((sum, project) => sum + project.workflowCount, 0) ?? 0 : `${totalProgress}%`}</strong><em>{operatorSnapshot ? `${scopedPortfolio?.length ?? 0} project${scopedPortfolio?.length === 1 ? "" : "s"} in scope` : `${scopedProjects.length} project${scopedProjects.length === 1 ? "" : "s"} in scope`}</em></div>
           </article>
           <article className="metric-card">
             <span className="metric-icon amber">!</span>
-            <div><small>Needs your attention</small><strong>{scopedActionInbox.length}</strong><em>{scopedBlockers.filter((item) => item.severity === "critical").length} critical blocker</em></div>
+            <div><small>Needs your attention</small><strong>{scopedActionInbox.length}</strong><em>{operatorSnapshot ? "protected decision records" : `${scopedBlockers.filter((item) => item.severity === "critical").length} critical blocker`}</em></div>
           </article>
           <article className="metric-card">
             <span className="metric-icon blue">◫</span>
@@ -209,7 +211,7 @@ export function ControlRoomDashboard() {
           </article>
           <article className="metric-card">
             <span className="metric-icon violet">◎</span>
-            <div><small>Running now</small><strong>{running.length}</strong><em>across {new Set(running.map((item) => item.source.projectId)).size} projects</em></div>
+            <div><small>Running now</small><strong>{operatorSnapshot ? protectedActiveWork?.length ?? 0 : running.length}</strong><em>{operatorSnapshot ? `across ${new Set(protectedActiveWork?.map((item) => item.projectId)).size} projects` : `across ${new Set(running.map((item) => item.source.projectId)).size} projects`}</em></div>
           </article>
         </section>
 
@@ -218,7 +220,7 @@ export function ControlRoomDashboard() {
             <div><p className="eyebrow">Portfolio</p><h2>Active projects</h2></div>
             {scope !== "all" && <button className="text-button" type="button" onClick={() => setScope("all")}>Show all projects</button>}
           </div>
-          {operatorSnapshot ? <PortfolioProjection projects={operatorSnapshot.portfolio} /> : <div className="project-grid">
+          {operatorSnapshot ? <PortfolioProjection projects={scopedPortfolio ?? []} /> : <div className="project-grid">
             {scopedProjects.map((project) => (
               <article key={project.id} className={`project-card accent-${projectAccent[project.id]}`}>
                 <div className="project-topline">
