@@ -15,7 +15,7 @@
 | Isolation | Fleet storage and reads bind tenant/node; the pure eligibility boundary now rejects a mixed tenant/node signal set instead of combining evidence across machines | Codex pass after identity fix |
 | Redaction and bounded effects | Secret canaries, unsafe display text, host-private material, browser tenant selection, scheduling overrides, outbox emission, and direct operational controls remain rejected or absent | Codex pass |
 | Regression coverage | The normal full-suite command now includes the protected operator API/UI, Owner Focus, target guards, and platform qualification safety tests that it previously omitted | Codex pass after suite fix |
-| Independent review | A separate route must review the immutable remediated head and may report only; it cannot repair, approve, merge, or make the final security decision | Pending |
+| Independent review | V2 jobber #155 lets a separate route review immutable remediated commit `c5dcb81cd1167caa4804b5f3c2483d3503b70946`; it may report only and cannot repair, approve, merge, or make the final security decision | Ready for direct claim |
 
 ## Closed findings
 
