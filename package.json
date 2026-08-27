@@ -15,7 +15,7 @@
     "test:cr6e-ui": "node --import tsx --test tests/action-inbox.test.tsx tests/owner-focus-strip.test.tsx",
     "test:cr6e-api": "node --import tsx --test tests/operator-surface-read-service.test.ts",
     "test:cr6e-route": "node --import tsx --test tests/operator-surface-api.test.ts",
-    "test:cr6e-dashboard": "node --import tsx --test tests/action-inbox.test.tsx tests/owner-focus-strip.test.tsx tests/fleet-projection.test.tsx tests/operator-surface-http-client.test.ts",
+    "test:cr6e-dashboard": "node --import tsx --test tests/action-inbox.test.tsx tests/owner-focus-strip.test.tsx tests/fleet-projection.test.tsx tests/service-incident-list.test.tsx tests/operator-surface-http-client.test.ts",
     "check": "tsc --noEmit",
     "db:verify": "tsx scripts/verify-migrations.ts",
     "domain:generate": "tsx scripts/generate-domain-schema.ts",

@@ -91,7 +91,26 @@ export class OperatorSurfaceReadServiceV1 {
     const actionInbox = filterActionInboxV1(inbox, { now: input.now, limit: 100, ...input.inboxFilter });
     if (!actionInbox) throw new OperatorSurfaceReadError("invalid_filter");
     return {
-      snapshot: buildOperatorSurfaceSnapshotV1({ contractVersion: OPERATOR_SURFACES_CONTRACT_V1, tenantId, generatedAt: input.now, fleet, bottlenecks, actionInbox, ownerFocus }),
+      snapshot: buildOperatorSurfaceSnapshotV1({
+        contractVersion: OPERATOR_SURFACES_CONTRACT_V1,
+        tenantId,
+        generatedAt: input.now,
+        fleet,
+        bottlenecks,
+        serviceIncidents: serviceIncidents.map((incident) => ({
+          id: incident.id,
+          serviceId: incident.serviceId,
+          severity: incident.severity,
+          state: incident.state,
+          reasonCode: incident.safeReasonCode,
+          remedyCode: incident.safeRemedyCode,
+          openedAt: incident.openedAt,
+          lastObservedAt: incident.lastObservedAt,
+          ...(incident.resolvedAt ? { resolvedAt: incident.resolvedAt } : {}),
+        })),
+        actionInbox,
+        ownerFocus,
+      }),
       serviceIncidents,
     };
   }

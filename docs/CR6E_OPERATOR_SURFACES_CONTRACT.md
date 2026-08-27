@@ -29,3 +29,5 @@ The protected HTTP route requires the deployment-provided authenticated actor he
 The dashboard browser reader calls that protected route with same-site credentials and no tenant parameter. It validates the complete response again before rendering it. If authentication, private configuration, transport, or validation is unavailable, the dashboard may display its clearly labelled synthetic fixture; it never presents that fixture as protected operator truth.
 
 The protected fleet table renders only the projection's observed state, platform, capability and telemetry status, and declared capacity. Missing capacity is displayed as unavailable; neither an online state nor a positive slot count is presented as dispatch authority.
+
+Service incidents are included inside the same validated snapshot, using only the durable incident identifier, service identifier, severity, state, safe reason/remedy codes, and timing. The tenant and correlation key stay server-side; a remedy code is never a repair operation.

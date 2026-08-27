@@ -83,6 +83,19 @@ export interface BottleneckProjectionV1 {
   explanation: string;
 }
 
+/** Redacted durable incident facts. A remedy code is guidance, never a repair request. */
+export interface ServiceIncidentProjectionV1 {
+  id: string;
+  serviceId: string;
+  severity: "warning" | "critical";
+  state: "open" | "resolved";
+  reasonCode: string;
+  remedyCode: string;
+  openedAt: string;
+  lastObservedAt: string;
+  resolvedAt?: string;
+}
+
 /** A human priority projection. It is intentionally separate from scheduling policy and authority. */
 export interface OwnerFocusPinV1 {
   id: string;
@@ -132,6 +145,7 @@ export interface OperatorSurfaceSnapshotV1 {
   generatedAt: string;
   fleet: FleetWorkerSummaryV1[];
   bottlenecks: BottleneckProjectionV1[];
+  serviceIncidents: ServiceIncidentProjectionV1[];
   actionInbox: ActionInboxItemV1[];
   ownerFocus: OwnerFocusPinV1[];
 }

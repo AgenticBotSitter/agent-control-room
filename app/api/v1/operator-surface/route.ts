@@ -34,7 +34,7 @@ export async function GET(request: Request): Promise<Response> {
       now: new Date().toISOString(),
       inboxFilter: { ...(projectId ? { projectId } : {}), ...(state ? { states: [state as "open" | "resolved" | "expired"] } : {}), includeExpired, limit },
     });
-    return Response.json(result, { headers: { "cache-control": "no-store", "x-control-room-contract": result.snapshot.contractVersion, "x-control-room-data-class": "operator-projection" } });
+    return Response.json({ snapshot: result.snapshot }, { headers: { "cache-control": "no-store", "x-control-room-contract": result.snapshot.contractVersion, "x-control-room-data-class": "operator-projection" } });
   } catch (error) {
     return unavailable(error);
   } finally {

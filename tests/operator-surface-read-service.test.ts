@@ -42,6 +42,8 @@ test("CR6E authorized read service assembles only the bound tenant's redacted re
     assert.equal(result.snapshot.contractVersion, OPERATOR_SURFACES_CONTRACT_V1);
     assert.equal(result.snapshot.tenantId, "tenant:1");
     assert.deepEqual(result.snapshot.actionInbox.map((item) => item.id), ["attention:read"]);
+    assert.equal("tenantId" in result.snapshot.serviceIncidents[0]!, false);
+    assert.deepEqual(result.snapshot.serviceIncidents.map((incident) => incident.reasonCode), ["service_degraded"]);
     assert.deepEqual(result.serviceIncidents.map((incident) => incident.tenantId), ["tenant:1"]);
     assert.deepEqual(calls.sort(), ["bottlenecks:tenant:1", "fleet:tenant:1"]);
   } finally { await raw.close(); }

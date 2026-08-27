@@ -15,6 +15,7 @@ import { cr6eActionInboxFixture, cr6eOwnerFocusFixture } from "./fixtures/cr6e-u
 import { ActionInbox } from "./components/action-inbox";
 import { OwnerFocusStrip, type OwnerFocusDraftRequestV1 } from "./components/owner-focus-strip";
 import { FleetProjection } from "./components/fleet-projection";
+import { ServiceIncidentList } from "./components/service-incident-list";
 import { fetchOperatorSurfaceSnapshotV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
 
 type Scope = "all" | (typeof projects)[number]["id"];
@@ -330,6 +331,11 @@ export function ControlRoomDashboard() {
             ))}
           </div>}
         </section>
+
+        {operatorSnapshot && <section className="section-block panel">
+          <div className="section-heading"><div><p className="eyebrow">Protected service records</p><h2>Service incidents</h2></div><span className="count-pill critical">{operatorSnapshot.serviceIncidents.filter((incident) => incident.state === "open").length}</span></div>
+          <ServiceIncidentList incidents={operatorSnapshot.serviceIncidents} />
+        </section>}
 
         <div className="dashboard-columns lower-columns">
           <section id="agents" className="section-block panel">

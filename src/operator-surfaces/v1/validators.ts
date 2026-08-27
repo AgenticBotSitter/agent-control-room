@@ -79,6 +79,22 @@ export const bottleneckProjectionSchemaV1 = z.object({
   explanation: safeText,
 }).refine((value) => new Set(value.blockedWorkItemIds).size === value.blockedWorkItemIds.length, "blocked work item ids must be unique");
 
+export const serviceIncidentProjectionSchemaV1 = z.object({
+  id: safeId,
+  serviceId: safeId,
+  severity: z.enum(["warning", "critical"]),
+  state: z.enum(["open", "resolved"]),
+  reasonCode: safeId,
+  remedyCode: safeId,
+  openedAt: isoDate,
+  lastObservedAt: isoDate,
+  resolvedAt: isoDate.optional(),
+}).superRefine((value, context) => {
+  if (Date.parse(value.lastObservedAt) < Date.parse(value.openedAt)) context.addIssue({ code: "custom", message: "incident observation cannot precede opening" });
+  if (value.state === "resolved" && !value.resolvedAt) context.addIssue({ code: "custom", message: "resolved incidents require resolution time" });
+  if (value.state === "open" && value.resolvedAt) context.addIssue({ code: "custom", message: "open incidents cannot have resolution time" });
+});
+
 export const ownerFocusPinSchemaV1 = z.object({
   id: safeId,
   tenantId: safeId,
@@ -111,11 +127,13 @@ export const operatorSurfaceSnapshotSchemaV1 = z.object({
   generatedAt: isoDate,
   fleet: z.array(fleetWorkerSummarySchemaV1).max(1_000),
   bottlenecks: z.array(bottleneckProjectionSchemaV1).max(100),
+  serviceIncidents: z.array(serviceIncidentProjectionSchemaV1).max(1_000),
   actionInbox: z.array(actionInboxItemSchemaV1).max(1_000),
   ownerFocus: z.array(ownerFocusPinSchemaV1).max(100),
 }).superRefine((value, context) => {
   for (const [name, ids] of [
     ["fleet", value.fleet.map((worker) => worker.workerId)],
+    ["service incidents", value.serviceIncidents.map((incident) => incident.id)],
     ["action inbox", value.actionInbox.map((item) => item.id)],
     ["owner focus", value.ownerFocus.map((pin) => pin.id)],
   ] as const) if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: `${name} ids must be unique` });
