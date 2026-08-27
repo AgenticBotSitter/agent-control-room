@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   agents,
-  attentionItems,
   blockers,
   projects,
   recentActivity,
@@ -15,6 +14,8 @@ import { portfolioScheduleScenario, transcriptionScenarios } from "@/src/simulat
 import { cr6eActionInboxFixture, cr6eOwnerFocusFixture } from "./fixtures/cr6e-ui";
 import { ActionInbox } from "./components/action-inbox";
 import { OwnerFocusStrip, type OwnerFocusDraftRequestV1 } from "./components/owner-focus-strip";
+import { FleetProjection } from "./components/fleet-projection";
+import { fetchOperatorSurfaceSnapshotV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
 
 type Scope = "all" | (typeof projects)[number]["id"];
 type ScenarioKey = keyof typeof transcriptionScenarios;
@@ -44,6 +45,7 @@ export function ControlRoomDashboard() {
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("automatic");
   const [simulationApplied, setSimulationApplied] = useState(false);
   const [ownerFocusNotice, setOwnerFocusNotice] = useState<string>();
+  const [operatorData, setOperatorData] = useState<OperatorSurfaceDataStateV1>({ state: "loading" });
 
   useEffect(() => {
     const saved = window.localStorage.getItem("control-room-theme");
@@ -55,6 +57,14 @@ export function ControlRoomDashboard() {
     document.documentElement.dataset.theme = initial;
     const frame = window.requestAnimationFrame(() => setTheme(initial));
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    let current = true;
+    void fetchOperatorSurfaceSnapshotV1().then((result) => {
+      if (current) setOperatorData(result);
+    });
+    return () => { current = false; };
   }, []);
 
   const toggleTheme = () => {
@@ -76,9 +86,11 @@ export function ControlRoomDashboard() {
     [scope],
   );
   const scopedIds = new Set(scopedProjects.map((project) => project.id));
-  const scopedAttention = attentionItems.filter((item) => scopedIds.has(item.source.projectId));
-  const scopedActionInbox = cr6eActionInboxFixture.filter((item) => !item.projectId || scopedIds.has(item.projectId));
-  const scopedOwnerFocus = cr6eOwnerFocusFixture.filter((pin) => scopedIds.has(pin.projectId));
+  const operatorSnapshot = operatorData.state === "available" ? operatorData.snapshot : undefined;
+  const actionInbox = operatorSnapshot?.actionInbox ?? cr6eActionInboxFixture;
+  const ownerFocus = operatorSnapshot?.ownerFocus ?? cr6eOwnerFocusFixture;
+  const scopedActionInbox = actionInbox.filter((item) => !item.projectId || scopedIds.has(item.projectId));
+  const scopedOwnerFocus = ownerFocus.filter((pin) => scopedIds.has(pin.projectId));
   const focusProjects = scopedProjects.map((project) => ({ id: project.id, label: project.workspaceName }));
   const scopedBlockers = blockers.filter((item) => scopedIds.has(item.source.projectId));
   const scopedWork = workItems.filter((item) => scopedIds.has(item.source.projectId));
@@ -89,7 +101,18 @@ export function ControlRoomDashboard() {
   const totalProgress = Math.round(
     scopedProjects.reduce((sum, project) => sum + (project.progressPercent ?? 0), 0) / Math.max(scopedProjects.length, 1),
   );
-  const activeWorkers = workers.filter((worker) => worker.state !== "offline" && worker.state !== "maintenance").length;
+  const syntheticActiveWorkers = workers.filter((worker) => worker.state !== "offline" && worker.state !== "maintenance").length;
+  const protectedActiveWorkers = operatorSnapshot?.fleet.filter((worker) => worker.state !== "offline" && worker.state !== "maintenance").length;
+  const activeWorkers = protectedActiveWorkers ?? syntheticActiveWorkers;
+  const displayedWorkerCount = operatorSnapshot?.fleet.length ?? workers.length;
+  const availableSlots = operatorSnapshot?.fleet.reduce((sum, worker) => sum + (worker.capacityState === "reported" ? worker.availableSlots ?? 0 : 0), 0) ?? workers.reduce((sum, worker) => sum + worker.availableSlots, 0);
+  const operatorDataMessage = operatorData.state === "available"
+    ? "Protected operator data"
+    : operatorData.state === "loading"
+      ? "Protected data loading; synthetic fixture is shown until it arrives"
+      : operatorData.code === "authentication_required"
+        ? "Sign in is required; synthetic fixture is shown"
+        : "Protected operator data is unavailable; synthetic fixture is shown";
 
   return (
     <div className="app-shell">
@@ -104,7 +127,7 @@ export function ControlRoomDashboard() {
         <nav className="side-nav">
           <a className="active" href="#overview"><span aria-hidden="true">⌂</span> Overview</a>
           <a href="#projects"><span aria-hidden="true">▦</span> Projects</a>
-          <a href="#attention"><span aria-hidden="true">◆</span> Needs Me <b>{scopedAttention.length}</b></a>
+          <a href="#attention"><span aria-hidden="true">◆</span> Needs Me <b>{scopedActionInbox.length}</b></a>
           <a href="#workers"><span aria-hidden="true">◫</span> Workers</a>
           <a href="#agents"><span aria-hidden="true">◎</span> Agents</a>
           <a href="#capacity"><span aria-hidden="true">⌁</span> Capacity</a>
@@ -112,8 +135,8 @@ export function ControlRoomDashboard() {
         </nav>
 
         <div className="sidebar-foot">
-          <span className="connection-dot" /> Synthetic adapters healthy
-          <small>CR-0 → CR-2 · No live connections</small>
+          <span className={`connection-dot ${operatorData.state === "available" ? "protected" : "synthetic"}`} /> {operatorData.state === "available" ? "Protected data connected" : "Synthetic adapters active"}
+          <small>{operatorData.state === "available" ? "Tenant-bound read projection" : "No protected data is being claimed"}</small>
         </div>
       </aside>
 
@@ -129,7 +152,7 @@ export function ControlRoomDashboard() {
             </select>
           </div>
           <div className="top-actions">
-            <span className="freshness"><i /> Snapshot 12:30 PM</span>
+            <span className="freshness"><i /> {operatorSnapshot ? `Projection ${new Date(operatorSnapshot.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Fixture snapshot"}</span>
             <button className="icon-button" type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
               {theme === "dark" ? "☼" : "◐"}
             </button>
@@ -143,11 +166,12 @@ export function ControlRoomDashboard() {
             <h1>{scope === "all" ? "Everything moving, in one room." : scopedProjects[0]?.title}</h1>
             <p className="hero-copy">
               {scope === "all"
-                ? "Synthetic status across every project, worker, agent, blocker, and allocation decision."
+                ? "Portfolio status across every project, worker, agent, blocker, and allocation decision."
                 : `${scopedProjects[0]?.workspaceName} · ${stateLabel(scopedProjects[0]?.domainState ?? "")}`}
             </p>
+            <p className={`operator-data-status ${operatorData.state}`} aria-live="polite">{operatorDataMessage}</p>
           </div>
-          <span className="prototype-badge">Synthetic prototype</span>
+          <span className="prototype-badge">{operatorData.state === "available" ? "Protected projection" : "Synthetic fixture"}</span>
         </section>
 
         <OwnerFocusStrip pins={scopedOwnerFocus} projects={focusProjects} onPrepare={prepareOwnerFocus} notice={ownerFocusNotice} />
@@ -159,11 +183,11 @@ export function ControlRoomDashboard() {
           </article>
           <article className="metric-card">
             <span className="metric-icon amber">!</span>
-            <div><small>Needs your attention</small><strong>{scopedAttention.length}</strong><em>{scopedBlockers.filter((item) => item.severity === "critical").length} critical blocker</em></div>
+            <div><small>Needs your attention</small><strong>{scopedActionInbox.length}</strong><em>{scopedBlockers.filter((item) => item.severity === "critical").length} critical blocker</em></div>
           </article>
           <article className="metric-card">
             <span className="metric-icon blue">◫</span>
-            <div><small>Workers connected</small><strong>{activeWorkers}/{workers.length}</strong><em>{workers.reduce((sum, worker) => sum + worker.availableSlots, 0)} slots currently free</em></div>
+            <div><small>Workers observed</small><strong>{activeWorkers}/{displayedWorkerCount}</strong><em>{operatorSnapshot?.fleet.some((worker) => worker.capacityState === "unavailable") ? "some capacity unavailable" : `${availableSlots} slots currently free`}</em></div>
           </article>
           <article className="metric-card">
             <span className="metric-icon violet">◎</span>
@@ -203,7 +227,7 @@ export function ControlRoomDashboard() {
         <div className="dashboard-columns">
           <section id="attention" className="section-block panel">
             <div className="section-heading">
-              <div><p className="eyebrow">Decision queue</p><h2>Needs your attention</h2></div>
+              <div><p className="eyebrow">{operatorData.state === "available" ? "Protected decision queue" : "Synthetic decision queue"}</p><h2>Needs your attention</h2></div>
               <span className="count-pill">{scopedActionInbox.length}</span>
             </div>
             <ActionInbox items={scopedActionInbox} title="Needs your attention" />
@@ -291,8 +315,8 @@ export function ControlRoomDashboard() {
         </section>
 
         <section id="workers" className="section-block panel table-panel">
-          <div className="section-heading"><div><p className="eyebrow">Global resources</p><h2>Workers</h2></div><span className="live-label"><i /> {activeWorkers} connected</span></div>
-          <div className="worker-table" role="table" aria-label="Synthetic workers">
+          <div className="section-heading"><div><p className="eyebrow">{operatorSnapshot ? "Protected fleet projection" : "Synthetic global resources"}</p><h2>Workers</h2></div><span className="live-label"><i /> {activeWorkers} observed</span></div>
+          {operatorSnapshot ? <FleetProjection workers={operatorSnapshot.fleet} /> : <div className="worker-table" role="table" aria-label="Synthetic workers">
             <div className="table-row table-head" role="row"><span>Worker</span><span>Status</span><span>Allocation</span><span>Current work</span><span>Capabilities</span><span /></div>
             {workers.map((worker) => (
               <div className="table-row" role="row" key={worker.id}>
@@ -304,7 +328,7 @@ export function ControlRoomDashboard() {
                 <span><Link className="row-link" href={`/workers/${encodeURIComponent(worker.id)}`} prefetch={false} aria-label={`Open ${worker.displayName}`}>→</Link></span>
               </div>
             ))}
-          </div>
+          </div>}
         </section>
 
         <div className="dashboard-columns lower-columns">
@@ -332,7 +356,7 @@ export function ControlRoomDashboard() {
 
         <footer className="page-footer">
           <span>Control Room · {"control-room-project-adapter/v1"}</span>
-          <span>Fixture data only · No production credentials · No live project commands</span>
+          <span>{operatorSnapshot ? "Protected read projection · No project commands" : "Fixture data only · No production credentials · No live project commands"}</span>
         </footer>
       </main>
 

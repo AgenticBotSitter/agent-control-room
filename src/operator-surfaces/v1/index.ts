@@ -3,3 +3,4 @@ export * from "./validators";
 export * from "./store";
 export * from "./projections";
 export * from "./read-service";
+export * from "./http-client";

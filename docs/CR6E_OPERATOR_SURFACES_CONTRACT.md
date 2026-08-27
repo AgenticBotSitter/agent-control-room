@@ -25,3 +25,7 @@ Read models use stable ordering and explicit filters. Expired items stay auditab
 The read service receives a tenant scope only from the authenticated server boundary. It binds every durable store and fleet/bottleneck source query to that scope, validates/redacts the assembled snapshot again before returning it, and performs no write or command. A browser query parameter is never an authority source.
 
 The protected HTTP route requires the deployment-provided authenticated actor header and uses server-only tenant/database configuration. It accepts only bounded display filters; it never accepts a tenant identifier. Missing private configuration fails unavailable rather than returning fixture or cross-tenant data.
+
+The dashboard browser reader calls that protected route with same-site credentials and no tenant parameter. It validates the complete response again before rendering it. If authentication, private configuration, transport, or validation is unavailable, the dashboard may display its clearly labelled synthetic fixture; it never presents that fixture as protected operator truth.
+
+The protected fleet table renders only the projection's observed state, platform, capability and telemetry status, and declared capacity. Missing capacity is displayed as unavailable; neither an online state nor a positive slot count is presented as dispatch authority.
