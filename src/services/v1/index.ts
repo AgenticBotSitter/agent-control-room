@@ -1,2 +1,3 @@
 export * from "./recurrence";
 export * from "./reconciliation";
+export * from "./occurrence-store";
