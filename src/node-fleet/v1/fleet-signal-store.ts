@@ -21,14 +21,15 @@ export class FleetSignalStore {
   /** Returns only normalized, tenant-scoped current facts; never raw host reads. */
   async current(input: { tenantId: string; nodeId: string }): Promise<FleetSignalEnvelope[]> {
     const result = await this.db.query<{
-      signal_kind: FleetSignalEnvelope["kind"]; signal_sequence: number; fingerprint: string; trust: FleetSignalEnvelope["trust"];
+      signal_kind: FleetSignalEnvelope["kind"]; signal_subject_id: string; signal_sequence: number; fingerprint: string; trust: FleetSignalEnvelope["trust"];
       observed_at: string | Date; expires_at: string | Date; payload: unknown;
-    }>(`SELECT signal_kind,signal_sequence,fingerprint,trust,observed_at,expires_at,payload FROM control_node_fleet_current WHERE tenant_id=$1 AND node_id=$2 ORDER BY signal_kind`, [input.tenantId,input.nodeId]);
+    }>(`SELECT signal_kind,signal_subject_id,signal_sequence,fingerprint,trust,observed_at,expires_at,payload FROM control_node_fleet_current WHERE tenant_id=$1 AND node_id=$2 ORDER BY signal_kind,signal_subject_id`, [input.tenantId,input.nodeId]);
     const signals: FleetSignalEnvelope[] = [];
     for (const row of result.rows) {
       const parsed = fleetSignalEnvelopeSchema.safeParse(row.payload);
       if (!parsed.success || parsed.data.tenantId !== input.tenantId || parsed.data.nodeId !== input.nodeId
         || parsed.data.kind !== row.signal_kind || parsed.data.sequence !== Number(row.signal_sequence)
+        || fleetSignalSubjectId(parsed.data) !== row.signal_subject_id
         || parsed.data.fingerprint !== row.fingerprint || parsed.data.trust !== row.trust
         || parsed.data.observedAt !== new Date(row.observed_at).toISOString() || parsed.data.expiresAt !== new Date(row.expires_at).toISOString()) {
         throw new FleetSignalStoreError("invalid_signal");
@@ -81,11 +82,18 @@ export class FleetSignalStore {
       [signal.tenantId,signal.nodeId,signal.kind,signal.sequence,payloadDigest,signal.fingerprint,signal.trust,signal.observedAt,signal.expiresAt,JSON.stringify(signal),recordedAt],
     );
     await tx.query(
-      `INSERT INTO control_node_fleet_current (tenant_id,node_id,signal_kind,signal_sequence,fingerprint,trust,observed_at,expires_at,payload)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
-       ON CONFLICT (tenant_id,node_id,signal_kind) DO UPDATE SET signal_sequence=EXCLUDED.signal_sequence,fingerprint=EXCLUDED.fingerprint,trust=EXCLUDED.trust,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at,payload=EXCLUDED.payload`,
-      [signal.tenantId,signal.nodeId,signal.kind,signal.sequence,signal.fingerprint,signal.trust,signal.observedAt,signal.expiresAt,JSON.stringify(signal)],
+      `INSERT INTO control_node_fleet_current (tenant_id,node_id,signal_kind,signal_subject_id,signal_sequence,fingerprint,trust,observed_at,expires_at,payload)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+       ON CONFLICT (tenant_id,node_id,signal_kind,signal_subject_id) DO UPDATE SET signal_sequence=EXCLUDED.signal_sequence,fingerprint=EXCLUDED.fingerprint,trust=EXCLUDED.trust,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at,payload=EXCLUDED.payload`,
+      [signal.tenantId,signal.nodeId,signal.kind,fleetSignalSubjectId(signal),signal.sequence,signal.fingerprint,signal.trust,signal.observedAt,signal.expiresAt,JSON.stringify(signal)],
     );
     return { replayed: false };
   }
+}
+
+/** Current rows must preserve each probe/benchmark, while node facts remain singleton subjects. */
+export function fleetSignalSubjectId(signal: FleetSignalEnvelope): string {
+  if (signal.kind === "capability") return signal.payload.probeId;
+  if (signal.kind === "benchmark") return signal.payload.benchmarkId;
+  return "node";
 }

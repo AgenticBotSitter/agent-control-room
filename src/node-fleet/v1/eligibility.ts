@@ -5,9 +5,11 @@ export type FleetEligibilityReason =
   | "telemetry_stale"
   | "scratch_insufficient"
   | "capability_missing"
+  | "capability_expired"
   | "capability_unverified"
   | "benchmark_missing"
-  | "benchmark_expired";
+  | "benchmark_expired"
+  | "benchmark_environment_mismatch";
 
 export interface FleetEligibilityInput {
   now: string;
@@ -38,12 +40,17 @@ export function evaluateFleetEligibility(input: FleetEligibilityInput): FleetEli
   if (input.requiredCapabilityProbeId) {
     const capability = latest(input.signals.filter((signal): signal is Extract<FleetSignalEnvelope, { kind: "capability" }> => signal.kind === "capability" && signal.payload.probeId === input.requiredCapabilityProbeId));
     if (!capability || capability.payload.outcome !== "pass") reasons.push("capability_missing");
+    else if (Date.parse(capability.expiresAt) <= Date.parse(input.now)) reasons.push("capability_expired");
     else if (input.requireVerifiedCapability && capability.trust !== "verified") reasons.push("capability_unverified");
   }
   if (input.requiredBenchmarkId) {
     const benchmark = latest(input.signals.filter((signal): signal is Extract<FleetSignalEnvelope, { kind: "benchmark" }> => signal.kind === "benchmark" && signal.payload.benchmarkId === input.requiredBenchmarkId));
     if (!benchmark) reasons.push("benchmark_missing");
     else if (Date.parse(benchmark.expiresAt) <= Date.parse(input.now)) reasons.push("benchmark_expired");
+    else {
+      const discovery = latest(input.signals.filter((signal): signal is Extract<FleetSignalEnvelope, { kind: "discovery" }> => signal.kind === "discovery"));
+      if (!discovery || benchmark.payload.environmentFingerprint !== discovery.fingerprint) reasons.push("benchmark_environment_mismatch");
+    }
   }
   return { eligible: reasons.length === 0, reasons };
 }
