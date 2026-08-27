@@ -1,0 +1,47 @@
+{
+  "schema": "control-room.agent-build-result/v2",
+  "capsulePath": "coordination/agent-build/capsules/CR6Q-REV-002.json",
+  "capsuleId": "CR6Q-REV-002",
+  "waveId": "CR6Q-REVIEW-2",
+  "baseCommit": "c5dcb81cd1167caa4804b5f3c2483d3503b70946",
+  "implementationCommit": "adb125184a2d0733714a17a94ee52d56435dd410",
+  "producerRoute": "marvin-macos",
+  "changedFiles": [
+    {
+      "path": "docs/hermes-reviews/CR6Q_FLEET_SCHEDULER_CLEAN_REVIEW.md",
+      "additions": 93,
+      "deletions": 0
+    }
+  ],
+  "commands": [
+    {
+      "command": "npm run test:cr6q",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run check",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check integration/cr5d-synthetic-executor-1...HEAD",
+      "exitCode": 0
+    }
+  ],
+  "repairIterations": 0,
+  "failures": [],
+  "assumptions": [
+    "Producer branch agent/marvin-macos/cr6q-rev-002 created in an isolated worktree from origin/integration/cr5d-synthetic-executor-1 at head 5bc6c4d5dd6b1340e2474ae30a5c23c3c44b601b; baseCommit copied exactly from the capsule.",
+    "No install, download, or network package fetch occurred. Repository dependencies were reused from a pre-existing checkout on the same machine after verifying the pnpm-lock.yaml blob (2641216ddd94d8ba1c13e5e172c7da04829d251b) is identical across origin/main, the integration tip, and the worktree base; the stage-zero probe reported ready_for_runtime_check before any test ran.",
+    "Acceptance commands executed exactly as declared. Before the third command, a local tracking ref for integration/cr5d-synthetic-executor-1 was created inside the isolated worktree (pointing at the integration commit; no commit content depends on it) so the literal branch name resolves.",
+    "Independence established before reading any CR6Q-REV-001 conclusions: all product commits at the reviewed head are authored by the architect identity (Alastair Fraser); the first independent review was claimed and submitted by the ziggy-windows route; this reviewer profile authored neither.",
+    "Full npm test (339 tests, 337 passed, 0 failed, 2 platform skips, matching the acceptance record) was re-run by this reviewer as corroboration; production build, rendered-route verification, and migration verification were not re-run and remain Codex-side evidence per docs/CR6Q_ACCEPTANCE.md."
+  ],
+  "effectCount": 0,
+  "safety": {
+    "secretsAbsent": true,
+    "privateHostDataAbsent": true,
+    "workerDidNotApproveOrMerge": true,
+    "scopeNotExpanded": true
+  },
+  "disposition": "ready-for-intake"
+}
