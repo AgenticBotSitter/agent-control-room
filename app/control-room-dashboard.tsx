@@ -99,11 +99,12 @@ export function ControlRoomDashboard() {
   };
 
   const operatorSnapshot = operatorData.state === "available" ? operatorData.snapshot : undefined;
+  const activeScope = operatorSnapshot && scope !== "all" && !operatorSnapshot.portfolio.some((project) => project.projectId === scope) ? "all" : scope;
   const scopeOptions = operatorSnapshot
     ? operatorSnapshot.portfolio.map((project) => ({ id: project.projectId, label: project.projectId }))
     : projects.map((project) => ({ id: project.id, label: `${project.workspaceName} · ${project.title}` }));
-  const scopedProjects = useMemo(() => scope === "all" ? projects : projects.filter((project) => project.id === scope), [scope]);
-  const scopedIds = new Set(operatorSnapshot ? (scope === "all" ? operatorSnapshot.portfolio.map((project) => project.projectId) : [scope]) : scopedProjects.map((project) => project.id));
+  const scopedProjects = useMemo(() => activeScope === "all" ? projects : projects.filter((project) => project.id === activeScope), [activeScope]);
+  const scopedIds = new Set(operatorSnapshot ? (activeScope === "all" ? operatorSnapshot.portfolio.map((project) => project.projectId) : [activeScope]) : scopedProjects.map((project) => project.id));
   const scopedPortfolio = operatorSnapshot?.portfolio.filter((project) => scopedIds.has(project.projectId));
   const actionInbox = operatorSnapshot?.actionInbox ?? cr6eActionInboxFixture;
   const ownerFocus = operatorSnapshot?.ownerFocus ?? cr6eOwnerFocusFixture;
@@ -164,7 +165,7 @@ export function ControlRoomDashboard() {
         <header className="topbar">
           <div className="scope-control">
             <label htmlFor="project-scope">Viewing</label>
-            <select id="project-scope" value={scope} onChange={(event) => setScope(event.target.value as Scope)}>
+            <select id="project-scope" value={activeScope} onChange={(event) => setScope(event.target.value as Scope)}>
               <option value="all">All projects</option>
               {scopeOptions.map((project) => (
                 <option key={project.id} value={project.id}>{project.label}</option>
@@ -183,11 +184,11 @@ export function ControlRoomDashboard() {
         <section id="overview" className="hero-section">
           <div>
             <p className="eyebrow">Portfolio command view</p>
-            <h1>{scope === "all" ? "Everything moving, in one room." : operatorSnapshot ? scope : scopedProjects[0]?.title}</h1>
+            <h1>{activeScope === "all" ? "Everything moving, in one room." : operatorSnapshot ? activeScope : scopedProjects[0]?.title}</h1>
             <p className="hero-copy">
-              {scope === "all"
+              {activeScope === "all"
                 ? "Portfolio status across every project, worker, agent, blocker, and allocation decision."
-                : operatorSnapshot ? `Protected status for ${scope}.` : `${scopedProjects[0]?.workspaceName} · ${stateLabel(scopedProjects[0]?.domainState ?? "")}`}
+                : operatorSnapshot ? `Protected status for ${activeScope}.` : `${scopedProjects[0]?.workspaceName} · ${stateLabel(scopedProjects[0]?.domainState ?? "")}`}
             </p>
             <p className={`operator-data-status ${operatorData.state}`} aria-live="polite">{operatorDataMessage}</p>
           </div>
@@ -218,7 +219,7 @@ export function ControlRoomDashboard() {
         <section id="projects" className="section-block">
           <div className="section-heading">
             <div><p className="eyebrow">Portfolio</p><h2>Active projects</h2></div>
-            {scope !== "all" && <button className="text-button" type="button" onClick={() => setScope("all")}>Show all projects</button>}
+            {activeScope !== "all" && <button className="text-button" type="button" onClick={() => setScope("all")}>Show all projects</button>}
           </div>
           {operatorSnapshot ? <PortfolioProjection projects={scopedPortfolio ?? []} /> : <div className="project-grid">
             {scopedProjects.map((project) => (
@@ -256,9 +257,9 @@ export function ControlRoomDashboard() {
           <section className="section-block panel">
             <div className="section-heading">
               <div><p className="eyebrow">{operatorSnapshot ? "Protected job observation" : "Synthetic execution"}</p><h2>Running now</h2></div>
-              <span className="live-label"><i /> {operatorSnapshot ? `${operatorSnapshot.activeWork.length} observed` : "Live fixture"}</span>
+              <span className="live-label"><i /> {operatorSnapshot ? `${protectedActiveWork?.length ?? 0} observed` : "Live fixture"}</span>
             </div>
-            {operatorSnapshot ? <ActiveWorkList work={operatorSnapshot.activeWork} /> : <div className="running-list">
+            {operatorSnapshot ? <ActiveWorkList work={protectedActiveWork ?? []} /> : <div className="running-list">
               {running.map((item) => {
                 const worker = workers.find((candidate) => candidate.id === item.currentWorkerId);
                 return (
@@ -358,7 +359,7 @@ export function ControlRoomDashboard() {
 
         {operatorSnapshot && <section id="services" className="section-block panel">
           <div className="section-heading"><div><p className="eyebrow">Protected service and schedule status</p><h2>Services and schedules</h2></div><span className="live-label"><i /> Read-only observation</span></div>
-          <ServiceScheduleList services={operatorSnapshot.services} schedules={operatorSnapshot.schedules} />
+          <ServiceScheduleList services={operatorSnapshot.services.filter((service) => scopedIds.has(service.projectId))} schedules={operatorSnapshot.schedules.filter((schedule) => scopedIds.has(schedule.projectId))} />
         </section>}
 
         <div className="dashboard-columns lower-columns">

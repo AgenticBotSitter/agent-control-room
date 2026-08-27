@@ -9,7 +9,7 @@
 - worker fleet, active work, bottlenecks, Action Inbox, Owner Focus, service incidents, services, and schedules use bounded redacted projections;
 - absent or invalid protected data fails closed and the dashboard labels its synthetic fallback instead of presenting it as real;
 - Owner Focus saves only a policy-authorized P0/Today intent. It creates no reservation, scheduler override, dispatch, outbox message, or external effect; and
-- project and worker detail pages are explicitly labelled synthetic fixtures until their own protected reads are implemented.
+- project and worker detail pages load a small protected status panel from the same snapshot when their stable identifier matches; all remaining detail material stays explicitly labelled fixture content.
 
 ## Automated evidence
 
