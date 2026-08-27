@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { artifactManifestRecordSchema, authorityEnvelopeSchema } from "../../domain/v1";
+import { fleetSignalEnvelopeSchema } from "../../node-fleet/v1/schemas";
 import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
 import { computeAuthorityDigest, sha256Digest } from "../../security";
 import { NODE_PROTOCOL_MAX_FRAME_BYTES, NODE_PROTOCOL_V1 } from "./types";
@@ -313,6 +314,7 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("connection.hello", connectionHello),
   frame("connection.accepted", connectionAccepted),
   frame("node.heartbeat", heartbeat),
+  frame("node.fleet.signal", fleetSignalEnvelopeSchema),
   frame("job.offer", jobOffer),
   frame("job.offer.decision", offerDecision),
   frame("job.lease.grant", leaseGrant),
@@ -332,5 +334,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   if (value.direction === "server_to_node" && value.senderKind !== "control_room") context.addIssue({ code: "custom", path: ["senderKind"], message: "server-to-node frames must be Control Room signed" });
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
 export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);

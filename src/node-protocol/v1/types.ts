@@ -1,4 +1,5 @@
 import type { ArtifactManifestRecord, AuthorityEnvelope } from "../../domain/v1";
+import type { FleetSignalEnvelope } from "../../node-fleet/v1/schemas";
 
 export const NODE_PROTOCOL_V1 = "control-room-node/v1" as const;
 export const NODE_PROTOCOL_SUPPORTED_VERSIONS = [NODE_PROTOCOL_V1] as const;
@@ -256,6 +257,7 @@ export interface NodeMessageBodyMap {
   "connection.hello": ConnectionHelloBody;
   "connection.accepted": ConnectionAcceptedBody;
   "node.heartbeat": HeartbeatBody;
+  "node.fleet.signal": FleetSignalEnvelope;
   "job.offer": JobOfferBody;
   "job.offer.decision": OfferDecisionBody;
   "job.lease.grant": LeaseGrantBody;

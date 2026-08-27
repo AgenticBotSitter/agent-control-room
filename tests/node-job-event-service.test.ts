@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { PortableNodeBridge, SqliteBridgeJournal, type BridgeTransport } from "../src/node-bridge";
-import { NodeJobEventIngress } from "../src/node-control";
+import { NodeFleetSignalIngress, NodeJobEventIngress } from "../src/node-control";
 import { NodeJobEventError, NodeJobEventService } from "../src/node-control/job-event-service";
 import { buildArtifactLineageRecord, buildTextArtifactBundle } from "../src/node-executor";
 import {
@@ -179,6 +179,23 @@ test("ingress authenticates raw frames before retaining job evidence and only th
   } finally {
     await db.close();
   }
+});
+
+test("fleet ingress authenticates the raw frame, binds node identity, persists, and acknowledges after storage", async () => {
+  const { db } = await fixture();
+  try {
+    const keys = generateKeyPairSync("ed25519");
+    const spki = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+    await db.query(`INSERT INTO control_node_keys (id,tenant_id,node_id,algorithm,public_key_spki,fingerprint,state,valid_from,created_at) VALUES ('key:fleet','tenant:owner','node:ingest','ed25519',$1,$2,'active',$3,$3)`, [spki, publicKeyFingerprint(spki), t0]);
+    const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(adaptPglite(db)), new DatabaseReplayGuard(adaptPglite(db)), new FixedWindowProtocolRateLimiter(20, 60));
+    const ingress = new NodeFleetSignalIngress(authenticator, adaptPglite(db));
+    const hello = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", messageId: "message:fleet:hello", correlationId: "correlation:fleet", tenantId: "tenant:owner", actorId: "node:ingest", senderKind: "node", keyId: "key:fleet", connectionId: "connection:fleet", sequence: 1, sentAt: t2, expiresAt: "2026-08-26T12:06:00.000Z", nonce: "nonce_fleet_hello_1234567890123456", type: "connection.hello", body: { supportedProtocols: [NODE_PROTOCOL_V1], features: ["fleet-signals"], requestedMaxFrameBytes: 4096, lastAcknowledgedServerSequence: 0, unresolvedAttemptIds: [] } } as UnsignedNodeFrame<"connection.hello">, keys.privateKey);
+    await authenticator.verify(JSON.stringify(hello), { expectedDirection: "node_to_server", transportIdentity: "transport:fleet", receivedAt: t2 });
+    const frame = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", messageId: "message:fleet:1", correlationId: "correlation:fleet", tenantId: "tenant:owner", actorId: "node:ingest", senderKind: "node", keyId: "key:fleet", connectionId: "connection:fleet", sequence: 2, sentAt: t2, expiresAt: "2026-08-26T12:06:00.000Z", nonce: "nonce_fleet_123456789012345678901", type: "node.fleet.signal", body: { schemaVersion: "1.0.0", tenantId: "tenant:owner", nodeId: "node:ingest", kind: "telemetry", source: "telemetry_port", sequence: 1, observedAt: t2, expiresAt: "2026-08-26T12:05:00.000Z", trust: "reported", fingerprint: hashA, payload: { samplingIntervalSeconds: 60, cpuUtilizationPercent: { quality: "observed", value: 5 }, availableMemoryBytes: { quality: "observed", value: 1000 }, availableStorageBytes: { quality: "observed", value: 1000 }, networkClass: "unmetered", powerState: "ac", thermalState: "nominal" } } } as UnsignedNodeFrame<"node.fleet.signal">, keys.privateKey);
+    const accepted = await ingress.receive(JSON.stringify(frame), { transportIdentity: "transport:fleet", receivedAt: t2, expectedConnectionId: "connection:fleet" });
+    assert.equal(accepted.acknowledgement.disposition, "accepted");
+    assert.equal((await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_node_fleet_signals`)).rows[0]?.count, "1");
+  } finally { await db.close(); }
 });
 
 test("inactive leases, malformed bodies, future claims, and backwards event time fail without partial truth", async () => {

@@ -10,9 +10,10 @@ export class FleetSignalStore {
   constructor(private readonly db: DatabaseClient) {}
 
   /** Caller authentication is required before this persistence boundary. */
-  async ingestAuthenticated(signalInput: FleetSignalEnvelope, recordedAt: string): Promise<{ replayed: boolean }> {
+  async ingestAuthenticated(signalInput: FleetSignalEnvelope, recordedAt: string, binding?: { tenantId: string; nodeId: string }): Promise<{ replayed: boolean }> {
     const signal = fleetSignalEnvelopeSchema.safeParse(signalInput);
     if (!signal.success) throw new FleetSignalStoreError("invalid_signal");
+    if (binding && (signal.data.tenantId !== binding.tenantId || signal.data.nodeId !== binding.nodeId)) throw new FleetSignalStoreError("identity_mismatch");
     assertNoSecretMaterial(signal.data, "fleet signal");
     return this.db.transaction((tx) => this.persist(tx, signal.data, recordedAt));
   }
