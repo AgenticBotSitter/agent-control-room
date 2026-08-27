@@ -1,0 +1,6 @@
+[
+  {"jsonrpc":"2.0","method":"event","params":{"type":"session.info","session_id":"native-session-a","payload":{"profile_name":"private-profile","cwd":"/private/workspace"}}},
+  {"jsonrpc":"2.0","method":"event","params":{"type":"tool.start","session_id":"native-session-a","payload":{"name":"terminal","arguments":{"command":"private command"}}}},
+  {"jsonrpc":"2.0","method":"event","params":{"type":"session.usage","session_id":"native-session-a","payload":{"input_tokens":12,"output_tokens":7,"cache_read_tokens":3,"reasoning_tokens":2,"estimated_cost_usd":"0.0042"}}},
+  {"jsonrpc":"2.0","method":"event","params":{"type":"message.complete","session_id":"native-session-a","payload":{"text":"private final answer"}}}
+]

@@ -1,0 +1,6 @@
+{
+  "status":{"version":"0.20.6","active_session_count":1,"gateway":{"status":"running"},"account_email":"private@example.test"},
+  "sessions":[{"id":"native-session-a","status":"running","updated_at":"2026-08-27T20:00:00.000Z","input_tokens":12,"output_tokens":7,"cache_read_tokens":3,"reasoning_tokens":2,"profile_name":"private-profile","preview":"private prompt text"}],
+  "cronJobs":[{"id":"native-cron-a","enabled":true,"status":"active","next_run_at":"2026-08-28T20:00:00.000Z","name":"private schedule","prompt":"private cron prompt"}],
+  "usage":{"input_tokens":100,"output_tokens":50,"cache_read_tokens":25,"reasoning_tokens":10,"provider_key":"must-not-project"}
+}
