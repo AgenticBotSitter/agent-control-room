@@ -9,6 +9,7 @@ import { adaptPglite } from "../src/persistence/database";
 import { ServiceIncidentStore } from "../src/services/v1";
 import { DOMAIN_CONTRACT_VERSION, type JobRecord, type NodeRecord, type RequestRecord, type ScheduleRecord, type ServiceRecord, type WorkflowRecord } from "../src/domain/v1";
 import { computeAuthorityDigest } from "../src/security";
+import { FleetSignalStore, type FleetSignalEnvelope } from "../src/node-fleet/v1";
 
 const now = "2026-08-27T12:00:00.000Z";
 const inbox = {
@@ -55,6 +56,7 @@ test("CR6E authorized read service assembles only the bound tenant's redacted re
     assert.deepEqual(result.snapshot.serviceIncidents.map((incident) => incident.reasonCode), ["service_degraded"]);
     assert.deepEqual(result.serviceIncidents.map((incident) => incident.tenantId), ["tenant:1"]);
     assert.deepEqual(calls.sort(), ["active-work:tenant:1", "bottlenecks:tenant:1", "fleet:tenant:1", "portfolio:tenant:1", "schedules:tenant:1", "services:tenant:1"]);
+    await assert.rejects(reader.read({ scope: { tenantId: "tenant:1", actorId: "actor:owner", grantedAt: "2026-08-27T12:00:00.001Z" }, now }), (error: unknown) => error instanceof Error && error.message === "invalid_read_scope");
   } finally { await raw.close(); }
 });
 
@@ -105,10 +107,58 @@ test("CR6E database fleet source reports only persisted node facts and marks abs
     await raw.query(`UPDATE control_jobs SET state='running',version=1,payload=$1::jsonb,updated_at=$2 WHERE tenant_id='tenant:1' AND id='job:1'`, [JSON.stringify(runningJob), now]);
     const source = new DatabaseOperatorFleetReadSourceV1(client);
     const fleet = await source.fleet({ tenantId: "tenant:1", now });
-    assert.deepEqual(fleet, [{ workerId: "node:1", platform: "macos", state: "online", lastObservedAt: now, capacityState: "unavailable", capabilityState: "unavailable", telemetryState: "missing" }]);
+    assert.deepEqual(fleet, [{ workerId: "node:1", platform: "macos", state: "degraded", stateReasonCode: "telemetry_missing", lastObservedAt: now, capacityState: "unavailable", capabilityState: "unavailable", telemetryState: "missing" }]);
     assert.deepEqual(await source.activeWork({ tenantId: "tenant:1", now }), [{ jobId: "job:1", projectId: "project:1", state: "running", jobType: "synthetic:render", priority: 80, requiredCapability: "capability:render", updatedAt: now }]);
     assert.deepEqual(await source.portfolio({ tenantId: "tenant:1", now }), [{ projectId: "project:1", workflowCount: 1, activeJobCount: 1, waitingApprovalJobCount: 0, failedJobCount: 0, lastActivityAt: now }]);
     assert.deepEqual(await source.services({ tenantId: "tenant:1", now }), [{ serviceId: "service:1", projectId: "project:1", serviceType: "service:backup", state: "degraded", statusCode: "backup_stale", lastObservedAt: now }]);
     assert.deepEqual(await source.schedules({ tenantId: "tenant:1", now }), [{ scheduleId: "schedule:1", projectId: "project:1", state: "active", scheduleType: "cron", targetType: "service_check", targetId: "service:1", timezone: "UTC", nextRunAt: "2026-08-27T13:00:00.000Z", idempotencyWindowSeconds: 60 }]);
+  } finally { await raw.close(); }
+});
+
+test("CR6Q fleet projection never turns stale, future, failed, or blocked evidence into current capability", async () => {
+  const raw = await database();
+  try {
+    const client = adaptPglite(raw);
+    const canonical = new CanonicalStore(client);
+    const signals = new FleetSignalStore(client);
+    const digest = `sha256:${"f".repeat(64)}`;
+    const nodes = ["fresh", "expired", "future", "blocked"];
+    for (const suffix of nodes) {
+      const id = `node:${suffix}`;
+      const node: NodeRecord = {
+        contractVersion: DOMAIN_CONTRACT_VERSION, kind: "node", id, tenantId: "tenant:1", displayName: `Node ${suffix}`, state: "pending_enrollment", version: 0,
+        platform: "macos", architecture: "arm64", identityKeyId: `key:${suffix}`, hardwareFingerprint: digest, softwareFingerprint: digest,
+        policyVersion: "1.0.0", minimumProtocolVersion: "control-room-node/v1", createdAt: "2026-08-27T10:00:00.000Z", updatedAt: "2026-08-27T10:00:00.000Z",
+      };
+      await canonical.create(node);
+      const activeNode: NodeRecord = { ...node, state: "active", version: 1, enrolledAt: "2026-08-27T10:00:00.000Z" };
+      await raw.query(`UPDATE control_nodes SET state='active',version=1,payload=$1::jsonb WHERE tenant_id='tenant:1' AND id=$2`, [JSON.stringify(activeNode), id]);
+    }
+    const telemetryPayload: Extract<FleetSignalEnvelope, { kind: "telemetry" }>["payload"] = {
+      samplingIntervalSeconds: 60,
+      cpuUtilizationPercent: { quality: "observed", value: 10 },
+      availableMemoryBytes: { quality: "observed", value: 1024 },
+      availableStorageBytes: { quality: "observed", value: 2048 },
+      networkClass: "unmetered", powerState: "ac", thermalState: "nominal",
+    };
+    const timing = {
+      fresh: ["2026-08-27T11:59:00.000Z", "2026-08-27T12:04:00.000Z"],
+      expired: ["2026-08-27T11:50:00.000Z", "2026-08-27T11:55:00.000Z"],
+      future: ["2026-08-27T12:01:00.000Z", "2026-08-27T12:06:00.000Z"],
+      blocked: ["2026-08-27T11:59:00.000Z", "2026-08-27T12:04:00.000Z"],
+    } as const;
+    for (const suffix of nodes) {
+      const [observedAt, expiresAt] = timing[suffix as keyof typeof timing];
+      const trust = suffix === "blocked" ? "blocked" as const : "reported" as const;
+      await signals.ingestAuthenticated({ schemaVersion: "1.0.0", tenantId: "tenant:1", nodeId: `node:${suffix}`, kind: "telemetry", sequence: 1, observedAt, expiresAt, trust, fingerprint: digest, source: "telemetry_port", payload: telemetryPayload }, now);
+      await signals.ingestAuthenticated({ schemaVersion: "1.0.0", tenantId: "tenant:1", nodeId: `node:${suffix}`, kind: "capability", sequence: 1, observedAt, expiresAt, trust, fingerprint: digest, source: "probe_runner", payload: { probeId: "probe:render", probeVersion: "1.0.0", outcome: suffix === "blocked" ? "blocked" : "pass", reasonCode: suffix === "blocked" ? "probe_blocked" : "probe_passed", evidenceDigest: digest } }, now);
+    }
+    const fleet = await new DatabaseOperatorFleetReadSourceV1(client).fleet({ tenantId: "tenant:1", now });
+    const byId = new Map(fleet.map((worker) => [worker.workerId, worker]));
+    assert.deepEqual({ state: byId.get("node:fresh")?.state, reason: byId.get("node:fresh")?.stateReasonCode, telemetry: byId.get("node:fresh")?.telemetryState, capability: byId.get("node:fresh")?.capabilityState }, { state: "online", reason: undefined, telemetry: "fresh", capability: "provisional" });
+    assert.deepEqual({ state: byId.get("node:expired")?.state, reason: byId.get("node:expired")?.stateReasonCode, telemetry: byId.get("node:expired")?.telemetryState, capability: byId.get("node:expired")?.capabilityState }, { state: "degraded", reason: "telemetry_stale", telemetry: "stale", capability: "expired" });
+    assert.deepEqual({ state: byId.get("node:future")?.state, reason: byId.get("node:future")?.stateReasonCode, telemetry: byId.get("node:future")?.telemetryState, capability: byId.get("node:future")?.capabilityState }, { state: "degraded", reason: "telemetry_stale", telemetry: "stale", capability: "unavailable" });
+    assert.deepEqual({ state: byId.get("node:blocked")?.state, reason: byId.get("node:blocked")?.stateReasonCode, telemetry: byId.get("node:blocked")?.telemetryState, capability: byId.get("node:blocked")?.capabilityState }, { state: "degraded", reason: "telemetry_missing", telemetry: "missing", capability: "unavailable" });
+    assert.deepEqual(await new DatabaseOperatorFleetReadSourceV1(client).fleet({ tenantId: "tenant:2", now }), []);
   } finally { await raw.close(); }
 });

@@ -2,6 +2,7 @@ import type { FleetSignalEnvelope } from "./schemas";
 import { evaluateFleetSignalFreshness } from "./freshness";
 
 export type FleetEligibilityReason =
+  | "signal_identity_mismatch"
   | "telemetry_missing"
   | "telemetry_stale"
   | "scratch_insufficient"
@@ -37,6 +38,8 @@ function currentUsable(signal: FleetSignalEnvelope, now: string): boolean {
 
 /** A total, effect-free policy function for a single node's current signals. */
 export function evaluateFleetEligibility(input: FleetEligibilityInput): FleetEligibilityResult {
+  const identities = new Set(input.signals.map((signal) => `${signal.tenantId}\u0000${signal.nodeId}`));
+  if (identities.size > 1) return { eligible: false, reasons: ["signal_identity_mismatch"] };
   const reasons: FleetEligibilityReason[] = [];
   const telemetry = latest(input.signals.filter((signal) => signal.kind === "telemetry"));
   if (!telemetry || telemetry.trust === "blocked" || telemetry.trust === "unavailable") reasons.push("telemetry_missing");

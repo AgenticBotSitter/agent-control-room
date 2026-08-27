@@ -16,6 +16,7 @@ test("CR6C reservations serialize capacity, exact replay, release, and expiry wi
   try {
     await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:reservation','Reservation')`);
     const store = new ResourceReservationStore(adaptPglite(raw));
+    await assert.rejects(store.acquire({ ...request, acquiredAt: "2026-08-27T00:01:00.000Z" }, at), (error: unknown) => error instanceof ResourceReservationError && error.safeCode === "invalid_reservation");
     assert.deepEqual(await store.acquire(request, at), { reservation: { ...request, state: "active" }, replayed: false });
     assert.equal((await store.acquire(request, at)).replayed, true);
     await assert.rejects(store.acquire({ ...request, id: "reservation.2", projectId: "project:two" }, at), (error: unknown) => error instanceof ResourceReservationError && error.safeCode === "resource_unavailable");

@@ -54,7 +54,7 @@ export class ResourceReservationStore {
   constructor(private readonly db: DatabaseClient) {}
 
   async acquire(input: ResourceReservationRequest, now: string): Promise<{ reservation: ResourceReservation; replayed: boolean }> {
-    if (!valid(input) || !instant(now) || Date.parse(input.expiresAt) <= Date.parse(now)) throw new ResourceReservationError("invalid_reservation");
+    if (!valid(input) || !instant(now) || Date.parse(input.acquiredAt) > Date.parse(now) || Date.parse(input.expiresAt) <= Date.parse(now)) throw new ResourceReservationError("invalid_reservation");
     return this.db.transaction(async (tx) => {
       await tx.query(`INSERT INTO control_resource_reservation_heads (tenant_id,resource_key,capacity_units) VALUES ($1,$2,$3) ON CONFLICT (tenant_id,resource_key) DO NOTHING`, [input.tenantId,input.resourceKey,input.capacityUnits]);
       const head = await tx.query<{ capacity_units: number }>(`SELECT capacity_units FROM control_resource_reservation_heads WHERE tenant_id=$1 AND resource_key=$2 FOR UPDATE`, [input.tenantId,input.resourceKey]);

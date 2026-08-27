@@ -30,31 +30,48 @@ export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourc
   /** Reads only normalized node state and signal availability; absent capacity remains explicitly unavailable. */
   async fleet(input: { tenantId: string; now: string }): Promise<FleetWorkerSummaryV1[]> {
     if (!safeId.test(input.tenantId) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
-    const result = await this.db.query<{ id: string; state: string; payload: unknown; updated_at: string | Date; telemetry_expires_at: string | Date | null; capability_count: number }>(
+    const result = await this.db.query<{
+      id: string; state: string; payload: unknown; updated_at: string | Date;
+      valid_telemetry_observed_at: string | Date | null; fresh_telemetry_count: number; usable_telemetry_count: number;
+      fresh_capability_count: number; verified_capability_count: number; expired_capability_count: number;
+    }>(
       `SELECT n.id,n.state,n.payload,n.updated_at,
-        MAX(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' THEN f.expires_at ELSE NULL END) AS telemetry_expires_at,
-        COUNT(CASE WHEN f.signal_kind='capability' THEN 1 ELSE NULL END)::int AS capability_count
+        MAX(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') AND f.observed_at <= $2::timestamptz THEN f.observed_at ELSE NULL END) AS valid_telemetry_observed_at,
+        COUNT(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') THEN 1 ELSE NULL END)::int AS usable_telemetry_count,
+        COUNT(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' AND f.trust IN ('reported','verified') AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS fresh_telemetry_count,
+        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust IN ('reported','verified') AND f.payload->'payload'->>'outcome'='pass' AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS fresh_capability_count,
+        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust='verified' AND f.payload->'payload'->>'outcome'='pass' AND f.observed_at <= $2::timestamptz AND f.expires_at > $2::timestamptz THEN 1 ELSE NULL END)::int AS verified_capability_count,
+        COUNT(CASE WHEN f.signal_kind='capability' AND f.trust IN ('reported','verified') AND f.payload->'payload'->>'outcome'='pass' AND f.observed_at <= $2::timestamptz AND f.expires_at <= $2::timestamptz THEN 1 ELSE NULL END)::int AS expired_capability_count
        FROM control_nodes n
        LEFT JOIN control_node_fleet_current f ON f.tenant_id=n.tenant_id AND f.node_id=n.id
        WHERE n.tenant_id=$1
        GROUP BY n.id,n.state,n.payload,n.updated_at
        ORDER BY n.id`,
-      [input.tenantId],
+      [input.tenantId,input.now],
     );
     return result.rows.map((row) => {
       const node = nodeRecordSchema.safeParse(row.payload);
       if (!node.success || node.data.tenantId !== input.tenantId || node.data.id !== row.id || node.data.state !== row.state) throw new OperatorSurfaceReadError("invalid_read_scope");
-      const observedAt = node.data.lastSeenAt ?? new Date(row.updated_at).toISOString();
-      const telemetryExpiry = row.telemetry_expires_at ? new Date(row.telemetry_expires_at).getTime() : undefined;
-      const telemetryState = telemetryExpiry === undefined ? "missing" : telemetryExpiry > Date.parse(input.now) ? "fresh" : "stale";
+      const telemetryState = Number(row.fresh_telemetry_count) > 0 ? "fresh" : Number(row.usable_telemetry_count) > 0 ? "stale" : "missing";
+      const observedCandidates = [row.valid_telemetry_observed_at, node.data.lastSeenAt, row.updated_at]
+        .filter((value): value is string | Date => value !== null && value !== undefined)
+        .map((value) => new Date(value).toISOString())
+        .filter((value) => Date.parse(value) <= Date.parse(input.now));
+      const observedAt = observedCandidates.sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+      if (!observedAt) throw new OperatorSurfaceReadError("invalid_read_scope");
+      const activeState = telemetryState === "fresh" ? "online" as const : "degraded" as const;
+      const activeReason = telemetryState === "fresh" ? undefined : telemetryState === "stale" ? "telemetry_stale" : "telemetry_missing";
+      const capabilityState = Number(row.verified_capability_count) > 0 ? "verified" as const
+        : Number(row.fresh_capability_count) > 0 ? "provisional" as const
+          : Number(row.expired_capability_count) > 0 ? "expired" as const : "unavailable" as const;
       return {
         workerId: node.data.id,
         platform: node.data.platform,
-        state: node.data.state === "active" ? "online" : node.data.state === "draining" ? "draining" : node.data.state === "offline" || node.data.state === "revoked" ? "offline" : node.data.state === "quarantined" ? "degraded" : "maintenance",
-        ...(node.data.quarantineReasonCode ? { stateReasonCode: node.data.quarantineReasonCode } : {}),
+        state: node.data.state === "active" ? activeState : node.data.state === "draining" ? "draining" : node.data.state === "offline" || node.data.state === "revoked" ? "offline" : node.data.state === "quarantined" ? "degraded" : "maintenance",
+        ...(node.data.quarantineReasonCode ? { stateReasonCode: node.data.quarantineReasonCode } : node.data.state === "active" && activeReason ? { stateReasonCode: activeReason } : {}),
         lastObservedAt: observedAt,
         capacityState: "unavailable" as const,
-        capabilityState: Number(row.capability_count) > 0 ? "provisional" as const : "unavailable" as const,
+        capabilityState,
         telemetryState,
       };
     });
@@ -178,7 +195,7 @@ export class OperatorSurfaceReadServiceV1 {
   ) {}
 
   async read(input: { scope: AuthorizedOperatorReadScopeV1; now: string; inboxFilter?: Omit<ActionInboxFilterV1, "now">; incidentState?: ServiceIncidentV1["state"] }): Promise<OperatorSurfaceReadModelV1> {
-    if (!safeId.test(input.scope.tenantId) || !safeId.test(input.scope.actorId) || !instant(input.scope.grantedAt) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
+    if (!safeId.test(input.scope.tenantId) || !safeId.test(input.scope.actorId) || !instant(input.scope.grantedAt) || !instant(input.now) || Date.parse(input.scope.grantedAt) > Date.parse(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
     const tenantId = input.scope.tenantId;
     const [fleet, bottlenecks, activeWork, portfolio, services, schedules, inbox, ownerFocus, serviceIncidents] = await Promise.all([
       this.fleetSource.fleet({ tenantId, now: input.now }),
