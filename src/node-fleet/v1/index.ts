@@ -1,5 +1,6 @@
 export * from "./fingerprint";
 export * from "./fleet-signal-store";
+export * from "./fleet-eligibility-service";
 export * from "./eligibility";
 export * from "./freshness";
 export * from "./capability-probe-runner";

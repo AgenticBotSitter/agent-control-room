@@ -18,6 +18,46 @@ export class FleetSignalStore {
     return this.db.transaction((tx) => this.persist(tx, signal.data, recordedAt));
   }
 
+  /** Returns only normalized, tenant-scoped current facts; never raw host reads. */
+  async current(input: { tenantId: string; nodeId: string }): Promise<FleetSignalEnvelope[]> {
+    const result = await this.db.query<{
+      signal_kind: FleetSignalEnvelope["kind"]; signal_sequence: number; fingerprint: string; trust: FleetSignalEnvelope["trust"];
+      observed_at: string | Date; expires_at: string | Date; payload: unknown;
+    }>(`SELECT signal_kind,signal_sequence,fingerprint,trust,observed_at,expires_at,payload FROM control_node_fleet_current WHERE tenant_id=$1 AND node_id=$2 ORDER BY signal_kind`, [input.tenantId,input.nodeId]);
+    const signals: FleetSignalEnvelope[] = [];
+    for (const row of result.rows) {
+      const parsed = fleetSignalEnvelopeSchema.safeParse(row.payload);
+      if (!parsed.success || parsed.data.tenantId !== input.tenantId || parsed.data.nodeId !== input.nodeId
+        || parsed.data.kind !== row.signal_kind || parsed.data.sequence !== Number(row.signal_sequence)
+        || parsed.data.fingerprint !== row.fingerprint || parsed.data.trust !== row.trust
+        || parsed.data.observedAt !== new Date(row.observed_at).toISOString() || parsed.data.expiresAt !== new Date(row.expires_at).toISOString()) {
+        throw new FleetSignalStoreError("invalid_signal");
+      }
+      try { assertNoSecretMaterial(parsed.data, "fleet signal"); } catch { throw new FleetSignalStoreError("invalid_signal"); }
+      signals.push(parsed.data);
+    }
+    return signals;
+  }
+
+  async history(input: { tenantId: string; nodeId: string; kind?: FleetSignalEnvelope["kind"]; limit: number }): Promise<FleetSignalEnvelope[]> {
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 500) throw new FleetSignalStoreError("invalid_signal");
+    const result = input.kind
+      ? await this.db.query<{ payload: unknown }>(
+        `SELECT payload FROM control_node_fleet_signals WHERE tenant_id=$1 AND node_id=$2 AND signal_kind=$3 ORDER BY recorded_at DESC LIMIT $4`,
+        [input.tenantId, input.nodeId, input.kind, input.limit],
+      )
+      : await this.db.query<{ payload: unknown }>(
+        `SELECT payload FROM control_node_fleet_signals WHERE tenant_id=$1 AND node_id=$2 ORDER BY recorded_at DESC LIMIT $3`,
+        [input.tenantId, input.nodeId, input.limit],
+      );
+    return result.rows.map((row) => {
+      const parsed = fleetSignalEnvelopeSchema.safeParse(row.payload);
+      if (!parsed.success || parsed.data.tenantId !== input.tenantId || parsed.data.nodeId !== input.nodeId) throw new FleetSignalStoreError("invalid_signal");
+      try { assertNoSecretMaterial(parsed.data, "fleet signal"); } catch { throw new FleetSignalStoreError("invalid_signal"); }
+      return parsed.data;
+    });
+  }
+
   private async persist(tx: DatabaseSession, signal: FleetSignalEnvelope, recordedAt: string): Promise<{ replayed: boolean }> {
     const node = await tx.query<{ id: string }>(`SELECT id FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [signal.tenantId, signal.nodeId]);
     if (!node.rows[0]) throw new FleetSignalStoreError("identity_mismatch");

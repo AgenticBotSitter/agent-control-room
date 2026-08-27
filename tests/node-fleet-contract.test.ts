@@ -3,7 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { BenchmarkRunner, CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, decideRediscovery, discoveryPayloadSchema, evaluateFleetEligibility, evaluateFleetSignalFreshness, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
+import { BenchmarkRunner, CapabilityProbeRunner, computeDiscoveryFingerprint, createInventoryManifest, decideRediscovery, discoveryPayloadSchema, evaluateFleetEligibility, evaluateFleetSignalFreshness, FleetEligibilityService, fleetSignalEnvelopeSchema, normalizeStaticDiscovery, normalizeTelemetrySample } from "../src/node-fleet/v1";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import { adaptPglite } from "../src/persistence/database";
 import { CanonicalStore } from "../src/persistence/canonical-store";
@@ -113,6 +113,12 @@ test("fleet history is tenant-bound, append-only by sequence, and exact-replay s
     assert.deepEqual(await store.ingestAuthenticated(signal, signal.observedAt), { replayed: true });
     await assert.rejects(store.ingestAuthenticated({ ...signal, fingerprint: `sha256:${"b".repeat(64)}` }, signal.observedAt));
     assert.equal((await raw.query<{ signal_sequence: number }>(`SELECT signal_sequence FROM control_node_fleet_current WHERE tenant_id='tenant:fleet'`)).rows[0]?.signal_sequence, 1);
+    assert.deepEqual((await store.current({ tenantId: "tenant:fleet", nodeId: "node:fleet" })).map((item) => item.kind), ["discovery"]);
+    assert.deepEqual((await store.history({ tenantId: "tenant:fleet", nodeId: "node:fleet", kind: "discovery", limit: 10 })).map((item) => item.sequence), [1]);
+    assert.deepEqual(
+      await new FleetEligibilityService(store).evaluate({ tenantId: "tenant:fleet", nodeId: "node:fleet", now: "2026-08-26T01:00:00.000Z", requiredScratchBytes: 1 }),
+      { eligible: false, reasons: ["telemetry_missing"] },
+    );
   } finally { await raw.close(); }
 });
 
