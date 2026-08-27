@@ -6,7 +6,7 @@ import { OwnerFocusStrip } from "../app/components/owner-focus-strip";
 import type { OwnerFocusPinV1 } from "../src/operator-surfaces/v1";
 
 const pins: OwnerFocusPinV1[] = [{ id: "focus:1", tenantId: "tenant:1", projectId: "project:1", level: "p0", reason: "Keep the critical project visible", createdAt: "2026-08-27T12:00:00.000Z" }];
-function render(items = pins): string { return renderToStaticMarkup(createElement(OwnerFocusStrip, { pins: items, projects: [{ id: "project:1", label: "Project One" }], onPrepare: () => {} })); }
+function render(items = pins): string { return renderToStaticMarkup(createElement(OwnerFocusStrip, { pins: items, projects: [{ id: "project:1", label: "Project One" }], onSubmit: () => {} })); }
 
 test("renders P0 intent with explicit non-bypass authority language", () => {
   const html = render();
@@ -14,14 +14,14 @@ test("renders P0 intent with explicit non-bypass authority language", () => {
   assert.match(html, /Project One/);
   assert.match(html, /Keep the critical project visible/);
   assert.match(html, /cannot change fairness, authority, capacity, or dispatch/);
-  assert.match(html, /Nothing has been saved or scheduled/);
-  assert.match(html, /Prepare P0/);
-  assert.match(html, /Prepare Today/);
+  assert.match(html, /never changes scheduling or dispatch/);
+  assert.match(html, /Save P0/);
+  assert.match(html, /Save Today/);
   assert.ok(!html.toLowerCase().includes("priority override"));
 });
 
-test("renders clear preparation and an empty state without claiming a saved change", () => {
-  assert.match(render(), /Prepare clear/);
+test("renders a clear action and an empty state without claiming a schedule change", () => {
+  assert.match(render(), /Clear focus/);
   assert.match(render([]), /No P0 or Today focus is recorded/);
 });
 

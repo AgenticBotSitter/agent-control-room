@@ -31,3 +31,5 @@ The dashboard browser reader calls that protected route with same-site credentia
 The protected fleet table renders only the projection's observed state, platform, capability and telemetry status, and declared capacity. Missing capacity is displayed as unavailable; neither an online state nor a positive slot count is presented as dispatch authority.
 
 Service incidents are included inside the same validated snapshot, using only the durable incident identifier, service identifier, severity, state, safe reason/remedy codes, and timing. The tenant and correlation key stay server-side; a remedy code is never a repair operation.
+
+Saving Owner Focus uses a separate protected route. The server assigns the tenant and recorded time, requires an authenticated platform identity and a durable low-risk policy decision scoped to the project, and rejects client-supplied tenant or scheduler fields. A successful save records only Owner Focus intent; it creates no outbox event, reservation, scheduling preference, dispatch, or external operation.

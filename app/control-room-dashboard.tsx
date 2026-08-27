@@ -16,7 +16,7 @@ import { ActionInbox } from "./components/action-inbox";
 import { OwnerFocusStrip, type OwnerFocusDraftRequestV1 } from "./components/owner-focus-strip";
 import { FleetProjection } from "./components/fleet-projection";
 import { ServiceIncidentList } from "./components/service-incident-list";
-import { fetchOperatorSurfaceSnapshotV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
+import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
 
 type Scope = "all" | (typeof projects)[number]["id"];
 type ScenarioKey = keyof typeof transcriptionScenarios;
@@ -75,11 +75,23 @@ export function ControlRoomDashboard() {
     window.localStorage.setItem("control-room-theme", next);
   };
 
-  const prepareOwnerFocus = (request: OwnerFocusDraftRequestV1) => {
+  const submitOwnerFocus = async (request: OwnerFocusDraftRequestV1) => {
     const project = projects.find((candidate) => candidate.id === request.projectId)?.workspaceName ?? request.projectId;
-    setOwnerFocusNotice(request.operation === "clear_owner_focus"
-      ? `Clear request prepared for ${project}. Nothing has been saved or scheduled.`
-      : `${request.level === "p0" ? "P0" : "Today"} request prepared for ${project}. Nothing has been saved or scheduled.`);
+    setOwnerFocusNotice("Saving protected Owner Focus intent…");
+    const result = await saveOwnerFocusV1(request);
+    if (result.state !== "unavailable") {
+      setOwnerFocusNotice(request.operation === "clear_owner_focus"
+        ? `Owner Focus cleared for ${project}. No schedule or dispatch changed.`
+        : `${request.level === "p0" ? "P0" : "Today"} Owner Focus saved for ${project}. No schedule or dispatch changed.`);
+      const refreshed = await fetchOperatorSurfaceSnapshotV1();
+      setOperatorData(refreshed);
+      return;
+    }
+    setOwnerFocusNotice(result.code === "owner_focus_forbidden"
+      ? "Your current Control Room role cannot save Owner Focus for this project."
+      : result.code === "authentication_required"
+        ? "Sign in is required before Owner Focus can be saved."
+        : "Owner Focus could not be saved. No change was made.");
   };
 
   const scopedProjects = useMemo(
@@ -175,7 +187,7 @@ export function ControlRoomDashboard() {
           <span className="prototype-badge">{operatorData.state === "available" ? "Protected projection" : "Synthetic fixture"}</span>
         </section>
 
-        <OwnerFocusStrip pins={scopedOwnerFocus} projects={focusProjects} onPrepare={prepareOwnerFocus} notice={ownerFocusNotice} />
+        <OwnerFocusStrip pins={scopedOwnerFocus} projects={focusProjects} onSubmit={submitOwnerFocus} notice={ownerFocusNotice} />
 
         <section className="metric-grid" aria-label="Portfolio summary">
           <article className="metric-card">
