@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseAllocationV1, evaluateSchedulingConstraintsV1, placementRejectionV1, STARVATION_BOUND_MINUTES_V1 } from "../src/scheduler/v1";
+import { chooseAllocationV1, evaluateResourceAvailabilityV1, evaluateSchedulingConstraintsV1, placementRejectionV1, STARVATION_BOUND_MINUTES_V1 } from "../src/scheduler/v1";
 
 test("CR6C chooses a deprived eligible project but never scores through a hard exclusion", () => {
   const result = chooseAllocationV1([
@@ -88,4 +88,29 @@ test("CR6C allocation cannot score through policy constraints", () => {
   ]);
   assert.equal(result.selected?.workItemId, "work.allowed");
   assert.deepEqual(result.rejected, [{ projectId: "project.denied", workItemId: "work.denied", routeId: "route.provider", reasons: ["privacy_denied"] }]);
+});
+
+test("CR6C availability windows require complete interval coverage and enough declared capacity", () => {
+  const base = { resourceKey: "gpu.zero", requestedFrom: "2026-08-27T01:00:00.000Z", requestedUntil: "2026-08-27T02:00:00.000Z", units: 1, windows: [{ startsAt: "2026-08-27T00:00:00.000Z", endsAt: "2026-08-27T03:00:00.000Z", capacityUnits: 1 }] };
+  assert.equal(evaluateResourceAvailabilityV1(base).eligible, true);
+  assert.equal(evaluateResourceAvailabilityV1({ ...base, requestedUntil: "2026-08-27T04:00:00.000Z" }).reason, "outside_availability_window");
+  assert.equal(evaluateResourceAvailabilityV1({ ...base, units: 2 }).reason, "insufficient_window_capacity");
+  assert.equal(evaluateResourceAvailabilityV1({ ...base, windows: [...base.windows, { ...base.windows[0], startsAt: "2026-08-27T02:00:00.000Z", endsAt: "2026-08-27T04:00:00.000Z" }] }).reason, "invalid_candidate");
+});
+
+test("CR6C allocation cannot score work outside a resource availability window", () => {
+  const common = { targetShare: 0, recentShareUsed: 0, priority: 0, queueAgeMinutes: 0, downstreamUnlockCount: 0, deadlineRisk: 0, estimatedCostUsd: 0 };
+  const result = chooseAllocationV1([
+    { ...common, priority: 100, projectId: "project.outside", workItemId: "work.outside", routeId: "route.gpu", availability: { resourceKey: "gpu.zero", requestedFrom: "2026-08-27T04:00:00.000Z", requestedUntil: "2026-08-27T05:00:00.000Z", units: 1, windows: [{ startsAt: "2026-08-27T00:00:00.000Z", endsAt: "2026-08-27T03:00:00.000Z", capacityUnits: 1 }] } },
+    { ...common, projectId: "project.safe", workItemId: "work.safe", routeId: "route.cpu" },
+  ]);
+  assert.equal(result.selected?.workItemId, "work.safe");
+  assert.deepEqual(result.rejected[0]?.reasons, ["outside_availability_window"]);
+});
+
+test("CR6C availability and placement facts must bind the same resource", () => {
+  const result = chooseAllocationV1([{ projectId: "project.a", workItemId: "work.a", routeId: "route.a", targetShare: 0, recentShareUsed: 0, priority: 0, queueAgeMinutes: 0, downstreamUnlockCount: 0, deadlineRisk: 0, estimatedCostUsd: 0,
+    availability: { resourceKey: "gpu.one", requestedFrom: "2026-08-27T01:00:00.000Z", requestedUntil: "2026-08-27T02:00:00.000Z", units: 1, windows: [{ startsAt: "2026-08-27T00:00:00.000Z", endsAt: "2026-08-27T03:00:00.000Z", capacityUnits: 1 }] },
+    placement: { resourceKey: "gpu.two", mode: "shared" } }]);
+  assert.deepEqual(result.rejected[0]?.reasons, ["invalid_candidate"]);
 });

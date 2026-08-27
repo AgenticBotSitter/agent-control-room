@@ -37,6 +37,11 @@ export interface ResourceReservation {
   releasedAt?: string;
 }
 
+export interface ResourceReservationReconciliation {
+  expiredReservationIds: string[];
+  activeReservations: ResourceReservation[];
+}
+
 function instant(value: string): boolean { const parsed = new Date(value); return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value; }
 function valid(input: ResourceReservationRequest): boolean {
   return [input.id,input.tenantId,input.projectId,input.workItemId,input.routeId,input.resourceKey].every((value) => safeId.test(value))
@@ -76,10 +81,26 @@ export class ResourceReservationStore {
       const reservation = rowToReservation(row.rows[0], Number(row.rows[0].capacity_units));
       if (reservation.state === "active") {
         if (Date.parse(input.releasedAt) < Date.parse(reservation.acquiredAt)) throw new ResourceReservationError("invalid_reservation");
+        if (Date.parse(input.releasedAt) >= Date.parse(reservation.expiresAt)) {
+          await tx.query(`UPDATE control_resource_reservations SET state='expired' WHERE tenant_id=$1 AND id=$2`, [input.tenantId,input.id]);
+          return { ...reservation, state: "expired" };
+        }
         await tx.query(`UPDATE control_resource_reservations SET state='released',released_at=$3 WHERE tenant_id=$1 AND id=$2`, [input.tenantId,input.id,input.releasedAt]);
         return { ...reservation, state: "released", releasedAt: input.releasedAt };
       }
       return reservation;
+    });
+  }
+
+  async reconcile(input: { tenantId: string; now: string }): Promise<ResourceReservationReconciliation> {
+    if (!safeId.test(input.tenantId) || !instant(input.now)) throw new ResourceReservationError("invalid_reservation");
+    return this.db.transaction(async (tx) => {
+      const expired = await tx.query<{ id: string }>(`UPDATE control_resource_reservations SET state='expired' WHERE tenant_id=$1 AND state='active' AND expires_at <= $2 RETURNING id`, [input.tenantId,input.now]);
+      const active = await tx.query<ReservationRow & { capacity_units: number }>(`SELECT r.*,h.capacity_units FROM control_resource_reservations r JOIN control_resource_reservation_heads h ON h.tenant_id=r.tenant_id AND h.resource_key=r.resource_key WHERE r.tenant_id=$1 AND r.state='active' AND r.expires_at > $2 ORDER BY r.resource_key,r.id`, [input.tenantId,input.now]);
+      return {
+        expiredReservationIds: expired.rows.map((row) => row.id).sort(),
+        activeReservations: active.rows.map((row) => rowToReservation(row, Number(row.capacity_units))),
+      };
     });
   }
 }

@@ -24,3 +24,32 @@ test("CR6C reservations serialize capacity, exact replay, release, and expiry wi
     assert.equal((await store.acquire({ ...request, id: "reservation.3", projectId: "project:three", acquiredAt: "2026-08-27T00:06:00.000Z", expiresAt: "2026-08-27T00:07:00.000Z" }, "2026-08-27T00:06:00.000Z")).replayed, false);
   } finally { await raw.close(); }
 });
+
+test("CR6C reservation reconciliation expires stale holds and remains tenant scoped", async () => {
+  const raw = new PGlite();
+  for (const file of (await readdir(resolve("db/migrations"))).filter((file) => file.endsWith(".sql")).sort()) await raw.exec(await readFile(resolve("db/migrations", file), "utf8"));
+  try {
+    await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:reservation','Reservation'),('tenant:other','Other')`);
+    const store = new ResourceReservationStore(adaptPglite(raw));
+    await store.acquire(request, at);
+    const other = { ...request, id: "reservation.other", tenantId: "tenant:other" };
+    await store.acquire(other, at);
+    const before = await store.reconcile({ tenantId: request.tenantId, now: "2026-08-27T00:04:00.000Z" });
+    assert.deepEqual(before.expiredReservationIds, []);
+    assert.deepEqual(before.activeReservations.map((value) => value.id), [request.id]);
+    const after = await store.reconcile({ tenantId: request.tenantId, now: "2026-08-27T00:05:00.000Z" });
+    assert.deepEqual(after, { expiredReservationIds: [request.id], activeReservations: [] });
+    assert.deepEqual((await store.reconcile({ tenantId: "tenant:other", now: "2026-08-27T00:04:00.000Z" })).activeReservations.map((value) => value.id), [other.id]);
+  } finally { await raw.close(); }
+});
+
+test("CR6C a release at or after expiry is recovered as expired, never falsely released", async () => {
+  const raw = new PGlite();
+  for (const file of (await readdir(resolve("db/migrations"))).filter((file) => file.endsWith(".sql")).sort()) await raw.exec(await readFile(resolve("db/migrations", file), "utf8"));
+  try {
+    await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:reservation','Reservation')`);
+    const store = new ResourceReservationStore(adaptPglite(raw));
+    await store.acquire(request, at);
+    assert.equal((await store.release({ tenantId: request.tenantId, id: request.id, releasedAt: request.expiresAt })).state, "expired");
+  } finally { await raw.close(); }
+});

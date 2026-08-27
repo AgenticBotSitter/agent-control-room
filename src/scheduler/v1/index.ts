@@ -1,4 +1,5 @@
 export * from "./allocation";
+export * from "./availability";
 export * from "./bottleneck";
 export * from "./budget-store";
 export * from "./constraints";

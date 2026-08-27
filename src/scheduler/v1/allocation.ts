@@ -1,7 +1,8 @@
+import { evaluateResourceAvailabilityV1, type ResourceAvailabilityRequestV1 } from "./availability";
 import { evaluateSchedulingConstraintsV1, type SchedulingConstraintsV1 } from "./constraints";
 import { placementRejectionV1, type PlacementConstraintV1 } from "./placement";
 
-export type AllocationRejection = "dependency_unsatisfied" | "fleet_ineligible" | "route_unavailable" | "maintenance" | "budget_exhausted" | "cost_limit_exceeded" | "privacy_denied" | "quality_insufficient" | "deadline_missed" | "resource_unavailable" | "resource_draining" | "exclusive_resource_owned" | "preferred_resource_reserved" | "opportunistic_work_deferred" | "manual_assignment_required" | "invalid_candidate";
+export type AllocationRejection = "dependency_unsatisfied" | "fleet_ineligible" | "route_unavailable" | "maintenance" | "budget_exhausted" | "cost_limit_exceeded" | "privacy_denied" | "quality_insufficient" | "deadline_missed" | "resource_unavailable" | "outside_availability_window" | "insufficient_window_capacity" | "resource_draining" | "exclusive_resource_owned" | "preferred_resource_reserved" | "opportunistic_work_deferred" | "manual_assignment_required" | "invalid_candidate";
 
 export interface AllocationCandidateV1 {
   projectId: string;
@@ -14,6 +15,7 @@ export interface AllocationCandidateV1 {
   downstreamUnlockCount: number;
   deadlineRisk: number;
   estimatedCostUsd: number;
+  availability?: ResourceAvailabilityRequestV1;
   constraints?: SchedulingConstraintsV1;
   placement?: PlacementConstraintV1;
   exclusions?: AllocationRejection[];
@@ -31,6 +33,7 @@ export const STARVATION_BOUND_MINUTES_V1 = 1_440;
 const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/;
 function invalid(candidate: AllocationCandidateV1): boolean {
   return ![candidate.projectId, candidate.workItemId, candidate.routeId].every((value) => safeId.test(value))
+    || Boolean(candidate.availability && candidate.placement && candidate.availability.resourceKey !== candidate.placement.resourceKey)
     || !Number.isFinite(candidate.targetShare) || candidate.targetShare < 0 || candidate.targetShare > 100
     || !Number.isFinite(candidate.recentShareUsed) || candidate.recentShareUsed < 0 || candidate.recentShareUsed > 1_000
     || !Number.isInteger(candidate.priority) || candidate.priority < 0 || candidate.priority > 100
@@ -47,7 +50,7 @@ export function chooseAllocationV1(candidates: AllocationCandidateV1[]): Allocat
     : undefined;
   const reasons = (candidate: AllocationCandidateV1): AllocationRejection[] => invalid(candidate)
     ? ["invalid_candidate"]
-    : [...new Set([...(candidate.exclusions ?? []), ...(candidate.constraints ? evaluateSchedulingConstraintsV1(candidate.constraints) : []), placementReason(candidate)].filter((reason): reason is AllocationRejection => reason !== undefined))].sort();
+    : [...new Set([...(candidate.exclusions ?? []), ...(candidate.availability ? [evaluateResourceAvailabilityV1(candidate.availability).reason] : []), ...(candidate.constraints ? evaluateSchedulingConstraintsV1(candidate.constraints) : []), placementReason(candidate)].filter((reason): reason is AllocationRejection => reason !== undefined))].sort();
   const rejected = candidates.filter((candidate) => reasons(candidate).length > 0).map((candidate) => ({
     projectId: candidate.projectId, workItemId: candidate.workItemId, routeId: candidate.routeId, reasons: reasons(candidate),
   })).sort((a, b) => `${a.projectId}:${a.workItemId}:${a.routeId}`.localeCompare(`${b.projectId}:${b.workItemId}:${b.routeId}`));

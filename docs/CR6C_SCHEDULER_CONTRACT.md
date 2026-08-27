@@ -11,7 +11,9 @@
 4. Within an eligible project, priority, deadline risk, queue age, downstream unlock value, and resource cost are explicit scoring inputs. Ties resolve by stable project/work/route identifiers.
    An otherwise eligible item waiting 1,440 minutes enters the starvation guard; the oldest guarded item wins at the next safe scheduling boundary. Hard exclusions still win.
 5. A reservation is a separate atomic operation. It must bind tenant, project, work item, route, resource key, capacity units, a bounded expiry, and a decision digest. A lost or expired reservation is not an execution permission.
+   Declared UTC availability must cover the complete requested interval with enough capacity. Overlapping or malformed windows fail closed. Restart reconciliation expires stale tenant-scoped holds and reports the still-active ledger without touching a live resource.
 6. Resource contention, lease loss, and recovery are visible as stable reason codes. The scheduler reports why each candidate was excluded and which limiting resource is the bottleneck; it never invents a remedy or raw host detail.
+   Projected relief uses only declared capacity, reservation, queue-order, unit-demand, and downstream-impact facts. It states which additional work would become feasible under the hypothetical and always labels the result as a projection rather than an instruction.
 7. Manual, exclusive, and draining resources are not borrowed. Preferred resources may be borrowed only when their preferred project has no eligible waiting work.
    Shared resources accept any otherwise eligible project. Opportunistic resources defer whenever normal eligible work is waiting. Manual placement requires an exact project/work/route assignment. Missing facts fail closed instead of silently making a constrained resource shareable.
 
