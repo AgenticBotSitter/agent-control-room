@@ -1,5 +1,5 @@
 import type { ActionInboxFilterV1, ActionInboxItemV1, OperatorSurfaceSnapshotV1, OwnerFocusPinV1, OwnerFocusSchedulerProjectionV1 } from "./types";
-import { operatorSurfaceSnapshotSchemaV1 } from "./validators";
+import { parseOperatorSurfaceSnapshotV1 } from "./validators";
 
 const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/;
 function instant(value: string): boolean { return !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value; }
@@ -45,7 +45,7 @@ export function projectOwnerFocusForSchedulerV1(pins: OwnerFocusPinV1[], now: st
 
 /** Creates a validated, deterministic, redacted snapshot from already authorized read sources. */
 export function buildOperatorSurfaceSnapshotV1(input: OperatorSurfaceSnapshotV1): OperatorSurfaceSnapshotV1 {
-  const parsed = operatorSurfaceSnapshotSchemaV1.parse(input);
+  const parsed = parseOperatorSurfaceSnapshotV1(input);
   return {
     ...parsed,
     fleet: [...parsed.fleet].sort((left, right) => left.workerId.localeCompare(right.workerId)),

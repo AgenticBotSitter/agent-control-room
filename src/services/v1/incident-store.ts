@@ -13,6 +13,14 @@ function valid(input: ServiceIncidentInputV1): boolean { return [input.tenantId,
 /** Durable correlation ledger and outbox proposal only; it never repairs or operates a service. */
 export class ServiceIncidentStore {
   constructor(private readonly db: DatabaseClient) {}
+  /** Returns only tenant-bound durable incident projections; it never reads or repairs a host. */
+  async list(input: { tenantId: string; state?: ServiceIncidentV1["state"]; limit: number }): Promise<ServiceIncidentV1[]> {
+    if (!safeId.test(input.tenantId) || !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 500) throw new ServiceIncidentError("invalid_incident");
+    const result = input.state
+      ? await this.db.query<Row>(`SELECT * FROM control_service_incidents WHERE tenant_id=$1 AND state=$2 ORDER BY last_observed_at DESC,id LIMIT $3`, [input.tenantId,input.state,input.limit])
+      : await this.db.query<Row>(`SELECT * FROM control_service_incidents WHERE tenant_id=$1 ORDER BY last_observed_at DESC,id LIMIT $2`, [input.tenantId,input.limit]);
+    return result.rows.map((row) => rowToIncident(row));
+  }
   async apply(input: ServiceIncidentInputV1): Promise<{ incident?: ServiceIncidentV1; replayed: boolean }> {
     if (!valid(input)) throw new ServiceIncidentError("invalid_incident");
     return this.db.transaction(async (tx) => {
