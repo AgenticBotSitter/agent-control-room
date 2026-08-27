@@ -15,7 +15,7 @@
 | Isolation | Fleet storage and reads bind tenant/node; the pure eligibility boundary now rejects a mixed tenant/node signal set instead of combining evidence across machines | Codex pass after identity fix |
 | Redaction and bounded effects | Secret canaries, unsafe display text, host-private material, browser tenant selection, scheduling overrides, outbox emission, and direct operational controls remain rejected or absent | Codex pass |
 | Regression coverage | The normal full-suite command now includes the protected operator API/UI, Owner Focus, target guards, and platform qualification safety tests that it previously omitted | Codex pass after suite fix |
-| Independent review | Jobber #155 produced a useful independent report, preserved in PR #156, but its reviewer ran an offline install despite an explicit stop condition. Codex accepted it as research only. Replacement capsule `CR6Q-REV-002` requires a different profile and pre-existing dependencies. | Replacement required |
+| Independent review | Jobber #155 produced a useful independent report, preserved in PR #156, but its reviewer ran an offline install despite an explicit stop condition. Codex accepted it as research only. Replacement jobber #157 requires a different profile and pre-existing dependencies. | Ready for direct claim |
 
 ## Closed findings
 
@@ -30,7 +30,7 @@
 - `npm run test:cr6q`: 41 passed, 0 failed.
 - `npm test`: 339 tests, 337 passed, 0 failed, 2 intentional platform skips.
 - Type checking and ESLint pass.
-- Production build, rendered-route verification, and migration verification are required again at the final review head.
+- Production build and rendered-route verification pass at integration commit `4d813ab832446c835cacb10bc14d26bbbada946c`; migration verification applies 0001 through 0019 and verifies 66 PostgreSQL tables. The smallest relevant checks run again after the clean report is integrated.
 
 ## Retained gates
 
