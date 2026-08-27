@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
-import { OPERATOR_SURFACES_CONTRACT_V1, actionInboxItemSchemaV1, ownerFocusCommandSchemaV1, parseOperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1";
+import { PGlite } from "@electric-sql/pglite";
+import { OPERATOR_SURFACES_CONTRACT_V1, actionInboxItemSchemaV1, OperatorSurfaceStoreV1, ownerFocusCommandSchemaV1, parseOperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1";
+import { adaptPglite } from "../src/persistence/database";
 
 const now = "2026-08-27T12:00:00.000Z";
 const item = {
@@ -37,4 +41,26 @@ test("CR6E Owner Focus records intent only and cannot smuggle a scheduling overr
   assert.equal(ownerFocusCommandSchemaV1.safeParse({ ...command, operation: "clear_owner_focus", level: undefined, reason: undefined, workerId: "worker:1" }).success, false);
   assert.equal(ownerFocusCommandSchemaV1.safeParse({ ...command, operation: "clear_owner_focus" }).success, false);
   assert.equal(ownerFocusCommandSchemaV1.safeParse({ ...command, reservationId: "reservation:1" }).success, false);
+});
+
+test("CR6E stores tenant-bound inbox records and replay-safe Owner Focus intent without dispatching", async () => {
+  const raw = new PGlite();
+  for (const file of (await readdir(resolve("db/migrations"))).filter((file) => file.endsWith(".sql")).sort()) await raw.exec(await readFile(resolve("db/migrations", file), "utf8"));
+  try {
+    await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:1','One'),('tenant:2','Two')`);
+    const store = new OperatorSurfaceStoreV1(adaptPglite(raw));
+    assert.deepEqual(await store.upsertInbox(item), { replayed: false });
+    assert.deepEqual(await store.upsertInbox(item), { replayed: true });
+    assert.deepEqual((await store.listInbox({ tenantId: "tenant:1", state: "open", limit: 10 })).map((entry) => entry.id), ["attention:1"]);
+    assert.deepEqual(await store.listInbox({ tenantId: "tenant:2", limit: 10 }), []);
+    const command = { contractVersion: OPERATOR_SURFACES_CONTRACT_V1, commandId: "command:focus:1", tenantId: "tenant:1", operation: "set_owner_focus" as const, projectId: "project:1", idempotencyKey: "idempotency-key-focus-001", requestedAt: now, level: "p0" as const, reason: "Keep the project visible" };
+    const first = await store.applyAuthorizedOwnerFocus(command);
+    assert.equal(first.replayed, false);
+    assert.equal(first.pin?.level, "p0");
+    assert.deepEqual(await store.applyAuthorizedOwnerFocus(command), { replayed: true });
+    assert.deepEqual((await store.listOwnerFocus({ tenantId: "tenant:1", now })).map((pin) => pin.projectId), ["project:1"]);
+    await store.applyAuthorizedOwnerFocus({ ...command, commandId: "command:focus:2", idempotencyKey: "idempotency-key-focus-002", operation: "clear_owner_focus", level: undefined, reason: undefined });
+    assert.deepEqual(await store.listOwnerFocus({ tenantId: "tenant:1", now }), []);
+    assert.equal((await raw.query<{ count: number }>(`SELECT count(*)::int AS count FROM control_outbox`)).rows[0]?.count, 0);
+  } finally { await raw.close(); }
 });

@@ -1,6 +1,6 @@
 # CR-6E operator-surfaces contract
 
-**Status:** Active, effect-free contract and foundation.
+**Status:** Active, effect-free contract and durable projection foundation.
 
 ## Shared operator truth
 
@@ -17,3 +17,5 @@ An Owner Focus pin records an owner priority signal (`p0` or `today`) for a proj
 ## Effect boundary
 
 This contract exposes read models and command shapes only. It does not send a notification, change an external system, approve an operation, start a service, or dispatch work. Persisting or applying a command remains a separately authorized later step.
+
+The initial durable store keeps Action Inbox projections tenant-bound and replay-safe. Owner Focus requests are accepted only after the caller's authentication and authorization boundary, are idempotent, and produce no outbox event or scheduler change.
