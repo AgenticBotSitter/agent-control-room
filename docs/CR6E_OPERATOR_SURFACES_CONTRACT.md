@@ -19,3 +19,5 @@ An Owner Focus pin records an owner priority signal (`p0` or `today`) for a proj
 This contract exposes read models and command shapes only. It does not send a notification, change an external system, approve an operation, start a service, or dispatch work. Persisting or applying a command remains a separately authorized later step.
 
 The initial durable store keeps Action Inbox projections tenant-bound and replay-safe. Owner Focus requests are accepted only after the caller's authentication and authorization boundary, are idempotent, and produce no outbox event or scheduler change.
+
+Read models use stable ordering and explicit filters. Expired items stay auditable and can be included deliberately; a delivery failure never makes an unresolved item disappear. Scheduler-facing Owner Focus metadata contains explicit `false` flags for fairness, authority, and capacity overrides, so it cannot be mistaken for a reservation or permission.

@@ -106,6 +106,25 @@ export interface OwnerFocusCommandV1 {
   reason?: string;
 }
 
+/** Scheduler-visible metadata only; it cannot alter feasibility, authority, capacity, or fair-share policy. */
+export interface OwnerFocusSchedulerProjectionV1 {
+  projectId: string;
+  level: "p0" | "today";
+  reasonCode: "owner_focus";
+  canOverrideFairness: false;
+  canOverrideAuthority: false;
+  canReserveCapacity: false;
+}
+
+export interface ActionInboxFilterV1 {
+  projectId?: string;
+  kinds?: AttentionKindV1[];
+  states?: AttentionStateV1[];
+  includeExpired?: boolean;
+  now: string;
+  limit: number;
+}
+
 export interface OperatorSurfaceSnapshotV1 {
   contractVersion: typeof OPERATOR_SURFACES_CONTRACT_V1;
   tenantId: string;

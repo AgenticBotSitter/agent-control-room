@@ -3,7 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { OPERATOR_SURFACES_CONTRACT_V1, actionInboxItemSchemaV1, OperatorSurfaceStoreV1, ownerFocusCommandSchemaV1, parseOperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1";
+import { buildOperatorSurfaceSnapshotV1, filterActionInboxV1, OPERATOR_SURFACES_CONTRACT_V1, actionInboxItemSchemaV1, OperatorSurfaceStoreV1, ownerFocusCommandSchemaV1, parseOperatorSurfaceSnapshotV1, projectOwnerFocusForSchedulerV1 } from "../src/operator-surfaces/v1";
 import { adaptPglite } from "../src/persistence/database";
 
 const now = "2026-08-27T12:00:00.000Z";
@@ -63,4 +63,18 @@ test("CR6E stores tenant-bound inbox records and replay-safe Owner Focus intent 
     assert.deepEqual(await store.listOwnerFocus({ tenantId: "tenant:1", now }), []);
     assert.equal((await raw.query<{ count: number }>(`SELECT count(*)::int AS count FROM control_outbox`)).rows[0]?.count, 0);
   } finally { await raw.close(); }
+});
+
+test("CR6E read projections are deterministic, keep failed delivery visible, and cannot elevate Owner Focus", () => {
+  const expired = { ...item, id: "attention:expired", state: "expired" as const, expiresAt: "2026-08-27T11:00:00.000Z", deliveryState: "failed" as const };
+  const openSoon = { ...item, id: "attention:soon", expiresAt: "2026-08-27T12:30:00.000Z" };
+  assert.deepEqual(filterActionInboxV1([item, expired, openSoon], { now, limit: 10 })!.map((entry) => entry.id), ["attention:soon", "attention:1"]);
+  assert.deepEqual(filterActionInboxV1([item, expired], { now, includeExpired: true, states: ["expired"], limit: 10 })!.map((entry) => entry.id), ["attention:expired"]);
+  assert.equal(filterActionInboxV1([item], { now: "bad", limit: 10 }), undefined);
+  assert.deepEqual(projectOwnerFocusForSchedulerV1([
+    { id: "focus:today", tenantId: "tenant:1", projectId: "project:1", level: "today", reason: "Today", createdAt: now },
+    { id: "focus:p0", tenantId: "tenant:1", projectId: "project:1", level: "p0", reason: "P0", createdAt: now },
+  ], now), [{ projectId: "project:1", level: "p0", reasonCode: "owner_focus", canOverrideFairness: false, canOverrideAuthority: false, canReserveCapacity: false }]);
+  const snapshot = buildOperatorSurfaceSnapshotV1({ contractVersion: OPERATOR_SURFACES_CONTRACT_V1, tenantId: "tenant:1", generatedAt: now, fleet: [], bottlenecks: [], actionInbox: [openSoon, item], ownerFocus: [] });
+  assert.deepEqual(snapshot.actionInbox.map((entry) => entry.id), ["attention:1", "attention:soon"]);
 });
