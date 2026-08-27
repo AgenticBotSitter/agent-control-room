@@ -69,8 +69,9 @@ export interface FleetWorkerSummaryV1 {
   state: "online" | "idle" | "busy" | "draining" | "degraded" | "offline" | "maintenance";
   stateReasonCode?: string;
   lastObservedAt: string;
-  availableSlots: number;
-  totalSlots: number;
+  capacityState: "reported" | "unavailable";
+  availableSlots?: number;
+  totalSlots?: number;
   capabilityState: "verified" | "provisional" | "expired" | "unavailable";
   telemetryState: "fresh" | "stale" | "missing";
 }

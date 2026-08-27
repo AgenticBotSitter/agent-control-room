@@ -23,3 +23,5 @@ The initial durable store keeps Action Inbox projections tenant-bound and replay
 Read models use stable ordering and explicit filters. Expired items stay auditable and can be included deliberately; a delivery failure never makes an unresolved item disappear. Scheduler-facing Owner Focus metadata contains explicit `false` flags for fairness, authority, and capacity overrides, so it cannot be mistaken for a reservation or permission.
 
 The read service receives a tenant scope only from the authenticated server boundary. It binds every durable store and fleet/bottleneck source query to that scope, validates/redacts the assembled snapshot again before returning it, and performs no write or command. A browser query parameter is never an authority source.
+
+The protected HTTP route requires the deployment-provided authenticated actor header and uses server-only tenant/database configuration. It accepts only bounded display filters; it never accepts a tenant identifier. Missing private configuration fails unavailable rather than returning fixture or cross-tenant data.

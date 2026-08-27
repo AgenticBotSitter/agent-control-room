@@ -1,5 +1,7 @@
 import type { ServiceIncidentV1 } from "../../services/v1/incident-store";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
+import type { DatabaseClient } from "../../persistence/database";
+import { nodeRecordSchema } from "../../domain/v1/validators";
 import { OperatorSurfaceStoreV1 } from "./store";
 import { buildOperatorSurfaceSnapshotV1, filterActionInboxV1 } from "./projections";
 import type { ActionInboxFilterV1, BottleneckProjectionV1, FleetWorkerSummaryV1, OperatorSurfaceSnapshotV1 } from "./types";
@@ -15,6 +17,48 @@ export interface AuthorizedOperatorReadScopeV1 { tenantId: string; actorId: stri
 export interface OperatorFleetReadSourceV1 {
   fleet(input: { tenantId: string; now: string }): Promise<FleetWorkerSummaryV1[]>;
   bottlenecks(input: { tenantId: string; now: string }): Promise<BottleneckProjectionV1[]>;
+}
+
+export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourceV1 {
+  constructor(private readonly db: DatabaseClient) {}
+
+  /** Reads only normalized node state and signal availability; absent capacity remains explicitly unavailable. */
+  async fleet(input: { tenantId: string; now: string }): Promise<FleetWorkerSummaryV1[]> {
+    if (!safeId.test(input.tenantId) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
+    const result = await this.db.query<{ id: string; state: string; payload: unknown; updated_at: string | Date; telemetry_expires_at: string | Date | null; capability_count: number }>(
+      `SELECT n.id,n.state,n.payload,n.updated_at,
+        MAX(CASE WHEN f.signal_kind='telemetry' AND f.signal_subject_id='node' THEN f.expires_at ELSE NULL END) AS telemetry_expires_at,
+        COUNT(CASE WHEN f.signal_kind='capability' THEN 1 ELSE NULL END)::int AS capability_count
+       FROM control_nodes n
+       LEFT JOIN control_node_fleet_current f ON f.tenant_id=n.tenant_id AND f.node_id=n.id
+       WHERE n.tenant_id=$1
+       GROUP BY n.id,n.state,n.payload,n.updated_at
+       ORDER BY n.id`,
+      [input.tenantId],
+    );
+    return result.rows.map((row) => {
+      const node = nodeRecordSchema.safeParse(row.payload);
+      if (!node.success || node.data.tenantId !== input.tenantId || node.data.id !== row.id || node.data.state !== row.state) throw new OperatorSurfaceReadError("invalid_read_scope");
+      const observedAt = node.data.lastSeenAt ?? new Date(row.updated_at).toISOString();
+      const telemetryExpiry = row.telemetry_expires_at ? new Date(row.telemetry_expires_at).getTime() : undefined;
+      const telemetryState = telemetryExpiry === undefined ? "missing" : telemetryExpiry > Date.parse(input.now) ? "fresh" : "stale";
+      return {
+        workerId: node.data.id,
+        platform: node.data.platform,
+        state: node.data.state === "active" ? "online" : node.data.state === "draining" ? "draining" : node.data.state === "offline" || node.data.state === "revoked" ? "offline" : node.data.state === "quarantined" ? "degraded" : "maintenance",
+        ...(node.data.quarantineReasonCode ? { stateReasonCode: node.data.quarantineReasonCode } : {}),
+        lastObservedAt: observedAt,
+        capacityState: "unavailable" as const,
+        capabilityState: Number(row.capability_count) > 0 ? "provisional" as const : "unavailable" as const,
+        telemetryState,
+      };
+    });
+  }
+
+  async bottlenecks(input: { tenantId: string; now: string }): Promise<BottleneckProjectionV1[]> {
+    if (!safeId.test(input.tenantId) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
+    return [];
+  }
 }
 
 export interface OperatorSurfaceReadModelV1 {

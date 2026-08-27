@@ -61,11 +61,16 @@ export const fleetWorkerSummarySchemaV1 = z.object({
   state: z.enum(["online", "idle", "busy", "draining", "degraded", "offline", "maintenance"]),
   stateReasonCode: safeId.optional(),
   lastObservedAt: isoDate,
-  availableSlots: z.number().int().min(0),
-  totalSlots: z.number().int().positive(),
+  capacityState: z.enum(["reported", "unavailable"]),
+  availableSlots: z.number().int().min(0).optional(),
+  totalSlots: z.number().int().positive().optional(),
   capabilityState: z.enum(["verified", "provisional", "expired", "unavailable"]),
   telemetryState: z.enum(["fresh", "stale", "missing"]),
-}).refine((value) => value.availableSlots <= value.totalSlots, "available slots cannot exceed total slots");
+}).superRefine((value, context) => {
+  if (value.capacityState === "reported" && (value.availableSlots === undefined || value.totalSlots === undefined)) context.addIssue({ code: "custom", message: "reported capacity requires slot counts" });
+  if (value.capacityState === "unavailable" && (value.availableSlots !== undefined || value.totalSlots !== undefined)) context.addIssue({ code: "custom", message: "unavailable capacity cannot invent slot counts" });
+  if (value.availableSlots !== undefined && value.totalSlots !== undefined && value.availableSlots > value.totalSlots) context.addIssue({ code: "custom", message: "available slots cannot exceed total slots" });
+});
 
 export const bottleneckProjectionSchemaV1 = z.object({
   resourceKey: safeId,

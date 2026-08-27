@@ -26,7 +26,7 @@ test("CR6E Action Inbox exposes the required safe attention facts", () => {
 test("CR6E snapshot is tenant-bound, bounded, and rejects unsafe display material", () => {
   const snapshot = parseOperatorSurfaceSnapshotV1({
     contractVersion: OPERATOR_SURFACES_CONTRACT_V1, tenantId: "tenant:1", generatedAt: now,
-    fleet: [{ workerId: "worker:1", platform: "macos", state: "degraded", stateReasonCode: "telemetry_stale", lastObservedAt: now, availableSlots: 0, totalSlots: 2, capabilityState: "verified", telemetryState: "stale" }],
+    fleet: [{ workerId: "worker:1", platform: "macos", state: "degraded", stateReasonCode: "telemetry_stale", lastObservedAt: now, capacityState: "reported", availableSlots: 0, totalSlots: 2, capabilityState: "verified", telemetryState: "stale" }],
     bottlenecks: [{ resourceKey: "gpu:local", utilizationPercent: 100, blockedWorkItemIds: ["work:1"], explanation: "Declared capacity is fully reserved." }],
     actionInbox: [item], ownerFocus: [{ id: "focus:1", tenantId: "tenant:1", projectId: "project:1", level: "today", reason: "Owner wants visibility", createdAt: now }],
   });
