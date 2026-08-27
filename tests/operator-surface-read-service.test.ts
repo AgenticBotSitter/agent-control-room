@@ -39,6 +39,7 @@ test("CR6E authorized read service assembles only the bound tenant's redacted re
       fleet: async ({ tenantId }) => { calls.push(`fleet:${tenantId}`); return [{ workerId: "worker:1", platform: "macos", state: "busy", lastObservedAt: now, capacityState: "reported", availableSlots: 0, totalSlots: 1, capabilityState: "verified", telemetryState: "fresh" }]; },
       bottlenecks: async ({ tenantId }) => { calls.push(`bottlenecks:${tenantId}`); return [{ resourceKey: "gpu:1", utilizationPercent: 100, blockedWorkItemIds: ["work:1"], explanation: "Declared capacity is fully reserved." }]; },
       activeWork: async ({ tenantId }) => { calls.push(`active-work:${tenantId}`); return [{ jobId: "job:1", projectId: "project:1", state: "running", jobType: "synthetic:render", priority: 80, requiredCapability: "capability:render", updatedAt: now }]; },
+      portfolio: async ({ tenantId }) => { calls.push(`portfolio:${tenantId}`); return [{ projectId: "project:1", workflowCount: 1, activeJobCount: 1, waitingApprovalJobCount: 0, failedJobCount: 0, lastActivityAt: now }]; },
       services: async ({ tenantId }) => { calls.push(`services:${tenantId}`); return [{ serviceId: "service:1", projectId: "project:1", serviceType: "service:backup", state: "degraded", statusCode: "backup_stale", lastObservedAt: now }]; },
       schedules: async ({ tenantId }) => { calls.push(`schedules:${tenantId}`); return [{ scheduleId: "schedule:1", projectId: "project:1", state: "active", scheduleType: "cron", targetType: "service_check", targetId: "service:1", timezone: "UTC", idempotencyWindowSeconds: 60 }]; },
     });
@@ -47,12 +48,13 @@ test("CR6E authorized read service assembles only the bound tenant's redacted re
     assert.equal(result.snapshot.tenantId, "tenant:1");
     assert.deepEqual(result.snapshot.actionInbox.map((item) => item.id), ["attention:read"]);
     assert.deepEqual(result.snapshot.activeWork.map((work) => work.jobId), ["job:1"]);
+    assert.deepEqual(result.snapshot.portfolio.map((project) => project.projectId), ["project:1"]);
     assert.deepEqual(result.snapshot.services.map((service) => service.statusCode), ["backup_stale"]);
     assert.deepEqual(result.snapshot.schedules.map((schedule) => schedule.scheduleId), ["schedule:1"]);
     assert.equal("tenantId" in result.snapshot.serviceIncidents[0]!, false);
     assert.deepEqual(result.snapshot.serviceIncidents.map((incident) => incident.reasonCode), ["service_degraded"]);
     assert.deepEqual(result.serviceIncidents.map((incident) => incident.tenantId), ["tenant:1"]);
-    assert.deepEqual(calls.sort(), ["active-work:tenant:1", "bottlenecks:tenant:1", "fleet:tenant:1", "schedules:tenant:1", "services:tenant:1"]);
+    assert.deepEqual(calls.sort(), ["active-work:tenant:1", "bottlenecks:tenant:1", "fleet:tenant:1", "portfolio:tenant:1", "schedules:tenant:1", "services:tenant:1"]);
   } finally { await raw.close(); }
 });
 
@@ -64,6 +66,7 @@ test("CR6E read service rejects unsafe upstream display text before it reaches a
       fleet: async () => [],
       bottlenecks: async () => [{ resourceKey: "gpu:1", utilizationPercent: 1, blockedWorkItemIds: ["work:1"], explanation: "Bearer secret-token-value" }],
       activeWork: async () => [],
+      portfolio: async () => [],
       services: async () => [],
       schedules: async () => [],
     });
@@ -104,6 +107,7 @@ test("CR6E database fleet source reports only persisted node facts and marks abs
     const fleet = await source.fleet({ tenantId: "tenant:1", now });
     assert.deepEqual(fleet, [{ workerId: "node:1", platform: "macos", state: "online", lastObservedAt: now, capacityState: "unavailable", capabilityState: "unavailable", telemetryState: "missing" }]);
     assert.deepEqual(await source.activeWork({ tenantId: "tenant:1", now }), [{ jobId: "job:1", projectId: "project:1", state: "running", jobType: "synthetic:render", priority: 80, requiredCapability: "capability:render", updatedAt: now }]);
+    assert.deepEqual(await source.portfolio({ tenantId: "tenant:1", now }), [{ projectId: "project:1", workflowCount: 1, activeJobCount: 1, waitingApprovalJobCount: 0, failedJobCount: 0, lastActivityAt: now }]);
     assert.deepEqual(await source.services({ tenantId: "tenant:1", now }), [{ serviceId: "service:1", projectId: "project:1", serviceType: "service:backup", state: "degraded", statusCode: "backup_stale", lastObservedAt: now }]);
     assert.deepEqual(await source.schedules({ tenantId: "tenant:1", now }), [{ scheduleId: "schedule:1", projectId: "project:1", state: "active", scheduleType: "cron", targetType: "service_check", targetId: "service:1", timezone: "UTC", nextRunAt: "2026-08-27T13:00:00.000Z", idempotencyWindowSeconds: 60 }]);
   } finally { await raw.close(); }

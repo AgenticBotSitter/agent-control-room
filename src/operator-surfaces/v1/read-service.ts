@@ -1,10 +1,10 @@
 import type { ServiceIncidentV1 } from "../../services/v1/incident-store";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
 import type { DatabaseClient } from "../../persistence/database";
-import { jobRecordSchema, nodeRecordSchema, scheduleRecordSchema, serviceRecordSchema } from "../../domain/v1/validators";
+import { jobRecordSchema, nodeRecordSchema, scheduleRecordSchema, serviceRecordSchema, workflowRecordSchema } from "../../domain/v1/validators";
 import { OperatorSurfaceStoreV1 } from "./store";
 import { buildOperatorSurfaceSnapshotV1, filterActionInboxV1 } from "./projections";
-import type { ActionInboxFilterV1, ActiveWorkProjectionV1, BottleneckProjectionV1, FleetWorkerSummaryV1, OperatorSurfaceSnapshotV1, ScheduleProjectionV1, ServiceProjectionV1 } from "./types";
+import type { ActionInboxFilterV1, ActiveWorkProjectionV1, BottleneckProjectionV1, FleetWorkerSummaryV1, OperatorSurfaceSnapshotV1, PortfolioProjectProjectionV1, ScheduleProjectionV1, ServiceProjectionV1 } from "./types";
 import { OPERATOR_SURFACES_CONTRACT_V1 } from "./types";
 
 const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/;
@@ -19,6 +19,7 @@ export interface OperatorFleetReadSourceV1 {
   fleet(input: { tenantId: string; now: string }): Promise<FleetWorkerSummaryV1[]>;
   bottlenecks(input: { tenantId: string; now: string }): Promise<BottleneckProjectionV1[]>;
   activeWork(input: { tenantId: string; now: string }): Promise<ActiveWorkProjectionV1[]>;
+  portfolio(input: { tenantId: string; now: string }): Promise<PortfolioProjectProjectionV1[]>;
   services(input: { tenantId: string; now: string }): Promise<ServiceProjectionV1[]>;
   schedules(input: { tenantId: string; now: string }): Promise<ScheduleProjectionV1[]>;
 }
@@ -78,6 +79,36 @@ export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourc
       if (!job.success || job.data.tenantId !== input.tenantId || job.data.id !== row.id || job.data.projectId !== row.project_id || job.data.state !== row.state || !isActiveWorkState(job.data.state)) throw new OperatorSurfaceReadError("invalid_read_scope");
       return { jobId: job.data.id, projectId: job.data.projectId, state: job.data.state, jobType: job.data.jobType, priority: job.data.priority, requiredCapability: job.data.requiredCapability, updatedAt: new Date(row.updated_at).toISOString() };
     });
+  }
+
+  /** Builds status-only portfolio summaries from canonical workflow/job state; titles and progress claims stay out. */
+  async portfolio(input: { tenantId: string; now: string }): Promise<PortfolioProjectProjectionV1[]> {
+    if (!safeId.test(input.tenantId) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
+    const [workflows, jobs] = await Promise.all([
+      this.db.query<{ id: string; project_id: string; state: string; payload: unknown; updated_at: string | Date }>(`SELECT id,project_id,state,payload,updated_at FROM control_workflows WHERE tenant_id=$1 ORDER BY project_id,id LIMIT 1000`, [input.tenantId]),
+      this.db.query<{ id: string; project_id: string; state: string; payload: unknown; updated_at: string | Date }>(`SELECT id,project_id,state,payload,updated_at FROM control_jobs WHERE tenant_id=$1 ORDER BY project_id,id LIMIT 10000`, [input.tenantId]),
+    ]);
+    const byProject = new Map<string, PortfolioProjectProjectionV1>();
+    for (const row of workflows.rows) {
+      const workflow = workflowRecordSchema.safeParse(row.payload);
+      if (!workflow.success || workflow.data.tenantId !== input.tenantId || workflow.data.id !== row.id || workflow.data.projectId !== row.project_id || workflow.data.state !== row.state) throw new OperatorSurfaceReadError("invalid_read_scope");
+      const current = byProject.get(row.project_id) ?? { projectId: row.project_id, workflowCount: 0, activeJobCount: 0, waitingApprovalJobCount: 0, failedJobCount: 0, lastActivityAt: new Date(row.updated_at).toISOString() };
+      current.workflowCount += 1;
+      if (Date.parse(new Date(row.updated_at).toISOString()) > Date.parse(current.lastActivityAt)) current.lastActivityAt = new Date(row.updated_at).toISOString();
+      byProject.set(row.project_id, current);
+    }
+    for (const row of jobs.rows) {
+      const job = jobRecordSchema.safeParse(row.payload);
+      if (!job.success || job.data.tenantId !== input.tenantId || job.data.id !== row.id || job.data.projectId !== row.project_id || job.data.state !== row.state) throw new OperatorSurfaceReadError("invalid_read_scope");
+      const current = byProject.get(row.project_id);
+      if (!current) throw new OperatorSurfaceReadError("invalid_read_scope");
+      if (job.data.state === "leased" || job.data.state === "running" || job.data.state === "waiting_approval") current.activeJobCount += 1;
+      if (job.data.state === "waiting_approval") current.waitingApprovalJobCount += 1;
+      if (job.data.state === "failed") current.failedJobCount += 1;
+      const updatedAt = new Date(row.updated_at).toISOString();
+      if (Date.parse(updatedAt) > Date.parse(current.lastActivityAt)) current.lastActivityAt = updatedAt;
+    }
+    return [...byProject.values()];
   }
 
   /** Projects persisted health/status facts only; the desired state and its digest never leave the server. */
@@ -149,10 +180,11 @@ export class OperatorSurfaceReadServiceV1 {
   async read(input: { scope: AuthorizedOperatorReadScopeV1; now: string; inboxFilter?: Omit<ActionInboxFilterV1, "now">; incidentState?: ServiceIncidentV1["state"] }): Promise<OperatorSurfaceReadModelV1> {
     if (!safeId.test(input.scope.tenantId) || !safeId.test(input.scope.actorId) || !instant(input.scope.grantedAt) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
     const tenantId = input.scope.tenantId;
-    const [fleet, bottlenecks, activeWork, services, schedules, inbox, ownerFocus, serviceIncidents] = await Promise.all([
+    const [fleet, bottlenecks, activeWork, portfolio, services, schedules, inbox, ownerFocus, serviceIncidents] = await Promise.all([
       this.fleetSource.fleet({ tenantId, now: input.now }),
       this.fleetSource.bottlenecks({ tenantId, now: input.now }),
       this.fleetSource.activeWork({ tenantId, now: input.now }),
+      this.fleetSource.portfolio({ tenantId, now: input.now }),
       this.fleetSource.services({ tenantId, now: input.now }),
       this.fleetSource.schedules({ tenantId, now: input.now }),
       this.surfaces.listInbox({ tenantId, limit: 500 }),
@@ -169,6 +201,7 @@ export class OperatorSurfaceReadServiceV1 {
         fleet,
         bottlenecks,
         activeWork,
+        portfolio,
         services,
         schedules,
         serviceIncidents: serviceIncidents.map((incident) => ({

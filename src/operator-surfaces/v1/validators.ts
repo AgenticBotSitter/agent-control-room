@@ -105,6 +105,17 @@ export const activeWorkProjectionSchemaV1 = z.object({
   updatedAt: isoDate,
 });
 
+export const portfolioProjectProjectionSchemaV1 = z.object({
+  projectId: safeId,
+  workflowCount: z.number().int().nonnegative().max(1_000),
+  activeJobCount: z.number().int().nonnegative().max(10_000),
+  waitingApprovalJobCount: z.number().int().nonnegative().max(10_000),
+  failedJobCount: z.number().int().nonnegative().max(10_000),
+  lastActivityAt: isoDate,
+}).superRefine((value, context) => {
+  if (value.waitingApprovalJobCount > value.activeJobCount) context.addIssue({ code: "custom", message: "waiting approval cannot exceed active work" });
+});
+
 export const serviceProjectionSchemaV1 = z.object({
   serviceId: safeId,
   projectId: safeId,
@@ -160,6 +171,7 @@ export const operatorSurfaceSnapshotSchemaV1 = z.object({
   fleet: z.array(fleetWorkerSummarySchemaV1).max(1_000),
   bottlenecks: z.array(bottleneckProjectionSchemaV1).max(100),
   activeWork: z.array(activeWorkProjectionSchemaV1).max(1_000),
+  portfolio: z.array(portfolioProjectProjectionSchemaV1).max(1_000),
   services: z.array(serviceProjectionSchemaV1).max(1_000),
   schedules: z.array(scheduleProjectionSchemaV1).max(1_000),
   serviceIncidents: z.array(serviceIncidentProjectionSchemaV1).max(1_000),
@@ -169,6 +181,7 @@ export const operatorSurfaceSnapshotSchemaV1 = z.object({
   for (const [name, ids] of [
     ["fleet", value.fleet.map((worker) => worker.workerId)],
     ["active work", value.activeWork.map((work) => work.jobId)],
+    ["portfolio", value.portfolio.map((project) => project.projectId)],
     ["services", value.services.map((service) => service.serviceId)],
     ["schedules", value.schedules.map((schedule) => schedule.scheduleId)],
     ["service incidents", value.serviceIncidents.map((incident) => incident.id)],

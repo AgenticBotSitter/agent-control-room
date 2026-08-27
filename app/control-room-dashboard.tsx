@@ -19,6 +19,7 @@ import { ServiceIncidentList } from "./components/service-incident-list";
 import { BottleneckList } from "./components/bottleneck-list";
 import { ActiveWorkList } from "./components/active-work-list";
 import { ServiceScheduleList } from "./components/service-schedule-list";
+import { PortfolioProjection } from "./components/portfolio-projection";
 import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
 
 type Scope = "all" | (typeof projects)[number]["id"];
@@ -217,7 +218,7 @@ export function ControlRoomDashboard() {
             <div><p className="eyebrow">Portfolio</p><h2>Active projects</h2></div>
             {scope !== "all" && <button className="text-button" type="button" onClick={() => setScope("all")}>Show all projects</button>}
           </div>
-          <div className="project-grid">
+          {operatorSnapshot ? <PortfolioProjection projects={operatorSnapshot.portfolio} /> : <div className="project-grid">
             {scopedProjects.map((project) => (
               <article key={project.id} className={`project-card accent-${projectAccent[project.id]}`}>
                 <div className="project-topline">
@@ -238,7 +239,7 @@ export function ControlRoomDashboard() {
                 </div>
               </article>
             ))}
-          </div>
+          </div>}
         </section>
 
         <div className="dashboard-columns">

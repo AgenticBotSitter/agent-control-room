@@ -131,6 +131,16 @@ export interface ScheduleProjectionV1 {
   idempotencyWindowSeconds: number;
 }
 
+/** Redacted portfolio health derived from canonical workflows and jobs, never from a demo-progress estimate. */
+export interface PortfolioProjectProjectionV1 {
+  projectId: string;
+  workflowCount: number;
+  activeJobCount: number;
+  waitingApprovalJobCount: number;
+  failedJobCount: number;
+  lastActivityAt: string;
+}
+
 /** A human priority projection. It is intentionally separate from scheduling policy and authority. */
 export interface OwnerFocusPinV1 {
   id: string;
@@ -181,6 +191,7 @@ export interface OperatorSurfaceSnapshotV1 {
   fleet: FleetWorkerSummaryV1[];
   bottlenecks: BottleneckProjectionV1[];
   activeWork: ActiveWorkProjectionV1[];
+  portfolio: PortfolioProjectProjectionV1[];
   services: ServiceProjectionV1[];
   schedules: ScheduleProjectionV1[];
   serviceIncidents: ServiceIncidentProjectionV1[];
