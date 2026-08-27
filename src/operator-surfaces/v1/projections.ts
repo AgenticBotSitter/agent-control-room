@@ -50,6 +50,7 @@ export function buildOperatorSurfaceSnapshotV1(input: OperatorSurfaceSnapshotV1)
     ...parsed,
     fleet: [...parsed.fleet].sort((left, right) => left.workerId.localeCompare(right.workerId)),
     bottlenecks: [...parsed.bottlenecks].sort((left, right) => right.utilizationPercent - left.utilizationPercent || left.resourceKey.localeCompare(right.resourceKey)),
+    activeWork: [...parsed.activeWork].sort((left, right) => right.priority - left.priority || Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.jobId.localeCompare(right.jobId)),
     serviceIncidents: [...parsed.serviceIncidents].sort((left, right) => Date.parse(right.lastObservedAt) - Date.parse(left.lastObservedAt) || left.id.localeCompare(right.id)),
     actionInbox: [...parsed.actionInbox].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) || left.id.localeCompare(right.id)),
     ownerFocus: [...parsed.ownerFocus].sort((left, right) => left.level.localeCompare(right.level) || left.projectId.localeCompare(right.projectId)),

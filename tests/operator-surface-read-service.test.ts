@@ -7,7 +7,8 @@ import { DatabaseOperatorFleetReadSourceV1, OPERATOR_SURFACES_CONTRACT_V1, Opera
 import { CanonicalStore } from "../src/persistence/canonical-store";
 import { adaptPglite } from "../src/persistence/database";
 import { ServiceIncidentStore } from "../src/services/v1";
-import { DOMAIN_CONTRACT_VERSION, type NodeRecord } from "../src/domain/v1";
+import { DOMAIN_CONTRACT_VERSION, type JobRecord, type NodeRecord, type RequestRecord, type WorkflowRecord } from "../src/domain/v1";
+import { computeAuthorityDigest } from "../src/security";
 
 const now = "2026-08-27T12:00:00.000Z";
 const inbox = {
@@ -37,15 +38,17 @@ test("CR6E authorized read service assembles only the bound tenant's redacted re
     const reader = new OperatorSurfaceReadServiceV1(surfaces, incidents, {
       fleet: async ({ tenantId }) => { calls.push(`fleet:${tenantId}`); return [{ workerId: "worker:1", platform: "macos", state: "busy", lastObservedAt: now, capacityState: "reported", availableSlots: 0, totalSlots: 1, capabilityState: "verified", telemetryState: "fresh" }]; },
       bottlenecks: async ({ tenantId }) => { calls.push(`bottlenecks:${tenantId}`); return [{ resourceKey: "gpu:1", utilizationPercent: 100, blockedWorkItemIds: ["work:1"], explanation: "Declared capacity is fully reserved." }]; },
+      activeWork: async ({ tenantId }) => { calls.push(`active-work:${tenantId}`); return [{ jobId: "job:1", projectId: "project:1", state: "running", jobType: "synthetic:render", priority: 80, requiredCapability: "capability:render", updatedAt: now }]; },
     });
     const result = await reader.read({ scope: { tenantId: "tenant:1", actorId: "actor:owner", grantedAt: now }, now });
     assert.equal(result.snapshot.contractVersion, OPERATOR_SURFACES_CONTRACT_V1);
     assert.equal(result.snapshot.tenantId, "tenant:1");
     assert.deepEqual(result.snapshot.actionInbox.map((item) => item.id), ["attention:read"]);
+    assert.deepEqual(result.snapshot.activeWork.map((work) => work.jobId), ["job:1"]);
     assert.equal("tenantId" in result.snapshot.serviceIncidents[0]!, false);
     assert.deepEqual(result.snapshot.serviceIncidents.map((incident) => incident.reasonCode), ["service_degraded"]);
     assert.deepEqual(result.serviceIncidents.map((incident) => incident.tenantId), ["tenant:1"]);
-    assert.deepEqual(calls.sort(), ["bottlenecks:tenant:1", "fleet:tenant:1"]);
+    assert.deepEqual(calls.sort(), ["active-work:tenant:1", "bottlenecks:tenant:1", "fleet:tenant:1"]);
   } finally { await raw.close(); }
 });
 
@@ -56,6 +59,7 @@ test("CR6E read service rejects unsafe upstream display text before it reaches a
     const reader = new OperatorSurfaceReadServiceV1(new OperatorSurfaceStoreV1(client), new ServiceIncidentStore(client), {
       fleet: async () => [],
       bottlenecks: async () => [{ resourceKey: "gpu:1", utilizationPercent: 1, blockedWorkItemIds: ["work:1"], explanation: "Bearer secret-token-value" }],
+      activeWork: async () => [],
     });
     await assert.rejects(reader.read({ scope: { tenantId: "tenant:1", actorId: "actor:owner", grantedAt: now }, now }));
   } finally { await raw.close(); }
@@ -73,7 +77,20 @@ test("CR6E database fleet source reports only persisted node facts and marks abs
     await new CanonicalStore(client).create(node);
     const activeNode: NodeRecord = { ...node, state: "active", version: 1, enrolledAt: now };
     await raw.query(`UPDATE control_nodes SET state='active',version=1,payload=$1::jsonb,updated_at=$2 WHERE tenant_id='tenant:1' AND id='node:1'`, [JSON.stringify(activeNode), now]);
-    const fleet = await new DatabaseOperatorFleetReadSourceV1(client).fleet({ tenantId: "tenant:1", now });
+    const request: RequestRecord = { contractVersion: DOMAIN_CONTRACT_VERSION, kind: "request", id: "request:1", tenantId: "tenant:1", version: 0, createdAt: now, updatedAt: now, title: "Observed job", objective: "Prove active work projection", state: "draft", priority: 80, requestedBy: { actorId: "identity:owner", actorType: "human" }, idempotencyKey: "request-idempotency-001" };
+    const workflow: WorkflowRecord = { contractVersion: DOMAIN_CONTRACT_VERSION, kind: "workflow", id: "workflow:1", tenantId: "tenant:1", version: 0, createdAt: now, updatedAt: now, requestId: request.id, projectId: "project:1", definitionVersion: "1.0.0", definitionDigest: `sha256:${"a".repeat(64)}`, authorityMode: "control_room_native", state: "proposed", jobIds: ["job:1"] };
+    const authority: JobRecord["authority"] = { projectId: workflow.projectId, allowedExecutor: "executor:synthetic", allowedOperations: ["operation:synthetic"], credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none", maxRisk: "low", maxDurationSeconds: 60, maxConcurrentEffects: 0, expiresAt: "2026-08-27T13:00:00.000Z", digest: `sha256:${"b".repeat(64)}` };
+    authority.digest = computeAuthorityDigest(authority);
+    const job: JobRecord = { contractVersion: DOMAIN_CONTRACT_VERSION, kind: "job", id: "job:1", tenantId: "tenant:1", version: 0, createdAt: now, updatedAt: now, workflowId: workflow.id, projectId: workflow.projectId, jobType: "synthetic:render", specVersion: "1.0.0", inputDigest: `sha256:${"c".repeat(64)}`, state: "proposed", priority: 80, requiredCapability: "capability:render", dependsOnJobIds: [], authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } };
+    const canonical = new CanonicalStore(client);
+    await canonical.create(request);
+    await canonical.create(workflow);
+    await canonical.create(job);
+    const runningJob: JobRecord = { ...job, state: "running", version: 1, updatedAt: now };
+    await raw.query(`UPDATE control_jobs SET state='running',version=1,payload=$1::jsonb,updated_at=$2 WHERE tenant_id='tenant:1' AND id='job:1'`, [JSON.stringify(runningJob), now]);
+    const source = new DatabaseOperatorFleetReadSourceV1(client);
+    const fleet = await source.fleet({ tenantId: "tenant:1", now });
     assert.deepEqual(fleet, [{ workerId: "node:1", platform: "macos", state: "online", lastObservedAt: now, capacityState: "unavailable", capabilityState: "unavailable", telemetryState: "missing" }]);
+    assert.deepEqual(await source.activeWork({ tenantId: "tenant:1", now }), [{ jobId: "job:1", projectId: "project:1", state: "running", jobType: "synthetic:render", priority: 80, requiredCapability: "capability:render", updatedAt: now }]);
   } finally { await raw.close(); }
 });

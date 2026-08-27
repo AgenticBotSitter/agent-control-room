@@ -95,6 +95,16 @@ export const serviceIncidentProjectionSchemaV1 = z.object({
   if (value.state === "open" && value.resolvedAt) context.addIssue({ code: "custom", message: "open incidents cannot have resolution time" });
 });
 
+export const activeWorkProjectionSchemaV1 = z.object({
+  jobId: safeId,
+  projectId: safeId,
+  state: z.enum(["leased", "running", "waiting_approval"]),
+  jobType: safeId,
+  priority: z.number().int().min(0).max(100),
+  requiredCapability: safeId,
+  updatedAt: isoDate,
+});
+
 export const ownerFocusPinSchemaV1 = z.object({
   id: safeId,
   tenantId: safeId,
@@ -127,12 +137,14 @@ export const operatorSurfaceSnapshotSchemaV1 = z.object({
   generatedAt: isoDate,
   fleet: z.array(fleetWorkerSummarySchemaV1).max(1_000),
   bottlenecks: z.array(bottleneckProjectionSchemaV1).max(100),
+  activeWork: z.array(activeWorkProjectionSchemaV1).max(1_000),
   serviceIncidents: z.array(serviceIncidentProjectionSchemaV1).max(1_000),
   actionInbox: z.array(actionInboxItemSchemaV1).max(1_000),
   ownerFocus: z.array(ownerFocusPinSchemaV1).max(100),
 }).superRefine((value, context) => {
   for (const [name, ids] of [
     ["fleet", value.fleet.map((worker) => worker.workerId)],
+    ["active work", value.activeWork.map((work) => work.jobId)],
     ["service incidents", value.serviceIncidents.map((incident) => incident.id)],
     ["action inbox", value.actionInbox.map((item) => item.id)],
     ["owner focus", value.ownerFocus.map((pin) => pin.id)],

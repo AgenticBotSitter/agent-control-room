@@ -35,3 +35,5 @@ Service incidents are included inside the same validated snapshot, using only th
 Saving Owner Focus uses a separate protected route. The server assigns the tenant and recorded time, requires an authenticated platform identity and a durable low-risk policy decision scoped to the project, and rejects client-supplied tenant or scheduler fields. A successful save records only Owner Focus intent; it creates no outbox event, reservation, scheduling preference, dispatch, or external operation.
 
 The protected Bottleneck surface renders declared resource pressure, bounded work-item identifiers, and a redacted explanation. It is a read-only capacity projection: it never offers a capacity release, reservation, or dispatch action.
+
+The protected active-work surface renders only canonical jobs observed in `leased`, `running`, or `waiting_approval` state. It includes stable job/project identifiers, job type, priority, required capability, and last update time. It does not infer progress, a worker reservation, completion, or dispatch authority.

@@ -1,14 +1,15 @@
 import type { ServiceIncidentV1 } from "../../services/v1/incident-store";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
 import type { DatabaseClient } from "../../persistence/database";
-import { nodeRecordSchema } from "../../domain/v1/validators";
+import { jobRecordSchema, nodeRecordSchema } from "../../domain/v1/validators";
 import { OperatorSurfaceStoreV1 } from "./store";
 import { buildOperatorSurfaceSnapshotV1, filterActionInboxV1 } from "./projections";
-import type { ActionInboxFilterV1, BottleneckProjectionV1, FleetWorkerSummaryV1, OperatorSurfaceSnapshotV1 } from "./types";
+import type { ActionInboxFilterV1, ActiveWorkProjectionV1, BottleneckProjectionV1, FleetWorkerSummaryV1, OperatorSurfaceSnapshotV1 } from "./types";
 import { OPERATOR_SURFACES_CONTRACT_V1 } from "./types";
 
 const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/;
 function instant(value: string): boolean { return !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value; }
+function isActiveWorkState(value: string): value is ActiveWorkProjectionV1["state"] { return value === "leased" || value === "running" || value === "waiting_approval"; }
 
 /** This value is created by the server authentication layer, never decoded from an API query or request body. */
 export interface AuthorizedOperatorReadScopeV1 { tenantId: string; actorId: string; grantedAt: string; }
@@ -17,6 +18,7 @@ export interface AuthorizedOperatorReadScopeV1 { tenantId: string; actorId: stri
 export interface OperatorFleetReadSourceV1 {
   fleet(input: { tenantId: string; now: string }): Promise<FleetWorkerSummaryV1[]>;
   bottlenecks(input: { tenantId: string; now: string }): Promise<BottleneckProjectionV1[]>;
+  activeWork(input: { tenantId: string; now: string }): Promise<ActiveWorkProjectionV1[]>;
 }
 
 export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourceV1 {
@@ -59,6 +61,22 @@ export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourc
     if (!safeId.test(input.tenantId) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
     return [];
   }
+
+  /** Reads active canonical jobs only. Job payloads are validated before any redacted fields are projected. */
+  async activeWork(input: { tenantId: string; now: string }): Promise<ActiveWorkProjectionV1[]> {
+    if (!safeId.test(input.tenantId) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
+    const result = await this.db.query<{ id: string; project_id: string; state: string; payload: unknown; updated_at: string | Date }>(
+      `SELECT id,project_id,state,payload,updated_at FROM control_jobs
+       WHERE tenant_id=$1 AND state IN ('leased','running','waiting_approval')
+       ORDER BY priority DESC,updated_at DESC,id LIMIT 1000`,
+      [input.tenantId],
+    );
+    return result.rows.map((row) => {
+      const job = jobRecordSchema.safeParse(row.payload);
+      if (!job.success || job.data.tenantId !== input.tenantId || job.data.id !== row.id || job.data.projectId !== row.project_id || job.data.state !== row.state || !isActiveWorkState(job.data.state)) throw new OperatorSurfaceReadError("invalid_read_scope");
+      return { jobId: job.data.id, projectId: job.data.projectId, state: job.data.state, jobType: job.data.jobType, priority: job.data.priority, requiredCapability: job.data.requiredCapability, updatedAt: new Date(row.updated_at).toISOString() };
+    });
+  }
 }
 
 export interface OperatorSurfaceReadModelV1 {
@@ -81,9 +99,10 @@ export class OperatorSurfaceReadServiceV1 {
   async read(input: { scope: AuthorizedOperatorReadScopeV1; now: string; inboxFilter?: Omit<ActionInboxFilterV1, "now">; incidentState?: ServiceIncidentV1["state"] }): Promise<OperatorSurfaceReadModelV1> {
     if (!safeId.test(input.scope.tenantId) || !safeId.test(input.scope.actorId) || !instant(input.scope.grantedAt) || !instant(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
     const tenantId = input.scope.tenantId;
-    const [fleet, bottlenecks, inbox, ownerFocus, serviceIncidents] = await Promise.all([
+    const [fleet, bottlenecks, activeWork, inbox, ownerFocus, serviceIncidents] = await Promise.all([
       this.fleetSource.fleet({ tenantId, now: input.now }),
       this.fleetSource.bottlenecks({ tenantId, now: input.now }),
+      this.fleetSource.activeWork({ tenantId, now: input.now }),
       this.surfaces.listInbox({ tenantId, limit: 500 }),
       this.surfaces.listOwnerFocus({ tenantId, now: input.now }),
       this.incidents.list({ tenantId, state: input.incidentState, limit: 500 }),
@@ -97,6 +116,7 @@ export class OperatorSurfaceReadServiceV1 {
         generatedAt: input.now,
         fleet,
         bottlenecks,
+        activeWork,
         serviceIncidents: serviceIncidents.map((incident) => ({
           id: incident.id,
           serviceId: incident.serviceId,

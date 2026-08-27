@@ -96,6 +96,17 @@ export interface ServiceIncidentProjectionV1 {
   resolvedAt?: string;
 }
 
+/** Redacted active job facts. This is state observation, not a claim that a job will complete. */
+export interface ActiveWorkProjectionV1 {
+  jobId: string;
+  projectId: string;
+  state: "leased" | "running" | "waiting_approval";
+  jobType: string;
+  priority: number;
+  requiredCapability: string;
+  updatedAt: string;
+}
+
 /** A human priority projection. It is intentionally separate from scheduling policy and authority. */
 export interface OwnerFocusPinV1 {
   id: string;
@@ -145,6 +156,7 @@ export interface OperatorSurfaceSnapshotV1 {
   generatedAt: string;
   fleet: FleetWorkerSummaryV1[];
   bottlenecks: BottleneckProjectionV1[];
+  activeWork: ActiveWorkProjectionV1[];
   serviceIncidents: ServiceIncidentProjectionV1[];
   actionInbox: ActionInboxItemV1[];
   ownerFocus: OwnerFocusPinV1[];

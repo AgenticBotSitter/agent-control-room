@@ -17,6 +17,7 @@ import { OwnerFocusStrip, type OwnerFocusDraftRequestV1 } from "./components/own
 import { FleetProjection } from "./components/fleet-projection";
 import { ServiceIncidentList } from "./components/service-incident-list";
 import { BottleneckList } from "./components/bottleneck-list";
+import { ActiveWorkList } from "./components/active-work-list";
 import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
 
 type Scope = "all" | (typeof projects)[number]["id"];
@@ -249,10 +250,10 @@ export function ControlRoomDashboard() {
 
           <section className="section-block panel">
             <div className="section-heading">
-              <div><p className="eyebrow">Execution</p><h2>Running now</h2></div>
-              <span className="live-label"><i /> Live fixture</span>
+              <div><p className="eyebrow">{operatorSnapshot ? "Protected job observation" : "Synthetic execution"}</p><h2>Running now</h2></div>
+              <span className="live-label"><i /> {operatorSnapshot ? `${operatorSnapshot.activeWork.length} observed` : "Live fixture"}</span>
             </div>
-            <div className="running-list">
+            {operatorSnapshot ? <ActiveWorkList work={operatorSnapshot.activeWork} /> : <div className="running-list">
               {running.map((item) => {
                 const worker = workers.find((candidate) => candidate.id === item.currentWorkerId);
                 return (
@@ -267,7 +268,7 @@ export function ControlRoomDashboard() {
                   </article>
                 );
               })}
-            </div>
+            </div>}
           </section>
         </div>
 
