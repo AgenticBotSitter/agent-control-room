@@ -23,14 +23,15 @@
 | CR-5B portable bridge core | Complete | Outbound connection state machine, heartbeat, acknowledgements, SQLite journal/recovery, backpressure, migration 0009 |
 | CR-5C node-local policy and effect enforcement | In progress — CR-5C.1 through CR-5C.8 complete; CR-5C.9 implemented; Windows and Linux providers qualified; macOS native qualification remains blocked after accepted negative evidence | Canonical policy/effect enforcement, explicit platform private-key providers, repository-owned qualification harnesses, and bounded macOS failure-stage diagnostics |
 | CR-5D and CR-5Q | Complete for the effect-free local vertical slice | Synthetic executor, evidence builder, coordinator, private disposable storage, restart-safe SQLite delivery, authenticated central intake, atomic lifecycle/evidence projection, signed acknowledgement retirement, abrupt-exit recovery, and remediated adversarial review |
-| CR-6 through CR-10 | Dependency-mapped; implementation not started | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
+| CR-6B discovery, telemetry, capability, benchmark, and eligibility core | Complete for effect-free implementation | Versioned normalized signals, authenticated ingress, tenant-bound append-only history/current facts with separate per-probe/per-benchmark current records, safe current/history reads, freshness/trust/resource gates, and full verification evidence; native host evidence remains owner-controlled |
+| CR-6C through CR-10 | Dependency-mapped; implementation not started | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-The effect-free active build lane is the CR-6B fleet-signal contract. CR-6A's normative contract, value-free systemd/launchd/Windows templates, and static conformance/diagnostics are complete; its real per-platform supervisor rehearsals remain explicit owner-controlled gates. The unresolved macOS CR-5C.9H native gate remains an explicit owner-controlled security risk; it is not converted into a pass and is not allowed to halt effect-free implementation.
+The effect-free CR-6B fleet-signal core is complete. It carries versioned normalized discovery, telemetry, capability, and benchmark claims through raw-frame authentication; exact tenant/node/sequence binding; append-only history; multi-subject current facts; safe reads; and deterministic freshness, trust, scratch, capability, and benchmark-environment eligibility gates. Retention is intentionally evidence-preserving: no fleet history is deleted without an explicit owner retention policy. CR-6A's normative contract, value-free systemd/launchd/Windows templates, and static conformance/diagnostics are complete; its real per-platform supervisor rehearsals remain explicit owner-controlled gates. The unresolved macOS CR-5C.9H native gate remains an explicit owner-controlled security risk; it is not converted into a pass and is not allowed to halt effect-free implementation.
 
 ```text
-Active: CR-6B discovery, telemetry, capability, and benchmark contracts
+Active: CR-6C deterministic scheduler, resource reservations, fairness, and bottlenecks
 Delivered this boundary: CR5D-INT-001 through CR5D-INT-003 add exact admission binding, cancellation, restart-safe lifecycle delivery, and transactional artifact lineage. CR5D-STOR-001 and STOR-002 provide bounded memory storage plus a private disposable-filesystem adapter with no-overwrite atomic publication, exact hashing, capacity bounds, root identity checks, and honest crash ambiguity. CR5D-CTRL-001 is complete: authenticated version-bound requests, atomic audit plus outbox, strict protocol bodies, acknowledgement-gated central state, durable node-local drain/quarantine before reply, closed admission/renewal gates, restart-safe cancellation obligations, and signed semantic acknowledgement delivery. CR5D-UI-004 is complete: worker views use explicit node identity/version/state, operation requests require confirmation and distinguish requested from signed-node-confirmed state, and synthetic timeline plus artifact lineage render producer claims separately from independent verification. CR5D-REC-001 proves an actual abrupt process exit after local completion, SQLite recovery of execution and lineage, resend after a second interruption before acknowledgement, authenticated retirement, and no post-ack redelivery. CR5D-ACC-001 now proves raw signed job-event authentication before central persistence, exact lease/lineage binding, replay-safe central evidence and lifecycle projections, and a completed node-local record that remains durable until a signed central acknowledgement is received. CR6A-CON-001 is complete, and the static systemd, launchd, and Windows wrapper templates plus an effect-free conformance and diagnostic harness are implemented. The harness validates value-free platform markers, fixed runtime/config placeholders, privilege/restart/cancellation assertions, and safe status codes without reading local configuration or operating a native supervisor.
 Validation completed: CR-5Q remediated four findings and passed the full effect-free attack, recovery, build, and migration suite. See `CR5Q_SECURITY_RECOVERY_REVIEW.md`.
 Open risks: the macOS provider remains unqualified and its original failure stage remains unproven; atomic platform file semantics, live DNS/TLS and rebinding, timer/cancellation transport, approval consumption, cost/concurrency reservation, process-kill rehearsal, destination evidence, approval issuance, disposable deployment, and CR-6 service isolation remain explicit downstream gates
@@ -53,12 +54,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR-6B — discovery, telemetry, capabilities, and benchmarks
-Set model: gpt-5.6-terra
-Set reasoning effort: high
-Why: CR-6A's static safety boundary is complete; CR-6B now needs many deterministic schemas, collectors, fingerprints, freshness rules, and bounded eligibility inputs.
-Expected output: versioned discovery, telemetry, capability, benchmark, fingerprint, freshness, and trust contracts followed by effect-free collectors and tests.
-Stop before: native host inventory/probes/benchmarks, installing or starting a native service, a new macOS native key-provider attempt, credentials, production identities, live deployment, or consequential external effects without exact owner authority.
+Block: CR-6C — deterministic scheduler, resource reservations, fairness, and bottlenecks
+Set model: gpt-5.6-sol
+Set reasoning effort: xhigh
+Why: This phase establishes the allocation and starvation boundaries that later services and operator controls must obey.
+Expected output: versioned deterministic allocation/explanation contract, fair-share debt and priority/deadline/cost/privacy/maintenance rules, atomic resource reservations and recovery, bottleneck calculation, simulation/property tests, and safe explanations.
+Stop before: dispatching a real job, reserving a live GPU or host resource, changing a service, credentials, production identities, live deployment, or consequential external effects without exact owner authority.
 ```
 
 ## Update rule
