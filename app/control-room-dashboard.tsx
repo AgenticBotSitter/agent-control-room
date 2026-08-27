@@ -12,8 +12,9 @@ import {
   workItems,
 } from "@/src/fixtures/data";
 import { portfolioScheduleScenario, transcriptionScenarios } from "@/src/simulator/scenarios";
-import { cr6eActionInboxFixture } from "./fixtures/cr6e-ui";
+import { cr6eActionInboxFixture, cr6eOwnerFocusFixture } from "./fixtures/cr6e-ui";
 import { ActionInbox } from "./components/action-inbox";
+import { OwnerFocusStrip, type OwnerFocusDraftRequestV1 } from "./components/owner-focus-strip";
 
 type Scope = "all" | (typeof projects)[number]["id"];
 type ScenarioKey = keyof typeof transcriptionScenarios;
@@ -42,6 +43,7 @@ export function ControlRoomDashboard() {
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("automatic");
   const [simulationApplied, setSimulationApplied] = useState(false);
+  const [ownerFocusNotice, setOwnerFocusNotice] = useState<string>();
 
   useEffect(() => {
     const saved = window.localStorage.getItem("control-room-theme");
@@ -62,6 +64,13 @@ export function ControlRoomDashboard() {
     window.localStorage.setItem("control-room-theme", next);
   };
 
+  const prepareOwnerFocus = (request: OwnerFocusDraftRequestV1) => {
+    const project = projects.find((candidate) => candidate.id === request.projectId)?.workspaceName ?? request.projectId;
+    setOwnerFocusNotice(request.operation === "clear_owner_focus"
+      ? `Clear request prepared for ${project}. Nothing has been saved or scheduled.`
+      : `${request.level === "p0" ? "P0" : "Today"} request prepared for ${project}. Nothing has been saved or scheduled.`);
+  };
+
   const scopedProjects = useMemo(
     () => scope === "all" ? projects : projects.filter((project) => project.id === scope),
     [scope],
@@ -69,6 +78,8 @@ export function ControlRoomDashboard() {
   const scopedIds = new Set(scopedProjects.map((project) => project.id));
   const scopedAttention = attentionItems.filter((item) => scopedIds.has(item.source.projectId));
   const scopedActionInbox = cr6eActionInboxFixture.filter((item) => !item.projectId || scopedIds.has(item.projectId));
+  const scopedOwnerFocus = cr6eOwnerFocusFixture.filter((pin) => scopedIds.has(pin.projectId));
+  const focusProjects = scopedProjects.map((project) => ({ id: project.id, label: project.workspaceName }));
   const scopedBlockers = blockers.filter((item) => scopedIds.has(item.source.projectId));
   const scopedWork = workItems.filter((item) => scopedIds.has(item.source.projectId));
   const scopedActivity = recentActivity.filter((item) => scopedIds.has(item.projectId));
@@ -138,6 +149,8 @@ export function ControlRoomDashboard() {
           </div>
           <span className="prototype-badge">Synthetic prototype</span>
         </section>
+
+        <OwnerFocusStrip pins={scopedOwnerFocus} projects={focusProjects} onPrepare={prepareOwnerFocus} notice={ownerFocusNotice} />
 
         <section className="metric-grid" aria-label="Portfolio summary">
           <article className="metric-card">

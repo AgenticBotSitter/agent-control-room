@@ -1,4 +1,4 @@
-import type { ActionInboxItemV1 } from "@/src/operator-surfaces/v1";
+import type { ActionInboxItemV1, OwnerFocusPinV1 } from "@/src/operator-surfaces/v1";
 
 /** Explicitly synthetic UI records that use the same shape as the durable CR-6E Action Inbox. */
 export const cr6eActionInboxFixture: ActionInboxItemV1[] = [
@@ -26,4 +26,9 @@ export const cr6eActionInboxFixture: ActionInboxItemV1[] = [
       { id: "response.blooms.approve", kind: "approve_exact_operation", label: "Approve exact next operation", requiresConfirmation: true, available: false, unavailableReasonCode: "approval_not_issued" },
     ], evidence: [{ id: "evidence.blooms.draft", kind: "artifact", observedAt: "2026-08-22T17:11:00.000Z" }], createdAt: "2026-08-22T17:11:00.000Z", deliveryState: "failed",
   },
+];
+
+export const cr6eOwnerFocusFixture: OwnerFocusPinV1[] = [
+  { id: "focus.wayfarer", tenantId: "tenant:owner", projectId: "project.wayfarer.lazy-river", level: "p0", reason: "Owner wants the preview review visible", createdAt: "2026-08-22T17:30:00.000Z" },
+  { id: "focus.blooms", tenantId: "tenant:owner", projectId: "project.blooms.content-ops", level: "today", reason: "Resolve the route choice today", createdAt: "2026-08-22T17:30:00.000Z" },
 ];
