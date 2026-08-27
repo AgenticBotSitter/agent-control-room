@@ -8,6 +8,7 @@ import type { WorkerProjection } from "@/src/contracts/v1";
 import { ArtifactEvidenceCard } from "@/app/components/artifact-evidence-card";
 import { SyntheticExecutionTimeline } from "@/app/components/synthetic-execution-timeline";
 import { cr5dArtifactFixture, cr5dTimelineFixture } from "@/app/fixtures/cr5d-ui";
+import { ProtectedWorkerDetailStatus } from "@/app/components/protected-detail-status";
 
 export function generateStaticParams() {
   return workers.map((worker) => ({ workerId: worker.id }));
@@ -82,6 +83,7 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
         </header>
 
         <p className="operator-data-status unavailable" role="status">This worker detail is a synthetic fixture. Protected fleet status is available on the portfolio dashboard.</p>
+        <ProtectedWorkerDetailStatus workerId={worker.id} />
         <section className="metric-grid section-block" aria-label="Synthetic worker summary">
           <article className="metric-card"><span className="metric-icon green">◫</span><div><small>Free slots</small><strong>{worker.availableSlots}/{worker.totalSlots}</strong><em>{label(worker.allocationMode)}</em></div></article>
           <article className="metric-card"><span className="metric-icon blue">⌁</span><div><small>Capability routes</small><strong>{worker.capabilities.length}</strong><em>{worker.capabilities.filter((route) => route.verification === "verified").length} verified</em></div></article>

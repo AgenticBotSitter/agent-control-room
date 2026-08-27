@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { agents, blockers, projects, workers, workItems } from "@/src/fixtures/data";
+import { ProtectedProjectDetailStatus } from "@/app/components/protected-detail-status";
 
 export function generateStaticParams() {
   return projects.map((project) => ({ projectId: project.id }));
@@ -45,6 +46,7 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
         </header>
 
         <p className="operator-data-status unavailable" role="status">This project detail is a synthetic fixture. Protected project status is available on the portfolio dashboard.</p>
+        <ProtectedProjectDetailStatus projectId={project.id} />
         <section className="metric-grid section-block" aria-label="Synthetic project summary">
           <article className="metric-card"><span className="metric-icon green">↗</span><div><small>Progress</small><strong>{project.progressPercent}%</strong><em>{label(project.domainState)}</em></div></article>
           <article className="metric-card"><span className="metric-icon amber">!</span><div><small>Blockers</small><strong>{project.blockerCount}</strong><em>{project.attentionCount} need attention</em></div></article>

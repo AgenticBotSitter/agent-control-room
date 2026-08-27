@@ -439,6 +439,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .history-chart { display: grid; grid-template-columns: repeat(14, 1fr); align-items: end; gap: 4px; height: 120px; border-bottom: 1px solid var(--border); padding: 10px 4px 0; }
 .history-chart i { display: block; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--green) 70%, var(--surface-3)); }
 .not-found { display: grid; min-height: 70vh; place-items: center; text-align: center; }
+.protected-detail-status { margin: 14px 0; }.protected-detail-status .eyebrow { margin: 0 0 3px; }.protected-detail-status h2 { overflow-wrap: anywhere; }.protected-detail-status small { color: var(--faint); font-size: 9px; }
 
 @media (max-width: 1120px) {
   .metric-grid { grid-template-columns: 1fr 1fr; }
