@@ -7,7 +7,7 @@ function instant(value: string): boolean { const parsed = new Date(value); retur
 function json(value: unknown): string { return JSON.stringify(value); }
 
 export class ScheduleOccurrenceError extends Error {
-  constructor(readonly safeCode: "invalid_occurrence" | "occurrence_conflict") { super(safeCode); }
+  constructor(readonly safeCode: "invalid_occurrence" | "occurrence_conflict" | "outbox_not_delivered") { super(safeCode); }
 }
 
 export interface ScheduleOccurrenceProposalV1 extends ScheduleOccurrenceV1 {
@@ -20,6 +20,7 @@ export interface ScheduleOccurrenceProposalV1 extends ScheduleOccurrenceV1 {
 
 export interface StoredScheduleOccurrenceV1 extends ScheduleOccurrenceProposalV1 {
   state: "pending" | "dispatched" | "cancelled";
+  dispatchedAt?: string;
 }
 
 function valid(input: ScheduleOccurrenceProposalV1): boolean {
@@ -53,9 +54,29 @@ export class ScheduleOccurrenceStore {
       return { occurrence, replayed: true };
     });
   }
+
+  async acknowledgeDelivery(input: { tenantId: string; scheduleId: string; occurrenceKey: string; deliveredAt: string }): Promise<{ occurrence: StoredScheduleOccurrenceV1; replayed: boolean }> {
+    if (![input.tenantId,input.scheduleId,input.occurrenceKey].every((value) => safeId.test(value)) || !instant(input.deliveredAt)) throw new ScheduleOccurrenceError("invalid_occurrence");
+    return this.db.transaction(async (tx) => {
+      const prior = await tx.query<Row>(`SELECT * FROM control_schedule_occurrences WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3 FOR UPDATE`, [input.tenantId,input.scheduleId,input.occurrenceKey]);
+      const occurrence = prior.rows[0] && rowToOccurrence(prior.rows[0]);
+      if (!occurrence) throw new ScheduleOccurrenceError("invalid_occurrence");
+      if (occurrence.state === "dispatched") return { occurrence, replayed: true };
+      const delivered = await tx.query<{ id: string }>(`SELECT id FROM control_outbox WHERE tenant_id=$1 AND id=$2 AND status='delivered'`, [input.tenantId,outboxId(occurrence)]);
+      if (!delivered.rows.length) throw new ScheduleOccurrenceError("outbox_not_delivered");
+      const updated = await tx.query<Row>(`UPDATE control_schedule_occurrences SET state='dispatched',dispatched_at=$4 WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3 RETURNING *`, [input.tenantId,input.scheduleId,input.occurrenceKey,input.deliveredAt]);
+      return { occurrence: rowToOccurrence(updated.rows[0]), replayed: false };
+    });
+  }
+
+  async reconcileDelivered(input: { tenantId: string; deliveredAt: string }): Promise<number> {
+    if (!safeId.test(input.tenantId) || !instant(input.deliveredAt)) throw new ScheduleOccurrenceError("invalid_occurrence");
+    const result = await this.db.query<{ occurrence_key: string }>(`UPDATE control_schedule_occurrences s SET state='dispatched',dispatched_at=$2 WHERE s.tenant_id=$1 AND s.state='pending' AND EXISTS (SELECT 1 FROM control_outbox o WHERE o.tenant_id=s.tenant_id AND o.id=('outbox:schedule:' || s.tenant_id || ':' || s.schedule_id || ':' || s.occurrence_key) AND o.status='delivered') RETURNING s.occurrence_key`, [input.tenantId,input.deliveredAt]);
+    return result.rows.length;
+  }
 }
 
-interface Row { tenant_id: string; schedule_id: string; occurrence_key: string; target_type: StoredScheduleOccurrenceV1["targetType"]; target_id: string; definition_digest: string; scheduled_for: string | Date; local_time: string; state: StoredScheduleOccurrenceV1["state"]; created_at: string | Date; }
+interface Row { tenant_id: string; schedule_id: string; occurrence_key: string; target_type: StoredScheduleOccurrenceV1["targetType"]; target_id: string; definition_digest: string; scheduled_for: string | Date; local_time: string; state: StoredScheduleOccurrenceV1["state"]; created_at: string | Date; dispatched_at: string | Date | null; }
 function toInstant(value: string | Date): string { return new Date(value).toISOString(); }
-function rowToOccurrence(row: Row): StoredScheduleOccurrenceV1 { return { tenantId: row.tenant_id, scheduleId: row.schedule_id, occurrenceKey: row.occurrence_key, targetType: row.target_type, targetId: row.target_id, definitionDigest: row.definition_digest, scheduledFor: toInstant(row.scheduled_for), localTime: row.local_time, createdAt: toInstant(row.created_at), state: row.state }; }
+function rowToOccurrence(row: Row): StoredScheduleOccurrenceV1 { return { tenantId: row.tenant_id, scheduleId: row.schedule_id, occurrenceKey: row.occurrence_key, targetType: row.target_type, targetId: row.target_id, definitionDigest: row.definition_digest, scheduledFor: toInstant(row.scheduled_for), localTime: row.local_time, createdAt: toInstant(row.created_at), state: row.state, ...(row.dispatched_at ? { dispatchedAt: toInstant(row.dispatched_at) } : {}) }; }
 function outboxId(input: ScheduleOccurrenceProposalV1): string { return `outbox:schedule:${input.tenantId}:${input.scheduleId}:${input.occurrenceKey}`; }

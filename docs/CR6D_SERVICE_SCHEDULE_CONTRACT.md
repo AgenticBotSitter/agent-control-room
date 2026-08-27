@@ -18,6 +18,7 @@
 3. An incident is keyed by the tenant, source type, source identity, and correlation key. Repeated evidence updates one open incident; recovery evidence resolves it only after the contract-defined recovery condition.
    A later recurrence creates a new generation, preserving the resolved record. Opening and resolving an incident each write a tenant-bound idempotent outbox proposal.
 4. All persistence and dispatch work is transactional and idempotent. An outbox message names the exact occurrence or incident projection and is retried through existing delivery boundaries.
+   An occurrence becomes dispatched only after that exact outbox row is marked delivered. Startup reconciliation repairs a delivered-outbox/pending-occurrence mismatch without producing another occurrence.
 
 ## Effect boundary
 
