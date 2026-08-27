@@ -1,0 +1,84 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR6Q-REV-001",
+  "waveId": "CR6Q-REVIEW-1",
+  "block": "CR-6Q",
+  "summary": "Independently review fleet and scheduler integrity",
+  "platform": "any",
+  "status": "ready",
+  "mode": "independent-review",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "high",
+  "baseCommit": "c5dcb81cd1167caa4804b5f3c2483d3503b70946",
+  "integrationBranch": "integration/cr5d-synthetic-executor-1",
+  "eligibleRoutes": ["marvin-macos", "johnny5-linux", "ziggy-windows"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"],
+    "johnny5-linux": ["MarvinAi5"],
+    "ziggy-windows": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": ["Git", "Node.js >=22.13.0", "repository dependencies", "authenticated GitHub CLI"],
+  "maxConcurrentClaimsPerRoute": 1,
+  "verification": {
+    "required": false,
+    "independence": "none"
+  },
+  "objective": "Independently review the immutable CR-6Q remediated head for policy bypass, starvation, capacity races, platform-status drift, stale or future evidence, mixed-identity composition, tenant isolation, and redaction. Produce a source-linked report only. Do not repair code, change contracts, approve the block, or merge anything. This is a real security gate, not calibration or instruction-following work.",
+  "contractRefs": [
+    "docs/CR6Q_ACCEPTANCE.md",
+    "docs/CR6B_FLEET_SIGNAL_CONTRACT.md",
+    "docs/CR6C_ACCEPTANCE.md",
+    "docs/CR6E_OPERATOR_SURFACES_CONTRACT.md",
+    "docs/CR3_BUILD_PLAN.md",
+    "src/node-fleet/v1/eligibility.ts",
+    "src/operator-surfaces/v1/read-service.ts",
+    "src/scheduler/v1/reservation-store.ts",
+    "tests/node-fleet-contract.test.ts",
+    "tests/operator-surface-read-service.test.ts",
+    "tests/scheduler-acceptance.test.ts",
+    "tests/scheduler-properties.test.ts",
+    "tests/scheduler-reservation-store.test.ts"
+  ],
+  "allowedPaths": [
+    "docs/hermes-reviews/CR6Q_FLEET_SCHEDULER_INDEPENDENT_REVIEW.md"
+  ],
+  "forbiddenPrefixes": [
+    ".github",
+    "app",
+    "coordination/agent-build/capsules",
+    "db/migrations",
+    "scripts",
+    "skills",
+    "src",
+    "tests"
+  ],
+  "acceptanceCommands": [
+    "npm run test:cr6q",
+    "npm run check",
+    "git diff --check integration/cr5d-synthetic-executor-1...HEAD"
+  ],
+  "semanticAcceptance": [
+    "The report names the exact reviewed commit and declares that the reviewer profile authored none of the reviewed commits; any overlap produces a blocked disposition and no review conclusion.",
+    "The report separately evaluates policy bypass, starvation, capacity races, platform drift, stale/future evidence, identity and tenant isolation, redaction, default-suite registration, and retained deployment/native gates with source links and reproducible failure reasoning.",
+    "Every finding has severity, exact file or test evidence, a concrete failure or attack scenario, and one disposition: confirmed, not reproduced, retained gate, or unsupported. Passing tests alone are not treated as proof that no finding exists.",
+    "The close recommendation uses exactly accept, changes required, blocked, or reject; it does not approve or merge CR-6Q and does not alter the Codex acceptance matrix.",
+    "The report contains no secret, raw host identity, private infrastructure detail, personal path, production artifact, invented observation, code repair, architecture decision, or native/live effect claim."
+  ],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 320,
+    "maxRepairIterations": 1
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop and submit a blocked report if the reviewer profile authored any reviewed commit or cannot establish independence.",
+    "Stop if the immutable base is unavailable, differs from the capsule, or the review would require changing any path other than the single allowed report.",
+    "Stop before repairing code, tests, contracts, migrations, workflow files, or acceptance criteria; report findings for Codex disposition instead.",
+    "Stop before any install, download, credential use beyond existing GitHub access, native probe, service, external integration, destructive cleanup, or consequential effect."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR6Q-REV-001.json"
+}
