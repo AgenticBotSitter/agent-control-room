@@ -16,6 +16,7 @@
 1. Desired service state is an operator/project intent; observed service state is time-bounded evidence. One never silently overwrites the other.
 2. Reconciliation compares declared desired state with observed evidence and creates a safe proposal or incident projection. It does not start, stop, or repair a service.
 3. An incident is keyed by the tenant, source type, source identity, and correlation key. Repeated evidence updates one open incident; recovery evidence resolves it only after the contract-defined recovery condition.
+   A later recurrence creates a new generation, preserving the resolved record. Opening and resolving an incident each write a tenant-bound idempotent outbox proposal.
 4. All persistence and dispatch work is transactional and idempotent. An outbox message names the exact occurrence or incident projection and is retried through existing delivery boundaries.
 
 ## Effect boundary
