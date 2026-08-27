@@ -16,6 +16,7 @@ import { ActionInbox } from "./components/action-inbox";
 import { OwnerFocusStrip, type OwnerFocusDraftRequestV1 } from "./components/owner-focus-strip";
 import { FleetProjection } from "./components/fleet-projection";
 import { ServiceIncidentList } from "./components/service-incident-list";
+import { BottleneckList } from "./components/bottleneck-list";
 import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
 
 type Scope = "all" | (typeof projects)[number]["id"];
@@ -314,8 +315,8 @@ export function ControlRoomDashboard() {
         </section>
 
         <section id="blockers" className="section-block">
-          <div className="section-heading"><div><p className="eyebrow">Constraints</p><h2>Blockers</h2></div><span className="count-pill critical">{scopedBlockers.length}</span></div>
-          <div className="blocker-grid">
+          <div className="section-heading"><div><p className="eyebrow">{operatorSnapshot ? "Protected capacity facts" : "Synthetic constraints"}</p><h2>Blockers</h2></div><span className="count-pill critical">{operatorSnapshot ? operatorSnapshot.bottlenecks.length : scopedBlockers.length}</span></div>
+          {operatorSnapshot ? <BottleneckList bottlenecks={operatorSnapshot.bottlenecks} /> : <div className="blocker-grid">
             {scopedBlockers.map((item) => (
               <article key={item.id} className={`blocker-card severity-${item.severity}`}>
                 <div><span>{stateLabel(item.severity)}</span><small>{projectName(item.source.projectId)}</small></div>
@@ -324,7 +325,7 @@ export function ControlRoomDashboard() {
                 <footer><span>Owner: {stateLabel(item.responsibleRole)}</span><Link href={`/projects/${encodeURIComponent(item.source.projectId)}`} prefetch={false}>Inspect →</Link></footer>
               </article>
             ))}
-          </div>
+          </div>}
         </section>
 
         <section id="workers" className="section-block panel table-panel">
