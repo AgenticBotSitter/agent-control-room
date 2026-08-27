@@ -1,6 +1,6 @@
 # CR-6Q fleet and scheduler architecture review
 
-**Status:** Codex adversarial review and remediation complete; independent review remains required before CR-6Q closes.
+**Status:** Codex adversarial review and remediation complete; a clean independent review remains required before CR-6Q closes.
 **Scope:** Effect-free CR-6A through CR-6E contracts and implementation at the recorded review head. This record does not qualify a native host, deployment identity boundary, or live resource.
 
 ## Acceptance matrix
@@ -15,7 +15,7 @@
 | Isolation | Fleet storage and reads bind tenant/node; the pure eligibility boundary now rejects a mixed tenant/node signal set instead of combining evidence across machines | Codex pass after identity fix |
 | Redaction and bounded effects | Secret canaries, unsafe display text, host-private material, browser tenant selection, scheduling overrides, outbox emission, and direct operational controls remain rejected or absent | Codex pass |
 | Regression coverage | The normal full-suite command now includes the protected operator API/UI, Owner Focus, target guards, and platform qualification safety tests that it previously omitted | Codex pass after suite fix |
-| Independent review | V2 jobber #155 lets a separate route review immutable remediated commit `c5dcb81cd1167caa4804b5f3c2483d3503b70946`; it may report only and cannot repair, approve, merge, or make the final security decision | Ready for direct claim |
+| Independent review | Jobber #155 produced a useful independent report, preserved in PR #156, but its reviewer ran an offline install despite an explicit stop condition. Codex accepted it as research only. Replacement capsule `CR6Q-REV-002` requires a different profile and pre-existing dependencies. | Replacement required |
 
 ## Closed findings
 
@@ -23,7 +23,7 @@
 2. **Expired or invalid capability presentation.** The fleet read model treated any stored capability row as provisional. It now requires a passing outcome, usable trust, an observation no later than the read time, and unexpired evidence; expired passing evidence is explicitly expired.
 3. **Administrative state presented as live state.** An enrolled `active` node appeared online even with missing or stale telemetry. It now appears degraded with `telemetry_missing` or `telemetry_stale` until fresh usable telemetry exists.
 4. **Future-time acceptance.** A future-granted read scope and a future-starting resource reservation were accepted. Both boundaries now reject a time that has not occurred.
-5. **Incomplete default regression suite.** Fourteen effect-free security, protected-API, and operator-surface test files were outside `npm test`. They are now part of the default full suite; rendered HTML remains in the separate post-build check.
+5. **Incomplete default regression suite.** Thirteen effect-free security, protected-API, and operator-surface test files were outside `npm test`. They are now part of the default full suite; rendered HTML remains in the separate post-build check.
 
 ## Automated evidence
 
@@ -39,5 +39,9 @@
 - CR-6E owner acceptance remains separate and cannot be replaced by automated evidence.
 - Native macOS key-store qualification and per-platform supervisor rehearsals remain owner-controlled gates and are not converted into passes by this review.
 - The scheduler and reservation ledger remain effect-free planning/accounting components, not live resource acquisition or execution authority.
+
+## Independent-review disposition
+
+PR #156 is retained because its source analysis found no policy, starvation, capacity, platform-drift, stale-evidence, isolation, or redaction defect and correctly found the test-count documentation error above. It does not close the gate: the reviewer ran `pnpm install --frozen-lockfile --offline` after capsule `CR6Q-REV-001` said to stop before any install. Cleanup or a corrected report cannot erase that historical authorization deviation. The telemetry reason-code overlap it noted is retained as non-blocking contract hygiene for the next consumer contract; no unsafe behavior was demonstrated.
 
 CR-7 must not begin until the independent reviewer reports a disposition and Codex closes or explicitly retains every finding.
