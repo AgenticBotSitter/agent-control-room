@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseAllocationV1 } from "../src/scheduler/v1";
+import { chooseAllocationV1, STARVATION_BOUND_MINUTES_V1 } from "../src/scheduler/v1";
 
 test("CR6C chooses a deprived eligible project but never scores through a hard exclusion", () => {
   const result = chooseAllocationV1([
@@ -21,4 +21,15 @@ test("CR6C rejects malformed numeric inputs before they can distort scoring", ()
   const candidate = { projectId: "project.a", workItemId: "work.a", routeId: "route.a", targetShare: 10, recentShareUsed: 0, priority: 1, queueAgeMinutes: 0, downstreamUnlockCount: 0, deadlineRisk: 0, estimatedCostUsd: 0 };
   assert.deepEqual(chooseAllocationV1([{ ...candidate, estimatedCostUsd: Number.NaN }]).rejected[0]?.reasons, ["invalid_candidate"]);
   assert.deepEqual(chooseAllocationV1([{ ...candidate, queueAgeMinutes: -1 }]).rejected[0]?.reasons, ["invalid_candidate"]);
+});
+
+test("CR6C gives the oldest eligible work a hard starvation bound without bypassing exclusions", () => {
+  const base = { targetShare: 0, recentShareUsed: 0, downstreamUnlockCount: 0, deadlineRisk: 0, estimatedCostUsd: 0 };
+  const result = chooseAllocationV1([
+    { ...base, projectId: "project:new", workItemId: "work:new", routeId: "route:new", priority: 100, queueAgeMinutes: 1 },
+    { ...base, projectId: "project:old", workItemId: "work:old", routeId: "route:old", priority: 0, queueAgeMinutes: STARVATION_BOUND_MINUTES_V1 },
+    { ...base, projectId: "project:blocked", workItemId: "work:blocked", routeId: "route:blocked", priority: 0, queueAgeMinutes: STARVATION_BOUND_MINUTES_V1 * 2, exclusions: ["maintenance"] as const },
+  ]);
+  assert.equal(result.selected?.workItemId, "work:old");
+  assert.match(result.explanation.join(" "), /starvation bound/i);
 });
