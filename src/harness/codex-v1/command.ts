@@ -3,6 +3,7 @@ import type { AuthorityEnvelope } from "../../domain/v1/types";
 import { assertAuthorityDigest } from "../../security";
 import { CODEX_PINNED_EXECUTABLE_V1, codexAdapterManifestV1 } from "./manifest";
 import { assertCodexWorkspaceLeaseV1, type CodexWorkspaceLeaseV1 } from "./workspace";
+import { assertCodexCredentialBoundaryPermitV1, type CodexCredentialBoundaryPermitV1 } from "./credential-boundary";
 
 export interface CodexExecPlanV1 {
   executable: string;
@@ -27,10 +28,14 @@ export interface CodexExecPlanInputV1 {
   authority: AuthorityEnvelope;
   now: string;
   workspaceLease?: CodexWorkspaceLeaseV1;
+  credentialBoundaryPermit: CodexCredentialBoundaryPermitV1;
 }
 
 export function planCodexExecV1(input: CodexExecPlanInputV1): CodexExecPlanV1 {
   assertAuthorityDigest(input.authority);
+  assertCodexCredentialBoundaryPermitV1(input.credentialBoundaryPermit, input.runId, input.now);
+  if (input.model && input.model !== input.credentialBoundaryPermit.model) throw new Error("Codex model does not match credential boundary permit");
+  const selectedModel = input.model ?? input.credentialBoundaryPermit.model;
   if (input.authority.allowedExecutor !== codexAdapterManifestV1.adapterId) throw new Error("Codex executor not authorized");
   if (Date.parse(input.authority.expiresAt) <= Date.parse(input.now)) throw new Error("Codex authority expired");
   if (!isAbsolute(input.executable) || !isAbsolute(input.cwd)) throw new Error("Codex executable and cwd must be absolute");
@@ -56,7 +61,7 @@ export function planCodexExecV1(input: CodexExecPlanInputV1): CodexExecPlanV1 {
     "--sandbox", input.sandbox, "--cd", input.cwd, "--thread-source", "control-room-harness",
   ];
   if (!input.resumable) args.push("--ephemeral");
-  if (input.model) args.push("--model", input.model);
+  args.push("--model", selectedModel);
   args.push("-");
   return { executable: resolve(input.executable), args, stdin: input.prompt, cwd: resolve(input.cwd), timeoutMs: input.authority.maxDurationSeconds * 1_000, resumable: input.resumable, sandbox: input.sandbox, verificationCommands };
 }

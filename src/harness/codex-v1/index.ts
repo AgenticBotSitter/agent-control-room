@@ -6,3 +6,4 @@ export * from "./process";
 export * from "./result";
 export * from "./artifact";
 export * from "./workspace";
+export * from "./credential-boundary";

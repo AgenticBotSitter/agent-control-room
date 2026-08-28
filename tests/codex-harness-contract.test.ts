@@ -5,7 +5,7 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import type { AuthorityEnvelope } from "../src/domain/v1/types";
 import type { HarnessRunEventV1 } from "../src/harness/v1";
 import { InMemoryArtifactStorage } from "../src/node-executor";
-import { CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexExecProcessV1, CodexWorkspaceManagerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, evaluateCodexCompatibilityV1, planCodexExecV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
+import { CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexExecProcessV1, CodexWorkspaceManagerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, evaluateCodexCompatibilityV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, type CodexCredentialBoundaryPermitV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
 
 function authority(overrides: Partial<AuthorityEnvelope> = {}): AuthorityEnvelope {
   const base: AuthorityEnvelope = {
@@ -21,6 +21,16 @@ function workspaceLease(runId = "run:plan") {
   return { ...lease, leaseId: sha256Digest(lease) };
 }
 
+function credentialPermit(runId = "run:plan", now = "2026-08-27T23:00:00.000Z"): CodexCredentialBoundaryPermitV1 {
+  const issued = issueCodexCredentialBoundaryPermitV1({ runId, now, evidence: {
+    mode: "scoped_provider_broker", longLivedCredentialInWorker: false, credentialStoreReadableToCommands: "blocked",
+    directProviderNetworkFromWorker: false, commandEnvironmentInheritsCredential: false,
+    broker: { endpointIdentityDigest: `sha256:${"5".repeat(64)}`, runAudience: runId, expiresAt: "2026-08-27T23:04:00.000Z", maximumProviderCalls: 3, model: "gpt-5.6-sol", capabilityKind: "ephemeral_run_capability" },
+  } });
+  if (!issued.accepted) throw new Error("test permit rejected");
+  return issued.permit;
+}
+
 test("CR7B Codex manifest is pinned to the signed installed Mac binary and honest about unsupported steer and approval", () => {
   assert.equal(codexAdapterManifestV1.harnessVersion, "0.150.0-alpha.8");
   assert.equal(codexAdapterManifestV1.harnessRevision, CODEX_PINNED_MACOS_CDHASH_V1);
@@ -30,31 +40,53 @@ test("CR7B Codex manifest is pinned to the signed installed Mac binary and hones
 });
 
 test("Codex compatibility fails closed on binary, version, JSON, resume, isolation, or sandbox drift", () => {
-  const baseline = { version: "0.150.0-alpha.8", macosCodeDirectoryHash: CODEX_PINNED_MACOS_CDHASH_V1, execJson: true, execResume: true, ignoreUserConfig: true, ignoreRules: true, sandboxModes: ["read-only", "workspace-write"] };
+  const baseline = { version: "0.150.0-alpha.8", macosCodeDirectoryHash: CODEX_PINNED_MACOS_CDHASH_V1, execJson: true, execResume: true, ignoreUserConfig: true, ignoreRules: true, credentialIsolation: "blocked" as const, sandboxModes: ["read-only", "workspace-write"] };
   assert.deepEqual(evaluateCodexCompatibilityV1(baseline), { compatible: true, reasons: [] });
-  assert.deepEqual(evaluateCodexCompatibilityV1({ ...baseline, version: "next", macosCodeDirectoryHash: "0".repeat(40), execJson: false, execResume: false, ignoreUserConfig: false, ignoreRules: false, sandboxModes: [] }).reasons,
-    ["version_drift", "binary_drift", "json_events_missing", "resume_missing", "config_isolation_missing", "rules_isolation_missing", "sandbox_mode_missing"]);
+  assert.deepEqual(evaluateCodexCompatibilityV1({ ...baseline, version: "next", macosCodeDirectoryHash: "0".repeat(40), execJson: false, execResume: false, ignoreUserConfig: false, ignoreRules: false, credentialIsolation: "readable", sandboxModes: [] }).reasons,
+    ["version_drift", "binary_drift", "json_events_missing", "resume_missing", "config_isolation_missing", "rules_isolation_missing", "credential_isolation_missing", "sandbox_mode_missing"]);
+});
+
+test("CR7B native negative evidence is sanitized and cannot qualify the adapter", async () => {
+  const evidence = JSON.parse(await readFile("tests/fixtures/codex-v1/native-readonly-negative.json", "utf8"));
+  assert.deepEqual(evidence, { schema: "control-room.codex-native-qualification/v1", status: "failed", reasonCode: "credential_boundary_failed", calls: 1, profileRemoved: true, workspaceRemoved: true });
+  const compatibility = evaluateCodexCompatibilityV1({ version: "0.150.0-alpha.8", macosCodeDirectoryHash: CODEX_PINNED_MACOS_CDHASH_V1, execJson: true, execResume: true, ignoreUserConfig: true, ignoreRules: true, credentialIsolation: "readable", sandboxModes: ["read-only", "workspace-write"] });
+  assert.equal(compatibility.compatible, false);
+  assert.deepEqual(compatibility.reasons, ["credential_isolation_missing"]);
+});
+
+test("Codex credential boundary rejects saved auth and issues only a short run-bound broker permit", () => {
+  const rejected = issueCodexCredentialBoundaryPermitV1({ runId: "run:permit", now: "2026-08-27T23:00:00.000Z", evidence: {
+    mode: "saved_auth_file", longLivedCredentialInWorker: true, credentialStoreReadableToCommands: "readable",
+    directProviderNetworkFromWorker: true, commandEnvironmentInheritsCredential: true,
+  } });
+  assert.equal(rejected.accepted, false);
+  if (rejected.accepted) assert.fail("saved auth unexpectedly accepted");
+  assert.deepEqual(rejected.reasons, ["saved_auth_in_worker", "credential_store_exposed", "direct_provider_network", "credential_in_command_environment", "broker_missing"]);
+  const permit = credentialPermit("run:permit");
+  assert.equal(permit.runId, "run:permit");
+  assert.equal(permit.maximumProviderCalls, 3);
+  assert.match(permit.permitDigest, /^sha256:[a-f0-9]{64}$/);
 });
 
 test("Codex command planning maps exact authority to isolated read and write invocations", () => {
-  const read = planCodexExecV1({ runId: "run:plan", executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "inspect only", resumable: true, sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z" });
-  assert.deepEqual(read.args, ["exec", "--json", "--color", "never", "--strict-config", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--cd", "/work/project", "--thread-source", "control-room-harness", "-"]);
+  const read = planCodexExecV1({ runId: "run:plan", credentialBoundaryPermit: credentialPermit(), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "inspect only", resumable: true, sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z" });
+  assert.deepEqual(read.args, ["exec", "--json", "--color", "never", "--strict-config", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--cd", "/work/project", "--thread-source", "control-room-harness", "--model", "gpt-5.6-sol", "-"]);
   assert.equal(read.stdin, "inspect only");
   assert.equal(read.args.includes(read.stdin), false);
   const lease = workspaceLease();
   const writeAuthority = authority({ allowedOperations: ["codex:workspace-write"], filesystemRoots: [lease.checkoutPath] });
-  const write = planCodexExecV1({ runId: lease.runId, executable: CODEX_PINNED_EXECUTABLE_V1, cwd: lease.checkoutPath, prompt: "bounded edit", resumable: false, sandbox: "workspace-write", workspaceLease: lease, authority: writeAuthority, now: "2026-08-27T23:00:00.000Z" });
+  const write = planCodexExecV1({ runId: lease.runId, credentialBoundaryPermit: credentialPermit(lease.runId), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: lease.checkoutPath, prompt: "bounded edit", resumable: false, sandbox: "workspace-write", workspaceLease: lease, authority: writeAuthority, now: "2026-08-27T23:00:00.000Z" });
   assert.equal(write.args.includes("--ephemeral"), true);
-  assert.throws(() => planCodexExecV1({ runId: lease.runId, executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/other", prompt: "x", resumable: false, sandbox: "workspace-write", workspaceLease: lease, authority: writeAuthority, now: "2026-08-27T23:00:00.000Z" }), /outside authorized roots/);
-  assert.throws(() => planCodexExecV1({ runId: "run:plan", executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "x", resumable: false, sandbox: "workspace-write", authority: authority(), now: "2026-08-27T23:00:00.000Z" }), /write not authorized/);
-  assert.throws(() => planCodexExecV1({ runId: "run:plan", executable: "/tmp/codex", cwd: "/work/project", prompt: "x", resumable: false, sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z" }), /not the pinned binary/);
-  const verify = planCodexExecV1({ runId: "run:plan", executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "verify", resumable: false, sandbox: "read-only", verificationCommands: ["npm test"], authority: authority({ allowedOperations: ["codex:read", "codex:verify"] }), now: "2026-08-27T23:00:00.000Z" });
+  assert.throws(() => planCodexExecV1({ runId: lease.runId, credentialBoundaryPermit: credentialPermit(lease.runId), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/other", prompt: "x", resumable: false, sandbox: "workspace-write", workspaceLease: lease, authority: writeAuthority, now: "2026-08-27T23:00:00.000Z" }), /outside authorized roots/);
+  assert.throws(() => planCodexExecV1({ runId: "run:plan", credentialBoundaryPermit: credentialPermit(), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "x", resumable: false, sandbox: "workspace-write", authority: authority(), now: "2026-08-27T23:00:00.000Z" }), /write not authorized/);
+  assert.throws(() => planCodexExecV1({ runId: "run:plan", credentialBoundaryPermit: credentialPermit(), executable: "/tmp/codex", cwd: "/work/project", prompt: "x", resumable: false, sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z" }), /not the pinned binary/);
+  const verify = planCodexExecV1({ runId: "run:plan", credentialBoundaryPermit: credentialPermit(), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "verify", resumable: false, sandbox: "read-only", verificationCommands: ["npm test"], authority: authority({ allowedOperations: ["codex:read", "codex:verify"] }), now: "2026-08-27T23:00:00.000Z" });
   assert.deepEqual(verify.verificationCommands, ["npm test"]);
-  assert.throws(() => planCodexExecV1({ runId: "run:plan", executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "verify", resumable: false, sandbox: "read-only", verificationCommands: ["npm test"], authority: authority(), now: "2026-08-27T23:00:00.000Z" }), /verification not authorized/);
+  assert.throws(() => planCodexExecV1({ runId: "run:plan", credentialBoundaryPermit: credentialPermit(), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "verify", resumable: false, sandbox: "read-only", verificationCommands: ["npm test"], authority: authority(), now: "2026-08-27T23:00:00.000Z" }), /verification not authorized/);
 });
 
 test("Codex command planning rejects expired, networked, credentialed, effectful, or tampered authority", () => {
-  const input = { runId: "run:plan", executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "inspect", resumable: true, sandbox: "read-only" as const, now: "2026-08-27T23:00:00.000Z" };
+  const input = { runId: "run:plan", credentialBoundaryPermit: credentialPermit(), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "inspect", resumable: true, sandbox: "read-only" as const, now: "2026-08-27T23:00:00.000Z" };
   assert.throws(() => planCodexExecV1({ ...input, authority: authority({ expiresAt: input.now }) }), /expired/);
   assert.throws(() => planCodexExecV1({ ...input, authority: authority({ networkPolicy: "allowlist", allowedNetworkDestinations: ["api.example.test"] }) }), /no-network/);
   assert.throws(() => planCodexExecV1({ ...input, authority: authority({ credentialRefs: ["credential:one"] }) }), /credential references/);
@@ -63,7 +95,7 @@ test("Codex command planning rejects expired, networked, credentialed, effectful
 });
 
 test("Codex resume targets one explicit native thread without --last", () => {
-  const plan = planCodexResumeV1({ runId: "run:plan", executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "continue bounded work", sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z", nativeThreadId: "0199a213-81c0-7800-8aa1-bbab2a035a53" });
+  const plan = planCodexResumeV1({ runId: "run:plan", credentialBoundaryPermit: credentialPermit(), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "continue bounded work", sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z", nativeThreadId: "0199a213-81c0-7800-8aa1-bbab2a035a53" });
   assert.deepEqual(plan.args.slice(-3), ["resume", "0199a213-81c0-7800-8aa1-bbab2a035a53", "-"]);
   assert.equal(plan.stdin, "continue bounded work");
   assert.equal(plan.args.includes("--last"), false);
@@ -94,7 +126,7 @@ test("Codex JSONL decoder emits bounded lifecycle evidence and discards commands
 test("Codex process wrapper preserves sequence and rejects missing or contradictory terminal truth", async () => {
   const lines = (await readFile("tests/fixtures/codex-v1/exec-events.jsonl", "utf8")).trim().split("\n");
   const wrapper = new CodexExecProcessV1({ async run(_plan, handlers) { for (const line of lines) handlers.stdoutLine(line); return { exitCode: 0 }; } });
-  const plan = planCodexExecV1({ runId: "run:1", executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "inspect", resumable: true, sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z" });
+  const plan = planCodexExecV1({ runId: "run:1", credentialBoundaryPermit: credentialPermit("run:1"), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "inspect", resumable: true, sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z" });
   const result = await wrapper.run(plan, { tenantId: "tenant:1", nodeId: "node:1", runId: "run:1", sequence: 1, now: () => "2026-08-27T23:00:00.000Z" });
   assert.equal(result.exitCode, 0); assert.equal(result.events.length, 7); assert.deepEqual(result.events.map((event) => event.sequence), [1,2,3,4,5,6,7]); assert.match(result.finalTextDigest ?? "", /^sha256:[a-f0-9]{64}$/);
   const failed = new CodexExecProcessV1({ async run() { return { exitCode: 9 }; } });
@@ -107,7 +139,7 @@ test("Codex process wrapper exposes one bounded cancellation channel", async () 
   const wrapper = new CodexExecProcessV1({ async run(_plan, _handlers, signal) {
     return await new Promise((resolve) => signal.addEventListener("abort", () => resolve({ exitCode: 130 }), { once: true }));
   } });
-  const plan = planCodexExecV1({ runId: "run:cancel", executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "inspect", resumable: true, sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z" });
+  const plan = planCodexExecV1({ runId: "run:cancel", credentialBoundaryPermit: credentialPermit("run:cancel"), executable: CODEX_PINNED_EXECUTABLE_V1, cwd: "/work/project", prompt: "inspect", resumable: true, sandbox: "read-only", authority: authority(), now: "2026-08-27T23:00:00.000Z" });
   const pending = wrapper.run(plan, { tenantId: "tenant:1", nodeId: "node:1", runId: "run:cancel", sequence: 1, now: () => "2026-08-27T23:00:00.000Z" });
   assert.equal(wrapper.cancel(), true);
   assert.equal(wrapper.cancel(), false);

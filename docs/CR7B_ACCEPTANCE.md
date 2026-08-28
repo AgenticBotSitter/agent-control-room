@@ -1,7 +1,7 @@
 # CR-7B Codex worker adapter acceptance
 
-**Status:** Effect-free adapter, worktree boundary, result, file, test, usage, and artifact-lineage core complete; native provider-backed qualification remains open.
-**Scope:** CR7B-001/002/003 foundation for the installed macOS Codex CLI. No Codex child process was launched and no credential, rollout, prompt, transcript, command output, file path, or worktree mutation was captured.
+**Status:** Effect-free adapter, worktree boundary, result, file, test, usage, and artifact-lineage core complete; native qualification is blocked by accepted negative credential-isolation evidence.
+**Scope:** CR7B-001 through CR7B-006 for the installed macOS Codex CLI. One owner-authorized provider-backed read-only call was made in a disposable profile and empty Git workspace. No credential contents, rollout, prompt, transcript, command output, raw session identifier, file path, or worktree mutation was retained.
 
 ## Frozen seam
 
@@ -27,6 +27,7 @@
 10. File changes become bounded counts with all paths discarded. The final agent message becomes a digest with its text discarded. A result projection binds those facts to exact tenant/run scope, continuous sequence, usage totals, and one terminal state.
 11. Workspace-write planning requires a digest-bound lease for the exact run and checkout. The workspace manager requires canonical, disjoint repository and node-owned workspace roots, a full Git commit, an attested created checkout, and unchanged device/inode identity before cleanup. It never exposes a generic recursive-delete operation.
 12. Successful changed-file results can publish a bounded, secret-scanned patch through the existing no-overwrite artifact store. Stored bytes, hash, size, tenant, project, job, attempt, and producer node are verified before content-free artifact lineage is returned.
+13. Native command planning now requires a digest-protected credential-boundary permit for the exact run, broker identity, model, expiry, and provider-call ceiling. Permits are issued only when long-lived credentials and direct provider access stay outside the worker, command processes inherit no credential, and the broker capability expires within five minutes with at most three calls.
 
 ## Security disposition
 
@@ -34,17 +35,26 @@
 - Read-only and workspace-write remain separate authority operations. A write-capable plan cannot be derived from read authority.
 - Workspace-write cannot be planned from a path alone; it requires the exact active worktree lease. Replaced or symlinked directories fail closed before cleanup.
 - The installed CLI's saved authentication is a node-local harness concern and is not represented in the job authority or committed fixtures.
-- The current fixture is a sanitized contract fixture derived from the official documented event shapes, not native acceptance evidence.
-- Before a live Codex qualification, Codex must prove that the child sandbox cannot read or emit the authentication store, that user/plugin/MCP configuration is absent as intended, and that the disposable repository/worktree is the only writable project root.
+- The structured-event fixture is derived from official documented event shapes. The separate native fixture records only the failed gate, safe reason code, call count, and confirmed cleanup.
+- A future native requalification must first present a valid short-lived credential-boundary permit. Saved authentication inside the worker, readable or unknown credential-store access, direct provider network, inherited credential material, and missing/overbroad broker scope all fail closed.
 
 ## Automated evidence
 
-- Focused CR-7B suite: 12 passed, 0 failed.
+- Focused CR-7B suite: 14 passed, 0 failed.
 - Type checking and focused lint pass.
-- Full suite: 363 tests, 361 passed, 0 failed, 2 intentional platform skips.
+- Full suite: 365 tests, 363 passed, 0 failed, 2 intentional platform skips.
 - Production build and both rendered-route tests pass.
 - Migration verification applies 0001 through 0020 and verifies 68 PostgreSQL tables.
 
+## Native negative evidence
+
+- The owner authorized up to three short provider calls, a temporary profile, and an empty disposable Git workspace for read-only start/event/usage/cancel/explicit-ID-resume qualification.
+- Call one used the pinned signed binary with JSONL, `--sandbox read-only`, `--strict-config`, `--ignore-user-config`, `--ignore-rules`, stdin prompt delivery, and no configured MCP servers or plugins.
+- The only shell check tested whether the temporary `auth.json` was readable; it did not open or print the file. The check returned readable, proving that the model-controlled command boundary could reach saved authentication material despite the read-only sandbox.
+- The harness stopped immediately. Resume and cancellation were not attempted, so one of the authorized three calls was consumed. Both the temporary credential profile and Git workspace were removed, and independent residue checks found neither target.
+- The repository qualification harness now also refuses to start without an explicit authorized-attempt flag and attempts exact temporary-target cleanup on interruption. This is a deliberate-run guard, not permission for another attempt.
+- Sanitized evidence is retained in `tests/fixtures/codex-v1/native-readonly-negative.json`. Compatibility now fails closed with `credential_isolation_missing` when the credential store is readable or unknown.
+
 ## Remaining gate
 
-One separately authorized, bounded, disposable, provider-backed `codex exec --json` lifecycle must validate the exact pin, read-only sandbox, stdin prompt, event stream, usage, cancellation, and explicit-ID resume. Native workspace-write and artifact-publication qualification follow only after read-only credential isolation passes.
+A credential-isolated execution design must keep long-lived saved authentication outside every model-controlled command process. Hiding `CODEX_HOME` from the shell environment is insufficient because it does not create a filesystem security boundary. No further native attempt may proceed until a separately reviewed broker/proxy or equivalent OS-enforced design proves that the credential store is unreadable. Start/event/usage/cancel/explicit-ID resume, followed by native workspace-write and artifact publication, remain downstream gates.
