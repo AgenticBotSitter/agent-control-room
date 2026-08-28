@@ -1,18 +1,72 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { evaluateHermesCompatibilityV1, hermesAdapterManifestV1, HERMES_REQUIRED_GATEWAY_METHODS_V1, normalizeHermesGatewayEventV1, projectHermesServeSnapshotV1, readHermesServeProjectionV1 } from "../src/harness/hermes-v1";
+import { evaluateHermesCompatibilityV1, HermesGatewayLifecycleClientV1, hermesAdapterManifestV1, HERMES_REQUIRED_GATEWAY_METHODS_V1, normalizeHermesGatewayEventV1, projectHermesServeSnapshotV1, readHermesServeProjectionV1, type HermesGatewayMethodV1 } from "../src/harness/hermes-v1";
 import { harnessAdapterManifestSchemaV1, harnessRunSchemaV1 } from "../src/harness/v1";
 
 const digest = `sha256:${"a".repeat(64)}`;
 
 test("CR7 foundation manifest is pinned, honest about implemented verbs, and rejects ambiguous capabilities", () => {
-  assert.equal(hermesAdapterManifestV1.harnessRevision, "4956ff0cb9646aaf894c228e6dc932b126d1f927");
+  assert.equal(hermesAdapterManifestV1.harnessRevision, "5fc308a70719a83cccdbba4c0e39c23f5a8239d5");
   assert.equal(hermesAdapterManifestV1.harnessVersion, "0.20.6");
-  assert.deepEqual(hermesAdapterManifestV1.supportedVerbs, ["discover", "stream", "usage"]);
+  assert.deepEqual(hermesAdapterManifestV1.supportedVerbs, ["discover", "start", "stream", "steer", "cancel", "resume", "usage"]);
   assert.equal(hermesAdapterManifestV1.approvalMode, "observe_only");
   assert.equal(harnessAdapterManifestSchemaV1.safeParse({ ...hermesAdapterManifestV1, supportedVerbs: ["discover", "discover"] }).success, false);
   assert.equal(harnessAdapterManifestSchemaV1.safeParse({ ...hermesAdapterManifestV1, harnessRevision: "main" }).success, false);
+});
+
+test("Hermes lifecycle client starts only after zero-tool attestation and keeps native identifiers node-local", async () => {
+  const calls: Array<{ method: HermesGatewayMethodV1; params: Readonly<Record<string, unknown>> }> = [];
+  const responses: Record<HermesGatewayMethodV1, unknown> = {
+    "session.create": { session_id: "native-live", stored_session_id: "native-stored", info: { tools: {}, mcp_servers: [] } },
+    "prompt.submit": { status: "streaming" },
+    "session.steer": { status: "queued" },
+    "session.interrupt": { status: "interrupted" },
+    "session.resume": { session_id: "native-resumed", resumed: "native-stored", status: "idle", info: { tools: {}, mcp_servers: [] } },
+    "session.status": {},
+    "session.usage": { input: 10, output: 4, reasoning: 2, total: 16, calls: 1 },
+  };
+  const client = new HermesGatewayLifecycleClientV1(
+    { async call(method, params) { calls.push({ method, params }); return responses[method]; } },
+    { harnessVersion: "0.20.6", harnessRevision: hermesAdapterManifestV1.harnessRevision, gatewayMethods: [...HERMES_REQUIRED_GATEWAY_METHODS_V1] },
+    { disposableProfile: true, disposableWorkspace: true, ignoreContextFiles: true, enabledToolsets: ["context_engine"], callableToolCount: 0, mcpServerCount: 0 },
+  );
+  const reference = await client.start({ tenantId: "tenant:1", nodeId: "node:1", cwd: "/disposable", prompt: "bounded prompt" });
+  await client.steer(reference, "bounded correction");
+  await client.cancel(reference);
+  assert.deepEqual(await client.usage(reference), { inputTokens: 10, outputTokens: 4, reasoningTokens: 2, totalTokens: 16, calls: 1 });
+  const resumed = await client.resume({ tenantId: "tenant:1", nodeId: "node:1", storedSessionId: reference.storedSessionId });
+  assert.match(reference.sessionKeyDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(resumed.liveSessionId, "native-resumed");
+  assert.deepEqual(calls.map((entry) => entry.method), ["session.create", "prompt.submit", "session.steer", "session.interrupt", "session.usage", "session.resume"]);
+});
+
+test("Hermes lifecycle client fails closed before prompt submission when tools or launch isolation drift", async () => {
+  const compatibility = { harnessVersion: "0.20.6", harnessRevision: hermesAdapterManifestV1.harnessRevision, gatewayMethods: [...HERMES_REQUIRED_GATEWAY_METHODS_V1] };
+  assert.throws(() => new HermesGatewayLifecycleClientV1(
+    { async call() { return {}; } }, compatibility,
+    { disposableProfile: true, disposableWorkspace: true, ignoreContextFiles: true, enabledToolsets: ["context_engine"], callableToolCount: 1, mcpServerCount: 0 } as never,
+  ));
+  const methods: HermesGatewayMethodV1[] = [];
+  const client = new HermesGatewayLifecycleClientV1(
+    { async call(method) { methods.push(method); return { session_id: "native-live", stored_session_id: "native-stored", info: { tools: { terminal: {} }, mcp_servers: [] } }; } },
+    compatibility,
+    { disposableProfile: true, disposableWorkspace: true, ignoreContextFiles: true, enabledToolsets: ["context_engine"], callableToolCount: 0, mcpServerCount: 0 },
+  );
+  await assert.rejects(client.start({ tenantId: "tenant:1", nodeId: "node:1", cwd: "/disposable", prompt: "bounded prompt" }), /callable tools/);
+  assert.deepEqual(methods, ["session.create"]);
+});
+
+test("sanitized live Hermes evidence records a provider-backed start, steer, cancel, usage, and resume without content", async () => {
+  const evidence = JSON.parse(await readFile("tests/fixtures/hermes-v1/live-lifecycle-sanitized.json", "utf8"));
+  assert.deepEqual(evidence.isolation, { disposableProfile: true, disposableWorkspace: true, ignoreContextFiles: true, enabledToolsets: ["context_engine"], callableToolCount: 0, mcpServerCount: 0 });
+  assert.deepEqual({ start: evidence.observed.startStatus, steer: evidence.observed.steerStatus, cancel: evidence.observed.cancelStatus, resume: evidence.observed.resumeStatus }, { start: "streaming", steer: "queued", cancel: "interrupted", resume: "idle" });
+  assert.equal(evidence.observed.providerBackedTurnObserved, true);
+  assert.equal(evidence.observed.reportedCompletedCalls > 0, true);
+  assert.equal(evidence.observed.totalTokens > 0, true);
+  assert.deepEqual([evidence.containsRawIdentifiers, evidence.containsPromptOrTranscript, evidence.containsCredentials], [false, false, false]);
+  const serialized = JSON.stringify(evidence);
+  for (const forbidden of ["native-live", "native-stored", "provider_key", "Bearer ", "https://portal.nousresearch.com/orgs/"]) assert.equal(serialized.includes(forbidden), false, forbidden);
 });
 
 test("CR7 run contract binds attempt lineage, opaque native identity, timestamps, and terminal truth", () => {

@@ -1,6 +1,6 @@
 import { harnessAdapterManifestSchemaV1, type HarnessAdapterManifestV1 } from "../v1";
 
-export const HERMES_PINNED_REVISION_V1 = "4956ff0cb9646aaf894c228e6dc932b126d1f927" as const;
+export const HERMES_PINNED_REVISION_V1 = "5fc308a70719a83cccdbba4c0e39c23f5a8239d5" as const;
 
 export const hermesAdapterManifestV1: HarnessAdapterManifestV1 = harnessAdapterManifestSchemaV1.parse({
   schemaVersion: "control-room-harness/v1",
@@ -10,7 +10,7 @@ export const hermesAdapterManifestV1: HarnessAdapterManifestV1 = harnessAdapterM
   harnessVersion: "0.20.6",
   harnessRevision: HERMES_PINNED_REVISION_V1,
   runtime: { name: "python", minimumVersion: "3.11", supportedPlatforms: ["linux", "macos", "windows"] },
-  supportedVerbs: ["discover", "stream", "usage"],
+  supportedVerbs: ["discover", "start", "stream", "steer", "cancel", "resume", "usage"],
   eventSchemaVersion: "control-room-harness-event/v1",
   approvalMode: "observe_only",
   isolation: "adapter_process",

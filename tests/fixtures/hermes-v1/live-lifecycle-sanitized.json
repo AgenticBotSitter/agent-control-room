@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "control-room-hermes-qualification/v1",
+  "capturedAt": "2026-08-27T23:24:00.000Z",
+  "platform": "macos",
+  "harnessVersion": "0.20.6",
+  "harnessRevision": "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
+  "isolation": {
+    "disposableProfile": true,
+    "disposableWorkspace": true,
+    "ignoreContextFiles": true,
+    "enabledToolsets": ["context_engine"],
+    "callableToolCount": 0,
+    "mcpServerCount": 0
+  },
+  "observed": {
+    "startStatus": "streaming",
+    "steerStatus": "queued",
+    "cancelStatus": "interrupted",
+    "terminalStatus": "complete",
+    "providerBackedTurnObserved": true,
+    "reportedCompletedCalls": 1,
+    "totalTokens": 1035,
+    "resumeStatus": "idle",
+    "resumedMessageCount": 4,
+    "toolsAfterResume": 0
+  },
+  "notObserved": ["approval_request", "approval_response"],
+  "containsRawIdentifiers": false,
+  "containsPromptOrTranscript": false,
+  "containsCredentials": false
+}
