@@ -7,7 +7,7 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import type { AuthorityEnvelope } from "../src/domain/v1/types";
 import type { HarnessRunEventV1 } from "../src/harness/v1";
 import { InMemoryArtifactStorage } from "../src/node-executor";
-import { CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
+import { CODEX_ISOLATED_CLIENT_METHODS_V1, CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, digestCodexIsolatedTopologyAttestationV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, evaluateCodexIsolatedTopologyV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexIsolatedTopologyAttestationV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
 
 function authority(overrides: Partial<AuthorityEnvelope> = {}): AuthorityEnvelope {
   const base: AuthorityEnvelope = {
@@ -195,6 +195,45 @@ test("CR7B durable broker rejects ephemeral production storage and conflicting c
   assert.deepEqual(ledger.close(permit.permitDigest, "broker_cancelled"), { replayed: false, ambiguousCalls: 0 });
   assert.throws(() => ledger.close(permit.permitDigest, "different_reason"), policyCode("settlement_invalid"));
   ledger.closeDatabase();
+});
+
+function isolatedTopology(overrides: Partial<Omit<CodexIsolatedTopologyAttestationV1, "attestationDigest">> = {}): CodexIsolatedTopologyAttestationV1 {
+  const unsigned = {
+    schema: "control-room.codex-isolated-topology/v1" as const,
+    brokerIdentityDigest: `sha256:${"1".repeat(64)}`, executorIdentityDigest: `sha256:${"2".repeat(64)}`,
+    environmentIdDigest: `sha256:${"3".repeat(64)}`, executableVersion: codexAdapterManifestV1.harnessVersion,
+    executableCodeDirectoryHash: CODEX_PINNED_MACOS_CDHASH_V1, appServerTransport: "parent_owned_stdio" as const,
+    commandEnvironment: "remote_exec_server_only" as const, remoteDisconnectBehavior: "fail_closed" as const,
+    brokerCanExecuteModelCommands: false, executorCanReadCredentialStore: "blocked" as const,
+    executorCanReadBrokerLedger: "blocked" as const, executorProviderEgress: "blocked" as const,
+    brokerProviderEgress: "exact_allowlist" as const, providerCallsMediatedByLedger: true,
+    allowedClientMethods: [...CODEX_ISOLATED_CLIENT_METHODS_V1], experimentalSeamAcknowledged: true,
+    useClass: "disposable_qualification" as const, ...overrides,
+  };
+  return { ...unsigned, attestationDigest: digestCodexIsolatedTopologyAttestationV1(unsigned) };
+}
+
+test("CR7B isolated topology is eligible only for disposable qualification and never for production", () => {
+  assert.deepEqual(evaluateCodexIsolatedTopologyV1(isolatedTopology()), { eligibleForDisposableQualification: true, productionEligible: false, reasons: [] });
+  assert.deepEqual(evaluateCodexIsolatedTopologyV1(isolatedTopology({ useClass: "production" })).reasons, ["production_use_forbidden"]);
+});
+
+test("CR7B isolated topology fails every credential, command, network, replay, identity, and transport bypass", () => {
+  const unsafe = isolatedTopology({
+    brokerIdentityDigest: `sha256:${"2".repeat(64)}`, environmentIdDigest: "raw-environment-id",
+    executableVersion: "drift", executableCodeDirectoryHash: "0".repeat(40), appServerTransport: "websocket",
+    commandEnvironment: "local_or_remote", remoteDisconnectBehavior: "local_fallback", brokerCanExecuteModelCommands: true,
+    executorCanReadCredentialStore: "readable", executorCanReadBrokerLedger: "unknown", executorProviderEgress: "allowed",
+    brokerProviderEgress: "unrestricted", providerCallsMediatedByLedger: false,
+    allowedClientMethods: [...CODEX_ISOLATED_CLIENT_METHODS_V1, "process/spawn"], experimentalSeamAcknowledged: false,
+  });
+  assert.deepEqual(evaluateCodexIsolatedTopologyV1(unsafe).reasons, [
+    "identity_not_separated", "environment_invalid", "binary_drift", "transport_not_parent_owned",
+    "remote_execution_not_exclusive", "remote_disconnect_fallback", "broker_command_execution_enabled",
+    "credential_store_exposed", "broker_ledger_exposed", "executor_provider_egress", "broker_egress_overbroad",
+    "ledger_bypass", "client_method_overbroad", "experimental_seam_unacknowledged",
+  ]);
+  assert.deepEqual(evaluateCodexIsolatedTopologyV1({ ...isolatedTopology(), attestationDigest: `sha256:${"9".repeat(64)}` }).reasons, ["attestation_digest_invalid"]);
 });
 
 test("Codex command planning maps exact authority to isolated read and write invocations", () => {

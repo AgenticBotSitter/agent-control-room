@@ -31,6 +31,7 @@
 14. A broker-side call ledger now atomically consumes a provider-call allowance before dispatch. Exact retries cannot redispatch; changed retries, cross-run/model requests, endpoint substitution, expired grants, oversize inputs/outputs, and exhausted budgets fail closed.
 15. A broker-private SQLite implementation survives restart, converts unsettled calls to ambiguity, requires private filesystem placement, serializes claims with immediate transactions, and stores no prompt or response content. Cancellation closes the grant and makes unsettled work ambiguous.
 16. Product transport policy rejects saved-auth CLI execution and the experimental app-server WebSocket as production credential boundaries. The supported seam is a separately isolated Control Room broker; see `CR7B_CREDENTIAL_BROKER_CONTRACT.md`.
+17. A digest-bound topology gate now recognizes the pinned app-server/remote-exec split only for disposable qualification. It requires distinct broker/executor identities, parent-owned stdio, one remote environment with no local fallback, no broker-side model commands, exact client methods, broker-only provider egress, executor unreadability, and ledger mediation. Production eligibility is always false because both seams are experimental.
 
 ## Security disposition
 
@@ -44,9 +45,9 @@
 
 ## Automated evidence
 
-- Focused CR-7B suite: 21 passed, 0 failed.
+- Focused CR-7B suite: 23 passed, 0 failed.
 - Type checking and focused lint pass.
-- Full suite: 372 tests, 370 passed, 0 failed, 2 intentional platform skips.
+- Full suite: 374 tests, 372 passed, 0 failed, 2 intentional platform skips.
 - Production build and both rendered-route tests pass.
 - Migration verification applies 0001 through 0020 and verifies 68 PostgreSQL tables.
 
@@ -61,4 +62,4 @@
 
 ## Remaining gate
 
-The effect-free broker contract and durable replay ledger now exist, but code structure alone does not prove OS isolation. Hiding `CODEX_HOME` from the shell environment is insufficient because it does not create a filesystem security boundary. No further native attempt may proceed until a separately reviewed broker launcher proves that its credential store and internal provisioning/settlement path are unreachable to the worker and that the worker has no direct provider route. Start/event/usage/cancel/explicit-ID resume, followed by native workspace-write and artifact publication, remain downstream gates.
+The effect-free broker contract, durable replay ledger, and qualification-only isolated-topology gate now exist, but code structure alone does not prove OS isolation. Hiding `CODEX_HOME` from the shell environment is insufficient because it does not create a filesystem security boundary. No further native attempt may proceed until a separately reviewed broker/remote-executor launcher proves that its credential store, ledger, and internal provisioning/settlement path are unreachable to the executor; the executor has no provider route; and remote loss cannot fall back to broker-local command execution. Start/event/usage/cancel/explicit-ID resume, followed by native workspace-write and artifact publication, remain downstream gates.

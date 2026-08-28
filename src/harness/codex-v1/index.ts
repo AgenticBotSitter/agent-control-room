@@ -9,3 +9,4 @@ export * from "./workspace";
 export * from "./credential-boundary";
 export * from "./credential-broker";
 export * from "./credential-broker-sqlite";
+export * from "./isolated-topology";

@@ -48,6 +48,19 @@ OpenAI documents `codex app-server` as the protocol used for deep client integra
 - The experimental app-server WebSocket is not accepted as the production credential boundary.
 - Neither `codex exec`, app-server, nor the SDK alone proves that a model-controlled command cannot read saved authentication. The separate OS-enforced broker boundary remains mandatory.
 
+The exact pinned Mac binary was also inspected through its effect-free `--help` output and locally generated protocol schema. It exposes an experimental app-server plus an experimental remote exec-server/environment split. That split is useful only as a disposable qualification candidate:
+
+- app-server and the broker ledger remain on the credential-owning identity;
+- the remote exec-server runs under a distinct credential-free identity;
+- a thread must be pinned to that one remote environment, with local fallback disabled;
+- the broker-facing app-server uses a parent-owned stdio channel, not a listening WebSocket;
+- the client method allowlist is exactly initialize, thread start/resume, turn start, and turn interrupt;
+- dangerous general app-server methods such as process spawning are excluded;
+- executor provider egress is blocked and every provider call remains ledger-mediated;
+- the experimental split is never marked production-eligible.
+
+`isolated-topology.ts` turns those requirements into a digest-bound attestation and fails every identity, binary, transport, local-command, disconnect-fallback, credential, ledger, egress, method, and production-use bypass. This is effect-free design evidence. It does not prove that the Mac currently has the required users, permissions, egress controls, or running services.
+
 Official references:
 
 - <https://learn.chatgpt.com/docs/app-server>
@@ -57,8 +70,9 @@ Official references:
 
 - `credential-broker.ts`: transport policy, run-scoped provisioning, atomic call spending, replay/conflict handling, close behavior, bounded settlement, and sanitized evidence.
 - `credential-broker-sqlite.ts`: broker-private durable ledger, immediate transactions, full synchronous durability, private-path checks, restart ambiguity recovery, and content-free records.
-- `codex-harness-contract.test.ts`: adversarial endpoint, run, model, replay, expiry, input, output, budget, resume, ticket, usage, cancellation, restart, filesystem-permission, and prompt-canary cases.
+- `isolated-topology.ts`: qualification-only remote-executor topology gate with exact binary, identity separation, fail-closed routing, method allowlist, credential/ledger unreadability, and egress requirements.
+- `codex-harness-contract.test.ts`: adversarial endpoint, run, model, replay, expiry, input, output, budget, resume, ticket, usage, cancellation, restart, filesystem-permission, prompt-canary, topology, and production-denial cases.
 
 ## Remaining native gate
 
-Before another provider call, an independently reviewed launcher must demonstrate a real broker and worker under separate OS identities or an equivalent isolation mechanism. Qualification must prove the worker cannot read the broker credential store, cannot connect directly to the provider, cannot forge broker provisioning or settlement, and cannot bypass the call ledger. That later attempt requires new exact owner approval and retains only sanitized start/event/usage/cancel/explicit-ID-resume evidence.
+Before another provider call, an independently reviewed launcher must demonstrate a real broker and remote executor under separate OS identities or an equivalent isolation mechanism. Qualification must prove the executor cannot read the broker credential store or ledger, cannot connect directly to the provider, cannot forge broker provisioning or settlement, cannot select local execution or fall back locally, and cannot bypass the call ledger. Creating identities, installing or starting processes, configuring egress, and making the later provider call all remain owner-authorized native actions. That later attempt requires new exact owner approval and retains only sanitized start/event/usage/cancel/explicit-ID-resume evidence.
