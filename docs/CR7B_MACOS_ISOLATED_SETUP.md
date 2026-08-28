@@ -59,7 +59,7 @@ Service readiness alone is not qualification. Retain only sanitized pass/fail co
 
 ## Stage 3 — effect-free protocol rehearsal
 
-The repository now exercises the controller with a fake app-server transport. It proves the required initialize handshake, exact `environment/add`, ready-status gating, explicit nonempty environment selection, atomic ledger claim before `turn/start`, one dispatch per request, bounded/correlated JSONL, content-free usage and terminal settlement, disconnect ambiguity, and rejection of server-initiated or non-allowlisted methods. It also tests fragmented/oversized/flooded child stdout, stderr exclusion, partial exit, exact close/terminate, deadline, and cancellation. Exact pinned child creation and independent review remain required before Stage 4.
+The repository now exercises the controller with a fake app-server transport. It proves the required initialize handshake, exact `environment/add`, ready-status gating, explicit nonempty environment selection, atomic ledger claim before `turn/start`, one dispatch per request, bounded/correlated JSONL, content-free usage and terminal settlement, disconnect ambiguity, and rejection of server-initiated or non-allowlisted methods. It also tests the exact pinned child specification, ambient-environment exclusion, identity drift, fragmented/oversized/flooded child stdout, stderr exclusion, partial exit, exact close/terminate, deadline, and cancellation. Independent review remains required before Stage 4.
 
 Any uncertainty after a claimed turn is terminally ambiguous. It must not be retried automatically.
 

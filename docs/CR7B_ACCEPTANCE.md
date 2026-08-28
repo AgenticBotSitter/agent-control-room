@@ -1,6 +1,6 @@
 # CR-7B Codex worker adapter acceptance
 
-**Status:** Effect-free adapter, durable credential broker, macOS launcher/controller, bounded JSONL runtime, child-stream transport, deadline/cancellation, and static service package complete; native qualification is blocked pending pinned child creation, independent review, and owner-authorized OS deployment.
+**Status:** Effect-free adapter, durable credential broker, macOS launcher/controller, bounded JSONL runtime, exact pinned child factory, child-stream transport, deadline/cancellation, and static service package complete; native qualification is blocked pending independent review and owner-authorized OS deployment.
 **Scope:** CR7B-001 through CR7B-006 for the installed macOS Codex CLI. One owner-authorized provider-backed read-only call was made in a disposable profile and empty Git workspace. No credential contents, rollout, prompt, transcript, command output, raw session identifier, file path, or worktree mutation was retained.
 
 ## Frozen seam
@@ -40,6 +40,7 @@
 23. An effect-free qualification runtime drives the full handshake, environment registration/readiness, thread start/resume, claim-before-turn dispatch, notifications, settlement, and close lifecycle over an injected line transport. Notification and event bounds prevent memory-growth attacks. Fake-transport tests prove success, offline denial before spending, forbidden approval-request denial, missing-usage denial, and disconnect ambiguity without starting a native process.
 24. A child-stream transport reassembles fragmented UTF-8, separates complete JSONL frames, bounds partial frames and queued lines, forbids concurrent reads, drains but never captures stderr, treats partial-line exit as failure, and closes stdin/terminates at most once. It accepts an already-created child port and cannot spawn a process itself.
 25. The qualification runtime now has one bounded deadline and external cancellation channel. Either closes the transport exactly once; before claim it spends nothing, and after claim it records terminal ambiguity with a safe cancellation/deadline code.
+26. The child factory accepts no arbitrary executable, arguments, environment, shell option, or stdio selection. It emits only the pinned app-server command with an absolute broker working directory, `CODEX_HOME` as the sole environment key, shell and detachment disabled, stderr ignored, and piped stdin/stdout. A child must return a live positive PID and the exact spawn-spec digest; drift closes and terminates it immediately.
 
 ## Security disposition
 
@@ -53,9 +54,9 @@
 
 ## Automated evidence
 
-- Focused CR-7B suite: 38 passed, 0 failed.
+- Focused CR-7B suite: 40 passed, 0 failed.
 - Type checking and focused lint pass.
-- Full suite: 389 tests, 387 passed, 0 failed, 2 intentional platform skips.
+- Full suite: 391 tests, 389 passed, 0 failed, 2 intentional platform skips.
 - Production build and both rendered-route tests pass.
 - Migration verification applies 0001 through 0020 and verifies 68 PostgreSQL tables.
 

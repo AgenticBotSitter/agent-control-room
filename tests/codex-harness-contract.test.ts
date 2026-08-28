@@ -7,7 +7,7 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import type { AuthorityEnvelope } from "../src/domain/v1/types";
 import type { HarnessRunEventV1 } from "../src/harness/v1";
 import { InMemoryArtifactStorage } from "../src/node-executor";
-import { CODEX_APP_SERVER_MAX_PENDING_REQUESTS_V1, CODEX_APP_SERVER_MAX_QUEUED_LINES_V1, CODEX_ISOLATED_CLIENT_METHODS_V1, CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexAppServerChildLineTransportV1, CodexAppServerJsonlSessionV1, CodexAppServerRuntimeErrorV1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexIsolatedQualificationRuntimeV1, CodexIsolatedTurnObserverV1, CodexMacIsolatedControllerV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, digestCodexIsolatedTopologyAttestationV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, evaluateCodexIsolatedTopologyV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexMacIsolatedLauncherV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, verifyCodexMacIsolatedPackagesV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexIsolatedTopologyAttestationV1, type CodexMacIsolatedLauncherConfigV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
+import { CODEX_APP_SERVER_MAX_PENDING_REQUESTS_V1, CODEX_APP_SERVER_MAX_QUEUED_LINES_V1, CODEX_ISOLATED_CLIENT_METHODS_V1, CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexAppServerChildLineTransportV1, CodexAppServerJsonlSessionV1, CodexAppServerRuntimeErrorV1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexIsolatedQualificationRuntimeV1, CodexIsolatedTurnObserverV1, CodexMacIsolatedControllerV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, createCodexPinnedAppServerChildV1, decodeCodexJsonLineV1, digestCodexIsolatedTopologyAttestationV1, digestCodexPinnedAppServerSpawnSpecV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, evaluateCodexIsolatedTopologyV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexMacIsolatedLauncherV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, verifyCodexMacIsolatedPackagesV1, type CodexAppServerChildPortV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexIsolatedTopologyAttestationV1, type CodexMacIsolatedLauncherConfigV1, type CodexPinnedAppServerSpawnSpecV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
 
 function authority(overrides: Partial<AuthorityEnvelope> = {}): AuthorityEnvelope {
   const base: AuthorityEnvelope = {
@@ -294,6 +294,45 @@ test("CR7B macOS launcher rejects identity reuse, non-loopback execution, and ow
   assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ brokerConfigPath: "/executor/work/config.json" })), /roots overlap/);
   assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ brokerReleaseRoot: "/executor/work/release", brokerControllerScript: "/executor/work/release/controller.js" })), /roots overlap/);
   assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ executorCodexHome: "/executor/work/repo/home" })), /roots overlap/);
+});
+
+function inertPinnedPort(spec: CodexPinnedAppServerSpawnSpecV1, overrides: Partial<{ pid: number; spawnSpecDigest: string; state: "running" | "exited" }> = {}): CodexAppServerChildPortV1 & { pid: number; spawnSpecDigest: string; state: "running" | "exited"; closes: number; terminates: number } {
+  return {
+    pid: 4242, spawnSpecDigest: digestCodexPinnedAppServerSpawnSpecV1(spec), state: "running", closes: 0, terminates: 0, ...overrides,
+    async writeStdin() {}, closeStdin() { this.closes += 1; }, terminate() { this.terminates += 1; }, discardStderr() {},
+    onStdout() { return () => {}; }, onExit() { return () => {}; }, onError() { return () => {}; },
+  };
+}
+
+test("CR7B pinned child factory passes only exact app-server process authority", () => {
+  const launcher = planCodexMacIsolatedLauncherV1(isolatedLauncherConfig());
+  let observed: CodexPinnedAppServerSpawnSpecV1 | undefined;
+  const child = createCodexPinnedAppServerChildV1(launcher, { spawnPinnedAppServer(spec) { observed = spec; return inertPinnedPort(spec); } });
+  assert.deepEqual(observed, {
+    executable: CODEX_PINNED_EXECUTABLE_V1, args: ["app-server", "--stdio", "--strict-config"],
+    cwd: "/release/broker", env: { CODEX_HOME: "/broker/credentials" }, shell: false, detached: false,
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  assert.equal(Object.keys(observed?.env ?? {}).includes("PATH"), false);
+  assert.deepEqual(child.identity, { pid: 4242, spawnSpecDigest: digestCodexPinnedAppServerSpawnSpecV1(observed!) });
+});
+
+test("CR7B pinned child factory rejects plan drift and kills identity-mismatched children", () => {
+  const base = planCodexMacIsolatedLauncherV1(isolatedLauncherConfig());
+  for (const appServerChild of [
+    { ...base.appServerChild, executable: "/tmp/codex" },
+    { ...base.appServerChild, args: ["app-server", "--stdio"] },
+    { ...base.appServerChild, args: [...base.appServerChild.args, "--dangerously-bypass-approvals-and-sandbox"] },
+    { ...base.appServerChild, cwd: "relative" },
+    { ...base.appServerChild, env: { ...base.appServerChild.env, PATH: "/job/bin" } },
+  ]) assert.throws(() => createCodexPinnedAppServerChildV1({ ...base, appServerChild }, { spawnPinnedAppServer() { assert.fail("invalid plan spawned"); } }), /plan invalid/);
+
+  for (const overrides of [{ pid: 0 }, { spawnSpecDigest: `sha256:${"0".repeat(64)}` }, { state: "exited" as const }]) {
+    let port: ReturnType<typeof inertPinnedPort> | undefined;
+    assert.throws(() => createCodexPinnedAppServerChildV1(base, { spawnPinnedAppServer(spec) { port = inertPinnedPort(spec, overrides); return port; } }), /identity invalid/);
+    assert.equal(port?.closes, 1);
+    assert.equal(port?.terminates, 1);
+  }
 });
 
 test("CR7B macOS isolated service templates pass static safety conformance", async () => {

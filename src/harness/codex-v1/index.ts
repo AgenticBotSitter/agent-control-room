@@ -16,3 +16,4 @@ export * from "./isolated-controller";
 export * from "./isolated-jsonrpc";
 export * from "./isolated-runtime";
 export * from "./isolated-process-transport";
+export * from "./isolated-child-factory";
