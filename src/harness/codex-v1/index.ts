@@ -13,3 +13,6 @@ export * from "./isolated-topology";
 export * from "./isolated-launcher";
 export * from "./isolated-package-conformance";
 export * from "./isolated-controller";
+export * from "./isolated-jsonrpc";
+export * from "./isolated-runtime";
+export * from "./isolated-process-transport";

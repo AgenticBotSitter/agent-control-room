@@ -71,8 +71,8 @@ export class CodexMacIsolatedControllerV1 {
     } };
   }
 
-  planInitialized(): { method: "initialized" } {
-    return { method: "initialized" };
+  planInitialized(): { method: "initialized"; params: Record<string, never> } {
+    return { method: "initialized", params: {} };
   }
 
   planEnvironmentRegistration(): CodexMacIsolatedLauncherPlanV1["environmentAdd"] {

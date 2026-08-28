@@ -13,7 +13,7 @@ The broker release, configuration, credential, and state roots must be separated
 
 All `{{CONTROL_ROOM_CODEX_*}}` values are required render-time inputs. Rendering must reject missing placeholders, relative paths, a non-loopback endpoint, overlapping roots, an unpinned executable, or reused broker/executor identities. Rendered files are host-local deployment artifacts and must not be committed.
 
-The repository conformance check validates the static templates only. Passing it does not prove native account separation, filesystem permissions, network policy, process identity, service operation, or credential isolation.
+The repository conformance check validates the static templates only. The fake-transport runtime separately validates bounded JSONL, request correlation, remote readiness, claim-before-turn ordering, sanitized settlement, and failure ambiguity. Passing both does not prove native account separation, filesystem permissions, network policy, process identity, service operation, or credential isolation.
 
 ## Stop points
 

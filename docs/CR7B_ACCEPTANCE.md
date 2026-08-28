@@ -1,6 +1,6 @@
 # CR-7B Codex worker adapter acceptance
 
-**Status:** Effect-free adapter, worktree boundary, artifact lineage, durable credential broker, macOS launcher/controller plan, and static service package complete; native qualification is blocked pending independent review and owner-authorized OS deployment.
+**Status:** Effect-free adapter, durable credential broker, macOS launcher/controller, bounded JSONL runtime, child-stream transport, deadline/cancellation, and static service package complete; native qualification is blocked pending pinned child creation, independent review, and owner-authorized OS deployment.
 **Scope:** CR7B-001 through CR7B-006 for the installed macOS Codex CLI. One owner-authorized provider-backed read-only call was made in a disposable profile and empty Git workspace. No credential contents, rollout, prompt, transcript, command output, raw session identifier, file path, or worktree mutation was retained.
 
 ## Frozen seam
@@ -35,6 +35,11 @@
 18. The macOS launcher planner fixes three process roles: the Control Room broker controller, its parent-owned app-server child, and a loopback-only single-request remote executor. It requires separate broker release, configuration, credential, and state roots plus separate executor home/workspace, and rejects path escape or containment overlap.
 19. The effect-free controller projector registers one exact remote environment, requires ready status before spending a call, atomically claims before `turn/start`, pins both thread and turn to a nonempty environment, forces read-only/no-network/never-approve behavior, disables dynamic tools and capability roots, and refuses general app-server methods or cross-thread resume.
 20. Static macOS LaunchAgent and LaunchDaemon templates plus repository conformance checks define the owner-login broker and dedicated non-admin credential-free executor. They are not rendered, installed, loaded, or treated as native evidence. `CR7B_MACOS_ISOLATED_SETUP.md` records separate approval stops and sanitized failure/rollback handling.
+21. A strict app-server JSONL session implements the documented initialize/initialized handshake, numeric request correlation, newline framing, safe error projection, bounded frames and pending work, and rejection of malformed, unsolicited, overlarge, server-initiated, and non-allowlisted traffic. Raw error text never crosses the boundary.
+22. A content-free turn observer accepts only the exact thread/turn scope, monotonic last-turn token usage, and one terminal status. Completion requires usage and settles the claimed call once; failure/interruption receive safe codes; disconnect and protocol uncertainty settle ambiguity without redispatch.
+23. An effect-free qualification runtime drives the full handshake, environment registration/readiness, thread start/resume, claim-before-turn dispatch, notifications, settlement, and close lifecycle over an injected line transport. Notification and event bounds prevent memory-growth attacks. Fake-transport tests prove success, offline denial before spending, forbidden approval-request denial, missing-usage denial, and disconnect ambiguity without starting a native process.
+24. A child-stream transport reassembles fragmented UTF-8, separates complete JSONL frames, bounds partial frames and queued lines, forbids concurrent reads, drains but never captures stderr, treats partial-line exit as failure, and closes stdin/terminates at most once. It accepts an already-created child port and cannot spawn a process itself.
+25. The qualification runtime now has one bounded deadline and external cancellation channel. Either closes the transport exactly once; before claim it spends nothing, and after claim it records terminal ambiguity with a safe cancellation/deadline code.
 
 ## Security disposition
 
@@ -48,9 +53,9 @@
 
 ## Automated evidence
 
-- Focused CR-7B suite: 28 passed, 0 failed.
+- Focused CR-7B suite: 38 passed, 0 failed.
 - Type checking and focused lint pass.
-- Full suite: 379 tests, 377 passed, 0 failed, 2 intentional platform skips.
+- Full suite: 389 tests, 387 passed, 0 failed, 2 intentional platform skips.
 - Production build and both rendered-route tests pass.
 - Migration verification applies 0001 through 0020 and verifies 68 PostgreSQL tables.
 
@@ -65,4 +70,4 @@
 
 ## Remaining gate
 
-The effect-free broker contract, durable replay ledger, and qualification-only isolated-topology gate now exist, but code structure alone does not prove OS isolation. Hiding `CODEX_HOME` from the shell environment is insufficient because it does not create a filesystem security boundary. No further native attempt may proceed until a separately reviewed broker/remote-executor launcher proves that its credential store, ledger, and internal provisioning/settlement path are unreachable to the executor; the executor has no provider route; and remote loss cannot fall back to broker-local command execution. Start/event/usage/cancel/explicit-ID resume, followed by native workspace-write and artifact publication, remain downstream gates.
+The effect-free broker contract, durable replay ledger, and qualification-only isolated-topology gate now exist, but code structure alone does not prove OS isolation. The raw native thread ID returned by the qualification runtime is explicitly a node-local resume handle; only its digest may enter canonical evidence. Hiding `CODEX_HOME` from the shell environment is insufficient because it does not create a filesystem security boundary. No further native attempt may proceed until a separately reviewed broker/remote-executor launcher proves that its credential store, ledger, and internal provisioning/settlement path are unreachable to the executor; the executor has no provider route; and remote loss cannot fall back to broker-local command execution. Start/event/usage/cancel/explicit-ID resume, followed by native workspace-write and artifact publication, remain downstream gates.

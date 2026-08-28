@@ -7,7 +7,7 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import type { AuthorityEnvelope } from "../src/domain/v1/types";
 import type { HarnessRunEventV1 } from "../src/harness/v1";
 import { InMemoryArtifactStorage } from "../src/node-executor";
-import { CODEX_ISOLATED_CLIENT_METHODS_V1, CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexMacIsolatedControllerV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, digestCodexIsolatedTopologyAttestationV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, evaluateCodexIsolatedTopologyV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexMacIsolatedLauncherV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, verifyCodexMacIsolatedPackagesV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexIsolatedTopologyAttestationV1, type CodexMacIsolatedLauncherConfigV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
+import { CODEX_APP_SERVER_MAX_PENDING_REQUESTS_V1, CODEX_APP_SERVER_MAX_QUEUED_LINES_V1, CODEX_ISOLATED_CLIENT_METHODS_V1, CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexAppServerChildLineTransportV1, CodexAppServerJsonlSessionV1, CodexAppServerRuntimeErrorV1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexIsolatedQualificationRuntimeV1, CodexIsolatedTurnObserverV1, CodexMacIsolatedControllerV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, digestCodexIsolatedTopologyAttestationV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, evaluateCodexIsolatedTopologyV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexMacIsolatedLauncherV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, verifyCodexMacIsolatedPackagesV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexIsolatedTopologyAttestationV1, type CodexMacIsolatedLauncherConfigV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
 
 function authority(overrides: Partial<AuthorityEnvelope> = {}): AuthorityEnvelope {
   const base: AuthorityEnvelope = {
@@ -320,7 +320,7 @@ test("CR7B isolated controller pins every start and turn to the remote read-only
       capabilities: { experimentalApi: true, requestAttestation: false },
     },
   });
-  assert.deepEqual(controller.planInitialized(), { method: "initialized" });
+  assert.deepEqual(controller.planInitialized(), { method: "initialized", params: {} });
   assert.deepEqual(controller.planEnvironmentRegistration(), launcher.environmentAdd);
   assert.deepEqual(controller.planEnvironmentStatus(), launcher.environmentStatus);
   const thread = controller.planThreadBoundary(request);
@@ -361,6 +361,340 @@ test("CR7B isolated controller refuses offline, local, replay-conflicting, and c
   assert.throws(() => controller.claimAndPlanTurn({ request: resume, nativeThreadId: "thread:resume:other", environmentStatus: "ready", now: "2026-08-27T23:00:01.000Z" }), /thread mismatch/);
   assert.equal(ledger.evidence(permit.permitDigest).consumedProviderCalls, 0);
   assert.throws(() => controller.planInterrupt("x", "turn:valid:one"), /identity invalid/);
+});
+
+function initializedJsonlSession(): CodexAppServerJsonlSessionV1 {
+  const session = new CodexAppServerJsonlSessionV1();
+  const initialize = session.request("initialize", { clientInfo: { name: "control-room", title: null, version: "1.0.0" } });
+  assert.equal(initialize.id, 1);
+  assert.deepEqual(session.receive('{"id":1,"result":{"userAgent":"pinned"}}'), {
+    kind: "response", id: 1, method: "initialize", ok: true, result: { userAgent: "pinned" },
+  });
+  assert.equal(session.notification("initialized", {}), '{"method":"initialized","params":{}}\n');
+  return session;
+}
+
+test("CR7B app-server JSONL session enforces handshake, correlation, framing, and safe errors", () => {
+  const session = new CodexAppServerJsonlSessionV1();
+  assert.throws(() => session.request("thread/start", {}), /not initialized/);
+  const initialize = session.request("initialize", { clientInfo: { name: "control-room", title: null, version: "1.0.0" } });
+  assert.equal(initialize.line, '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"control-room","title":null,"version":"1.0.0"}}}\n');
+  assert.throws(() => session.notification("initialized", {}), /notification order/);
+  session.receive('{"id":1,"result":{"userAgent":"pinned"}}');
+  session.notification("initialized", {});
+  assert.throws(() => session.request("initialized", {}), /notification method/);
+  assert.throws(() => session.request("process/spawn", {}), /method forbidden/);
+  const status = session.request("environment/status", { environmentId: "environment:one" });
+  assert.equal(status.id, 2);
+  assert.deepEqual(session.receive('{"id":2,"result":{"status":"ready"}}'), {
+    kind: "response", id: 2, method: "environment/status", ok: true, result: { status: "ready" },
+  });
+  assert.deepEqual(session.receive('{"method":"turn/started","params":{"private":"discard downstream"}}'), {
+    kind: "notification", method: "turn/started", params: { private: "discard downstream" },
+  });
+  const failed = session.request("environment/status", { environmentId: "environment:one" });
+  const safeError = session.receive(`{"id":${failed.id},"error":{"code":500,"message":"private provider failure"}}`);
+  assert.deepEqual(safeError, { kind: "response", id: failed.id, method: "environment/status", ok: false, safeErrorCode: "app_server_error" });
+  assert.equal(JSON.stringify(safeError).includes("private provider failure"), false);
+  const rejectedInitialize = new CodexAppServerJsonlSessionV1();
+  rejectedInitialize.request("initialize", {});
+  assert.deepEqual(rejectedInitialize.receive('{"id":1,"error":{"code":500,"message":"private auth failure"}}'), {
+    kind: "response", id: 1, method: "initialize", ok: false, safeErrorCode: "app_server_error",
+  });
+  assert.throws(() => rejectedInitialize.notification("initialized", {}), /notification order|session closed/);
+});
+
+test("CR7B app-server JSONL session rejects malformed, oversized, unsolicited, and server-initiated traffic", () => {
+  const session = initializedJsonlSession();
+  assert.throws(() => session.receive("not-json"), /JSON invalid/);
+  assert.throws(() => session.receive('{"jsonrpc":"2.0","method":"turn/started","params":{}}'), /message invalid/);
+  assert.throws(() => session.receive('{"id":99,"result":{}}'), /correlation invalid/);
+  assert.throws(() => session.receive('{"id":1,"result":{},"error":{"code":1,"message":"x"}}'), /correlation invalid|shape invalid/);
+  assert.throws(() => session.receive(`${"x".repeat(262_145)}`), /frame invalid/);
+  const forbidden = session.receive('{"id":"approval:private","method":"item/commandExecution/requestApproval","params":{"command":"private"}}');
+  assert.equal(forbidden.kind, "server_request_forbidden");
+  assert.equal(JSON.stringify(forbidden).includes("approval:private"), false);
+  assert.equal(JSON.stringify(forbidden).includes("commandExecution"), false);
+  const pending = Array.from({ length: CODEX_APP_SERVER_MAX_PENDING_REQUESTS_V1 }, () => session.request("environment/status", { environmentId: "environment:one" }));
+  assert.equal(pending.length, 16);
+  assert.throws(() => session.request("environment/status", { environmentId: "environment:one" }), /pending request limit/);
+  const disconnected = session.disconnect();
+  assert.equal(disconnected.pendingRequestCount, 16);
+  assert.equal(disconnected.pendingMethodDigests.length, 16);
+  assert.equal(JSON.stringify(disconnected).includes("environment/status"), false);
+  assert.throws(() => session.receive('{"method":"turn/started","params":{}}'), /session closed/);
+});
+
+function claimedObserver(input: {
+  ledger: InMemoryCodexCredentialBrokerLedgerV1;
+  permit: CodexCredentialBoundaryPermitV1;
+  requestId: string;
+}): { observer: CodexIsolatedTurnObserverV1; request: CodexBrokerCallRequestV1 } {
+  const request = brokerRequest(input.permit, { requestId: input.requestId });
+  const claimed = input.ledger.claim(request, "2026-08-27T23:00:01.000Z");
+  assert.equal(claimed.disposition, "dispatch_once");
+  assert.ok(claimed.ticket);
+  return { observer: new CodexIsolatedTurnObserverV1("thread:observer:one", claimed.ticket, input.ledger), request };
+}
+
+test("CR7B turn observer settles one completed call from scoped terminal and last-turn usage only", () => {
+  const permit = credentialPermit("run:observer");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const { observer, request } = claimedObserver({ ledger, permit, requestId: "request:observer:complete" });
+  assert.deepEqual(observer.observe({ method: "turn/started", params: { threadId: "thread:observer:one", turn: { id: "turn:observer:one", status: "inProgress", items: [] } } }),
+    { category: "lifecycle", state: "started" });
+  assert.deepEqual(observer.observe({ method: "thread/tokenUsage/updated", params: {
+    threadId: "thread:observer:one", turnId: "turn:observer:one",
+    tokenUsage: { total: { inputTokens: 9999 }, last: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4, reasoningOutputTokens: 1 } },
+  } }), { category: "usage", usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4, reasoningTokens: 1 } });
+  assert.throws(() => observer.observe({ method: "thread/tokenUsage/updated", params: {
+    threadId: "thread:observer:one", turnId: "turn:observer:one",
+    tokenUsage: { last: { inputTokens: 11, outputTokens: 3, cachedInputTokens: 4, reasoningOutputTokens: 1 } },
+  } }), /usage regressed/);
+  assert.deepEqual(observer.observe({ method: "item/agentMessage/delta", params: { private: "discard me" } }).category, "ignored");
+  assert.deepEqual(observer.observe({ method: "turn/completed", params: {
+    threadId: "thread:observer:one", turn: { id: "turn:observer:one", status: "completed", items: [{ private: "discard me" }] },
+  } }), { category: "lifecycle", state: "completed" });
+  assert.deepEqual(ledger.claim(request, "2026-08-27T23:00:02.000Z"), {
+    disposition: "replay_completed", usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4, reasoningTokens: 1 },
+  });
+  assert.equal(observer.disconnect(), undefined);
+  assert.throws(() => observer.observe({ method: "turn/completed", params: {} }), /already terminal/);
+});
+
+test("CR7B turn observer converts failure, interruption, malformed scope, and disconnect to safe terminal truth", () => {
+  const permit = credentialPermit("run:observer-negative");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const failed = claimedObserver({ ledger, permit, requestId: "request:observer:failed" });
+  failed.observer.observe({ method: "turn/started", params: { threadId: "thread:observer:one", turn: { id: "turn:observer:failed", status: "inProgress" } } });
+  assert.throws(() => failed.observer.observe({ method: "thread/tokenUsage/updated", params: { threadId: "thread:other", turnId: "turn:observer:failed" } }), /usage scope/);
+  assert.deepEqual(failed.observer.observe({ method: "turn/completed", params: {
+    threadId: "thread:observer:one", turn: { id: "turn:observer:failed", status: "failed", error: { message: "private failure" } },
+  } }), { category: "lifecycle", state: "failed" });
+  assert.deepEqual(ledger.claim(failed.request, "2026-08-27T23:00:02.000Z"), { disposition: "replay_failed", safeResultCode: "codex_turn_failed" });
+
+  const disconnected = claimedObserver({ ledger, permit, requestId: "request:observer:disconnect" });
+  assert.deepEqual(disconnected.observer.disconnect(), { category: "lifecycle", state: "ambiguous" });
+  assert.deepEqual(ledger.claim(disconnected.request, "2026-08-27T23:00:02.000Z"), { disposition: "ambiguous", safeResultCode: "app_server_disconnected" });
+
+  const interrupted = claimedObserver({ ledger, permit, requestId: "request:observer:interrupt" });
+  interrupted.observer.observe({ method: "turn/started", params: { threadId: "thread:observer:one", turn: { id: "turn:observer:interrupt", status: "inProgress" } } });
+  assert.deepEqual(interrupted.observer.observe({ method: "turn/completed", params: {
+    threadId: "thread:observer:one", turn: { id: "turn:observer:interrupt", status: "interrupted" },
+  } }), { category: "lifecycle", state: "interrupted" });
+  assert.deepEqual(ledger.claim(interrupted.request, "2026-08-27T23:00:02.000Z"), { disposition: "replay_failed", safeResultCode: "codex_turn_interrupted" });
+});
+
+class FakeAppServerChild {
+  readonly writes: string[] = [];
+  closeStdinCalls = 0;
+  terminateCalls = 0;
+  discardStderrCalls = 0;
+  private readonly stdoutListeners = new Set<(chunk: Uint8Array) => void>();
+  private readonly exitListeners = new Set<() => void>();
+  private readonly errorListeners = new Set<() => void>();
+
+  async writeStdin(data: string): Promise<void> { this.writes.push(data); }
+  closeStdin(): void { this.closeStdinCalls += 1; }
+  terminate(): void { this.terminateCalls += 1; }
+  discardStderr(): void { this.discardStderrCalls += 1; }
+  onStdout(listener: (chunk: Uint8Array) => void): () => void { this.stdoutListeners.add(listener); return () => this.stdoutListeners.delete(listener); }
+  onExit(listener: () => void): () => void { this.exitListeners.add(listener); return () => this.exitListeners.delete(listener); }
+  onError(listener: () => void): () => void { this.errorListeners.add(listener); return () => this.errorListeners.delete(listener); }
+  stdout(text: string): void { this.stdoutBytes(new TextEncoder().encode(text)); }
+  stdoutBytes(bytes: Uint8Array): void { for (const listener of this.stdoutListeners) listener(bytes); }
+  exit(): void { for (const listener of this.exitListeners) listener(); }
+  error(): void { for (const listener of this.errorListeners) listener(); }
+}
+
+test("CR7B child transport reassembles fragmented UTF-8 and drains multiple bounded JSONL frames", async () => {
+  const child = new FakeAppServerChild();
+  const transport = new CodexAppServerChildLineTransportV1(child);
+  assert.equal(child.discardStderrCalls, 1);
+  const first = transport.readLine();
+  const encoded = new TextEncoder().encode('{"value":"café"}\n{"id":2}\n');
+  const split = encoded.indexOf(0xc3) + 1;
+  child.stdoutBytes(encoded.slice(0, split));
+  child.stdoutBytes(encoded.slice(split));
+  assert.equal(await first, '{"value":"café"}');
+  assert.equal(await transport.readLine(), '{"id":2}');
+  await transport.write('{"method":"initialized","params":{}}\n');
+  assert.deepEqual(child.writes, ['{"method":"initialized","params":{}}\n']);
+  await transport.close();
+  await transport.close();
+  assert.equal(child.closeStdinCalls, 1);
+  assert.equal(child.terminateCalls, 1);
+  assert.equal(await transport.readLine(), null);
+});
+
+test("CR7B child transport rejects partial exit, oversized frames, queue floods, and concurrent reads", async () => {
+  const partialChild = new FakeAppServerChild();
+  const partial = new CodexAppServerChildLineTransportV1(partialChild, 1_024);
+  const partialRead = partial.readLine();
+  partialChild.stdout('{"partial":true}');
+  partialChild.exit();
+  await assert.rejects(partialRead, /framing failed/);
+  await partial.close();
+  assert.equal(partialChild.terminateCalls, 0);
+
+  const oversizedChild = new FakeAppServerChild();
+  const oversized = new CodexAppServerChildLineTransportV1(oversizedChild, 1_024);
+  oversizedChild.stdout("x".repeat(1_025));
+  await assert.rejects(oversized.readLine(), /framing failed/);
+  await oversized.close();
+
+  const floodedChild = new FakeAppServerChild();
+  const flooded = new CodexAppServerChildLineTransportV1(floodedChild);
+  floodedChild.stdout(Array.from({ length: CODEX_APP_SERVER_MAX_QUEUED_LINES_V1 + 1 }, () => "{}").join("\n") + "\n");
+  await assert.rejects(flooded.readLine(), /framing failed/);
+  await flooded.close();
+
+  const waitingChild = new FakeAppServerChild();
+  const waiting = new CodexAppServerChildLineTransportV1(waitingChild);
+  const pending = waiting.readLine();
+  await assert.rejects(waiting.readLine(), /concurrent read/);
+  waitingChild.error();
+  await assert.rejects(pending, /framing failed/);
+  await waiting.close();
+});
+
+class ScriptedAppServerTransport {
+  readonly writes: string[] = [];
+  readonly reads: string[] = [];
+  closed = false;
+
+  constructor(private readonly options: {
+    environmentStatus?: "ready" | "pending" | "disconnected" | "unknown";
+    turnMode?: "completed" | "server_request" | "missing_usage" | "disconnect" | "block";
+  } = {}) {}
+
+  private blockedRead?: (value: null) => void;
+
+  async write(line: string): Promise<void> {
+    this.writes.push(line);
+    const message = JSON.parse(line) as { id?: number; method: string; params?: Record<string, unknown> };
+    if (message.method === "initialized") return;
+    if (message.method === "initialize") this.reads.push(JSON.stringify({ id: message.id, result: { userAgent: "pinned" } }));
+    else if (message.method === "environment/add") this.reads.push(JSON.stringify({ id: message.id, result: {} }));
+    else if (message.method === "environment/status") this.reads.push(JSON.stringify({ id: message.id, result: { status: this.options.environmentStatus ?? "ready" } }));
+    else if (message.method === "thread/start" || message.method === "thread/resume") {
+      const requested = message.method === "thread/resume" ? message.params?.threadId : undefined;
+      this.reads.push(JSON.stringify({ id: message.id, result: { thread: { id: requested ?? "thread:runtime:one" } } }));
+    } else if (message.method === "turn/start") {
+      const mode = this.options.turnMode ?? "completed";
+      if (mode === "server_request") {
+        this.reads.push(JSON.stringify({ id: "approval:private", method: "item/commandExecution/requestApproval", params: { command: "private command" } }));
+        return;
+      }
+      this.reads.push(JSON.stringify({ id: message.id, result: { turn: { id: "turn:runtime:one", status: "inProgress" } } }));
+      this.reads.push(JSON.stringify({ method: "turn/started", params: { threadId: "thread:runtime:one", turn: { id: "turn:runtime:one", status: "inProgress" } } }));
+      if (mode !== "missing_usage") this.reads.push(JSON.stringify({ method: "thread/tokenUsage/updated", params: {
+        threadId: "thread:runtime:one", turnId: "turn:runtime:one",
+        tokenUsage: { last: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 8, reasoningOutputTokens: 2 } },
+      } }));
+      if (mode !== "disconnect" && mode !== "block") this.reads.push(JSON.stringify({ method: "turn/completed", params: {
+        threadId: "thread:runtime:one", turn: { id: "turn:runtime:one", status: "completed", items: [{ private: "discard" }] },
+      } }));
+    }
+  }
+
+  async readLine(): Promise<string | null> {
+    const line = this.reads.shift();
+    if (line !== undefined) return line;
+    if (this.options.turnMode !== "block") return null;
+    return await new Promise<null>((resolve) => { this.blockedRead = resolve; });
+  }
+  async close(): Promise<void> { this.closed = true; this.blockedRead?.(null); this.blockedRead = undefined; }
+}
+
+test("CR7B qualification runtime completes one fake-transport turn and returns sanitized evidence", async () => {
+  const permit = credentialPermit("run:runtime");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const transport = new ScriptedAppServerTransport();
+  const runtime = new CodexIsolatedQualificationRuntimeV1(planCodexMacIsolatedLauncherV1(isolatedLauncherConfig()), ledger, transport);
+  const request = brokerRequest(permit, { requestId: "request:runtime:complete", input: "private runtime prompt" });
+  const result = await runtime.execute(request, "2026-08-27T23:00:01.000Z");
+  assert.equal(result.disposition, "completed");
+  assert.equal(result.nodeLocalNativeThreadId, "thread:runtime:one");
+  assert.match(result.nativeThreadIdDigest ?? "", /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(result.events, [
+    { category: "lifecycle", state: "started" },
+    { category: "usage", usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 8, reasoningTokens: 2 } },
+    { category: "lifecycle", state: "completed" },
+  ]);
+  assert.equal(JSON.stringify(result.events).includes("private"), false);
+  assert.equal(transport.closed, true);
+  assert.deepEqual(ledger.claim(request, "2026-08-27T23:00:02.000Z"), {
+    disposition: "replay_completed", usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 8, reasoningTokens: 2 },
+  });
+  const methods = transport.writes.map((line) => (JSON.parse(line) as { method: string }).method);
+  assert.deepEqual(methods, ["initialize", "initialized", "environment/add", "environment/status", "thread/start", "turn/start"]);
+});
+
+test("CR7B qualification runtime spends no call when the remote executor is not ready", async () => {
+  const permit = credentialPermit("run:runtime-offline");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const transport = new ScriptedAppServerTransport({ environmentStatus: "disconnected" });
+  const runtime = new CodexIsolatedQualificationRuntimeV1(planCodexMacIsolatedLauncherV1(isolatedLauncherConfig()), ledger, transport);
+  await assert.rejects(runtime.execute(brokerRequest(permit, { requestId: "request:runtime:offline" }), "2026-08-27T23:00:01.000Z"),
+    (error) => error instanceof CodexAppServerRuntimeErrorV1 && error.safeCode === "remote_environment_not_ready");
+  assert.equal(ledger.evidence(permit.permitDigest).consumedProviderCalls, 0);
+  assert.equal(transport.writes.some((line) => line.includes("turn/start")), false);
+  assert.equal(transport.closed, true);
+});
+
+test("CR7B qualification runtime makes forbidden requests, missing usage, and disconnect terminally ambiguous", async () => {
+  for (const [mode, safeCode] of [
+    ["server_request", "app_server_server_request_forbidden"],
+    ["missing_usage", "app_server_protocol_invalid"],
+    ["disconnect", "app_server_disconnected"],
+  ] as const) {
+    const permit = credentialPermit(`run:runtime-${mode}`);
+    const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+    ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+    const transport = new ScriptedAppServerTransport({ turnMode: mode });
+    const runtime = new CodexIsolatedQualificationRuntimeV1(planCodexMacIsolatedLauncherV1(isolatedLauncherConfig()), ledger, transport);
+    const request = brokerRequest(permit, { requestId: `request:runtime:${mode}` });
+    await assert.rejects(runtime.execute(request, "2026-08-27T23:00:01.000Z"),
+      (error) => error instanceof CodexAppServerRuntimeErrorV1 && error.safeCode === safeCode);
+    assert.deepEqual(ledger.claim(request, "2026-08-27T23:00:02.000Z"), {
+      disposition: "ambiguous", safeResultCode: mode === "disconnect" ? "app_server_disconnected" : "app_server_protocol_invalid",
+    });
+    assert.equal(transport.closed, true);
+  }
+});
+
+test("CR7B qualification runtime enforces deadline and cancellation before or after call claim", async () => {
+  const deadlinePermit = credentialPermit("run:runtime-deadline");
+  const deadlineLedger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  deadlineLedger.provision({ permit: deadlinePermit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const deadlineTransport = new ScriptedAppServerTransport({ turnMode: "block" });
+  const deadlineRuntime = new CodexIsolatedQualificationRuntimeV1(planCodexMacIsolatedLauncherV1(isolatedLauncherConfig()), deadlineLedger, deadlineTransport);
+  const deadlineRequest = brokerRequest(deadlinePermit, { requestId: "request:runtime:deadline" });
+  await assert.rejects(deadlineRuntime.execute(deadlineRequest, "2026-08-27T23:00:01.000Z", { timeoutMs: 5 }),
+    (error) => error instanceof CodexAppServerRuntimeErrorV1 && error.safeCode === "app_server_deadline_exceeded");
+  assert.deepEqual(deadlineLedger.claim(deadlineRequest, "2026-08-27T23:00:02.000Z"), {
+    disposition: "ambiguous", safeResultCode: "app_server_deadline_exceeded",
+  });
+
+  const cancelPermit = credentialPermit("run:runtime-cancel");
+  const cancelLedger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  cancelLedger.provision({ permit: cancelPermit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const cancelTransport = new ScriptedAppServerTransport({ turnMode: "block" });
+  const cancelRuntime = new CodexIsolatedQualificationRuntimeV1(planCodexMacIsolatedLauncherV1(isolatedLauncherConfig()), cancelLedger, cancelTransport);
+  const cancelRequest = brokerRequest(cancelPermit, { requestId: "request:runtime:cancel" });
+  const controller = new AbortController();
+  const pending = cancelRuntime.execute(cancelRequest, "2026-08-27T23:00:01.000Z", { signal: controller.signal, timeoutMs: 1_000 });
+  setTimeout(() => controller.abort("operator_cancelled"), 0);
+  await assert.rejects(pending, (error) => error instanceof CodexAppServerRuntimeErrorV1 && error.safeCode === "app_server_cancelled");
+  assert.deepEqual(cancelLedger.claim(cancelRequest, "2026-08-27T23:00:02.000Z"), {
+    disposition: "ambiguous", safeResultCode: "app_server_cancelled",
+  });
+  assert.equal(cancelTransport.closed, true);
 });
 
 test("Codex command planning maps exact authority to isolated read and write invocations", () => {
