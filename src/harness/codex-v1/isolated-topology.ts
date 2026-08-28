@@ -2,7 +2,8 @@ import { sha256Digest } from "../../security";
 import { CODEX_PINNED_MACOS_CDHASH_V1, codexAdapterManifestV1 } from "./manifest";
 
 export const CODEX_ISOLATED_CLIENT_METHODS_V1 = [
-  "initialize", "thread/resume", "thread/start", "turn/interrupt", "turn/start",
+  "environment/add", "environment/info", "environment/status", "initialize", "initialized",
+  "thread/resume", "thread/start", "turn/interrupt", "turn/start",
 ] as const;
 
 export interface CodexIsolatedTopologyAttestationV1 {

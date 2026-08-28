@@ -10,3 +10,6 @@ export * from "./credential-boundary";
 export * from "./credential-broker";
 export * from "./credential-broker-sqlite";
 export * from "./isolated-topology";
+export * from "./isolated-launcher";
+export * from "./isolated-package-conformance";
+export * from "./isolated-controller";

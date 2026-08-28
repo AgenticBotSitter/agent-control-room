@@ -1,6 +1,6 @@
 # CR-7B Codex worker adapter acceptance
 
-**Status:** Effect-free adapter, worktree boundary, result, file, test, usage, artifact-lineage, and durable credential-broker policy core complete; native qualification is blocked pending a real OS-isolated broker deployment and review.
+**Status:** Effect-free adapter, worktree boundary, artifact lineage, durable credential broker, macOS launcher/controller plan, and static service package complete; native qualification is blocked pending independent review and owner-authorized OS deployment.
 **Scope:** CR7B-001 through CR7B-006 for the installed macOS Codex CLI. One owner-authorized provider-backed read-only call was made in a disposable profile and empty Git workspace. No credential contents, rollout, prompt, transcript, command output, raw session identifier, file path, or worktree mutation was retained.
 
 ## Frozen seam
@@ -32,6 +32,9 @@
 15. A broker-private SQLite implementation survives restart, converts unsettled calls to ambiguity, requires private filesystem placement, serializes claims with immediate transactions, and stores no prompt or response content. Cancellation closes the grant and makes unsettled work ambiguous.
 16. Product transport policy rejects saved-auth CLI execution and the experimental app-server WebSocket as production credential boundaries. The supported seam is a separately isolated Control Room broker; see `CR7B_CREDENTIAL_BROKER_CONTRACT.md`.
 17. A digest-bound topology gate now recognizes the pinned app-server/remote-exec split only for disposable qualification. It requires distinct broker/executor identities, parent-owned stdio, one remote environment with no local fallback, no broker-side model commands, exact client methods, broker-only provider egress, executor unreadability, and ledger mediation. Production eligibility is always false because both seams are experimental.
+18. The macOS launcher planner fixes three process roles: the Control Room broker controller, its parent-owned app-server child, and a loopback-only single-request remote executor. It requires separate broker release, configuration, credential, and state roots plus separate executor home/workspace, and rejects path escape or containment overlap.
+19. The effect-free controller projector registers one exact remote environment, requires ready status before spending a call, atomically claims before `turn/start`, pins both thread and turn to a nonempty environment, forces read-only/no-network/never-approve behavior, disables dynamic tools and capability roots, and refuses general app-server methods or cross-thread resume.
+20. Static macOS LaunchAgent and LaunchDaemon templates plus repository conformance checks define the owner-login broker and dedicated non-admin credential-free executor. They are not rendered, installed, loaded, or treated as native evidence. `CR7B_MACOS_ISOLATED_SETUP.md` records separate approval stops and sanitized failure/rollback handling.
 
 ## Security disposition
 
@@ -45,9 +48,9 @@
 
 ## Automated evidence
 
-- Focused CR-7B suite: 23 passed, 0 failed.
+- Focused CR-7B suite: 28 passed, 0 failed.
 - Type checking and focused lint pass.
-- Full suite: 374 tests, 372 passed, 0 failed, 2 intentional platform skips.
+- Full suite: 379 tests, 377 passed, 0 failed, 2 intentional platform skips.
 - Production build and both rendered-route tests pass.
 - Migration verification applies 0001 through 0020 and verifies 68 PostgreSQL tables.
 

@@ -7,7 +7,7 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import type { AuthorityEnvelope } from "../src/domain/v1/types";
 import type { HarnessRunEventV1 } from "../src/harness/v1";
 import { InMemoryArtifactStorage } from "../src/node-executor";
-import { CODEX_ISOLATED_CLIENT_METHODS_V1, CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, digestCodexIsolatedTopologyAttestationV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, evaluateCodexIsolatedTopologyV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexIsolatedTopologyAttestationV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
+import { CODEX_ISOLATED_CLIENT_METHODS_V1, CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexMacIsolatedControllerV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, digestCodexIsolatedTopologyAttestationV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, evaluateCodexIsolatedTopologyV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexMacIsolatedLauncherV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, verifyCodexMacIsolatedPackagesV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexIsolatedTopologyAttestationV1, type CodexMacIsolatedLauncherConfigV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
 
 function authority(overrides: Partial<AuthorityEnvelope> = {}): AuthorityEnvelope {
   const base: AuthorityEnvelope = {
@@ -234,6 +234,133 @@ test("CR7B isolated topology fails every credential, command, network, replay, i
     "ledger_bypass", "client_method_overbroad", "experimental_seam_unacknowledged",
   ]);
   assert.deepEqual(evaluateCodexIsolatedTopologyV1({ ...isolatedTopology(), attestationDigest: `sha256:${"9".repeat(64)}` }).reasons, ["attestation_digest_invalid"]);
+});
+
+function isolatedLauncherConfig(overrides: Partial<CodexMacIsolatedLauncherConfigV1> = {}): CodexMacIsolatedLauncherConfigV1 {
+  return {
+    nodeRuntime: "/runtime/node",
+    brokerControllerScript: "/release/broker/codex-broker-controller.js",
+    brokerConfigPath: "/broker-config/config.json",
+    brokerConfigRoot: "/broker-config",
+    brokerReleaseRoot: "/release/broker",
+    brokerCodexHome: "/broker/credentials",
+    brokerStateRoot: "/broker/state",
+    brokerLedgerPath: "/broker/state/ledger.sqlite",
+    executorCodexHome: "/executor/home",
+    executorWorkingDirectory: "/executor/work",
+    workspacePath: "/executor/work/repo",
+    executorEndpoint: "ws://127.0.0.1:45451",
+    environmentId: "environment:codex:one",
+    brokerIdentityDigest: `sha256:${"1".repeat(64)}`,
+    executorIdentityDigest: `sha256:${"2".repeat(64)}`,
+    ...overrides,
+  };
+}
+
+test("CR7B macOS launcher plans parent-owned stdio and one credential-free loopback executor", () => {
+  const config = isolatedLauncherConfig();
+  const plan = planCodexMacIsolatedLauncherV1(config);
+  assert.deepEqual(plan.appServerChild, {
+    executable: CODEX_PINNED_EXECUTABLE_V1,
+    args: ["app-server", "--stdio", "--strict-config"],
+    cwd: config.brokerReleaseRoot,
+    env: { CODEX_HOME: config.brokerCodexHome },
+  });
+  assert.deepEqual(plan.remoteExecutor, {
+    executable: CODEX_PINNED_EXECUTABLE_V1,
+    args: ["exec-server", "--strict-config", "--concurrent-requests", "1", "--listen", config.executorEndpoint],
+    cwd: config.executorWorkingDirectory,
+    env: { CODEX_HOME: config.executorCodexHome },
+  });
+  assert.deepEqual(plan.environmentAdd, { method: "environment/add", params: {
+    environmentId: config.environmentId, execServerUrl: config.executorEndpoint, connectTimeoutMs: 5_000,
+  } });
+  assert.deepEqual(plan.environmentStatus, { method: "environment/status", params: { environmentId: config.environmentId } });
+  assert.deepEqual(plan.threadEnvironment, { environmentId: config.environmentId, cwd: config.workspacePath, runtimeWorkspaceRoots: [config.workspacePath] });
+  assert.deepEqual(plan.allowedClientMethods, CODEX_ISOLATED_CLIENT_METHODS_V1);
+  for (const forbidden of ["process/spawn", "command/exec", "config/write", "mcpServer/start", "plugin/install"])
+    assert.equal(plan.allowedClientMethods.includes(forbidden as never), false);
+  const safeSummary = JSON.stringify(plan.summary);
+  for (const raw of [config.brokerCodexHome, config.brokerStateRoot, config.executorCodexHome, config.environmentId, config.executorEndpoint])
+    assert.equal(safeSummary.includes(raw), false, raw);
+});
+
+test("CR7B macOS launcher rejects identity reuse, non-loopback execution, and ownership overlap", () => {
+  assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ executorEndpoint: "ws://0.0.0.0:45451" })), /endpoint invalid/);
+  assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ executorEndpoint: "ws://127.0.0.1:80" })), /endpoint invalid/);
+  assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ executorIdentityDigest: `sha256:${"1".repeat(64)}` })), /identity invalid/);
+  assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ brokerStateRoot: "/broker/credentials/state", brokerLedgerPath: "/broker/credentials/state/ledger.sqlite" })), /roots overlap/);
+  assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ brokerLedgerPath: "/broker/credentials/ledger.sqlite" })), /roots overlap/);
+  assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ brokerConfigPath: "/executor/work/config.json" })), /roots overlap/);
+  assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ brokerReleaseRoot: "/executor/work/release", brokerControllerScript: "/executor/work/release/controller.js" })), /roots overlap/);
+  assert.throws(() => planCodexMacIsolatedLauncherV1(isolatedLauncherConfig({ executorCodexHome: "/executor/work/repo/home" })), /roots overlap/);
+});
+
+test("CR7B macOS isolated service templates pass static safety conformance", async () => {
+  const result = await verifyCodexMacIsolatedPackagesV1();
+  assert.deepEqual(result.map((entry) => entry.file), [
+    "broker/com.control-room.codex-broker.plist.template",
+    "executor/com.control-room.codex-executor.plist.template",
+  ]);
+  assert.ok(result.every((entry) => entry.checks.length >= 6));
+  assert.equal(JSON.stringify(result).includes("/Users/"), false);
+});
+
+test("CR7B isolated controller pins every start and turn to the remote read-only environment", () => {
+  const launcher = planCodexMacIsolatedLauncherV1(isolatedLauncherConfig());
+  const permit = credentialPermit("run:controller");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const controller = new CodexMacIsolatedControllerV1(launcher, ledger);
+  const request = brokerRequest(permit, { requestId: "request:controller:1", input: "private isolated prompt" });
+  assert.deepEqual(controller.planInitialize(), {
+    method: "initialize",
+    params: {
+      clientInfo: { name: "control-room", title: null, version: "1.0.0" },
+      capabilities: { experimentalApi: true, requestAttestation: false },
+    },
+  });
+  assert.deepEqual(controller.planInitialized(), { method: "initialized" });
+  assert.deepEqual(controller.planEnvironmentRegistration(), launcher.environmentAdd);
+  assert.deepEqual(controller.planEnvironmentStatus(), launcher.environmentStatus);
+  const thread = controller.planThreadBoundary(request);
+  assert.equal(thread.method, "thread/start");
+  assert.deepEqual(thread.params, {
+    model: "gpt-5.6-sol", cwd: "/executor/work/repo", runtimeWorkspaceRoots: ["/executor/work/repo"],
+    approvalPolicy: "never", sandbox: "read-only", ephemeral: true, environments: [launcher.threadEnvironment],
+    dynamicTools: [], selectedCapabilityRoots: [], experimentalRawEvents: false,
+  });
+  const turn = controller.claimAndPlanTurn({ request, nativeThreadId: "thread:controller:one", environmentStatus: "ready", now: "2026-08-27T23:00:01.000Z" });
+  assert.equal(turn.disposition, "dispatch_once");
+  assert.deepEqual(turn.request, { method: "turn/start", params: {
+    threadId: "thread:controller:one", input: [{ type: "text", text: "private isolated prompt", text_elements: [] }],
+    environments: [launcher.threadEnvironment], cwd: "/executor/work/repo", runtimeWorkspaceRoots: ["/executor/work/repo"],
+    approvalPolicy: "never", sandboxPolicy: { type: "readOnly", networkAccess: false }, model: "gpt-5.6-sol",
+  } });
+  assert.equal(controller.claimAndPlanTurn({ request, nativeThreadId: "thread:controller:one", environmentStatus: "ready", now: "2026-08-27T23:00:02.000Z" }).disposition, "in_progress");
+  assert.deepEqual(controller.planInterrupt("thread:controller:one", "turn:controller:one"), {
+    method: "turn/interrupt", params: { threadId: "thread:controller:one", turnId: "turn:controller:one" },
+  });
+});
+
+test("CR7B isolated controller refuses offline, local, replay-conflicting, and cross-thread dispatch", () => {
+  const launcher = planCodexMacIsolatedLauncherV1(isolatedLauncherConfig());
+  const permit = credentialPermit("run:controller-deny");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const controller = new CodexMacIsolatedControllerV1(launcher, ledger);
+  const start = brokerRequest(permit, { requestId: "request:controller:deny" });
+  for (const status of ["pending", "disconnected", "unknown"] as const)
+    assert.throws(() => controller.claimAndPlanTurn({ request: start, nativeThreadId: "thread:deny:one", environmentStatus: status, now: "2026-08-27T23:00:01.000Z" }), /not ready/);
+  assert.equal(ledger.evidence(permit.permitDigest).consumedProviderCalls, 0);
+  for (const method of ["process/spawn", "config/write", "plugin/install", "mcpServer/start"])
+    assert.throws(() => controller.assertClientMethod(method), /method forbidden/);
+  controller.assertClientMethod("environment/status");
+  const resume = brokerRequest(permit, { requestId: "request:controller:resume", operation: "resume", nativeThreadId: "thread:resume:one" });
+  assert.equal(controller.planThreadBoundary(resume).method, "thread/resume");
+  assert.throws(() => controller.claimAndPlanTurn({ request: resume, nativeThreadId: "thread:resume:other", environmentStatus: "ready", now: "2026-08-27T23:00:01.000Z" }), /thread mismatch/);
+  assert.equal(ledger.evidence(permit.permitDigest).consumedProviderCalls, 0);
+  assert.throws(() => controller.planInterrupt("x", "turn:valid:one"), /identity invalid/);
 });
 
 test("Codex command planning maps exact authority to isolated read and write invocations", () => {

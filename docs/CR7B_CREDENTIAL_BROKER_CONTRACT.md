@@ -1,6 +1,6 @@
 # CR-7B credential-isolated Codex broker contract
 
-**Status:** Effect-free policy and durable call-ledger core implemented. Native transport and credential isolation are not yet qualified.
+**Status:** Effect-free policy, durable call ledger, macOS launcher/controller plan, and static service package implemented. Native transport and credential isolation are not yet qualified.
 
 ## Purpose
 
@@ -54,12 +54,12 @@ The exact pinned Mac binary was also inspected through its effect-free `--help` 
 - the remote exec-server runs under a distinct credential-free identity;
 - a thread must be pinned to that one remote environment, with local fallback disabled;
 - the broker-facing app-server uses a parent-owned stdio channel, not a listening WebSocket;
-- the client method allowlist is exactly initialize, thread start/resume, turn start, and turn interrupt;
+- the client method allowlist is exactly environment add/info/status, initialize plus its required initialized notification, thread start/resume, turn start, and turn interrupt;
 - dangerous general app-server methods such as process spawning are excluded;
 - executor provider egress is blocked and every provider call remains ledger-mediated;
 - the experimental split is never marked production-eligible.
 
-`isolated-topology.ts` turns those requirements into a digest-bound attestation and fails every identity, binary, transport, local-command, disconnect-fallback, credential, ledger, egress, method, and production-use bypass. This is effect-free design evidence. It does not prove that the Mac currently has the required users, permissions, egress controls, or running services.
+`isolated-topology.ts` turns those requirements into a digest-bound attestation and fails every identity, binary, transport, local-command, disconnect-fallback, credential, ledger, egress, method, and production-use bypass. `isolated-launcher.ts` requires separate broker release, configuration, credential, and state roots plus separate executor home/workspace, a loopback-only single-request executor, parent-owned app-server stdio, and one explicit environment. `isolated-controller.ts` projects only read-only, approval-free, tool-free requests; checks remote readiness before atomically claiming a provider call; supplies the exact nonempty remote environment on both thread and turn; and refuses replay dispatch, cross-thread resume, and methods outside the allowlist. This remains effect-free design evidence. It does not prove that the Mac currently has the required users, permissions, egress controls, or running services.
 
 Official references:
 
@@ -71,8 +71,12 @@ Official references:
 - `credential-broker.ts`: transport policy, run-scoped provisioning, atomic call spending, replay/conflict handling, close behavior, bounded settlement, and sanitized evidence.
 - `credential-broker-sqlite.ts`: broker-private durable ledger, immediate transactions, full synchronous durability, private-path checks, restart ambiguity recovery, and content-free records.
 - `isolated-topology.ts`: qualification-only remote-executor topology gate with exact binary, identity separation, fail-closed routing, method allowlist, credential/ledger unreadability, and egress requirements.
-- `codex-harness-contract.test.ts`: adversarial endpoint, run, model, replay, expiry, input, output, budget, resume, ticket, usage, cancellation, restart, filesystem-permission, prompt-canary, topology, and production-denial cases.
+- `isolated-launcher.ts`: effect-free macOS process and environment-registration plan with path ownership and loopback enforcement.
+- `isolated-controller.ts`: effect-free JSON-RPC request projector and claim-before-turn gate.
+- `isolated-package-conformance.ts` and `packages/control-room-codex-isolated-macos`: static LaunchAgent/LaunchDaemon template checks without installing or starting services.
+- `CR7B_MACOS_ISOLATED_SETUP.md`: staged owner-attended setup, proof, failure, and rollback procedure.
+- `codex-harness-contract.test.ts`: adversarial endpoint, path, identity, method, readiness, cross-thread, run, model, replay, expiry, input, output, budget, resume, ticket, usage, cancellation, restart, filesystem-permission, prompt-canary, topology, and production-denial cases.
 
 ## Remaining native gate
 
-Before another provider call, an independently reviewed launcher must demonstrate a real broker and remote executor under separate OS identities or an equivalent isolation mechanism. Qualification must prove the executor cannot read the broker credential store or ledger, cannot connect directly to the provider, cannot forge broker provisioning or settlement, cannot select local execution or fall back locally, and cannot bypass the call ledger. Creating identities, installing or starting processes, configuring egress, and making the later provider call all remain owner-authorized native actions. That later attempt requires new exact owner approval and retains only sanitized start/event/usage/cancel/explicit-ID-resume evidence.
+Before another provider call, the implemented launcher and controller must receive independent security review and then demonstrate a real broker and remote executor under separate OS identities or an equivalent isolation mechanism. Qualification must prove the executor cannot read or change any broker-owned root, cannot connect directly to the provider, cannot forge broker provisioning or settlement, cannot select local execution or fall back locally, and cannot bypass the call ledger. Creating identities, rendering/installing/loading services, changing permissions or egress, accessing authentication, and making the later provider call all remain separately owner-authorized native actions. That later attempt requires new exact owner approval and retains only sanitized start/event/usage/cancel/explicit-ID-resume evidence.
