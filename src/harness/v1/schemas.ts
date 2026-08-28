@@ -12,7 +12,7 @@ export const harnessAdapterManifestSchemaV1 = z.object({
   schemaVersion: z.literal(HARNESS_CONTRACT_VERSION_V1), adapterId: id, adapterVersion: version,
   harness: z.enum(["hermes", "codex", "claude", "other"]), harnessVersion: version,
   harnessRevision: z.string().regex(/^[a-f0-9]{40}$/),
-  runtime: z.object({ name: z.enum(["python", "node"]), minimumVersion: version, supportedPlatforms: z.array(z.enum(["linux", "macos", "windows"])).min(1).max(3) }).strict(),
+  runtime: z.object({ name: z.enum(["python", "node", "native"]), minimumVersion: version, supportedPlatforms: z.array(z.enum(["linux", "macos", "windows"])).min(1).max(3) }).strict(),
   supportedVerbs: z.array(z.enum(["discover", "start", "stream", "steer", "cancel", "resume", "usage"])).min(1).max(7),
   eventSchemaVersion: z.literal(HARNESS_EVENT_SCHEMA_VERSION_V1), approvalMode: z.enum(["unsupported", "observe_only", "request_response"]),
   isolation: z.enum(["adapter_process", "worktree", "container", "harness_owned"]), credentialResolution: z.enum(["harness_native", "node_reference_only", "unsupported"]),
