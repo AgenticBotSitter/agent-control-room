@@ -582,3 +582,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Codex must actively keep the ready frontier stocked, batch reviews, and resolve dependencies. Some serial gates remain unavoidable, but they are named before work begins and do not block unrelated effect-free production.
 
 **Reevaluate:** When CR-7 northbound MCP and Control Room scheduling are operational, import this graph and capsule/result history into canonical jobs, attempts, evidence, and integration gates. Preserve the ownership split, frozen contracts, dependency checks, and owner-effect boundaries.
+
+## ADR-049 — Native agent authentication lives behind an at-most-once credential broker
+
+**Decision:** A native agent worker never receives saved provider authentication, a readable credential store, inherited credential material, or a direct provider route. Control Room provisions a separately isolated broker with one short-lived run/model/endpoint grant and bounded input, output, and provider-call ceilings. The broker durably claims each request before dispatch; retry after claim cannot redispatch, and restart uncertainty becomes ambiguity. Permit and ticket digests are evidence, not bearer credentials. Broker provisioning and settlement remain internal. Experimental client transports are not production security boundaries.
+
+**Why:** The first read-only native Codex call proved that a model-controlled command could read the disposable saved-auth file. Workspace sandboxing does not isolate credentials. A stateless proxy would also permit duplicate provider effects after timeout or crash and would let a worker replay a valid request beyond its intended call budget.
+
+**Alternatives rejected:** Saved auth in a disposable worker profile; hiding `CODEX_HOME`; environment-only redaction; direct provider networking from the worker; a static digest permit without a consumption ledger; automatic retry after uncertain dispatch; treating Codex app-server WebSocket as a production credential boundary while its documented transport is experimental.
+
+**Trade-off:** Native execution now needs a separate least-privilege process identity, private durable ledger, local IPC authentication, broker-only provider egress, and operational recovery for ambiguous calls. At-most-once dispatch can consume a call allowance without obtaining a result when the broker crashes before or during the provider request.
+
+**Reevaluate:** A supported upstream run-scoped credential delegation mechanism may replace the local broker only if it independently proves credential unreadability, direct-egress denial, exact run/model/call bounds, revocation, durable replay containment, and sanitized evidence.

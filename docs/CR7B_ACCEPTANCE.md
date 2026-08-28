@@ -1,6 +1,6 @@
 # CR-7B Codex worker adapter acceptance
 
-**Status:** Effect-free adapter, worktree boundary, result, file, test, usage, and artifact-lineage core complete; native qualification is blocked by accepted negative credential-isolation evidence.
+**Status:** Effect-free adapter, worktree boundary, result, file, test, usage, artifact-lineage, and durable credential-broker policy core complete; native qualification is blocked pending a real OS-isolated broker deployment and review.
 **Scope:** CR7B-001 through CR7B-006 for the installed macOS Codex CLI. One owner-authorized provider-backed read-only call was made in a disposable profile and empty Git workspace. No credential contents, rollout, prompt, transcript, command output, raw session identifier, file path, or worktree mutation was retained.
 
 ## Frozen seam
@@ -28,6 +28,9 @@
 11. Workspace-write planning requires a digest-bound lease for the exact run and checkout. The workspace manager requires canonical, disjoint repository and node-owned workspace roots, a full Git commit, an attested created checkout, and unchanged device/inode identity before cleanup. It never exposes a generic recursive-delete operation.
 12. Successful changed-file results can publish a bounded, secret-scanned patch through the existing no-overwrite artifact store. Stored bytes, hash, size, tenant, project, job, attempt, and producer node are verified before content-free artifact lineage is returned.
 13. Native command planning now requires a digest-protected credential-boundary permit for the exact run, broker identity, model, expiry, and provider-call ceiling. Permits are issued only when long-lived credentials and direct provider access stay outside the worker, command processes inherit no credential, and the broker capability expires within five minutes with at most three calls.
+14. A broker-side call ledger now atomically consumes a provider-call allowance before dispatch. Exact retries cannot redispatch; changed retries, cross-run/model requests, endpoint substitution, expired grants, oversize inputs/outputs, and exhausted budgets fail closed.
+15. A broker-private SQLite implementation survives restart, converts unsettled calls to ambiguity, requires private filesystem placement, serializes claims with immediate transactions, and stores no prompt or response content. Cancellation closes the grant and makes unsettled work ambiguous.
+16. Product transport policy rejects saved-auth CLI execution and the experimental app-server WebSocket as production credential boundaries. The supported seam is a separately isolated Control Room broker; see `CR7B_CREDENTIAL_BROKER_CONTRACT.md`.
 
 ## Security disposition
 
@@ -37,12 +40,13 @@
 - The installed CLI's saved authentication is a node-local harness concern and is not represented in the job authority or committed fixtures.
 - The structured-event fixture is derived from official documented event shapes. The separate native fixture records only the failed gate, safe reason code, call count, and confirmed cleanup.
 - A future native requalification must first present a valid short-lived credential-boundary permit. Saved authentication inside the worker, readable or unknown credential-store access, direct provider network, inherited credential material, and missing/overbroad broker scope all fail closed.
+- Permit and ticket digests are integrity evidence, not secrets or worker-held bearer authorization. Provisioning and settlement remain broker-internal operations behind an OS boundary; exposing either method to the worker would fail the contract.
 
 ## Automated evidence
 
-- Focused CR-7B suite: 14 passed, 0 failed.
+- Focused CR-7B suite: 21 passed, 0 failed.
 - Type checking and focused lint pass.
-- Full suite: 365 tests, 363 passed, 0 failed, 2 intentional platform skips.
+- Full suite: 372 tests, 370 passed, 0 failed, 2 intentional platform skips.
 - Production build and both rendered-route tests pass.
 - Migration verification applies 0001 through 0020 and verifies 68 PostgreSQL tables.
 
@@ -57,4 +61,4 @@
 
 ## Remaining gate
 
-A credential-isolated execution design must keep long-lived saved authentication outside every model-controlled command process. Hiding `CODEX_HOME` from the shell environment is insufficient because it does not create a filesystem security boundary. No further native attempt may proceed until a separately reviewed broker/proxy or equivalent OS-enforced design proves that the credential store is unreadable. Start/event/usage/cancel/explicit-ID resume, followed by native workspace-write and artifact publication, remain downstream gates.
+The effect-free broker contract and durable replay ledger now exist, but code structure alone does not prove OS isolation. Hiding `CODEX_HOME` from the shell environment is insufficient because it does not create a filesystem security boundary. No further native attempt may proceed until a separately reviewed broker launcher proves that its credential store and internal provisioning/settlement path are unreachable to the worker and that the worker has no direct provider route. Start/event/usage/cancel/explicit-ID resume, followed by native workspace-write and artifact publication, remain downstream gates.

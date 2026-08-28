@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import type { AuthorityEnvelope } from "../src/domain/v1/types";
 import type { HarnessRunEventV1 } from "../src/harness/v1";
 import { InMemoryArtifactStorage } from "../src/node-executor";
-import { CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexExecProcessV1, CodexWorkspaceManagerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, evaluateCodexCompatibilityV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, type CodexCredentialBoundaryPermitV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
+import { CODEX_PINNED_EXECUTABLE_V1, CODEX_PINNED_MACOS_CDHASH_V1, CodexBrokerPolicyErrorV1, CodexExecProcessV1, CodexWorkspaceManagerV1, InMemoryCodexCredentialBrokerLedgerV1, SqliteCodexCredentialBrokerLedgerV1, codexAdapterManifestV1, decodeCodexJsonLineV1, evaluateCodexBrokerTransportV1, evaluateCodexCompatibilityV1, issueCodexCredentialBoundaryPermitV1, planCodexExecV1, planCodexResumeV1, projectCodexRunResultV1, publishCodexPatchArtifactV1, type CodexBrokerCallRequestV1, type CodexCredentialBoundaryPermitV1, type CodexWorkspaceIdentityV1 } from "../src/harness/codex-v1";
 
 function authority(overrides: Partial<AuthorityEnvelope> = {}): AuthorityEnvelope {
   const base: AuthorityEnvelope = {
@@ -66,6 +68,133 @@ test("Codex credential boundary rejects saved auth and issues only a short run-b
   assert.equal(permit.runId, "run:permit");
   assert.equal(permit.maximumProviderCalls, 3);
   assert.match(permit.permitDigest, /^sha256:[a-f0-9]{64}$/);
+});
+
+function brokerRequest(permit: CodexCredentialBoundaryPermitV1, overrides: Partial<CodexBrokerCallRequestV1> = {}): CodexBrokerCallRequestV1 {
+  return {
+    schema: "control-room.codex-broker-call/v1", requestId: "request:codex:1", permitDigest: permit.permitDigest,
+    runId: permit.runId, model: permit.model, operation: "start", input: "bounded prompt", maximumOutputTokens: 512, ...overrides,
+  };
+}
+
+function policyCode(code: CodexBrokerPolicyErrorV1["safeCode"]): (error: unknown) => boolean {
+  return (error) => error instanceof CodexBrokerPolicyErrorV1 && error.safeCode === code;
+}
+
+test("CR7B broker transport policy accepts only the credential-isolated Control Room boundary", () => {
+  assert.deepEqual(evaluateCodexBrokerTransportV1("control_room_credential_broker"), { accepted: true });
+  assert.deepEqual(evaluateCodexBrokerTransportV1("codex_app_server_websocket"), { accepted: false, reasonCode: "experimental_transport_not_security_boundary" });
+  assert.deepEqual(evaluateCodexBrokerTransportV1("saved_auth_cli"), { accepted: false, reasonCode: "credential_inside_worker" });
+});
+
+test("CR7B broker atomically spends each call once and returns only sanitized replay evidence", () => {
+  const endpoint = `sha256:${"5".repeat(64)}`;
+  const permit = credentialPermit("run:broker");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(endpoint);
+  const limits = { maximumInputBytes: 1024, maximumOutputTokens: 1024 };
+  assert.deepEqual(ledger.provision({ permit, limits, now: "2026-08-27T23:00:00.000Z" }), { replayed: false });
+  assert.deepEqual(ledger.provision({ permit, limits, now: "2026-08-27T23:00:00.000Z" }), { replayed: true });
+  const request = brokerRequest(permit, { input: "private broker prompt" });
+  const claimed = ledger.claim(request, "2026-08-27T23:00:01.000Z");
+  assert.equal(claimed.disposition, "dispatch_once");
+  assert.equal(ledger.claim(request, "2026-08-27T23:00:02.000Z").disposition, "in_progress");
+  if (!claimed.ticket) assert.fail("dispatch ticket missing");
+  ledger.settle({ ticket: claimed.ticket, outcome: "completed", usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4, reasoningTokens: 1 } });
+  assert.deepEqual(ledger.claim(request, "2026-08-27T23:00:03.000Z"), { disposition: "replay_completed", usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4, reasoningTokens: 1 } });
+  const evidence = ledger.evidence(permit.permitDigest);
+  assert.equal(evidence.consumedProviderCalls, 1);
+  assert.equal(JSON.stringify(evidence).includes("private broker prompt"), false);
+  assert.match(evidence.calls[0].requestIdDigest, /^sha256:[a-f0-9]{64}$/);
+});
+
+test("CR7B broker rejects replay conflicts, cross-scope requests, oversize work, expiry, and budget overflow", () => {
+  const endpoint = `sha256:${"5".repeat(64)}`;
+  const permit = credentialPermit("run:adversarial");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(endpoint);
+  ledger.provision({ permit, limits: { maximumInputBytes: 20, maximumOutputTokens: 512 }, now: "2026-08-27T23:00:00.000Z" });
+  const first = brokerRequest(permit, { requestId: "request:adversarial:1" });
+  ledger.claim(first, "2026-08-27T23:00:01.000Z");
+  assert.throws(() => ledger.claim({ ...first, input: "changed prompt" }, "2026-08-27T23:00:02.000Z"), policyCode("request_replay_conflict"));
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:wrong:run", runId: "run:other" }), "2026-08-27T23:00:02.000Z"), policyCode("request_scope_mismatch"));
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:wrong:model", model: "other-model" }), "2026-08-27T23:00:02.000Z"), policyCode("request_scope_mismatch"));
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:large:input", input: "x".repeat(21) }), "2026-08-27T23:00:02.000Z"), policyCode("input_too_large"));
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:large:output", maximumOutputTokens: 513 }), "2026-08-27T23:00:02.000Z"), policyCode("output_limit_exceeded"));
+  ledger.claim(brokerRequest(permit, { requestId: "request:adversarial:2" }), "2026-08-27T23:00:02.000Z");
+  ledger.claim(brokerRequest(permit, { requestId: "request:adversarial:3" }), "2026-08-27T23:00:03.000Z");
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:adversarial:4" }), "2026-08-27T23:00:03.000Z"), policyCode("call_budget_exhausted"));
+  assert.throws(() => ledger.claim(first, "2026-08-27T23:04:00.000Z"), policyCode("grant_expired"));
+});
+
+test("CR7B broker makes uncertain calls terminal and closes all unsettled work without redispatch", () => {
+  const permit = credentialPermit("run:close");
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  const firstRequest = brokerRequest(permit, { requestId: "request:close:1" });
+  const first = ledger.claim(firstRequest, "2026-08-27T23:00:01.000Z");
+  if (!first.ticket) assert.fail("dispatch ticket missing");
+  ledger.settle({ ticket: first.ticket, outcome: "ambiguous", safeResultCode: "broker_transport_lost" });
+  assert.deepEqual(ledger.claim(firstRequest, "2026-08-27T23:00:02.000Z"), { disposition: "ambiguous", safeResultCode: "broker_transport_lost" });
+  ledger.claim(brokerRequest(permit, { requestId: "request:close:2" }), "2026-08-27T23:00:02.000Z");
+  assert.deepEqual(ledger.close(permit.permitDigest, "broker_cancelled"), { replayed: false, ambiguousCalls: 2 });
+  assert.deepEqual(ledger.close(permit.permitDigest, "broker_cancelled"), { replayed: true, ambiguousCalls: 2 });
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:close:3" }), "2026-08-27T23:00:03.000Z"), policyCode("grant_closed"));
+  const evidence = ledger.evidence(permit.permitDigest);
+  assert.deepEqual(evidence.calls.map((call) => call.state), ["ambiguous", "ambiguous"]);
+});
+
+test("CR7B broker refuses endpoint substitution, malformed resume, forged settlement, and unsafe usage", () => {
+  const permit = credentialPermit("run:forgery");
+  const wrongEndpoint = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"6".repeat(64)}`);
+  assert.throws(() => wrongEndpoint.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" }), policyCode("grant_invalid"));
+  const ledger = new InMemoryCodexCredentialBrokerLedgerV1(`sha256:${"5".repeat(64)}`);
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:resume:bad", operation: "resume" }), "2026-08-27T23:00:01.000Z"), policyCode("request_invalid"));
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:operation:bad", operation: "delete" as "start" }), "2026-08-27T23:00:01.000Z"), policyCode("request_invalid"));
+  const claimed = ledger.claim(brokerRequest(permit, { requestId: "request:forgery:1" }), "2026-08-27T23:00:01.000Z");
+  const ticket = claimed.ticket;
+  assert.ok(ticket);
+  assert.throws(() => ledger.settle({ ticket: { ...ticket, callNumber: 2 }, outcome: "completed" }), policyCode("ticket_mismatch"));
+  assert.throws(() => ledger.settle({ ticket, outcome: "completed", usage: { inputTokens: -1, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 } }), policyCode("settlement_invalid"));
+  ledger.settle({ ticket, outcome: "failed", safeResultCode: "provider_rejected" });
+  assert.throws(() => ledger.settle({ ticket, outcome: "failed", safeResultCode: "provider_rejected" }), policyCode("settlement_invalid"));
+});
+
+test("CR7B durable broker survives restart without redispatch and stores no prompt content", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cr7b-broker-"));
+  const path = join(root, "ledger.sqlite");
+  const endpoint = `sha256:${"5".repeat(64)}`;
+  const permit = credentialPermit("run:durable");
+  const request = brokerRequest(permit, { requestId: "request:durable:1", input: "private durable prompt canary" });
+  try {
+    const first = new SqliteCodexCredentialBrokerLedgerV1(path, endpoint);
+    first.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+    assert.equal(first.claim(request, "2026-08-27T23:00:01.000Z").disposition, "dispatch_once");
+    first.closeDatabase();
+
+    const restarted = new SqliteCodexCredentialBrokerLedgerV1(path, endpoint);
+    assert.equal(restarted.recoverAfterRestart(), 1);
+    assert.deepEqual(restarted.claim(request, "2026-08-27T23:00:02.000Z"), { disposition: "ambiguous", safeResultCode: "broker_restarted" });
+    assert.equal(restarted.recoverAfterRestart(), 0);
+    assert.equal(restarted.evidence(permit.permitDigest).consumedProviderCalls, 1);
+    restarted.closeDatabase();
+
+    assert.equal((await stat(path)).mode & 0o077, 0);
+    assert.equal((await readFile(path)).includes(Buffer.from("private durable prompt canary")), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CR7B durable broker rejects ephemeral production storage and conflicting close replay", () => {
+  const endpoint = `sha256:${"5".repeat(64)}`;
+  assert.throws(() => new SqliteCodexCredentialBrokerLedgerV1(":memory:", endpoint), policyCode("grant_invalid"));
+  const ledger = new SqliteCodexCredentialBrokerLedgerV1(":memory:", endpoint, { testOnlyAllowEphemeral: true });
+  const permit = credentialPermit("run:durable-close");
+  ledger.provision({ permit, limits: { maximumInputBytes: 1024, maximumOutputTokens: 1024 }, now: "2026-08-27T23:00:00.000Z" });
+  assert.throws(() => ledger.claim(brokerRequest(permit, { requestId: "request:durable:operation", operation: "delete" as "start" }), "2026-08-27T23:00:01.000Z"), policyCode("request_invalid"));
+  assert.deepEqual(ledger.close(permit.permitDigest, "broker_cancelled"), { replayed: false, ambiguousCalls: 0 });
+  assert.throws(() => ledger.close(permit.permitDigest, "different_reason"), policyCode("settlement_invalid"));
+  ledger.closeDatabase();
 });
 
 test("Codex command planning maps exact authority to isolated read and write invocations", () => {

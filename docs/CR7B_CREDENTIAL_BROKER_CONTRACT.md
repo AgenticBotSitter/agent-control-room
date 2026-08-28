@@ -1,0 +1,64 @@
+# CR-7B credential-isolated Codex broker contract
+
+**Status:** Effect-free policy and durable call-ledger core implemented. Native transport and credential isolation are not yet qualified.
+
+## Purpose
+
+The first native Codex qualification proved that a model-controlled command could read the disposable saved-auth file even under the CLI read-only sandbox. The sandbox controls workspace effects; it is not a secret-store boundary. This contract moves all long-lived provider authentication and direct provider networking into a separate broker process that the worker cannot inspect or invoke except through a run-scoped interface.
+
+## Supported architecture
+
+```text
+Control Room authority
+        |
+        | broker-side provisioning: exact run, model, expiry, limits
+        v
+credential-isolated broker ---- provider HTTPS
+        ^                         long-lived auth stays here
+        |
+        | run-scoped request; no bearer credential
+        |
+Codex worker process
+  - no readable credential store
+  - no inherited credential
+  - no direct provider route
+  - model-controlled commands remain sandboxed
+```
+
+The broker must run under an OS identity or isolation boundary that the worker cannot read, signal, debug, or impersonate. Its private directory contains only the durable replay ledger; the provider credential remains in a broker-only OS credential store or injected broker memory and is never written to the ledger.
+
+## Normative rules
+
+1. A Control Room permit is broker-side evidence, not a bearer credential. The worker cannot self-provision, widen, or renew it.
+2. Every permit binds one run, broker endpoint identity, exact model, expiry no later than five minutes, and one to three provider calls.
+3. Broker policy adds input-byte and output-token ceilings. A request binds one unique request ID, exact permit, run, model, operation, input digest, output ceiling, and explicit native thread identifier for resume.
+4. The broker atomically records a call as claimed before provider dispatch. An exact retry while claimed does not dispatch. A changed retry, cross-run/model retry, endpoint substitution, expired grant, or exhausted budget fails closed.
+5. A crash after claim makes the call ambiguous. Restart recovery never assumes the provider was not reached and never redispatches that request automatically.
+6. Cancellation closes the grant. Every unsettled call becomes ambiguous; a later request cannot reopen the grant.
+7. Only broker-internal provider code may settle a call. Completed calls require bounded numeric usage. Failed and ambiguous calls require a safe reason code. Settlement never accepts or stores response text, reasoning, tool arguments, commands, paths, credentials, or raw session content.
+8. The durable ledger requires an absolute path in an owner-only directory and a non-group-readable regular database file. In-memory storage is test-only. Transactions use immediate serialization and full synchronous durability.
+9. Durable evidence exposes only run/model scope, call counts, operation/state, safe reason codes, bounded usage, and one-way request-ID digests. It never stores prompt bytes; tests scan the database for a prompt canary.
+10. The worker must have no direct provider route. A broker contract without an independently verified OS/network boundary is design evidence only and cannot enable native Codex.
+
+## Product seam choice
+
+OpenAI documents `codex app-server` as the protocol used for deep client integrations and documents `codex exec` or the Codex SDK for automation. The app-server WebSocket transport is explicitly experimental and not supported for production. Therefore:
+
+- Control Room may use documented Codex event/protocol shapes behind an adapter.
+- The experimental app-server WebSocket is not accepted as the production credential boundary.
+- Neither `codex exec`, app-server, nor the SDK alone proves that a model-controlled command cannot read saved authentication. The separate OS-enforced broker boundary remains mandatory.
+
+Official references:
+
+- <https://learn.chatgpt.com/docs/app-server>
+- <https://learn.chatgpt.com/docs/non-interactive-mode>
+
+## Implemented evidence
+
+- `credential-broker.ts`: transport policy, run-scoped provisioning, atomic call spending, replay/conflict handling, close behavior, bounded settlement, and sanitized evidence.
+- `credential-broker-sqlite.ts`: broker-private durable ledger, immediate transactions, full synchronous durability, private-path checks, restart ambiguity recovery, and content-free records.
+- `codex-harness-contract.test.ts`: adversarial endpoint, run, model, replay, expiry, input, output, budget, resume, ticket, usage, cancellation, restart, filesystem-permission, and prompt-canary cases.
+
+## Remaining native gate
+
+Before another provider call, an independently reviewed launcher must demonstrate a real broker and worker under separate OS identities or an equivalent isolation mechanism. Qualification must prove the worker cannot read the broker credential store, cannot connect directly to the provider, cannot forge broker provisioning or settlement, and cannot bypass the call ledger. That later attempt requires new exact owner approval and retains only sanitized start/event/usage/cancel/explicit-ID-resume evidence.
