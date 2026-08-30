@@ -10,6 +10,7 @@ import { adaptPglite } from "../src/persistence/database.ts";
 import {
   READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1,
   ReadyFrontierContractErrorV1,
+  ReadyFrontierFixedRepositoryClockV1,
   ReadyFrontierInMemoryFakeDeliveryV1,
   ReadyFrontierMaterializationServiceV1,
   ReadyFrontierNoRelayCoordinatorV1,
@@ -21,6 +22,7 @@ import {
   buildReadyFrontierActivationPacketV1,
   buildReadyFrontierNoRelayProjectionFixtureV1,
   buildReadyFrontierNoRelayRequestFixtureV1,
+  buildReadyFrontierNoRelayRunV1,
   buildReadyFrontierReadyPolicyFixtureV1,
   buildReadyFrontierRepositoryFixtureEvaluationV1,
   buildReadyFrontierStandingPolicyFixtureV1,
@@ -32,14 +34,14 @@ import {
   readyFrontierRepositoryFixtureReadyPolicyKeyV1,
   readyFrontierRepositoryFixtureStandingPolicyKeyV1,
 } from "../src/ready-frontier/v1/index.ts";
-import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security/index.ts";
+import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/index.ts";
 import { observedProxy } from "./proxy-test-helper.ts";
 
 const code = (safeCode: ReadyFrontierContractErrorV1["safeCode"]) => (error: unknown) =>
   error instanceof ReadyFrontierContractErrorV1 && error.safeCode === safeCode;
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 
-function resources() {
+function resources(maximumRecords = 1_000) {
   const directory = mkdtempSync(join(tmpdir(), "cr11b-auto-040-")); chmodSync(directory, 0o700);
   const evaluationKey = readyFrontierRepositoryFixtureEvaluationKeyV1();
   const standingKey = readyFrontierRepositoryFixtureStandingPolicyKeyV1();
@@ -53,7 +55,7 @@ function resources() {
     "tenant.owner", "workspace.control-room", readyKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
   const runCheckpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
   const runs = new ReadyFrontierNoRelayStoreV1(join(directory, "runs.sqlite"), "tenant.owner",
-    "workspace.control-room", runKey, runCheckpoints);
+    "workspace.control-room", runKey, runCheckpoints, maximumRecords);
   return { directory, evaluationKey, standingKey, readyKey, runKey, evaluations, standingPolicies,
     readyPolicies, runCheckpoints, runs };
 }
@@ -84,7 +86,7 @@ function setup(resource: ReturnType<typeof resources>, canonical: CanonicalStore
     resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
     { now: () => "2026-08-30T18:04:00.000Z" });
   const coordinator = new ReadyFrontierNoRelayCoordinatorV1(materializer, promoter, resource.runs, fake,
-    { now: () => deliveryNow }, resource.runKey);
+    new ReadyFrontierFixedRepositoryClockV1(deliveryNow), resource.runKey);
   return { evaluation, standing, ready, materializer, promoter, coordinator, fake,
     request: buildReadyFrontierNoRelayRequestFixtureV1(evaluation, standing, ready) };
 }
@@ -153,6 +155,22 @@ test("CR11B-AUTO-040 expiry after promotion records no fake delivery and remains
   } finally { await db.close(); close(resource); }
 });
 
+test("CR11B-AUTO-040 reserves terminal ledger capacity before any second canonical mutation", async () => {
+  const resource = resources(3), db = await database();
+  try {
+    const value = setup(resource, new CanonicalStore(adaptPglite(db)));
+    const first = await value.coordinator.run(value.request);
+    assert.equal(first.run.state, "acknowledged_repository_simulation");
+    const second = buildReadyFrontierNoRelayRequestFixtureV1(value.evaluation, value.standing, value.ready, 1);
+    await assert.rejects(() => value.coordinator.run(second), code("capacity_exceeded"));
+    assert.equal(resource.runs.listCurrent().length, 1); assert.equal(value.fake.deliveryCount(), 1);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs)::text jobs,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs`);
+    assert.deepEqual(counts.rows[0], { jobs: "1", handoffs: "1" }); finish(value);
+  } finally { await db.close(); close(resource); }
+});
+
 test("CR11B-AUTO-040 acknowledgements outside the started delivery window become terminal ambiguity", async () => {
   for (const acknowledgedAt of ["2026-08-30T18:04:04.999Z", "2026-08-30T18:08:00.001Z"]) {
     const resource = resources(), db = await database();
@@ -183,18 +201,16 @@ test("CR11B-AUTO-040 invalid preflight delivery time fails before canonical muta
 test("CR11B-AUTO-040 restart turns an unsettled marker into terminal ambiguity without adapter contact", async () => {
   const resource = resources(), db = await database();
   try {
-    const canonical = new CanonicalStore(adaptPglite(db)), value = setup(resource, canonical);
-    const requestDigest = sha256Digest(value.request);
-    resource.runs.begin({ runId: value.request.runId, tenantId: value.request.tenantId,
-      workspaceId: value.request.workspaceId, projectId: "project.blooms.content-ops", requestDigest,
-      materializationReceiptDigest: sha256Digest({ fixture: "materialization" }),
-      promotionReceiptDigest: sha256Digest({ fixture: "promotion" }), jobId: "job.frontier.fixture",
-      routeId: "route.marvin.macos", handoffId: "handoff.frontier.fixture",
-      handoffPacketDigest: sha256Digest({ fixture: "handoff" }), deliveryId: "frontier.fake-delivery:fixture",
-      deliveryDeadline: value.request.deliveryDeadline, startedAt: value.request.observedAt }, "delivery_started");
-    const restarted = await value.coordinator.run(value.request);
-    assert.equal(restarted.run.state, "terminal_ambiguous"); assert.equal(value.fake.deliveryCount(), 0);
-    finish(value);
+    const interrupting = new ReadyFrontierInMemoryFakeDeliveryV1("interrupt_after_marker", "2026-08-30T18:04:06.000Z"),
+      value = setup(resource, new CanonicalStore(adaptPglite(db)), interrupting);
+    await assert.rejects(() => value.coordinator.run(value.request));
+    assert.equal(interrupting.deliveryCount(), 1); value.coordinator.close();
+    const restartFake = new ReadyFrontierInMemoryFakeDeliveryV1("acknowledge", "2026-08-30T18:04:06.000Z"),
+      restartedCoordinator = new ReadyFrontierNoRelayCoordinatorV1(value.materializer, value.promoter,
+        resource.runs, restartFake, new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:05.000Z"), resource.runKey);
+    const restarted = await restartedCoordinator.run(value.request);
+    assert.equal(restarted.run.state, "terminal_ambiguous"); assert.equal(restartFake.deliveryCount(), 0);
+    restartedCoordinator.close(); value.materializer.close(); value.promoter.close();
   } finally { await db.close(); close(resource); }
 });
 
@@ -224,21 +240,30 @@ test("CR11B-AUTO-040 durable ledger detects request drift, row tampering, and co
   }
 });
 
-test("CR11B-AUTO-040 exact durable restart succeeds and terminal replay rejects changed completion facts", async () => {
+test("CR11B-AUTO-040 exact durable restart succeeds and direct store mutation is capability denied", async () => {
   const resource = resources(), db = await database(), path = join(resource.directory, "runs.sqlite");
   try {
     const value = setup(resource, new CanonicalStore(adaptPglite(db))), result = await value.coordinator.run(value.request);
-    assert.throws(() => resource.runs.complete(result.run.runId, result.run.requestDigest, {
+    assert.throws(() => resource.runs.complete(undefined, result.run.runId, result.run.requestDigest, {
       state: "acknowledged_repository_simulation", updatedAt: "2026-08-30T18:04:07.000Z",
       acknowledgementDigest: result.run.acknowledgementDigest ?? undefined,
-    }), code("replay_drift"));
-    assert.throws(() => resource.runs.begin({ runId: result.run.runId, tenantId: result.run.tenantId,
+    }), code("policy_denied"));
+    assert.throws(() => resource.runs.begin(undefined, { runId: result.run.runId, tenantId: result.run.tenantId,
       workspaceId: result.run.workspaceId, projectId: result.run.projectId, requestDigest: result.run.requestDigest,
       materializationReceiptDigest: result.run.materializationReceiptDigest,
       promotionReceiptDigest: result.run.promotionReceiptDigest, jobId: result.run.jobId, routeId: result.run.routeId,
       handoffId: result.run.handoffId, handoffPacketDigest: result.run.handoffPacketDigest,
       deliveryId: "frontier.fake-delivery:changed", deliveryDeadline: result.run.deliveryDeadline,
-      startedAt: result.run.startedAt }, "delivery_started"), code("replay_drift"));
+      startedAt: result.run.startedAt }, "delivery_started"), code("policy_denied"));
+    const { schema: _schema, runDigest: _digest, runAuthTag: _tag, ...unsigned } = result.run;
+    void _schema; void _digest; void _tag;
+    assert.throws(() => buildReadyFrontierNoRelayRunV1({ ...unsigned, state: "expired_before_delivery",
+      safeReason: "delivery_window_expired", updatedAt: result.run.startedAt, acknowledgedAt: null,
+      acknowledgementDigest: null }, resource.runKey), code("replay_drift"));
+    assert.throws(() => buildReadyFrontierNoRelayRunV1({ ...unsigned, state: "delivery_started",
+      safeReason: "delivery_outcome_ambiguous", startedAt: result.run.deliveryDeadline,
+      updatedAt: result.run.deliveryDeadline, acknowledgedAt: null, acknowledgementDigest: null }, resource.runKey),
+    code("replay_drift"));
     finish(value); resource.runs.closeDatabase();
     const reopened = new ReadyFrontierNoRelayStoreV1(path, "tenant.owner", "workspace.control-room",
       resource.runKey, resource.runCheckpoints);
@@ -255,11 +280,25 @@ test("CR11B-AUTO-040 activation packet is authenticated, complete, blocked, and 
     try {
       const packet = buildReadyFrontierActivationPacketV1({ packetId: "frontier.activation-packet.0001",
         run: result.run, createdAt: "2026-08-30T18:05:00.000Z" }, resource.runKey, packetKey);
+      assert.equal(Object.isFrozen(result.run), true);
+      assert.throws(() => Object.defineProperty(result.run, "updatedAt", { value: "2026-08-30T18:03:00.000Z" }));
       assert.deepEqual(packet.requiredProductionGateCodes, [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1]);
       assert.equal(packet.canActivateItself, false); assert.equal(packet.productionOwnerApprovalPresent, false);
       assert.deepEqual(parseReadyFrontierActivationPacketV1(packet, packetKey), packet);
       const tampered = clone(packet); tampered.requiredProductionGateCodes.pop();
       assert.throws(() => parseReadyFrontierActivationPacketV1(tampered, packetKey), code("digest_mismatch"));
+      assert.throws(() => buildReadyFrontierActivationPacketV1({ packetId: "frontier.activation-packet.0002",
+        run: clone(result.run), createdAt: "2026-08-30T18:05:00.000Z" }, resource.runKey, packetKey),
+      code("policy_denied"));
+      assert.throws(() => buildReadyFrontierActivationPacketV1({ packetId: "frontier.activation-packet.0003",
+        run: result.run, createdAt: "2026-08-30T18:03:00.000Z" }, resource.runKey, packetKey),
+      code("policy_denied"));
+      let accesses = 0; const hostile = { packetId: "frontier.activation-packet.0004", run: result.run } as
+        { packetId: string; run: typeof result.run; createdAt: string };
+      Object.defineProperty(hostile, "createdAt", { enumerable: true,
+        get: () => { accesses += 1; return "2026-08-30T18:05:00.000Z"; } });
+      assert.throws(() => buildReadyFrontierActivationPacketV1(hostile, resource.runKey, packetKey), code("invalid_input"));
+      assert.equal(accesses, 0);
     } finally { packetKey.fill(0); }
     finish(value);
   } finally { await db.close(); close(resource); }
@@ -285,13 +324,34 @@ test("CR11B-AUTO-040 coordinator accepts only the registered exact fake and an e
     class SubclassedFake extends ReadyFrontierInMemoryFakeDeliveryV1 {}
     const subclassed = new SubclassedFake("acknowledge", "2026-08-30T18:04:06.000Z");
     assert.throws(() => new ReadyFrontierNoRelayCoordinatorV1(value.materializer, value.promoter,
-      resource.runs, subclassed, { now: () => "2026-08-30T18:04:05.000Z" }, resource.runKey),
+      resource.runs, subclassed, new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:05.000Z"), resource.runKey),
     code("policy_denied"));
     const proxy = observedProxy(resource.runKey, "throwing");
     assert.throws(() => new ReadyFrontierNoRelayCoordinatorV1(value.materializer, value.promoter,
-      resource.runs, value.fake, { now: () => "2026-08-30T18:04:05.000Z" }, proxy.value),
+      resource.runs, value.fake, new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:05.000Z"), proxy.value),
     code("policy_denied"));
-    assert.equal(proxy.trapCount(), 0); assert.equal(value.fake.deliveryCount(), 0); finish(value);
+    let callbacks = 0; const duckMaterializer = { materialize: async () => { callbacks += 1; return {}; } };
+    assert.throws(() => new ReadyFrontierNoRelayCoordinatorV1(duckMaterializer as never, value.promoter,
+      resource.runs, value.fake, new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:05.000Z"), resource.runKey),
+    code("policy_denied"));
+    const fakeProxy = observedProxy(value.fake, "throwing");
+    assert.throws(() => new ReadyFrontierNoRelayCoordinatorV1(value.materializer, value.promoter,
+      resource.runs, fakeProxy.value as never,
+      new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:05.000Z"), resource.runKey), code("policy_denied"));
+    const materializerProxy = observedProxy(value.materializer, "throwing");
+    assert.throws(() => new ReadyFrontierNoRelayCoordinatorV1(materializerProxy.value as never, value.promoter,
+      resource.runs, value.fake,
+      new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:05.000Z"), resource.runKey), code("policy_denied"));
+    assert.deepEqual(Object.getOwnPropertyNames(value.coordinator), []);
+    assert.equal(Reflect.set(value.coordinator as object, "fakeDelivery", duckMaterializer), false);
+    assert.throws(() => Object.defineProperty(value.coordinator, "fakeDelivery", { value: duckMaterializer }));
+    assert.throws(() => Object.defineProperty(value.fake, "deliver", { value: () => { callbacks += 1; } }));
+    assert.throws(() => Object.defineProperty(ReadyFrontierInMemoryFakeDeliveryV1.prototype, "deliver",
+      { value: () => { callbacks += 1; } }));
+    assert.throws(() => Object.defineProperty(resource.runs, "complete", { value: () => { callbacks += 1; } }));
+    assert.equal(callbacks, 0); assert.equal(proxy.trapCount(), 0); assert.equal(fakeProxy.trapCount(), 0);
+    assert.equal(materializerProxy.trapCount(), 0);
+    assert.equal(value.fake.deliveryCount(), 0); finish(value);
   } finally { await db.close(); close(resource); }
 });
 

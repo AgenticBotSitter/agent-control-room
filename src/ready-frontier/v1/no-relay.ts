@@ -12,7 +12,6 @@ import {
   readyFrontierNoRelayRunSchemaV1,
 } from "./no-relay-schemas";
 import {
-  READY_FRONTIER_ACTIVATION_PACKET_V1,
   READY_FRONTIER_FAKE_DELIVERY_ACK_V1,
   READY_FRONTIER_NO_RELAY_PROJECTION_V1,
   READY_FRONTIER_NO_RELAY_RUN_V1,
@@ -86,9 +85,13 @@ function runUnsigned(value: ReadyFrontierNoRelayRunV1): Omit<ReadyFrontierNoRela
 }
 function validateRunState(run: ReadyFrontierNoRelayRunV1): void {
   if (Date.parse(run.updatedAt) < Date.parse(run.startedAt)) fail("replay_drift");
+  const startedBeforeDeadline = Date.parse(run.startedAt) < Date.parse(run.deliveryDeadline);
+  if ((run.state === "expired_before_delivery" && startedBeforeDeadline)
+    || (run.state !== "expired_before_delivery" && !startedBeforeDeadline)) fail("replay_drift");
   if (run.state === "acknowledged_repository_simulation") {
     if (run.safeReason !== "fake_handoff_acknowledged" || !run.acknowledgedAt || !run.acknowledgementDigest
-      || run.updatedAt !== run.acknowledgedAt || Date.parse(run.acknowledgedAt) > Date.parse(run.deliveryDeadline)) fail("replay_drift");
+      || run.updatedAt !== run.acknowledgedAt || Date.parse(run.acknowledgedAt) < Date.parse(run.startedAt)
+      || Date.parse(run.acknowledgedAt) > Date.parse(run.deliveryDeadline)) fail("replay_drift");
   } else if (run.acknowledgedAt !== null || run.acknowledgementDigest !== null
     || (run.state === "terminal_ambiguous" && run.safeReason !== "delivery_outcome_ambiguous")
     || (run.state === "expired_before_delivery" && run.safeReason !== "delivery_window_expired")
@@ -208,30 +211,6 @@ export function projectReadyFrontierNoRelayAttentionV1(value: unknown): ActionIn
       deliveryState: run.state === "terminal_ambiguous" ? "failed" : "not_requested",
     };
   });
-}
-
-export function buildReadyFrontierActivationPacketV1(input: { packetId: string; run: ReadyFrontierNoRelayRunV1;
-  createdAt: string }, runIntegrityKeyValue: unknown, packetIntegrityKeyValue: unknown): ReadyFrontierActivationPacketV1 {
-  const run = parseReadyFrontierNoRelayRunV1(input.run, runIntegrityKeyValue);
-  if (run.state !== "acknowledged_repository_simulation" || Date.parse(input.createdAt) < Date.parse(run.updatedAt)) fail("policy_denied");
-  const packetKey = key(packetIntegrityKeyValue);
-  try {
-    const unsigned = parseExactReadyFrontierV1(readyFrontierActivationPacketSchemaV1.omit({ packetDigest: true,
-      packetAuthTag: true }), { schema: READY_FRONTIER_ACTIVATION_PACKET_V1, packetId: input.packetId,
-      tenantId: run.tenantId, workspaceId: run.workspaceId, simulationRunId: run.runId,
-      simulationRunDigest: run.runDigest, acceptedAuto030Commit: "adf0804a52a13d544192afc90506c3e989254ffd",
-      acceptedAuto030ReviewSha256: "sha256:18df9e9611c5f9053962b776b8261304512b98244ba7b627fd99f4821a79fa2",
-      requiredProductionGateCodes: [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1],
-      state: "blocked_pending_production_proof", createdAt: input.createdAt, repositorySimulationOnly: true,
-      productionOwnerApprovalPresent: false, productionPolicyEnrolled: false, productionConsumerQualified: false,
-      productionDatabaseQualified: false, canActivateItself: false, permitsProtectedMaterial: false, permitsNetwork: false,
-      permitsGitHubMutation: false, permitsAgentOrProviderContact: false, permitsDispatchOrExecution: false,
-      permitsExternalEffects: false });
-    const withDigest = { ...unsigned, packetDigest: sha256Digest(unsigned) };
-    return parseExactReadyFrontierV1(readyFrontierActivationPacketSchemaV1, { ...withDigest,
-      packetAuthTag: hmacSha256Tag(packetKey, { packetId: withDigest.packetId,
-        simulationRunDigest: withDigest.simulationRunDigest, packetDigest: withDigest.packetDigest }) }) as ReadyFrontierActivationPacketV1;
-  } finally { packetKey.fill(0); }
 }
 
 export function parseReadyFrontierActivationPacketV1(value: unknown,

@@ -1266,3 +1266,31 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** The repository now proves one complete no-owner-relay simulation, but the fixed fake is deliberately not a production consumer. The local ledger and injected clocks/keys/checkpoints do not prove hosted multi-process operation or protected custody. Terminal ambiguity requires later reconciliation rather than automatic retry. The production activation packet is useful planning evidence but grants no capability.
 
 **Reevaluate:** A fresh independent reviewer must attack the exact AUTO-040 candidate before the repository snapshot can be accepted. Any real consumer channel, policy enrollment, hosted PostgreSQL, protected clock/key/checkpoint or credential custody, agent/provider/GitHub contact, scheduling, claim, lease, dispatch, execution, recurrence, hosting, deployment, or external effect requires a later contract, production proof, fresh owner approval, and any required independent review.
+
+## ADR-106 — AUTO-040 composition uses runtime-private capabilities, not caller assertions
+
+**Decision:** The rejected AUTO-040 candidate is not accepted. Its first remediation captures exact registered materialization,
+promotion, store, fake, and fixed repository-clock implementations in ECMAScript-private slots or closures, freezes their
+instances and prototype surfaces, and invokes captured base methods. Ledger mutation requires a module-private capability
+held only by that coordinator. A packet can be built only from the exact frozen acknowledged run object returned by the
+composed operation. Start state, start/deadline chronology, and complete terminal-row capacity are durable facts, and the
+complete packet input is snapshotted once without executing caller behavior.
+
+**Why:** Separate reviewers proved that TypeScript `private readonly` fields were writable runtime properties, a Proxy
+replacement could execute after the marker and produce acknowledged success, activation time could change between reads,
+the public store could authenticate fabricated success, replay ignored changed start state, deadline state could be false,
+and a completion could exceed the configured row ceiling. These were structural failures even though every original test
+passed. Runtime-private bindings and capabilities remove the alternate mutation path; frozen eligible-run identity prevents
+a valid HMAC-shaped clone from becoming composed-path evidence; preflight capacity prevents partial canonical progress.
+
+**Alternatives rejected:** Treat TypeScript privacy or source-string scans as runtime isolation; expose the store mutation
+token; accept any HMAC-valid run as coordinator evidence; re-read hostile input after validation; validate chronology only
+in the coordinator; reserve only marker capacity; rewrite either negative report; interpret the blocked packet as authority.
+
+**Trade-off:** The repository fixed clock is deterministic and cannot represent a production clock. Activation eligibility
+is intentionally process-local and must be re-established by an exact coordinator replay after restart. The local SQLite
+ledger, in-memory checkpoint, and same-process capacity preflight still do not prove hosted multi-process convergence.
+
+**Reevaluate:** Different independent reviewers must reproduce all `AUTO040-SAR` and `AUTO040-DR` findings against the
+exact remediation commit. Any remaining finding keeps AUTO-040 open. Production consumer, reconciliation, database,
+clock/key/checkpoint/policy custody, credential brokerage, owner approval, deployment, and effects remain later gates.
