@@ -219,6 +219,13 @@ checkpoint, collaborator, completion, replay, ambiguity, rollback, activation, a
 accepted report has SHA-256 `bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`. AUTO-040 is
 complete for that exact effect-free repository snapshot; production activation remains separately blocked.
 
+AUTO-040 GitHub transfer: private PR #167 targets the accepted AUTO-030 branch
+`codex/cr11b-auto-030-ready-scheduler-handoff` from `codex/cr11b-auto-040-no-relay-simulation`. It preserves exact accepted
+implementation commit `fb549ebbcf5a2cbd9ca3d3cbef6842578e280074`, acceptance-record commit
+`8aee5be1e5824d394e5eba36767bb18a714b9dce`, and accepted report SHA-256
+`bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`. GitHub reports the stack mergeable; required CI
+has not reported yet. PR #167 is not owner-approved or merged and grants no production authority.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -238,7 +245,7 @@ Block: CR11B-AUTO-040-GITHUB-TRANSFER — publish the exact accepted repository 
 Set model: gpt-5.6-terra
 Set reasoning effort: high
 Why: AUTO-040 is independently accepted locally. The immediate work is deterministic branch transfer, pull-request lineage, and CI reconciliation rather than new architecture.
-Expected output: one private pull request or update that preserves exact implementation commit `fb549ebbcf5a2cbd9ca3d3cbef6842578e280074`, immutable accepted report SHA-256 `bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`, clean stacked ancestry, and passing read-only CI. The pull request must state that production activation remains blocked.
+Expected output: private PR #167 preserves exact implementation commit `fb549ebbcf5a2cbd9ca3d3cbef6842578e280074`, immutable accepted report SHA-256 `bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`, clean stacked ancestry, and passing read-only CI. The pull request states that production activation remains blocked.
 Owner action: approve merge only after the pull request is ready. No production effect is part of this transfer.
 Stop before: self-merging, rewriting reviewer evidence, real policy enrollment, live scheduling or delivery, agent/provider contact, claim, lease, dispatch, execution, recurrence activation, credentials, native reads, DNS, Cloudflare, hosting, deployment, or any production effect.
 ```
