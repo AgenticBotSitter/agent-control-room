@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReadyFrontierPortfolioView, ReadyFrontierProjectView } from "../app/components/ready-frontier-view.tsx";
-import { buildReadyFrontierAutomationProjectionFixtureV1, buildReadyFrontierCycleProjectionFixtureV1 } from "../src/ready-frontier/v1/index.ts";
+import { buildReadyFrontierAutomationProjectionFixtureV1, buildReadyFrontierCycleProjectionFixtureV1,
+  buildReadyFrontierPromotionProjectionFixtureV1 } from "../src/ready-frontier/v1/index.ts";
 
 test("CR11B-AUTO-010 portfolio view explains cross-project proposals without controls", () => {
   const projection = buildReadyFrontierCycleProjectionFixtureV1();
@@ -10,7 +11,7 @@ test("CR11B-AUTO-010 portfolio view explains cross-project proposals without con
   assert.match(html, /What|Authenticated proposal frontier|Highest-ranked proposal/);
   assert.match(html, /Document the Unreal setup/); assert.match(html, /Research a verified AI release/);
   assert.match(html, /Draft a source-backed article/); assert.match(html, /Proposal only/);
-  assert.match(html, /cannot materialize, approve, ready, schedule, claim, lease, dispatch, or execute work/);
+  assert.match(html, /internal handoff cannot claim, lease, message, dispatch, or execute work/);
   assert.doesNotMatch(html, /<button|<form|<input|<select|<textarea/);
 });
 
@@ -28,11 +29,25 @@ test("CR11B-AUTO-020 views show honest repository policy and pending materializa
   const projection = buildReadyFrontierCycleProjectionFixtureV1(), automation = buildReadyFrontierAutomationProjectionFixtureV1();
   const portfolio = renderToStaticMarkup(<ReadyFrontierPortfolioView data={{ state: "available", projection }} automation={automation} />);
   assert.match(portfolio, /Repository simulation active/); assert.match(portfolio, /Production policy/);
-  assert.match(portfolio, /Not enrolled/); assert.match(portfolio, /Proposed work only/);
+  assert.match(portfolio, /Not enrolled/); assert.match(portfolio, /Ready handoff not requested/);
   const project = renderToStaticMarkup(<ReadyFrontierProjectView data={{ state: "available", projection }} automation={automation}
     projectId="project.blooms.content-ops" />);
   assert.match(project, /Eligible in repository simulation/); assert.match(project, /materialization not requested/);
-  assert.match(project, /Production policy is not enrolled/);
+  assert.match(project, /no production policy is enrolled/i);
+  assert.doesNotMatch(`${portfolio}${project}`, /<button|<form|<input|<select|<textarea/);
+});
+
+test("CR11B-AUTO-030 views show ready-policy truth and no internal-handoff controls", () => {
+  const projection = buildReadyFrontierCycleProjectionFixtureV1();
+  const automation = buildReadyFrontierAutomationProjectionFixtureV1();
+  const promotion = buildReadyFrontierPromotionProjectionFixtureV1();
+  const portfolio = renderToStaticMarkup(<ReadyFrontierPortfolioView data={{ state: "available", projection }}
+    automation={automation} promotion={promotion} />);
+  assert.match(portfolio, /Ready policy/); assert.match(portfolio, /Ready handoff not requested/);
+  assert.match(portfolio, /internal handoff cannot claim, lease, message, dispatch, or execute work/);
+  const project = renderToStaticMarkup(<ReadyFrontierProjectView data={{ state: "available", projection }}
+    automation={automation} promotion={promotion} projectId="project.blooms.content-ops" />);
+  assert.match(project, /repository ready-policy fixture is active/); assert.match(project, /no ready handoff was requested/);
   assert.doesNotMatch(`${portfolio}${project}`, /<button|<form|<input|<select|<textarea/);
 });
 

@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import type { ReadyFrontierCycleProjectViewV1, ReadyFrontierCycleProjectionV1 } from "@/src/ready-frontier/v1/integration-types";
 import type { ReadyFrontierAutomationProjectionV1 } from "@/src/ready-frontier/v1/automation-types";
+import type { ReadyFrontierPromotionProjectionV1 } from "@/src/ready-frontier/v1/ready-policy-types";
 
 export type ReadyFrontierViewStateV1 =
   | { state: "available"; projection: ReadyFrontierCycleProjectionV1 }
@@ -22,15 +23,16 @@ function stateMessage(state: Exclude<ReadyFrontierViewStateV1, { state: "availab
 }
 
 export function ReadyFrontierPortfolioView(props: { data: ReadyFrontierViewStateV1; automation?: ReadyFrontierAutomationProjectionV1;
-  projectIds?: ReadonlySet<string> }): JSX.Element {
+  promotion?: ReadyFrontierPromotionProjectionV1; projectIds?: ReadonlySet<string> }): JSX.Element {
   if (props.data.state !== "available") return stateMessage(props.data);
   const projects = props.data.projection.projects.filter((project) => !props.projectIds || props.projectIds.has(project.projectId));
   if (!projects.length) return <p className="empty-state">No proposal-frontier projects are in this view.</p>;
   return <div className="frontier-shell" aria-label="Authenticated proposal frontier">
     {props.automation ? <div className="frontier-policy-strip" role="status">
       <span><small>Standing policy</small><strong>{props.automation.standingPolicyState === "repository_fixture_active" ? "Repository simulation active" : label(props.automation.standingPolicyState)}</strong></span>
+      <span><small>Ready policy</small><strong>{props.promotion?.readyPolicyState === "repository_fixture_active" ? "Repository simulation active" : props.promotion ? label(props.promotion.readyPolicyState) : "Unavailable"}</strong></span>
       <span><small>Production policy</small><strong>Not enrolled</strong></span>
-      <span><small>Automatic next step</small><strong>Proposed work only</strong></span>
+      <span><small>Current outcome</small><strong>{props.promotion?.readyPromotionState === "ready_handoff_pending" ? "Internal handoff pending" : "Ready handoff not requested"}</strong></span>
     </div> : null}
     <div className="frontier-summary">
       <div><small>Proposed</small><strong>{projects.reduce((sum, project) => sum + project.proposed.length, 0)}</strong></div>
@@ -53,7 +55,7 @@ export function ReadyFrontierPortfolioView(props: { data: ReadyFrontierViewState
         <a href={`/projects/${encodeURIComponent(project.projectId)}#ready-frontier`}>Inspect frontier <span aria-hidden="true">→</span></a>
       </article>)}
     </div>
-    <p className="frontier-boundary">Repository-only proposal and policy evidence. No real standing policy is enrolled; this view cannot materialize, approve, ready, schedule, claim, lease, dispatch, or execute work.</p>
+    <p className="frontier-boundary">Repository-only proposal, standing-policy, and ready-policy evidence. No production policy is enrolled; this view has no action controls, and an internal handoff cannot claim, lease, message, dispatch, or execute work.</p>
   </div>;
 }
 
@@ -68,13 +70,13 @@ function GateList(props: { title: string; items: ReadyFrontierCycleProjectViewV1
 }
 
 export function ReadyFrontierProjectView(props: { data: ReadyFrontierViewStateV1; projectId: string;
-  automation?: ReadyFrontierAutomationProjectionV1 }): JSX.Element {
+  automation?: ReadyFrontierAutomationProjectionV1; promotion?: ReadyFrontierPromotionProjectionV1 }): JSX.Element {
   if (props.data.state !== "available") return <section id="ready-frontier" className="detail-card section-block"><h2>Ready frontier</h2>{stateMessage(props.data)}</section>;
   const project = props.data.projection.projects.find((item) => item.projectId === props.projectId);
   const automation = props.automation?.projects.find((item) => item.projectId === props.projectId);
   if (!project) return <section id="ready-frontier" className="detail-card section-block"><h2>Ready frontier</h2><p className="empty-state">This project is not present in the authenticated proposal cycle.</p></section>;
   return <section id="ready-frontier" className="detail-card section-block frontier-workspace">
-    <div className="section-heading"><div><p className="eyebrow">Authenticated repository cycle</p><h2>Ready frontier</h2></div><span className="simulation-only">Proposal only · owner review required</span></div>
+    <div className="section-heading"><div><p className="eyebrow">Authenticated repository cycle</p><h2>Ready frontier</h2></div><span className="simulation-only">Policy-gated · no action controls</span></div>
     <p>What Control Room currently recommends proposing next, plus the exact gates holding other candidates back.</p>
     <div className="frontier-lanes">
       <section className="frontier-lane frontier-proposed">
@@ -97,6 +99,6 @@ export function ReadyFrontierProjectView(props: { data: ReadyFrontierViewStateV1
       <GateList title="Deferred" items={project.deferred} />
     </div>
     {project.suppressedCount > 0 ? <p className="frontier-suppressed">{project.suppressedCount} unchanged or duplicate candidate{project.suppressedCount === 1 ? " was" : "s were"} safely suppressed.</p> : null}
-    <p className="frontier-boundary">This is a read-only explanation of local repository policy and materialization truth. Production policy is not enrolled, and this surface contains no materialization, approval, scheduling, agent-message, or execution control.</p>
+    <p className="frontier-boundary">This is a read-only explanation of local repository policy and materialization truth. The repository ready-policy fixture is {props.promotion?.readyPolicyState === "repository_fixture_active" ? "active" : "unavailable"}, but no production policy is enrolled and {props.promotion?.readyPromotionState === "ready_handoff_pending" ? "an internal handoff is pending" : "no ready handoff was requested"}. This surface contains no materialization, approval, scheduling, claim, lease, agent-message, dispatch, or execution control.</p>
   </section>;
 }
