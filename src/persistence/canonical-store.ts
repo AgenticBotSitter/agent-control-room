@@ -26,6 +26,7 @@ import {
 } from "../domain/v1";
 import type { DatabaseClient, DatabaseSession } from "./database";
 import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDigest, sha256Digest } from "../security";
+import { isHostProxyV1 } from "../security/host-value";
 import { actionInboxItemSchemaV1, type ActionInboxItemV1 } from "../operator-surfaces/v1";
 import { acquireReadyFrontierCanonicalPromotionAuthorizationV1 } from "../ready-frontier/v1/promotion-service";
 
@@ -192,8 +193,27 @@ function extras(entity: DomainEntity): Array<[string, unknown]> {
   }
 }
 
+const canonicalStores = new WeakSet<object>();
+
 export class CanonicalStore {
-  constructor(private readonly db: DatabaseClient) {}
+  readonly #session: DatabaseSession;
+  readonly #transaction: DatabaseClient["transaction"];
+  readonly #transactionWithPreCommitCheck: DatabaseClient["transactionWithPreCommitCheck"];
+
+  constructor(db: DatabaseClient) {
+    if (!db || typeof db !== "object" || isHostProxyV1(db)
+      || typeof db.query !== "function" || typeof db.transaction !== "function"
+      || typeof db.transactionWithPreCommitCheck !== "function") throw new Error("Invalid canonical database client");
+    const query = db.query, transaction = db.transaction, transactionWithPreCommitCheck = db.transactionWithPreCommitCheck;
+    this.#session = Object.freeze({
+      query: <T = Record<string, unknown>>(statement: string, params?: unknown[]) => query.call(db, statement, params) as Promise<{ rows: T[] }>,
+    });
+    this.#transaction = (<T>(callback: (session: DatabaseSession) => Promise<T>) =>
+      transaction.call(db, callback) as Promise<T>) as DatabaseClient["transaction"];
+    this.#transactionWithPreCommitCheck = (<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void) =>
+      transactionWithPreCommitCheck.call(db, callback, preCommitCheck) as Promise<T>) as DatabaseClient["transactionWithPreCommitCheck"];
+    canonicalStores.add(this); Object.freeze(this);
+  }
 
   async create(entity: DomainEntity): Promise<void> {
     const validated = domainEntitySchema.parse(entity) as DomainEntity;
@@ -202,14 +222,14 @@ export class CanonicalStore {
       throw new Error(`${validated.kind} must be created in ${initialStates[validated.kind]} state`);
     }
     if (validated.kind === "attempt" || validated.kind === "lease") throw new Error("Attempts and leases must be created by claimReadyJob");
-    await this.db.transaction(async (tx) => {
+    await this.#transaction(async (tx) => {
       if (validated.kind === "workflow") {
-        const request = await this.requireWith(tx, validated.tenantId, "request", validated.requestId) as DomainEntity & { projectId?: string };
+        const request = await this.#requireWith(tx, validated.tenantId, "request", validated.requestId) as DomainEntity & { projectId?: string };
         if (request.projectId && request.projectId !== validated.projectId) throw new Error("Workflow project does not match its request");
       }
       if (validated.kind === "job") {
         assertAuthorityDigest(validated.authority);
-        const workflow = await this.requireWith(tx, validated.tenantId, "workflow", validated.workflowId) as DomainEntity & { projectId: string };
+        const workflow = await this.#requireWith(tx, validated.tenantId, "workflow", validated.workflowId) as DomainEntity & { projectId: string };
         if (workflow.projectId !== validated.projectId || validated.authority.projectId !== validated.projectId) {
           throw new Error("Job project and authority must match its workflow");
         }
@@ -221,7 +241,7 @@ export class CanonicalStore {
         );
         const job = jobResult.rows[0]?.payload;
         if (!job) throw new Error("Effect job not found");
-        const attempt = await this.requireWith(tx, validated.tenantId, "attempt", validated.attemptId) as AttemptRecord;
+        const attempt = await this.#requireWith(tx, validated.tenantId, "attempt", validated.attemptId) as AttemptRecord;
         if (attempt.jobId !== job.id) throw new Error("Effect attempt does not belong to its job");
         if (!["leased", "running", "waiting"].includes(attempt.state)
           || !["leased", "running", "waiting_approval"].includes(job.state)) {
@@ -238,15 +258,15 @@ export class CanonicalStore {
         }
         if (job.authority.effectPolicy === "approval_required" && !validated.approvalId) throw new Error("Job authority requires effect approval");
         if (validated.approvalId) {
-          const approval = await this.requireWith(tx, validated.tenantId, "approval", validated.approvalId) as ApprovalRecord;
+          const approval = await this.#requireWith(tx, validated.tenantId, "approval", validated.approvalId) as ApprovalRecord;
           if (approval.operationDigest !== validated.operationDigest || approval.risk !== validated.risk) {
             throw new Error("Effect approval is not bound to the exact operation and risk");
           }
         }
       }
       if (validated.kind === "artifact_manifest") {
-        const job = await this.requireWith(tx, validated.tenantId, "job", validated.jobId) as JobRecord;
-        const attempt = await this.requireWith(tx, validated.tenantId, "attempt", validated.attemptId) as AttemptRecord;
+        const job = await this.#requireWith(tx, validated.tenantId, "job", validated.jobId) as JobRecord;
+        const attempt = await this.#requireWith(tx, validated.tenantId, "attempt", validated.attemptId) as AttemptRecord;
         if (attempt.jobId !== job.id || validated.projectId !== job.projectId
           || (validated.workflowId && validated.workflowId !== job.workflowId)) {
           throw new Error("Artifact lineage does not match its job and attempt");
@@ -266,7 +286,7 @@ export class CanonicalStore {
           throw new Error("Checkpoint sequence must increase monotonically");
         }
       }
-      await this.insertWith(tx, validated);
+      await this.#insertWith(tx, validated);
       if (validated.kind === "job") {
         for (const dependencyId of validated.dependsOnJobIds) {
           await tx.query(
@@ -305,14 +325,14 @@ export class CanonicalStore {
       || job.authority.maxConcurrentEffects !== 0) {
       throw new Error("Proposed work bundle exceeds the materialization ceiling");
     }
-    return this.db.transaction(async (tx) => {
+    return this.#transaction(async (tx) => {
       let replayed = true;
       for (const entity of [request, workflow, job] as DomainEntity[]) {
-        const existing = await this.getWith(tx, entity.tenantId, entity.kind, entity.id);
+        const existing = await this.#getWith(tx, entity.tenantId, entity.kind, entity.id);
         if (existing) {
           if (sha256Digest(existing) !== sha256Digest(entity)) throw new Error("Proposed work bundle replay conflict");
         } else {
-          await this.insertWith(tx, entity);
+          await this.#insertWith(tx, entity);
           replayed = false;
         }
       }
@@ -352,13 +372,13 @@ export class CanonicalStore {
       || actionInbox.evidence.length !== 2 || actionInbox.evidence.some((item) => item.kind !== "audit" || !item.digest || !item.observedAt)) {
       throw new Error("Reviewed proposed work attention contract mismatch");
     }
-    return this.db.transaction(async (tx) => {
+    return this.#transaction(async (tx) => {
       let replayed = true;
       for (const entity of [request, workflow, job] as DomainEntity[]) {
-        const existing = await this.getWith(tx, entity.tenantId, entity.kind, entity.id);
+        const existing = await this.#getWith(tx, entity.tenantId, entity.kind, entity.id);
         if (existing) {
           if (sha256Digest(existing) !== sha256Digest(entity)) throw new Error("Reviewed proposed work replay conflict");
-        } else { await this.insertWith(tx, entity); replayed = false; }
+        } else { await this.#insertWith(tx, entity); replayed = false; }
       }
       const prior = await tx.query<{ payload: unknown }>(
         "SELECT payload FROM control_action_inbox WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [actionInbox.tenantId, actionInbox.id]);
@@ -408,13 +428,13 @@ export class CanonicalStore {
       || actionInbox.evidence.some((item) => item.kind !== "audit" || !item.digest || !item.observedAt)) {
       throw new Error("Frontier proposed work attention contract mismatch");
     }
-    return this.db.transaction(async (tx) => {
+    return this.#transaction(async (tx) => {
       let replayed = true;
       for (const entity of [request, workflow, job] as DomainEntity[]) {
-        const existing = await this.getWith(tx, entity.tenantId, entity.kind, entity.id);
+        const existing = await this.#getWith(tx, entity.tenantId, entity.kind, entity.id);
         if (existing) {
           if (sha256Digest(existing) !== sha256Digest(entity)) throw new Error("Frontier proposed work replay conflict");
-        } else { await this.insertWith(tx, entity); replayed = false; }
+        } else { await this.#insertWith(tx, entity); replayed = false; }
       }
       const prior = await tx.query<{ payload: unknown }>(
         "SELECT payload FROM control_action_inbox WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [actionInbox.tenantId, actionInbox.id]);
@@ -565,7 +585,7 @@ export class CanonicalStore {
         return value;
       };
       let requireFreshAtPreCommit = true;
-      const result = await this.db.transactionWithPreCommitCheck(async (tx) => {
+      const result = await this.#transactionWithPreCommitCheck(async (tx) => {
       const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
       if (!tenant.rows[0]) throw new Error("Ready frontier tenant not found");
       const priorRequest = await tx.query<{ request_digest: string; status: string; result: {
@@ -631,7 +651,7 @@ export class CanonicalStore {
           || new Date(held.expires_at).toISOString() !== input.reservation.expiresAt) {
           throw new Error("Ready frontier handoff replay lacks its database reservation");
         }
-        const current = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+        const current = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
         if (current.state !== "ready" || current.version !== input.expectedJobVersion + 1
           || sha256Digest(current) !== input.readyJobDigest) throw new Error("Ready frontier replay job has advanced or drifted");
         currentAuthorizationTime(false);
@@ -695,7 +715,7 @@ export class CanonicalStore {
         input.reservation.resourceKey, input.reservation.units, input.reservation.decisionDigest,
         input.reservation.acquiredAt, input.reservation.expiresAt]);
       currentAuthorizationTime(true);
-      const promoted = await this.transitionWith(tx, { tenantId: input.tenantId, kind: "job", entityId: input.jobId,
+      const promoted = await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "job", entityId: input.jobId,
         expectedVersion: input.expectedJobVersion, toState: "ready", transitionId: input.transitionId,
         idempotencyKey: input.transitionIdempotencyKey, actor: input.actor, occurredAt: input.occurredAt,
         safeMetadata: { readyFrontierHandoffId: input.handoff.id, schedulerDecisionDigest: input.reservation.decisionDigest,
@@ -723,15 +743,15 @@ export class CanonicalStore {
   }
 
   async get(tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity | undefined> {
-    return this.getWith(this.db, tenantId, kind, id);
+    return this.#getWith(this.#session, tenantId, kind, id);
   }
 
   async transition(input: TransitionInput): Promise<TransitionResult> {
-    return this.db.transaction((tx) => this.transitionWith(tx, input, false));
+    return this.#transaction((tx) => this.#transitionWith(tx, input, false));
   }
 
   async claimReadyJob(input: ClaimJobInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {
-    return this.db.transaction(async (tx) => {
+    return this.#transaction(async (tx) => {
       const prior = await tx.query<{ entity_id: string; safe_metadata: { attemptId?: string; leaseId?: string } }>(
         `SELECT entity_id,safe_metadata FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='job' AND idempotency_key=$2`,
         [input.tenantId, input.idempotencyKey],
@@ -739,12 +759,12 @@ export class CanonicalStore {
       if (prior.rows.length) {
         if (prior.rows[0].entity_id !== input.jobId || prior.rows[0].safe_metadata.attemptId !== input.attemptId
           || prior.rows[0].safe_metadata.leaseId !== input.leaseId) throw new Error("Claim idempotency key reused with different lineage");
-        const job = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+        const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
         if (job.specVersion === "ready-frontier-work-order/v1") {
           throw new Error("Ready frontier jobs require the separately reviewed internal handoff consumer");
         }
-        const attempt = await this.requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
-        const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+        const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+        const lease = await this.#requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
         return { job, attempt, lease, replayed: true };
       }
 
@@ -794,9 +814,9 @@ export class CanonicalStore {
         createdAt: input.acquiredAt,
         updatedAt: input.acquiredAt,
       };
-      await this.insertWith(tx, attemptOffered);
+      await this.#insertWith(tx, attemptOffered);
 
-      const attemptResult = await this.transitionWith(tx, {
+      const attemptResult = await this.#transitionWith(tx, {
         tenantId: input.tenantId, kind: "attempt", entityId: input.attemptId,
         expectedVersion: 0, toState: "leased", transitionId: `${input.transitionId}:attempt`,
         idempotencyKey: `${input.idempotencyKey}:attempt`, actor: input.actor, occurredAt: input.acquiredAt,
@@ -818,9 +838,9 @@ export class CanonicalStore {
         createdAt: input.acquiredAt,
         updatedAt: input.acquiredAt,
       };
-      await this.insertWith(tx, lease);
+      await this.#insertWith(tx, lease);
 
-      const jobResult = await this.transitionWith(tx, {
+      const jobResult = await this.#transitionWith(tx, {
         tenantId: input.tenantId, kind: "job", entityId: input.jobId,
         expectedVersion: input.expectedJobVersion, toState: "leased", transitionId: input.transitionId,
         idempotencyKey: input.idempotencyKey, actor: input.actor, occurredAt: input.acquiredAt,
@@ -831,23 +851,23 @@ export class CanonicalStore {
   }
 
   async expireLease(input: ExpireLeaseInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {
-    return this.db.transaction(async (tx) => {
+    return this.#transaction(async (tx) => {
       const prior = await tx.query<{ entity_id: string }>(
         `SELECT entity_id FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='lease' AND idempotency_key=$2`,
         [input.tenantId, input.idempotencyKey],
       );
       if (prior.rows.length) {
         if (prior.rows[0].entity_id !== input.leaseId) throw new Error("Expiry idempotency key reused for another lease");
-        const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+        const lease = await this.#requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
         if (lease.jobId !== input.jobId || lease.attemptId !== input.attemptId || lease.epoch !== input.epoch) {
           throw new Error("Expiry replay lineage or epoch mismatch");
         }
-        const attempt = await this.requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
-        const job = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+        const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+        const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
         return { job, attempt, lease, replayed: true };
       }
 
-      const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+      const lease = await this.#requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
       if (lease.jobId !== input.jobId || lease.attemptId !== input.attemptId || lease.epoch !== input.epoch) {
         throw new Error("Lease lineage or epoch mismatch");
       }
@@ -855,20 +875,20 @@ export class CanonicalStore {
         throw new Error("Lease is not eligible for expiry");
       }
 
-      const leaseResult = await this.transitionWith(tx, {
+      const leaseResult = await this.#transitionWith(tx, {
         tenantId: input.tenantId, kind: "lease", entityId: input.leaseId,
         expectedVersion: input.expectedLeaseVersion, toState: "expired", transitionId: input.transitionId,
         idempotencyKey: input.idempotencyKey, actor: input.actor, occurredAt: input.occurredAt,
       }, true);
-      const attemptResult = await this.transitionWith(tx, {
+      const attemptResult = await this.#transitionWith(tx, {
         tenantId: input.tenantId, kind: "attempt", entityId: input.attemptId,
         expectedVersion: input.expectedAttemptVersion, toState: "orphaned", transitionId: `${input.transitionId}:attempt`,
         idempotencyKey: `${input.idempotencyKey}:attempt`, actor: input.actor, occurredAt: input.occurredAt,
         recordPatch: { finishedAt: input.occurredAt },
       }, true);
-      const currentJob = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+      const currentJob = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
       const nextJobState = currentJob.state === "leased" ? "ready" : "orphaned";
-      const jobResult = await this.transitionWith(tx, {
+      const jobResult = await this.#transitionWith(tx, {
         tenantId: input.tenantId, kind: "job", entityId: input.jobId,
         expectedVersion: input.expectedJobVersion, toState: nextJobState, transitionId: `${input.transitionId}:job`,
         idempotencyKey: `${input.idempotencyKey}:job`, actor: input.actor, occurredAt: input.occurredAt,
@@ -884,7 +904,7 @@ export class CanonicalStore {
   }
 
   async renewLease(input: RenewLeaseInput): Promise<{ lease: LeaseRecord; replayed: boolean }> {
-    return this.db.transaction(async (tx) => {
+    return this.#transaction(async (tx) => {
       const prior = await tx.query<{ payload: { leaseId: string; epoch: number; expiresAt: string } }>(
         `SELECT payload FROM control_outbox WHERE tenant_id=$1 AND topic='lease.renewed' AND idempotency_key=$2`,
         [input.tenantId, input.idempotencyKey],
@@ -892,7 +912,7 @@ export class CanonicalStore {
       if (prior.rows.length) {
         if (prior.rows[0].payload.leaseId !== input.leaseId || prior.rows[0].payload.epoch !== input.epoch
           || prior.rows[0].payload.expiresAt !== input.expiresAt) throw new Error("Renewal idempotency key reused with different content");
-        return { lease: await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord, replayed: true };
+        return { lease: await this.#requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord, replayed: true };
       }
 
       const row = await tx.query<{ payload: LeaseRecord }>(
@@ -906,7 +926,7 @@ export class CanonicalStore {
       }
       if (Date.parse(input.renewedAt) > Date.parse(current.expiresAt)) throw new Error("Expired leases cannot be renewed");
       if (Date.parse(input.expiresAt) <= Date.parse(current.expiresAt)) throw new Error("Renewal must extend expiry");
-      const job = await this.requireWith(tx, input.tenantId, "job", current.jobId) as JobRecord;
+      const job = await this.#requireWith(tx, input.tenantId, "job", current.jobId) as JobRecord;
       if (Date.parse(input.expiresAt) > Date.parse(job.authority.expiresAt)
         || Date.parse(input.expiresAt) - Date.parse(current.acquiredAt) > job.authority.maxDurationSeconds * 1_000) {
         throw new Error("Renewal exceeds job authority");
@@ -933,15 +953,15 @@ export class CanonicalStore {
   }
 
   async resolveApproval(input: ResolveApprovalInput): Promise<TransitionResult> {
-    return this.db.transaction(async (tx) => {
-      const approval = await this.requireWith(tx, input.tenantId, "approval", input.approvalId) as ApprovalRecord;
+    return this.#transaction(async (tx) => {
+      const approval = await this.#requireWith(tx, input.tenantId, "approval", input.approvalId) as ApprovalRecord;
       const linkedEffect = await tx.query<{ project_id: string }>(
         `SELECT j.project_id FROM control_effect_intents e
          JOIN control_jobs j ON j.tenant_id=e.tenant_id AND j.id=e.job_id
          WHERE e.tenant_id=$1 AND e.approval_id=$2`,
         [input.tenantId, input.approvalId],
       );
-      const decision = await this.requirePolicyDecision(tx, {
+      const decision = await this.#requirePolicyDecision(tx, {
         tenantId: input.tenantId,
         decisionId: input.policyDecisionId,
         identityId: input.actor.actorId,
@@ -961,7 +981,7 @@ export class CanonicalStore {
       if ((approval.risk === "high" || approval.risk === "critical") && !decision.strong_factor_evidence_id) {
         throw new Error("High-risk approval requires strong-factor evidence");
       }
-      return this.transitionWith(tx, {
+      return this.#transitionWith(tx, {
         tenantId: input.tenantId,
         kind: "approval",
         entityId: input.approvalId,
@@ -982,7 +1002,7 @@ export class CanonicalStore {
   }
 
   async authorizeEffect(input: AuthorizeEffectInput): Promise<TransitionResult> {
-    return this.db.transaction(async (tx) => {
+    return this.#transaction(async (tx) => {
       const replay = await tx.query<{ entity_id: string; to_state: string }>(
         `SELECT entity_id,to_state FROM control_transition_events
          WHERE tenant_id=$1 AND entity_kind='effect_intent' AND idempotency_key=$2`,
@@ -992,7 +1012,7 @@ export class CanonicalStore {
         if (replay.rows[0].entity_id !== input.effectIntentId || replay.rows[0].to_state !== "authorized") {
           throw new Error("Idempotency key conflicts with a different effect authorization");
         }
-        return { entity: await this.requireWith(tx, input.tenantId, "effect_intent", input.effectIntentId), replayed: true };
+        return { entity: await this.#requireWith(tx, input.tenantId, "effect_intent", input.effectIntentId), replayed: true };
       }
 
       const effectRow = await tx.query<{ payload: EffectIntentRecord }>(
@@ -1001,8 +1021,8 @@ export class CanonicalStore {
       );
       const effect = effectRow.rows[0]?.payload;
       if (!effect) throw new Error("effect_intent not found");
-      const job = await this.requireWith(tx, input.tenantId, "job", effect.jobId) as JobRecord;
-      const decision = await this.requirePolicyDecision(tx, {
+      const job = await this.#requireWith(tx, input.tenantId, "job", effect.jobId) as JobRecord;
+      const decision = await this.#requirePolicyDecision(tx, {
         tenantId: input.tenantId,
         decisionId: input.policyDecisionId,
         identityId: input.actor.actorId,
@@ -1040,7 +1060,7 @@ export class CanonicalStore {
         throw new Error("High-risk effect requires an approval");
       }
 
-      return this.transitionWith(tx, {
+      return this.#transitionWith(tx, {
         tenantId: input.tenantId,
         kind: "effect_intent",
         entityId: input.effectIntentId,
@@ -1055,7 +1075,7 @@ export class CanonicalStore {
     });
   }
 
-  private async insertWith(tx: DatabaseSession, entity: DomainEntity): Promise<void> {
+  async #insertWith(tx: DatabaseSession, entity: DomainEntity): Promise<void> {
     domainEntitySchema.parse(entity);
     const config = entityConfigs[entity.kind];
     const fields: Array<[string, unknown, boolean?]> = [
@@ -1071,7 +1091,7 @@ export class CanonicalStore {
     );
   }
 
-  private async getWith(tx: DatabaseSession, tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity | undefined> {
+  async #getWith(tx: DatabaseSession, tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity | undefined> {
     const result = await tx.query<{ payload: DomainEntity }>(
       `SELECT payload FROM ${entityConfigs[kind].table} WHERE tenant_id=$1 AND id=$2`,
       [tenantId, id],
@@ -1079,13 +1099,13 @@ export class CanonicalStore {
     return result.rows[0] ? domainEntitySchema.parse(result.rows[0].payload) as DomainEntity : undefined;
   }
 
-  private async requireWith(tx: DatabaseSession, tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity> {
-    const entity = await this.getWith(tx, tenantId, kind, id);
+  async #requireWith(tx: DatabaseSession, tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity> {
+    const entity = await this.#getWith(tx, tenantId, kind, id);
     if (!entity) throw new Error(`${kind} ${id} not found`);
     return entity;
   }
 
-  private async requirePolicyDecision(tx: DatabaseSession, input: {
+  async #requirePolicyDecision(tx: DatabaseSession, input: {
     tenantId: string;
     decisionId: string;
     identityId: string;
@@ -1138,7 +1158,7 @@ export class CanonicalStore {
     return decision;
   }
 
-  private async transitionWith(tx: DatabaseSession, input: TransitionInput, coordinated: boolean): Promise<TransitionResult> {
+  async #transitionWith(tx: DatabaseSession, input: TransitionInput, coordinated: boolean): Promise<TransitionResult> {
     assertNoSecretMaterial(input.safeMetadata ?? {}, "Transition safe metadata");
     assertNoSecretMaterial(input.recordPatch ?? {}, "Transition record patch");
     const existing = await tx.query<{ entity_id: string; to_state: string; from_version: number; actor_id: string; actor_type: string; occurred_at: string }>(
@@ -1152,7 +1172,7 @@ export class CanonicalStore {
         || new Date(prior.occurred_at).toISOString() !== new Date(input.occurredAt).toISOString()) {
         throw new Error("Idempotency key conflicts with a different transition");
       }
-      return { entity: await this.requireWith(tx, input.tenantId, input.kind, input.entityId), replayed: true };
+      return { entity: await this.#requireWith(tx, input.tenantId, input.kind, input.entityId), replayed: true };
     }
 
     // Every new ready transition shares this tenant lock so policy-bound ready counts cannot race a generic canonical transition.
@@ -1228,4 +1248,27 @@ export class CanonicalStore {
     );
     return { entity: next, replayed: false };
   }
+}
+
+export interface ReadyFrontierCanonicalOperationsV1 {
+  createProposedWorkBundle(input: ProposedWorkBundleWithActionInbox):
+    Promise<ProposedWorkBundleResult & { actionInbox: ActionInboxItemV1 }>;
+  promoteWithInternalHandoff(operationAuthorization: unknown): Promise<{ job: JobRecord; replayed: boolean }>;
+}
+
+const createReadyFrontierProposedWorkBundle = CanonicalStore.prototype.createReadyFrontierProposedWorkBundleWithActionInbox;
+const promoteReadyFrontierWithInternalHandoff = CanonicalStore.prototype.promoteReadyFrontierJobWithInternalHandoff;
+Object.freeze(CanonicalStore.prototype);
+
+/** Captures the exact registered canonical operations used by the repository-only frontier composition. */
+export function bindReadyFrontierCanonicalOperationsV1(value: unknown): ReadyFrontierCanonicalOperationsV1 | undefined {
+  if (!value || typeof value !== "object" || isHostProxyV1(value) || !canonicalStores.has(value)
+    || Object.getPrototypeOf(value) !== CanonicalStore.prototype || !Object.isFrozen(value)) return undefined;
+  const store = value as CanonicalStore;
+  return Object.freeze({
+    createProposedWorkBundle: (input: ProposedWorkBundleWithActionInbox) =>
+      createReadyFrontierProposedWorkBundle.call(store, input),
+    promoteWithInternalHandoff: (operationAuthorization: unknown) =>
+      promoteReadyFrontierWithInternalHandoff.call(store, operationAuthorization),
+  });
 }

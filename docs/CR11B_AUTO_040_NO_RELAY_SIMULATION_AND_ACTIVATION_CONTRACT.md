@@ -1,6 +1,6 @@
 # CR11B-AUTO-040 No-Relay Simulation and Protected Activation Contract
 
-Status: first remediation candidate after rejected initial review; different-agent re-review required
+Status: second remediation candidate after split first-remediation review; different-agent security re-review required
 
 Date: 2026-08-30
 
@@ -25,11 +25,17 @@ One strict no-relay request binds the tenant, workspace, AUTO-020 materializatio
 
 The exact replay of a terminal run returns the authenticated ledger result without materializing, promoting, or delivering again. Changed reuse of a run identity fails. A same-process overlapping call is rejected. Multi-process convergence remains explicitly unproved and production-blocking.
 
-Every coordinator dependency is captured through an exact registered implementation into an ECMAScript-private slot or
-closure. The coordinator, services, store, fake, and repository clock are frozen; their captured prototype methods are
-fixed before any caller can construct an instance. TypeScript-only `private` or `readonly` fields are not treated as a
-runtime boundary. Duck-typed objects, Proxies, subclasses, post-construction aliases, and prototype replacement cannot
-enter the composed operation.
+Every coordinator and service dependency is captured through an exact registered implementation into an
+ECMAScript-private slot or closure. The simulation store, standing-policy store, ready-policy store, canonical store,
+materialization service, promotion service, no-relay store, fake, and both repository clocks are frozen exact instances;
+their prototypes and accepted base operations are fixed before any caller can construct an instance. Store database,
+key, checkpoint, scope, capacity, queue, and verification state is ECMAScript-private. The canonical store captures its
+database query and transaction operations at construction, uses ECMAScript-private internal repository helpers, and the
+PGlite adapter captures and freezes the raw database operations it accepts. The services retain only captured evaluation,
+policy-guard, canonical-write, and clock closures, never caller-held collaborator objects used for later dynamic dispatch.
+TypeScript-only `private` or `readonly` fields are not treated as a runtime boundary. Duck-typed objects, Proxies,
+subclasses, post-construction aliases, deletion, assignment, `defineProperty`, and prototype replacement cannot enter the
+composed operation or execute a hostile callback.
 
 ## Fixed injected fake
 
@@ -86,5 +92,10 @@ The packet is digest- and HMAC-authenticated but always has state `blocked_pendi
 AUTO-040 creates repository-only evidence. It does not enroll a real standing policy, consume a production handoff, reconcile a real ambiguous destination, create a schedule, recurrence, GitHub issue or pull request, send an agent message, access a credential, claim or lease work, dispatch or execute a job, contact a provider, read a native profile, use DNS or Cloudflare, host, deploy, or perform any production effect.
 
 The initial candidate was rejected by separate security/authority and durability/replay reviewers. Both unchanged reports
-remain evidence. The remediation requires different independent review of the exact committed snapshot. Passing repository
-tests is necessary but cannot make the phase accepted or authorize production activation.
+remain evidence. Different reviewers then examined exact first-remediation commit
+`8344dd698bc8bc2786b611fdb246e9e5aca3dc4e`: durability accepted all four `DR` repairs in unchanged report SHA-256
+`392af82a4462c6cccc8ea2098b248962b95a1a49331b0ae5aa4f69edb7600e6a`, while security accepted `SAR-002` and rejected
+`SAR-001` in unchanged report SHA-256 `14405beb724bf29f08f6ed4747d247f88ab19efbf6d3763e38d20481f5aef6dc`
+after reproducing arbitrary callback execution through a nested simulation-store alias. The second remediation closes that
+complete dependency-graph seam and requires a new different independent security review of the exact committed snapshot.
+Passing repository tests is necessary but cannot make the phase accepted or authorize production activation.

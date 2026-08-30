@@ -54,13 +54,24 @@ export function adaptPglite(db: {
   query<T>(statement: string, params?: unknown[]): Promise<{ rows: T[] }>;
   transaction<T>(callback: (tx: { query<U>(statement: string, params?: unknown[]): Promise<{ rows: U[] }> }) => Promise<T>): Promise<T>;
 }): DatabaseClient {
-  return {
-    query: (statement, params = []) => db.query(statement, params),
-    transaction: (callback) => db.transaction((tx) => callback({ query: (statement, params = []) => tx.query(statement, params) })),
-    transactionWithPreCommitCheck: (callback, preCommitCheck) => db.transaction(async (tx) => {
-      const result = await callback({ query: (statement, params = []) => tx.query(statement, params) });
+  const query = db.query.bind(db) as typeof db.query;
+  const transaction = db.transaction.bind(db) as typeof db.transaction;
+  const client: DatabaseClient = {
+    query<T = Record<string, unknown>>(statement: string, params: unknown[] = []) { return query<T>(statement, params); },
+    transaction<T>(callback: (session: DatabaseSession) => Promise<T>): Promise<T> {
+      return transaction<T>((tx) => callback(Object.freeze({
+        query: <U = Record<string, unknown>>(statement: string, params: unknown[] = []) => tx.query<U>(statement, params),
+      })));
+    },
+    transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void): Promise<T> {
+      return transaction<T>(async (tx) => {
+      const result = await callback(Object.freeze({
+        query: <U = Record<string, unknown>>(statement: string, params: unknown[] = []) => tx.query<U>(statement, params),
+      }));
       preCommitCheck();
       return result;
-    }),
+      });
+    },
   };
+  return Object.freeze(client);
 }

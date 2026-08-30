@@ -1,7 +1,8 @@
-import type { CanonicalStore } from "../../persistence/canonical-store";
+import { bindReadyFrontierCanonicalOperationsV1, type CanonicalStore,
+  type ReadyFrontierCanonicalOperationsV1 } from "../../persistence/canonical-store";
 import { assertNoSecretMaterial } from "../../security";
 import { exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
-import type { ReadyFrontierSimulationStoreV1 } from "./durable-store";
+import { bindReadyFrontierSimulationEvaluationV1, type ReadyFrontierSimulationStoreV1 } from "./durable-store";
 import { ReadyFrontierContractErrorV1 } from "./errors";
 import { exactReadyFrontierJsonV1 } from "./exact";
 import { buildReadyFrontierPromotionV1, parseReadyFrontierPromotionV1 } from "./promotion";
@@ -10,12 +11,16 @@ import { readyFrontierPromotionBuildInputSchemaV1 } from "./ready-policy-schemas
 import type { ReadyFrontierPromotionBuildInputV1, ReadyFrontierPromotionReceiptV1,
   ReadyFrontierReadyPolicyV1 } from "./ready-policy-types";
 import type { ReadyFrontierStandingPolicyV1 } from "./automation-types";
-import type { ReadyFrontierReadyPolicyStoreV1 } from "./ready-policy-store";
-import type { ReadyFrontierStandingPolicyStoreV1 } from "./standing-policy-store";
+import { bindReadyFrontierFixedRepositoryClockV1 } from "./no-relay-coordinator";
+import { bindReadyFrontierReadyPolicyGuardV1, type ReadyFrontierBoundReadyPolicyGuardV1,
+  type ReadyFrontierReadyPolicyStoreV1 } from "./ready-policy-store";
+import { bindReadyFrontierStandingPolicyGuardV1, type ReadyFrontierBoundStandingPolicyGuardV1,
+  type ReadyFrontierStandingPolicyStoreV1 } from "./standing-policy-store";
 
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never { throw new ReadyFrontierContractErrorV1(code); }
 
 const promotionServices = new WeakSet<object>();
+const repositoryPromotionServices = new WeakSet<object>();
 
 export interface ReadyFrontierTrustedClockV1 { now(): string; }
 
@@ -25,7 +30,7 @@ interface CanonicalPromotionAuthorizationBindingV1 {
   readyPolicy: ReadyFrontierReadyPolicyV1;
   materializedAt: string;
   authorizedAt: string;
-  clock: ReadyFrontierTrustedClockV1;
+  now: () => string;
   accepting: boolean;
   acquired: boolean;
   uses: Set<Promise<void>>;
@@ -62,7 +67,7 @@ export function acquireReadyFrontierCanonicalPromotionAuthorizationV1(
     readyPolicy: exactClone(binding.readyPolicy),
     materializedAt: binding.materializedAt,
     authorizedAt: binding.authorizedAt,
-    now: () => binding.clock.now(),
+    now: () => binding.now(),
     release: () => {
       if (released) return;
       released = true;
@@ -88,7 +93,8 @@ async function withCanonicalPromotionAuthorizationV1<T>(bindingInput: Omit<Canon
   }
 }
 
-async function persistPromotion(input: { canonicalStore: CanonicalStore; receipt: ReadyFrontierPromotionReceiptV1;
+async function persistPromotion(input: { promoteWithInternalHandoff: ReadyFrontierCanonicalOperationsV1["promoteWithInternalHandoff"];
+  receipt: ReadyFrontierPromotionReceiptV1;
   standingPolicy: ReadyFrontierStandingPolicyV1; readyPolicy: ReadyFrontierReadyPolicyV1;
   operationAuthorization: object;
   evaluationKey: unknown; readyPolicyKey: unknown }):
@@ -100,8 +106,18 @@ async function persistPromotion(input: { canonicalStore: CanonicalStore; receipt
     || policy.policyDigest !== receipt.readyPolicyDigest || project.resourceKey !== receipt.reservation.resourceKey
     || project.reservationUnits !== receipt.reservation.units
     || project.resourceCapacityUnits !== receipt.reservation.capacityUnits) fail("policy_denied");
-  const result = await input.canonicalStore.promoteReadyFrontierJobWithInternalHandoff(input.operationAuthorization);
+  const result = await input.promoteWithInternalHandoff(input.operationAuthorization);
   return { receipt, replayed: result.replayed };
+}
+
+function captureTrustedClockNowV1(clock: ReadyFrontierTrustedClockV1): (() => string) | undefined {
+  if (!clock || (typeof clock !== "object" && typeof clock !== "function") || isHostProxyV1(clock)) return undefined;
+  const own = Object.getOwnPropertyDescriptor(clock, "now");
+  const inherited = own ? undefined : Object.getOwnPropertyDescriptor(Object.getPrototypeOf(clock) as object, "now");
+  const descriptor = own ?? inherited;
+  if (!descriptor || typeof descriptor.value !== "function" || descriptor.get || descriptor.set) return undefined;
+  const now = descriptor.value as () => string;
+  return () => now.call(clock);
 }
 
 /** Repository-only ready bridge. It writes canonical readiness, database capacity, and an internal outbox packet only. */
@@ -109,11 +125,11 @@ export class ReadyFrontierPromotionServiceV1 {
   readonly #evaluationKey: Uint8Array;
   readonly #standingPolicyKey: Uint8Array;
   readonly #readyPolicyKey: Uint8Array;
-  readonly #evaluations: ReadyFrontierSimulationStoreV1;
-  readonly #standingPolicies: ReadyFrontierStandingPolicyStoreV1;
-  readonly #readyPolicies: ReadyFrontierReadyPolicyStoreV1;
-  readonly #canonicalStore: CanonicalStore;
-  readonly #clock: ReadyFrontierTrustedClockV1;
+  readonly #evaluation: NonNullable<ReturnType<typeof bindReadyFrontierSimulationEvaluationV1>>;
+  readonly #withStandingPolicy: ReadyFrontierBoundStandingPolicyGuardV1;
+  readonly #withReadyPolicy: ReadyFrontierBoundReadyPolicyGuardV1;
+  readonly #promoteWithInternalHandoff: ReadyFrontierCanonicalOperationsV1["promoteWithInternalHandoff"];
+  readonly #now: () => string;
 
   constructor(evaluations: ReadyFrontierSimulationStoreV1,
     standingPolicies: ReadyFrontierStandingPolicyStoreV1,
@@ -124,12 +140,21 @@ export class ReadyFrontierPromotionServiceV1 {
     const evaluationKey = exactHostUint8ArrayV1(evaluationKeyValue, 128);
     const standingPolicyKey = exactHostUint8ArrayV1(standingPolicyKeyValue, 128);
     const readyPolicyKey = exactHostUint8ArrayV1(readyPolicyKeyValue, 128);
+    const evaluation = bindReadyFrontierSimulationEvaluationV1(evaluations);
+    const withStandingPolicy = bindReadyFrontierStandingPolicyGuardV1(standingPolicies);
+    const withReadyPolicy = bindReadyFrontierReadyPolicyGuardV1(readyPolicies);
+    const canonical = bindReadyFrontierCanonicalOperationsV1(canonicalStore);
+    const repositoryNow = bindReadyFrontierFixedRepositoryClockV1(clock);
+    const genericNow = captureTrustedClockNowV1(clock);
     if (!evaluationKey || evaluationKey.byteLength < 32 || !standingPolicyKey || standingPolicyKey.byteLength < 32
-      || !readyPolicyKey || readyPolicyKey.byteLength < 32) fail("integrity_failed");
-    this.#evaluations = evaluations; this.#standingPolicies = standingPolicies;
-    this.#readyPolicies = readyPolicies; this.#canonicalStore = canonicalStore; this.#clock = clock;
+      || !readyPolicyKey || readyPolicyKey.byteLength < 32 || !evaluation || !withStandingPolicy
+      || !withReadyPolicy || !canonical || !genericNow) fail("integrity_failed");
+    this.#evaluation = evaluation; this.#withStandingPolicy = withStandingPolicy;
+    this.#withReadyPolicy = withReadyPolicy; this.#promoteWithInternalHandoff = canonical.promoteWithInternalHandoff;
+    this.#now = repositoryNow ?? genericNow;
     this.#evaluationKey = evaluationKey.copy(); this.#standingPolicyKey = standingPolicyKey.copy();
-    this.#readyPolicyKey = readyPolicyKey.copy(); promotionServices.add(this); Object.freeze(this);
+    this.#readyPolicyKey = readyPolicyKey.copy(); promotionServices.add(this);
+    if (repositoryNow) repositoryPromotionServices.add(this); Object.freeze(this);
   }
 
   async promote(value: unknown): Promise<{ receipt: ReadyFrontierPromotionReceiptV1; replayed: boolean }> {
@@ -141,18 +166,18 @@ export class ReadyFrontierPromotionServiceV1 {
       if (error instanceof ReadyFrontierContractErrorV1) throw error; fail("invalid_input");
     }
     const request = envelope.request, materialization = envelope.materializationReceipt;
-    const evaluation = this.#evaluations.evaluation(materialization.cycleId);
+    const evaluation = this.#evaluation(materialization.cycleId);
     if (!evaluation) fail("integrity_failed");
-    return this.#standingPolicies.withCurrentPolicy(request.standingPolicyId, request.standingPolicyRevision,
-      request.standingPolicyDigest, (standingPolicy) => this.#readyPolicies.withCurrentPolicy(request.readyPolicyId,
+    return this.#withStandingPolicy(request.standingPolicyId, request.standingPolicyRevision,
+      request.standingPolicyDigest, (standingPolicy) => this.#withReadyPolicy(request.readyPolicyId,
         request.readyPolicyRevision, request.readyPolicyDigest, async (readyPolicy) => {
           let trustedNow: string;
-          try { trustedNow = this.#clock.now(); } catch { fail("integrity_failed"); }
+          try { trustedNow = this.#now(); } catch { fail("integrity_failed"); }
           const receipt = buildReadyFrontierPromotionV1(envelope, this.#evaluationKey, this.#standingPolicyKey,
             this.#readyPolicyKey, evaluation, standingPolicy, readyPolicy, trustedNow);
           return withCanonicalPromotionAuthorizationV1({ receipt, standingPolicy, readyPolicy,
-            materializedAt: materialization.materializedAt, authorizedAt: trustedNow, clock: this.#clock },
-          (operationAuthorization) => persistPromotion({ canonicalStore: this.#canonicalStore, receipt,
+            materializedAt: materialization.materializedAt, authorizedAt: trustedNow, now: this.#now },
+          (operationAuthorization) => persistPromotion({ promoteWithInternalHandoff: this.#promoteWithInternalHandoff, receipt,
             standingPolicy, readyPolicy, operationAuthorization,
             evaluationKey: this.#evaluationKey, readyPolicyKey: this.#readyPolicyKey }));
         }));
@@ -170,6 +195,7 @@ Object.freeze(ReadyFrontierPromotionServiceV1.prototype);
 export function bindReadyFrontierPromotionServiceV1(value: unknown):
   ((request: unknown) => Promise<{ receipt: ReadyFrontierPromotionReceiptV1; replayed: boolean }>) | undefined {
   if (!value || typeof value !== "object" || isHostProxyV1(value) || !promotionServices.has(value)
+    || !repositoryPromotionServices.has(value)
     || Object.getPrototypeOf(value) !== ReadyFrontierPromotionServiceV1.prototype
     || !Object.isFrozen(value)) return undefined;
   const service = value as ReadyFrontierPromotionServiceV1;

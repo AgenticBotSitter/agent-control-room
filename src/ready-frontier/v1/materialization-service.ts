@@ -1,12 +1,14 @@
-import type { CanonicalStore } from "../../persistence/canonical-store";
+import { bindReadyFrontierCanonicalOperationsV1, type CanonicalStore,
+  type ReadyFrontierCanonicalOperationsV1 } from "../../persistence/canonical-store";
 import { exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
 import { readyFrontierMaterializationRequestSchemaV1 } from "./automation-schemas";
 import type { ReadyFrontierMaterializationReceiptV1, ReadyFrontierMaterializationRequestV1 } from "./automation-types";
-import type { ReadyFrontierSimulationStoreV1 } from "./durable-store";
+import { bindReadyFrontierSimulationEvaluationV1, type ReadyFrontierSimulationStoreV1 } from "./durable-store";
 import { ReadyFrontierContractErrorV1 } from "./errors";
 import { parseExactReadyFrontierV1 } from "./exact";
-import { buildReadyFrontierMaterializationV1, persistReadyFrontierMaterializationV1 } from "./materialization";
-import type { ReadyFrontierStandingPolicyStoreV1 } from "./standing-policy-store";
+import { buildReadyFrontierMaterializationV1, parseReadyFrontierMaterializationV1 } from "./materialization";
+import { bindReadyFrontierStandingPolicyGuardV1, type ReadyFrontierBoundStandingPolicyGuardV1,
+  type ReadyFrontierStandingPolicyStoreV1 } from "./standing-policy-store";
 
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never { throw new ReadyFrontierContractErrorV1(code); }
 
@@ -15,25 +17,33 @@ const materializationServices = new WeakSet<object>();
 /** Repository-only materialization seam. It has no timer, scheduler, provider, agent, GitHub, or effect client. */
 export class ReadyFrontierMaterializationServiceV1 {
   readonly #evaluationKey: Uint8Array; readonly #policyKey: Uint8Array;
-  readonly #evaluations: ReadyFrontierSimulationStoreV1;
-  readonly #policies: ReadyFrontierStandingPolicyStoreV1;
-  readonly #canonicalStore: CanonicalStore;
+  readonly #evaluation: NonNullable<ReturnType<typeof bindReadyFrontierSimulationEvaluationV1>>;
+  readonly #withPolicy: ReadyFrontierBoundStandingPolicyGuardV1;
+  readonly #createProposedWorkBundle: ReadyFrontierCanonicalOperationsV1["createProposedWorkBundle"];
   constructor(evaluations: ReadyFrontierSimulationStoreV1,
     policies: ReadyFrontierStandingPolicyStoreV1, canonicalStore: CanonicalStore,
     evaluationKeyValue: unknown, policyKeyValue: unknown) {
     const evaluationKey = exactHostUint8ArrayV1(evaluationKeyValue, 128), policyKey = exactHostUint8ArrayV1(policyKeyValue, 128);
-    if (!evaluationKey || evaluationKey.byteLength < 32 || !policyKey || policyKey.byteLength < 32) fail("integrity_failed");
-    this.#evaluations = evaluations; this.#policies = policies; this.#canonicalStore = canonicalStore;
+    const evaluation = bindReadyFrontierSimulationEvaluationV1(evaluations);
+    const withPolicy = bindReadyFrontierStandingPolicyGuardV1(policies);
+    const canonical = bindReadyFrontierCanonicalOperationsV1(canonicalStore);
+    if (!evaluationKey || evaluationKey.byteLength < 32 || !policyKey || policyKey.byteLength < 32
+      || !evaluation || !withPolicy || !canonical) fail("integrity_failed");
+    this.#evaluation = evaluation; this.#withPolicy = withPolicy;
+    this.#createProposedWorkBundle = canonical.createProposedWorkBundle;
     this.#evaluationKey = evaluationKey.copy(); this.#policyKey = policyKey.copy();
     materializationServices.add(this); Object.freeze(this);
   }
   async materialize(value: unknown): Promise<{ receipt: ReadyFrontierMaterializationReceiptV1; replayed: boolean }> {
     const request = parseExactReadyFrontierV1(readyFrontierMaterializationRequestSchemaV1, value) as ReadyFrontierMaterializationRequestV1;
-    const evaluation = this.#evaluations.evaluation(request.cycleId); if (!evaluation) fail("integrity_failed");
-    return this.#policies.withCurrentPolicy(request.standingPolicyId, request.standingPolicyRevision,
+    const evaluation = this.#evaluation(request.cycleId); if (!evaluation) fail("integrity_failed");
+    return this.#withPolicy(request.standingPolicyId, request.standingPolicyRevision,
       request.standingPolicyDigest, async (policy) => {
-        const receipt = buildReadyFrontierMaterializationV1({ request, evaluation, standingPolicy: policy }, this.#evaluationKey, this.#policyKey);
-        return persistReadyFrontierMaterializationV1({ canonicalStore: this.#canonicalStore, receipt, integrityKey: this.#evaluationKey });
+        const built = buildReadyFrontierMaterializationV1({ request, evaluation, standingPolicy: policy }, this.#evaluationKey, this.#policyKey);
+        const receipt = parseReadyFrontierMaterializationV1(built, this.#evaluationKey);
+        const result = await this.#createProposedWorkBundle({ request: receipt.request, workflow: receipt.workflow,
+          job: receipt.job, actionInbox: receipt.actionInbox });
+        return { receipt, replayed: result.replayed };
       });
   }
   close(): void { this.#evaluationKey.fill(0); this.#policyKey.fill(0); }

@@ -82,12 +82,13 @@ function setup(resource: ReturnType<typeof resources>, canonical: CanonicalStore
   const ready = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey); resource.readyPolicies.recordPolicy(ready);
   const materializer = new ReadyFrontierMaterializationServiceV1(resource.evaluations, resource.standingPolicies,
     canonical, resource.evaluationKey, resource.standingKey);
+  const promotionClock = new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:00.000Z");
   const promoter = new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
     resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
-    { now: () => "2026-08-30T18:04:00.000Z" });
+    promotionClock);
   const coordinator = new ReadyFrontierNoRelayCoordinatorV1(materializer, promoter, resource.runs, fake,
     new ReadyFrontierFixedRepositoryClockV1(deliveryNow), resource.runKey);
-  return { evaluation, standing, ready, materializer, promoter, coordinator, fake,
+  return { evaluation, standing, ready, materializer, promoter, coordinator, fake, canonical, promotionClock,
     request: buildReadyFrontierNoRelayRequestFixtureV1(evaluation, standing, ready) };
 }
 function finish(value: ReturnType<typeof setup>) { value.coordinator.close(); value.materializer.close(); value.promoter.close(); }
@@ -353,6 +354,91 @@ test("CR11B-AUTO-040 coordinator accepts only the registered exact fake and an e
     assert.equal(materializerProxy.trapCount(), 0);
     assert.equal(value.fake.deliveryCount(), 0); finish(value);
   } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-040 freezes every nested collaborator before a hostile alias can enter the run", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const value = setup(resource, new CanonicalStore(adaptPglite(db)));
+    let callbacks = 0;
+    const callback = () => { callbacks += 1; return undefined; };
+    const targets: Array<{ target: object; method: string }> = [
+      { target: resource.evaluations, method: "evaluation" },
+      { target: resource.standingPolicies, method: "withCurrentPolicy" },
+      { target: resource.readyPolicies, method: "withCurrentPolicy" },
+      { target: value.canonical, method: "createReadyFrontierProposedWorkBundleWithActionInbox" },
+      { target: value.canonical, method: "promoteReadyFrontierJobWithInternalHandoff" },
+      { target: value.promotionClock, method: "now" },
+    ];
+    for (const { target, method } of targets) {
+      const before = Reflect.get(target, method);
+      assert.equal(Object.isFrozen(target), true);
+      assert.equal(Object.isFrozen(Object.getPrototypeOf(target) as object), true);
+      assert.equal(Reflect.set(target, method, callback), false);
+      assert.equal(Reflect.deleteProperty(target, method), true);
+      assert.equal(Reflect.get(target, method), before);
+      assert.throws(() => Object.defineProperty(target, method, { configurable: true, value: callback }));
+      assert.throws(() => Object.defineProperty(Object.getPrototypeOf(target) as object, method,
+        { configurable: true, value: callback }));
+    }
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs)::text jobs,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs`);
+    assert.deepEqual(counts.rows[0], { jobs: "0", handoffs: "0" });
+    assert.equal(callbacks, 0); assert.equal(value.fake.deliveryCount(), 0); finish(value);
+  } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-040 nested collaborator Proxies and subclasses are rejected without executing traps", async () => {
+  const resource = resources(), db = await database();
+  const extra: Array<{ closeDatabase(): void }> = [];
+  try {
+    const canonical = new CanonicalStore(adaptPglite(db));
+    const probes = [observedProxy(resource.evaluations, "throwing"), observedProxy(resource.standingPolicies, "throwing"),
+      observedProxy(resource.readyPolicies, "throwing"), observedProxy(canonical, "throwing"),
+      observedProxy(new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:00.000Z"), "throwing")];
+    assert.throws(() => new ReadyFrontierMaterializationServiceV1(probes[0].value as never, resource.standingPolicies,
+      canonical, resource.evaluationKey, resource.standingKey), code("integrity_failed"));
+    assert.throws(() => new ReadyFrontierMaterializationServiceV1(resource.evaluations, probes[1].value as never,
+      canonical, resource.evaluationKey, resource.standingKey), code("integrity_failed"));
+    assert.throws(() => new ReadyFrontierMaterializationServiceV1(resource.evaluations, resource.standingPolicies,
+      probes[3].value as never, resource.evaluationKey, resource.standingKey), code("integrity_failed"));
+    assert.throws(() => new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      probes[2].value as never, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:00.000Z")), code("integrity_failed"));
+    assert.throws(() => new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      probes[4].value as never), code("integrity_failed"));
+    for (const probe of probes) assert.equal(probe.trapCount(), 0);
+
+    class SimulationSubclass extends ReadyFrontierSimulationStoreV1 {}
+    class StandingSubclass extends ReadyFrontierStandingPolicyStoreV1 {}
+    class ReadySubclass extends ReadyFrontierReadyPolicyStoreV1 {}
+    class CanonicalSubclass extends CanonicalStore {}
+    class ClockSubclass extends ReadyFrontierFixedRepositoryClockV1 {}
+    const simulation = new SimulationSubclass(join(resource.directory, "sub-evaluations.sqlite"), "tenant.owner",
+      resource.evaluationKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true })); extra.push(simulation);
+    const standing = new StandingSubclass(join(resource.directory, "sub-standing.sqlite"), "tenant.owner",
+      "workspace.control-room", resource.standingKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true })); extra.push(standing);
+    const ready = new ReadySubclass(join(resource.directory, "sub-ready.sqlite"), "tenant.owner",
+      "workspace.control-room", resource.readyKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true })); extra.push(ready);
+    const subclassedCanonical = new CanonicalSubclass(adaptPglite(db));
+    assert.throws(() => new ReadyFrontierMaterializationServiceV1(simulation, resource.standingPolicies,
+      canonical, resource.evaluationKey, resource.standingKey), code("integrity_failed"));
+    assert.throws(() => new ReadyFrontierMaterializationServiceV1(resource.evaluations, standing,
+      canonical, resource.evaluationKey, resource.standingKey), code("integrity_failed"));
+    assert.throws(() => new ReadyFrontierMaterializationServiceV1(resource.evaluations, resource.standingPolicies,
+      subclassedCanonical, resource.evaluationKey, resource.standingKey), code("integrity_failed"));
+    assert.throws(() => new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      ready, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:00.000Z")), code("integrity_failed"));
+    assert.throws(() => new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      new ClockSubclass("2026-08-30T18:04:00.000Z")), code("integrity_failed"));
+  } finally {
+    for (const store of extra) try { store.closeDatabase(); } catch { /* closed */ }
+    await db.close(); close(resource);
+  }
 });
 
 test("CR11B-AUTO-040 honest server projection claims no run and exposes no activation authority", () => {

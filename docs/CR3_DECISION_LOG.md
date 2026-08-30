@@ -1294,3 +1294,36 @@ ledger, in-memory checkpoint, and same-process capacity preflight still do not p
 **Reevaluate:** Different independent reviewers must reproduce all `AUTO040-SAR` and `AUTO040-DR` findings against the
 exact remediation commit. Any remaining finding keeps AUTO-040 open. Production consumer, reconciliation, database,
 clock/key/checkpoint/policy custody, credential brokerage, owner approval, deployment, and effects remain later gates.
+
+## ADR-107 — AUTO-040 binds the complete collaborator graph, not only the coordinator surface
+
+**Decision:** The first AUTO-040 remediation remains rejected for security acceptance despite its accepted durability
+re-review. Its second remediation makes every collaborator admitted to the repository-only composed path a registered exact
+runtime object whose mutable state is ECMAScript-private and whose instance, prototype, database operations, and accepted
+base operation are captured before use. Materialization and promotion retain only exact evaluation, policy-guard,
+canonical-write, and clock closures. The no-relay promotion binder accepts only a promotion service constructed with the
+registered fixed repository clock. Generic AUTO-030 clocks remain available to the earlier isolated contract but cannot
+enter AUTO-040. The canonical database adapter captures raw query and transaction functions once and freezes its exposed
+client, preventing later caller replacement from entering the captured canonical path.
+
+**Why:** The first security re-review replaced neither the frozen coordinator nor either frozen service. Instead it added
+an own `evaluation` method to the still externally held simulation store after the whole composition existed. Both services
+dynamically dispatched through that alias, executed the hostile callback twice, contacted the fake, and returned an
+acknowledged run. Top-level privacy therefore did not close the dependency graph. Capturing only the exact complete graph,
+including policy stores, canonical persistence, and promotion time, removes the arbitrary-callback seam before any marker
+or canonical mutation can occur.
+
+**Alternatives rejected:** Treat a frozen coordinator as proof that nested objects are immutable; capture only the public
+evaluation method while leaving database, verification, or guard helpers runtime-public; trust a caller-held canonical
+store or clock because its TypeScript type is narrow; repair only the exact reproduced method name; discard the accepted
+durability report or rewrite the negative security report; infer security acceptance from producer tests.
+
+**Trade-off:** Repository store and canonical instances are intentionally frozen, so test instrumentation must occur at the
+captured database or clock boundary rather than by replacing accepted repository methods. This is a stronger local runtime
+boundary but still does not establish hostile-process isolation, protected production clock/key/checkpoint custody, hosted
+multi-process PostgreSQL convergence, or a qualified real consumer.
+
+**Reevaluate:** A fresh reviewer different from all implementation and earlier review agents must reproduce the nested
+alias attack and probe assignment, deletion, `defineProperty`, Proxy, subclass, own-method, and prototype replacement for
+evaluation, both policy stores, canonical persistence, and both clock uses on the exact second-remediation commit. Any
+remaining callback or alternate consumer/effect seam keeps AUTO-040 open. Production activation remains separately gated.
