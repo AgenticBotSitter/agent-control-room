@@ -1,6 +1,7 @@
 import type { PGlite as PGliteType } from "@electric-sql/pglite";
 import postgres from "postgres";
-import { isHostProxyV1 } from "../security/host-value";
+import { dataMethodV1, isHostProxyV1 } from "../security/host-value";
+import { createExactPgliteReceiverV1 } from "./pglite-provenance";
 
 export interface QueryResult<T> {
   rows: T[];
@@ -17,6 +18,8 @@ export interface DatabaseClient extends DatabaseSession {
 }
 
 const repositorySimulationDatabaseClients = new WeakSet<object>();
+const bindFunction = Function.call.bind(Function.bind) as
+  <T extends (...args: never[]) => unknown>(fn: T, receiver: unknown) => T;
 
 /** True only for the frozen client created around a module-private PGlite instance. */
 export function isRepositorySimulationDatabaseClientV1(value: unknown): value is DatabaseClient {
@@ -43,13 +46,16 @@ export async function createRepositorySimulationDatabaseV1(options: { testOnly: 
   if (options.testOnly !== true) throw new Error("repository simulation database is test-only");
   const packageName = ["@electric-sql", "pglite"].join("/");
   const { PGlite } = await import(/* @vite-ignore */ packageName) as { PGlite: typeof PGliteType };
-  const db = new PGlite();
-  const query = db.query.bind(db) as typeof db.query;
-  const transaction = db.transaction.bind(db) as typeof db.transaction;
-  const exec = db.exec.bind(db) as typeof db.exec;
-  const close = db.close.bind(db) as typeof db.close;
+  const exact = createExactPgliteReceiverV1(PGlite);
+  const db = exact.receiver;
+  const query = bindFunction(exact.query, db) as typeof db.query;
+  const transaction = bindFunction(exact.transaction, db) as typeof db.transaction;
+  const exec = bindFunction(exact.exec, db) as typeof db.exec;
+  const close = bindFunction(exact.close, db) as typeof db.close;
   const session = (tx: { query<U>(statement: string, params?: unknown[]): Promise<{ rows: U[] }> }): DatabaseSession => {
-    const txQuery = tx.query.bind(tx) as typeof tx.query;
+    const method = dataMethodV1(tx, "query");
+    if (!method) throw new Error("repository simulation transaction implementation drift");
+    const txQuery = bindFunction(method, tx) as typeof tx.query;
     return Object.freeze({
       query: <U = Record<string, unknown>>(statement: string, params: unknown[] = []) => txQuery<U>(statement, params),
     });

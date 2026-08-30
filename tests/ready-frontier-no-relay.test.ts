@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { PGlite } from "@electric-sql/pglite";
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
 import { createPostgresClient, createRepositorySimulationDatabaseV1, type DatabaseClient,
   type DatabaseSession } from "../src/persistence/database.ts";
@@ -40,6 +41,16 @@ import { observedProxy } from "./proxy-test-helper.ts";
 const code = (safeCode: ReadyFrontierContractErrorV1["safeCode"]) => (error: unknown) =>
   error instanceof ReadyFrontierContractErrorV1 && error.safeCode === safeCode;
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
+
+function pglitePrototypeDescriptor(name: string): { owner: object; descriptor: PropertyDescriptor } {
+  let owner: object | null = PGlite.prototype;
+  while (owner) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, name);
+    if (descriptor) return { owner, descriptor };
+    owner = Object.getPrototypeOf(owner) as object | null;
+  }
+  throw new Error(`missing PGlite prototype descriptor: ${name}`);
+}
 
 function resources(maximumRecords = 1_000) {
   const directory = mkdtempSync(join(tmpdir(), "cr11b-auto-040-")); chmodSync(directory, 0o700);
@@ -542,8 +553,27 @@ test("CR11B-AUTO-040 checkpoint ports require exact private state and reject duc
   }
 });
 
+test("CR11B-AUTO-040 rejects pre-factory PGlite prototype drift before construction or run behavior", async () => {
+  let callbacks = 0;
+  const fake = new ReadyFrontierInMemoryFakeDeliveryV1("acknowledge", "2026-08-30T18:04:06.000Z");
+  for (const name of ["query", "transaction", "exec", "_checkReady", "_runExclusiveTransaction"]) {
+    const { owner, descriptor } = pglitePrototypeDescriptor(name);
+    assert.equal(typeof descriptor.value, "function");
+    Object.defineProperty(owner, name, { ...descriptor, value() { callbacks += 1; throw new Error("must not execute"); } });
+    try {
+      await assert.rejects(createRepositorySimulationDatabaseV1({ testOnly: true }),
+        /repository simulation database implementation drift/);
+      assert.equal(callbacks, 0); assert.equal(fake.deliveryCount(), 0);
+    } finally { Object.defineProperty(owner, name, descriptor); }
+  }
+  const exact = await createRepositorySimulationDatabaseV1({ testOnly: true });
+  await exact.close();
+  assert.equal(callbacks, 0); assert.equal(fake.deliveryCount(), 0);
+});
+
 test("CR11B-AUTO-040 captured exact checkpoint and repository database operations ignore later aliases", async () => {
   const resource = resources(), db = await database();
+  const originals: Array<{ owner: object; name: string; descriptor: PropertyDescriptor }> = [];
   try {
     let callbacks = 0;
     for (const checkpoint of [resource.evaluationCheckpoints, resource.standingCheckpoints,
@@ -558,11 +588,20 @@ test("CR11B-AUTO-040 captured exact checkpoint and repository database operation
     assert.equal(Reflect.set(db.client, "query", () => { callbacks += 1; }), false);
     assert.equal(Reflect.deleteProperty(db.client, "transaction"), false);
     assert.throws(() => Object.setPrototypeOf(db.client, { query: () => { callbacks += 1; } }));
+    for (const name of ["query", "transaction", "exec", "_checkReady", "_runExclusiveTransaction"]) {
+      const { owner, descriptor } = pglitePrototypeDescriptor(name);
+      originals.push({ owner, name, descriptor });
+      Object.defineProperty(owner, name, { ...descriptor, value() { callbacks += 1; throw new Error("must not execute"); } });
+    }
     const value = setup(resource, new CanonicalStore(db.client));
     const result = await value.coordinator.run(value.request);
     assert.equal(result.run.state, "acknowledged_repository_simulation");
     assert.equal(value.fake.deliveryCount(), 1); assert.equal(callbacks, 0); finish(value);
-  } finally { await db.close(); close(resource); }
+  } finally {
+    await db.close();
+    for (const { owner, name, descriptor } of originals.reverse()) Object.defineProperty(owner, name, descriptor);
+    close(resource);
+  }
 });
 
 test("CR11B-AUTO-040 honest server projection claims no run and exposes no activation authority", () => {

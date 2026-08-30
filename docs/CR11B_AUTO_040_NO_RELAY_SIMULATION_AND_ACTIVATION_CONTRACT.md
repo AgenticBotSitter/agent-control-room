@@ -107,5 +107,14 @@ PGlite, inherited, duck, and networked PostgreSQL clients cannot enter the no-re
 store accepts checkpoint operations only from the exact registered in-memory reference implementation and invokes
 captured base methods over ECMAScript-private state. Accessor, Proxy, subclass, delegate-mutation, and network-client
 probes reject before canonical/no-relay mutation with zero hostile behavior or fake contact. A new different independent
-security review of the exact committed third remediation remains mandatory.
+reviewer nevertheless rejected exact third-remediation commit `3a9972ff18f07d1f9e2e832f42893a490f239ef9` after
+varying PGlite's shared `transaction` prototype before factory construction. The changed method entered the private brand
+and executed inside acknowledged success. The immutable negative report has SHA-256
+`98265a5b35b19a049c9221c97bf892076b273feb494ff31ed885f22192b3cba4`.
+
+The fourth remediation validates the pinned PGlite 0.3.14 constructor and complete executable prototype manifest before
+receiver construction. Descriptor shapes and function-source digests must match exactly. It then installs the verified
+surface as non-writable, non-configurable own descriptors on the withheld receiver, so both pre-factory drift and later
+shared-prototype changes fail without entering acknowledged behavior. A new different independent security review of the
+exact committed fourth remediation remains mandatory.
 Passing repository tests is necessary but cannot make the phase accepted or authorize production activation.

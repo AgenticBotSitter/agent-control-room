@@ -1,6 +1,6 @@
 # CR11B-AUTO-040 Candidate Acceptance Record
 
-Status: initial candidate rejected; first remediation received a split verdict; second remediation rejected; third remediation complete; different-agent security re-review pending
+Status: initial candidate rejected; first remediation received a split verdict; second and third remediations rejected; fourth remediation complete; different-agent security re-review pending
 
 Date: 2026-08-30
 
@@ -12,7 +12,7 @@ The candidate also produces a separately keyed, digest-bound activation packet t
 
 ## Dedicated hostile evidence
 
-Nineteen AUTO-040 cases verify:
+Twenty AUTO-040 cases verify:
 
 - the complete end-to-end path, one fake delivery, exact terminal replay, one ready job, one reservation, one handoff, zero attempts, and zero leases;
 - thrown and malformed fake delivery becoming terminal ambiguity with no retry;
@@ -32,6 +32,8 @@ Nineteen AUTO-040 cases verify:
   network use, including accessor and Proxy inputs with zero getter/trap execution;
 - exact checkpoint provenance across all four SQLite stores, with duck, accessor, Proxy, and subclass ports rejected
   before file or callback behavior;
+- pinned PGlite 0.3.14 constructor and complete executable prototype provenance, with pre-factory `query`, `transaction`,
+  `exec`, `_checkReady`, and `_runExclusiveTransaction` variation rejected before construction or callback behavior;
 - captured exact database and checkpoint operations ignoring later receiver aliases while the real path still completes;
 - an honest empty server projection with zero activation authority; and
 - structural absence of real effect clients.
@@ -44,9 +46,9 @@ The existing UI gate separately proves that the portfolio and Project Workspace 
 
 ## Repository gate
 
-- dedicated AUTO-040 gate: 19/19 passed;
-- combined CR11B gate: 86/86 passed;
-- registered pretest lifecycle: 668/668 passed;
+- dedicated AUTO-040 gate: 20/20 passed;
+- combined CR11B gate: 87/87 passed;
+- registered pretest lifecycle: 669/669 passed;
 - core suite: 414/416 passed with two intentional platform skips and zero failures;
 - public post-test suite: 52/52 passed;
 - type checking and full lint passed;
@@ -104,9 +106,23 @@ captured base methods over ECMAScript-private state. Descriptor-safe database in
 without executing them. New post-construction receiver mutation and complete rejection matrices produce zero hostile
 callbacks, zero traps, zero fake contacts, and zero canonical rows on rejected paths.
 
+The next different reviewer rejected exact third-remediation commit
+`3a9972ff18f07d1f9e2e832f42893a490f239ef9`. Its unchanged report has SHA-256
+`98265a5b35b19a049c9221c97bf892076b273feb494ff31ed885f22192b3cba4`. It reproduced pre-factory replacement of
+PGlite's shared `transaction` prototype method: the private factory captured and branded that changed function, which ran
+twice inside an otherwise acknowledged simulation.
+
+The fourth remediation pins the exact PGlite 0.3.14 implementation manifest rather than trusting factory ownership alone.
+Before constructing a receiver, it verifies the constructor, both prototype levels, every executable data/getter
+descriptor, descriptor shape, and source digest. Any drift fails before receiver construction. The verified executable
+surface is then installed as non-writable, non-configurable own descriptors on the private receiver, so later shared
+prototype changes cannot enter `query`, `transaction`, `exec`, their internal dispatch, or cleanup. The raw receiver is
+still withheld and only the frozen outer client receives the private repository-simulation brand.
+
 This record is not final acceptance. The accepted durability verdict remains bounded to the first-remediation commit. A
-new different independent security reviewer must review the exact committed third remediation, reproduce the
-`AUTO040-SSRR-001` receiver-delegate attack and every earlier `SAR` path, attack the fixed-fake/collaborator/capability boundary,
+new different independent security reviewer must review the exact committed fourth remediation, reproduce the
+`AUTO040-STRR-001` pre-factory prototype path, `AUTO040-SSRR-001` receiver-delegate attack, and every earlier `SAR` path,
+attack the fixed-fake/collaborator/capability boundary,
 durable marker/restart semantics,
 clock and deadline rules, replay and rollback behavior, projection sanitation, activation packet completeness, and absence
 of operational authority. Any finding keeps AUTO-040 open and requires another different-agent re-review.

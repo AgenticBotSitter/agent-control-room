@@ -1361,3 +1361,35 @@ third-remediation commit. It must reproduce `AUTO040-SSRR-001`, test mutable rec
 network-capable clients, accessors, Proxies, subclasses, and inherited wrappers across the database and all four checkpoint
 seams, and repeat every earlier `SAR` path. Any callback, network-capable alternate path, false acknowledgement, or other
 consumer/effect seam keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-109 — AUTO-040 pins dependency implementation provenance before constructing a trusted receiver
+
+**Decision:** The third AUTO-040 remediation remains rejected. Its fourth remediation treats exact pinned dependency
+implementation identity as part of the repository-simulation authority boundary. Before constructing a PGlite receiver,
+the factory verifies the PGlite 0.3.14 constructor, both prototype levels, every executable method/getter descriptor,
+descriptor flags, and function-source SHA-256 against an in-repository manifest. Drift fails before construction. The
+complete verified executable surface is then installed as non-writable, non-configurable own descriptors on the withheld
+receiver. The exposed frozen client binds only verified operations, and only that client can receive the private
+repository-simulation brand.
+
+**Why:** The third-remediation reviewer changed the shared PGlite `transaction` prototype before calling the private
+factory. Factory ownership alone then branded the changed method, which ran twice during an otherwise acknowledged
+simulation. Withholding and freezing the returned client did not prove the implementation from which its captured
+operation came. A pinned manifest rejects earlier drift, while a sealed private receiver prevents later shared-prototype
+changes from affecting dynamic internal dispatch.
+
+**Alternatives rejected:** Treat a module-private factory as sufficient provenance; validate only `query`, `transaction`,
+and `exec` while leaving their dynamically dispatched helpers mutable; freeze the shared third-party prototypes globally;
+bundle PGlite into the production application solely to capture early references; accept package-lock identity without
+runtime implementation validation; alter the immutable third-remediation report.
+
+**Trade-off:** The manifest deliberately binds this repository-only fixture to exact PGlite 0.3.14 executable source.
+Updating that development dependency requires an explicit manifest review and new evidence. This remains local test
+database evidence; it does not prove hosted PostgreSQL, process isolation, durable protected checkpoint custody, or a
+qualified production consumer.
+
+**Reevaluate:** A fresh reviewer different from the implementation author and all earlier AUTO-040 reviewers must
+reproduce `AUTO040-STRR-001`, vary every accepted PGlite executable descriptor before construction and after receiver
+creation, and repeat all `SAR` and `SSRR` paths plus ordinary completion, replay, ambiguity, rollback, blocked activation,
+and negative-authority checks. Any admitted changed behavior, alternate consumer/effect seam, or false acknowledgement
+keeps AUTO-040 open. Production activation remains separately gated.
