@@ -1,6 +1,6 @@
 # CR11B-AUTO-030 Independent-Review Remediation
 
-**Status:** third remediation implementation complete; another independent re-review required
+**Status:** fourth remediation implementation complete; another independent re-review required
 
 **Rejected target:** `47e4000fb374eaefdfeb31e88db127505d3f11dc`
 
@@ -20,9 +20,15 @@
 
 **Preserved second-remediation re-review SHA-256:** `db6e7986b97a877db77cc235a8e9d83b9723ef7a5a4aacdc4fe12805cd2897b7`
 
+**Rejected third remediation:** `9e43ea56471df1ee58dd8e94da04550ce6062063`
+
+**Preserved third-remediation re-review:** `docs/reviews/CR11B_AUTO_030_THIRD_REMEDIATION_REREVIEW.md`
+
+**Preserved third-remediation re-review SHA-256:** `10147ed33b7a95a300c36ac5a1d7d59124c037a8e88fa59323e816f97ffe0acc`
+
 ## Disposition
 
-The first independent review rejected AUTO-030 with five reproduced findings. A separate transaction audit confirmed the generic-ready bypass, untrusted-time acceptance, shared-outbox exposure, stale replay truth, and missing simultaneous-concurrency evidence. A different-agent re-review then rejected the first remediation with three High authorization/time defects, one Medium operator-truth defect, and one Low evidence-wording defect. A third independent review rejected the second remediation with two High authorization/time defects, two Medium current-truth defects, and one Low concurrency-evidence defect. The third remediation preserves every negative report unchanged and does not reinterpret any negative result as acceptance.
+The first independent review rejected AUTO-030 with five reproduced findings. A separate transaction audit confirmed the generic-ready bypass, untrusted-time acceptance, shared-outbox exposure, stale replay truth, and missing simultaneous-concurrency evidence. A different-agent re-review then rejected the first remediation with three High authorization/time defects, one Medium operator-truth defect, and one Low evidence-wording defect. A third independent review rejected the second remediation with two High authorization/time defects, two Medium current-truth defects, and one Low concurrency-evidence defect. The next independent review rejected the third remediation with one High commit-boundary timing defect and one Medium replay-return timing defect. The fourth remediation preserves every negative report unchanged and does not reinterpret any negative result as acceptance.
 
 ## Remediation binding
 
@@ -57,11 +63,18 @@ The first independent review rejected AUTO-030 with five reproduced findings. A 
 | `AUTO030-SRR-004` receipt-only projection claims current pending state | Receipt-only projection is explicitly historical. It never reports a current ready job or pending handoff, including before nominal expiry, and rejects only observations that predate the authenticated promotion. | Current and post-expiry observations both report one historical promotion with zero current jobs and zero pending handoffs. A pre-promotion observation rejects. |
 | `AUTO030-SRR-005` same-store Promise test does not reach canonical concurrency | Two independent evaluation, standing-policy, and ready-policy stores plus two service instances submit the same exact request to one shared canonical database. | Instrumentation proves at least two promotion transactions were pending at the canonical transaction boundary; they converge to one new result and one replay with exactly one job, reservation, transition, handoff, and request. Multi-process PostgreSQL behavior remains explicitly unproved. |
 
+## Third-remediation re-review binding
+
+| Finding | Fourth remediation | Hostile evidence |
+|---|---|---|
+| `AUTO030-TRR-001` authorization expires after callback but before commit | `DatabaseClient` now requires a transaction-owner `transactionWithPreCommitCheck` operation. Both PostgreSQL and PGlite adapters execute the trusted-time predicate after the complete application callback and immediately before returning control to their transaction manager for commit. | The exact report probe holds the underlying transaction after the canonical callback returns, advances time beyond policy expiry, and resumes. The adapter-owned check rejects and the request, transition, ready job, reservation, handoff, and outbox all roll back. |
+| `AUTO030-TRR-002` replay expires after final callback check | The same adapter-owned predicate covers replay after every evidence read. Canonical promotion then resamples time after the transaction promise settles and before returning either a new or replay result. | A replay held after callback but before commit rejects in the pre-commit predicate. A replay held after transaction completion also rejects before `replayed: true` can return. A new result delayed after commit returns explicit canonical ambiguity rather than current success. |
+
 ## Current evidence
 
-- AUTO-030 focused tests: 19/19 passed.
-- Combined CR11B gate: 63/63 passed.
-- Registered pretest lifecycle: 645/645 passed.
+- AUTO-030 focused tests: 22/22 passed.
+- Combined CR11B gate: 66/66 passed.
+- Registered pretest lifecycle: 648/648 passed.
 - Core suite: 414/416 passed, with two intentional platform skips and zero failures.
 - Public post-test suite: 52/52 passed.
 - Type checking and lint passed.
@@ -70,4 +83,4 @@ The first independent review rejected AUTO-030 with five reproduced findings. A 
 - Migration verification passed through `0027`, with 97 PostgreSQL tables.
 - Architect-owned working-tree whitespace validation passed; the immutable initial report's two Markdown hard breaks remain documented exact-range exceptions.
 
-The complete third-remediation repository gate is green. Another different-agent re-review of the exact immutable third-remediation commit is still required. The owner has already authorized all required independent reviews. No production policy, consumer, schedule, claim, lease, dispatch, provider/agent contact, GitHub mutation, deployment, or external effect is authorized.
+The complete fourth-remediation repository gate is green. Another different-agent re-review of the exact immutable fourth-remediation commit is still required. The owner has already authorized all required independent reviews. No production policy, consumer, schedule, claim, lease, dispatch, provider/agent contact, GitHub mutation, deployment, or external effect is authorized.

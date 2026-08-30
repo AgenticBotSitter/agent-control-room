@@ -10,6 +10,8 @@ export interface DatabaseSession {
 
 export interface DatabaseClient extends DatabaseSession {
   transaction<T>(callback: (session: DatabaseSession) => Promise<T>): Promise<T>;
+  transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>,
+    preCommitCheck: () => void): Promise<T>;
 }
 
 export function createPostgresClient(connectionString: string): {
@@ -36,6 +38,13 @@ export function createPostgresClient(connectionString: string): {
       transaction<T>(callback: (session: DatabaseSession) => Promise<T>) {
         return sql.begin((transaction) => callback(adapt(transaction as typeof sql))) as Promise<T>;
       },
+      transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void) {
+        return sql.begin(async (transaction) => {
+          const result = await callback(adapt(transaction as typeof sql));
+          preCommitCheck();
+          return result;
+        }) as Promise<T>;
+      },
     },
     close: () => sql.end({ timeout: 5 }),
   };
@@ -48,5 +57,10 @@ export function adaptPglite(db: {
   return {
     query: (statement, params = []) => db.query(statement, params),
     transaction: (callback) => db.transaction((tx) => callback({ query: (statement, params = []) => tx.query(statement, params) })),
+    transactionWithPreCommitCheck: (callback, preCommitCheck) => db.transaction(async (tx) => {
+      const result = await callback({ query: (statement, params = []) => tx.query(statement, params) });
+      preCommitCheck();
+      return result;
+    }),
   };
 }

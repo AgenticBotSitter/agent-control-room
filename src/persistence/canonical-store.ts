@@ -564,7 +564,8 @@ export class CanonicalStore {
         lastAuthorizedTime = current;
         return value;
       };
-      return await this.db.transaction(async (tx) => {
+      let requireFreshAtPreCommit = true;
+      const result = await this.db.transactionWithPreCommitCheck(async (tx) => {
       const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
       if (!tenant.rows[0]) throw new Error("Ready frontier tenant not found");
       const priorRequest = await tx.query<{ request_digest: string; status: string; result: {
@@ -574,6 +575,7 @@ export class CanonicalStore {
         [input.tenantId, input.requestId]);
       let transactionNow = currentAuthorizationTime(!priorRequest.rows[0]);
       if (priorRequest.rows[0]) {
+        requireFreshAtPreCommit = false;
         const prior = priorRequest.rows[0];
         if (prior.request_digest !== input.requestDigest || prior.status !== "completed"
           || prior.result?.receiptDigest !== input.receiptDigest || prior.result?.jobId !== input.jobId
@@ -711,7 +713,10 @@ export class CanonicalStore {
         reservationId: input.reservation.id, handoffId: input.handoff.id }), input.tenantId, input.requestId]);
       currentAuthorizationTime(true);
       return { job: promoted.entity as JobRecord, replayed: false };
-      });
+      }, () => { currentAuthorizationTime(requireFreshAtPreCommit); });
+      try { currentAuthorizationTime(false); }
+      catch { throw new Error("Ready frontier transaction completed without confirmed current authorization; canonical outcome is ambiguous"); }
+      return result;
     } finally {
       authorization.release();
     }

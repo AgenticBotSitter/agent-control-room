@@ -281,9 +281,11 @@ test("CR11B-AUTO-030 an unawaited canonical call cannot escape authorization lif
     const transactionHeld = new Promise<void>((resolve) => { release = resolve; });
     const delayed: DatabaseClient = {
       query: base.query,
-      transaction: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0]) => {
+      transaction: base.transaction,
+      transactionWithPreCommitCheck: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0],
+        preCommitCheck: () => void) => {
         if (delayPromotion) { entered(); await transactionHeld; }
-        return base.transaction(operation) as Promise<T>;
+        return base.transactionWithPreCommitCheck(operation, preCommitCheck) as Promise<T>;
       },
     };
     const canonical = new CanonicalStore(delayed);
@@ -322,9 +324,11 @@ test("CR11B-AUTO-030 trusted time is sampled after policy queues and again at th
     const heldTransaction = new Promise<void>((resolve) => { releaseTransaction = resolve; });
     const delayed: DatabaseClient = {
       query: base.query,
-      transaction: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0]) => {
+      transaction: base.transaction,
+      transactionWithPreCommitCheck: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0],
+        preCommitCheck: () => void) => {
         if (delayPromotion) { transactionEntered(); await heldTransaction; }
-        return base.transaction(operation) as Promise<T>;
+        return base.transactionWithPreCommitCheck(operation, preCommitCheck) as Promise<T>;
       },
     };
     const canonical = new CanonicalStore(delayed);
@@ -395,6 +399,97 @@ test("CR11B-AUTO-030 expiry reached during the ready transition rolls back the e
   } finally { await db.close(); close(resource); }
 });
 
+test("CR11B-AUTO-030 transaction owner rechecks expiry after the application callback and rolls back before commit", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const base = adaptPglite(db);
+    let holdPromotion = false, callbackReturned!: () => void, releaseCommit!: () => void;
+    const returned = new Promise<void>((resolve) => { callbackReturned = resolve; });
+    const held = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    const delayed: DatabaseClient = {
+      query: base.query,
+      transaction: base.transaction,
+      transactionWithPreCommitCheck: <T>(operation: Parameters<DatabaseClient["transaction"]>[0],
+        preCommitCheck: () => void) => base.transactionWithPreCommitCheck(async (session) => {
+          const result = await operation(session);
+          if (holdPromotion) { callbackReturned(); await held; }
+          return result;
+        }, preCommitCheck) as Promise<T>,
+    };
+    const canonical = new CanonicalStore(delayed);
+    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey,
+      { expiresAt: "2026-08-30T18:10:00.000Z" });
+    resource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
+    let now = "2026-08-30T18:04:00.000Z", clockCalls = 0;
+    const service = new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      { now: () => { clockCalls += 1; return now; } });
+    holdPromotion = true;
+    const pending = assert.rejects(service.promote(envelope), /no longer current/);
+    await returned;
+    assert.equal(clockCalls, 8);
+    now = "2026-08-30T18:20:00.000Z"; releaseCommit(); await pending; service.close();
+    assert.equal(clockCalls, 9);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs WHERE state='proposed')::text proposed,
+      (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
+      (SELECT count(*) FROM control_resource_reservations)::text reservations,
+      (SELECT count(*) FROM control_transition_events)::text transitions,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests,
+      (SELECT count(*) FROM control_outbox)::text outbox`);
+    assert.deepEqual(counts.rows[0], { proposed: "1", ready: "0", reservations: "0", transitions: "0",
+      handoffs: "0", requests: "0", outbox: "0" });
+  } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-030 promotion crossing expiry after commit returns explicit ambiguity instead of current success", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const base = adaptPglite(db);
+    let holdReturn = false, transactionCompleted!: () => void, releaseReturn!: () => void;
+    const completed = new Promise<void>((resolve) => { transactionCompleted = resolve; });
+    const held = new Promise<void>((resolve) => { releaseReturn = resolve; });
+    const delayed: DatabaseClient = {
+      query: base.query,
+      transaction: base.transaction,
+      transactionWithPreCommitCheck: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0],
+        preCommitCheck: () => void) => {
+        const result = await base.transactionWithPreCommitCheck(operation, preCommitCheck) as T;
+        if (holdReturn) { transactionCompleted(); await held; }
+        return result;
+      },
+    };
+    const canonical = new CanonicalStore(delayed);
+    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey,
+      { expiresAt: "2026-08-30T18:10:00.000Z" });
+    resource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
+    let now = "2026-08-30T18:04:00.000Z", clockCalls = 0;
+    const service = new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      { now: () => { clockCalls += 1; return now; } });
+    holdReturn = true;
+    const pending = assert.rejects(service.promote(envelope), /canonical outcome is ambiguous/);
+    await completed;
+    assert.equal(clockCalls, 9);
+    now = "2026-08-30T18:20:00.000Z"; releaseReturn(); await pending; service.close();
+    assert.equal(clockCalls, 10);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
+      (SELECT count(*) FROM control_resource_reservations)::text reservations,
+      (SELECT count(*) FROM control_transition_events)::text transitions,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests,
+      (SELECT count(*) FROM control_outbox)::text outbox`);
+    assert.deepEqual(counts.rows[0], { ready: "1", reservations: "1", transitions: "1",
+      handoffs: "1", requests: "1", outbox: "1" });
+  } finally { await db.close(); close(resource); }
+});
+
 test("CR11B-AUTO-030 expiry reached after replay evidence reads denies replay without adding mutation", async () => {
   const resource = resources(), db = await database();
   try {
@@ -413,6 +508,53 @@ test("CR11B-AUTO-030 expiry reached after replay evidence reads denies replay wi
         ? "2026-08-30T18:04:00.000Z" : "2026-08-30T18:20:00.000Z"; } });
     await assert.rejects(() => replay.promote(envelope), /no longer current/); replay.close();
     assert.equal(clockCalls, 3);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
+      (SELECT count(*) FROM control_resource_reservations)::text reservations,
+      (SELECT count(*) FROM control_transition_events)::text transitions,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests,
+      (SELECT count(*) FROM control_outbox)::text outbox`);
+    assert.deepEqual(counts.rows[0], { ready: "1", reservations: "1", transitions: "1",
+      handoffs: "1", requests: "1", outbox: "1" });
+  } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-030 replay resamples time after transaction completion before reporting success", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const base = adaptPglite(db);
+    let holdReturn = false, transactionCompleted!: () => void, releaseReturn!: () => void;
+    const completed = new Promise<void>((resolve) => { transactionCompleted = resolve; });
+    const held = new Promise<void>((resolve) => { releaseReturn = resolve; });
+    const delayed: DatabaseClient = {
+      query: base.query,
+      transaction: base.transaction,
+      transactionWithPreCommitCheck: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0],
+        preCommitCheck: () => void) => {
+        const result = await base.transactionWithPreCommitCheck(operation, preCommitCheck) as T;
+        if (holdReturn) { transactionCompleted(); await held; }
+        return result;
+      },
+    };
+    const canonical = new CanonicalStore(delayed);
+    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey,
+      { expiresAt: "2026-08-30T18:10:00.000Z" });
+    resource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
+    const initial = promoter(resource, canonical);
+    assert.equal((await initial.promote(envelope)).replayed, false); initial.close();
+    let now = "2026-08-30T18:04:00.000Z", clockCalls = 0;
+    const replay = new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      { now: () => { clockCalls += 1; return now; } });
+    holdReturn = true;
+    const pending = assert.rejects(replay.promote(envelope), /canonical outcome is ambiguous/);
+    await completed;
+    assert.equal(clockCalls, 4);
+    now = "2026-08-30T18:20:00.000Z"; releaseReturn(); await pending; replay.close();
+    assert.equal(clockCalls, 5);
     const counts = await db.query<Record<string, string>>(`SELECT
       (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
       (SELECT count(*) FROM control_resource_reservations)::text reservations,
@@ -478,12 +620,14 @@ test("CR11B-AUTO-030 independent policy stores reach the shared canonical transa
     let trackPromotions = false, pendingTransactions = 0, maximumPendingTransactions = 0;
     const instrumented: DatabaseClient = {
       query: base.query,
-      transaction: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0]) => {
-        if (!trackPromotions) return base.transaction(operation) as Promise<T>;
+      transaction: base.transaction,
+      transactionWithPreCommitCheck: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0],
+        preCommitCheck: () => void) => {
+        if (!trackPromotions) return base.transactionWithPreCommitCheck(operation, preCommitCheck) as Promise<T>;
         pendingTransactions += 1;
         maximumPendingTransactions = Math.max(maximumPendingTransactions, pendingTransactions);
         await Promise.resolve();
-        try { return await base.transaction(operation) as T; }
+        try { return await base.transactionWithPreCommitCheck(operation, preCommitCheck) as T; }
         finally { pendingTransactions -= 1; }
       },
     };

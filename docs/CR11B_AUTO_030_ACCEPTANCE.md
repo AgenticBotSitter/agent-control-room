@@ -1,6 +1,6 @@
 # CR11B-AUTO-030 Acceptance Record
 
-Status: initial candidate plus first and second remediations rejected; third remediation implemented; acceptance blocked on another independent re-review
+Status: initial candidate plus first, second, and third remediations rejected; fourth remediation implemented; acceptance blocked on another independent re-review
 
 Date: 2026-08-30
 
@@ -26,9 +26,15 @@ The next different-agent review of commit `5b26a634516ca1a956edfeb67c7480343bf91
 
 The third remediation removes every caller fact from the canonical port: it accepts only the opaque one-use token and derives all writes from hidden cloned authorization bindings. Trusted time is checked after the ready transition, after the handoff write, after request completion, and after replay's last evidence read. Receipt-only projection is labelled historical and never claims a current pending handoff. Two fully separate policy-store/service stacks now reach the shared local canonical transaction boundary concurrently and converge to one mutation. Multi-process PostgreSQL remains explicitly outside this repository proof. See `docs/CR11B_AUTO_030_REMEDIATION.md`.
 
+## Third remediation re-review
+
+The next different-agent review of commit `9e43ea56471df1ee58dd8e94da04550ce6062063` returned `REJECTED_THIRD_REMEDIATION_FINDINGS`. It reproduced one remaining High timing gap after the final application callback check but before the transaction manager committed, plus the equivalent Medium replay return gap. The token-only boundary, historical projection, separate-store concurrency, isolation, rollback, capacity, negative authority, and UI all held. The report is preserved unchanged in `docs/reviews/CR11B_AUTO_030_THIRD_REMEDIATION_REREVIEW.md` with SHA-256 `10147ed33b7a95a300c36ac5a1d7d59124c037a8e88fa59323e816f97ffe0acc`.
+
+The fourth remediation makes the database transaction owner run the trusted-time predicate after the complete application callback and before commit initiation. Both PostgreSQL and PGlite adapters implement the mandatory boundary. Canonical promotion also resamples time after transaction completion and before returning a new or replay result. Expiry in the pre-commit window rolls the complete attempted bundle back; expiry only after a successful commit produces explicit canonical ambiguity rather than a false current-success result. See `docs/CR11B_AUTO_030_REMEDIATION.md`.
+
 ## Focused remediated-candidate evidence
 
-The combined AUTO-000/AUTO-010/AUTO-020/AUTO-030 gate passes 63/63 tests. Nineteen AUTO-030 hostile cases cover:
+The final combined AUTO-000/AUTO-010/AUTO-020/AUTO-030 gate passes 66/66. Twenty-two AUTO-030 hostile cases cover:
 
 - the exact authenticated repository-only ready-policy contract and negative authority;
 - restart, suspension, terminal revocation, and complete database rollback detection;
@@ -47,14 +53,16 @@ The combined AUTO-000/AUTO-010/AUTO-020/AUTO-030 gate passes 63/63 tests. Ninete
 - an unawaited database promise that cannot escape authorization lifetime or be overtaken by revocation;
 - trusted time sampled after policy queues, after transition and commit-sensitive writes, and after replay evidence reads;
 - receipt-only projection that reports history but never current ready or pending state; and
-- two independent policy-store/service stacks reaching the shared canonical transaction boundary concurrently and converging to one exact mutation.
+- two independent policy-store/service stacks reaching the shared canonical transaction boundary concurrently and converging to one exact mutation;
+- transaction-owner pre-commit rejection after the complete application callback, with full rollback; and
+- post-transaction new/replay expiry returning explicit ambiguity or non-success rather than current success.
 
 ## Full repository gate
 
-- registered pretest lifecycle: 645/645 passed;
+- registered pretest lifecycle: 648/648 passed;
 - core suite: 414/416 passed with two intentional platform skips and zero failures;
 - public post-test suite: 52/52 passed;
-- combined CR11B focused gate: 63/63 passed;
+- combined CR11B focused gate: 66/66 passed;
 - type checking and full lint passed;
 - macOS stage-zero reported `ready_for_runtime_check`;
 - production build and 2/2 rendered-route tests passed;
@@ -66,7 +74,7 @@ The exact candidate creates no real policy enrollment, approval, schedule, claim
 
 ## Required independent review
 
-A different independent agent from every prior reviewer must inspect the exact third-remediated candidate commit, re-run every recorded attack, and explicitly determine whether:
+A different independent agent from every prior reviewer must inspect the exact fourth-remediated candidate commit, re-run every recorded attack, and explicitly determine whether:
 
 - either policy can change between authorization and canonical commit;
 - a duplicate or conflicting request can create multiple ready jobs, reservations, or handoffs;
