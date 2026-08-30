@@ -48,7 +48,7 @@ export const readyFrontierReadyPolicySchemaV1 = z.object({
   maximumActiveReadyGlobal: z.number().int().min(1).max(64),
   projectPolicies: z.array(readyFrontierReadyProjectPolicySchemaV1).min(1).max(READY_FRONTIER_RESOURCE_CEILINGS_V1.maxProjects),
   permitsAutomaticReadyTransition: z.literal(true), permitsDatabaseSchedulerReservation: z.literal(true),
-  permitsInternalJobberHandoff: z.literal(true), handoffTransport: z.literal("canonical_outbox"),
+  permitsInternalJobberHandoff: z.literal(true), handoffTransport: z.literal("canonical_internal_table"),
   permitsAutomaticApproval: z.literal(false), permitsScheduleCreation: z.literal(false), ...nonAuthority,
   policyCeilingDigest: readyFrontierDigestSchemaV1, policyDigest: readyFrontierDigestSchemaV1,
   policyAuthTag: readyFrontierAuthTagSchemaV1,
@@ -94,14 +94,15 @@ export const readyFrontierHandoffPacketSchemaV1 = z.object({
   proposalDigest: readyFrontierDigestSchemaV1, standingPolicyDigest: readyFrontierDigestSchemaV1,
   readyPolicyDigest: readyFrontierDigestSchemaV1, schedulerDecisionDigest: readyFrontierDigestSchemaV1,
   reservationId: readyFrontierIdSchemaV1, createdAt: readyFrontierTimeSchemaV1,
-  expiresAt: readyFrontierTimeSchemaV1, destination: z.literal("internal_scheduler_jobber_outbox"),
+  expiresAt: readyFrontierTimeSchemaV1, destination: z.literal("internal_scheduler_jobber_table"),
   state: z.literal("pending_internal_handoff"), repositorySimulationOnly: z.literal(true), ...nonAuthority,
   packetDigest: readyFrontierDigestSchemaV1, packetAuthTag: readyFrontierAuthTagSchemaV1,
 }).strict();
 
 export const readyFrontierPromotionReceiptSchemaV1 = z.object({
   schema: z.literal(READY_FRONTIER_PROMOTION_RECEIPT_V1), receiptId: readyFrontierIdSchemaV1,
-  requestId: readyFrontierIdSchemaV1, tenantId: readyFrontierIdSchemaV1, workspaceId: readyFrontierIdSchemaV1,
+  requestId: readyFrontierIdSchemaV1, promotionRequestDigest: readyFrontierDigestSchemaV1,
+  tenantId: readyFrontierIdSchemaV1, workspaceId: readyFrontierIdSchemaV1,
   materializationReceiptId: readyFrontierIdSchemaV1, materializationReceiptDigest: readyFrontierDigestSchemaV1,
   cycleId: readyFrontierIdSchemaV1, proposalId: readyFrontierIdSchemaV1, proposalDigest: readyFrontierDigestSchemaV1,
   evaluationDigest: readyFrontierDigestSchemaV1, sourceDigest: readyFrontierDigestSchemaV1,

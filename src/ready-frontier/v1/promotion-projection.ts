@@ -3,6 +3,7 @@ import { parseExactReadyFrontierV1 } from "./exact";
 import { parseReadyFrontierPromotionV1 } from "./promotion";
 import { parseReadyFrontierReadyPolicyV1 } from "./ready-policy";
 import { readyFrontierPromotionProjectionSchemaV1 } from "./ready-policy-schemas";
+import { readyFrontierTimeSchemaV1 } from "./schemas";
 import {
   READY_FRONTIER_PROMOTION_PROJECTION_V1,
   type ReadyFrontierPromotionProjectionV1,
@@ -13,6 +14,7 @@ import {
 export function projectReadyFrontierPromotionV1(input: { tenantId: string;
   readyPolicy?: ReadyFrontierReadyPolicyV1; receipts: ReadyFrontierPromotionReceiptV1[];
   observedAt: string; evaluationIntegrityKey: unknown; readyPolicyIntegrityKey: unknown }): ReadyFrontierPromotionProjectionV1 {
+  const observedAt = parseExactReadyFrontierV1(readyFrontierTimeSchemaV1, input.observedAt);
   const policy = input.readyPolicy ? parseReadyFrontierReadyPolicyV1(input.readyPolicy, input.readyPolicyIntegrityKey) : undefined;
   const receipts = input.receipts.map((receipt) => parseReadyFrontierPromotionV1(receipt, input.evaluationIntegrityKey));
   if ((policy && policy.tenantId !== input.tenantId) || receipts.some((receipt) => receipt.tenantId !== input.tenantId)) {
@@ -22,7 +24,7 @@ export function projectReadyFrontierPromotionV1(input: { tenantId: string;
     receipts.map((receipt) => receipt.reservation.reservationId), receipts.map((receipt) => receipt.handoff.handoffId)]) {
     if (new Set(identities).size !== identities.length) throw new Error("promotion projection duplicate lineage");
   }
-  const observed = Date.parse(input.observedAt);
+  const observed = Date.parse(observedAt);
   const state = !policy ? "missing" : policy.state === "suspended" ? "suspended" : policy.state === "revoked" ? "revoked"
     : observed < Date.parse(policy.effectiveAt) || observed >= Date.parse(policy.expiresAt) ? "expired" : "repository_fixture_active";
   const unsigned = { schema: READY_FRONTIER_PROMOTION_PROJECTION_V1, tenantId: input.tenantId,

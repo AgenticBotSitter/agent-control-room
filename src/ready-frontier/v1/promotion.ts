@@ -1,6 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
 import { jobRecordSchema, type JobRecord } from "../../domain/v1";
-import type { CanonicalStore } from "../../persistence/canonical-store";
 import { chooseAllocationV1 } from "../../scheduler/v1";
 import { assertAuthorityDigest, assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
 import { exactHostUint8ArrayV1 } from "../../security/host-value";
@@ -11,6 +10,7 @@ import { ReadyFrontierContractErrorV1 } from "./errors";
 import { exactReadyFrontierJsonV1 } from "./exact";
 import { parseReadyFrontierEvaluationV1 } from "./controller";
 import { readyFrontierPromotionBuildInputSchemaV1, readyFrontierPromotionReceiptSchemaV1 } from "./ready-policy-schemas";
+import { readyFrontierTimeSchemaV1 } from "./schemas";
 import {
   READY_FRONTIER_HANDOFF_PACKET_V1,
   READY_FRONTIER_PROMOTION_RECEIPT_V1,
@@ -54,8 +54,9 @@ function receiptTag(key: Uint8Array, receipt: ReadyFrontierPromotionReceiptV1): 
     receiptDigest: receipt.receiptDigest });
 }
 function eligible(proposal: ReadyFrontierProposalV1, standing: ReadyFrontierStandingPolicyV1,
-  ready: ReadyFrontierReadyPolicyV1, promotedAt: string): ReadyFrontierReadyProjectPolicyV1 {
-  const now = Date.parse(promotedAt);
+  ready: ReadyFrontierReadyPolicyV1, promotedAt: string, trustedNow: string): ReadyFrontierReadyProjectPolicyV1 {
+  const promoted = Date.parse(promotedAt), now = Date.parse(trustedNow);
+  if (promoted > now || now - promoted > 5_000) fail("stale_proposal");
   if (standing.state !== "active" || ready.state !== "active"
     || now < Date.parse(standing.effectiveAt) || now >= Date.parse(standing.expiresAt)
     || now < Date.parse(ready.effectiveAt) || now >= Date.parse(ready.expiresAt)) fail("policy_inactive");
@@ -80,9 +81,10 @@ function eligible(proposal: ReadyFrontierProposalV1, standing: ReadyFrontierStan
 
 function buildPromotion(value: unknown, evaluationKey: Uint8Array, standingPolicyKey: unknown,
   readyPolicyKey: unknown, evaluationValue: unknown, standingPolicyValue: unknown,
-  readyPolicyValue: unknown): ReadyFrontierPromotionReceiptV1 {
+  readyPolicyValue: unknown, trustedNowValue?: unknown): ReadyFrontierPromotionReceiptV1 {
   const envelope = parseServer(readyFrontierPromotionBuildInputSchemaV1, value) as ReadyFrontierPromotionBuildInputV1;
   const input = envelope.request;
+  const trustedNow = trustedNowValue === undefined ? input.promotedAt : parseServer(readyFrontierTimeSchemaV1, trustedNowValue);
   const materialization = parseReadyFrontierMaterializationV1(envelope.materializationReceipt, evaluationKey);
   const evaluation = parseReadyFrontierEvaluationV1(evaluationValue, evaluationKey);
   const standing = parseReadyFrontierStandingPolicyV1(standingPolicyValue, standingPolicyKey);
@@ -101,13 +103,14 @@ function buildPromotion(value: unknown, evaluationKey: Uint8Array, standingPolic
   const proposal = evaluation.proposals.find((item) => item.proposalId === materialization.proposalId);
   if (!proposal || proposal.proposalDigest !== materialization.proposalDigest
     || materialization.job.inputDigest !== proposal.proposalDigest) fail("replay_drift");
-  const projectPolicy = eligible(proposal, standing, ready, input.promotedAt);
-  if (Date.parse(input.promotedAt) - Date.parse(materialization.materializedAt)
+  const projectPolicy = eligible(proposal, standing, ready, input.promotedAt, trustedNow);
+  if (Date.parse(trustedNow) - Date.parse(materialization.materializedAt)
     > ready.maximumMaterializationAgeSeconds * 1_000) fail("stale_proposal");
   if (materialization.state !== "materialized_proposed" || materialization.job.state !== "proposed"
     || materialization.job.version !== 0 || input.requestedAt < materialization.materializedAt
-    || input.promotedAt < input.requestedAt
+    || input.promotedAt < input.requestedAt || input.requestedAt > trustedNow
     || Date.parse(input.reservationExpiresAt) <= Date.parse(input.promotedAt)
+    || Date.parse(input.reservationExpiresAt) <= Date.parse(trustedNow)
     || Date.parse(input.reservationExpiresAt) > Date.parse(ready.expiresAt)
     || Date.parse(input.reservationExpiresAt) > Date.parse(standing.expiresAt)
     || Date.parse(input.reservationExpiresAt) > Date.parse(materialization.job.authority.expiresAt)
@@ -152,7 +155,7 @@ function buildPromotion(value: unknown, evaluationKey: Uint8Array, standingPolic
     sourceDigest: evaluation.sourceDigest, proposalDigest: proposal.proposalDigest,
     standingPolicyDigest: standing.policyDigest, readyPolicyDigest: ready.policyDigest,
     schedulerDecisionDigest: schedulerDecision.decisionDigest, reservationId, createdAt: input.promotedAt,
-    expiresAt: input.reservationExpiresAt, destination: "internal_scheduler_jobber_outbox" as const,
+    expiresAt: input.reservationExpiresAt, destination: "internal_scheduler_jobber_table" as const,
     state: "pending_internal_handoff" as const, repositorySimulationOnly: true as const,
     permitsClaimOrLease: false as const, permitsDispatchOrExecution: false as const,
     permitsProviderContact: false as const, permitsAgentMessage: false as const,
@@ -163,6 +166,7 @@ function buildPromotion(value: unknown, evaluationKey: Uint8Array, standingPolic
     { ...packetWithDigest, packetAuthTag: packetTag(evaluationKey, packetWithDigest) }) as ReadyFrontierHandoffPacketV1;
   const unsigned = { schema: READY_FRONTIER_PROMOTION_RECEIPT_V1,
     receiptId: id("promotion:frontier", bound), requestId: input.requestId, tenantId: input.tenantId,
+    promotionRequestDigest: sha256Digest(input),
     workspaceId: input.workspaceId, materializationReceiptId: materialization.receiptId,
     materializationReceiptDigest: materialization.receiptDigest, cycleId: evaluation.cycleId,
     proposalId: proposal.proposalId, proposalDigest: proposal.proposalDigest,
@@ -184,11 +188,11 @@ function buildPromotion(value: unknown, evaluationKey: Uint8Array, standingPolic
 
 export function buildReadyFrontierPromotionV1(value: unknown, evaluationKeyValue: unknown,
   standingPolicyKey: unknown, readyPolicyKey: unknown, evaluation: unknown,
-  standingPolicy: unknown, readyPolicy: unknown): ReadyFrontierPromotionReceiptV1 {
+  standingPolicy: unknown, readyPolicy: unknown, trustedNowValue?: unknown): ReadyFrontierPromotionReceiptV1 {
   const snapshot = exactHostUint8ArrayV1(evaluationKeyValue, 128);
   if (!snapshot || snapshot.byteLength < 32) fail("integrity_failed");
   const key = snapshot.copy();
-  try { return buildPromotion(value, key, standingPolicyKey, readyPolicyKey, evaluation, standingPolicy, readyPolicy); }
+  try { return buildPromotion(value, key, standingPolicyKey, readyPolicyKey, evaluation, standingPolicy, readyPolicy, trustedNowValue); }
   finally { key.fill(0); }
 }
 
@@ -227,32 +231,4 @@ export function parseReadyFrontierPromotionV1(value: unknown, evaluationKeyValue
       || receipt.handoff.expiresAt !== receipt.reservation.expiresAt) fail("digest_mismatch");
     assertAuthorityDigest(receipt.readyJob.authority); return receipt;
   } finally { key.fill(0); }
-}
-
-export async function persistReadyFrontierPromotionV1(input: { canonicalStore: CanonicalStore;
-  receipt: ReadyFrontierPromotionReceiptV1; readyPolicy: ReadyFrontierReadyPolicyV1;
-  evaluationKey: unknown; readyPolicyKey: unknown }): Promise<{ receipt: ReadyFrontierPromotionReceiptV1; replayed: boolean }> {
-  const receipt = parseReadyFrontierPromotionV1(input.receipt, input.evaluationKey);
-  const policy = parseReadyFrontierReadyPolicyV1(input.readyPolicy, input.readyPolicyKey);
-  const project = policy.projectPolicies.find((item) => item.projectId === receipt.readyJob.projectId);
-  if (!project || policy.policyId !== receipt.readyPolicyId || policy.revision !== receipt.readyPolicyRevision
-    || policy.policyDigest !== receipt.readyPolicyDigest || project.resourceKey !== receipt.reservation.resourceKey
-    || project.reservationUnits !== receipt.reservation.units
-    || project.resourceCapacityUnits !== receipt.reservation.capacityUnits) fail("policy_denied");
-  const result = await input.canonicalStore.promoteReadyFrontierJobWithInternalHandoff({
-    tenantId: receipt.tenantId, projectId: receipt.readyJob.projectId, jobId: receipt.readyJob.id,
-    expectedJobVersion: 0, expectedJobDigest: receipt.proposedJobDigest,
-    maximumActiveReadyGlobal: policy.maximumActiveReadyGlobal, maximumActiveReadyProject: project.maximumActiveReady,
-    transitionId: id("transition:frontier-ready", { receiptId: receipt.receiptId }),
-    transitionIdempotencyKey: `frontier-ready-${receipt.receiptDigest.slice(7)}`,
-    actor: { actorId: "service:ready-frontier-promoter", actorType: "service" }, occurredAt: receipt.promotedAt,
-    reservation: { id: receipt.reservation.reservationId, routeId: receipt.reservation.routeId,
-      resourceKey: receipt.reservation.resourceKey, units: receipt.reservation.units,
-      capacityUnits: receipt.reservation.capacityUnits, decisionDigest: receipt.reservation.decisionDigest,
-      acquiredAt: receipt.reservation.acquiredAt, expiresAt: receipt.reservation.expiresAt },
-    handoff: { id: receipt.handoff.handoffId, idempotencyKey: `frontier-handoff-${receipt.handoff.packetDigest.slice(7)}`,
-      payloadDigest: sha256Digest(receipt.handoff), availableAt: receipt.handoff.createdAt,
-      payload: exactReadyFrontierJsonV1(receipt.handoff) as Record<string, unknown> },
-  });
-  return { receipt, replayed: result.replayed };
 }

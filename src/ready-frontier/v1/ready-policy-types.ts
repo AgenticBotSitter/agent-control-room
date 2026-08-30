@@ -55,7 +55,7 @@ export interface ReadyFrontierReadyPolicyV1 {
   permitsAutomaticReadyTransition: true;
   permitsDatabaseSchedulerReservation: true;
   permitsInternalJobberHandoff: true;
-  handoffTransport: "canonical_outbox";
+  handoffTransport: "canonical_internal_table";
   permitsAutomaticApproval: false;
   permitsScheduleCreation: false;
   permitsClaimOrLease: false;
@@ -150,7 +150,7 @@ export interface ReadyFrontierHandoffPacketV1 {
   reservationId: string;
   createdAt: string;
   expiresAt: string;
-  destination: "internal_scheduler_jobber_outbox";
+  destination: "internal_scheduler_jobber_table";
   state: "pending_internal_handoff";
   repositorySimulationOnly: true;
   permitsClaimOrLease: false;
@@ -167,6 +167,7 @@ export interface ReadyFrontierPromotionReceiptV1 {
   schema: typeof READY_FRONTIER_PROMOTION_RECEIPT_V1;
   receiptId: string;
   requestId: string;
+  promotionRequestDigest: string;
   tenantId: string;
   workspaceId: string;
   materializationReceiptId: string;

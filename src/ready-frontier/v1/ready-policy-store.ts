@@ -51,6 +51,13 @@ function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never { throw new
 function same(a: string, b: string): boolean {
   const left = Buffer.from(a), right = Buffer.from(b); return left.length === right.length && timingSafeEqual(left, right);
 }
+const activeReadyPolicyGuards = new WeakMap<object, { policyId: string; revision: number; policyDigest: string }>();
+export function authorizesReadyFrontierReadyPolicyGuardV1(value: unknown, policyId: string,
+  revision: number, policyDigest: string): boolean {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return false;
+  const binding = activeReadyPolicyGuards.get(value as object);
+  return binding?.policyId === policyId && binding.revision === revision && binding.policyDigest === policyDigest;
+}
 function prepare(path: string): void {
   if (!isAbsolute(path) || !process.getuid) fail("integrity_failed");
   const uid = process.getuid(), parent = statSync(dirname(path));
@@ -68,6 +75,9 @@ function prepare(path: string): void {
 export class ReadyFrontierReadyPolicyStoreV1 {
   private readonly db: DatabaseSync;
   private readonly key: Uint8Array;
+  private operationActive = false;
+  private pendingGuardOperations = 0;
+  private guardTail: Promise<void> = Promise.resolve();
   private readonly checkpointRead: RollbackCheckpointStoreV1["read"];
   private readonly checkpointInitialize: RollbackCheckpointStoreV1["initialize"];
   private readonly checkpointAdvance: RollbackCheckpointStoreV1["advance"];
@@ -104,8 +114,10 @@ export class ReadyFrontierReadyPolicyStoreV1 {
   recordPolicy(value: unknown): { policy: ReadyFrontierReadyPolicyV1; replayed: boolean } {
     const policy = parseReadyFrontierReadyPolicyV1(value, this.key);
     if (policy.tenantId !== this.tenantId || policy.workspaceId !== this.workspaceId) fail("scope_mismatch");
-    this.db.exec("BEGIN IMMEDIATE");
+    if (this.operationActive || this.pendingGuardOperations > 0) fail("policy_inactive");
+    this.operationActive = true; let began = false;
     try {
+      this.db.exec("BEGIN IMMEDIATE"); began = true;
       const current = this.verify();
       const exact = current.policies.find((item) => item.policy.policyId === policy.policyId && item.policy.revision === policy.revision);
       if (exact) {
@@ -137,10 +149,11 @@ export class ReadyFrontierReadyPolicyStoreV1 {
       this.checkpointAdvance(rollbackCheckpointDigestV1(this.checkpoint(current.metadata)), this.checkpoint({
         tenant_id: this.tenantId, workspace_id: this.workspaceId, revision, record_count: count,
         state_digest: digest, state_auth_tag: tag }));
-      this.verify(); this.db.exec("COMMIT"); return { policy, replayed: false };
+      this.verify(); this.db.exec("COMMIT"); began = false; return { policy, replayed: false };
     } catch (error) {
-      this.db.exec("ROLLBACK"); if (error instanceof ReadyFrontierContractErrorV1) throw error; fail("integrity_failed");
-    }
+      if (began) { try { this.db.exec("ROLLBACK"); } catch { /* preserve the originating failure */ } }
+      if (error instanceof ReadyFrontierContractErrorV1) throw error; fail("integrity_failed");
+    } finally { this.operationActive = false; }
   }
 
   policy(policyId: string, revision: number): ReadyFrontierReadyPolicyV1 | undefined {
@@ -154,20 +167,34 @@ export class ReadyFrontierReadyPolicyStoreV1 {
   }
   listPolicies(): ReadyFrontierReadyPolicyV1[] { return this.verify().policies.map((item) => item.policy); }
   async withCurrentPolicy<T>(policyId: string, revision: number, policyDigest: string,
-    operation: (policy: ReadyFrontierReadyPolicyV1) => Promise<T>): Promise<T> {
+    operation: (policy: ReadyFrontierReadyPolicyV1, activeGuard: object) => Promise<T>): Promise<T> {
     parseExactReadyFrontierV1(readyFrontierIdSchemaV1, policyId);
     parseExactReadyFrontierV1(readyFrontierDigestSchemaV1, policyDigest);
     if (!Number.isSafeInteger(revision) || revision < 1) fail("invalid_input");
-    this.db.exec("BEGIN IMMEDIATE");
+    let release!: () => void;
+    const prior = this.guardTail;
+    this.guardTail = new Promise<void>((resolve) => { release = resolve; });
+    this.pendingGuardOperations += 1;
+    await prior;
+    this.operationActive = true; let began = false; let activeGuard: object | undefined;
     try {
+      this.db.exec("BEGIN IMMEDIATE"); began = true;
       const latest = [...this.verify().policies].reverse().find((item) => item.policy.policyId === policyId)?.policy;
       if (!latest || latest.revision !== revision || latest.policyDigest !== policyDigest || latest.state !== "active") fail("policy_inactive");
-      const result = await operation(latest); this.db.exec("COMMIT"); return result;
+      activeGuard = Object.freeze(Object.create(null)) as object;
+      activeReadyPolicyGuards.set(activeGuard, { policyId, revision, policyDigest });
+      const result = await operation(latest, activeGuard); this.db.exec("COMMIT"); began = false; return result;
     } catch (error) {
-      this.db.exec("ROLLBACK"); if (error instanceof ReadyFrontierContractErrorV1) throw error; throw error;
+      if (began) { try { this.db.exec("ROLLBACK"); } catch { /* preserve the originating failure */ } }
+      if (error instanceof ReadyFrontierContractErrorV1) throw error; throw error;
+    } finally {
+      if (activeGuard) activeReadyPolicyGuards.delete(activeGuard);
+      this.operationActive = false; this.pendingGuardOperations -= 1; release();
     }
   }
-  closeDatabase(): void { this.key.fill(0); this.db.close(); }
+  closeDatabase(): void {
+    if (this.operationActive || this.pendingGuardOperations > 0) fail("policy_inactive"); this.key.fill(0); this.db.close();
+  }
 
   private initializeOrVerify(): void {
     this.db.exec("BEGIN IMMEDIATE");

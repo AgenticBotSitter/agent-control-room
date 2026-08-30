@@ -50,7 +50,7 @@ export function buildReadyFrontierReadyPolicyFixtureV1(evaluation: ReadyFrontier
         maximumActiveReady: 1, resourceKey: `frontier.ready.${routeIds[0]}`,
         reservationUnits: 1, resourceCapacityUnits: 1, reservationTtlSeconds: 300 };
     }), permitsAutomaticReadyTransition: true, permitsDatabaseSchedulerReservation: true,
-    permitsInternalJobberHandoff: true, handoffTransport: "canonical_outbox",
+    permitsInternalJobberHandoff: true, handoffTransport: "canonical_internal_table",
     permitsAutomaticApproval: false, permitsScheduleCreation: false, permitsClaimOrLease: false,
     permitsDispatchOrExecution: false, permitsProviderContact: false, permitsAgentMessage: false,
     permitsGitHubMutation: false, permitsExternalEffects: false,
@@ -78,8 +78,9 @@ export function buildReadyFrontierPromotionRequestFixtureV1(materialization: Rea
 }
 
 export function buildReadyFrontierPromotionEnvelopeFixtureV1(materialization: ReadyFrontierMaterializationReceiptV1,
-  readyPolicy: ReadyFrontierReadyPolicyV1): ReadyFrontierPromotionBuildInputV1 {
-  return { request: buildReadyFrontierPromotionRequestFixtureV1(materialization, readyPolicy),
+  readyPolicy: ReadyFrontierReadyPolicyV1, input: Partial<Pick<ReadyFrontierPromotionRequestV1,
+    "requestId" | "requestedAt" | "promotedAt" | "reservationExpiresAt">> = {}): ReadyFrontierPromotionBuildInputV1 {
+  return { request: buildReadyFrontierPromotionRequestFixtureV1(materialization, readyPolicy, input),
     materializationReceipt: materialization };
 }
 

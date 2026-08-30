@@ -1,6 +1,6 @@
 # CR11B-AUTO-030 Acceptance Record
 
-Status: implementation candidate complete; acceptance blocked on a different independent security review
+Status: initial candidate rejected; remediation implemented; acceptance blocked on independent re-review
 
 Date: 2026-08-30
 
@@ -8,9 +8,15 @@ Date: 2026-08-30
 
 AUTO-030 must prove that one exact authenticated proposed zero-effect job can become ready only while both its standing policy and separate ready-policy addendum remain current. The ready transition, bounded scheduler reservation, and internal jobber handoff must commit together or not at all, without creating approval, schedule, claim, lease, dispatch, execution, agent/provider contact, GitHub mutation, or an external effect.
 
-## Focused candidate evidence
+## Initial independent review
 
-The combined AUTO-000/AUTO-010/AUTO-020/AUTO-030 gate passes 52/52 tests. Eight new AUTO-030 hostile cases cover:
+The independent review of commit `47e4000fb374eaefdfeb31e88db127505d3f11dc` returned `REJECTED_FINDINGS_REQUIRE_REMEDIATION`. It reproduced five defects: generic ready transition bypass, stale exported persistence after revocation, conflicting request-ID reuse, stale replay truth, and invalid projection time. A separate transaction audit confirmed additional caller-time, shared-delivery, generic-claim, exact-concurrency, and evidence gaps. The negative report is preserved unchanged in `docs/reviews/CR11B_AUTO_030_INDEPENDENT_REVIEW.md` with SHA-256 `5a5f2d884c28ae5397caaf27b4573aa14f3ae93fe8936687d8251d7e328ae825`.
+
+The remediation removes the standalone persistence export, requires simultaneous unforgeable policy-guard capabilities at the canonical port, rejects generic ready and claim paths for frontier jobs, binds request identity in the canonical transaction, injects trusted service time, isolates the handoff in migration `0027`, makes replay state-aware after the tenant lock, queues same-process guards safely, and validates real canonical projection instants. See `docs/CR11B_AUTO_030_REMEDIATION.md`.
+
+## Focused remediated-candidate evidence
+
+The combined AUTO-000/AUTO-010/AUTO-020/AUTO-030 gate passes 57/57 tests. Thirteen AUTO-030 hostile cases cover:
 
 - the exact authenticated repository-only ready-policy contract and negative authority;
 - restart, suspension, terminal revocation, and complete database rollback detection;
@@ -19,18 +25,23 @@ The combined AUTO-000/AUTO-010/AUTO-020/AUTO-030 gate passes 52/52 tests. Eight 
 - competing promotions against one constrained resource, where only one job becomes ready;
 - forced handoff collision with full rollback of job, reservation, transition, and outbox evidence;
 - a bounded safe operator projection; and
-- accessor and Proxy rejection plus structural absence of effect clients.
+- accessor and Proxy rejection plus structural absence of effect clients;
+- generic ready-transition and retired-policy-guard bypass rejection;
+- trusted-time rejection of historical and future requests;
+- simultaneous exact-request convergence and conflicting request-ID rejection;
+- generic delivery and job-claim isolation; and
+- reentrant policy-write/close rejection without guard rollback.
 
 ## Full repository gate
 
-- registered pretest lifecycle: 634/634 passed;
+- registered pretest lifecycle: 639/639 passed;
 - core suite: 414/416 passed with two intentional platform skips and zero failures;
 - public post-test suite: 52/52 passed;
-- combined CR11B focused gate: 52/52 passed;
+- combined CR11B focused gate: 57/57 passed;
 - type checking and full lint passed;
 - macOS stage-zero reported `ready_for_runtime_check`;
 - production build and 2/2 rendered-route tests passed;
-- all 26 PostgreSQL migrations verified 96 tables;
+- all 27 PostgreSQL migrations verified 97 tables;
 - localhost browser QA passed for the portfolio and Content Blooms Project Workspace, including the ready-policy/no-handoff truth and zero frontier action controls; and
 - whitespace validation passed.
 
@@ -38,7 +49,7 @@ The exact candidate creates no real policy enrollment, approval, schedule, claim
 
 ## Required independent review
 
-A different independent agent must inspect the exact candidate commit and explicitly determine whether:
+A different independent agent must inspect the exact remediated candidate commit, re-run every recorded attack, and explicitly determine whether:
 
 - either policy can change between authorization and canonical commit;
 - a duplicate or conflicting request can create multiple ready jobs, reservations, or handoffs;
@@ -48,8 +59,8 @@ A different independent agent must inspect the exact candidate commit and explic
 - the internal handoff grants claim, lease, dispatch, execution, agent-message, provider, GitHub, or effect authority; and
 - the UI or safe projection exposes private evidence or an action control.
 
-Until that review passes, AUTO-030 is not accepted and AUTO-040 does not begin.
+Until that re-review passes, AUTO-030 is not accepted and AUTO-040 does not begin.
 
 ## Residual boundary
 
-The ready policy, integrity keys, rollback checkpoints, scheduler decision, resource reservation, and internal handoff are repository/local database evidence. Protected production policy ingress and custody, an outbox consumer, scheduler/jobber delivery, no-relay agent operation, real capacity, hosted persistence, ambiguity reconciliation across services, and every external effect remain unimplemented and unauthorized.
+The ready policy, integrity keys, rollback checkpoints, trusted test clock, scheduler decision, resource reservation, and dedicated internal handoff are repository/local database evidence. Protected production policy ingress and custody, an internal-handoff consumer, scheduler/jobber delivery, no-relay agent operation, real capacity, hosted persistence, multi-process PostgreSQL concurrency evidence, ambiguity reconciliation across services, and every external effect remain unimplemented and unauthorized.

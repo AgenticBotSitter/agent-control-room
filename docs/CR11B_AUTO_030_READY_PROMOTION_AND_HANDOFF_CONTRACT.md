@@ -1,6 +1,6 @@
 # CR11B-AUTO-030 Ready Promotion and Internal Handoff Contract
 
-**Status:** implementation candidate for repository-only simulation; acceptance requires a different independent security review
+**Status:** remediated implementation candidate for repository-only simulation; acceptance requires independent re-review
 
 ## Purpose
 
@@ -25,11 +25,11 @@ The private owner-mode SQLite ledger authenticates every row and complete ordere
 
 ## Exact promotion lineage
 
-The promotion request binds the authenticated AUTO-020 materialization receipt, canonical job, standing policy, ready policy, request and promotion times, and exact reservation expiry. The service re-reads the authenticated frontier evaluation and both current policies. It verifies the complete source, evaluation, proposal, materialization, standing-policy, ready-policy, job-authority, route, platform, capability, risk, cost, project, and time lineage.
+The promotion request binds the authenticated AUTO-020 materialization receipt, canonical job, standing policy, ready policy, request and promotion times, and exact reservation expiry. The service re-reads the authenticated frontier evaluation and both current policies. It verifies the complete source, evaluation, proposal, materialization, standing-policy, ready-policy, job-authority, route, platform, capability, risk, cost, project, and time lineage. A required injected trusted clock supplies the current canonical UTC instant; promotion time cannot be in the future or more than five seconds old, and policy, materialization, authority, and reservation freshness are checked against trusted time rather than caller history.
 
-The service holds the current standing-policy guard and then the current ready-policy guard through the canonical database transaction. A concurrent revision, suspension, or revocation must serialize entirely before or after promotion. A stale, superseded, suspended, revoked, narrowed, foreign, over-capacity, or changed input fails before a partial result can survive.
+The service holds the current standing-policy guard and then the current ready-policy guard through the canonical database transaction. Each guard has an unforgeable in-memory capability bound to the exact policy identity, revision, and digest; the canonical promotion port requires both capabilities to remain live. Guard operations queue, reentrant synchronous policy mutation cannot roll back another operation's transaction, and capabilities retire on exit. A concurrent revision, suspension, or revocation must serialize entirely before or after promotion. A stale, superseded, suspended, revoked, narrowed, foreign, over-capacity, or changed input fails before a partial result can survive. No standalone persistence function is exported.
 
-The deterministic CR6 scheduler scores only the exact authenticated candidate. It does not discover or accept caller-selected alternatives. The scheduler decision, reservation, handoff packet, and final promotion receipt have stable digest-bound identities. Handoff packets and receipts are separately HMAC-authenticated.
+The deterministic CR6 scheduler scores only the exact authenticated candidate. It does not discover or accept caller-selected alternatives. The scheduler decision, reservation, handoff packet, and final promotion receipt have stable digest-bound identities. Handoff packets and receipts are separately HMAC-authenticated. A tenant-scoped canonical idempotency record binds each promotion request ID to the exact request digest, receipt, job, reservation, and handoff; exact simultaneous replay converges and changed reuse fails before mutation.
 
 ## Atomic canonical result
 
@@ -40,11 +40,12 @@ One canonical transaction:
 3. locks the resource head, expires stale reservations, and verifies capacity;
 4. inserts one active database reservation;
 5. transitions the exact job from `proposed` version 0 to `ready` version 1; and
-6. inserts one canonical outbox record with topic `ready-frontier.scheduler-jobber-handoff` and state `pending`.
+6. inserts one record into the dedicated `control_ready_frontier_handoffs` table with its only permitted state, `pending_internal_handoff`; and
+7. completes the exact promotion-request idempotency record.
 
-The handoff packet destination is `internal_scheduler_jobber_outbox` and its state is `pending_internal_handoff`. Exact replay verifies the existing transition, reservation, and handoff, then returns the same authenticated receipt without duplicating work. A forced handoff collision rolls back the job transition, reservation, transition evidence, and both canonical outbox writes.
+The handoff packet destination is `internal_scheduler_jobber_table` and its state is `pending_internal_handoff`. It is not stored in `control_outbox`, so generic delivery cannot claim it. Exact replay runs after the tenant lock and verifies the completed request identity, exact ready job, active reservation and resource-head capacity, transition, and pending handoff before returning the same authenticated receipt. A forced handoff collision rolls back the idempotency record, job transition, reservation, transition evidence, ordinary domain-event outbox write, and internal handoff.
 
-The transaction creates no attempt, approval, schedule, claim, lease, effect intent, provider request, agent message, GitHub item, or executor invocation. No consumer for the internal handoff is part of AUTO-030.
+The transaction creates no attempt, approval, schedule, claim, lease, effect intent, provider request, agent message, GitHub item, or executor invocation. Generic transition cannot ready a frontier work order, generic delivery cannot see its handoff, and generic job claiming rejects frontier-ready jobs. No consumer for the dedicated internal handoff is part of AUTO-030.
 
 ## Operator projection
 
@@ -56,4 +57,4 @@ The projection omits proposal objectives, intent identity, owner evidence, authe
 
 AUTO-030 is repository simulation only. It has no real policy enrollment, timer, recurrence activation, outbox consumer, GitHub jobber creation, agent message, native read, provider client, credential access, claim, lease, dispatch, execution, filesystem or network effect, DNS, Cloudflare, hosting, deployment, or production action.
 
-A different independent agent must review the exact candidate commit before AUTO-030 may be accepted. AUTO-040 remains the separately owner-gated end-to-end no-relay simulation and protected activation packet.
+The initial independent review rejected the first candidate. A different independent agent must re-review the exact remediated commit and every recorded attack before AUTO-030 may be accepted. AUTO-040 remains the separately owner-gated end-to-end no-relay simulation and protected activation packet.
