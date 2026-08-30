@@ -3,6 +3,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReadyFrontierPortfolioView, ReadyFrontierProjectView } from "../app/components/ready-frontier-view.tsx";
 import { buildReadyFrontierAutomationProjectionFixtureV1, buildReadyFrontierCycleProjectionFixtureV1,
+  buildReadyFrontierNoRelayProjectionFixtureV1,
   buildReadyFrontierPromotionProjectionFixtureV1 } from "../src/ready-frontier/v1/index.ts";
 
 test("CR11B-AUTO-010 portfolio view explains cross-project proposals without controls", () => {
@@ -48,6 +49,21 @@ test("CR11B-AUTO-030 views show ready-policy truth and no internal-handoff contr
   const project = renderToStaticMarkup(<ReadyFrontierProjectView data={{ state: "available", projection }}
     automation={automation} promotion={promotion} projectId="project.blooms.content-ops" />);
   assert.match(project, /repository ready-policy fixture is active/); assert.match(project, /no ready handoff was requested/);
+  assert.doesNotMatch(`${portfolio}${project}`, /<button|<form|<input|<select|<textarea/);
+});
+
+test("CR11B-AUTO-040 views show honest no-relay and blocked-activation truth without controls", () => {
+  const projection = buildReadyFrontierCycleProjectionFixtureV1();
+  const automation = buildReadyFrontierAutomationProjectionFixtureV1();
+  const promotion = buildReadyFrontierPromotionProjectionFixtureV1();
+  const noRelay = buildReadyFrontierNoRelayProjectionFixtureV1();
+  const portfolio = renderToStaticMarkup(<ReadyFrontierPortfolioView data={{ state: "available", projection }}
+    automation={automation} promotion={promotion} noRelay={noRelay} />);
+  assert.match(portfolio, /No-relay simulation/); assert.match(portfolio, /Not Run/);
+  assert.match(portfolio, /Blocked · no simulation evidence/); assert.match(portfolio, /cannot activate production/);
+  const project = renderToStaticMarkup(<ReadyFrontierProjectView data={{ state: "available", projection }}
+    automation={automation} promotion={promotion} noRelay={noRelay} projectId="project.blooms.content-ops" />);
+  assert.match(project, /Project fake acknowledgements/); assert.match(project, /production activation remains blocked/i);
   assert.doesNotMatch(`${portfolio}${project}`, /<button|<form|<input|<select|<textarea/);
 });
 
