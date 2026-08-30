@@ -1,6 +1,6 @@
 # CR11B-AUTO-030 Acceptance Record
 
-Status: initial candidate plus first, second, and third remediations rejected; fourth remediation implemented; acceptance blocked on another independent re-review
+Status: accepted for the exact effect-free repository snapshot at `adf0804a52a13d544192afc90506c3e989254ffd`
 
 Date: 2026-08-30
 
@@ -31,6 +31,10 @@ The third remediation removes every caller fact from the canonical port: it acce
 The next different-agent review of commit `9e43ea56471df1ee58dd8e94da04550ce6062063` returned `REJECTED_THIRD_REMEDIATION_FINDINGS`. It reproduced one remaining High timing gap after the final application callback check but before the transaction manager committed, plus the equivalent Medium replay return gap. The token-only boundary, historical projection, separate-store concurrency, isolation, rollback, capacity, negative authority, and UI all held. The report is preserved unchanged in `docs/reviews/CR11B_AUTO_030_THIRD_REMEDIATION_REREVIEW.md` with SHA-256 `10147ed33b7a95a300c36ac5a1d7d59124c037a8e88fa59323e816f97ffe0acc`.
 
 The fourth remediation makes the database transaction owner run the trusted-time predicate after the complete application callback and before commit initiation. Both PostgreSQL and PGlite adapters implement the mandatory boundary. Canonical promotion also resamples time after transaction completion and before returning a new or replay result. Expiry in the pre-commit window rolls the complete attempted bundle back; expiry only after a successful commit produces explicit canonical ambiguity rather than a false current-success result. See `docs/CR11B_AUTO_030_REMEDIATION.md`.
+
+## Fourth remediation independent re-review
+
+A fresh reviewer, different from every prior reviewer, inspected exact commit `adf0804a52a13d544192afc90506c3e989254ffd` and returned `ACCEPTED_EFFECT_FREE_REPOSITORY_SNAPSHOT`. The reviewer independently re-ran every `REV`, `RR`, `SRR`, and `TRR` finding family, confirmed the mandatory PostgreSQL/PGlite callback-to-pre-commit ordering, reproduced full PGlite rollback when the predicate observed expiry, and confirmed that post-transaction expiry returns explicit ambiguity for both new and replay paths. The accepted report is preserved unchanged in `docs/reviews/CR11B_AUTO_030_FOURTH_REMEDIATION_REREVIEW.md` with SHA-256 `18df9e9611c5f9053962b776b8261304512b98244ba7b627fd99f4821a79fa2`.
 
 ## Focused remediated-candidate evidence
 
@@ -72,9 +76,9 @@ The final combined AUTO-000/AUTO-010/AUTO-020/AUTO-030 gate passes 66/66. Twenty
 
 The exact candidate creates no real policy enrollment, approval, schedule, claim, lease, dispatch, execution, agent/provider contact, GitHub work, or external effect.
 
-## Required independent review
+## Accepted independent review boundary
 
-A different independent agent from every prior reviewer must inspect the exact fourth-remediated candidate commit, re-run every recorded attack, and explicitly determine whether:
+The accepted reviewer explicitly determined that, for the exact effect-free repository snapshot:
 
 - either policy can change between authorization and canonical commit;
 - a duplicate or conflicting request can create multiple ready jobs, reservations, or handoffs;
@@ -84,7 +88,7 @@ A different independent agent from every prior reviewer must inspect the exact f
 - the internal handoff grants claim, lease, dispatch, execution, agent-message, provider, GitHub, or effect authority; and
 - the UI or safe projection exposes private evidence or an action control.
 
-Until that re-review passes, AUTO-030 is not accepted and AUTO-040 does not begin.
+AUTO-030 is accepted only at the exact reviewed commit. AUTO-040 may begin as a repository-only no-relay simulation and protected activation packet; no production activation or external effect is authorized by this acceptance.
 
 ## Residual boundary
 

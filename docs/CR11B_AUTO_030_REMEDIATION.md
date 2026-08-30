@@ -1,6 +1,6 @@
 # CR11B-AUTO-030 Independent-Review Remediation
 
-**Status:** fourth remediation implementation complete; another independent re-review required
+**Status:** fourth remediation independently accepted for exact effect-free commit `adf0804a52a13d544192afc90506c3e989254ffd`
 
 **Rejected target:** `47e4000fb374eaefdfeb31e88db127505d3f11dc`
 
@@ -26,9 +26,15 @@
 
 **Preserved third-remediation re-review SHA-256:** `10147ed33b7a95a300c36ac5a1d7d59124c037a8e88fa59323e816f97ffe0acc`
 
+**Accepted fourth remediation:** `adf0804a52a13d544192afc90506c3e989254ffd`
+
+**Preserved accepted re-review:** `docs/reviews/CR11B_AUTO_030_FOURTH_REMEDIATION_REREVIEW.md`
+
+**Preserved accepted re-review SHA-256:** `18df9e9611c5f9053962b776b8261304512b98244ba7b627fd99f4821a79fa2`
+
 ## Disposition
 
-The first independent review rejected AUTO-030 with five reproduced findings. A separate transaction audit confirmed the generic-ready bypass, untrusted-time acceptance, shared-outbox exposure, stale replay truth, and missing simultaneous-concurrency evidence. A different-agent re-review then rejected the first remediation with three High authorization/time defects, one Medium operator-truth defect, and one Low evidence-wording defect. A third independent review rejected the second remediation with two High authorization/time defects, two Medium current-truth defects, and one Low concurrency-evidence defect. The next independent review rejected the third remediation with one High commit-boundary timing defect and one Medium replay-return timing defect. The fourth remediation preserves every negative report unchanged and does not reinterpret any negative result as acceptance.
+The first independent review rejected AUTO-030 with five reproduced findings. A separate transaction audit confirmed the generic-ready bypass, untrusted-time acceptance, shared-outbox exposure, stale replay truth, and missing simultaneous-concurrency evidence. A different-agent re-review then rejected the first remediation with three High authorization/time defects, one Medium operator-truth defect, and one Low evidence-wording defect. A third independent review rejected the second remediation with two High authorization/time defects, two Medium current-truth defects, and one Low concurrency-evidence defect. The next independent review rejected the third remediation with one High commit-boundary timing defect and one Medium replay-return timing defect. A fresh reviewer accepted the fourth remediation only after independently closing every `REV`, `RR`, `SRR`, and `TRR` attack. All four negative reports remain unchanged and retain their negative meaning.
 
 ## Remediation binding
 
@@ -83,4 +89,4 @@ The first independent review rejected AUTO-030 with five reproduced findings. A 
 - Migration verification passed through `0027`, with 97 PostgreSQL tables.
 - Architect-owned working-tree whitespace validation passed; the immutable initial report's two Markdown hard breaks remain documented exact-range exceptions.
 
-The complete fourth-remediation repository gate is green. Another different-agent re-review of the exact immutable fourth-remediation commit is still required. The owner has already authorized all required independent reviews. No production policy, consumer, schedule, claim, lease, dispatch, provider/agent contact, GitHub mutation, deployment, or external effect is authorized.
+The complete fourth-remediation repository gate and the fresh independent re-review are green. Acceptance is limited to exact commit `adf0804a52a13d544192afc90506c3e989254ffd`; no production policy, consumer, schedule, claim, lease, dispatch, provider/agent contact, GitHub mutation, deployment, or external effect is authorized.

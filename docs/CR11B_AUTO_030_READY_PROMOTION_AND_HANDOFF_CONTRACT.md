@@ -1,6 +1,6 @@
 # CR11B-AUTO-030 Ready Promotion and Internal Handoff Contract
 
-**Status:** fourth remediated implementation candidate for repository-only simulation; acceptance requires another different independent re-review
+**Status:** independently accepted for exact effect-free repository commit `adf0804a52a13d544192afc90506c3e989254ffd`
 
 ## Purpose
 
@@ -64,4 +64,4 @@ The projection omits proposal objectives, intent identity, owner evidence, authe
 
 AUTO-030 is repository simulation only. It has no real policy enrollment, timer, recurrence activation, outbox consumer, GitHub jobber creation, agent message, native read, provider client, credential access, claim, lease, dispatch, execution, filesystem or network effect, DNS, Cloudflare, hosting, deployment, or production action.
 
-The initial independent review rejected the first candidate, and three successive different-agent reviews rejected the first, second, and third remediations. All four negative reports remain unchanged. Another different independent agent must review the exact fourth-remediation commit and every recorded attack before AUTO-030 may be accepted. The owner has already authorized all required independent reviews. AUTO-040 remains the separately owner-gated end-to-end no-relay simulation and protected activation packet.
+The initial independent review rejected the first candidate, and three successive different-agent reviews rejected the first, second, and third remediations. All four negative reports remain unchanged. A fresh different reviewer re-ran every recorded attack against exact fourth-remediation commit `adf0804a52a13d544192afc90506c3e989254ffd` and returned `ACCEPTED_EFFECT_FREE_REPOSITORY_SNAPSHOT`; that unchanged report has SHA-256 `18df9e9611c5f9053962b776b8261304512b98244ba7b627fd99f4821a79fa2`. AUTO-040 remains a separate repository-only no-relay simulation and protected activation packet, and any real activation remains owner-gated.
