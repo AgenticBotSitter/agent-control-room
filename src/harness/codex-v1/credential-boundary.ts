@@ -33,6 +33,12 @@ export type CodexCredentialBoundaryReasonV1 =
   | "broker_audience_mismatch" | "broker_expiry_invalid" | "broker_call_budget_invalid"
   | "broker_model_invalid" | "broker_capability_invalid";
 
+function exactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort(); const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
 export function issueCodexCredentialBoundaryPermitV1(input: {
   evidence: CodexCredentialBoundaryEvidenceV1;
   runId: string;
@@ -69,10 +75,18 @@ export function issueCodexCredentialBoundaryPermitV1(input: {
 }
 
 export function assertCodexCredentialBoundaryPermitV1(permit: CodexCredentialBoundaryPermitV1, runId: string, now: string): void {
+  if (!exactKeys(permit, ["schema", "runId", "mode", "endpointIdentityDigest", "model", "maximumProviderCalls", "expiresAt", "permitDigest"])
+    || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/.test(permit.runId)
+    || !/^sha256:[a-f0-9]{64}$/.test(permit.endpointIdentityDigest)
+    || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/.test(permit.model)
+    || !Number.isSafeInteger(permit.maximumProviderCalls) || permit.maximumProviderCalls < 1 || permit.maximumProviderCalls > 3
+    || !/^sha256:[a-f0-9]{64}$/.test(permit.permitDigest)) throw new Error("Codex credential boundary permit invalid");
   const { permitDigest, ...unsigned } = permit;
   if (permit.schema !== "control-room.codex-credential-boundary-permit/v1" || permit.mode !== "scoped_provider_broker" || permit.runId !== runId) throw new Error("Codex credential boundary permit scope mismatch");
   if (sha256Digest(unsigned) !== permitDigest) throw new Error("Codex credential boundary permit digest mismatch");
   const expiresAt = Date.parse(permit.expiresAt);
   const observedAt = Date.parse(now);
-  if (!Number.isFinite(expiresAt) || !Number.isFinite(observedAt) || expiresAt <= observedAt) throw new Error("Codex credential boundary permit expired");
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(observedAt) || expiresAt <= observedAt || expiresAt - observedAt > 5 * 60_000) {
+    throw new Error("Codex credential boundary permit expired");
+  }
 }

@@ -2,7 +2,7 @@
 
 import type { JSX } from "react";
 import { useMemo, useState } from "react";
-import type { ActionInboxItemV1 } from "@/src/operator-surfaces/v1";
+import type { ActionInboxItemV1 } from "@/src/operator-surfaces/v1/types";
 
 function label(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());

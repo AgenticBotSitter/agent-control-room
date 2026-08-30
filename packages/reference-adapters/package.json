@@ -1,0 +1,15 @@
+{
+  "name": "@control-room/synthetic-reference-adapters",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local synthetic-only reference adapters for Control Room observation conformance.",
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src", "README.md", "LICENSE", "NOTICE"],
+  "dependencies": {
+    "@control-room/public-core": "workspace:*",
+    "@control-room/observation-adapter-sdk": "workspace:*",
+    "@control-room/conformance-kit": "workspace:*"
+  }
+}

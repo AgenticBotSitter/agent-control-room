@@ -3,6 +3,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { agents, blockers, projects, workers, workItems } from "@/src/fixtures/data";
 import { ProtectedProjectDetailStatus } from "@/app/components/protected-detail-status";
+import { AbsNewsWorkspace } from "@/app/components/abs-news-workspace";
+import { ABS_NEWS_PROJECT_ID_V1, buildAbsNewsSyntheticWorkspaceV1 } from "@/src/project-adapters/abs-news/v1";
+import { WayfarerWorkspace } from "@/app/components/wayfarer-workspace";
+import { WAYFARER_PRESENTATION_PROJECT_ID_V1, buildWayfarerWorkspaceViewV1 } from "@/src/project-adapters/wayfarer/v1";
+import { AgentTeamWorkspace } from "@/app/components/agent-team-workspace";
+import { buildAgentTeamDurabilityFixtureV1, buildAgentTeamFixtureV1 } from "@/src/agent-team/v1";
 
 export function generateStaticParams() {
   return projects.map((project) => ({ projectId: project.id }));
@@ -30,6 +36,7 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
     worker.preferredProjectIds?.includes(project.id),
   );
   const projectAgents = agents.filter((agent) => agent.projectIds.includes(project.id));
+  const isWayfarer = project.id === WAYFARER_PRESENTATION_PROJECT_ID_V1;
 
   return (
     <div className="detail-shell">
@@ -47,6 +54,10 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
 
         <p className="operator-data-status unavailable" role="status">This project detail is a synthetic fixture. Protected project status is available on the portfolio dashboard.</p>
         <ProtectedProjectDetailStatus projectId={project.id} />
+        <AgentTeamWorkspace fixture={buildAgentTeamFixtureV1(project.id)} durabilityFixture={buildAgentTeamDurabilityFixtureV1(project.id)} />
+        {project.id === ABS_NEWS_PROJECT_ID_V1 ? <AbsNewsWorkspace fixture={buildAbsNewsSyntheticWorkspaceV1()} /> : null}
+        {isWayfarer ? <WayfarerWorkspace fixture={buildWayfarerWorkspaceViewV1()} /> : null}
+        {!isWayfarer ? <>
         <section className="metric-grid section-block" aria-label="Synthetic project summary">
           <article className="metric-card"><span className="metric-icon green">↗</span><div><small>Progress</small><strong>{project.progressPercent}%</strong><em>{label(project.domainState)}</em></div></article>
           <article className="metric-card"><span className="metric-icon amber">!</span><div><small>Blockers</small><strong>{project.blockerCount}</strong><em>{project.attentionCount} need attention</em></div></article>
@@ -93,6 +104,7 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
             {!projectBlockers.length && <p className="empty-state">No blockers in this fixture snapshot.</p>}
           </div>
         </section>
+        </> : null}
       </main>
     </div>
   );

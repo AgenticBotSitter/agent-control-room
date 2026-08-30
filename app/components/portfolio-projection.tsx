@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import type { PortfolioProjectProjectionV1 } from "@/src/operator-surfaces/v1";
+import type { PortfolioProjectProjectionV1 } from "@/src/operator-surfaces/v1/types";
 
 /** Read-only canonical portfolio status; it intentionally makes no completion or scheduling promise. */
 export function PortfolioProjection(props: { projects: readonly PortfolioProjectProjectionV1[] }): JSX.Element {

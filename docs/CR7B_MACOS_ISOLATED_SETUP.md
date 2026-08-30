@@ -2,6 +2,8 @@
 
 **Status:** Static launcher plan and service templates implemented. No native deployment is authorized by this document.
 
+This static setup design is subordinate to the approval stops and rollback rules in `CR7B_OWNER_ATTENDED_QUALIFICATION_PACKAGE.md`. Neither document authorizes installation, service control, credential access, network changes, or a provider call.
+
 ## Goal
 
 Prove that an authenticated Codex app-server can ask a separate credential-free `exec-server` to run commands without letting that executor read authentication, read or change the replay ledger, call the provider directly, or fall back to broker-local command execution.
@@ -30,6 +32,7 @@ This stage is effect-free and can run without native authorization.
 3. Confirm distinct identity digests and disjoint broker release, configuration, credential, and state roots plus executor home and workspace. The executor working root may contain only its workspace, never a broker-owned root.
 4. Confirm the allowed client methods are limited to initialization, remote-environment registration/inspection, thread start/resume, turn start, and turn interruption. General process spawning, configuration writes, plugin installation, and MCP-server operations are forbidden.
 5. Run the CR-7B tests, type check, lint, full suite, production build/render checks, and migration verification.
+6. Assemble a fully synthetic authenticated-executor bundle and confirm that it satisfies the repository contract while still returning `nativeQualificationAuthorized: false`.
 
 Passing Stage 0 means only that the plan and templates fail closed in code.
 
@@ -57,9 +60,11 @@ Render the static templates to an uncommitted host-local directory. Reject unres
 
 Service readiness alone is not qualification. Retain only sanitized pass/fail codes and digests.
 
-## Stage 3 — effect-free protocol rehearsal
+## Stage 3 — effect-free protocol and evidence rehearsal
 
-The repository now exercises the controller with a fake app-server transport. It proves the required initialize handshake, exact `environment/add`, ready-status gating, explicit nonempty environment selection, atomic ledger claim before `turn/start`, one dispatch per request, bounded/correlated JSONL, content-free usage and terminal settlement, disconnect ambiguity, and rejection of server-initiated or non-allowlisted methods. It also tests the exact pinned child specification, ambient-environment exclusion, identity drift, fragmented/oversized/flooded child stdout, stderr exclusion, partial exit, exact close/terminate, deadline, and cancellation. Independent review remains required before Stage 4.
+The repository exercises the controller with a fake app-server transport. It proves claim before thread creation, replay without another thread, correlated turn binding, bounded JSONL, content-free settlement, exact terminal truth, broker-owned time, safe cleanup, and rejection of server-initiated or non-allowlisted methods.
+
+It also rehearses mutually signed channel proofs, restart-safe digest-only replay, signed native observation, executor-bound turn receipts, provider hard-output authority, remote interruption confirmation, and atomic evidence-bundle composition. Synthetic keys and fake observations are contract fixtures only. The bundle must remain explicitly unauthorized for native use. The topology gate remains ineligible until owner-installed trust pins and authenticated IPC/process/path/network evidence exist and clean independent re-review accepts them.
 
 Any uncertainty after a claimed turn is terminally ambiguous. It must not be retried automatically.
 
@@ -67,7 +72,7 @@ Any uncertainty after a claimed turn is terminally ambiguous. It must not be ret
 
 Stop and request a new exact owner approval naming the maximum provider calls, time limit, read-only workspace, cleanup targets, and retained sanitized evidence. Earlier approval has been consumed and does not carry forward.
 
-The qualification must prove start, bounded events, usage, cancellation, and explicit-ID resume while continuously retaining the isolation proofs above. It must not enable workspace writes, MCP servers, plugins, deployments, or consequential effects. No prompt, response, command, path, credential, raw identity, or session identifier is retained.
+The qualification must prove start, bounded events, usage, cancellation, and explicit-ID resume while continuously retaining the isolation proofs above. Before any provider dispatch, the owner-installed broker/executor keys must complete the one-time channel handshake and the native verifier must produce fresh child/path evidence. Before acceptance, the exact provider hard-output evidence and executor turn receipt must compose into one bundle with no remaining lineage or chronology failure. It must not enable workspace writes, MCP servers, plugins, deployments, or consequential effects. No prompt, response, command, path, credential, raw identity, or session identifier is retained.
 
 ## Failure and rollback
 

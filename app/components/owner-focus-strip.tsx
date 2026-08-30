@@ -1,5 +1,5 @@
 import { useState, type JSX } from "react";
-import type { OwnerFocusPinV1 } from "@/src/operator-surfaces/v1";
+import type { OwnerFocusPinV1 } from "@/src/operator-surfaces/v1/types";
 
 export type OwnerFocusDraftRequestV1 =
   | { operation: "set_owner_focus"; projectId: string; level: "p0" | "today"; reason: string }

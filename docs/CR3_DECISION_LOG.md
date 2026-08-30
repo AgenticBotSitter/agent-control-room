@@ -594,3 +594,519 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Native execution now needs a separate least-privilege process identity, private durable ledger, local IPC authentication, broker-only provider egress, and operational recovery for ambiguous calls. At-most-once dispatch can consume a call allowance without obtaining a result when the broker crashes before or during the provider request.
 
 **Reevaluate:** A supported upstream run-scoped credential delegation mechanism may replace the local broker only if it independently proves credential unreadability, direct-egress denial, exact run/model/call bounds, revocation, durable replay containment, and sanitized evidence.
+
+## ADR-050 — Northbound MCP records proposals but never becomes orchestration authority
+
+**Decision:** Control Room targets the stateless MCP `2026-07-28` core for its northbound agent interface. Every request requires a short-lived signed scope grant plus possession of its bound bearer secret. MCP may expose redacted scoped observations and record job, delegation, or approval proposals. It cannot create an approval attestation, mint authority, claim or lease work, dispatch an executor, issue a credential, or perform an effect. Internal policy review, canonical workflow materialization, leases, retries, and node delivery remain outside MCP.
+
+**Why:** Agents need one discoverable interface to request work and inspect results, but a tool call is not a durable scheduling or authorization protocol. Treating a tool name or client session as capability would bypass Control Room's tenant, replay, approval, lease, and effect gates.
+
+**Alternatives rejected:** MCP as the internal worker queue; session-scoped authorization; tools that directly approve or execute; returning credentials through tools; accepting client-supplied parent authority; allowing proposal recording to imply dispatch.
+
+**Trade-off:** Proposal materialization requires a separate internal idempotent workflow, and clients must poll scoped job/artifact evidence rather than treating a tool receipt as completion.
+
+**Reevaluate:** New MCP transports or protocol revisions may replace wire details after compatibility and security review. The separation between northbound intent, canonical orchestration, authority, and effects remains.
+
+## ADR-051 — Harness adapters publish observations, not operational authority
+
+**Decision:** The public harness adapter SDK is restricted to a pinned manifest, compatibility decision, and safe normalization of node-local frames into canonical harness events. It exposes no lifecycle execution, approval, credentials, scheduling, lease, dispatch, artifact publication, or effect method. Raw native identifiers stay node-local and become tenant/node/adapter-bound digests before output. Hermes and Codex retain their existing protected lifecycle and security modules behind this boundary.
+
+**Why:** A shared adapter interface is useful only if it prevents a new adapter from treating its transport client as an authority bypass. Lifecycle capabilities differ across harnesses, and a common `start` or `approve` method would obscure the stricter provider-specific requirements.
+
+**Alternatives rejected:** One universal execution interface; adapters that return raw native IDs; conformance that launches external harnesses; treating a passing fixture as native qualification; letting example adapters inherit workflow or approval power.
+
+**Trade-off:** Execution remains in protected adapter-specific modules and later adapters must implement a small wrapper rather than a full generic runtime.
+
+**Reevaluate:** A future public operation layer may be considered only after canonical authority, replay, credential, isolation, and effect gates can be represented without weakening the strictest current adapter.
+
+## ADR-052 — Package activation is an append-only reviewed pointer change
+
+**Decision:** Procedure and knowledge bodies are immutable digest-addressed versions. Reviews, exact harness mappings, promotions, and rollbacks are separate append-only records. The only mutable registry record is a serialized active-version pointer for one tenant/project/kind/name channel. Activation requires an accepted independent review, a verified exact-version harness mapping, and the caller's expected prior digest. Rollback appends a new activation event and may select only a previously active reviewed version. Package resolution explicitly denies policy, approval, dispatch, execution, credentials, and authority.
+
+**Why:** Editing trust into a package body would destroy provenance, while allowing a mutable status or automatic run-outcome promotion would let reusable prompt content become permission. Exact review and mapping evidence must survive later activation and rollback decisions without reinterpretation.
+
+**Alternatives rejected:** Mutable package documents; trust flags rewritten in place; automatic activation after a successful run; compatibility by adapter name without exact versions; rollback by deleting history; treating procedure selection as execution authority.
+
+**Trade-off:** Every useful revision creates several small immutable records and activation needs optimistic concurrency. Consumers must combine package compatibility with separate policy, lease, authority, and effect gates.
+
+**Reevaluate:** A signed package distribution standard may replace the transport format, but immutable bodies, independent review, exact compatibility, append-only activation history, and authority separation remain mandatory.
+
+## ADR-053 — Telegram is a presentation and response-proposal channel
+
+**Decision:** Telegram may deliver recipient-scoped redacted notifications, collect short-lived authenticated bounded response proposals for low/medium-risk items, and deep-link to the protected dashboard. It never proves owner identity, creates a consequential approval, grants execution authority, dispatches work, or carries a credential. High/critical-risk items are deep-link only. Every callback is bound to a strict server-side record, signed within Telegram's callback-size limit, chat-bound, expiring, and consumed idempotently.
+
+**Why:** Messaging is useful for attention but its account/session, forwarded content, bot transport, and callback replay properties are not a strong approval or execution boundary. Keeping the system of record and all consequential authority in Control Room preserves ADR-009 and ADR-041 while still supporting fast operator response.
+
+**Alternatives rejected:** Treat any Telegram button as approval; put operation authority or secrets in callback data; trust usernames or inbound chat IDs as enrollment; allow high-risk inline actions; send raw artifacts or transcripts; let callback retry repeat downstream effects.
+
+**Trade-off:** High-risk actions require opening the authenticated dashboard, and low/medium responses require a separate policy/materialization step. Durable idempotency and live recipient verification add deployment work.
+
+**Reevaluate:** Transport and signing details may evolve after live qualification, but Telegram's inability to grant approval or execution authority remains.
+
+## ADR-054 — Credential material is consumed inside a node-local single-use broker
+
+**Decision:** Central Control Room, MCP, harness adapters, workers, and message channels may carry only logical credential references and safe catalog metadata. After exact node-local policy admission, a node-private broker issues one short-lived purpose-bound invocation, claims it before provider resolution, passes bytes only to a fixed trusted local consumer, and returns a negative-authority safe receipt. Exact terminal replay cannot reacquire material. Any uncertainty after claim is terminal ambiguity. Provider locators remain digest-only outside the provider-private boundary, and live providers are unavailable until their durable local claim, IPC, process, cleanup, and canary contracts pass.
+
+**Why:** Returning a resolved credential to central orchestration or a general worker would turn every prompt, log, tool, adapter, and retry path into a disclosure boundary. Claim-before-resolution and terminal ambiguity also prevent a crash or timeout from silently consuming the same credential twice for an effect whose first outcome is unknown.
+
+**Alternatives rejected:** Central vault proxy with plaintext responses; secrets in jobs, prompts, environment variables, command arguments, logs, or artifacts; bearer references that resolve without exact local admission; generic node-local `getSecret` RPC; automatic retry after provider, consumer, or cleanup uncertainty; treating buffer zeroing as proof that no copy exists.
+
+**Trade-off:** Every credential-using operation needs a typed local consumer and provider adapter. At-most-once use may consume an invocation without a result, and production requires node-private durable claims, authenticated narrow IPC, provider-specific least privilege, restart recovery, and owner-attended operational proof.
+
+**Reevaluate:** A provider-native workload identity or one-time delegated credential may replace local byte resolution if it preserves exact tenant/project/job/operation scope, prevents central plaintext access, supports revocation and expiry, and supplies durable at-most-once evidence.
+
+## ADR-055 — Source-scheduled adapter reads are evidence and lifecycle changes cannot rewrite source truth
+
+**Decision:** A source-scheduled adapter release declares only reviewed sanitized reads and carries no command, lease, network, or execution authority. Each read binds exact source scope, release, snapshot, opaque cursor, record digests, and the current adapter-control-state digest. Disable is immediate. Upgrade and rollback are expected-state append-only transitions that preserve committed cursor and receipt high-water. Rollback may select only a previously reviewed release and never re-enables an already disabled adapter. The source retains eligibility, leases, and domain transitions throughout.
+
+**Why:** Content Blooms already owns durable scheduling and lease truth. Treating a Control Room projection, cursor reset, adapter downgrade, or local enabled flag as source authority would create two schedulers and make crashes or rollbacks capable of replaying old work. Preserving read high-water and negative authority lets Control Room recover or replace its projection without rewriting the source.
+
+**Alternatives rejected:** Direct edits to source workflow tables; Control Room-issued leases for source-scheduled work; adapter activation as network authorization; command fields hidden in read records; cursor rewind on rollback; deleting receipts on disable; automatically re-enabling after rollback; accepting a producer's unreviewed adapter release.
+
+**Trade-off:** Live reads need a separate authenticated connector and protected activation store. Rollback cannot erase a bad source observation and may require re-projecting from the preserved cursor or an explicit source snapshot. Placement changes arrive later as versioned source requests with source receipts rather than direct lease mutation.
+
+**Reevaluate:** Content Blooms may explicitly delegate a bounded command in CR9A-CB-050 after the read path, redaction, idempotency, disable, rollback, and source-receipt gates pass. Its core source-scheduled lease authority remains unless a separately reviewed future contract changes the project authority mode.
+
+## ADR-056 — Content Blooms placement is a versioned source preference with source-settled truth
+
+**Decision:** The first Content Blooms command is only `setWorkerPreference` for one exact transcription work item and one eligible observed route. A request binds the accepted declaration and read release, a lifecycle revision that changes on enable/disable/upgrade/rollback but not ordinary reads, the exact source record version/checksum/digest, route-comparison and route-observation digests, job/attempt/effect identity, medium risk, strong approval, and one deterministic source-echoed idempotency key. Dispatch additionally requires authoritative approval resolution, a separately trusted node attestation, durable effect claim, and pre-effect marker. Content Blooms settles accepted, already-applied, or rejected truth. Missing post-marker truth is ambiguous and never auto-retries.
+
+**Why:** A route recommendation is useful but is neither source eligibility nor a lease. Binding the expected source version prevents a stale projection from overwriting newer source truth. Separating lifecycle revision from read high-water keeps synchronization from cancelling valid approval while making disable and rollback real command invalidation barriers. Stable idempotency and source receipts allow safe reconciliation without pretending exactly-once delivery.
+
+**Alternatives rejected:** Direct Control Room lease takeover; hidden placement inside a read; low-risk or approval-free classification; request ID as effect identity; new idempotency key on retry; retry after an unknown post-marker result; treating a local accepted receipt as source truth; allowing disable then re-enable to revive an old authorization; allowing a route comparison to dispatch directly.
+
+**Trade-off:** Every placement needs exact source and route evidence, a fresh lifecycle-bound approval, protected claim/marker storage, and an authenticated source receipt. A harmless lifecycle change intentionally invalidates pending placement. Ambiguity may require operator-visible source reconciliation and can consume an authorization without an immediate result.
+
+**Reevaluate:** CB-060 may implement the bounded command against injected fakes after durable request, authorization, claim, marker, receipt, ambiguity, replay, and tombstone storage pass. Live transport remains a separate owner-authorized rehearsal and cannot change source lease ownership.
+
+## ADR-057 — Fake-backed placement uses one protected at-most-once ledger and packages remain non-authoritative
+
+**Decision:** The first placement runtime stores the reviewed declaration, exact request, central approval records, separately verified node attestation, effect claim, pre-effect marker, source or ambiguity outcome, and permanent replay tombstone in one scope-bound HMAC-authenticated ledger. Request ID, source idempotency key, operation digest, node attestation nonce, and effect claim are independently unique. A duplicate marker cannot dispatch. Restart may re-evaluate only an unmarked claim; every marked unknown result becomes ambiguity. The only callable source is an exact injected fake with no endpoint or credential path. The research/transcription/article project pack is stored and independently reviewed through the package registry but remains inactive and non-authoritative.
+
+**Why:** Durable state must make the safe recovery choice mechanical. Splitting replay identity from protected outcome truth or allowing a generic transport during fake acceptance would leave a path for duplicate placement. Treating reviewed instructions as runtime authority would bypass the same approval and effect gates the placement ledger is intended to enforce.
+
+**Alternatives rejected:** In-memory placement locks; request-ID-only deduplication; a generic connector interface in the fake phase; redispatch after a duplicate marker; treating a source timeout as rejection; overwriting ambiguity with a later local receipt; deleting full outcomes when a tombstone is written; automatically activating a reviewed project pack; letting procedure text grant approval or execution.
+
+**Trade-off:** The local slice creates several small authenticated rows and requires separate central and node approval evidence. An uncertain fake call may consume the effect without a final answer. Full outcomes remain stored even after a tombstone, and project packages require a later exact harness mapping and activation decision before use.
+
+**Reevaluate:** CB-080/090 may add one owner-authorized authenticated read rehearsal only after endpoint identity, credential custody, transport authentication, rollback, cleanup, and evidence scope are frozen. A live placement write remains a separate explicit authorization and must preserve the same ledger and source-reconciliation rules.
+
+## ADR-058 — Project Workspaces turn project evidence into proposals without becoming authority
+
+**Decision:** Every project receives the same ordered owner-facing workspace shell for Overview, Inbox, Work, Agents, Automations, Files and artifacts, Reviews, Activity, and Settings. Project adapters may append bounded extension sections but cannot replace the core. ABS AI and Tech News may curate verified story projections and prepare digest-bound action proposals. A story URL is evidence, not fetch authority. An action proposal remains a draft, creates no work item, requires owner review, and grants no approval, network, command, lease, dispatch, publication, or execution authority.
+
+**Why:** Control Room's project view is operationally strong but does not yet provide a fluid information-to-action workspace. A news project needs daily briefs, source health, queues, archive/history, evidence, and article actions without turning a content card or AI ranking into an orchestration bypass. The shared shell lets other projects add useful owner workflows while preserving the canonical scheduler, Completion Gate, package registry, node ceiling, and effect ledger.
+
+**Alternatives rejected:** Copy a separate dashboard into the core; make ABS a standalone scheduler; let a story button dispatch immediately; treat search snippets, newsletters, or AI summaries as verified source truth; store current model names as permission; let a project extension replace the global Work or Reviews view; let the private workspace publish directly to the public ABS site.
+
+**Trade-off:** Proposal materialization adds one explicit step before useful work enters the queue, and project-specific sections need versioned schemas. Live collection and publication require later source, privacy, credential, cost, retry, and destination contracts. The initial visible action buttons remain disabled until durable proposal storage and owner review are connected.
+
+**Reevaluate:** CR9D-ABS-040 may connect accepted proposals to canonical workflows after replay, scope, policy, route, package, and Action Inbox tests pass. Live collection and publication remain separately owner-authorized and cannot weaken the proposal boundary.
+
+## ADR-059 — ABS review materializes only non-runnable work and restart uncertainty is terminal
+
+**Decision:** An ABS proposal review is a digest-bound owner decision, not a Control Room approval. Only an accepted exact review may materialize one deterministic canonical draft request, proposed workflow, and proposed job in a single transaction. The job has no credentials, filesystem roots, network destinations, effect permission, attempt, lease, dispatch, or outbox event. Collector and monitor declarations are immutable, canonical-schedule-backed, and disabled by default. The current block may record synthetic run evidence only. A run found unsettled after restart becomes terminally ambiguous; only a definite allowlisted pre-effect failure may create a separately identified bounded retry.
+
+**Why:** Turning a news-card click or owner content decision directly into runnable work would bypass ordinary route, readiness, policy, lease, and effect controls. Separating review from approval preserves the useful information-to-work flow while keeping scheduling authority canonical. Terminal restart ambiguity prevents a monitor or collector from silently duplicating work when its prior outcome is unknown.
+
+**Alternatives rejected:** Dispatch on article action; treat proposal acceptance as strong-factor approval; create a ready job; sequential non-transactional request/workflow/job writes; embed live endpoints or credentials in schedule declarations; start a background timer when a declaration is saved; automatically retry a run that crossed its start boundary; overwrite run history; treat local receipt creation as proof that an agent or source ran.
+
+**Trade-off:** A reviewed item still needs ordinary readiness, route, package, policy, lease, and execution steps before useful agent work begins. Live collection needs a separate owner-authorized packet, and ambiguous runs may require manual source reconciliation instead of immediate retry.
+
+**Reevaluate:** CR9D-ABS-060 may add one frozen owner-authorized live-read rehearsal after endpoint identity, source allowlist, credential custody, privacy, cost, timeout, cleanup, and evidence contracts are accepted. It cannot turn schedule declaration, review acceptance, or local materialization into live authority.
+
+## ADR-060 — ABS live reads require an exact owner packet and protected at-most-once evidence
+
+**Decision:** An ABS live read may target only a frozen, canonically ordered set of exact public unauthenticated HTTPS RSS or sitemap endpoints. The request binds endpoint identity, source set, project/job/attempt/effect identity, byte/item/time/cost ceilings, allowed content types, and one stable idempotency key while explicitly denying redirects, cookies, credentials, model calls, raw-body retention, execution, and publication. A separate non-synthetic strong owner decision must bind that exact operation before an owner-live authorization can exist. Durable claim precedes transport preparation and a marker precedes the first possible read. Any uncertainty after the marker is terminal ambiguity and cannot retry. Cleanup and terminal truth remain authenticated in the same protected ledger. The accepted repository coordinator is simulation-only, uses injected results, contains no network path, and rejects owner-live authorization.
+
+**Why:** Reading a public feed is still an external effect with SSRF, redirect, privacy, replay, cost, and crash ambiguity risks. An enabled schedule or accepted article action cannot safely stand in for endpoint-specific authority. Keeping the first runtime fake-only proves the durable rules without turning the contract itself into a network capability.
+
+**Alternatives rejected:** Treat public URLs as harmless and fetch on discovery; let a schedule enable the collector; accept redirects; reuse browser cookies; resolve credentials through a generic connector; return or persist raw bodies; retry after timeout or restart; mint a new idempotency key after ambiguity; treat approval as agent-execution or publication authority; ship an unreviewed generic HTTP client in the simulation block.
+
+**Trade-off:** A real read requires a separately reviewed native transport and one owner-approved populated packet. Terminal ambiguity may consume a single-use authorization without stories. Public feeds that require redirects, authentication, cookies, or query tokens are not eligible for this lane.
+
+**Reevaluate:** CR9D-ABS-070 may prepare publication packages locally without publication. A real ABS read remains blocked until exact sources, transport implementation, authoritative approval resolution, and operational cleanup evidence are reviewed and the owner authorizes that single packet.
+
+## ADR-061 — ABS publication uses immutable revisions and two-boundary idempotency
+
+**Decision:** ABS publication preparation binds one immutable content artifact and revision, source and Completion Gate evidence digests, exact destination identity and path, high-risk strong-approval operation, and a stable destination idempotency key. Declared editorial acceptance requires authoritative Completion Gate resolution before live use and never grants approval. A protected ledger claims the stable semantic publication before a pre-effect marker. The destination must independently absorb the same idempotency key and return exact revision and receipt evidence. A changed delivery/request ID cannot create a new publication identity. Definite rejection before mutation is terminal; every uncertainty after the marker is terminal ambiguity with no automatic retry. CR9D-ABS-070 implements only an injected fake destination and rejects owner-live authority.
+
+**Why:** Publication is public, consequential, and difficult to undo. Relying only on queue delivery deduplication permits a fresh message to repeat the same revision, while relying only on a destination promise leaves restart ambiguity unrecorded. Binding the content revision and destination at both boundaries makes duplicate behavior testable without pretending the effect is exactly once.
+
+**Alternatives rejected:** Publish from an accepted review; embed a mutable draft body in an authorization; use request/message ID as the destination key; let a new request ID republish the same revision; retry after timeout or restart; accept a destination URL without an exact adapter identity; treat a fake receipt as public truth; allow configured-live destinations into the simulation coordinator; store destination credentials in the package or ledger.
+
+**Trade-off:** Every changed article revision requires a new package, review evidence, approval, and idempotency identity. Ambiguity can require owner-visible destination reconciliation. A live rehearsal remains blocked until a native destination adapter, authoritative evidence resolution, node attestation, credential custody, and rollback procedure are accepted.
+
+**Reevaluate:** CR9D-ABS-080 may perform one exact owner-authorized rehearsal or record a disabled disposition. It cannot weaken the immutable revision, two-boundary idempotency, protected marker, receipt, cleanup, or ambiguity rules.
+
+## ADR-062 — Missing live-publication evidence becomes durable disabled truth
+
+**Decision:** CR9D-ABS-080 records publication readiness as one canonically ordered nine-gate assessment. Every gate carries an exact evidence class, current state, evidence digest when present, check time, optional expiry, and negative-authority flags. Candidate package and destination identities must each be complete ID/digest pairs. Only current evidence for every gate plus both complete identities can produce an owner-approval candidate; a candidate still grants no approval, execution, or publication authority. Missing or expired evidence produces a digest-bound disabled disposition with no attempt, mutation, effect, or automatic retry. Assessments and dispositions append atomically to a scope-bound authenticated ledger. A later assessment cannot rewrite the prior disposition, and whole-file rollback remains blocked on an independent checkpoint.
+
+**Why:** The permitted alternative to a live rehearsal must be operational truth rather than an informal note. Without exact negative evidence, a future operator could mistake prepared contracts, an accepted article, configured destination text, or old approval for readiness. Append-only disabled records preserve why nothing ran and force future work to re-establish every prerequisite.
+
+**Alternatives rejected:** Treat absence as implicitly disabled; mark the preparation block as a live pass; carry blockers only in prose; allow partial package or destination identity; let all-green checks authorize publication; reuse a disabled disposition as a retry; overwrite the old assessment; claim rollback resistance from an HMAC database without an independent checkpoint.
+
+**Trade-off:** Reassessment requires nine explicit evidence records and new immutable identities. The local ledger adds authenticated state but cannot by itself detect restoration of an older complete file. A real attempt therefore remains blocked until protected checkpoint custody and every native/live prerequisite exist.
+
+**Reevaluate:** A future owner-directed ABS publication block may consume a new candidate assessment only after authoritative evidence resolution and a separately approved one-use window. ADR-061's effect ledger, marker, destination idempotency, receipt, cleanup, and ambiguity rules remain controlling.
+
+## ADR-063 — Wayfarer media moves through an immutable graph and synthetic evidence never becomes quality authority
+
+**Decision:** Lo-Fi Wayfarer uses one digest-bound six-stage graph: model render and audio candidate feed QC and review, review feeds assembly, and assembly feeds publication preparation. Every stage binds exact artifact roles, producer lineage, logical route ceilings, and a CR-8 Completion Gate profile. Artifact declarations contain IDs, digests, content types, size ceilings, retention classes, and quarantine behavior but no bytes, paths, signed locators, credentials, or storage authority. Synthetic execution may emit only no-byte envelopes, non-authoritative QC observations, and negative-authority receipts. Synthetic prerequisite evidence can advance only the synthetic rehearsal; it explicitly is not authoritative Completion Gate resolution. Retention expiry produces an owner-reviewed proposal and never deletes automatically. Unreal remains ineligible until a separately measured owner-controlled benchmark exists. Publication preparation cannot upload or publish.
+
+**Why:** Media workflows are large, branching, and expensive. Without immutable roles and lineage, a stale proxy, wrong audio take, or mismatched render could reach assembly. Without explicit synthetic semantics, deterministic test evidence could be mistaken for independent quality acceptance. Without a storage-neutral artifact contract, project instructions could smuggle paths, credentials, or deletion authority before the storage boundary is reviewed.
+
+**Alternatives rejected:** One mutable project folder as truth; artifact filename as identity; QC implied by successful encoding; producer self-review; synthetic pass equals Completion Gate pass; assembly before accepted review; automatic cleanup at retention expiry; enable Unreal based on a declared GPU; embed R2 keys or signed URLs in the pack; let publication preparation call an uploader.
+
+**Trade-off:** Every real artifact needs an immutable envelope and every stage needs explicit verification. The first workflow produces metadata rather than media, and retention execution needs another protected state machine. High-value media may remain quarantined or blocked while independent evidence is gathered.
+
+**Reevaluate:** CR9B-WF-040 may add storage scope and lifecycle contracts without accessing storage. CR9B-WF-080 remains the first possible measured Unreal benchmark, and upload/publication remains separately destination-idempotent and owner-approved.
+
+## ADR-064 — Wayfarer storage identity is public metadata while every usable locator remains private authority
+
+**Decision:** Wayfarer has exactly two logical artifact stores at this boundary: local-private and R2-private. Control Room binds each immutable artifact declaration to a store-specific object-key digest, short-lived capacity proposal, retention class, and broker-private locator-reference digest. It stores no path, bucket, account, endpoint, signed URL, locator value, credential reference, or bytes. Object keys are immutable and overwrite is forbidden. One retry is allowed only after definite failure before the write marker. Integrity mismatch quarantines. Unknown outcome or restart after the marker is terminal ambiguity and cannot retry. Retention produces only independently evidenced owner-review candidates; legal hold always wins. Cleanup receipts are not deletion evidence. The accepted implementation evaluates injected metadata only and enables neither local nor R2 access.
+
+**Why:** A filename, path, bucket key, or signed URL can disclose private topology and can also become de facto access authority. Binding public identity to digests while keeping resolvable location in a separate protected broker allows Control Room to reason about lineage, capacity, integrity, and retention without becoming a storage credential vault. Store-specific identity prevents local and R2 operations for the same artifact from colliding. Terminal post-marker ambiguity prevents a restart from silently creating duplicate large objects.
+
+**Alternatives rejected:** Put paths or R2 keys in project records; use filenames as artifact identity; one shared ID for local and R2 copies; overwrite objects in place; store presigned URLs; let a capacity proposal write; retry after a marker, timeout, or restart; treat digest mismatch as a transient failure; automatically delete at retention expiry; let cleanup imply deletion; use R2 as a queue or lock service.
+
+**Trade-off:** A future adapter needs a protected locator registry and extra reconciliation work. Operators cannot repair an ambiguous write by pressing retry. Retention creates visible review work instead of background deletion. Local and R2 copies retain distinct records even when their artifact declaration is identical.
+
+**Reevaluate:** CR9B-WF-050 may add a fake adapter with no locator-resolution seam. A real local or R2 adapter requires a new owner-controlled qualification and must preserve store identity, locator custody, no-overwrite, marker, ambiguity, retention, legal-hold, and deletion-evidence rules.
+
+## ADR-065 — Wayfarer project views show unresolved evidence while fake storage and scheduling remain non-operative
+
+**Decision:** The accepted Wayfarer fake adapter holds only immutable metadata and enforces exact replay, no-overwrite, per-store capacity, quarantine, and terminal ambiguity without a locator-resolution or byte seam. The project workspace binds each stage digest to its independent-review target, shows synthetic evidence separately from authoritative completion, and omits command and approval controls. Its storage cards expose only accounted fake metadata and explicitly do not prove object existence. GPU and scratch scenarios reuse the deterministic eligibility and bottleneck engines with injected synthetic signals, but selection creates no reservation, dispatch, release, execution, or approval authority. Unreal remains explicitly ineligible even when declared synthetic resources are generous.
+
+**Why:** A visually complete media workspace can mislead an operator into believing that synthetic stages, fake object metadata, or a scheduler selection represent completed media or executable work. Keeping the negative authority in both the contract and the presentation prevents a rehearsal from becoming an accidental control plane.
+
+**Alternatives rejected:** Display the old fixture's simulated Unreal work as active; add disabled render or approval buttons; interpret a matching fake digest as object existence; let a changed replay consume capacity; combine local and R2 fake stores; infer real GPU readiness from declared capability; treat bottleneck relief as a release instruction; make synthetic QC resolve independent review.
+
+**Trade-off:** The workspace is useful for planning and review but deliberately cannot start work. Every real byte, storage locator, native tool, measured benchmark, review decision, upload, and publication effect requires a later protected boundary.
+
+**Reevaluate:** CR9B-WF-080 may add one frozen owner-controlled Unreal benchmark packet and either measured evidence from a separately authorized attempt or an explicit disabled disposition. It cannot reinterpret WF-050/060/070 evidence as native qualification.
+
+## ADR-066 — Unreal benchmark readiness is an ordered durable gate and missing native evidence becomes disabled truth
+
+**Decision:** Wayfarer freezes one digest-bound Unreal scene/render workload before any native attempt. It fixes 1920 by 1080 output, 300 frames, one warm-up, three measured runs, median wall-clock aggregation, exact metrics/evidence classes, a 15-minute ceiling, one attempt, 16 GiB memory, 64 GiB scratch, zero provider cost, and forbidden network. Thirteen ordered readiness gates bind the packet to private scene, tool, executor, node approval, hardware, GPU, scratch, network, measurement, integrity, cleanup, and owner-window evidence. Complete readiness creates only a candidate for a fresh owner-attended approval window. Measured pass is only an independently reviewable route-qualification candidate and cannot automatically activate Unreal or resolve media completion. Missing gates produce an authenticated append-only disabled disposition with no attempt or retry.
+
+**Why:** A declared GPU, installed-looking application, synthetic benchmark, or complete checklist does not prove that a private scene can be rendered safely and repeatably. A durable disabled result prevents operators and later agents from treating absence of evidence as permission or silently repeating a native attempt.
+
+**Alternatives rejected:** Discover and launch Unreal automatically; install or repair the tool during qualification; accept filenames or paths as scene/tool identity; benchmark an arbitrary scene; vary the workload between machines; permit network or provider fallback; treat three measured runs as three retryable attempts; retry a timeout or restart after the marker; enable the route from a synthetic pass; let benchmark success complete the media stage; store raw scene/render bytes or native output in Control Room.
+
+**Trade-off:** The current WF-080 result is disabled rather than a performance number. A real attempt requires substantial private native evidence and owner attendance. Even a measured pass needs independent review and a later pack/route change before Unreal becomes eligible.
+
+**Reevaluate:** WF-090/100 may add a frozen executor and upload-preparation package only in disabled, no-effect form against this packet. WF-110/120 remain separately destination-idempotent and owner-approved. A later measured benchmark requires a new exact readiness assessment and authorization without weakening the one-attempt or ambiguity rules.
+
+## ADR-067 — A frozen executor has no native seam and upload is not publication
+
+**Decision:** The accepted WF-090 Unreal executor binds the exact WF-080 packet, readiness assessment, and disabled disposition but contains no command, native adapter, process launcher, filesystem reader, private-locator resolver, credential resolver, network client, artifact writer, or cancellation controller. Its only current output is a digest-bound `disabled_before_start` admission and negative receipt with zero attempt or effect. WF-100 binds immutable declarations for the episode master, assembly manifest, and publication package into two separate future high-risk boundaries: private upload and public publication. Neither boundary contains a destination or credential. Each later effect independently requires an exact owner-supplied destination, qualified adapter, protected credential reference, node authority, fresh strong approval, stable destination idempotency, durable claim, pre-effect marker, destination receipt, cleanup receipt, and terminal ambiguity without automatic retry.
+
+**Why:** A class named executor can be mistaken for runnable authority even when the benchmark is disabled. Likewise, an uploaded private master can be mistaken for permission to publish publicly. Removing the native seam makes the present refusal structural rather than conventional, while separate delivery identities prevent one approval or idempotency key from crossing effect boundaries.
+
+**Alternatives rejected:** Store a dormant command line; accept injected process or filesystem callbacks; let the disabled executor create a job or effect claim; record synthetic cleanup as native cleanup; embed a destination placeholder URL, bucket, path, channel, or credential reference; treat private upload as publication staging under one approval; reuse message or request IDs as destination idempotency; retry after a marker; let prepared artifact declarations stand in for bytes, QC, review, or Completion Gate resolution.
+
+**Trade-off:** WF-090 cannot be toggled on; a real adapter requires a newly reviewed implementation and qualification. Delivery remains metadata-only until every artifact and destination prerequisite exists. Operators must approve upload and publication independently, and terminal ambiguity may require manual destination reconciliation.
+
+**Reevaluate:** WF-110/120 may add the exact destination/idempotency/approval readiness contract and either a separately owner-authorized rehearsal or authenticated disabled state. It cannot mutate this package into live authority or combine the two delivery boundaries.
+
+## ADR-068 — Delivery readiness is separate for upload and publication and missing evidence becomes durable disabled truth
+
+**Decision:** Wayfarer private upload and public publication use separate exact destination identities, immutable content sets, operation digests, stable destination idempotency keys, strong approval requests, readiness assessments, and dispositions. Ten ordered gates bind the preparation package, artifact content, Completion Gate resolution, destination, adapter, credential custody, node authority, idempotency qualification, reconciliation, and fresh owner window. All-green evidence creates only an owner-window candidate. Missing evidence produces a boundary-specific authenticated disabled disposition with no attempt, effect, retry, approval, or execution authority. Each lane advances independently in an append-only keyed ledger and requires an independent checkpoint before live use.
+
+**Why:** A private master upload and public publication have different consequences and destinations. A shared approval, request ID, or delivery key could make one effect authorize or duplicate the other. Durable negative truth prevents a prepared package or configured-looking destination from being mistaken for readiness.
+
+**Alternatives rejected:** One combined delivery operation; request ID as destination idempotency; raw destination or credential material in the control plane; approval as execution authority; all-green readiness as authority; one shared readiness row; overwrite the disabled record; retry after a marker, timeout, restart, or unknown result; claim rollback resistance without an independent checkpoint.
+
+**Trade-off:** Upload and publication require separate evidence and owner decisions. Reconciliation may be manual after ambiguity. The present result is disabled because no real media, destination, adapter, credential, node authority, or approval window exists.
+
+**Reevaluate:** A future owner-directed delivery rehearsal may consume one new exact candidate assessment. It must preserve the separate lanes, stable destination idempotency, claim, marker, receipt, cleanup, terminal ambiguity, and no-retry rules.
+
+## ADR-069 — Project adapters reject foreign scope before project evidence can cross boundaries
+
+**Decision:** ABS News, Content Blooms, and Wayfarer retain distinct tenant/workspace/project scope tuples. Wayfarer preparation, destination, request, readiness, disposition, and operator-view contracts require the exact Wayfarer workspace and project identities. A foreign object cannot become Wayfarer evidence by copying fields or recomputing an outer digest. Cross-project isolation is part of CR9 acceptance rather than a presentation convention.
+
+**Why:** Digest integrity proves that a record was unchanged after signing; it does not prove the record belongs to the correct project unless scope is also normative. A structurally valid record with a foreign project ID could otherwise enter later delivery logic and confuse evidence or authorization lineage.
+
+**Alternatives rejected:** Trust the caller to select the right adapter; validate scope only when an effect begins; rely on presentation project IDs; accept arbitrary workspace/project values in downstream delivery schemas; treat a recomputed digest as sufficient scope proof.
+
+**Trade-off:** Wayfarer contracts cannot be reused by simply changing IDs. A new media project needs its own accepted adapter contract or an explicitly versioned generic contract with equivalent scope binding.
+
+**Reevaluate:** A future multi-project media package may generalize these schemas only after project identity, adapter identity, evidence lineage, and effect authority remain exactly bound and cross-project adversarial tests pass.
+
+## ADR-070 — Production begins as seven distinct least-privilege services behind a protected edge
+
+**Decision:** The first production candidate is a recovery-based single-host modular monolith with seven distinct service roles: edge connector, Control Room application, one-shot migration runner, PostgreSQL primary, backup controller, audit anchor, and independent operations observer. Each role has a distinct derived operating-system principal. Only the migration runner may mutate schema. PostgreSQL is the sole global write authority. Nodes initiate outbound authenticated connections through the protected edge and have no direct inbound listener. Approved object storage is for immutable artifacts, backup archives, and audit anchors, never coordination. Fifteen exact authenticated flows are allowed and every unknown flow is denied. The architecture contract contains no hostnames, addresses, ports, credentials, or deployable configuration.
+
+**Why:** A smaller initial failure domain is operable by one owner, while identity and flow separation prevent the modular monolith from collapsing into one overpowered process. Protected ingress and outbound-only nodes avoid publishing an origin or every worker. PostgreSQL preserves transactional authority that object storage cannot safely replace.
+
+**Alternatives rejected:** Public application origin; direct inbound node control; one shared root or host-administrator service account; permanently privileged migration capability; database credentials shared across application, backup, and audit roles; object storage as queue or lock; multi-primary database before recovery evidence exists; hostnames, ports, or credentials embedded in the architecture contract.
+
+**Trade-off:** A single primary does not provide transparent failover, so restore quality and measured recovery objectives become important. More service identities and explicit flows require additional packaging work even on one host.
+
+**Reevaluate:** A later high-availability phase may add replicas or another host only after real backup/restore, canary, monitoring, incident, and RPO/RTO evidence is independently accepted. It must preserve distinct principals, single authoritative write semantics, exact flows, protected ingress, and outbound node connectivity.
+
+## ADR-071 — Readiness, health, and lifecycle evidence never become deployment authority
+
+**Decision:** A release is immutable and reference-only. Deployment admission requires eighteen exact ordered, current gates covering topology, release/signature/provenance/SBOM, configuration and credential custody, edge policy, backup/WAL/restore, migration/rollback, health/resources/monitoring/audit, and a fresh owner window. All-green admission creates only an owner-window candidate. Health uses role-specific independently observed, freshness-bounded probes and yields only a readiness candidate. Deployment progresses through a one-host canary and a separate owner promotion decision. Failed canary becomes rollback-pending; uncertain state after change is terminal ambiguity. Automatic promotion, rollback, down migration, and retry after change are forbidden.
+
+**Why:** Green dashboards and complete checklists are evidence, not consent and not proof that a side effect occurred. Separating observation, planning, approval, and effect authority prevents automation or stale evidence from silently changing production. A canary constrains the first release exposure without pretending a single-host system has a second production host.
+
+**Alternatives rejected:** Deploy when tests pass; treat health as service-control permission; allow a service to self-attest its health; auto-promote a healthy canary; auto-rollback a failed canary; retry after a timeout or restart; run schema migration inside the steady-state application; use down migrations as the default database rollback.
+
+**Trade-off:** Deployment and rollback require deliberate owner interaction and may stop in an ambiguous state needing reconciliation. More evidence must be produced and kept fresh before an owner window opens.
+
+**Reevaluate:** Native deployment tooling may be added only behind a newly reviewed effect boundary with durable claim, marker, receipt, cleanup, and reconciliation semantics. It cannot weaken the eighteen gates or turn health into authority.
+
+## ADR-072 — Recovery proves a disposable restore before any cutover, and application rollback is not database restore
+
+**Decision:** Backup identity is an immutable digest-only manifest binding release, database/schema, base backup, bounded WAL, audit head/anchor, protected locator/key references, signature, and restore window. Recovery targets only a distinct disposable isolated identity and follows eleven ordered phases from isolation and verification through base restore, bounded WAL replay, integrity/audit validation, node-journal reconciliation, independent health validation, and a fresh owner cutover request. Restored central data cannot overwrite node-local journal truth. Production overwrite, direct cutover, down migration, implicit retry, and cutover from restoration evidence are forbidden. Application-only rollback requires a canary and leaves a verified compatible database unchanged; restoring a prior database requires a separately bound verified backup and the recovery path.
+
+**Why:** A backup is not credible until it can restore into a clean isolated target and reconcile with independent system truth. Direct production restore combines destructive data mutation, validation, and cutover into one unsafe action. Separating application rollback from database recovery avoids using down migrations or an old database merely because an application release failed.
+
+**Alternatives rejected:** Trust a backup upload receipt; restore over production first; target an existing production identity; replay unbounded WAL; skip the external audit anchor; replace node journals with restored central state; automatically cut over a healthy restore; silently retry after a restore marker; bundle database rollback into every application rollback.
+
+**Trade-off:** Recovery needs disposable capacity, independent validation, explicit reconciliation, and an additional owner decision. Ambiguous or failed cleanup can stop the process without an automatic retry.
+
+**Reevaluate:** A real clean-host rehearsal may supply measured RPO/RTO and operational evidence under a separate owner-controlled attempt. Production cutover remains a distinct high-risk gate even after the rehearsal passes.
+
+## ADR-073 — Production packaging begins as canonical non-deployable references with exact peer separation
+
+**Decision:** Compose and Linux systemd outputs are canonical value-free references bound to the accepted topology and release, not deployable configuration. Compose uses ten internal two-peer networks for the ten host-local flows rather than a broad shared application or operations network; external flows are digest declarations only. Every service drops all capabilities, uses no-new-privileges, has bounded resources and restart, contains no command/entrypoint/port/host namespace, and has a distinct unresolved user and immutable artifact reference. Linux units have no install section, require an unresolved owner marker, use distinct users, strict system protections, exact address families, and no secondary commands. PostgreSQL is the only writable role and migration remains one-shot with no restart.
+
+**Why:** A realistic-looking template is easily mistaken for approved deployment configuration. Making the output structurally non-deployable allows packaging and security semantics to be tested before host, image, path, account, or credential choices exist. Two-peer networks reduce unintended lateral reach that a shared internal network would permit.
+
+**Alternatives rejected:** Ready-to-run Compose; published origin ports; one internal network for all roles; Docker socket or privileged helper; commands embedded in templates; shared users; systemd install targets; root services; shell pre/post hooks; automatically restarting migration; writable application or observer roots.
+
+**Trade-off:** Later native packaging must resolve references and add independently reviewed enforcement for declared external flows. The references cannot be used directly for a rehearsal.
+
+**Reevaluate:** OPS-080/090 may consume these references for planning and disabled runbooks. Native renderers require a separately reviewed value-binding boundary and owner-authorized target; they cannot weaken exact peers, identities, hardening, or activation stops.
+
+## ADR-074 — Protected-edge provider examples carry shape but no provider value or network authority
+
+**Decision:** Owner ingress and node protocol remain separate exact logical routes with different authentication, audience, freshness, and replay requirements. Both use an outbound connector, expose no public origin, and deny wildcard, redirect, bypass, and inbound node access. The Cloudflare Tunnel and Access-shaped example contains unresolved identity references only and no account, zone, domain, hostname, tunnel, credential, SDK, client, or provider operation. Current truth is a seven-blocker disabled disposition with zero effects. A fake policy match can become only an owner-review candidate.
+
+**Why:** Provider-specific examples are useful for implementation, but values or callable clients would turn an architecture reference into a latent infrastructure mutation seam. Separate owner and node routes prevent a human access decision from becoming node-protocol authority or vice versa.
+
+**Alternatives rejected:** Public application origin; one owner/node route; wildcard hostname or audience; redirect-based compatibility; inbound node listener; embedded provider identifiers; dormant SDK/client; validate by contacting a live provider; treat a matching fake route table as network approval.
+
+**Trade-off:** Actual provider correctness, DNS, tunnel connectivity, and access behavior remain completely unproved. Later value binding and native validation require owner attendance and fresh evidence.
+
+**Reevaluate:** A separately authorized provider rehearsal may bind one exact account/zone/domain/tunnel set and produce protected receipts. It must preserve no-public-origin, route separation, deny-unknown behavior, exact audiences, and non-authoritative readiness.
+
+## ADR-075 — Health collection admits only repository-created fake adapters and re-derives resource truth
+
+**Decision:** OPS-040's current collector accepts only frozen in-memory fake adapters created by a repository factory and registered in a private weak identity map. It calls exactly the role-required probes, marks every other role/probe cell not applicable without an adapter call, and requires an observer identity distinct from all production service principals. Resource samples are bounded policy inputs, not adapter verdicts: the coordinator derives pass/fail and the parser derives it again and cross-binds it to health evidence. The resulting projection is read-only and has no action controls.
+
+**Why:** A generic injected callback would be an undeclared native/network execution seam, and an adapter-supplied green status could hide threshold drift. Factory-only fake adapters make this phase genuinely effect-free while exercising orchestration. Independent derivation makes re-signing changed metrics insufficient.
+
+**Alternatives rejected:** Accept any object with a probe method; perform native checks during reference work; allow service self-report as sufficient; call adapters for inapplicable probes; let adapters decide resource status; treat missing metrics as healthy; expose restart or deploy controls beside the health projection.
+
+**Trade-off:** These results prove contract behavior only, not host health. Real probe adapters and persistence remain future security boundaries.
+
+**Reevaluate:** Native adapters may be added only as separately qualified implementations with exact I/O, timeout, identity, redaction, freshness, and failure contracts. They must not share the fake-adapter admission path or turn readiness into service-control authority.
+
+## ADR-076 — Backup planning is a pure no-command contract and fake execution has authenticated terminal truth
+
+**Decision:** OPS-050 separates the protected backup/WAL contract and no-command CLI from the test-only SQLite lifecycle ledger. The protected path binds topology, release, database identity, digest-only object/key/signer references, retention ceilings, bounded estimates, immutable encrypted manifest requirements, and stable operation identity while importing no database, storage, filesystem, subprocess, or network client. Fake execution uses a repository-created in-memory adapter plus a one-use lifecycle claim, pre-effect marker, and digest-bound receipt. Whole-ledger HMAC state and an external checkpoint port detect mutation or rollback. Reopening after a marker without a receipt is terminal ambiguity and cannot redispatch.
+
+**Why:** A backup contract that imports a database or storage client is already an execution seam, even when current code calls it only in a dry run. Conversely, a fake lifecycle still needs honest crash semantics so later orchestration cannot learn unsafe retry behavior. Keeping the pure contract separate from the ledger makes the absence of commands and clients structural while preserving reusable effect-state discipline.
+
+**Alternatives rejected:** Embed a dormant backup or encryption command; accept a bucket, path, URL, key, credential, or resolved locator; treat uploaded bytes or a storage receipt as manifest verification; place SQLite in the protected contract path; allow retention above the ceiling; retry after a marker, timeout, restart, or unknown result; accept caller-created fake adapters; let a valid manifest grant restore authority.
+
+**Trade-off:** The current CLI cannot perform or even prepare a native backup command. The fake ledger's in-memory acceptance checkpoint is not production rollback-resistant custody. External manifest signature verification, protected-reference resolution, capacity allocation, real backup/WAL tools, and durable independent checkpoints remain unimplemented.
+
+**Reevaluate:** A native backup boundary requires a separately reviewed adapter, owner-supplied exact target, protected reference broker, qualified process and storage identities, real rollback-resistant checkpoint, claim/marker/receipt/cleanup/reconciliation, and explicit owner authority. It cannot be added to the pure contract module or weaken terminal ambiguity.
+
+## ADR-077 — Disposable recovery consumes a target once and can produce only a cleaned recovery candidate
+
+**Decision:** OPS-060 recovery runs only against a repository-declared empty disposable fake identity that differs from every production principal and is consumed once. The coordinator enforces all eleven OPS-000 phases in exact order, records markers before synthetic base restore and WAL replay, refuses restored central data as a replacement for node-journal truth, requires external audit-anchor evidence and a validator distinct from the recovery worker, calculates RPO/RTO, and requires authenticated cleanup before attestation. Missing anchor, self-validation, node overwrite, cleanup failure, reordered work, duplicate targets, and unsettled post-marker restart are terminal failures or ambiguity. The attestation remains `recovery_candidate_only` and grants no readiness, cutover, restore, approval, or execution authority.
+
+**Why:** Successful restoration and successful production recovery are different claims. Reusing a target, skipping cleanup, allowing the restorer to validate itself, or opening cutover from restored data would make a fake rehearsal look like operational permission. Exact phase and identity binding lets the harness test recovery reasoning without creating a hidden database, host, or cutover seam.
+
+**Alternatives rejected:** Restore over an existing or production target; reuse a disposable target; run phases out of order; replay unbounded WAL; skip the audit anchor; overwrite node journals; accept restorer self-validation; attest before cleanup; treat RPO/RTO as production measurements; automatically request or open cutover; retry an uncertain restore; ship a container, database, storage, network, or native adapter in the fake coordinator.
+
+**Trade-off:** The accepted evidence proves state-machine behavior only. It contains no real bytes, process, storage system, database, host, or measured native recovery. A cleanup failure blocks attestation, and ambiguity may require an owner to reconcile rather than retry.
+
+**Reevaluate:** A real clean-host recovery rehearsal requires new owner-scoped authority, exact isolated capacity, qualified backup/restore/WAL adapters, protected reference custody, independent native validation, cleanup proof, and separately accepted measurements. Production cutover remains a later fresh strong-owner gate even after a real rehearsal passes.
+
+## ADR-078 — Monitoring has a closed vocabulary, treats absence as uncertainty, and cannot acquire effect authority
+
+**Decision:** OPS-070 freezes nine metric types, nine alert rules, four queue classes, seven service roles, and exactly thirty digest-bound series. It admits no caller-defined labels, raw tenant/project IDs, destinations, credentials, or authority fields. Missing, stale, and explicitly unknown observations are visible unknown alerts rather than healthy results. Incident clearance requires two consecutive current passing samples and accepts only batches produced by the repository evaluator, so a re-signed handcrafted clear cannot close an incident. Correlated incident transitions may create proposal-only notification evidence on open and escalation. The current adapter is privately admitted and always stops before provider contact or delivery.
+
+**Why:** Unbounded labels leak sensitive values and turn monitoring storage into an uncontrolled data plane. Treating absent data as green hides collector failure. A valid-looking alert payload is not sufficient evidence that the monitoring rules ran, and a notification is an external effect rather than an approval or operational command.
+
+**Alternatives rejected:** Caller-defined labels or series; raw project, tenant, host, or service values; missing data treated as healthy; one passing observation closes an incident; caller-signed clear evidence; notification on every evaluation; provider or destination configuration in the monitoring contract; alerts that authorize restart, deploy, rollback, restore, or incident response.
+
+**Trade-off:** The exact vocabulary is intentionally inflexible, the in-memory stores are not production durability, and owner-visible uncertainty may remain until two trustworthy observations arrive. Real collection and notification require separately reviewed adapters and value binding.
+
+**Reevaluate:** Production monitoring may add qualified collectors, durable protected storage, accepted thresholds, and a gated notification boundary only after exact identities, redaction, cardinality, freshness, integrity, destination custody, rate limits, acknowledgement, and external-effect semantics are reviewed. It cannot weaken missing-data behavior or turn alert evidence into authority.
+
+## ADR-079 — Canary and rollback planning records effect truth without owning an effect path
+
+**Decision:** OPS-080 composes one exact eighteen-gate deployment candidate with an exact same-topology, same-release application rollback plan, then produces eight ordered proposal-only steps, three owner questions, and four distinct intents for forward migration, one-host canary, promotion, and application rollback. Canary cannot bypass verified forward-migration evidence. Promotion requires independently verified pass evidence; application rollback requires independently verified failure evidence; the branches are mutually exclusive. Database restoration is rejected from this planner and remains in recovery. Claims and markers record external evidence but grant no authority. Complete post-marker outcomes require both effect and independent receipts. Restart before a marker is definite pre-change failure; restart after a marker is terminal ambiguity; neither retries. The current ledger uses authenticated portable snapshots, an external checkpoint, and a test-only state port while the executor seam is permanently disabled.
+
+**Why:** A useful deployment plan must preserve sequence and crash truth without quietly becoming deployment software. Treating a green canary as promotion consent, a failed canary as rollback consent, or application rollback as permission to restore a database combines evidence with authority and can magnify an incident. Separate branch evidence and terminal ambiguity allow later native work to reconcile facts without teaching unsafe automatic behavior.
+
+**Alternatives rejected:** Auto-promote on green health; auto-rollback on failed health; start canary before migration evidence; allow both promotion and rollback branches; use a down migration; restore a database as part of application rollback; retry after a marker, restart, timeout, partial receipt, or unknown outcome; accept stale owner windows or substituted gates; embed a dormant command, target, service client, database client, provider client, or native executor.
+
+**Trade-off:** The planner cannot deploy anything, and the current state port is not production persistence. An owner or later qualified boundary must make every consequential choice, supply independent evidence, and reconcile ambiguity. This adds stops but prevents a planner or dashboard from acquiring effect authority.
+
+**Reevaluate:** A native canary or rollback boundary requires a separately reviewed value-binding and executor design with exact host, service, release, approval, claim, marker, receipt, cleanup, credential, checkpoint, and reconciliation contracts. It cannot import execution into this planner, weaken branch separation, or retry terminal ambiguity.
+
+## ADR-080 — Operations runbooks compile evidence order without compiling an executor
+
+**Decision:** OPS-090 freezes eight exact state machines for deploy, forward migration, one-host canary, application rollback, backup/WAL, isolated restore, incident isolation, and audit-anchor recovery. Each graph has exact ordered evidence classes, explicit owner-gate rehearsal points, a disabled effect slot, and mandatory cleanup and reconciliation. Instances are bound to one definition, scope, and operation and are authenticated as complete resumable state. Evidence is synthetic, fresh, exact-step-bound, non-authorizing, and carries no raw output. Exact replay is inert; changed, skipped, mixed-operation, stale, or forged evidence fails closed. Before a change boundary, failure, uncertainty, or abort blocks. At or after a change boundary, it may proceed only to cleanup and reconciliation and then terminates in ambiguity. No runbook contains a native executor, command, target, credential, retry, approval, or authority.
+
+**Why:** A useful runbook must make sequence, stopping conditions, crash uncertainty, cleanup, and reconciliation machine-checkable without making a guide or state record callable. Compiling effect machinery beside these graphs would let evidence or an owner-facing screen become a latent action path. Authentication prevents an ordinary re-digest from rewriting resume truth, while exact graph comparison prevents semantic drift from being hidden behind valid hashes.
+
+**Alternatives rejected:** Free-form prose as the only runbook; caller-defined or reorderable steps; owner prompts treated as approval; stale evidence accepted; evidence reused across operations; skip directly to verification or reconciliation; automatic retry after failure, timeout, restart, or unknown result; unknown native outcome treated as failure or success; cleanup optional; executable commands or dormant clients embedded in definitions; a generic injected executor; production target or credential fields.
+
+**Trade-off:** The runbooks can prove only graph and state-machine behavior. They cannot perform, prepare, or authorize an operation, and synthetic owner gates are not human decisions. Production persistence, protected key/checkpoint custody, exact values, qualified adapters, real receipts, and owner-attended decisions remain future boundaries.
+
+**Reevaluate:** Any native operational path requires a new reviewed value-binding and effect boundary outside this module, with protected persistence, exact target and identity, fresh strong approval, claim-before-effect, marker, independently bound receipt, cleanup, reconciliation, cancellation, and terminal ambiguity. It cannot add callable execution to these accepted definitions or convert rehearsal evidence into authority.
+
+## ADR-081 — Privacy disposition is an evidence and review decision, never an inferred delete command
+
+**Decision:** OPS-100 freezes fourteen exact data classes, revisioned project-scoped retention rules, digest-only disposition requests, externally grounded legal-hold and release evidence, retention/reference/inventory evidence, a fixed fail-closed precedence order, candidate-only proposals, and a control-free projection. Audit/security truth remains an indefinite append-only full record. Replay, approval, work, scope, artifact-metadata, and quarantine truth can at most compact to required digest tombstones after every dependency horizon. Unknown horizons, active references, missing policy values, early expiry, and active holds preserve data. Legal hold wins before every request kind. Control Room makes no legal determination, and the current executor is structurally disabled before any storage or native action.
+
+**Why:** A retention date or deletion request is not proof that data is unreferenced, outside a hold, legally disposable, approved for destruction, or actually deleted. Separating classification, policy, evidence, review, authority, and effect prevents a missing value or green projection from causing irreversible loss. Preserving audit truth and replay tombstones keeps security, idempotency, and later reconciliation possible.
+
+**Alternatives rejected:** One universal retention duration; default deletion when policy is missing; raw subject identity in Control Room; Control Room deciding legal validity; legal release as deletion authority; deletion when any dependency horizon is unknown; full removal of replay/audit evidence; source content deleted solely from a local projection; automatic quarantine cleanup; commands, locators, credentials, storage clients, or generic executors in the policy module; candidate or owner review treated as approval; automatic retry after uncertainty.
+
+**Trade-off:** Current results are conservative and may retain data until external policy, legal, inventory, reference, and dependency evidence is complete. Production cleanup cannot run from this module, and source systems may need separate reconciliation. Additional durable custody and owner-controlled effect machinery are required before any real disposition.
+
+**Reevaluate:** OPS-110 may build a dry-run/idempotent cleanup ledger around exact candidates, but must preserve hold/audit precedence, dependency horizons, tombstones, scope, claim/marker/receipt/cleanup/reconciliation, and terminal ambiguity. A native deletion adapter requires a later separate owner-authorized and independently reviewed effect boundary.
+
+## ADR-082 — Cleanup rehearsal has one action-specific identity and preserves uncertainty instead of retrying
+
+**Decision:** OPS-110 re-derives every dry-run plan from the complete OPS-100 primary evidence and freezes twelve ordered checks and gates. Body deletion, digest-tombstone compaction, source reconciliation, and quarantine have separate action and evidence requirements. A repository-created fake inventory can produce only a bounded review candidate. HMAC plus an independent rollback checkpoint authenticates one stable operation and idempotency key. Exact replay is inert, duplicate start conflicts, restart after a claim but before a marker is definite pre-marker failure, and restart after a marker without a receipt is terminal ambiguity. Synthetic success requires independent postcondition, audit, and action-specific tombstone/quarantine/source evidence. The executor remains disabled before any client or effect.
+
+**Why:** A dry run is useful only if it exercises the same identity, evidence order, terminal proof, and crash rules a later real cleanup must preserve. Treating already-absent data, an existing tombstone, or restart uncertainty as success would allow duplicate or unverifiable destruction. Separate evidence per action prevents a quarantine record or source receipt from masquerading as deletion proof.
+
+**Alternatives rejected:** Generic cleanup action; trust the OPS-100 proposal without re-deriving it; caller-injected inventory callback; inventory body or locator reads; existing absence treated as deletion proof; shared idempotency across actions; start the same plan twice; retry after claim, marker, restart, or unknown result; omit a tombstone for deletion or compaction; reuse quarantine or source evidence as a tombstone; ordinary digest without authenticated state; authenticated state without an independent high-water checkpoint; safe projection without authentication; dormant storage client or native executor.
+
+**Trade-off:** The accepted CLI and lifecycle are synthetic and cannot clean anything. Conservative reconciliation may leave work unresolved when terminal-looking evidence already exists. Production use requires additional durable custody, real adapters, owner authority, and independent receipts.
+
+**Reevaluate:** CR10A-OPS-120/130 may consume these contracts only for separately owner-authorized native rehearsals and final disposition. Any native adapter must remain outside the pure module, preserve the four action lanes and twelve gates, and cannot retry or infer success after ambiguity.
+
+## ADR-083 — Public packaging is default-private and release evidence cannot certify itself
+
+**Decision:** CR10B-PUB-000 admits only eight explicit public material classes under eight exact logical roots; every unclassified or private class is denied. Canonical manifests bind ordered regular-file metadata, exact compatibility policy, source/lock/SBOM/license/NOTICE/provenance/scan/reproducibility digests, and explicit absence declarations without reading content bytes. Compatibility accepts only exact contract identifiers and the supported release line and rejects wildcards, unknown versions, prereleases, substitutions, and downgrades. A signature digest is only an unverified claim. A separately bound independent external verification report remains evidence rather than certification. Eleven ordered, freshness-bounded gates may create only a blocked, synthetic-only, or independent-review candidate. Every candidate is `not_certified`, requires later independent review and a fresh owner decision, and grants no build, signing, installation, upload, or publication authority. The current publisher contains no effect client and always stops before provider contact.
+
+**Why:** Copying files into a public-looking directory, hashing them, or attaching a signature-shaped record does not prove that private values were excluded, dependencies are licensed, provenance is complete, a verifier was independent, or a release is safe. Default-private classification prevents path placement from becoming disclosure authority. Separating content digests, signature claims, external verification reports, certification, and owner publication authority prevents a self-produced green record from promoting itself.
+
+**Alternatives rejected:** Allowlist only by file path or extension; public-by-default repository traversal; symlinks or executable entries; semver ranges, wildcard contracts, or automatic downgrade; signature digest treated as cryptographic verification; producer self-verification; synthetic scan or install evidence treated as release-ready; one combined signing/certification flag; certification implied by all-green metadata; candidate or independent review treated as owner publication approval; dormant registry, signer, filesystem, process, credential, or network clients in the contract.
+
+**Trade-off:** The accepted boundary cannot build a package or prove that any current file is public-safe. Later package builders must emit exact logical metadata and obtain independent evidence, and conservative version policy requires a contract revision when support lines expand. Real signing, clean-room installation, disclosure resources, and publication remain later owner-controlled work.
+
+**Reevaluate:** CR10B implementation may populate only the frozen public roots and must preserve observation-only SDK authority, synthetic examples, canonical manifests, and default-private exclusions. CR10C and CR10Q may add mechanical and independent evidence but cannot turn a digest into verification, let a candidate certify itself, or publish without a fresh protected owner decision and separately qualified effect boundary.
+
+## ADR-084 — Local public candidates expose observation data only and reject added callable surface
+
+**Decision:** PUB-010 through PUB-040 create four source-only package candidates at the exact roots frozen by PUB-000. The public core exposes bounded observation schemas, canonical digests, immutable data, and sensitive-value rejection. The adapter SDK has only compatibility evaluation and observation normalization; package code rejects an adapter carrying any additional own method. The conformance kit consumes supplied in-memory fixtures only. Hermes-shaped, Codex-shaped, and generic adapters transform fabricated frames only. Every manifest remains private and source-only, has one export, and declares no build, binary, publish, registry, provider, process, filesystem, network, environment, access, approval, operation, scheduling, lease, dispatch, or effect surface.
+
+**Why:** A public package boundary must be useful for integrations without becoming a route into an installed harness, private application runtime, or consequential action. Narrow contracts and package-level scans make that separation testable before later clean-room and release work.
+
+**Alternatives rejected:** Re-export the private harness SDK; expose start, cancel, resume, approval, access, or generic command callbacks; identify a local executable or installed harness; make reference adapters inspect real frames; accept undeclared adapter methods; ship package build or publish scripts; treat local source candidates as release artifacts.
+
+**Trade-off:** These candidates are intentionally narrower than the private Control Room runtime and cannot prove released-package behavior. They are not a clean-room installation, distributable archive, license disposition, SBOM, signature, or publication claim.
+
+**Reevaluate:** PUB-050 through PUB-080 may add synthetic deployment examples, guides, reproducible local tooling, and a clean-room contract only if no tool contacts a registry, reads protected values, executes an installed harness, or promotes the candidates from private local source to a release.
+
+## ADR-085 — Reproducibility planning and synthetic reproduction cannot claim a clean-room installation
+
+**Decision:** PUB-050 through PUB-080 add a fifth fabricated-only workspace candidate, five tested public guides, two public schemas, declarative release metadata, an exact nine-step release plan, two synthetic reproduction observations, and a disabled materializer. The plan binds package topology and evidence order while denying archive creation, package installation, registry/network/native-harness contact, signing, upload, publication, and release authority. A synthetic clean-room assessment requires different runner identities and identical output digests, but can produce only `synthetic_candidate_only`. It always records that no actual clean-room installation and no release artifact were observed and that independent external evidence is required.
+
+**Why:** Deterministic planning, public instructions, and repeatable fabricated evidence are useful preparation, but running twice in one prepared repository is not an independent clean-room installation. Encoding that distinction prevents local green tests from silently satisfying the PUB-000 release gate.
+
+**Alternatives rejected:** Create an archive in this phase; install local packages and call it clean-room; contact a registry in offline mode; treat two correlated executions as independent; accept mismatched outputs; infer release authority from a reproducible digest; place a filesystem, process, registry, network, signer, uploader, or provider client behind a disabled flag.
+
+**Trade-off:** The current rehearsal proves deterministic contract behavior only. It does not prove released package contents, dependency availability, license acceptability, a complete SBOM, public-data safety, installation instructions, or independent reproduction.
+
+**Reevaluate:** CR10C may mechanically inventory and scan the frozen candidate roots. CR10Q may accept real clean-room and security evidence only from an independently controlled environment and exact candidate. Neither may convert synthetic observations into certification or publication authority.
+
+## ADR-086 — Mechanical public-tree evidence is bounded, digest-only, and cannot make a legal or release decision
+
+**Decision:** CR10C-MECH-010 through MECH-040 inspect only the eight already-classified public roots. The inspector rejects symlinks and special entries, has no caller-controlled search path, returns ordered metadata and digests rather than file bodies, records five exact candidate manifests and their direct dependencies, records LICENSE and NOTICE digests without a legal conclusion, normalizes the two public schemas, two fabricated fixtures, and local public Markdown links, and runs a bounded private-data scanner. A finding carries only public candidate path, detector kind, and digest and blocks the result. A clean result can become only `mechanical_candidate_only`; it never declares public-tree safety, license acceptability, certification, or release authority.
+
+**Why:** A broad repository scan can leak the very private values it is meant to detect, while an unconstrained scanner can be pointed at host state or silently wander outside the release input. License text and a direct-dependency list are useful evidence but are not legal advice or complete supply-chain analysis. Keeping the inputs fixed and outputs digest-only permits repeatable checking without conflating mechanical observation with an independent reviewer or release owner.
+
+**Alternatives rejected:** Scan the whole checkout or arbitrary paths; include matching source text in reports; permit symlinks; let a clean regular expression scan certify public safety; infer license acceptability from a LICENSE file; treat a package manifest as a complete SBOM; write a release artifact; upload a report; run a package manager, archive builder, registry request, signer, provider, or native harness; downgrade a sensitive finding into a warning.
+
+**Trade-off:** The scanner intentionally has a finite detector vocabulary and no transitive-dependency resolver. It can report that the frozen source candidates meet the current mechanical criteria, not that the source is legally publishable, exhaustive, independently safe, or installable. Findings may require confidential owner handling outside the evidence record.
+
+**Reevaluate:** CR10C-MECH-050 may make a conservative Codex-owned evidence disposition. CR10Q must separately perform threat/privacy/recovery review and independently controlled clean-room evidence. Neither may weaken the fixed roots, output redaction, blocked-finding behavior, or disabled effect boundary.
+
+## ADR-087 — Public-tree disposition preserves legal uncertainty and blocks release before independent review
+
+**Decision:** CR10C-MECH-050 converts the fixed mechanical audit and narrow prepared-workspace dependency observations into one exact 17-gate disposition. Six mechanically established gates are `passed_local`; the missing complete project license text and missing package-manifest license declarations are `failed`; and nine authority, attribution, independent-evidence, final-artifact, signature, clean-room, security-review, and owner-decision gates are `not_observed`. Every failed or unobserved gate is a blocker. The only accepted result is `blocked_before_independent_review`, with unresolved owner licensing authority and no approval to make the candidate tree public.
+
+**Why:** An SPDX identifier file is not the complete license text, local dependency metadata is not independent provenance, and a clean bounded scan is not an independent privacy or security review. Recording those distinctions as exact gate states prevents a mechanically green candidate from silently becoming a legal conclusion, certification, or release authorization.
+
+**Alternatives rejected:** Insert a complete project license or manifest declaration without confirmed owner authority; infer a license grant from repository contents; treat the local Zod MIT files as independent provenance; mark unobserved evidence as failed or passed interchangeably; let a public projection expose paths, digests, or license bodies; create an archive; install packages; contact a registry or provider; sign, upload, publish, or change repository visibility; allow the candidate or reviewer to grant owner release authority.
+
+**Trade-off:** The disposition is useful because it identifies exact blockers, but it deliberately leaves the candidate unreleasable. Resolving the two license failures requires owner authority and may require legal review. CR10Q must still perform independent threat, privacy, recovery, artifact, and clean-room work against the exact candidate.
+
+**Reevaluate:** CR10Q may change a gate only with evidence bound to the exact candidate and reviewer identity. It may not grant a license, infer owner authority, or approve publication. Complete license text, manifest metadata, signing resources, repository visibility, and the first public release remain protected owner decisions.
+
+## ADR-088 — Public conformance validates ordinary data but does not sandbox adapter code
+
+**Decision:** Every public digest, redaction, freezing, adapter, fixture, compatibility, normalization, and conformance-case data boundary first copies bounded ordinary data without executing Proxy traps or accessors. Proxies, accessors, symbols, sparse arrays, custom prototypes, cycles, non-finite numbers, excessive depth/nodes/keys/string size, hidden methods, and mutable shape substitution fail closed. Adapter method references are captured from one exact ordinary object. The conformance runner nevertheless executes those caller-supplied functions in the caller's JavaScript process and must always state that it is a validator, not a sandbox.
+
+**Why:** Structural method names can restrict the public API shape but cannot prove that arbitrary JavaScript code is harmless. At the same time, accepting reflective or accessor-backed data would let hostile values execute before the validator made a decision. Separating exact data collection from code-isolation claims gives downstream users a truthful boundary.
+
+**Alternatives rejected:** Spread or clone untrusted objects before Proxy/accessor rejection; let Zod inspect arbitrary host objects directly; freeze caller objects in place; accept inherited, hidden, symbol, sparse, or custom-prototype shapes; infer effect-free behavior from an adapter's method names; call a conformance pass a sandbox verdict; add a process/network isolation client to the public candidate.
+
+**Trade-off:** The public validator is stricter and rejects some JavaScript objects that could serialize successfully. Trusted adapter code still runs with its host process authority. Untrusted third-party adapter execution requires a separately designed isolated runner with explicit capability, resource, credential, egress, cleanup, and review gates.
+
+**Reevaluate:** CR10Q-SEC-010 must independently reproduce the hostile boundary cases and verify the corrected documentation. Any future third-party adapter runner reopens architecture and independent security review; the current public conformance kit cannot be reused as its isolation boundary.
+
+## ADR-089 — Public ordinary-data records exclude prototype-mutating names and bound property names
+
+**Decision:** Public ordinary-data snapshots create null-prototype record copies, define copied properties explicitly, reject `__proto__`, `constructor`, and `prototype`, and reject empty or longer-than-256-character property names before visiting their values. The security gate must test both the exact accepted name-length ceiling and the first rejected length, prove reserved-key rejection occurs before nested behavior or adapter execution, and bind human scope claims to the machine-counted inventory. A negative independent report remains immutable; remediation is a new producer claim that requires a different independent re-reviewer.
+
+**Why:** A syntactically ordinary own data property can acquire special behavior when assigned to a normal object. If it becomes inherited state, own-key redaction and compatibility checks can disagree about what evidence was actually supplied. Unbounded property names also defeat the stated resource ceiling even when values and key counts are bounded. Machine-readable identity does not excuse a contradictory human scope count.
+
+**Alternatives rejected:** Copy untrusted records with `{}` assignment; permit reserved names because JSON can represent them; scan inherited state after copying; bound values but not property names; silently edit or replace the independent report; treat producer regressions as independent acceptance; re-run only the three findings while skipping the original 24-case matrix; let the architect accept its own remediation.
+
+**Trade-off:** The public boundary rejects a small class of JSON-shaped objects and long property names that could otherwise serialize. This is intentional for a narrow public contract. Existing trustworthy callers must rename reserved fields or shorten names before admission.
+
+**Reevaluate:** CR10Q-SEC-025 must be performed by a reviewer different from the original reviewer, architect, and candidate producer. It must bind the unchanged negative report, remediated candidate identity, all three findings, and all 24 original cases. Acceptance still cannot grant a license, certify a final artifact, satisfy real clean-room or signature evidence, or authorize publication.
+
+## ADR-090 — Agent conversations are bounded proposal surfaces, never job or authority records
+
+**Decision:** Project Agent Team views compose evidence-backed identity, presence, reviewed packages, schedules, canonical work, and owner attention without becoming a second worker registry or scheduler. `working` requires a current lease or authenticated heartbeat plus exact current work. War Rooms allow two to six members, at most three rounds and ten messages, at most four reciprocal agent-pair messages, and fixed duration, reasoning, and cost ceilings. Only bounded safe summaries enter the current projection. An exact `@agent` mention may create a digest-bound owner-review draft handoff, never a work item, dispatch, approval, lease, provider grant, or execution authority. Full audit remains canonical outside the room projection.
+
+**Why:** Hermes Bot Mode's named profiles, conversations, routines, and group rooms create a useful people-first experience, but fire-and-forget messaging, recent-activity presence, shared provider access, desktop-local history, and conversational loops are too weak for durable orchestration. Separating team visibility from job and authority truth lets Control Room gain the fluid experience without making chat behavior a security or completion boundary.
+
+**Alternatives rejected:** Treat a bot profile as a worker permit; mark activity as working without lease/heartbeat evidence; let a routine execute because it is scheduled; use room history as the canonical job or evidence log; dispatch directly from a mention; permit unbounded bot-to-bot recursion; store raw prompts, memory, native profiles, or provider sessions in the projection; share provider access across agent profiles; call unqualified Hermes Bot Mode RPCs; configure or deploy the reserved domain in the local UI phase.
+
+**Trade-off:** The first Team view is deliberately read-only and summary-only. Draft handoffs still require ordinary owner review and materialization, and room ceilings may stop a useful conversation early. Durable rooms, unread state, retention, legal hold, and native Bot Mode reads require additional implementation and review.
+
+**Reevaluate:** CR11A-TEAM-020 may add authenticated local persistence only after exact minimization, integrity, retention, legal-hold, unread, cleanup, and restart semantics are frozen. CR11A-TEAM-040/050 may add a read-only pinned Hermes Bot Mode seam only after separate conformance and owner authorization. Neither may weaken canonical job/approval/evidence authority or turn `agentcontrolroom.xyz` inventory into deployment permission.
+
+## ADR-091 — Durable Agent Team state stores safe events, not conversations or authority
+
+**Decision:** TEAM-020 uses one private SQLite ledger per exact tenant/workspace/project. Four append-only record kinds cover bounded safe room events, owner read receipts, owner-review draft handoffs, and revisioned preservation/legal-hold hooks. Every row and the complete ordered state are HMAC-authenticated, and an independent compare-and-swap checkpoint must match before use or append. Exact replay is inert; changed replay, row or schema mutation, sequence drift, foreign scope, changed key, and complete-database rollback fail closed. Read receipts are monotonic but do not acknowledge action. Retention is `blocked_unconfigured`, legal holds preserve, and no cleanup or deletion executor exists. The UI consumes only a strict digest-bound unread/needs-you/saved-draft projection.
+
+**Why:** A useful room must survive restart and show the owner what changed, but storing full conversations or treating persistence as orchestration would create a second unreviewed audit, memory, and authority plane. Row authentication alone cannot detect deletion or replacement of the complete database; whole-state authentication plus external high-water comparison is required. An explicit preservation default prevents missing policy from silently becoming deletion authority.
+
+**Alternatives rejected:** Store raw prompts, full messages, memory, native profiles, provider sessions, or usable locators; use browser storage as durable truth; share one database across projects; accept mutable rows or non-monotonic read cursors; let a read receipt clear action requirements; save a handoff without its exact source mention; use an ordinary digest without HMAC; keep rollback state inside the protected database; invent a production retention duration; add cleanup, job materialization, dispatch, provider, Hermes, network, D1, R2, or deployment clients.
+
+**Trade-off:** The ledger is local and summary-only. It cannot restore full conversation content, and preserving records until policy is supplied may retain more metadata than a later owner policy chooses. The repository checkpoint is test-only, so production rollback resistance, multi-user authentication, hosted persistence, backup, and cleanup remain unimplemented.
+
+**Reevaluate:** TEAM-030 may materialize only a freshly owner-reviewed exact draft through existing canonical proposed-work and Action Inbox boundaries and must remain no-dispatch. Hosted persistence or cleanup requires a separately reviewed authenticated service, protected key/checkpoint custody, owner policy, backup/recovery, monitoring, and effect semantics. TEAM-040/050 remain separate pinned read-only Hermes qualification gates.
+
+## ADR-092 — Agent Team handoffs require one authenticated exact review and atomic proposed-work materialization
+
+**Decision:** TEAM-030 records one append-only authenticated owner decision for one exact saved handoff. Accepted, rejected, and withdrawn are distinct durable outcomes. Exact replay is inert; a second or changed decision, stale proposal, different source lineage, or foreign scope fails closed. Only `accepted` may enter one transaction that creates a draft request, proposed workflow, proposed zero-effect job, and resolved Action Inbox item. Any conflict rolls back all new canonical records. The materialized job is fixed to the Agent Team handoff specification, the sole `prepare.agent-handoff` operation, no credentials, no filesystem roots, no network, no effects, zero concurrent effects, and zero cost authority. Review is not approval, and materialization is not dispatch.
+
+**Why:** A fluid team surface needs a short path from discussion to real tracked work, but letting chat state or a saved draft create runnable work would establish a second scheduler and authority plane. Binding the owner decision to the exact proposal and committing attention plus canonical work together prevents stale approval, split-brain UI state, and partial materialization after a crash or conflict.
+
+**Alternatives rejected:** Dispatch directly from a mention or review; treat a read receipt as consent; accept mutable or repeated owner decisions; collapse rejection and withdrawal into deletion; materialize request, workflow, job, and attention in separate transactions; create a ready job, attempt, lease, approval, effect intent, or outbox event; permit credentials, filesystem, network, cost, or effects; let a synthetic fixture stand in for a real owner decision; contact Hermes, a provider, hosted storage, or deployment infrastructure.
+
+**Trade-off:** The local interface can display the exact review choices but cannot yet record a real owner action through protected hosted ingress. Accepted synthetic evidence proves the transaction and restart rules, not that the owner approved a real handoff or that any agent can run it. Proposed work still needs ordinary later scheduling and execution authority.
+
+**Reevaluate:** TEAM-040 may consume only pinned injected Hermes Bot Mode observations through a read-only normalization seam. TEAM-050 requires separate owner authorization for one native read qualification. Neither may reuse review evidence as provider, execution, dispatch, or hosted authority.

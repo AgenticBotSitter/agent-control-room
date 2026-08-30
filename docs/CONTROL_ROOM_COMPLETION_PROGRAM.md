@@ -160,7 +160,7 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | CR7E-003/004/005 | Bot | Registry services, harness mappings, compatibility cases, and UI | E-001/002 |
 | CR7E-006 | Codex | Promotion/rejection/rollback acceptance | E-003-005 |
 | CR7Q-001 | Codex + independent review | Harness, MCP, package authority, compatibility, and secret-exposure gate | All CR7 |
-| CR7-I-001 | Codex | Hermes/Codex/Session Watch/MCP/package disposable vertical acceptance | CR7Q |
+| CR7-I-001 | Codex | Hermes/Codex/Session Watch/MCP/package disposable vertical acceptance | COMPLETE |
 
 ## CR-8 — Claude, Completion Gate, Telegram, and node-local secrets
 
@@ -169,62 +169,82 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | CR8A-001/002 | Owner + Codex | Authenticated disposable Claude discovery and frozen authority/lifecycle mapping | CR7 |
 | CR8A-003/004/005 | Bot | Sanitized fixtures, stream client, event decoder, adapter, permission/subagent/worktree/result mapping | A-002 |
 | CR8A-006 | Owner + Codex | Authenticated lifecycle acceptance | OWNER |
-| CR8B-001/002/003 | Codex | Separate approval/review/verification/finding/revision/preference contracts, domain, and persistence | CR7 |
-| CR8B-004/005/006/007 | Codex | Exact approval/step-up, independence, risk floors, verification/evidence, bounded revisions | B-001-003 |
-| CR8B-008 | Bot | Code/media/document/operation fixtures and adversarial cases | B-001 |
-| CR8C-001 | Codex | Completion Gate view model and safe preview contract | CR8B |
-| CR8C-002/003/004/005 | Bot | Review UI, evidence/media/diff/report previews, findings/revisions/preferences, mobile/a11y QA | C-001, B services |
-| CR8D-001 | Codex | Telegram recipient/risk/webhook/replay/expiry/deep-link security contract | CR8B |
-| CR8D-002/005 | Bot | Message rendering/preferences and sanitized callback/presentation fixtures | D-001 |
-| CR8D-003/004 | Codex | Verified webhook ingress, allowlist, idempotency, delivery, retry, grouping, receipts | D-001/002 |
+| CR8B-001/002/003 | Codex | Separate approval/review/verification/finding/revision/preference contracts, domain, and persistence | COMPLETE |
+| CR8B-004/005/006/007 | Codex | Exact approval/step-up, independence, risk floors, verification/evidence, bounded revisions | COMPLETE |
+| CR8B-008 | Codex | Code/media/document/operation fixtures and adversarial cases | COMPLETE |
+| CR8C-001 | Codex | Completion Gate view model and safe preview contract | COMPLETE — local-only hold |
+| CR8C-002/003/004/005 | Codex | Review UI, evidence/media/diff/report previews, findings/revisions/preferences, mobile/a11y QA | COMPLETE — local-only hold |
+| CR8D-001 | Codex | Telegram recipient/risk/webhook/replay/expiry/deep-link security contract | COMPLETE — local-only hold |
+| CR8D-002/005 | Codex | Message rendering/preferences and sanitized callback/presentation fixtures | COMPLETE — local-only hold |
+| CR8D-003/004 | Codex | Verified webhook ingress, allowlist, idempotency, delivery, retry, grouping, receipts | COMPLETE — local-only hold |
 | CR8D-006 | Owner + Codex | Disposable bot/chat live callback and cleanup | OWNER |
-| CR8E-001/002/003 | Codex | Reference-only secret contract, safe metadata catalog, node-local invocation and cleanup | CR5C, CR8B |
-| CR8E-004/005/006 | Codex | Bitwarden, 1Password, and destination-native brokers | E-003 |
-| CR8E-007 | Bot | Sanitized provider fixtures, failure cases, and operator docs | E-001 |
+| CR8E-001/002/003 | Codex | Reference-only secret contract, safe metadata catalog, node-local invocation and cleanup | COMPLETE — local-only hold |
+| CR8E-004/005/006 | Codex | Bitwarden, 1Password, and destination-native brokers | COMPLETE — effect-free local-only hold |
+| CR8E-007 | Bot | Sanitized provider fixtures, failure cases, and operator docs | COMPLETE — local-only hold |
 | CR8E-008 | Owner + Codex | Live canary, rotate, revoke, failure, and cleanup drills | OWNER |
-| CR8Q-001 | Codex + independent review | Approval/review/Telegram/secrets adversarial gate | All CR8 |
-| CR8-I-001 | Codex | Question-to-approval-to-evidence-to-independent-revision disposable workflow | CR8Q |
+| CR8Q-001 | Codex + independent review | Approval/review/Telegram/secrets adversarial gate | COMPLETE |
+| CR8-I-001 | Codex | Question-to-approval-to-evidence-to-independent-revision disposable workflow | COMPLETE — local-only hold |
 
 ## CR-9 — real project integrations
 
 | ID | Owner | Deliverable | Gate |
 |---|---|---|---|
-| CR9A-CB-000 | Codex | Content Blooms source-scheduled, read, receipt, disable, and rollback contract | CR7D, CR8Q |
-| CR9A-CB-010/020/030/040 | Bot | Sanitized fixtures, read adapter, isolated synchronization, and transcription route comparison | CB-000, CR6/7 |
-| CR9A-CB-050 | Codex | Placement-request authorization/version/idempotency/source-receipt contract | CB read path, CR8B |
-| CR9A-CB-060/070 | Bot | Bounded placement command plus research/transcription/article project pack | CB-050, CR7E, CR8C |
+| CR9A-CB-000 | Codex | Content Blooms source-scheduled, read, receipt, disable, and rollback contract | COMPLETE — local-only hold |
+| CR9A-CB-010/020/030/040 | Bot | Sanitized fixtures, read adapter, isolated synchronization, and transcription route comparison | COMPLETE — local-only hold |
+| CR9A-CB-050 | Codex | Placement-request authorization/version/idempotency/source-receipt contract | COMPLETE — local-only hold |
+| CR9A-CB-060/070 | Bot | Bounded placement command plus research/transcription/article project pack | COMPLETE — local-only hold |
 | CR9A-CB-080/090 | Codex + Owner | Authenticated read rehearsal, rollback, threat review, and acceptance | OWNER; offline slices pass |
-| CR9B-WF-000 | Codex | Wayfarer pack, media graph, artifact/QC/review/retention contract | CR7D/E, CR8Q |
-| CR9B-WF-010/020/030 | Bot | Synthetic media fixtures, workflow compiler, typed probe/QC executors | WF-000, executor framework |
-| CR9B-WF-040 | Codex | Local/R2 object scope, locator, retention, quarantine, and retry contract | CR8E, artifact core |
-| CR9B-WF-050/060/070 | Bot | Storage adapter against fakes, media/review UI, GPU/scratch scheduling scenarios | WF-040, CR6, CR8C |
-| CR9B-WF-080 | Codex + Owner | Measured Unreal scene/render benchmark | OWNER |
-| CR9B-WF-090/100 | Bot | Frozen Unreal executor and upload/publish-preparation package without effect | WF-080 contract, CR8 |
-| CR9B-WF-110/120 | Codex + Owner | Destination-idempotency/approval contract and separately authorized rehearsal or disabled state | OWNER |
-| CR9B-WF-130 | Codex | Wayfarer acceptance and cross-project isolation | Prior WF work |
+| CR9B-WF-000 | Codex | Wayfarer pack, media graph, artifact/QC/review/retention contract | COMPLETE — local-only hold |
+| CR9B-WF-010/020/030 | Bot | Synthetic media fixtures, workflow compiler, typed probe/QC executors | COMPLETE — no-byte synthetic flow |
+| CR9B-WF-040 | Codex | Local/R2 object scope, locator, retention, quarantine, and retry contract | COMPLETE — contract-only, no storage access |
+| CR9B-WF-050/060/070 | Bot | Storage adapter against fakes, media/review UI, GPU/scratch scheduling scenarios | COMPLETE — effect-free local-only hold |
+| CR9B-WF-080 | Codex + Owner | Measured Unreal scene/render benchmark or exact disabled disposition | COMPLETE — packet frozen and disabled; no native attempt |
+| CR9B-WF-090/100 | Bot | Frozen Unreal executor and upload/publish-preparation package without effect | COMPLETE — disabled local package; no native or delivery attempt |
+| CR9B-WF-110/120 | Codex + Owner | Destination-idempotency/approval contract and separately authorized rehearsal or disabled state | COMPLETE — authenticated disabled state; no delivery attempt |
+| CR9B-WF-130 | Codex | Wayfarer acceptance and cross-project isolation | COMPLETE — three-project isolation gate passes |
 | CR9C-LIVE-000/010/020 | Codex + Owner | One-project bounded live rehearsal packet, exact effects, rollback, evidence, and CR9 disposition | OWNER |
+| CR9D-ABS-000 | Codex | Shared Project Workspace plus ABS News story/action/proposal authority contract and synthetic view | COMPLETE — local-only hold |
+| CR9D-ABS-010/020/030 | Codex/Bot | Durable fake store, fake collectors/canonicalization/dedupe, interactive workspace and proposal editor | COMPLETE — local-only hold |
+| CR9D-ABS-040/050 | Codex | Reviewed proposal materialization plus schedule/collector/monitor security contracts | CR8, CR6; no live sources |
+| CR9D-ABS-060 | Codex + Owner | Exact bounded live read rehearsal, cleanup, privacy, cost, and evidence | OWNER |
+| CR9D-ABS-070/080 | Codex + Owner | Publication-preparation/idempotency contract and separately authorized rehearsal or disabled state | COMPLETE — disabled disposition; no publication |
 
 ## CR-10 — operations, public packaging, and release
 
 | ID | Owner | Deliverable | Gate |
 |---|---|---|---|
-| CR10A-OPS-000 | Codex | Production topology, roles, secret references, health, deploy, rollback, and recovery contract | CR9 |
-| CR10A-OPS-010/020/030/040 | Bot | Compose, systemd, value-free Cloudflare, health/readiness/resource checks | OPS-000 |
-| CR10A-OPS-050/060 | Bot | Backup/WAL tooling and disposable PITR/clean-host restore harness | OPS-000 |
-| CR10A-OPS-070/080/090 | Bot | Monitoring, update canary/rollback tooling, and executable runbooks | Operations foundations |
-| CR10A-OPS-100 | Codex | Privacy, retention, deletion, legal-hold, and audit semantics | CR8/9 data |
-| CR10A-OPS-110 | Bot | Dry-run/idempotent retention and quarantine cleanup | OPS-100 |
+| CR10A-OPS-000 | Codex | Production topology, roles, secret references, health, deploy, rollback, and recovery contract | COMPLETE — exact value-free effect-free contract |
+| CR10A-OPS-010/020/030/040 | Bot | Compose, systemd, value-free protected-edge example, health/readiness/resource checks | COMPLETE — exact value-free references and fake-only health accepted |
+| CR10A-OPS-050/060 | Bot | Backup/WAL dry-run tooling and disposable PITR/clean-host fake recovery harness | COMPLETE — exact no-command plan, authenticated fake lifecycle, eleven-phase disposable recovery, cleanup, and non-authorizing attestation |
+| CR10A-OPS-070 | Bot | Bounded monitoring, deterministic alerts, incident correlation, safe operator view, and disabled notifications | COMPLETE — exact synthetic provider-disabled contract accepted |
+| CR10A-OPS-080 | Bot | Exact canary/rollback planner, authenticated intent truth, reconciliation, safe owner view, and disabled executor | COMPLETE — exact planner-only effect-free contract accepted |
+| CR10A-OPS-090 | Bot | Executable-but-disabled operations runbooks | COMPLETE — eight exact authenticated synthetic runbooks, safe guides, cleanup, reconciliation, and terminal ambiguity accepted |
+| CR10A-OPS-100 | Codex | Privacy, retention, deletion, legal-hold, and audit semantics | COMPLETE — exact policy/evidence/proposal-only contract, hold precedence, audit preservation, and disabled executor accepted |
+| CR10A-OPS-110 | Bot | Dry-run/idempotent retention and quarantine cleanup | COMPLETE — exact twelve-step no-target plan, fake inventory, authenticated one-use lifecycle, tombstone evidence, restart ambiguity, and disabled executor accepted |
 | CR10A-OPS-120/130 | Codex + Owner | Real restore, canary, incident drill, RPO/RTO and operations disposition | OWNER |
-| CR10B-PUB-000 | Codex | Public/private boundaries, supported versions, signing and certification semantics | CR10A |
-| CR10B-PUB-010/020/030/040 | Bot | Public core, adapter SDK, conformance kit, and synthetic reference adapters | PUB-000, CR7D |
-| CR10B-PUB-050/060/070/080 | Bot | Synthetic example deployment, tested guides, reproducible release tooling, clean-room install | Public packages |
-| CR10C-MECH-010/020/030/040 | Bot | SBOM, license/NOTICE inventory, schema/fixture/link normalization, private-data scan | Release candidate |
-| CR10C-MECH-050 | Codex | License and public-tree disposition | Mechanical evidence |
-| CR10Q-SEC-000/010 | Codex + independent review | Full public threat/privacy/recovery review and independent execution | Release candidate |
-| CR10Q-SEC-020 | Bots + Codex | Bounded remediations; Codex retains security/contract fixes | Review findings |
-| CR10Q-SEC-030/040 | Codex + Owner | Supported-version/disclosure policy and real private reporting/signing resources | OWNER |
+| CR10B-PUB-000 | Codex | Public/private boundaries, supported versions, signing and certification semantics | COMPLETE — exact default-private metadata-only trust contract, 21 hostile tests, and disabled publisher accepted |
+| CR10B-PUB-010/020/030/040 | Bot | Public core, adapter SDK, conformance kit, and synthetic reference adapters | COMPLETE — four exact local candidates, narrow exports, public-only dependencies, synthetic-only references |
+| CR10B-PUB-050/060/070/080 | Bot | Synthetic example deployment, tested guides, reproducible release tooling, clean-room install | COMPLETE — runnable synthetic rehearsal, tested guides/schemas, exact no-archive plan, synthetic-only clean-room assessment |
+| CR10C-MECH-010/020/030/040 | Bot | SBOM, license/NOTICE inventory, schema/fixture/link normalization, private-data scan | COMPLETE — fixed-root digest-only audit, five-component direct-dependency inventory, exact LICENSE/NOTICE records, normalized schemas/fixtures/links, and bounded blocked-finding scanner |
+| CR10C-MECH-050 | Codex | License and public-tree disposition | COMPLETE — exact blocked disposition: 6 local passes, 2 failures, 9 unobserved gates; no legal conclusion or release effect |
+| CR10Q-SEC-000 | Codex | Full public threat/privacy/recovery architect review and frozen independent packet | COMPLETE — 2 high findings remediated, 24-case digest-bound packet, 14-test focused gate; producer claims remain unaccepted |
+| CR10Q-SEC-010 | Independent review | Different reviewer executes the frozen packet and writes one report | COMPLETE — `remediation_required`; 2 high runtime findings and 1 medium scope-count finding preserved in immutable report |
+| CR10Q-SEC-020 | Codex | Bounded security, regression, scope-document, and evidence-contract remediations | COMPLETE locally — null-prototype copies, reserved-key rejection, 256-character key ceiling, 36-file correction, and digest-bound re-review packet |
+| CR10Q-SEC-025 | Different independent review | Re-run all 24 cases and independently re-attack all three remediations | COMPLETE — different report-only reviewer accepted the exact effect-free remediated snapshot; all 24 cases and all 3 repairs verified, no new finding, release blockers retained |
+| CR10Q-SEC-030/040 | Codex + Owner | Supported-version/disclosure policy and real private reporting/signing resources | OWNER; after accepted SEC-025 evidence |
 | CR10Q-SEC-050 | Codex | Final clean-room, restore, attack, privacy, repository, and finding gates | All prior work |
 | CR10Q-SEC-060 | Codex + Owner | Exact first public release, provenance, signing, rollback/revocation | OWNER |
+
+## CR-11 — agent teams and bounded project collaboration
+
+| ID | Owner | Deliverable | Gate |
+|---|---|---|---|
+| CR11A-TEAM-000 | Codex | Agent identity/presence, routine, War Room, mention-handoff, and authority contract | COMPLETE — exact effect-free contract |
+| CR11A-TEAM-010 | Codex | Strict safe projection, synthetic fixtures, responsive Project Team UI, hostile tests | COMPLETE — local presentation only |
+| CR11A-TEAM-020 | Codex | Authenticated durable room-event, unread/needs-you, and handoff-proposal ledger | COMPLETE — authenticated fake local persistence only |
+| CR11A-TEAM-030 | Codex | Reviewed handoff materialization into canonical proposed work and Action Inbox | COMPLETE — exact authenticated local review and atomic no-dispatch proposed work |
+| CR11A-TEAM-040 | Codex | Pinned read-only Hermes Bot Mode adapter and conformance fixtures | CR7A/CR7D; injected fixtures only |
+| CR11A-TEAM-050 | Codex + Owner | One-profile/one-room native read qualification or disabled disposition | OWNER; no write or provider effect |
 
 ## Block acceptance and promotion
 

@@ -14,6 +14,8 @@ CREATE TABLE control_harness_runs (
   revision_of_run_id text,
   state text NOT NULL CHECK (state IN ('discovered','starting','running','waiting_input','waiting_approval','cancelling','disconnected','succeeded','failed','cancelled')),
   last_sequence bigint NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
+  run_digest text NOT NULL CHECK (run_digest ~ '^sha256:[a-f0-9]{64}$'),
+  run_auth_tag text NOT NULL CHECK (run_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   payload jsonb NOT NULL,
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL,
@@ -39,6 +41,7 @@ CREATE TABLE control_harness_run_events (
   source text NOT NULL CHECK (source IN ('adapter','harness_read','control_room')),
   source_event_key_digest text NOT NULL CHECK (source_event_key_digest ~ '^sha256:[a-f0-9]{64}$'),
   event_digest text NOT NULL CHECK (event_digest ~ '^sha256:[a-f0-9]{64}$'),
+  event_auth_tag text NOT NULL CHECK (event_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   payload jsonb NOT NULL,
   recorded_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id,run_id,sequence),
@@ -48,3 +51,11 @@ CREATE TABLE control_harness_run_events (
 
 CREATE INDEX idx_control_harness_runs_watch ON control_harness_runs(tenant_id,state,last_observed_at DESC);
 CREATE INDEX idx_control_harness_events_run ON control_harness_run_events(tenant_id,run_id,sequence);
+
+CREATE TRIGGER control_harness_run_events_append_only
+BEFORE UPDATE OR DELETE ON control_harness_run_events
+FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+
+CREATE TRIGGER control_harness_run_events_truncate_guard
+BEFORE TRUNCATE ON control_harness_run_events
+FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();

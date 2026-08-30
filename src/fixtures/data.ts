@@ -248,6 +248,7 @@ export const agents: AgentProjection[] = [
       "project.wayfarer.lazy-river",
       "project.blooms.content-ops",
       "project.website.public-site",
+      "project.abs.ai-tech-news",
     ],
     allowedActions: ["approve", "simulate_allocation", "change_policy"],
     lastSeenAt: "2026-08-22T17:30:00.000Z",
@@ -319,6 +320,26 @@ const websiteManifest: ProjectManifest = {
   supportedCommands: [],
   changeFeed: { cursorType: "opaque", retentionDays: 14 },
   redactionPolicyVersion: "website-ops-safe/1",
+};
+
+const absNewsManifest: ProjectManifest = {
+  contractVersion: CONTRACT_VERSION,
+  adapterId: "adapter.abs-news.fixture",
+  sourceSystem: "abs-news",
+  authorityMode: "control_room_native",
+  projectTypes: ["ai-tech-news"],
+  supportedReadOperations: [
+    "getProjectSummary",
+    "listWorkItems",
+    "listExecutions",
+    "listBlockers",
+    "listWorkers",
+    "listAttentionItems",
+    "readChanges",
+  ],
+  supportedCommands: [],
+  changeFeed: { cursorType: "opaque", retentionDays: 30 },
+  redactionPolicyVersion: "abs-news-safe/1",
 };
 
 export const projects: ProjectSummaryProjection[] = [
@@ -396,6 +417,30 @@ export const projects: ProjectSummaryProjection[] = [
     blockerCount: 0,
     priority: 45,
     authorityMode: "advisory",
+  },
+  {
+    id: "project.abs.ai-tech-news",
+    source: source(
+      "abs-news",
+      absNewsManifest.adapterId,
+      "workspace.abs.news",
+      "project.abs.ai-tech-news",
+      "project",
+      "ai-tech-news",
+      "1",
+    ),
+    workspaceName: "ABS News",
+    title: "AI and Tech Intelligence",
+    description: "A synthetic owner workspace for verified news, research proposals, drafts, and publication preparation.",
+    deepLink: "https://abs.invalid/news",
+    normalizedState: "ready",
+    domainState: "workspace_contract_ready",
+    health: "healthy",
+    progressPercent: 10,
+    attentionCount: 1,
+    blockerCount: 0,
+    priority: 85,
+    authorityMode: "control_room_native",
   },
 ];
 
@@ -663,8 +708,9 @@ function pack(manifest: ProjectManifest, projectId: string): ProjectionFixturePa
 export const wayfarerFixture = pack(wayfarerManifest, "project.wayfarer.lazy-river");
 export const contentBloomsFixture = pack(bloomsManifest, "project.blooms.content-ops");
 export const websiteOperationsFixture = pack(websiteManifest, "project.website.public-site");
+export const absNewsFixture = pack(absNewsManifest, "project.abs.ai-tech-news");
 
-export const fixturePacks = [wayfarerFixture, contentBloomsFixture, websiteOperationsFixture];
+export const fixturePacks = [wayfarerFixture, contentBloomsFixture, websiteOperationsFixture, absNewsFixture];
 
 export const recentActivity = [
   { id: "event.1", time: "12:29 PM", projectId: "project.wayfarer.lazy-river", actor: "M4 Wayfarer", action: "Preview reached 73%", tone: "good" },
@@ -672,4 +718,5 @@ export const recentActivity = [
   { id: "event.3", time: "12:11 PM", projectId: "project.blooms.content-ops", actor: "Johnny5", action: "Submitted synthetic draft record for review", tone: "neutral" },
   { id: "event.4", time: "11:58 AM", projectId: "project.website.public-site", actor: "Johnny5 VPS", action: "Backup freshness check passed", tone: "good" },
   { id: "event.5", time: "11:42 AM", projectId: "project.wayfarer.lazy-river", actor: "Basement Beast", action: "Archive route verification passed", tone: "good" },
+  { id: "event.6", time: "11:35 AM", projectId: "project.abs.ai-tech-news", actor: "Control Room", action: "Created the synthetic ABS project workspace contract", tone: "good" },
 ] as const;

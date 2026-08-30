@@ -1,4 +1,4 @@
-import type { ActionInboxItemV1, OwnerFocusPinV1 } from "@/src/operator-surfaces/v1";
+import type { ActionInboxItemV1, OwnerFocusPinV1 } from "@/src/operator-surfaces/v1/types";
 
 /** Explicitly synthetic UI records that use the same shape as the durable CR-6E Action Inbox. */
 export const cr6eActionInboxFixture: ActionInboxItemV1[] = [

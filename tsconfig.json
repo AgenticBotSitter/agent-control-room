@@ -15,7 +15,12 @@
     "jsx": "react-jsx",
     "incremental": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@control-room/public-core": ["./packages/control-room-core/src/index.ts"],
+      "@control-room/observation-adapter-sdk": ["./packages/control-room-adapter-sdk/src/index.ts"],
+      "@control-room/conformance-kit": ["./packages/control-room-conformance-kit/src/index.ts"],
+      "@control-room/synthetic-reference-adapters": ["./packages/reference-adapters/src/index.ts"],
+      "@control-room/synthetic-example": ["./examples/synthetic/src/index.ts"]
     }
   },
   "include": [

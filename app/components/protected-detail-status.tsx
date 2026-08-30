@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchOperatorSurfaceSnapshotV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
+import { fetchOperatorSurfaceSnapshotV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1/http-client";
 
 function label(value: string): string { return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
 

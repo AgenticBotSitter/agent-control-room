@@ -16,10 +16,6 @@
   </array>
   <key>WorkingDirectory</key>
   <string>{{CONTROL_ROOM_CODEX_BROKER_RELEASE_DIR}}</string>
-  <key>StandardOutPath</key>
-  <string>{{CONTROL_ROOM_CODEX_BROKER_LOG_ROOT}}/broker.stdout.log</string>
-  <key>StandardErrorPath</key>
-  <string>{{CONTROL_ROOM_CODEX_BROKER_LOG_ROOT}}/broker.stderr.log</string>
   <key>ThrottleInterval</key>
   <integer>5</integer>
   <key>ProcessType</key>

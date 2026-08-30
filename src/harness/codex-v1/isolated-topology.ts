@@ -34,7 +34,9 @@ export type CodexIsolatedTopologyReasonV1 =
   | "remote_disconnect_fallback" | "broker_command_execution_enabled" | "credential_store_exposed"
   | "broker_ledger_exposed" | "executor_provider_egress" | "broker_egress_overbroad"
   | "ledger_bypass" | "client_method_overbroad" | "experimental_seam_unacknowledged"
-  | "production_use_forbidden";
+  | "production_use_forbidden" | "untrusted_declaration" | "executor_peer_unauthenticated"
+  | "execution_receipt_missing" | "provider_output_cap_unenforced" | "native_child_identity_unverified"
+  | "remote_cancellation_unverified" | "path_identity_unverified";
 
 export function digestCodexIsolatedTopologyAttestationV1(input: Omit<CodexIsolatedTopologyAttestationV1, "attestationDigest">): string {
   return sha256Digest(input);
@@ -65,6 +67,11 @@ export function evaluateCodexIsolatedTopologyV1(attestation: CodexIsolatedTopolo
   if (sha256Digest([...new Set(attestation.allowedClientMethods)].sort()) !== sha256Digest([...CODEX_ISOLATED_CLIENT_METHODS_V1])) reasons.push("client_method_overbroad");
   if (!attestation.experimentalSeamAcknowledged) reasons.push("experimental_seam_unacknowledged");
   if (attestation.useClass !== "disposable_qualification") reasons.push("production_use_forbidden");
+  // This object is a plan declaration, not authenticated OS evidence. It must
+  // never enable a native qualification by itself.
+  reasons.push("untrusted_declaration");
+  reasons.push("executor_peer_unauthenticated", "execution_receipt_missing", "provider_output_cap_unenforced",
+    "native_child_identity_unverified", "remote_cancellation_unverified", "path_identity_unverified");
   const uniqueReasons = [...new Set(reasons)];
-  return { eligibleForDisposableQualification: uniqueReasons.length === 0, productionEligible: false, reasons: uniqueReasons };
+  return { eligibleForDisposableQualification: false, productionEligible: false, reasons: uniqueReasons };
 }

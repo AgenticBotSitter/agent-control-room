@@ -5,8 +5,10 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { HARNESS_EVENT_SCHEMA_VERSION_V1, HarnessRunStoreV1, type HarnessRunEventV1, type HarnessRunV1 } from "../src/harness/v1";
 import { adaptPglite } from "../src/persistence/database";
+import { sha256Digest } from "../src/security";
 
 const digest = `sha256:${"a".repeat(64)}`;
+const integrityKey = new Uint8Array(32).fill(7);
 async function setup(): Promise<PGlite> {
   const raw = new PGlite(); for (const file of (await readdir(resolve("db/migrations"))).filter((f) => f.endsWith(".sql")).sort()) await raw.exec(await readFile(resolve("db/migrations",file),"utf8"));
   await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:harness','Harness'),('tenant:other','Other')`);
@@ -22,7 +24,7 @@ function event(sequence: number, state: HarnessRunEventV1["payload"], second: nu
 
 test("CR7 harness persistence is tenant-bound, monotonic, replay-safe, and terminal", async () => {
   const raw = await setup(); try {
-    const store = new HarnessRunStoreV1(adaptPglite(raw));
+    const store = new HarnessRunStoreV1(adaptPglite(raw),integrityKey);
     assert.equal((await store.create(run)).replayed,false); assert.equal((await store.create(run)).replayed,true);
     assert.equal((await store.append(event(1,{category:"lifecycle",state:"starting"},1))).run.state,"starting");
     assert.equal((await store.append(event(2,{category:"lifecycle",state:"running"},2))).run.state,"running");
@@ -42,9 +44,38 @@ test("CR7 harness persistence is tenant-bound, monotonic, replay-safe, and termi
 
 test("CR7 harness persistence rejects conflicting replay, identity reuse, and time regression", async () => {
   const raw = await setup(); try {
-    const store = new HarnessRunStoreV1(adaptPglite(raw)); await store.create(run); await store.append(event(1,{category:"lifecycle",state:"starting"},1));
+    const store = new HarnessRunStoreV1(adaptPglite(raw),integrityKey); await store.create(run); await store.append(event(1,{category:"lifecycle",state:"starting"},1));
     await assert.rejects(store.append(event(1,{category:"lifecycle",state:"failed",reasonCode:"different"},1)),/replay conflict/);
     await assert.rejects(store.append(event(2,{category:"lifecycle",state:"running"},0)),/time regression/);
     await assert.rejects(store.create({ ...run,id:"run:second" }),/unique|duplicate/i);
   } finally { await raw.close(); }
+});
+
+test("CR7Q harness history is append-only and every stored payload is digest-verified on read",async()=>{
+  const raw=await setup(); try {
+    const store=new HarnessRunStoreV1(adaptPglite(raw),integrityKey); await store.create(run); await store.append(event(1,{category:"lifecycle",state:"starting"},1));
+    await assert.rejects(raw.exec(`UPDATE control_harness_run_events SET payload='{}'::jsonb WHERE tenant_id='tenant:harness' AND run_id='run:harness' AND sequence=1`),/append-only relation/);
+    await assert.rejects(raw.exec(`DELETE FROM control_harness_run_events WHERE tenant_id='tenant:harness' AND run_id='run:harness' AND sequence=1`),/append-only relation/);
+    await raw.query(`UPDATE control_harness_runs SET payload=$1::jsonb WHERE tenant_id=$2 AND id=$3`,[JSON.stringify({...run,state:"starting",updatedAt:"2026-08-27T20:00:01.000Z",lastObservedAt:"2026-08-27T20:00:01.000Z",safeReasonCode:"tampered"}),run.tenantId,run.id]);
+    await assert.rejects(store.get(run.tenantId,run.id),/integrity failure/);
+  } finally { await raw.close(); }
+});
+
+test("CR7Q independent remediation authenticates normalized rows and complete event history",async()=>{
+  const raw=await setup(); try {
+    const store=new HarnessRunStoreV1(adaptPglite(raw),integrityKey); await store.create(run); await store.append(event(1,{category:"lifecycle",state:"starting"},1));
+    const forgedRun={...run,adapterId:"adapter.hostile.v1",state:"starting" as const,updatedAt:"2026-08-27T20:00:01.000Z",lastObservedAt:"2026-08-27T20:00:01.000Z"};
+    await raw.query(`UPDATE control_harness_runs SET adapter_id=$1,payload=$2::jsonb,run_digest=$3 WHERE id=$4`,[forgedRun.adapterId,JSON.stringify(forgedRun),sha256Digest(forgedRun),run.id]);
+    await assert.rejects(store.get(run.tenantId,run.id),/integrity failure/);
+  } finally { await raw.close(); }
+
+  const gapRaw=await setup(); try {
+    const store=new HarnessRunStoreV1(adaptPglite(gapRaw),integrityKey); await store.create(run);
+    const forged=event(2,{category:"lifecycle",state:"running"},2);
+    await gapRaw.query(`INSERT INTO control_harness_run_events(tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)`,[forged.tenantId,forged.runId,forged.sequence,forged.occurredAt,forged.source,forged.sourceEventKeyDigest,sha256Digest(forged),`hmac-sha256:${"0".repeat(64)}`,JSON.stringify(forged),forged.occurredAt]);
+    await gapRaw.query(`UPDATE control_harness_runs SET last_sequence=2 WHERE tenant_id=$1 AND id=$2`,[run.tenantId,run.id]);
+    await assert.rejects(store.get(run.tenantId,run.id),/integrity failure/);
+    await assert.rejects(store.events(run.tenantId,run.id),/integrity failure/);
+    await assert.rejects(store.watch(run.tenantId),/integrity failure/);
+  } finally { await gapRaw.close(); }
 });

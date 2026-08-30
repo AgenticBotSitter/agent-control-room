@@ -1,0 +1,11 @@
+{
+  "name": "@control-room/conformance-kit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local candidate for deterministic Control Room observation adapter conformance.",
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src", "README.md", "LICENSE", "NOTICE"],
+  "dependencies": { "@control-room/observation-adapter-sdk": "workspace:*" }
+}

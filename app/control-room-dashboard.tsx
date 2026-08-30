@@ -19,8 +19,14 @@ import { ServiceIncidentList } from "./components/service-incident-list";
 import { BottleneckList } from "./components/bottleneck-list";
 import { ActiveWorkList } from "./components/active-work-list";
 import { ServiceScheduleList } from "./components/service-schedule-list";
+import { PackageRegistryList } from "./components/package-registry-list";
+import { cr7ePackageRegistryFixture } from "./fixtures/cr7e-ui";
+import { CompletionGatePanel } from "./components/completion-gate-panel";
+import { cr8cCompletionGateFixture } from "./fixtures/cr8c-ui";
+import { TelegramMessagePreview } from "./components/telegram-message-preview";
+import { cr8dTelegramPresentationFixture } from "./fixtures/cr8d-ui";
 import { PortfolioProjection } from "./components/portfolio-projection";
-import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1";
+import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1/http-client";
 
 type Scope = "all" | string;
 type ScenarioKey = keyof typeof transcriptionScenarios;
@@ -29,6 +35,7 @@ const projectAccent: Record<string, string> = {
   "project.wayfarer.lazy-river": "river",
   "project.blooms.content-ops": "bloom",
   "project.website.public-site": "site",
+  "project.abs.ai-tech-news": "news",
 };
 
 function stateLabel(value: string): string {
@@ -151,6 +158,9 @@ export function ControlRoomDashboard() {
           <a href="#workers"><span aria-hidden="true">◫</span> Workers</a>
           {operatorSnapshot && <a href="#services"><span aria-hidden="true">◌</span> Services</a>}
           <a href="#agents"><span aria-hidden="true">◎</span> Agents</a>
+          <a href="#packages"><span aria-hidden="true">◇</span> Packages</a>
+          <a href="#completion-gate"><span aria-hidden="true">✓</span> Reviews</a>
+          <a href="#telegram-preview"><span aria-hidden="true">⌁</span> Notifications</a>
           <a href="#capacity"><span aria-hidden="true">⌁</span> Capacity</a>
           <a href="#activity"><span aria-hidden="true">≡</span> Activity</a>
         </nav>
@@ -361,6 +371,21 @@ export function ControlRoomDashboard() {
           <div className="section-heading"><div><p className="eyebrow">Protected service and schedule status</p><h2>Services and schedules</h2></div><span className="live-label"><i /> Read-only observation</span></div>
           <ServiceScheduleList services={operatorSnapshot.services.filter((service) => scopedIds.has(service.projectId))} schedules={operatorSnapshot.schedules.filter((schedule) => scopedIds.has(schedule.projectId))} />
         </section>}
+
+        <section id="packages" className="section-block panel">
+          <div className="section-heading"><div><p className="eyebrow">CR-7E synthetic registry fixture</p><h2>Procedures and knowledge</h2></div><span className="simulation-only">Read-only · no activation control</span></div>
+          <PackageRegistryList packages={cr7ePackageRegistryFixture.filter((item)=>scopedIds.has(item.projectId))} />
+        </section>
+
+        <section id="completion-gate" className="section-block panel">
+          <div className="section-heading"><div><p className="eyebrow">CR-8C synthetic review fixture</p><h2>Completion Gate</h2></div><span className="simulation-only">Read-only · no approval or run control</span></div>
+          <CompletionGatePanel items={cr8cCompletionGateFixture.filter((item) => scopedIds.has(item.target.projectId))} />
+        </section>
+
+        <section id="telegram-preview" className="section-block panel">
+          <div className="section-heading"><div><p className="eyebrow">CR-8D sanitized presentation fixture</p><h2>Telegram notification preview</h2></div><span className="simulation-only">Offline · no bot or chat connected</span></div>
+          <TelegramMessagePreview presentations={cr8dTelegramPresentationFixture.filter((item)=>scopedIds.has(item.projectId))}/>
+        </section>
 
         <div className="dashboard-columns lower-columns">
           <section id="agents" className="section-block panel">

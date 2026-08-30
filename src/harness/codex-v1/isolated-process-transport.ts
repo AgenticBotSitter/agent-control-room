@@ -5,6 +5,7 @@ import {
 import type { CodexAppServerLineTransportV1 } from "./isolated-runtime";
 
 export const CODEX_APP_SERVER_MAX_QUEUED_LINES_V1 = 64;
+export const CODEX_APP_SERVER_MAX_CHUNK_BYTES_V1 = 65_536;
 
 export interface CodexAppServerChildPortV1 {
   writeStdin(data: string): Promise<void>;
@@ -29,6 +30,8 @@ export class CodexAppServerChildLineTransportV1 implements CodexAppServerLineTra
   private fatal = false;
   private exited = false;
   private closed = false;
+  private stdinClosed = false;
+  private terminateRequested = false;
 
   constructor(
     private readonly child: CodexAppServerChildPortV1,
@@ -37,12 +40,16 @@ export class CodexAppServerChildLineTransportV1 implements CodexAppServerLineTra
     if (!Number.isSafeInteger(maximumFrameBytes) || maximumFrameBytes < 1_024 || maximumFrameBytes > 1_048_576) {
       throw new Error("Codex app-server child frame limit invalid");
     }
-    child.discardStderr();
-    this.unsubscribe.push(
-      child.onStdout((chunk) => this.acceptChunk(chunk)),
-      child.onExit(() => this.acceptExit()),
-      child.onError(() => this.fail()),
-    );
+    try {
+      child.discardStderr();
+      this.unsubscribe.push(child.onStdout((chunk) => this.acceptChunk(chunk)));
+      this.unsubscribe.push(child.onExit(() => this.acceptExit()));
+      this.unsubscribe.push(child.onError(() => this.fail()));
+    } catch {
+      for (const stop of this.unsubscribe.splice(0)) { try { stop(); } catch { /* continue cleanup */ } }
+      this.stopChild();
+      throw new Error("Codex app-server child setup failed");
+    }
   }
 
   async write(line: string): Promise<void> {
@@ -64,14 +71,17 @@ export class CodexAppServerChildLineTransportV1 implements CodexAppServerLineTra
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.child.closeStdin();
-    if (!this.exited) this.child.terminate();
+    this.stopChild();
     this.finishWaiter(null);
-    for (const stop of this.unsubscribe.splice(0)) stop();
+    for (const stop of this.unsubscribe.splice(0)) { try { stop(); } catch { /* continue cleanup */ } }
   }
 
   private acceptChunk(chunk: Uint8Array): void {
     if (this.closed || this.exited || this.fatal || !(chunk instanceof Uint8Array)) return;
+    if (chunk.byteLength > CODEX_APP_SERVER_MAX_CHUNK_BYTES_V1
+      || chunk.byteLength + Buffer.byteLength(this.buffer, "utf8") > this.maximumFrameBytes + 1) {
+      this.fail(); return;
+    }
     this.buffer += this.decoder.write(chunk);
     let newline = this.buffer.indexOf("\n");
     while (newline >= 0) {
@@ -103,6 +113,15 @@ export class CodexAppServerChildLineTransportV1 implements CodexAppServerLineTra
     const waiter = this.waiter;
     this.waiter = undefined;
     waiter?.reject(new Error("Codex app-server child framing failed"));
+    this.stopChild();
+  }
+
+  private stopChild(): void {
+    if (!this.stdinClosed) { this.stdinClosed = true; try { this.child.closeStdin(); } catch { /* continue cleanup */ } }
+    if (!this.exited && !this.terminateRequested) {
+      this.terminateRequested = true;
+      try { this.child.terminate(); } catch { /* cleanup remains requested */ }
+    }
   }
 
   private finishWaiter(value: string | null): void {

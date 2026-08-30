@@ -4,6 +4,7 @@ import type {
   CodexBrokerDispatchTicketV1,
   CodexBrokerUsageV1,
 } from "./credential-broker";
+import { sha256Digest } from "../../security";
 import type { CodexMacIsolatedLauncherPlanV1 } from "./isolated-launcher";
 import { CODEX_ISOLATED_CLIENT_METHODS_V1 } from "./isolated-topology";
 
@@ -16,6 +17,7 @@ export interface CodexIsolatedBrokerLedgerPortV1 {
     usage?: CodexBrokerUsageV1;
     safeResultCode?: string;
   };
+  authorizeClaimedDispatch(ticket: CodexBrokerDispatchTicketV1): { remainingPermitMs: number };
 }
 
 export interface CodexAppServerRequestV1<TMethod extends string, TParams> {
@@ -134,6 +136,7 @@ export class CodexMacIsolatedControllerV1 {
     const claimed = this.ledger.claim(input.request, input.now);
     if (claimed.disposition !== "dispatch_once") return { ...claimed };
     if (!claimed.ticket) throw new Error("Codex isolated dispatch ticket missing");
+    this.ledger.authorizeClaimedDispatch(claimed.ticket);
     return {
       disposition: claimed.disposition,
       ticket: claimed.ticket,
@@ -148,6 +151,33 @@ export class CodexMacIsolatedControllerV1 {
         model: input.request.model,
       } },
     };
+  }
+
+  claim(request: CodexBrokerCallRequestV1, now?: string): ReturnType<CodexIsolatedBrokerLedgerPortV1["claim"]> {
+    return this.ledger.claim(request, now ?? "");
+  }
+
+  planClaimedTurn(input: {
+    request: CodexBrokerCallRequestV1;
+    ticket: CodexBrokerDispatchTicketV1;
+    nativeThreadId: string;
+    environmentStatus: CodexIsolatedEnvironmentStatusV1;
+  }): NonNullable<CodexIsolatedTurnDispatchV1["request"]> {
+    if (input.environmentStatus !== "ready") throw new Error("Codex isolated remote environment not ready");
+    if (!validIdentifier(input.nativeThreadId)) throw new Error("Codex isolated native thread invalid");
+    if (input.request.operation === "resume" && input.request.nativeThreadId !== input.nativeThreadId) throw new Error("Codex isolated resume thread mismatch");
+    if (input.ticket.requestDigest !== sha256Digest(input.request) || input.ticket.requestId !== input.request.requestId
+      || input.ticket.permitDigest !== input.request.permitDigest || input.ticket.runId !== input.request.runId
+      || input.ticket.model !== input.request.model || input.ticket.operation !== input.request.operation) {
+      throw new Error("Codex isolated dispatch ticket mismatch");
+    }
+    return { method: "turn/start", params: {
+      threadId: input.nativeThreadId,
+      input: [{ type: "text", text: input.request.input, text_elements: [] }],
+      environments: [structuredClone(this.launcher.threadEnvironment)], cwd: this.launcher.threadEnvironment.cwd,
+      runtimeWorkspaceRoots: [this.launcher.threadEnvironment.cwd], approvalPolicy: "never",
+      sandboxPolicy: { type: "readOnly", networkAccess: false }, model: input.request.model,
+    } };
   }
 
   planInterrupt(nativeThreadId: string, turnId: string): CodexAppServerRequestV1<"turn/interrupt", { threadId: string; turnId: string }> {

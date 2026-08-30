@@ -147,6 +147,7 @@ The first genuinely useful private system is the CR-5 vertical slice, roughly **
 | CR-9A | Content Blooms source-scheduled adapter | `gpt-5.6-sol` | `high` | Must preserve foreign lease/authority semantics | Read-only then bounded command receipts pass |
 | CR-9B | Lo-Fi Wayfarer project pack and media workflow | `gpt-5.6-terra` | `high` | Larger domain implementation under settled core | Synthetic media/QC/review/assembly flow passes |
 | CR-9C | First bounded live integration rehearsal | `gpt-5.6-sol` | `xhigh` | Cross-system rollback and production-risk review | Owner-approved rehearsal, rollback, and audit pass |
+| CR-9D | Shared Project Workspace and ABS AI/tech news project | `gpt-5.6-terra` | `high` | Owner-facing information queues and broad effect-free implementation under the Sol-frozen contract | Fake collection, dedupe, proposal editor, accessibility, and no-dispatch tests pass |
 | CR-10A | Deployment, backups/PITR, updates, monitoring, runbooks | `gpt-5.6-sol` | `high` | Operations and recovery correctness | Clean-host restore, canary upgrade, incident drill pass |
 | CR-10B | Public SDK/package/docs/examples | `gpt-5.6-terra` | `high` | Broad packaging and developer experience work | Clean-room installation and adapter example pass |
 | CR-10C | Mechanical SBOM, license inventory, fixture/docs normalization | `gpt-5.6-luna` | `medium` | Bounded high-volume work checked by deterministic tooling | Scans, links, schemas, formatting, and fixture tests pass |
@@ -451,7 +452,7 @@ Each project can be disabled independently. A failure or upgrade in one adapter 
 
 These are settings, not architecture blockers:
 
-- final Control Room domain/subdomain names;
+- exact hosted binding and any subdomains under the owner-reserved `agentcontrolroom.xyz` domain;
 - exact quiet hours and notification routing;
 - per-project budgets and approval thresholds;
 - retention duration;
@@ -461,3 +462,26 @@ These are settings, not architecture blockers:
 - which project becomes the first live integration after synthetic proof.
 
 The dashboard will expose configurable policy/preferences where safe; security invariants are not user-disableable convenience settings.
+
+## CR-11 — Agent Team and project War Rooms
+
+CR-11 adds the people-first collaboration layer after the project, schedule, worker, approval, evidence, and operations foundations exist.
+
+### First slice
+
+- Project-scoped Agent Team roster with evidence-backed presence and device-disambiguated handles.
+- Reviewed role/model/package summaries without raw prompts, memory, native profile data, provider access, or private infrastructure values.
+- Agent routines as non-authorizing schedule projections.
+- Two-to-six-member War Rooms with fixed loop, duration, reasoning, and cost ceilings.
+- `@mention` handoffs that stop as owner-review drafts before canonical work materialization.
+- One consistent responsive Team surface across every Project Workspace.
+
+### Exit criteria
+
+- Team visibility cannot create a job, dispatch, approval, lease, command, or execution grant.
+- Working state is impossible without current authenticated evidence and exact current work.
+- Rooms fail closed on scope, membership, sequence, round, mention, loop, and digest drift.
+- Authenticated local durable state stores safe summary events only, preserves on unconfigured retention, binds legal-hold hooks, verifies restart and rollback before use, and exposes no cleanup or effect executor.
+- One exact authenticated owner decision may atomically materialize only non-runnable canonical proposed work plus its Action Inbox record; rejection and withdrawal create nothing, and no review grants approval or dispatch authority.
+- Hermes Bot Mode calls remain absent until a separately pinned, read-only, conformance-tested adapter is accepted.
+- `agentcontrolroom.xyz` remains an owner-held future deployment destination; no hosted effect occurs in CR11A.

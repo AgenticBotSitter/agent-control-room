@@ -168,8 +168,10 @@ function readUsage(params: JsonObject): CodexBrokerUsageV1 | undefined {
 /** Settles one claimed provider call from content-free terminal and usage facts. */
 export class CodexIsolatedTurnObserverV1 {
   private turnId?: string;
+  private started = false;
   private usage?: CodexBrokerUsageV1;
   private terminal?: "completed" | "failed" | "interrupted" | "ambiguous";
+  private settlementRecorded = false;
 
   constructor(
     private readonly threadId: string,
@@ -180,6 +182,12 @@ export class CodexIsolatedTurnObserverV1 {
   }
 
   get isTerminal(): boolean { return this.terminal !== undefined; }
+  get terminalState(): "completed" | "failed" | "interrupted" | "ambiguous" | undefined { return this.terminal; }
+
+  bindTurn(turnId: string): void {
+    if (this.turnId || !validIdentifier(turnId)) throw new Error("Codex isolated turn binding invalid");
+    this.turnId = turnId;
+  }
 
   observe(notification: { method: string; params: JsonObject }): CodexIsolatedObservedEventV1 {
     if (this.terminal) throw new Error("Codex isolated observer already terminal");
@@ -190,22 +198,23 @@ export class CodexIsolatedTurnObserverV1 {
   }
 
   disconnect(safeResultCode = "app_server_disconnected"): CodexIsolatedObservedEventV1 | undefined {
-    if (this.terminal) return undefined;
+    if (this.terminal && (this.terminal !== "ambiguous" || this.settlementRecorded)) return undefined;
     if (!/^[a-z][a-z0-9_]{2,63}$/.test(safeResultCode)) throw new Error("Codex isolated disconnect code invalid");
-    this.ledger.settle({ ticket: this.ticket, outcome: "ambiguous", safeResultCode });
     this.terminal = "ambiguous";
+    try { this.ledger.settle({ ticket: this.ticket, outcome: "ambiguous", safeResultCode }); this.settlementRecorded = true; }
+    catch { /* reconcile durable uncertainty after restart */ }
     return { category: "lifecycle", state: "ambiguous" };
   }
 
   private observeStarted(params: JsonObject): CodexIsolatedObservedEventV1 {
-    if (params.threadId !== this.threadId || !isObject(params.turn) || !validIdentifier(params.turn.id)
-      || params.turn.status !== "inProgress" || this.turnId) throw new Error("Codex isolated turn start invalid");
-    this.turnId = params.turn.id;
+    if (!this.turnId || params.threadId !== this.threadId || !isObject(params.turn) || params.turn.id !== this.turnId
+      || params.turn.status !== "inProgress" || this.started) throw new Error("Codex isolated turn start invalid");
+    this.started = true;
     return { category: "lifecycle", state: "started" };
   }
 
   private observeUsage(params: JsonObject): CodexIsolatedObservedEventV1 {
-    if (!this.turnId || params.threadId !== this.threadId || params.turnId !== this.turnId) {
+    if (!this.turnId || !this.started || params.threadId !== this.threadId || params.turnId !== this.turnId) {
       throw new Error("Codex isolated usage scope invalid");
     }
     const usage = readUsage(params);
@@ -219,18 +228,21 @@ export class CodexIsolatedTurnObserverV1 {
   }
 
   private observeCompleted(params: JsonObject): CodexIsolatedObservedEventV1 {
-    if (!this.turnId || params.threadId !== this.threadId || !isObject(params.turn)
+    if (!this.turnId || !this.started || params.threadId !== this.threadId || !isObject(params.turn)
       || params.turn.id !== this.turnId || !["completed", "failed", "interrupted"].includes(String(params.turn.status))) {
       throw new Error("Codex isolated turn completion invalid");
     }
     const status = params.turn.status as "completed" | "failed" | "interrupted";
     if (status === "completed") {
       if (!this.usage) throw new Error("Codex isolated completed turn missing usage");
-      this.ledger.settle({ ticket: this.ticket, outcome: "completed", usage: this.usage });
+      this.terminal = status;
+      try { this.ledger.settle({ ticket: this.ticket, outcome: "completed", usage: this.usage }); this.settlementRecorded = true; }
+      catch { this.terminal = "ambiguous"; throw new Error("Codex isolated settlement uncertain"); }
     } else {
-      this.ledger.settle({ ticket: this.ticket, outcome: "failed", safeResultCode: status === "failed" ? "codex_turn_failed" : "codex_turn_interrupted" });
+      this.terminal = status;
+      try { this.ledger.settle({ ticket: this.ticket, outcome: "failed", safeResultCode: status === "failed" ? "codex_turn_failed" : "codex_turn_interrupted" }); this.settlementRecorded = true; }
+      catch { this.terminal = "ambiguous"; throw new Error("Codex isolated settlement uncertain"); }
     }
-    this.terminal = status;
     return { category: "lifecycle", state: status };
   }
 }

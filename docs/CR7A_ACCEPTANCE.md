@@ -15,7 +15,7 @@
 ## Delivered boundary
 
 1. A strict, versioned harness manifest, run, lifecycle, event, usage, and lineage contract.
-2. Migration 0020 with canonical harness runs and append-only events bound to the exact tenant, project, job, attempt, and node.
+2. Migration 0020 with canonical harness runs and append-only events bound to the exact tenant, project, job, attempt, and node. An external 256-bit integrity key authenticates every normalized run/event column and payload digest, and reads require a complete consecutive event history rather than trusting only the maximum sequence.
 3. Monotonic event sequencing, exact replay, conflict detection, time-regression denial, terminal-state enforcement, and tenant-scoped Session Watch reads.
 4. Sanitized Hermes gateway fixtures and event normalization that discard message deltas, transcript text, tool arguments, profile details, paths, and native session identifiers.
 5. Read-only Hermes status, session, cron, and usage projection with bounded collections and one-way scoped digests for native session and cron identities.

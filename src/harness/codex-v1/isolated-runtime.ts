@@ -1,5 +1,5 @@
 import { sha256Digest } from "../../security";
-import type { CodexBrokerCallRequestV1, CodexBrokerClaimDispositionV1 } from "./credential-broker";
+import { CodexBrokerPolicyErrorV1, type CodexBrokerCallRequestV1, type CodexBrokerClaimDispositionV1 } from "./credential-broker";
 import { CodexMacIsolatedControllerV1, type CodexIsolatedBrokerLedgerPortV1 } from "./isolated-controller";
 import {
   CodexAppServerJsonlSessionV1,
@@ -10,6 +10,10 @@ import {
 } from "./isolated-jsonrpc";
 import type { CodexMacIsolatedLauncherPlanV1 } from "./isolated-launcher";
 
+interface CodexNodeLocalThreadBindingPortV1 {
+  bindNodeLocalThread(ticket: import("./credential-broker").CodexBrokerDispatchTicketV1, nativeThreadId: string): void;
+}
+
 export type CodexAppServerRuntimeSafeCodeV1 =
   | "app_server_disconnected"
   | "app_server_cancelled"
@@ -18,7 +22,8 @@ export type CodexAppServerRuntimeSafeCodeV1 =
   | "app_server_request_failed"
   | "app_server_server_request_forbidden"
   | "remote_environment_not_ready"
-  | "thread_response_invalid";
+  | "thread_response_invalid"
+  | "broker_permit_expired";
 
 export const CODEX_APP_SERVER_MAX_INBOUND_PER_REQUEST_V1 = 4_096;
 export const CODEX_ISOLATED_MAX_OBSERVED_EVENTS_V1 = 1_024;
@@ -40,7 +45,7 @@ export interface CodexAppServerLineTransportV1 {
 type PlannedRequest = { method: string; params: unknown };
 
 /** Sequential request driver. Raw protocol values never escape error paths. */
-export class CodexAppServerRpcDriverV1 {
+class CodexAppServerRpcDriverV1 {
   private readonly session = new CodexAppServerJsonlSessionV1();
 
   constructor(private readonly transport: CodexAppServerLineTransportV1) {}
@@ -103,6 +108,13 @@ function threadIdFrom(result: unknown): string | undefined {
   return validIdentifier(thread?.id) ? thread.id : undefined;
 }
 
+function turnIdFrom(result: unknown, threadId: string): string | undefined {
+  const object = asObject(result);
+  const turn = asObject(object?.turn);
+  if (object?.threadId !== undefined && object.threadId !== threadId) return undefined;
+  return validIdentifier(turn?.id) && turn.status === "inProgress" ? turn.id : undefined;
+}
+
 function environmentStatusFrom(result: unknown): "ready" | "pending" | "disconnected" | "unknown" | undefined {
   const status = asObject(result)?.status;
   return ["ready", "pending", "disconnected", "unknown"].includes(String(status))
@@ -110,9 +122,7 @@ function environmentStatusFrom(result: unknown): "ready" | "pending" | "disconne
 }
 
 export interface CodexIsolatedQualificationResultV1 {
-  disposition: "completed" | Exclude<CodexBrokerClaimDispositionV1, "dispatch_once">;
-  /** Node-local resume handle. Never persist or export this as canonical evidence. */
-  nodeLocalNativeThreadId?: string;
+  disposition: "completed" | "failed" | "interrupted" | Exclude<CodexBrokerClaimDispositionV1, "dispatch_once">;
   nativeThreadIdDigest?: string;
   events: CodexIsolatedObservedEventV1[];
 }
@@ -127,21 +137,24 @@ export class CodexIsolatedQualificationRuntimeV1 {
 
   constructor(
     private readonly launcher: CodexMacIsolatedLauncherPlanV1,
-    private readonly ledger: CodexIsolatedBrokerLedgerPortV1 & CodexIsolatedBrokerSettlementPortV1,
+    private readonly ledger: CodexIsolatedBrokerLedgerPortV1 & CodexIsolatedBrokerSettlementPortV1 & CodexNodeLocalThreadBindingPortV1,
     transport: CodexAppServerLineTransportV1,
   ) {
     this.controller = new CodexMacIsolatedControllerV1(launcher, ledger);
     this.driver = new CodexAppServerRpcDriverV1(transport);
   }
 
-  async execute(request: CodexBrokerCallRequestV1, now: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<CodexIsolatedQualificationResultV1> {
+  async execute(request: CodexBrokerCallRequestV1, _untrustedNow: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<CodexIsolatedQualificationResultV1> {
+    void _untrustedNow;
     const timeoutMs = options.timeoutMs ?? CODEX_ISOLATED_MAX_RUNTIME_MS_V1;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > CODEX_ISOLATED_MAX_RUNTIME_MS_V1) {
       throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
     }
     let observer: CodexIsolatedTurnObserverV1 | undefined;
+    let claimedTicket: import("./credential-broker").CodexBrokerDispatchTicketV1 | undefined;
     const events: CodexIsolatedObservedEventV1[] = [];
-    let abortCode: "app_server_cancelled" | "app_server_deadline_exceeded" | undefined;
+    let abortCode: "app_server_cancelled" | "app_server_deadline_exceeded" | "broker_permit_expired" | undefined;
+    let permitTimer: ReturnType<typeof setTimeout> | undefined;
     const abort = (code: typeof abortCode): void => {
       if (abortCode) return;
       abortCode = code;
@@ -157,37 +170,53 @@ export class CodexIsolatedQualificationRuntimeV1 {
       await this.driver.request(this.controller.planEnvironmentRegistration());
       const status = environmentStatusFrom(await this.driver.request(this.controller.planEnvironmentStatus()));
       if (status !== "ready") throw new CodexAppServerRuntimeErrorV1("remote_environment_not_ready");
+      const claim = this.controller.claim(request);
+      if (claim.disposition !== "dispatch_once") return { disposition: claim.disposition, events };
+      if (!claim.ticket) throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
+      claimedTicket = claim.ticket;
       const threadId = threadIdFrom(await this.driver.request(this.controller.planThreadBoundary(request)));
       if (!threadId || (request.operation === "resume" && threadId !== request.nativeThreadId)) {
         throw new CodexAppServerRuntimeErrorV1("thread_response_invalid");
       }
-      const dispatch = this.controller.claimAndPlanTurn({ request, nativeThreadId: threadId, environmentStatus: status, now });
-      if (dispatch.disposition !== "dispatch_once") {
-        return { disposition: dispatch.disposition, nodeLocalNativeThreadId: threadId, nativeThreadIdDigest: sha256Digest(threadId), events };
-      }
-      if (!dispatch.ticket || !dispatch.request) throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
-      observer = new CodexIsolatedTurnObserverV1(threadId, dispatch.ticket, this.ledger);
+      this.ledger.bindNodeLocalThread(claim.ticket, threadId);
+      const turnRequest = this.controller.planClaimedTurn({ request, ticket: claim.ticket, nativeThreadId: threadId, environmentStatus: status });
+      const dispatchAuthority = this.ledger.authorizeClaimedDispatch(claim.ticket);
+      permitTimer = setTimeout(() => abort("broker_permit_expired"), dispatchAuthority.remainingPermitMs);
+      observer = new CodexIsolatedTurnObserverV1(threadId, claim.ticket, this.ledger);
       const observe = (notification: Extract<CodexAppServerInboundV1, { kind: "notification" }>): void => {
-        const event = observer?.observe(notification);
-        if (event) {
-          if (events.length >= CODEX_ISOLATED_MAX_OBSERVED_EVENTS_V1) throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
-          events.push(event);
+        if (events.length >= CODEX_ISOLATED_MAX_OBSERVED_EVENTS_V1) throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
+        try { this.ledger.authorizeClaimedDispatch(claim.ticket!); }
+        catch (error) {
+          if (error instanceof CodexBrokerPolicyErrorV1 && error.safeCode === "grant_expired") {
+            abort("broker_permit_expired");
+            throw new CodexAppServerRuntimeErrorV1("broker_permit_expired");
+          }
+          throw error;
         }
+        const event = observer?.observe(notification);
+        if (event) events.push(event);
       };
-      const observeBeforeResponse = (notification: Extract<CodexAppServerInboundV1, { kind: "notification" }>): void => {
-        if (notification.method === "turn/completed") throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
-        observe(notification);
+      const observeBeforeResponse = (_notification: Extract<CodexAppServerInboundV1, { kind: "notification" }>): void => {
+        void _notification;
+        throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
       };
-      await this.driver.request(dispatch.request, observeBeforeResponse);
+      const turnId = turnIdFrom(await this.driver.request(turnRequest, observeBeforeResponse), threadId);
+      if (!turnId) throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
+      observer.bindTurn(turnId);
       while (!observer.isTerminal) await this.driver.notification(observe);
-      return { disposition: "completed", nodeLocalNativeThreadId: threadId, nativeThreadIdDigest: sha256Digest(threadId), events };
+      const terminal = observer.terminalState;
+      if (!terminal || terminal === "ambiguous") throw new CodexAppServerRuntimeErrorV1("app_server_protocol_invalid");
+      return { disposition: terminal, nativeThreadIdDigest: sha256Digest(threadId), events };
     } catch (error) {
       const safeCode = abortCode ?? (error instanceof CodexAppServerRuntimeErrorV1 ? error.safeCode : "app_server_protocol_invalid");
-      observer?.disconnect(["app_server_disconnected", "app_server_cancelled", "app_server_deadline_exceeded"].includes(safeCode)
-        ? safeCode : "app_server_protocol_invalid");
+      const ambiguityCode = ["app_server_disconnected", "app_server_cancelled", "app_server_deadline_exceeded", "broker_permit_expired"].includes(safeCode)
+        ? safeCode : "app_server_protocol_invalid";
+      if (observer) observer.disconnect(ambiguityCode);
+      else if (claimedTicket) { try { this.ledger.settle({ ticket: claimedTicket, outcome: "ambiguous", safeResultCode: ambiguityCode }); } catch { /* reconcile after restart */ } }
       throw new CodexAppServerRuntimeErrorV1(safeCode);
     } finally {
       clearTimeout(timer);
+      if (permitTimer) clearTimeout(permitTimer);
       options.signal?.removeEventListener("abort", onAbort);
       await this.driver.close();
     }

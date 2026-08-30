@@ -24,10 +24,6 @@
   </dict>
   <key>WorkingDirectory</key>
   <string>{{CONTROL_ROOM_CODEX_EXECUTOR_WORK_ROOT}}</string>
-  <key>StandardOutPath</key>
-  <string>{{CONTROL_ROOM_CODEX_EXECUTOR_LOG_ROOT}}/executor.stdout.log</string>
-  <key>StandardErrorPath</key>
-  <string>{{CONTROL_ROOM_CODEX_EXECUTOR_LOG_ROOT}}/executor.stderr.log</string>
   <key>ThrottleInterval</key>
   <integer>5</integer>
   <key>ProcessType</key>

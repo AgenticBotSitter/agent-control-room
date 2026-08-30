@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import type { BottleneckProjectionV1 } from "@/src/operator-surfaces/v1";
+import type { BottleneckProjectionV1 } from "@/src/operator-surfaces/v1/types";
 
 /** Renders read-only capacity pressure evidence; it does not offer a release, reservation, or dispatch control. */
 export function BottleneckList(props: { bottlenecks: readonly BottleneckProjectionV1[] }): JSX.Element {
