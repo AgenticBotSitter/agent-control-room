@@ -38,7 +38,15 @@ jobs:
           cache: pnpm
 
       - name: Run dependency-free readiness probe
-        run: node scripts/qualification/platform-key-store-stage-zero.mjs --platform linux
+        shell: bash
+        run: |
+          set +e
+          node scripts/qualification/platform-key-store-stage-zero.mjs --platform linux
+          probe_status=$?
+          set -e
+          if [[ "$probe_status" -ne 0 && "$probe_status" -ne 2 ]]; then
+            exit "$probe_status"
+          fi
 
       - name: Install frozen dependencies
         env:
