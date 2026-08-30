@@ -96,6 +96,16 @@ remain evidence. Different reviewers then examined exact first-remediation commi
 `8344dd698bc8bc2786b611fdb246e9e5aca3dc4e`: durability accepted all four `DR` repairs in unchanged report SHA-256
 `392af82a4462c6cccc8ea2098b248962b95a1a49331b0ae5aa4f69edb7600e6a`, while security accepted `SAR-002` and rejected
 `SAR-001` in unchanged report SHA-256 `14405beb724bf29f08f6ed4747d247f88ab19efbf6d3763e38d20481f5aef6dc`
-after reproducing arbitrary callback execution through a nested simulation-store alias. The second remediation closes that
-complete dependency-graph seam and requires a new different independent security review of the exact committed snapshot.
+after reproducing arbitrary callback execution through a nested simulation-store alias. The second remediation closed that
+outer dependency-graph seam, but a fresh reviewer rejected exact commit
+`033b9ef81439f30ed88dc9727ffe32e9f32e6e69` after reproducing arbitrary callbacks through generic database and
+checkpoint receivers. Its unchanged report has SHA-256
+`b2812a4cba936eba688343e3e21d52fe92a1e3977193e291882ce48f6cfb48eb`.
+
+The third remediation gives repository simulation its own module-private PGlite factory and exact client registry; generic
+PGlite, inherited, duck, and networked PostgreSQL clients cannot enter the no-relay service graph. Every frontier SQLite
+store accepts checkpoint operations only from the exact registered in-memory reference implementation and invokes
+captured base methods over ECMAScript-private state. Accessor, Proxy, subclass, delegate-mutation, and network-client
+probes reject before canonical/no-relay mutation with zero hostile behavior or fake contact. A new different independent
+security review of the exact committed third remediation remains mandatory.
 Passing repository tests is necessary but cannot make the phase accepted or authorize production activation.

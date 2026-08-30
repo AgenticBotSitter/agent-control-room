@@ -1,4 +1,4 @@
-import { bindReadyFrontierCanonicalOperationsV1, type CanonicalStore,
+import { bindReadyFrontierCanonicalOperationsV1, bindReadyFrontierRepositoryCanonicalOperationsV1, type CanonicalStore,
   type ReadyFrontierCanonicalOperationsV1 } from "../../persistence/canonical-store";
 import { exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
 import { readyFrontierMaterializationRequestSchemaV1 } from "./automation-schemas";
@@ -13,6 +13,7 @@ import { bindReadyFrontierStandingPolicyGuardV1, type ReadyFrontierBoundStanding
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never { throw new ReadyFrontierContractErrorV1(code); }
 
 const materializationServices = new WeakSet<object>();
+const repositoryMaterializationServices = new WeakSet<object>();
 
 /** Repository-only materialization seam. It has no timer, scheduler, provider, agent, GitHub, or effect client. */
 export class ReadyFrontierMaterializationServiceV1 {
@@ -27,12 +28,15 @@ export class ReadyFrontierMaterializationServiceV1 {
     const evaluation = bindReadyFrontierSimulationEvaluationV1(evaluations);
     const withPolicy = bindReadyFrontierStandingPolicyGuardV1(policies);
     const canonical = bindReadyFrontierCanonicalOperationsV1(canonicalStore);
+    const repositoryCanonical = bindReadyFrontierRepositoryCanonicalOperationsV1(canonicalStore);
     if (!evaluationKey || evaluationKey.byteLength < 32 || !policyKey || policyKey.byteLength < 32
       || !evaluation || !withPolicy || !canonical) fail("integrity_failed");
     this.#evaluation = evaluation; this.#withPolicy = withPolicy;
     this.#createProposedWorkBundle = canonical.createProposedWorkBundle;
     this.#evaluationKey = evaluationKey.copy(); this.#policyKey = policyKey.copy();
-    materializationServices.add(this); Object.freeze(this);
+    materializationServices.add(this);
+    if (repositoryCanonical) repositoryMaterializationServices.add(this);
+    Object.freeze(this);
   }
   async materialize(value: unknown): Promise<{ receipt: ReadyFrontierMaterializationReceiptV1; replayed: boolean }> {
     const request = parseExactReadyFrontierV1(readyFrontierMaterializationRequestSchemaV1, value) as ReadyFrontierMaterializationRequestV1;
@@ -56,6 +60,7 @@ Object.freeze(ReadyFrontierMaterializationServiceV1.prototype);
 export function bindReadyFrontierMaterializationServiceV1(value: unknown):
   ((request: unknown) => Promise<{ receipt: ReadyFrontierMaterializationReceiptV1; replayed: boolean }>) | undefined {
   if (!value || typeof value !== "object" || isHostProxyV1(value) || !materializationServices.has(value)
+    || !repositoryMaterializationServices.has(value)
     || Object.getPrototypeOf(value) !== ReadyFrontierMaterializationServiceV1.prototype
     || !Object.isFrozen(value)) return undefined;
   const service = value as ReadyFrontierMaterializationServiceV1;

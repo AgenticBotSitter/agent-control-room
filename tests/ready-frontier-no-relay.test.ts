@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { PGlite } from "@electric-sql/pglite";
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
-import { adaptPglite } from "../src/persistence/database.ts";
+import { createPostgresClient, createRepositorySimulationDatabaseV1, type DatabaseClient,
+  type DatabaseSession } from "../src/persistence/database.ts";
 import {
   READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1,
   ReadyFrontierContractErrorV1,
@@ -34,7 +34,7 @@ import {
   readyFrontierRepositoryFixtureReadyPolicyKeyV1,
   readyFrontierRepositoryFixtureStandingPolicyKeyV1,
 } from "../src/ready-frontier/v1/index.ts";
-import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/index.ts";
+import { InMemoryRollbackCheckpointStoreV1, type RollbackCheckpointStoreV1 } from "../src/security/index.ts";
 import { observedProxy } from "./proxy-test-helper.ts";
 
 const code = (safeCode: ReadyFrontierContractErrorV1["safeCode"]) => (error: unknown) =>
@@ -47,17 +47,20 @@ function resources(maximumRecords = 1_000) {
   const standingKey = readyFrontierRepositoryFixtureStandingPolicyKeyV1();
   const readyKey = readyFrontierRepositoryFixtureReadyPolicyKeyV1();
   const runKey = readyFrontierRepositoryFixtureNoRelayKeyV1();
+  const evaluationCheckpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
+  const standingCheckpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
+  const readyCheckpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
   const evaluations = new ReadyFrontierSimulationStoreV1(join(directory, "evaluations.sqlite"), "tenant.owner",
-    evaluationKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+    evaluationKey, evaluationCheckpoints);
   const standingPolicies = new ReadyFrontierStandingPolicyStoreV1(join(directory, "standing.sqlite"),
-    "tenant.owner", "workspace.control-room", standingKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+    "tenant.owner", "workspace.control-room", standingKey, standingCheckpoints);
   const readyPolicies = new ReadyFrontierReadyPolicyStoreV1(join(directory, "ready.sqlite"),
-    "tenant.owner", "workspace.control-room", readyKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+    "tenant.owner", "workspace.control-room", readyKey, readyCheckpoints);
   const runCheckpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
   const runs = new ReadyFrontierNoRelayStoreV1(join(directory, "runs.sqlite"), "tenant.owner",
     "workspace.control-room", runKey, runCheckpoints, maximumRecords);
   return { directory, evaluationKey, standingKey, readyKey, runKey, evaluations, standingPolicies,
-    readyPolicies, runCheckpoints, runs };
+    readyPolicies, evaluationCheckpoints, standingCheckpoints, readyCheckpoints, runCheckpoints, runs };
 }
 function close(resource: ReturnType<typeof resources>) {
   try { resource.evaluations.closeDatabase(); } catch { /* closed */ }
@@ -68,7 +71,7 @@ function close(resource: ReturnType<typeof resources>) {
   rmSync(resource.directory, { recursive: true, force: true });
 }
 async function database() {
-  const db = new PGlite();
+  const db = await createRepositorySimulationDatabaseV1({ testOnly: true });
   for (const file of readdirSync(resolve("db/migrations")).filter((name) => name.endsWith(".sql")).sort()) {
     await db.exec(readFileSync(resolve("db/migrations", file), "utf8"));
   }
@@ -96,7 +99,7 @@ function finish(value: ReturnType<typeof setup>) { value.coordinator.close(); va
 test("CR11B-AUTO-040 runs materialization, ready promotion, fake handoff, and acknowledgement once without relay", async () => {
   const resource = resources(), db = await database();
   try {
-    const value = setup(resource, new CanonicalStore(adaptPglite(db)));
+    const value = setup(resource, new CanonicalStore(db.client));
     const first = await value.coordinator.run(value.request), replay = await value.coordinator.run(value.request);
     assert.equal(first.run.state, "acknowledged_repository_simulation"); assert.equal(first.runReplayed, false);
     assert.equal(first.materializationReplayed, false); assert.equal(first.promotionReplayed, false);
@@ -127,7 +130,7 @@ test("CR11B-AUTO-040 thrown and malformed fake delivery become terminal ambiguit
     const resource = resources(), db = await database();
     try {
       const fake = new ReadyFrontierInMemoryFakeDeliveryV1(mode, "2026-08-30T18:04:06.000Z"),
-        value = setup(resource, new CanonicalStore(adaptPglite(db)), fake);
+        value = setup(resource, new CanonicalStore(db.client), fake);
       const first = await value.coordinator.run(value.request), replay = await value.coordinator.run(value.request);
       assert.equal(first.run.state, "terminal_ambiguous"); assert.equal(replay.run.state, "terminal_ambiguous");
       assert.equal(replay.runReplayed, true); assert.equal(fake.deliveryCount(), 1);
@@ -146,7 +149,7 @@ test("CR11B-AUTO-040 expiry after promotion records no fake delivery and remains
   const resource = resources(), db = await database();
   try {
     const fake = new ReadyFrontierInMemoryFakeDeliveryV1("acknowledge", "2026-08-30T18:08:00.000Z"),
-      value = setup(resource, new CanonicalStore(adaptPglite(db)), fake, "2026-08-30T18:08:00.000Z");
+      value = setup(resource, new CanonicalStore(db.client), fake, "2026-08-30T18:08:00.000Z");
     const result = await value.coordinator.run(value.request);
     assert.equal(result.run.state, "expired_before_delivery"); assert.equal(fake.deliveryCount(), 0);
     const projection = value.coordinator.projection("tenant.owner");
@@ -159,7 +162,7 @@ test("CR11B-AUTO-040 expiry after promotion records no fake delivery and remains
 test("CR11B-AUTO-040 reserves terminal ledger capacity before any second canonical mutation", async () => {
   const resource = resources(3), db = await database();
   try {
-    const value = setup(resource, new CanonicalStore(adaptPglite(db)));
+    const value = setup(resource, new CanonicalStore(db.client));
     const first = await value.coordinator.run(value.request);
     assert.equal(first.run.state, "acknowledged_repository_simulation");
     const second = buildReadyFrontierNoRelayRequestFixtureV1(value.evaluation, value.standing, value.ready, 1);
@@ -177,7 +180,7 @@ test("CR11B-AUTO-040 acknowledgements outside the started delivery window become
     const resource = resources(), db = await database();
     try {
       const fake = new ReadyFrontierInMemoryFakeDeliveryV1("acknowledge", acknowledgedAt),
-        value = setup(resource, new CanonicalStore(adaptPglite(db)), fake);
+        value = setup(resource, new CanonicalStore(db.client), fake);
       const first = await value.coordinator.run(value.request), replay = await value.coordinator.run(value.request);
       assert.equal(first.run.state, "terminal_ambiguous"); assert.equal(replay.run.runDigest, first.run.runDigest);
       assert.equal(replay.runReplayed, true); assert.equal(fake.deliveryCount(), 1); finish(value);
@@ -188,7 +191,7 @@ test("CR11B-AUTO-040 acknowledgements outside the started delivery window become
 test("CR11B-AUTO-040 invalid preflight delivery time fails before canonical mutation or fake contact", async () => {
   const resource = resources(), db = await database();
   try {
-    const value = setup(resource, new CanonicalStore(adaptPglite(db)), undefined,
+    const value = setup(resource, new CanonicalStore(db.client), undefined,
       "2026-08-30T18:03:59.999Z");
     await assert.rejects(() => value.coordinator.run(value.request), code("replay_drift"));
     assert.equal(value.fake.deliveryCount(), 0); assert.equal(resource.runs.listCurrent().length, 0);
@@ -203,7 +206,7 @@ test("CR11B-AUTO-040 restart turns an unsettled marker into terminal ambiguity w
   const resource = resources(), db = await database();
   try {
     const interrupting = new ReadyFrontierInMemoryFakeDeliveryV1("interrupt_after_marker", "2026-08-30T18:04:06.000Z"),
-      value = setup(resource, new CanonicalStore(adaptPglite(db)), interrupting);
+      value = setup(resource, new CanonicalStore(db.client), interrupting);
     await assert.rejects(() => value.coordinator.run(value.request));
     assert.equal(interrupting.deliveryCount(), 1); value.coordinator.close();
     const restartFake = new ReadyFrontierInMemoryFakeDeliveryV1("acknowledge", "2026-08-30T18:04:06.000Z"),
@@ -220,7 +223,7 @@ test("CR11B-AUTO-040 durable ledger detects request drift, row tampering, and co
     backup = join(resource.directory, "runs-backup.sqlite");
   try {
     copyFileSync(path, backup); chmodSync(backup, 0o600);
-    const value = setup(resource, new CanonicalStore(adaptPglite(db))), result = await value.coordinator.run(value.request);
+    const value = setup(resource, new CanonicalStore(db.client)), result = await value.coordinator.run(value.request);
     const changed = clone(value.request); changed.deliveryDeadline = "2026-08-30T18:07:59.000Z";
     await assert.rejects(() => value.coordinator.run(changed), code("replay_drift"));
     finish(value); resource.runs.closeDatabase();
@@ -244,7 +247,7 @@ test("CR11B-AUTO-040 durable ledger detects request drift, row tampering, and co
 test("CR11B-AUTO-040 exact durable restart succeeds and direct store mutation is capability denied", async () => {
   const resource = resources(), db = await database(), path = join(resource.directory, "runs.sqlite");
   try {
-    const value = setup(resource, new CanonicalStore(adaptPglite(db))), result = await value.coordinator.run(value.request);
+    const value = setup(resource, new CanonicalStore(db.client)), result = await value.coordinator.run(value.request);
     assert.throws(() => resource.runs.complete(undefined, result.run.runId, result.run.requestDigest, {
       state: "acknowledged_repository_simulation", updatedAt: "2026-08-30T18:04:07.000Z",
       acknowledgementDigest: result.run.acknowledgementDigest ?? undefined,
@@ -276,7 +279,7 @@ test("CR11B-AUTO-040 exact durable restart succeeds and direct store mutation is
 test("CR11B-AUTO-040 activation packet is authenticated, complete, blocked, and cannot activate itself", async () => {
   const resource = resources(), db = await database();
   try {
-    const value = setup(resource, new CanonicalStore(adaptPglite(db))), result = await value.coordinator.run(value.request);
+    const value = setup(resource, new CanonicalStore(db.client)), result = await value.coordinator.run(value.request);
     const packetKey = readyFrontierRepositoryFixtureActivationPacketKeyV1();
     try {
       const packet = buildReadyFrontierActivationPacketV1({ packetId: "frontier.activation-packet.0001",
@@ -308,7 +311,7 @@ test("CR11B-AUTO-040 activation packet is authenticated, complete, blocked, and 
 test("CR11B-AUTO-040 exact boundaries reject accessors and Proxies without executing traps", async () => {
   const resource = resources(), db = await database();
   try {
-    const value = setup(resource, new CanonicalStore(adaptPglite(db)));
+    const value = setup(resource, new CanonicalStore(db.client));
     let accessed = 0; const hostile = clone(value.request) as unknown as Record<string, unknown>;
     Object.defineProperty(hostile, "runId", { enumerable: true, get: () => { accessed += 1; return value.request.runId; } });
     await assert.rejects(() => value.coordinator.run(hostile), code("invalid_input")); assert.equal(accessed, 0);
@@ -321,7 +324,7 @@ test("CR11B-AUTO-040 exact boundaries reject accessors and Proxies without execu
 test("CR11B-AUTO-040 coordinator accepts only the registered exact fake and an exact host key", async () => {
   const resource = resources(), db = await database();
   try {
-    const value = setup(resource, new CanonicalStore(adaptPglite(db)));
+    const value = setup(resource, new CanonicalStore(db.client));
     class SubclassedFake extends ReadyFrontierInMemoryFakeDeliveryV1 {}
     const subclassed = new SubclassedFake("acknowledge", "2026-08-30T18:04:06.000Z");
     assert.throws(() => new ReadyFrontierNoRelayCoordinatorV1(value.materializer, value.promoter,
@@ -359,7 +362,7 @@ test("CR11B-AUTO-040 coordinator accepts only the registered exact fake and an e
 test("CR11B-AUTO-040 freezes every nested collaborator before a hostile alias can enter the run", async () => {
   const resource = resources(), db = await database();
   try {
-    const value = setup(resource, new CanonicalStore(adaptPglite(db)));
+    const value = setup(resource, new CanonicalStore(db.client));
     let callbacks = 0;
     const callback = () => { callbacks += 1; return undefined; };
     const targets: Array<{ target: object; method: string }> = [
@@ -393,7 +396,7 @@ test("CR11B-AUTO-040 nested collaborator Proxies and subclasses are rejected wit
   const resource = resources(), db = await database();
   const extra: Array<{ closeDatabase(): void }> = [];
   try {
-    const canonical = new CanonicalStore(adaptPglite(db));
+    const canonical = new CanonicalStore(db.client);
     const probes = [observedProxy(resource.evaluations, "throwing"), observedProxy(resource.standingPolicies, "throwing"),
       observedProxy(resource.readyPolicies, "throwing"), observedProxy(canonical, "throwing"),
       observedProxy(new ReadyFrontierFixedRepositoryClockV1("2026-08-30T18:04:00.000Z"), "throwing")];
@@ -422,7 +425,7 @@ test("CR11B-AUTO-040 nested collaborator Proxies and subclasses are rejected wit
       "workspace.control-room", resource.standingKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true })); extra.push(standing);
     const ready = new ReadySubclass(join(resource.directory, "sub-ready.sqlite"), "tenant.owner",
       "workspace.control-room", resource.readyKey, new InMemoryRollbackCheckpointStoreV1({ testOnly: true })); extra.push(ready);
-    const subclassedCanonical = new CanonicalSubclass(adaptPglite(db));
+    const subclassedCanonical = new CanonicalSubclass(db.client);
     assert.throws(() => new ReadyFrontierMaterializationServiceV1(simulation, resource.standingPolicies,
       canonical, resource.evaluationKey, resource.standingKey), code("integrity_failed"));
     assert.throws(() => new ReadyFrontierMaterializationServiceV1(resource.evaluations, standing,
@@ -439,6 +442,127 @@ test("CR11B-AUTO-040 nested collaborator Proxies and subclasses are rejected wit
     for (const store of extra) try { store.closeDatabase(); } catch { /* closed */ }
     await db.close(); close(resource);
   }
+});
+
+test("CR11B-AUTO-040 rejects mutable and network-capable canonical database clients before any run behavior", async () => {
+  const resource = resources(), db = await database();
+  const networked = createPostgresClient("postgres://127.0.0.1:1/control_room_auto_040_must_not_connect");
+  try {
+    let callbacks = 0, accessorGets = 0, delegate: DatabaseClient = db.client;
+    const duck: DatabaseClient = {
+      query<T = Record<string, unknown>>(statement: string, params: unknown[] = []) {
+        return delegate.query<T>(statement, params);
+      },
+      transaction<T>(callback: (session: DatabaseSession) => Promise<T>) { return delegate.transaction(callback); },
+      transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void) {
+        return delegate.transactionWithPreCommitCheck(callback, preCommitCheck);
+      },
+    };
+    const canonical = new CanonicalStore(duck), trusted = db.client;
+    const accessor = Object.create(null) as Record<string, unknown>;
+    for (const name of ["query", "transaction", "transactionWithPreCommitCheck"]) Object.defineProperty(accessor, name, {
+      enumerable: true, get() { accessorGets += 1; return () => { callbacks += 1; }; },
+    });
+    const proxy = observedProxy(db.client, "throwing");
+    assert.throws(() => new CanonicalStore(accessor as unknown as DatabaseClient), /Invalid canonical database client/);
+    assert.throws(() => new CanonicalStore(proxy.value as DatabaseClient), /Invalid canonical database client/);
+    assert.equal(accessorGets, 0); assert.equal(proxy.trapCount(), 0);
+    delegate = {
+      query<T = Record<string, unknown>>(statement: string, params: unknown[] = []) {
+        callbacks += 1; return trusted.query<T>(statement, params);
+      },
+      transaction<T>(callback: (session: DatabaseSession) => Promise<T>) {
+        callbacks += 1; return trusted.transaction(callback);
+      },
+      transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void) {
+        callbacks += 1; return trusted.transactionWithPreCommitCheck(callback, preCommitCheck);
+      },
+    };
+    const fake = new ReadyFrontierInMemoryFakeDeliveryV1("acknowledge", "2026-08-30T18:04:06.000Z");
+    assert.throws(() => setup(resource, canonical, fake), code("policy_denied"));
+    assert.equal(callbacks, 0); assert.equal(fake.deliveryCount(), 0);
+
+    const inheritedClient = Object.create(db.client) as DatabaseClient;
+    const inheritedFake = new ReadyFrontierInMemoryFakeDeliveryV1("acknowledge", "2026-08-30T18:04:06.000Z");
+    assert.throws(() => setup(resource, new CanonicalStore(inheritedClient), inheritedFake), code("policy_denied"));
+    assert.equal(inheritedFake.deliveryCount(), 0);
+
+    const networkFake = new ReadyFrontierInMemoryFakeDeliveryV1("acknowledge", "2026-08-30T18:04:06.000Z");
+    assert.throws(() => setup(resource, new CanonicalStore(networked.client), networkFake), code("policy_denied"));
+    assert.equal(networkFake.deliveryCount(), 0);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs)::text jobs,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_attempts)::text attempts,
+      (SELECT count(*) FROM control_leases)::text leases`);
+    assert.deepEqual(counts.rows[0], { jobs: "0", handoffs: "0", attempts: "0", leases: "0" });
+  } finally { await networked.close(); await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-040 checkpoint ports require exact private state and reject ducks, accessors, Proxies, and subclasses", () => {
+  const directory = mkdtempSync(join(tmpdir(), "cr11b-auto-040-checkpoint-boundary-")); chmodSync(directory, 0o700);
+  const evaluationKey = readyFrontierRepositoryFixtureEvaluationKeyV1();
+  const standingKey = readyFrontierRepositoryFixtureStandingPolicyKeyV1();
+  const readyKey = readyFrontierRepositoryFixtureReadyPolicyKeyV1();
+  const runKey = readyFrontierRepositoryFixtureNoRelayKeyV1();
+  let callbacks = 0, accessorGets = 0;
+  const duck: RollbackCheckpointStoreV1 = {
+    read() { callbacks += 1; return undefined; },
+    initialize() { callbacks += 1; },
+    advance() { callbacks += 1; },
+  };
+  const accessor = Object.create(null) as Record<string, unknown>;
+  for (const name of ["read", "initialize", "advance"]) Object.defineProperty(accessor, name, {
+    enumerable: true, get() { accessorGets += 1; return () => { callbacks += 1; }; },
+  });
+  const proxy = observedProxy(duck, "throwing");
+  class CheckpointSubclass extends InMemoryRollbackCheckpointStoreV1 {}
+  const subclass = new CheckpointSubclass({ testOnly: true });
+  const attempts = (checkpoint: unknown, suffix: string) => [
+    () => new ReadyFrontierSimulationStoreV1(join(directory, `${suffix}-evaluation.sqlite`), "tenant.owner",
+      evaluationKey, checkpoint as RollbackCheckpointStoreV1),
+    () => new ReadyFrontierStandingPolicyStoreV1(join(directory, `${suffix}-standing.sqlite`), "tenant.owner",
+      "workspace.control-room", standingKey, checkpoint as RollbackCheckpointStoreV1),
+    () => new ReadyFrontierReadyPolicyStoreV1(join(directory, `${suffix}-ready.sqlite`), "tenant.owner",
+      "workspace.control-room", readyKey, checkpoint as RollbackCheckpointStoreV1),
+    () => new ReadyFrontierNoRelayStoreV1(join(directory, `${suffix}-runs.sqlite`), "tenant.owner",
+      "workspace.control-room", runKey, checkpoint as RollbackCheckpointStoreV1),
+  ];
+  try {
+    for (const [checkpoint, suffix] of [[duck, "duck"], [accessor, "accessor"], [proxy.value, "proxy"],
+      [subclass, "subclass"]] as const) {
+      for (const attempt of attempts(checkpoint, suffix)) assert.throws(attempt, code("integrity_failed"));
+    }
+    Object.setPrototypeOf(subclass, InMemoryRollbackCheckpointStoreV1.prototype);
+    for (const attempt of attempts(subclass, "subclass-spoof")) assert.throws(attempt, code("integrity_failed"));
+    assert.equal(callbacks, 0); assert.equal(accessorGets, 0); assert.equal(proxy.trapCount(), 0);
+  } finally {
+    evaluationKey.fill(0); standingKey.fill(0); readyKey.fill(0); runKey.fill(0);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CR11B-AUTO-040 captured exact checkpoint and repository database operations ignore later aliases", async () => {
+  const resource = resources(), db = await database();
+  try {
+    let callbacks = 0;
+    for (const checkpoint of [resource.evaluationCheckpoints, resource.standingCheckpoints,
+      resource.readyCheckpoints, resource.runCheckpoints]) {
+      assert.equal(Reflect.set(checkpoint, "delegate", () => { callbacks += 1; }), true);
+      assert.equal(Reflect.set(checkpoint, "read", () => { callbacks += 1; return undefined; }), true);
+      assert.equal(Reflect.set(checkpoint, "initialize", () => { callbacks += 1; }), true);
+      assert.equal(Reflect.set(checkpoint, "advance", () => { callbacks += 1; }), true);
+    }
+    assert.equal(Object.isFrozen(db.client), true);
+    assert.equal(Object.hasOwn(db, "raw"), false);
+    assert.equal(Reflect.set(db.client, "query", () => { callbacks += 1; }), false);
+    assert.equal(Reflect.deleteProperty(db.client, "transaction"), false);
+    assert.throws(() => Object.setPrototypeOf(db.client, { query: () => { callbacks += 1; } }));
+    const value = setup(resource, new CanonicalStore(db.client));
+    const result = await value.coordinator.run(value.request);
+    assert.equal(result.run.state, "acknowledged_repository_simulation");
+    assert.equal(value.fake.deliveryCount(), 1); assert.equal(callbacks, 0); finish(value);
+  } finally { await db.close(); close(resource); }
 });
 
 test("CR11B-AUTO-040 honest server projection claims no run and exposes no activation authority", () => {

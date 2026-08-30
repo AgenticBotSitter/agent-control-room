@@ -3,7 +3,7 @@ import { closeSync, lstatSync, openSync, statSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { assertPrivateSqliteSchemaV1 } from "../../harness/codex-v1/private-sqlite-schema";
-import { canonicalJson, hmacSha256Tag, ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1,
+import { bindInMemoryRollbackCheckpointStoreV1, canonicalJson, hmacSha256Tag, ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1,
   sha256Digest, type RollbackCheckpointStoreV1, type RollbackCheckpointV1 } from "../../security";
 import { exactHostDataSnapshotV1, exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
 import { ReadyFrontierContractErrorV1 } from "./errors";
@@ -96,10 +96,12 @@ export class ReadyFrontierNoRelayStoreV1 {
     const key = exactHostUint8ArrayV1(keyValue, 128);
     if (!key || key.byteLength < 32 || !Number.isSafeInteger(maximumRecords) || maximumRecords < 2
       || maximumRecords > 10_000) fail("integrity_failed");
+    const checkpoint = bindInMemoryRollbackCheckpointStoreV1(checkpointStore);
+    if (!checkpoint) fail("integrity_failed");
     this.#tenantId = tenantId; this.#workspaceId = workspaceId; this.#maximumRecords = maximumRecords;
-    this.#key = key.copy(); this.#checkpointRead = checkpointStore.read.bind(checkpointStore);
-    this.#checkpointInitialize = checkpointStore.initialize.bind(checkpointStore);
-    this.#checkpointAdvance = checkpointStore.advance.bind(checkpointStore);
+    this.#key = key.copy(); this.#checkpointRead = checkpoint.read;
+    this.#checkpointInitialize = checkpoint.initialize;
+    this.#checkpointAdvance = checkpoint.advance;
     prepare(path); this.#db = new DatabaseSync(path);
     try {
       const version = Number((this.#db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);

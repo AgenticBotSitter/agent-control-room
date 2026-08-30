@@ -1,4 +1,4 @@
-import { bindReadyFrontierCanonicalOperationsV1, type CanonicalStore,
+import { bindReadyFrontierCanonicalOperationsV1, bindReadyFrontierRepositoryCanonicalOperationsV1, type CanonicalStore,
   type ReadyFrontierCanonicalOperationsV1 } from "../../persistence/canonical-store";
 import { assertNoSecretMaterial } from "../../security";
 import { exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
@@ -144,6 +144,7 @@ export class ReadyFrontierPromotionServiceV1 {
     const withStandingPolicy = bindReadyFrontierStandingPolicyGuardV1(standingPolicies);
     const withReadyPolicy = bindReadyFrontierReadyPolicyGuardV1(readyPolicies);
     const canonical = bindReadyFrontierCanonicalOperationsV1(canonicalStore);
+    const repositoryCanonical = bindReadyFrontierRepositoryCanonicalOperationsV1(canonicalStore);
     const repositoryNow = bindReadyFrontierFixedRepositoryClockV1(clock);
     const genericNow = captureTrustedClockNowV1(clock);
     if (!evaluationKey || evaluationKey.byteLength < 32 || !standingPolicyKey || standingPolicyKey.byteLength < 32
@@ -154,7 +155,7 @@ export class ReadyFrontierPromotionServiceV1 {
     this.#now = repositoryNow ?? genericNow;
     this.#evaluationKey = evaluationKey.copy(); this.#standingPolicyKey = standingPolicyKey.copy();
     this.#readyPolicyKey = readyPolicyKey.copy(); promotionServices.add(this);
-    if (repositoryNow) repositoryPromotionServices.add(this); Object.freeze(this);
+    if (repositoryNow && repositoryCanonical) repositoryPromotionServices.add(this); Object.freeze(this);
   }
 
   async promote(value: unknown): Promise<{ receipt: ReadyFrontierPromotionReceiptV1; replayed: boolean }> {

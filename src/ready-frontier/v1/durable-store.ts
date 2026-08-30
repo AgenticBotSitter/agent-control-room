@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { assertPrivateSqliteSchemaV1 } from "../../harness/codex-v1/private-sqlite-schema";
 import {
   canonicalJson,
+  bindInMemoryRollbackCheckpointStoreV1,
   hmacSha256Tag,
   ROLLBACK_CHECKPOINT_SCHEMA_V1,
   rollbackCheckpointDigestV1,
@@ -110,11 +111,13 @@ export class ReadyFrontierSimulationStoreV1 {
       fail("integrity_failed");
     }
     parseExactReadyFrontierV1(readyFrontierIdSchemaV1, tenantId);
+    const checkpoint = bindInMemoryRollbackCheckpointStoreV1(checkpointStore);
+    if (!checkpoint) fail("integrity_failed");
     this.#tenantId = tenantId; this.#maximumCycles = maximumCycles;
     this.#integrityKey = key.copy();
-    this.#checkpointRead = checkpointStore.read.bind(checkpointStore);
-    this.#checkpointInitialize = checkpointStore.initialize.bind(checkpointStore);
-    this.#checkpointAdvance = checkpointStore.advance.bind(checkpointStore);
+    this.#checkpointRead = checkpoint.read;
+    this.#checkpointInitialize = checkpoint.initialize;
+    this.#checkpointAdvance = checkpoint.advance;
     preparePrivatePath(path); this.#db = new DatabaseSync(path);
     try {
       const version = (this.#db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;

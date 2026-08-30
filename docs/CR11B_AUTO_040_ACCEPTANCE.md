@@ -1,6 +1,6 @@
 # CR11B-AUTO-040 Candidate Acceptance Record
 
-Status: initial candidate rejected; first remediation received a split verdict; second remediation complete; different-agent security re-review pending
+Status: initial candidate rejected; first remediation received a split verdict; second remediation rejected; third remediation complete; different-agent security re-review pending
 
 Date: 2026-08-30
 
@@ -12,7 +12,7 @@ The candidate also produces a separately keyed, digest-bound activation packet t
 
 ## Dedicated hostile evidence
 
-Sixteen AUTO-040 cases verify:
+Nineteen AUTO-040 cases verify:
 
 - the complete end-to-end path, one fake delivery, exact terminal replay, one ready job, one reservation, one handoff, zero attempts, and zero leases;
 - thrown and malformed fake delivery becoming terminal ambiguity with no retry;
@@ -28,6 +28,11 @@ Sixteen AUTO-040 cases verify:
 - runtime-frozen evaluation, standing-policy, ready-policy, canonical, and fixed-clock collaborators whose assignment,
   deletion, `defineProperty`, and prototype-replacement probes execute zero hostile callbacks and create zero canonical rows;
 - rejection of nested evaluation, policy, canonical, and clock Proxies and subclasses without executing traps;
+- rejection of mutable duck, inherited, and network-capable database clients before canonical mutation, fake contact, or
+  network use, including accessor and Proxy inputs with zero getter/trap execution;
+- exact checkpoint provenance across all four SQLite stores, with duck, accessor, Proxy, and subclass ports rejected
+  before file or callback behavior;
+- captured exact database and checkpoint operations ignoring later receiver aliases while the real path still completes;
 - an honest empty server projection with zero activation authority; and
 - structural absence of real effect clients.
 
@@ -39,9 +44,9 @@ The existing UI gate separately proves that the portfolio and Project Workspace 
 
 ## Repository gate
 
-- dedicated AUTO-040 gate: 16/16 passed;
-- combined CR11B gate: 83/83 passed;
-- registered pretest lifecycle: 665/665 passed;
+- dedicated AUTO-040 gate: 19/19 passed;
+- combined CR11B gate: 86/86 passed;
+- registered pretest lifecycle: 668/668 passed;
 - core suite: 414/416 passed with two intentional platform skips and zero failures;
 - public post-test suite: 52/52 passed;
 - type checking and full lint passed;
@@ -84,9 +89,24 @@ additionally requires the exact registered fixed repository clock; a generic AUT
 coordinator. The PGlite adapter captures and freezes its database operations so later raw-adapter replacement cannot enter
 the canonical call chain. Earlier mutable-port tests now assert and exercise the stronger frozen canonical boundary.
 
+A fresh reviewer then rejected exact second-remediation commit
+`033b9ef81439f30ed88dc9727ffe32e9f32e6e69`. The unchanged report has SHA-256
+`b2812a4cba936eba688343e3e21d52fe92a1e3977193e291882ce48f6cfb48eb`. It proved that the outer graph still admitted
+generic caller-held database and checkpoint receivers whose captured functions could consult mutable delegate state, and
+that the networked PostgreSQL client could receive the same outer canonical brand.
+
+The third remediation separates generic persistence from repository-simulation provenance. A module-private PGlite
+factory retains the raw database receiver, freezes and privately registers its exact client, and is the only database
+source whose canonical store can enter AUTO-040. Generic PGlite adapters, inherited wrappers, arbitrary ducks, and the
+networked PostgreSQL client remain available to other contracts but cannot bind the no-relay services. All four frontier
+SQLite stores now accept checkpoint operations only from the privately registered exact in-memory implementation and call
+captured base methods over ECMAScript-private state. Descriptor-safe database inspection rejects accessors and Proxies
+without executing them. New post-construction receiver mutation and complete rejection matrices produce zero hostile
+callbacks, zero traps, zero fake contacts, and zero canonical rows on rejected paths.
+
 This record is not final acceptance. The accepted durability verdict remains bounded to the first-remediation commit. A
-new different independent security reviewer must review the exact committed second remediation, reproduce the remaining
-`SAR-001` nested-alias attack and every earlier `SAR` path, attack the fixed-fake/collaborator/capability boundary,
+new different independent security reviewer must review the exact committed third remediation, reproduce the
+`AUTO040-SSRR-001` receiver-delegate attack and every earlier `SAR` path, attack the fixed-fake/collaborator/capability boundary,
 durable marker/restart semantics,
 clock and deadline rules, replay and rollback behavior, projection sanitation, activation packet completeness, and absence
 of operational authority. Any finding keeps AUTO-040 open and requires another different-agent re-review.

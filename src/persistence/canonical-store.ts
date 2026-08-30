@@ -24,7 +24,7 @@ import {
   type TransitionTable,
   type WorkflowRecord,
 } from "../domain/v1";
-import type { DatabaseClient, DatabaseSession } from "./database";
+import { isRepositorySimulationDatabaseClientV1, type DatabaseClient, type DatabaseSession } from "./database";
 import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDigest, sha256Digest } from "../security";
 import { isHostProxyV1 } from "../security/host-value";
 import { actionInboxItemSchemaV1, type ActionInboxItemV1 } from "../operator-surfaces/v1";
@@ -194,6 +194,22 @@ function extras(entity: DomainEntity): Array<[string, unknown]> {
 }
 
 const canonicalStores = new WeakSet<object>();
+const repositorySimulationCanonicalStores = new WeakSet<object>();
+
+function databaseMethod(value: object, name: "query" | "transaction" | "transactionWithPreCommitCheck"):
+  ((...args: never[]) => unknown) | undefined {
+  let current: object | null = value;
+  const visited = new Set<object>();
+  while (current && !visited.has(current)) {
+    if (isHostProxyV1(current)) return undefined;
+    visited.add(current);
+    const descriptor = Object.getOwnPropertyDescriptor(current, name);
+    if (descriptor) return !descriptor.get && !descriptor.set && typeof descriptor.value === "function"
+      ? descriptor.value as (...args: never[]) => unknown : undefined;
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+  return undefined;
+}
 
 export class CanonicalStore {
   readonly #session: DatabaseSession;
@@ -201,10 +217,12 @@ export class CanonicalStore {
   readonly #transactionWithPreCommitCheck: DatabaseClient["transactionWithPreCommitCheck"];
 
   constructor(db: DatabaseClient) {
-    if (!db || typeof db !== "object" || isHostProxyV1(db)
-      || typeof db.query !== "function" || typeof db.transaction !== "function"
-      || typeof db.transactionWithPreCommitCheck !== "function") throw new Error("Invalid canonical database client");
-    const query = db.query, transaction = db.transaction, transactionWithPreCommitCheck = db.transactionWithPreCommitCheck;
+    if (!db || typeof db !== "object" || isHostProxyV1(db)) throw new Error("Invalid canonical database client");
+    const query = databaseMethod(db, "query") as DatabaseClient["query"] | undefined;
+    const transaction = databaseMethod(db, "transaction") as DatabaseClient["transaction"] | undefined;
+    const transactionWithPreCommitCheck = databaseMethod(db, "transactionWithPreCommitCheck") as
+      DatabaseClient["transactionWithPreCommitCheck"] | undefined;
+    if (!query || !transaction || !transactionWithPreCommitCheck) throw new Error("Invalid canonical database client");
     this.#session = Object.freeze({
       query: <T = Record<string, unknown>>(statement: string, params?: unknown[]) => query.call(db, statement, params) as Promise<{ rows: T[] }>,
     });
@@ -212,7 +230,9 @@ export class CanonicalStore {
       transaction.call(db, callback) as Promise<T>) as DatabaseClient["transaction"];
     this.#transactionWithPreCommitCheck = (<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void) =>
       transactionWithPreCommitCheck.call(db, callback, preCommitCheck) as Promise<T>) as DatabaseClient["transactionWithPreCommitCheck"];
-    canonicalStores.add(this); Object.freeze(this);
+    canonicalStores.add(this);
+    if (isRepositorySimulationDatabaseClientV1(db)) repositorySimulationCanonicalStores.add(this);
+    Object.freeze(this);
   }
 
   async create(entity: DomainEntity): Promise<void> {
@@ -1271,4 +1291,12 @@ export function bindReadyFrontierCanonicalOperationsV1(value: unknown): ReadyFro
     promoteWithInternalHandoff: (operationAuthorization: unknown) =>
       promoteReadyFrontierWithInternalHandoff.call(store, operationAuthorization),
   });
+}
+
+/** Repository-simulation-only variant; generic and networked clients never receive this brand. */
+export function bindReadyFrontierRepositoryCanonicalOperationsV1(value: unknown):
+  ReadyFrontierCanonicalOperationsV1 | undefined {
+  if (!value || typeof value !== "object" || isHostProxyV1(value)
+    || !repositorySimulationCanonicalStores.has(value)) return undefined;
+  return bindReadyFrontierCanonicalOperationsV1(value);
 }

@@ -1327,3 +1327,37 @@ multi-process PostgreSQL convergence, or a qualified real consumer.
 alias attack and probe assignment, deletion, `defineProperty`, Proxy, subclass, own-method, and prototype replacement for
 evaluation, both policy stores, canonical persistence, and both clock uses on the exact second-remediation commit. Any
 remaining callback or alternate consumer/effect seam keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-108 — AUTO-040 repository provenance is exact; structural persistence ports are not authority
+
+**Decision:** The second AUTO-040 remediation remains rejected. Its third remediation separates generic persistence from
+repository-simulation provenance. Only a client created and privately registered by the module-owned test-only PGlite
+factory can mark a `CanonicalStore` as eligible for the no-relay composition; generic PGlite adapters, inherited wrappers,
+ordinary ducks, and the networked PostgreSQL client remain usable elsewhere but cannot bind the AUTO-040 materialization or
+promotion services. The raw PGlite receiver remains inside the factory closure. Each of the four frontier SQLite stores
+accepts rollback-checkpoint operations only through a binder for the exact registered in-memory reference implementation,
+and that binder invokes captured base methods over ECMAScript-private state. Canonical database-method discovery uses data
+descriptors and rejects accessor or Proxy behavior without invoking it.
+
+**Why:** The second-remediation reviewer changed only caller-owned delegate state beneath already captured database and
+checkpoint method identities. Those methods still consulted their mutable receivers, executed arbitrary callbacks, and
+then allowed an acknowledged repository simulation. The same structural canonical boundary admitted a client backed by
+networked PostgreSQL. Freezing and branding outer objects therefore did not prove the behavior or provenance of their
+nested ports. Private factory state and captured exact checkpoint implementations remove the receiver-alias path rather
+than adding another surface assertion.
+
+**Alternatives rejected:** Treat captured function identity as captured behavior; allow any object satisfying
+`DatabaseClient` or `RollbackCheckpointStoreV1` into AUTO-040; brand every `adaptPglite` result; identify PGlite by a
+caller-visible constructor check while retaining the raw receiver; freeze a caller-owned receiver without controlling its
+closure state; remove generic PostgreSQL support from unrelated contracts; alter the negative review report.
+
+**Trade-off:** AUTO-040 now uses a test-only module-private PGlite factory and the in-memory checkpoint reference, so it
+still does not prove hosted PostgreSQL, durable protected checkpoint custody, multi-process convergence, or production
+runtime isolation. Those are explicit later gates. The exact factory is loaded only when the repository simulation calls
+it and is not bundled into the production application.
+
+**Reevaluate:** A fresh reviewer different from every implementation and prior review agent must attack the exact
+third-remediation commit. It must reproduce `AUTO040-SSRR-001`, test mutable receiver and closure state, ordinary ducks,
+network-capable clients, accessors, Proxies, subclasses, and inherited wrappers across the database and all four checkpoint
+seams, and repeat every earlier `SAR` path. Any callback, network-capable alternate path, false acknowledgement, or other
+consumer/effect seam keeps AUTO-040 open. Production activation remains separately gated.
