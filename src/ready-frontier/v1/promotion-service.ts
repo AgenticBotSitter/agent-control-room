@@ -1,5 +1,5 @@
 import type { CanonicalStore } from "../../persistence/canonical-store";
-import { assertNoSecretMaterial, sha256Digest } from "../../security";
+import { assertNoSecretMaterial } from "../../security";
 import { exactHostUint8ArrayV1 } from "../../security/host-value";
 import type { ReadyFrontierSimulationStoreV1 } from "./durable-store";
 import { ReadyFrontierContractErrorV1 } from "./errors";
@@ -14,7 +14,6 @@ import type { ReadyFrontierReadyPolicyStoreV1 } from "./ready-policy-store";
 import type { ReadyFrontierStandingPolicyStoreV1 } from "./standing-policy-store";
 
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never { throw new ReadyFrontierContractErrorV1(code); }
-function id(prefix: string, material: unknown): string { return `${prefix}:${sha256Digest(material).slice(7, 39)}`; }
 
 export interface ReadyFrontierTrustedClockV1 { now(): string; }
 
@@ -99,28 +98,7 @@ async function persistPromotion(input: { canonicalStore: CanonicalStore; receipt
     || policy.policyDigest !== receipt.readyPolicyDigest || project.resourceKey !== receipt.reservation.resourceKey
     || project.reservationUnits !== receipt.reservation.units
     || project.resourceCapacityUnits !== receipt.reservation.capacityUnits) fail("policy_denied");
-  const result = await input.canonicalStore.promoteReadyFrontierJobWithInternalHandoff({
-    tenantId: receipt.tenantId, projectId: receipt.readyJob.projectId, jobId: receipt.readyJob.id,
-    requestId: receipt.requestId, requestDigest: receipt.promotionRequestDigest, receiptDigest: receipt.receiptDigest,
-    readyJobDigest: sha256Digest(receipt.readyJob),
-    standingPolicy: { policyId: receipt.standingPolicyId, revision: receipt.standingPolicyRevision,
-      policyDigest: receipt.standingPolicyDigest },
-    readyPolicy: { policyId: receipt.readyPolicyId, revision: receipt.readyPolicyRevision,
-      policyDigest: receipt.readyPolicyDigest },
-    operationAuthorization: input.operationAuthorization,
-    expectedJobVersion: 0, expectedJobDigest: receipt.proposedJobDigest,
-    maximumActiveReadyGlobal: policy.maximumActiveReadyGlobal, maximumActiveReadyProject: project.maximumActiveReady,
-    transitionId: id("transition:frontier-ready", { receiptId: receipt.receiptId }),
-    transitionIdempotencyKey: `frontier-ready-${receipt.receiptDigest.slice(7)}`,
-    actor: { actorId: "service:ready-frontier-promoter", actorType: "service" }, occurredAt: receipt.promotedAt,
-    reservation: { id: receipt.reservation.reservationId, routeId: receipt.reservation.routeId,
-      resourceKey: receipt.reservation.resourceKey, units: receipt.reservation.units,
-      capacityUnits: receipt.reservation.capacityUnits, decisionDigest: receipt.reservation.decisionDigest,
-      acquiredAt: receipt.reservation.acquiredAt, expiresAt: receipt.reservation.expiresAt },
-    handoff: { id: receipt.handoff.handoffId, payloadDigest: sha256Digest(receipt.handoff),
-      availableAt: receipt.handoff.createdAt, expiresAt: receipt.handoff.expiresAt,
-      payload: exactReadyFrontierJsonV1(receipt.handoff) as Record<string, unknown> },
-  });
+  const result = await input.canonicalStore.promoteReadyFrontierJobWithInternalHandoff(input.operationAuthorization);
   return { receipt, replayed: result.replayed };
 }
 

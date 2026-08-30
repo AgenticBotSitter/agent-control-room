@@ -92,44 +92,6 @@ export interface ProposedWorkBundleWithActionInbox extends ProposedWorkBundle {
   actionInbox: ActionInboxItemV1;
 }
 
-export interface ReadyFrontierCanonicalPromotionInput {
-  tenantId: string;
-  projectId: string;
-  jobId: string;
-  requestId: string;
-  requestDigest: string;
-  receiptDigest: string;
-  readyJobDigest: string;
-  standingPolicy: { policyId: string; revision: number; policyDigest: string };
-  readyPolicy: { policyId: string; revision: number; policyDigest: string };
-  operationAuthorization: unknown;
-  expectedJobVersion: number;
-  expectedJobDigest: string;
-  maximumActiveReadyGlobal: number;
-  maximumActiveReadyProject: number;
-  transitionId: string;
-  transitionIdempotencyKey: string;
-  actor: ActorRef;
-  occurredAt: string;
-  reservation: {
-    id: string;
-    routeId: string;
-    resourceKey: string;
-    units: number;
-    capacityUnits: number;
-    decisionDigest: string;
-    acquiredAt: string;
-    expiresAt: string;
-  };
-  handoff: {
-    id: string;
-    payloadDigest: string;
-    availableAt: string;
-    expiresAt: string;
-    payload: Record<string, unknown>;
-  };
-}
-
 export interface ClaimJobInput {
   tenantId: string;
   jobId: string;
@@ -470,8 +432,8 @@ export class CanonicalStore {
   }
 
   /** Internal AUTO-030 persistence port. Callers must enter through the policy-guarded promotion service. */
-  async promoteReadyFrontierJobWithInternalHandoff(input: ReadyFrontierCanonicalPromotionInput): Promise<{ job: JobRecord; replayed: boolean }> {
-    const authorization = acquireReadyFrontierCanonicalPromotionAuthorizationV1(input.operationAuthorization);
+  async promoteReadyFrontierJobWithInternalHandoff(operationAuthorization: unknown): Promise<{ job: JobRecord; replayed: boolean }> {
+    const authorization = acquireReadyFrontierCanonicalPromotionAuthorizationV1(operationAuthorization);
     if (!authorization) throw new Error("Ready frontier promotion requires an active exact-operation authorization");
     const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]*$/;
     const digest = /^sha256:[a-f0-9]{64}$/;
@@ -486,41 +448,64 @@ export class CanonicalStore {
       const readyProject = readyPolicy.projectPolicies.find((item) => item.projectId === receipt.readyJob.projectId);
       const expectedTransitionId = `transition:frontier-ready:${sha256Digest({ receiptId: receipt.receiptId }).slice(7, 39)}`;
       const expectedTransitionKey = `frontier-ready-${receipt.receiptDigest.slice(7)}`;
+      const input = {
+        tenantId: receipt.tenantId,
+        projectId: receipt.readyJob.projectId,
+        jobId: receipt.readyJob.id,
+        requestId: receipt.requestId,
+        requestDigest: receipt.promotionRequestDigest,
+        receiptDigest: receipt.receiptDigest,
+        readyJobDigest: sha256Digest(receipt.readyJob),
+        standingPolicy: { policyId: receipt.standingPolicyId, revision: receipt.standingPolicyRevision,
+          policyDigest: receipt.standingPolicyDigest },
+        readyPolicy: { policyId: receipt.readyPolicyId, revision: receipt.readyPolicyRevision,
+          policyDigest: receipt.readyPolicyDigest },
+        expectedJobVersion: 0,
+        expectedJobDigest: receipt.proposedJobDigest,
+        maximumActiveReadyGlobal: readyPolicy.maximumActiveReadyGlobal,
+        maximumActiveReadyProject: readyProject?.maximumActiveReady ?? 0,
+        transitionId: expectedTransitionId,
+        transitionIdempotencyKey: expectedTransitionKey,
+        actor: { actorId: "service:ready-frontier-promoter", actorType: "service" } as ActorRef,
+        occurredAt: receipt.promotedAt,
+        reservation: {
+          id: receipt.reservation.reservationId,
+          routeId: receipt.reservation.routeId,
+          resourceKey: receipt.reservation.resourceKey,
+          units: receipt.reservation.units,
+          capacityUnits: receipt.reservation.capacityUnits,
+          decisionDigest: receipt.reservation.decisionDigest,
+          acquiredAt: receipt.reservation.acquiredAt,
+          expiresAt: receipt.reservation.expiresAt,
+        },
+        handoff: {
+          id: receipt.handoff.handoffId,
+          payloadDigest: sha256Digest(receipt.handoff),
+          availableAt: receipt.handoff.createdAt,
+          expiresAt: receipt.handoff.expiresAt,
+          payload: receipt.handoff as unknown as Record<string, unknown>,
+        },
+      };
       if (!standingProject || !standingProject.enabled || !readyProject || !readyProject.enabled
         || readyPolicy.parentStandingPolicyId !== standingPolicy.policyId
         || readyPolicy.parentStandingPolicyRevision !== standingPolicy.revision
         || readyPolicy.parentStandingPolicyDigest !== standingPolicy.policyDigest
-        || input.tenantId !== receipt.tenantId || input.tenantId !== standingPolicy.tenantId
-        || input.tenantId !== readyPolicy.tenantId || standingPolicy.workspaceId !== receipt.workspaceId
-        || readyPolicy.workspaceId !== receipt.workspaceId || input.projectId !== receipt.readyJob.projectId
-        || input.jobId !== receipt.readyJob.id || input.requestId !== receipt.requestId
-        || input.requestDigest !== receipt.promotionRequestDigest || input.receiptDigest !== receipt.receiptDigest
-        || input.readyJobDigest !== sha256Digest(receipt.readyJob) || input.expectedJobVersion !== 0
-        || input.expectedJobDigest !== receipt.proposedJobDigest
-        || input.standingPolicy.policyId !== standingPolicy.policyId
-        || input.standingPolicy.revision !== standingPolicy.revision
-        || input.standingPolicy.policyDigest !== standingPolicy.policyDigest
-        || input.readyPolicy.policyId !== readyPolicy.policyId || input.readyPolicy.revision !== readyPolicy.revision
-        || input.readyPolicy.policyDigest !== readyPolicy.policyDigest
-        || input.maximumActiveReadyGlobal !== readyPolicy.maximumActiveReadyGlobal
-        || input.maximumActiveReadyProject !== readyProject.maximumActiveReady
-        || input.transitionId !== expectedTransitionId || input.transitionIdempotencyKey !== expectedTransitionKey
-        || input.occurredAt !== receipt.promotedAt || input.reservation.id !== receipt.reservation.reservationId
-        || input.reservation.routeId !== receipt.reservation.routeId
+        || input.tenantId !== standingPolicy.tenantId || input.tenantId !== readyPolicy.tenantId
+        || standingPolicy.workspaceId !== receipt.workspaceId || readyPolicy.workspaceId !== receipt.workspaceId
+        || receipt.standingPolicyId !== standingPolicy.policyId
+        || receipt.standingPolicyRevision !== standingPolicy.revision
+        || receipt.standingPolicyDigest !== standingPolicy.policyDigest
+        || receipt.readyPolicyId !== readyPolicy.policyId || receipt.readyPolicyRevision !== readyPolicy.revision
+        || receipt.readyPolicyDigest !== readyPolicy.policyDigest
+        || receipt.reservation.projectId !== receipt.readyJob.projectId
+        || receipt.reservation.jobId !== receipt.readyJob.id
+        || receipt.reservation.routeId !== receipt.readyJob.authority.allowedExecutor
         || input.reservation.resourceKey !== readyProject.resourceKey
-        || input.reservation.resourceKey !== receipt.reservation.resourceKey
         || input.reservation.units !== readyProject.reservationUnits
-        || input.reservation.units !== receipt.reservation.units
         || input.reservation.capacityUnits !== readyProject.resourceCapacityUnits
-        || input.reservation.capacityUnits !== receipt.reservation.capacityUnits
-        || input.reservation.decisionDigest !== receipt.reservation.decisionDigest
-        || input.reservation.acquiredAt !== receipt.reservation.acquiredAt
-        || input.reservation.expiresAt !== receipt.reservation.expiresAt
-        || input.handoff.id !== receipt.handoff.handoffId
-        || input.handoff.payloadDigest !== sha256Digest(receipt.handoff)
-        || input.handoff.availableAt !== receipt.handoff.createdAt
-        || input.handoff.expiresAt !== receipt.handoff.expiresAt
-        || sha256Digest(input.handoff.payload) !== sha256Digest(receipt.handoff)) {
+        || receipt.handoff.tenantId !== receipt.tenantId || receipt.handoff.projectId !== receipt.readyJob.projectId
+        || receipt.handoff.jobId !== receipt.readyJob.id
+        || receipt.handoff.reservationId !== receipt.reservation.reservationId) {
         throw new Error("Ready frontier promotion authorization mismatch");
       }
       if (![input.tenantId, input.projectId, input.jobId, input.requestId, input.standingPolicy.policyId,
@@ -647,6 +632,7 @@ export class CanonicalStore {
         const current = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
         if (current.state !== "ready" || current.version !== input.expectedJobVersion + 1
           || sha256Digest(current) !== input.readyJobDigest) throw new Error("Ready frontier replay job has advanced or drifted");
+        currentAuthorizationTime(false);
         return { job: current, replayed: true };
       }
       await tx.query(`INSERT INTO control_idempotency
@@ -712,15 +698,18 @@ export class CanonicalStore {
         idempotencyKey: input.transitionIdempotencyKey, actor: input.actor, occurredAt: input.occurredAt,
         safeMetadata: { readyFrontierHandoffId: input.handoff.id, schedulerDecisionDigest: input.reservation.decisionDigest,
           handoffPayloadDigest: input.handoff.payloadDigest } }, true);
+      currentAuthorizationTime(true);
       await tx.query(`INSERT INTO control_ready_frontier_handoffs
         (id,tenant_id,request_id,project_id,job_id,reservation_id,state,payload_digest,available_at,expires_at,payload)
         VALUES($1,$2,$3,$4,$5,$6,'pending_internal_handoff',$7,$8,$9,$10::jsonb)`,
       [input.handoff.id, input.tenantId, input.requestId, input.projectId, input.jobId, input.reservation.id,
         input.handoff.payloadDigest, input.handoff.availableAt, input.handoff.expiresAt, JSON.stringify(input.handoff.payload)]);
+      currentAuthorizationTime(true);
       await tx.query(`UPDATE control_idempotency SET status='completed',result=$1::jsonb,completed_at=now()
         WHERE tenant_id=$2 AND operation_scope='ready-frontier-promotion' AND idempotency_key=$3 AND status='processing'`,
       [JSON.stringify({ receiptDigest: input.receiptDigest, jobId: input.jobId,
         reservationId: input.reservation.id, handoffId: input.handoff.id }), input.tenantId, input.requestId]);
+      currentAuthorizationTime(true);
       return { job: promoted.entity as JobRecord, replayed: false };
       });
     } finally {

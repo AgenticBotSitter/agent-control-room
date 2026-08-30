@@ -198,12 +198,9 @@ test("CR11B-AUTO-030 captured policy guards cannot mint the exact-operation cano
   const resource = resources(), db = await database();
   try {
     const canonical = new CanonicalStore(adaptPglite(db));
-    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const { evaluation, standing } = await materialize(resource, canonical);
     const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey);
     resource.readyPolicies.recordPolicy(readyPolicy);
-    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
-    const receipt = buildReadyFrontierPromotionV1(envelope, resource.evaluationKey, resource.standingKey,
-      resource.readyKey, evaluation, standing, readyPolicy);
     let standingGuard!: object, readyGuard!: object;
     await resource.standingPolicies.withCurrentPolicy(standing.policyId, standing.revision, standing.policyDigest,
       (_currentStanding, activeStandingGuard) => resource.readyPolicies.withCurrentPolicy(readyPolicy.policyId,
@@ -214,28 +211,8 @@ test("CR11B-AUTO-030 captured policy guards cannot mint the exact-operation cano
       { action: "revoke", state: "revoked", revision: 2, recordedAt: "2026-08-30T18:10:00.000Z" }, resource.readyKey);
     resource.readyPolicies.recordPolicy(revoked);
     assert.ok(standingGuard); assert.ok(readyGuard);
-    await assert.rejects(() => canonical.promoteReadyFrontierJobWithInternalHandoff({
-      tenantId: receipt.tenantId, projectId: receipt.readyJob.projectId, jobId: receipt.readyJob.id,
-      requestId: receipt.requestId, requestDigest: receipt.promotionRequestDigest, receiptDigest: receipt.receiptDigest,
-      readyJobDigest: sha256Digest(receipt.readyJob), expectedJobVersion: 0, expectedJobDigest: receipt.proposedJobDigest,
-      standingPolicy: { policyId: receipt.standingPolicyId, revision: receipt.standingPolicyRevision,
-        policyDigest: receipt.standingPolicyDigest },
-      readyPolicy: { policyId: receipt.readyPolicyId, revision: receipt.readyPolicyRevision,
-        policyDigest: receipt.readyPolicyDigest },
-      operationAuthorization: Object.freeze(Object.create(null)) as object,
-      maximumActiveReadyGlobal: readyPolicy.maximumActiveReadyGlobal,
-      maximumActiveReadyProject: readyPolicy.projectPolicies.find((item) => item.projectId === receipt.readyJob.projectId)!.maximumActiveReady,
-      transitionId: `transition:frontier-ready:${sha256Digest({ receiptId: receipt.receiptId }).slice(7, 39)}`,
-      transitionIdempotencyKey: `frontier-ready-${receipt.receiptDigest.slice(7)}`,
-      actor: { actorId: "service:ready-frontier-promoter", actorType: "service" }, occurredAt: receipt.promotedAt,
-      reservation: { id: receipt.reservation.reservationId, routeId: receipt.reservation.routeId,
-        resourceKey: receipt.reservation.resourceKey, units: receipt.reservation.units,
-        capacityUnits: receipt.reservation.capacityUnits, decisionDigest: receipt.reservation.decisionDigest,
-        acquiredAt: receipt.reservation.acquiredAt, expiresAt: receipt.reservation.expiresAt },
-      handoff: { id: receipt.handoff.handoffId, payloadDigest: sha256Digest(receipt.handoff),
-        availableAt: receipt.handoff.createdAt, expiresAt: receipt.handoff.expiresAt,
-        payload: clone(receipt.handoff) as unknown as Record<string, unknown> },
-    }), /active exact-operation authorization/);
+    await assert.rejects(() => canonical.promoteReadyFrontierJobWithInternalHandoff(
+      Object.freeze(Object.create(null)) as object), /active exact-operation authorization/);
     const counts = await db.query<Record<string, string>>(`SELECT
       (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
       (SELECT count(*) FROM control_resource_reservations)::text reservations,
@@ -244,7 +221,7 @@ test("CR11B-AUTO-030 captured policy guards cannot mint the exact-operation cano
   } finally { await db.close(); close(resource); }
 });
 
-test("CR11B-AUTO-030 exact-operation authorization rejects caller-expanded policy, resource, receipt, and handoff facts", async () => {
+test("CR11B-AUTO-030 canonical port accepts only the opaque token and derives every write fact from its hidden binding", async () => {
   const resource = resources(), db = await database();
   try {
     const canonical = new CanonicalStore(adaptPglite(db));
@@ -252,25 +229,27 @@ test("CR11B-AUTO-030 exact-operation authorization rejects caller-expanded polic
     const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey);
     resource.readyPolicies.recordPolicy(readyPolicy);
     const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
-    type PromotionInput = Parameters<CanonicalStore["promoteReadyFrontierJobWithInternalHandoff"]>[0];
     const original = canonical.promoteReadyFrontierJobWithInternalHandoff.bind(canonical);
-    const attacks: Array<(input: PromotionInput) => PromotionInput> = [
-      (input) => ({ ...input, maximumActiveReadyGlobal: input.maximumActiveReadyGlobal + 1 }),
-      (input) => ({ ...input, maximumActiveReadyProject: input.maximumActiveReadyProject + 1 }),
-      (input) => ({ ...input, reservation: { ...input.reservation, resourceKey: "resource:expanded" } }),
-      (input) => ({ ...input, reservation: { ...input.reservation,
-        units: input.reservation.units + 1, capacityUnits: input.reservation.capacityUnits + 1 } }),
-      (input) => ({ ...input, requestDigest: sha256Digest({ substituted: "request" }) }),
-      (input) => ({ ...input, receiptDigest: sha256Digest({ substituted: "receipt" }) }),
-      (input) => ({ ...input, handoff: { ...input.handoff,
-        payload: { ...input.handoff.payload, permitsClaimOrLease: true } } }),
-    ];
-    for (const attack of attacks) {
-      canonical.promoteReadyFrontierJobWithInternalHandoff = (input) => original(attack(input));
-      const service = promoter(resource, canonical);
-      await assert.rejects(() => service.promote(envelope), /authorization mismatch/);
-      service.close();
-    }
+    canonical.promoteReadyFrontierJobWithInternalHandoff = async (token) => {
+      let accessorTouches = 0, proxyTouches = 0;
+      const accessor = Object.create(null) as Record<string, unknown>;
+      Object.defineProperty(accessor, "operationAuthorization", { enumerable: true,
+        get: () => { accessorTouches += 1; return token; } });
+      await assert.rejects(() => original(accessor), /active exact-operation authorization/);
+      const proxy = new Proxy(token as object, { get: () => { proxyTouches += 1; throw new Error("proxy trap"); } });
+      await assert.rejects(() => original(proxy), /active exact-operation authorization/);
+      assert.deepEqual({ accessorTouches, proxyTouches }, { accessorTouches: 0, proxyTouches: 0 });
+      const callerControlled = { operationAuthorization: token, maximumActiveReadyGlobal: 999,
+        maximumActiveReadyProject: 999, requestDigest: sha256Digest({ substituted: "request" }),
+        receiptDigest: sha256Digest({ substituted: "receipt" }),
+        reservation: { resourceKey: "resource:expanded", units: 999, capacityUnits: 999 },
+        handoff: { payload: { permitsClaimOrLease: true, permitsDispatchOrExecution: true } } };
+      callerControlled.maximumActiveReadyGlobal = 1000;
+      return original(callerControlled.operationAuthorization);
+    };
+    const service = promoter(resource, canonical);
+    const result = await service.promote(envelope); service.close();
+    assert.equal(result.replayed, false);
     canonical.promoteReadyFrontierJobWithInternalHandoff = original;
     const counts = await db.query<Record<string, string>>(`SELECT
       (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
@@ -278,7 +257,18 @@ test("CR11B-AUTO-030 exact-operation authorization rejects caller-expanded polic
       (SELECT count(*) FROM control_transition_events)::text transitions,
       (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
       (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests`);
-    assert.deepEqual(counts.rows[0], { ready: "0", reservations: "0", transitions: "0", handoffs: "0", requests: "0" });
+    assert.deepEqual(counts.rows[0], { ready: "1", reservations: "1", transitions: "1", handoffs: "1", requests: "1" });
+    const stored = await db.query<{ resource_key: string; units: number; capacity_units: number;
+      payload: Record<string, unknown> }>(`SELECT r.resource_key,r.units,h.capacity_units,q.payload
+      FROM control_resource_reservations r JOIN control_resource_reservation_heads h
+        ON h.tenant_id=r.tenant_id AND h.resource_key=r.resource_key
+      JOIN control_ready_frontier_handoffs q ON q.reservation_id=r.id`);
+    const authorizedProject = readyPolicy.projectPolicies.find((item) => item.projectId === materialization.job.projectId);
+    assert.deepEqual({ resourceKey: stored.rows[0]?.resource_key, units: Number(stored.rows[0]?.units),
+      capacity: Number(stored.rows[0]?.capacity_units), claim: stored.rows[0]?.payload.permitsClaimOrLease,
+      dispatch: stored.rows[0]?.payload.permitsDispatchOrExecution },
+    { resourceKey: authorizedProject?.resourceKey, units: authorizedProject?.reservationUnits,
+      capacity: authorizedProject?.resourceCapacityUnits, claim: false, dispatch: false });
   } finally { await db.close(); close(resource); }
 });
 
@@ -376,6 +366,65 @@ test("CR11B-AUTO-030 trusted time is sampled after policy queues and again at th
   } finally { await db.close(); close(resource); }
 });
 
+test("CR11B-AUTO-030 expiry reached during the ready transition rolls back the entire canonical bundle", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const canonical = new CanonicalStore(adaptPglite(db));
+    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey,
+      { expiresAt: "2026-08-30T18:10:00.000Z" });
+    resource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
+    let clockCalls = 0;
+    const service = new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      { now: () => { clockCalls += 1; return clockCalls < 6
+        ? "2026-08-30T18:04:00.000Z" : "2026-08-30T18:20:00.000Z"; } });
+    await assert.rejects(() => service.promote(envelope), /no longer current/); service.close();
+    assert.equal(clockCalls, 6);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs WHERE state='proposed')::text proposed,
+      (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
+      (SELECT count(*) FROM control_resource_reservations)::text reservations,
+      (SELECT count(*) FROM control_transition_events)::text transitions,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests,
+      (SELECT count(*) FROM control_outbox)::text outbox`);
+    assert.deepEqual(counts.rows[0], { proposed: "1", ready: "0", reservations: "0", transitions: "0",
+      handoffs: "0", requests: "0", outbox: "0" });
+  } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-030 expiry reached after replay evidence reads denies replay without adding mutation", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const canonical = new CanonicalStore(adaptPglite(db));
+    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey,
+      { expiresAt: "2026-08-30T18:10:00.000Z" });
+    resource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
+    const initial = promoter(resource, canonical);
+    assert.equal((await initial.promote(envelope)).replayed, false); initial.close();
+    let clockCalls = 0;
+    const replay = new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      { now: () => { clockCalls += 1; return clockCalls < 3
+        ? "2026-08-30T18:04:00.000Z" : "2026-08-30T18:20:00.000Z"; } });
+    await assert.rejects(() => replay.promote(envelope), /no longer current/); replay.close();
+    assert.equal(clockCalls, 3);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
+      (SELECT count(*) FROM control_resource_reservations)::text reservations,
+      (SELECT count(*) FROM control_transition_events)::text transitions,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests,
+      (SELECT count(*) FROM control_outbox)::text outbox`);
+    assert.deepEqual(counts.rows[0], { ready: "1", reservations: "1", transitions: "1",
+      handoffs: "1", requests: "1", outbox: "1" });
+  } finally { await db.close(); close(resource); }
+});
+
 test("CR11B-AUTO-030 trusted service time rejects historical and future promotion envelopes", async () => {
   for (const trustedNow of ["2026-08-30T18:20:00.000Z", "2026-08-30T18:03:50.000Z"]) {
     const resource = resources(), db = await database();
@@ -420,6 +469,47 @@ test("CR11B-AUTO-030 simultaneous exact requests converge and conflicting reques
       (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests`);
     assert.deepEqual(counts.rows[0], { ready: "1", proposed: "1", reservations: "1", handoffs: "1", requests: "1" });
   } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-030 independent policy stores reach the shared canonical transaction boundary concurrently", async () => {
+  const firstResource = resources(), secondResource = resources(), db = await database();
+  try {
+    const base = adaptPglite(db);
+    let trackPromotions = false, pendingTransactions = 0, maximumPendingTransactions = 0;
+    const instrumented: DatabaseClient = {
+      query: base.query,
+      transaction: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0]) => {
+        if (!trackPromotions) return base.transaction(operation) as Promise<T>;
+        pendingTransactions += 1;
+        maximumPendingTransactions = Math.max(maximumPendingTransactions, pendingTransactions);
+        await Promise.resolve();
+        try { return await base.transaction(operation) as T; }
+        finally { pendingTransactions -= 1; }
+      },
+    };
+    const canonical = new CanonicalStore(instrumented);
+    const { evaluation, standing, materialization } = await materialize(firstResource, canonical);
+    secondResource.evaluations.recordEvaluation(evaluation);
+    secondResource.standingPolicies.recordPolicy(standing);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, firstResource.readyKey);
+    firstResource.readyPolicies.recordPolicy(readyPolicy);
+    secondResource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy,
+      { requestId: "promotion.request.independent-policy-stores" });
+    const firstService = promoter(firstResource, canonical), secondService = promoter(secondResource, canonical);
+    trackPromotions = true;
+    const exact = await Promise.all([firstService.promote(envelope), secondService.promote(envelope)]);
+    firstService.close(); secondService.close();
+    assert.ok(maximumPendingTransactions >= 2);
+    assert.deepEqual(exact.map((item) => item.replayed).sort(), [false, true]);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
+      (SELECT count(*) FROM control_resource_reservations)::text reservations,
+      (SELECT count(*) FROM control_transition_events)::text transitions,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests`);
+    assert.deepEqual(counts.rows[0], { ready: "1", reservations: "1", transitions: "1", handoffs: "1", requests: "1" });
+  } finally { await db.close(); close(firstResource); close(secondResource); }
 });
 
 test("CR11B-AUTO-030 atomically promotes one exact job, reserves database capacity, and queues only internal handoff", async () => {
@@ -597,7 +687,7 @@ test("CR11B-AUTO-030 handoff collision rolls back ready transition and reservati
   } finally { await db.close(); close(resource); }
 });
 
-test("CR11B-AUTO-030 safe projection reports policy and pending handoff without operator authority", async () => {
+test("CR11B-AUTO-030 safe projection reports historical evidence without claiming current pending state or authority", async () => {
   const resource = resources(), db = await database();
   try {
     const canonical = new CanonicalStore(adaptPglite(db));
@@ -611,10 +701,11 @@ test("CR11B-AUTO-030 safe projection reports policy and pending handoff without 
       readyPolicyIntegrityKey: resource.readyKey });
     assert.deepEqual({ policy: projection.readyPolicyState, production: projection.productionReadyPolicyState,
       state: projection.readyPromotionState, jobs: projection.readyJobCount, handoffs: projection.pendingInternalHandoffCount,
+      history: projection.historicalPromotionCount,
       promote: projection.viewCanPromote, schedule: projection.viewCanSchedule,
       lease: projection.viewCanClaimOrLease, dispatch: projection.viewCanDispatchOrExecute },
-    { policy: "repository_fixture_active", production: "not_enrolled", state: "ready_handoff_pending",
-      jobs: 1, handoffs: 1, promote: false, schedule: false, lease: false, dispatch: false });
+    { policy: "repository_fixture_active", production: "not_enrolled", state: "historical_ready_handoff_recorded",
+      jobs: 0, handoffs: 0, history: 1, promote: false, schedule: false, lease: false, dispatch: false });
     const json = JSON.stringify(projection);
     for (const forbidden of ["ownerActorDigest", "ownerAuthenticationEvidenceDigest", "separateReadyReviewDigest",
       "policyAuthTag", "packetAuthTag", "receiptAuthTag", "objective", "credential", "private locator"]) {
@@ -624,10 +715,15 @@ test("CR11B-AUTO-030 safe projection reports policy and pending handoff without 
       receipts: [receipt, receipt], observedAt: envelope.request.promotedAt,
       evaluationIntegrityKey: resource.evaluationKey, readyPolicyIntegrityKey: resource.readyKey }),
     /duplicate lineage/);
-    assert.throws(() => projectReadyFrontierPromotionV1({ tenantId: evaluation.tenantId, readyPolicy,
+    const expiredEvidence = projectReadyFrontierPromotionV1({ tenantId: evaluation.tenantId, readyPolicy,
       receipts: [receipt], observedAt: receipt.handoff.expiresAt,
-      evaluationIntegrityKey: resource.evaluationKey, readyPolicyIntegrityKey: resource.readyKey }),
-    /lacks current active reservation and pending handoff evidence/);
+      evaluationIntegrityKey: resource.evaluationKey, readyPolicyIntegrityKey: resource.readyKey });
+    assert.deepEqual({ state: expiredEvidence.readyPromotionState, jobs: expiredEvidence.readyJobCount,
+      handoffs: expiredEvidence.pendingInternalHandoffCount, history: expiredEvidence.historicalPromotionCount },
+    { state: "historical_ready_handoff_recorded", jobs: 0, handoffs: 0, history: 1 });
+    assert.throws(() => projectReadyFrontierPromotionV1({ tenantId: evaluation.tenantId, readyPolicy,
+      receipts: [receipt], observedAt: "2026-08-30T18:03:59.999Z",
+      evaluationIntegrityKey: resource.evaluationKey, readyPolicyIntegrityKey: resource.readyKey }), /predates/);
     for (const invalid of ["not-an-instant", "2026-08-30T12:04:00-06:00", "2026-02-30T18:04:00.000Z"]) {
       assert.throws(() => projectReadyFrontierPromotionV1({ tenantId: evaluation.tenantId, readyPolicy,
         receipts: [], observedAt: invalid, evaluationIntegrityKey: resource.evaluationKey,

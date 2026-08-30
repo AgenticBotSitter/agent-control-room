@@ -32,7 +32,7 @@ export function ReadyFrontierPortfolioView(props: { data: ReadyFrontierViewState
       <span><small>Standing policy</small><strong>{props.automation.standingPolicyState === "repository_fixture_active" ? "Repository simulation active" : label(props.automation.standingPolicyState)}</strong></span>
       <span><small>Ready policy</small><strong>{props.promotion?.readyPolicyState === "repository_fixture_active" ? "Repository simulation active" : props.promotion ? label(props.promotion.readyPolicyState) : "Unavailable"}</strong></span>
       <span><small>Production policy</small><strong>Not enrolled</strong></span>
-      <span><small>Current outcome</small><strong>{props.promotion?.readyPromotionState === "ready_handoff_pending" ? "Internal handoff pending" : "Ready handoff not requested"}</strong></span>
+      <span><small>Recorded outcome</small><strong>{props.promotion?.readyPromotionState === "historical_ready_handoff_recorded" ? "Historical ready handoff recorded" : "Ready handoff not requested"}</strong></span>
     </div> : null}
     <div className="frontier-summary">
       <div><small>Proposed</small><strong>{projects.reduce((sum, project) => sum + project.proposed.length, 0)}</strong></div>
@@ -99,6 +99,6 @@ export function ReadyFrontierProjectView(props: { data: ReadyFrontierViewStateV1
       <GateList title="Deferred" items={project.deferred} />
     </div>
     {project.suppressedCount > 0 ? <p className="frontier-suppressed">{project.suppressedCount} unchanged or duplicate candidate{project.suppressedCount === 1 ? " was" : "s were"} safely suppressed.</p> : null}
-    <p className="frontier-boundary">This is a read-only explanation of local repository policy and materialization truth. The repository ready-policy fixture is {props.promotion?.readyPolicyState === "repository_fixture_active" ? "active" : "unavailable"}, but no production policy is enrolled and {props.promotion?.readyPromotionState === "ready_handoff_pending" ? "an internal handoff is pending" : "no ready handoff was requested"}. This surface contains no materialization, approval, scheduling, claim, lease, agent-message, dispatch, or execution control.</p>
+    <p className="frontier-boundary">This is a read-only explanation of local repository policy and materialization truth. The repository ready-policy fixture is {props.promotion?.readyPolicyState === "repository_fixture_active" ? "active" : "unavailable"}, but no production policy is enrolled and {props.promotion?.readyPromotionState === "historical_ready_handoff_recorded" ? "a historical ready handoff is recorded without current pending-state proof" : "no ready handoff was requested"}. This surface contains no materialization, approval, scheduling, claim, lease, agent-message, dispatch, or execution control.</p>
   </section>;
 }

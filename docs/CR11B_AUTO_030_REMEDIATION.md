@@ -1,6 +1,6 @@
 # CR11B-AUTO-030 Independent-Review Remediation
 
-**Status:** second remediation implementation complete; another independent re-review required
+**Status:** third remediation implementation complete; another independent re-review required
 
 **Rejected target:** `47e4000fb374eaefdfeb31e88db127505d3f11dc`
 
@@ -14,9 +14,15 @@
 
 **Preserved first re-review SHA-256:** `8f0bd318bbbf69a516f737da5cdd4367e4bd00cc6afcb0130c7c433e9e042652`
 
+**Rejected second remediation:** `5b26a634516ca1a956edfeb67c7480343bf9104b`
+
+**Preserved second-remediation re-review:** `docs/reviews/CR11B_AUTO_030_SECOND_REMEDIATION_REREVIEW.md`
+
+**Preserved second-remediation re-review SHA-256:** `db6e7986b97a877db77cc235a8e9d83b9723ef7a5a4aacdc4fe12805cd2897b7`
+
 ## Disposition
 
-The first independent review rejected AUTO-030 with five reproduced findings. A separate transaction audit confirmed the generic-ready bypass, untrusted-time acceptance, shared-outbox exposure, stale replay truth, and missing simultaneous-concurrency evidence. A different-agent re-review then rejected the first remediation with three High authorization/time defects, one Medium operator-truth defect, and one Low evidence-wording defect. The second remediation does not reinterpret any negative result as acceptance.
+The first independent review rejected AUTO-030 with five reproduced findings. A separate transaction audit confirmed the generic-ready bypass, untrusted-time acceptance, shared-outbox exposure, stale replay truth, and missing simultaneous-concurrency evidence. A different-agent re-review then rejected the first remediation with three High authorization/time defects, one Medium operator-truth defect, and one Low evidence-wording defect. A third independent review rejected the second remediation with two High authorization/time defects, two Medium current-truth defects, and one Low concurrency-evidence defect. The third remediation preserves every negative report unchanged and does not reinterpret any negative result as acceptance.
 
 ## Remediation binding
 
@@ -41,11 +47,21 @@ The first independent review rejected AUTO-030 with five reproduced findings. A 
 | `AUTO030-RR-004` expired receipt projects pending | Receipt-only projection rejects observation before promotion or at/after reservation or handoff expiry. | Observation at exact handoff expiry fails closed instead of returning `ready_handoff_pending`. |
 | `AUTO030-RR-005` whitespace evidence wording | Both review reports remain byte-for-byte unchanged. Current documentation distinguishes architect-owned working-tree validation from the two intentional Markdown hard-break lines in the immutable first report. | Review SHA-256 values remain exact; no clean exact-range claim is made for rejected `fd64e418`. |
 
+## Second-remediation re-review binding
+
+| Finding | Third remediation | Hostile evidence |
+|---|---|---|
+| `AUTO030-SRR-001` mutable canonical input after validation | The canonical promotion port accepts only the opaque one-use token. It acquires cloned hidden receipt and policy bindings synchronously, derives every tenant, job, request, ceiling, resource, transition, reservation, actor, and handoff write fact locally, and has no caller-supplied fact object to reuse after an `await`. | A legitimate call is intercepted with caller-controlled expanded ceilings, resource facts, digests, and positive handoff authority. The committed bundle still contains only the exact hidden policy/receipt values and negative authority. A forged token remains rejected with zero mutation. |
+| `AUTO030-SRR-002` authorization expires during transition-to-commit window | The transaction resamples the non-decreasing trusted clock immediately after `transitionWith`, after the handoff insert, and after idempotency completion at the final callback boundary. Crossing any policy, materialization, reservation, handoff, or job-authority expiry throws inside the transaction. | A deterministic clock advances beyond policy expiry inside the ready transition. The request, transition, ready job, reservation, handoff, and outbox all roll back. |
+| `AUTO030-SRR-003` replay crosses expiry after evidence reads | Replay resamples the same trusted clock after the final ready-job read and immediately before returning `replayed: true`. | A deterministic replay clock advances beyond policy expiry only after the handoff, transition, reservation, and job reads. Replay rejects and adds no mutation. |
+| `AUTO030-SRR-004` receipt-only projection claims current pending state | Receipt-only projection is explicitly historical. It never reports a current ready job or pending handoff, including before nominal expiry, and rejects only observations that predate the authenticated promotion. | Current and post-expiry observations both report one historical promotion with zero current jobs and zero pending handoffs. A pre-promotion observation rejects. |
+| `AUTO030-SRR-005` same-store Promise test does not reach canonical concurrency | Two independent evaluation, standing-policy, and ready-policy stores plus two service instances submit the same exact request to one shared canonical database. | Instrumentation proves at least two promotion transactions were pending at the canonical transaction boundary; they converge to one new result and one replay with exactly one job, reservation, transition, handoff, and request. Multi-process PostgreSQL behavior remains explicitly unproved. |
+
 ## Current evidence
 
-- AUTO-030 focused tests: 16/16 passed.
-- Combined CR11B gate: 60/60 passed.
-- Registered pretest lifecycle: 642/642 passed.
+- AUTO-030 focused tests: 19/19 passed.
+- Combined CR11B gate: 63/63 passed.
+- Registered pretest lifecycle: 645/645 passed.
 - Core suite: 414/416 passed, with two intentional platform skips and zero failures.
 - Public post-test suite: 52/52 passed.
 - Type checking and lint passed.
@@ -54,4 +70,4 @@ The first independent review rejected AUTO-030 with five reproduced findings. A 
 - Migration verification passed through `0027`, with 97 PostgreSQL tables.
 - Architect-owned working-tree whitespace validation passed; the immutable initial report's two Markdown hard breaks remain documented exact-range exceptions.
 
-The complete second-remediation repository gate is green. Another different-agent re-review of the exact immutable second-remediation commit is still required. The owner has already authorized all required independent reviews. No production policy, consumer, schedule, claim, lease, dispatch, provider/agent contact, GitHub mutation, deployment, or external effect is authorized.
+The complete third-remediation repository gate is green. Another different-agent re-review of the exact immutable third-remediation commit is still required. The owner has already authorized all required independent reviews. No production policy, consumer, schedule, claim, lease, dispatch, provider/agent contact, GitHub mutation, deployment, or external effect is authorized.

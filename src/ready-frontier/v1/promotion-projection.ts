@@ -25,17 +25,15 @@ export function projectReadyFrontierPromotionV1(input: { tenantId: string;
     if (new Set(identities).size !== identities.length) throw new Error("promotion projection duplicate lineage");
   }
   const observed = Date.parse(observedAt);
-  if (receipts.some((receipt) => observed < Date.parse(receipt.promotedAt)
-    || observed >= Date.parse(receipt.reservation.expiresAt)
-    || observed >= Date.parse(receipt.handoff.expiresAt))) {
-    throw new Error("promotion projection lacks current active reservation and pending handoff evidence");
+  if (receipts.some((receipt) => observed < Date.parse(receipt.promotedAt))) {
+    throw new Error("promotion projection observation predates its historical promotion evidence");
   }
   const state = !policy ? "missing" : policy.state === "suspended" ? "suspended" : policy.state === "revoked" ? "revoked"
     : observed < Date.parse(policy.effectiveAt) || observed >= Date.parse(policy.expiresAt) ? "expired" : "repository_fixture_active";
   const unsigned = { schema: READY_FRONTIER_PROMOTION_PROJECTION_V1, tenantId: input.tenantId,
     readyPolicyState: state, productionReadyPolicyState: "not_enrolled" as const,
-    readyPromotionState: receipts.length > 0 ? "ready_handoff_pending" as const : "not_requested" as const,
-    readyJobCount: receipts.length, pendingInternalHandoffCount: receipts.length,
+    readyPromotionState: receipts.length > 0 ? "historical_ready_handoff_recorded" as const : "not_requested" as const,
+    readyJobCount: 0, pendingInternalHandoffCount: 0, historicalPromotionCount: receipts.length,
     repositorySimulationOnly: true as const, viewCanPromote: false as const, viewCanSchedule: false as const,
     viewCanClaimOrLease: false as const, viewCanDispatchOrExecute: false as const };
   return parseExactReadyFrontierV1(readyFrontierPromotionProjectionSchemaV1,

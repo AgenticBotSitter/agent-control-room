@@ -214,9 +214,10 @@ export interface ReadyFrontierPromotionProjectionV1 {
   tenantId: string;
   readyPolicyState: "repository_fixture_active" | "missing" | "suspended" | "revoked" | "expired";
   productionReadyPolicyState: "not_enrolled";
-  readyPromotionState: "not_requested" | "ready_handoff_pending";
+  readyPromotionState: "not_requested" | "historical_ready_handoff_recorded";
   readyJobCount: number;
   pendingInternalHandoffCount: number;
+  historicalPromotionCount: number;
   repositorySimulationOnly: true;
   viewCanPromote: false;
   viewCanSchedule: false;
