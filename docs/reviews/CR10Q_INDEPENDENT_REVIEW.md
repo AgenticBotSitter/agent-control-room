@@ -1,9 +1,9 @@
 # CR10Q-SEC-010 independent public-release security review
 
-**Date:** 2026-08-29
-**Reviewer identity:** `reviewer:codex:independent:cr10q-sec-010`
-**Review route:** different independent reviewer; effect-free repository review
-**Packet:** `public-security-review:6fc96618cf696e2b0ea82cf8`
+**Date:** 2026-08-29  
+**Reviewer identity:** `reviewer:codex:independent:cr10q-sec-010`  
+**Review route:** different independent reviewer; effect-free repository review  
+**Packet:** `public-security-review:6fc96618cf696e2b0ea82cf8`  
 **Effects:** none
 
 ## Independence and authority statement
