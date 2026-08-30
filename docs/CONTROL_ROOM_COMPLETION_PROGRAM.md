@@ -243,7 +243,7 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | CR11A-TEAM-010 | Codex | Strict safe projection, synthetic fixtures, responsive Project Team UI, hostile tests | COMPLETE — local presentation only |
 | CR11A-TEAM-020 | Codex | Authenticated durable room-event, unread/needs-you, and handoff-proposal ledger | COMPLETE — authenticated fake local persistence only |
 | CR11A-TEAM-030 | Codex | Reviewed handoff materialization into canonical proposed work and Action Inbox | COMPLETE — exact authenticated local review and atomic no-dispatch proposed work |
-| CR11A-TEAM-040 | Codex | Pinned read-only Hermes Bot Mode adapter and conformance fixtures | CR7A/CR7D; injected fixtures only |
+| CR11A-TEAM-040 | Codex | Pinned read-only Hermes Bot Mode adapter and conformance fixtures | COMPLETE — exact pin, injected-only safe normalization, hostile conformance, no native access |
 | CR11A-TEAM-050 | Codex + Owner | One-profile/one-room native read qualification or disabled disposition | OWNER; no write or provider effect |
 
 ## Block acceptance and promotion
