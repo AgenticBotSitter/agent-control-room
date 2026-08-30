@@ -533,6 +533,35 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .abs-local-drafts article small { grid-column: 1 / -1; color: var(--faint); font-size: 8px; }
 .abs-workspace-note { border-left: 3px solid var(--amber); margin: 0; background: var(--amber-soft); color: var(--muted); padding: 10px 12px; font-size: 9px; }
 
+/* CR11B authenticated ready-frontier explanation */
+.frontier-shell, .frontier-workspace { display: grid; gap: 12px; }
+.frontier-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.frontier-summary > div { border: 1px solid color-mix(in srgb, var(--violet) 22%, var(--border)); border-radius: 12px; background: var(--violet-soft); padding: 11px 12px; }
+.frontier-summary small { display: block; color: var(--muted); font-size: 7px; }
+.frontier-summary strong { display: block; margin-top: 2px; font-family: Georgia, serif; font-size: 25px; font-weight: 500; }
+.frontier-project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.frontier-project-card { display: flex; min-width: 0; flex-direction: column; border: 1px solid color-mix(in srgb, var(--violet) 20%, var(--border)); border-top: 3px solid var(--violet); border-radius: var(--radius); background: var(--surface); padding: 16px; box-shadow: var(--shadow); }
+.frontier-project-card > p:first-of-type { margin: 12px 0 2px; color: var(--violet); font-size: 7px; font-weight: 800; text-transform: uppercase; }
+.frontier-project-card h3 { overflow: hidden; margin: 0 0 13px; font-family: Georgia, serif; font-size: 17px; font-weight: 500; text-overflow: ellipsis; }
+.frontier-project-card > a { align-self: flex-start; margin-top: auto; color: var(--violet); padding-top: 10px; font-size: 8px; font-weight: 800; }
+.frontier-next { display: grid; gap: 3px; min-height: 42px; border-left: 2px solid var(--violet); margin: 12px 0; background: var(--violet-soft); color: var(--text); padding: 8px 9px; font-size: 9px; }
+.frontier-next small { color: var(--muted); font-size: 6px; font-weight: 800; text-transform: uppercase; }
+.frontier-boundary { border-left: 3px solid var(--amber); margin: 0; background: var(--amber-soft); color: var(--muted); padding: 10px 12px; font-size: 8px; }
+.frontier-lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; align-items: start; }
+.frontier-lane { min-width: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); padding: 11px; }
+.frontier-lane.frontier-proposed { border-color: color-mix(in srgb, var(--violet) 28%, var(--border)); }
+.frontier-lane-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.frontier-lane-title h3 { margin: 0; font-size: 10px; }
+.frontier-lane-title span { display: grid; min-width: 21px; height: 21px; place-items: center; border-radius: 999px; background: var(--surface-3); color: var(--muted); font-size: 7px; font-weight: 800; }
+.frontier-lane-items { display: grid; gap: 7px; }
+.frontier-lane-items article { display: grid; gap: 4px; border-left: 2px solid var(--amber); background: var(--surface); padding: 8px 9px; }
+.frontier-proposed .frontier-lane-items article { border-left-color: var(--violet); }
+.frontier-lane-items strong { font-size: 9px; }
+.frontier-lane-items small, .frontier-lane-items p, .frontier-lane-items em { margin: 0; color: var(--muted); font-size: 7px; font-style: normal; }
+.frontier-lane-items em { color: var(--amber); font-weight: 750; }
+.frontier-lane .empty-state { padding: 8px; font-size: 7px; }
+.frontier-suppressed { margin: 0; color: var(--faint); font-size: 8px; }
+
 /* CR11A Agent Team and bounded War Room workspace */
 .agent-team-workspace { display: grid; gap: 14px; margin: 16px 0; }
 .agent-team-banner { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 22px; border: 1px solid color-mix(in srgb, var(--violet) 27%, var(--border)); border-radius: var(--radius); background: linear-gradient(135deg, var(--surface), var(--violet-soft)); padding: 20px; box-shadow: var(--shadow); }
@@ -708,6 +737,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .capacity-layout { grid-template-columns: 1fr 1fr; }
   .fairness-card { grid-column: 1 / -1; }
   .wayfarer-stage-grid, .wayfarer-scenario-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .frontier-project-grid, .frontier-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 840px) {
@@ -749,6 +779,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .wayfarer-banner, .wayfarer-columns { grid-template-columns: 1fr; }
   .wayfarer-benchmark-summary { grid-template-columns: 1fr; }
   .wayfarer-executor-summary, .wayfarer-delivery-summary { grid-template-columns: 1fr; }
+  .frontier-project-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {
@@ -775,6 +806,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .wayfarer-benchmark-summary dl { grid-template-columns: repeat(2, 1fr); }
   .wayfarer-executor-summary dl, .wayfarer-delivery-summary dl, .wayfarer-delivery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wayfarer-delivery-grid { grid-template-columns: 1fr; }
+  .frontier-summary, .frontier-lanes { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
