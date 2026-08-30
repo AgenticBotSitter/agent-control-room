@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
-import { adaptPglite } from "../src/persistence/database.ts";
+import { adaptPglite, type DatabaseClient } from "../src/persistence/database.ts";
 import { DeliveryStore } from "../src/persistence/delivery-store.ts";
 import {
   ReadyFrontierContractErrorV1,
@@ -194,7 +194,7 @@ test("CR11B-AUTO-030 generic transition cannot ready a frontier job without the 
   } finally { await db.close(); close(resource); }
 });
 
-test("CR11B-AUTO-030 retired policy guards cannot authorize the internal canonical persistence port", async () => {
+test("CR11B-AUTO-030 captured policy guards cannot mint the exact-operation canonical authorization", async () => {
   const resource = resources(), db = await database();
   try {
     const canonical = new CanonicalStore(adaptPglite(db));
@@ -213,14 +213,16 @@ test("CR11B-AUTO-030 retired policy guards cannot authorize the internal canonic
     const revoked = readyLifecycle(evaluation, standing, readyPolicy,
       { action: "revoke", state: "revoked", revision: 2, recordedAt: "2026-08-30T18:10:00.000Z" }, resource.readyKey);
     resource.readyPolicies.recordPolicy(revoked);
+    assert.ok(standingGuard); assert.ok(readyGuard);
     await assert.rejects(() => canonical.promoteReadyFrontierJobWithInternalHandoff({
       tenantId: receipt.tenantId, projectId: receipt.readyJob.projectId, jobId: receipt.readyJob.id,
       requestId: receipt.requestId, requestDigest: receipt.promotionRequestDigest, receiptDigest: receipt.receiptDigest,
       readyJobDigest: sha256Digest(receipt.readyJob), expectedJobVersion: 0, expectedJobDigest: receipt.proposedJobDigest,
       standingPolicy: { policyId: receipt.standingPolicyId, revision: receipt.standingPolicyRevision,
-        policyDigest: receipt.standingPolicyDigest, activeGuard: standingGuard },
+        policyDigest: receipt.standingPolicyDigest },
       readyPolicy: { policyId: receipt.readyPolicyId, revision: receipt.readyPolicyRevision,
-        policyDigest: receipt.readyPolicyDigest, activeGuard: readyGuard },
+        policyDigest: receipt.readyPolicyDigest },
+      operationAuthorization: Object.freeze(Object.create(null)) as object,
       maximumActiveReadyGlobal: readyPolicy.maximumActiveReadyGlobal,
       maximumActiveReadyProject: readyPolicy.projectPolicies.find((item) => item.projectId === receipt.readyJob.projectId)!.maximumActiveReady,
       transitionId: `transition:frontier-ready:${sha256Digest({ receiptId: receipt.receiptId }).slice(7, 39)}`,
@@ -233,12 +235,144 @@ test("CR11B-AUTO-030 retired policy guards cannot authorize the internal canonic
       handoff: { id: receipt.handoff.handoffId, payloadDigest: sha256Digest(receipt.handoff),
         availableAt: receipt.handoff.createdAt, expiresAt: receipt.handoff.expiresAt,
         payload: clone(receipt.handoff) as unknown as Record<string, unknown> },
-    }), /requires both active policy guards/);
+    }), /active exact-operation authorization/);
     const counts = await db.query<Record<string, string>>(`SELECT
       (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
       (SELECT count(*) FROM control_resource_reservations)::text reservations,
       (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs`);
     assert.deepEqual(counts.rows[0], { ready: "0", reservations: "0", handoffs: "0" });
+  } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-030 exact-operation authorization rejects caller-expanded policy, resource, receipt, and handoff facts", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const canonical = new CanonicalStore(adaptPglite(db));
+    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey);
+    resource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
+    type PromotionInput = Parameters<CanonicalStore["promoteReadyFrontierJobWithInternalHandoff"]>[0];
+    const original = canonical.promoteReadyFrontierJobWithInternalHandoff.bind(canonical);
+    const attacks: Array<(input: PromotionInput) => PromotionInput> = [
+      (input) => ({ ...input, maximumActiveReadyGlobal: input.maximumActiveReadyGlobal + 1 }),
+      (input) => ({ ...input, maximumActiveReadyProject: input.maximumActiveReadyProject + 1 }),
+      (input) => ({ ...input, reservation: { ...input.reservation, resourceKey: "resource:expanded" } }),
+      (input) => ({ ...input, reservation: { ...input.reservation,
+        units: input.reservation.units + 1, capacityUnits: input.reservation.capacityUnits + 1 } }),
+      (input) => ({ ...input, requestDigest: sha256Digest({ substituted: "request" }) }),
+      (input) => ({ ...input, receiptDigest: sha256Digest({ substituted: "receipt" }) }),
+      (input) => ({ ...input, handoff: { ...input.handoff,
+        payload: { ...input.handoff.payload, permitsClaimOrLease: true } } }),
+    ];
+    for (const attack of attacks) {
+      canonical.promoteReadyFrontierJobWithInternalHandoff = (input) => original(attack(input));
+      const service = promoter(resource, canonical);
+      await assert.rejects(() => service.promote(envelope), /authorization mismatch/);
+      service.close();
+    }
+    canonical.promoteReadyFrontierJobWithInternalHandoff = original;
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
+      (SELECT count(*) FROM control_resource_reservations)::text reservations,
+      (SELECT count(*) FROM control_transition_events)::text transitions,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests`);
+    assert.deepEqual(counts.rows[0], { ready: "0", reservations: "0", transitions: "0", handoffs: "0", requests: "0" });
+  } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-030 an unawaited canonical call cannot escape authorization lifetime or be overtaken by revocation", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const base = adaptPglite(db);
+    let delayPromotion = false, entered!: () => void, release!: () => void;
+    const transactionEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const transactionHeld = new Promise<void>((resolve) => { release = resolve; });
+    const delayed: DatabaseClient = {
+      query: base.query,
+      transaction: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0]) => {
+        if (delayPromotion) { entered(); await transactionHeld; }
+        return base.transaction(operation) as Promise<T>;
+      },
+    };
+    const canonical = new CanonicalStore(delayed);
+    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey);
+    resource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
+    const original = canonical.promoteReadyFrontierJobWithInternalHandoff.bind(canonical);
+    let escaped!: ReturnType<typeof original>;
+    canonical.promoteReadyFrontierJobWithInternalHandoff = (input) => {
+      escaped = original(input);
+      return Promise.resolve({ job: materialization.job, replayed: false });
+    };
+    delayPromotion = true;
+    const service = promoter(resource, canonical);
+    const pending = service.promote(envelope);
+    await transactionEntered;
+    const revoked = readyLifecycle(evaluation, standing, readyPolicy,
+      { action: "revoke", state: "revoked", revision: 2, recordedAt: "2026-08-30T18:10:00.000Z" }, resource.readyKey);
+    assert.throws(() => resource.readyPolicies.recordPolicy(revoked), code("policy_inactive"));
+    release();
+    const result = await pending; await escaped;
+    assert.equal(result.receipt.state, "ready_handoff_pending");
+    assert.equal(resource.readyPolicies.latestPolicy(readyPolicy.policyId)?.state, "active");
+    assert.equal(resource.readyPolicies.recordPolicy(revoked).replayed, false);
+    service.close();
+  } finally { await db.close(); close(resource); }
+});
+
+test("CR11B-AUTO-030 trusted time is sampled after policy queues and again at the database write boundary", async () => {
+  const resource = resources(), db = await database();
+  try {
+    const base = adaptPglite(db);
+    let delayPromotion = false, transactionEntered!: () => void, releaseTransaction!: () => void;
+    const enteredTransaction = new Promise<void>((resolve) => { transactionEntered = resolve; });
+    const heldTransaction = new Promise<void>((resolve) => { releaseTransaction = resolve; });
+    const delayed: DatabaseClient = {
+      query: base.query,
+      transaction: async <T>(operation: Parameters<DatabaseClient["transaction"]>[0]) => {
+        if (delayPromotion) { transactionEntered(); await heldTransaction; }
+        return base.transaction(operation) as Promise<T>;
+      },
+    };
+    const canonical = new CanonicalStore(delayed);
+    const { evaluation, standing, materialization } = await materialize(resource, canonical);
+    const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey,
+      { expiresAt: "2026-08-30T18:10:00.000Z" });
+    resource.readyPolicies.recordPolicy(readyPolicy);
+    const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
+    let now = envelope.request.promotedAt, clockCalls = 0;
+    const service = new ReadyFrontierPromotionServiceV1(resource.evaluations, resource.standingPolicies,
+      resource.readyPolicies, canonical, resource.evaluationKey, resource.standingKey, resource.readyKey,
+      { now: () => { clockCalls += 1; return now; } });
+
+    let guardEntered!: () => void, releaseGuard!: () => void;
+    const enteredGuard = new Promise<void>((resolve) => { guardEntered = resolve; });
+    const heldGuard = new Promise<void>((resolve) => { releaseGuard = resolve; });
+    const blocker = resource.standingPolicies.withCurrentPolicy(standing.policyId, standing.revision,
+      standing.policyDigest, async () => { guardEntered(); await heldGuard; });
+    await enteredGuard;
+    const queued = assert.rejects(service.promote(envelope), code("stale_proposal"));
+    await Promise.resolve();
+    assert.equal(clockCalls, 0);
+    now = "2026-08-30T18:20:00.000Z"; releaseGuard(); await blocker; await queued;
+
+    now = envelope.request.promotedAt; delayPromotion = true;
+    const delayedPromotion = assert.rejects(service.promote(envelope), /no longer current|stale at the write boundary/);
+    await enteredTransaction;
+    assert.equal(clockCalls, 2);
+    now = "2026-08-30T18:20:00.000Z"; releaseTransaction(); await delayedPromotion;
+    assert.ok(clockCalls >= 3);
+    const counts = await db.query<Record<string, string>>(`SELECT
+      (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
+      (SELECT count(*) FROM control_resource_reservations)::text reservations,
+      (SELECT count(*) FROM control_transition_events)::text transitions,
+      (SELECT count(*) FROM control_ready_frontier_handoffs)::text handoffs,
+      (SELECT count(*) FROM control_idempotency WHERE operation_scope='ready-frontier-promotion')::text requests`);
+    assert.deepEqual(counts.rows[0], { ready: "0", reservations: "0", transitions: "0", handoffs: "0", requests: "0" });
+    service.close();
   } finally { await db.close(); close(resource); }
 });
 
@@ -490,6 +624,10 @@ test("CR11B-AUTO-030 safe projection reports policy and pending handoff without 
       receipts: [receipt, receipt], observedAt: envelope.request.promotedAt,
       evaluationIntegrityKey: resource.evaluationKey, readyPolicyIntegrityKey: resource.readyKey }),
     /duplicate lineage/);
+    assert.throws(() => projectReadyFrontierPromotionV1({ tenantId: evaluation.tenantId, readyPolicy,
+      receipts: [receipt], observedAt: receipt.handoff.expiresAt,
+      evaluationIntegrityKey: resource.evaluationKey, readyPolicyIntegrityKey: resource.readyKey }),
+    /lacks current active reservation and pending handoff evidence/);
     for (const invalid of ["not-an-instant", "2026-08-30T12:04:00-06:00", "2026-02-30T18:04:00.000Z"]) {
       assert.throws(() => projectReadyFrontierPromotionV1({ tenantId: evaluation.tenantId, readyPolicy,
         receipts: [], observedAt: invalid, evaluationIntegrityKey: resource.evaluationKey,

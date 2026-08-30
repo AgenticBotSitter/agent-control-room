@@ -25,6 +25,11 @@ export function projectReadyFrontierPromotionV1(input: { tenantId: string;
     if (new Set(identities).size !== identities.length) throw new Error("promotion projection duplicate lineage");
   }
   const observed = Date.parse(observedAt);
+  if (receipts.some((receipt) => observed < Date.parse(receipt.promotedAt)
+    || observed >= Date.parse(receipt.reservation.expiresAt)
+    || observed >= Date.parse(receipt.handoff.expiresAt))) {
+    throw new Error("promotion projection lacks current active reservation and pending handoff evidence");
+  }
   const state = !policy ? "missing" : policy.state === "suspended" ? "suspended" : policy.state === "revoked" ? "revoked"
     : observed < Date.parse(policy.effectiveAt) || observed >= Date.parse(policy.expiresAt) ? "expired" : "repository_fixture_active";
   const unsigned = { schema: READY_FRONTIER_PROMOTION_PROJECTION_V1, tenantId: input.tenantId,

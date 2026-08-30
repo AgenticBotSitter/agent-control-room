@@ -27,8 +27,7 @@ import {
 import type { DatabaseClient, DatabaseSession } from "./database";
 import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDigest, sha256Digest } from "../security";
 import { actionInboxItemSchemaV1, type ActionInboxItemV1 } from "../operator-surfaces/v1";
-import { authorizesReadyFrontierReadyPolicyGuardV1 } from "../ready-frontier/v1/ready-policy-store";
-import { authorizesReadyFrontierStandingPolicyGuardV1 } from "../ready-frontier/v1/standing-policy-store";
+import { acquireReadyFrontierCanonicalPromotionAuthorizationV1 } from "../ready-frontier/v1/promotion-service";
 
 type EntityKind = DomainEntity["kind"];
 type EntityState = DomainEntity["state"];
@@ -101,8 +100,9 @@ export interface ReadyFrontierCanonicalPromotionInput {
   requestDigest: string;
   receiptDigest: string;
   readyJobDigest: string;
-  standingPolicy: { policyId: string; revision: number; policyDigest: string; activeGuard: unknown };
-  readyPolicy: { policyId: string; revision: number; policyDigest: string; activeGuard: unknown };
+  standingPolicy: { policyId: string; revision: number; policyDigest: string };
+  readyPolicy: { policyId: string; revision: number; policyDigest: string };
+  operationAuthorization: unknown;
   expectedJobVersion: number;
   expectedJobDigest: string;
   maximumActiveReadyGlobal: number;
@@ -471,50 +471,115 @@ export class CanonicalStore {
 
   /** Internal AUTO-030 persistence port. Callers must enter through the policy-guarded promotion service. */
   async promoteReadyFrontierJobWithInternalHandoff(input: ReadyFrontierCanonicalPromotionInput): Promise<{ job: JobRecord; replayed: boolean }> {
+    const authorization = acquireReadyFrontierCanonicalPromotionAuthorizationV1(input.operationAuthorization);
+    if (!authorization) throw new Error("Ready frontier promotion requires an active exact-operation authorization");
     const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]*$/;
     const digest = /^sha256:[a-f0-9]{64}$/;
     const instant = (value: string): boolean => {
       const parsed = new Date(value); return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
     };
-    if (![input.tenantId, input.projectId, input.jobId, input.requestId, input.standingPolicy.policyId,
-      input.readyPolicy.policyId, input.transitionId, input.transitionIdempotencyKey,
-      input.reservation.id, input.reservation.routeId, input.reservation.resourceKey,
-      input.handoff.id].every((value) => safeId.test(value))
-      || ![input.requestDigest, input.receiptDigest, input.readyJobDigest, input.expectedJobDigest,
-        input.standingPolicy.policyDigest, input.readyPolicy.policyDigest,
-        input.reservation.decisionDigest, input.handoff.payloadDigest].every((value) => digest.test(value))
-      || ![input.occurredAt, input.reservation.acquiredAt, input.reservation.expiresAt,
-        input.handoff.availableAt, input.handoff.expiresAt].every(instant)
-      || input.expectedJobVersion !== 0 || input.reservation.acquiredAt !== input.occurredAt
-      || Date.parse(input.reservation.expiresAt) <= Date.parse(input.occurredAt)
-      || input.handoff.availableAt !== input.occurredAt || input.handoff.expiresAt !== input.reservation.expiresAt
-      || !Number.isSafeInteger(input.maximumActiveReadyGlobal) || input.maximumActiveReadyGlobal < 1
-      || !Number.isSafeInteger(input.maximumActiveReadyProject) || input.maximumActiveReadyProject < 1
-      || !Number.isSafeInteger(input.standingPolicy.revision) || input.standingPolicy.revision < 1
-      || !Number.isSafeInteger(input.readyPolicy.revision) || input.readyPolicy.revision < 1
-      || !Number.isSafeInteger(input.reservation.units) || input.reservation.units < 1
-      || !Number.isSafeInteger(input.reservation.capacityUnits) || input.reservation.capacityUnits < input.reservation.units
-      || input.actor.actorType !== "service" || input.actor.actorId !== "service:ready-frontier-promoter") {
-      throw new Error("Invalid ready frontier promotion input");
-    }
-    if (!authorizesReadyFrontierStandingPolicyGuardV1(input.standingPolicy.activeGuard,
-      input.standingPolicy.policyId, input.standingPolicy.revision, input.standingPolicy.policyDigest)
-      || !authorizesReadyFrontierReadyPolicyGuardV1(input.readyPolicy.activeGuard,
-        input.readyPolicy.policyId, input.readyPolicy.revision, input.readyPolicy.policyDigest)) {
-      throw new Error("Ready frontier promotion requires both active policy guards");
-    }
-    assertNoSecretMaterial(input.handoff.payload, "ready frontier handoff");
-    if (sha256Digest(input.handoff.payload) !== input.handoff.payloadDigest
-      || input.handoff.payload.handoffId !== input.handoff.id || input.handoff.payload.tenantId !== input.tenantId
-      || input.handoff.payload.projectId !== input.projectId || input.handoff.payload.jobId !== input.jobId
-      || input.handoff.payload.reservationId !== input.reservation.id
-      || input.handoff.payload.destination !== "internal_scheduler_jobber_table"
-      || input.handoff.payload.state !== "pending_internal_handoff"
-      || input.handoff.payload.repositorySimulationOnly !== true || input.handoff.payload.permitsClaimOrLease !== false
-      || input.handoff.payload.permitsDispatchOrExecution !== false || input.handoff.payload.permitsProviderContact !== false
-      || input.handoff.payload.permitsAgentMessage !== false || input.handoff.payload.permitsGitHubMutation !== false
-      || input.handoff.payload.permitsExternalEffects !== false) throw new Error("Ready frontier handoff contract mismatch");
-    return this.db.transaction(async (tx) => {
+    try {
+      const receipt = authorization.receipt;
+      const standingPolicy = authorization.standingPolicy;
+      const readyPolicy = authorization.readyPolicy;
+      const standingProject = standingPolicy.projectPolicies.find((item) => item.projectId === receipt.readyJob.projectId);
+      const readyProject = readyPolicy.projectPolicies.find((item) => item.projectId === receipt.readyJob.projectId);
+      const expectedTransitionId = `transition:frontier-ready:${sha256Digest({ receiptId: receipt.receiptId }).slice(7, 39)}`;
+      const expectedTransitionKey = `frontier-ready-${receipt.receiptDigest.slice(7)}`;
+      if (!standingProject || !standingProject.enabled || !readyProject || !readyProject.enabled
+        || readyPolicy.parentStandingPolicyId !== standingPolicy.policyId
+        || readyPolicy.parentStandingPolicyRevision !== standingPolicy.revision
+        || readyPolicy.parentStandingPolicyDigest !== standingPolicy.policyDigest
+        || input.tenantId !== receipt.tenantId || input.tenantId !== standingPolicy.tenantId
+        || input.tenantId !== readyPolicy.tenantId || standingPolicy.workspaceId !== receipt.workspaceId
+        || readyPolicy.workspaceId !== receipt.workspaceId || input.projectId !== receipt.readyJob.projectId
+        || input.jobId !== receipt.readyJob.id || input.requestId !== receipt.requestId
+        || input.requestDigest !== receipt.promotionRequestDigest || input.receiptDigest !== receipt.receiptDigest
+        || input.readyJobDigest !== sha256Digest(receipt.readyJob) || input.expectedJobVersion !== 0
+        || input.expectedJobDigest !== receipt.proposedJobDigest
+        || input.standingPolicy.policyId !== standingPolicy.policyId
+        || input.standingPolicy.revision !== standingPolicy.revision
+        || input.standingPolicy.policyDigest !== standingPolicy.policyDigest
+        || input.readyPolicy.policyId !== readyPolicy.policyId || input.readyPolicy.revision !== readyPolicy.revision
+        || input.readyPolicy.policyDigest !== readyPolicy.policyDigest
+        || input.maximumActiveReadyGlobal !== readyPolicy.maximumActiveReadyGlobal
+        || input.maximumActiveReadyProject !== readyProject.maximumActiveReady
+        || input.transitionId !== expectedTransitionId || input.transitionIdempotencyKey !== expectedTransitionKey
+        || input.occurredAt !== receipt.promotedAt || input.reservation.id !== receipt.reservation.reservationId
+        || input.reservation.routeId !== receipt.reservation.routeId
+        || input.reservation.resourceKey !== readyProject.resourceKey
+        || input.reservation.resourceKey !== receipt.reservation.resourceKey
+        || input.reservation.units !== readyProject.reservationUnits
+        || input.reservation.units !== receipt.reservation.units
+        || input.reservation.capacityUnits !== readyProject.resourceCapacityUnits
+        || input.reservation.capacityUnits !== receipt.reservation.capacityUnits
+        || input.reservation.decisionDigest !== receipt.reservation.decisionDigest
+        || input.reservation.acquiredAt !== receipt.reservation.acquiredAt
+        || input.reservation.expiresAt !== receipt.reservation.expiresAt
+        || input.handoff.id !== receipt.handoff.handoffId
+        || input.handoff.payloadDigest !== sha256Digest(receipt.handoff)
+        || input.handoff.availableAt !== receipt.handoff.createdAt
+        || input.handoff.expiresAt !== receipt.handoff.expiresAt
+        || sha256Digest(input.handoff.payload) !== sha256Digest(receipt.handoff)) {
+        throw new Error("Ready frontier promotion authorization mismatch");
+      }
+      if (![input.tenantId, input.projectId, input.jobId, input.requestId, input.standingPolicy.policyId,
+        input.readyPolicy.policyId, input.transitionId, input.transitionIdempotencyKey,
+        input.reservation.id, input.reservation.routeId, input.reservation.resourceKey,
+        input.handoff.id].every((value) => safeId.test(value))
+        || ![input.requestDigest, input.receiptDigest, input.readyJobDigest, input.expectedJobDigest,
+          input.standingPolicy.policyDigest, input.readyPolicy.policyDigest,
+          input.reservation.decisionDigest, input.handoff.payloadDigest].every((value) => digest.test(value))
+        || ![input.occurredAt, input.reservation.acquiredAt, input.reservation.expiresAt,
+          input.handoff.availableAt, input.handoff.expiresAt, authorization.materializedAt,
+          authorization.authorizedAt].every(instant)
+        || input.reservation.acquiredAt !== input.occurredAt
+        || Date.parse(input.reservation.expiresAt) <= Date.parse(input.occurredAt)
+        || input.handoff.availableAt !== input.occurredAt || input.handoff.expiresAt !== input.reservation.expiresAt
+        || !Number.isSafeInteger(input.maximumActiveReadyGlobal) || input.maximumActiveReadyGlobal < 1
+        || !Number.isSafeInteger(input.maximumActiveReadyProject) || input.maximumActiveReadyProject < 1
+        || !Number.isSafeInteger(input.standingPolicy.revision) || input.standingPolicy.revision < 1
+        || !Number.isSafeInteger(input.readyPolicy.revision) || input.readyPolicy.revision < 1
+        || !Number.isSafeInteger(input.reservation.units) || input.reservation.units < 1
+        || !Number.isSafeInteger(input.reservation.capacityUnits) || input.reservation.capacityUnits < input.reservation.units
+        || input.actor.actorType !== "service" || input.actor.actorId !== "service:ready-frontier-promoter") {
+        throw new Error("Invalid ready frontier promotion input");
+      }
+      assertNoSecretMaterial(input.handoff.payload, "ready frontier handoff");
+      if (input.handoff.payload.handoffId !== input.handoff.id || input.handoff.payload.tenantId !== input.tenantId
+        || input.handoff.payload.projectId !== input.projectId || input.handoff.payload.jobId !== input.jobId
+        || input.handoff.payload.reservationId !== input.reservation.id
+        || input.handoff.payload.destination !== "internal_scheduler_jobber_table"
+        || input.handoff.payload.state !== "pending_internal_handoff"
+        || input.handoff.payload.repositorySimulationOnly !== true || input.handoff.payload.permitsClaimOrLease !== false
+        || input.handoff.payload.permitsDispatchOrExecution !== false || input.handoff.payload.permitsProviderContact !== false
+        || input.handoff.payload.permitsAgentMessage !== false || input.handoff.payload.permitsGitHubMutation !== false
+        || input.handoff.payload.permitsExternalEffects !== false) throw new Error("Ready frontier handoff contract mismatch");
+      let lastAuthorizedTime = Date.parse(authorization.authorizedAt);
+      const currentAuthorizationTime = (requireFreshPromotion: boolean): string => {
+        let value: string;
+        try { value = authorization.now(); } catch { throw new Error("Ready frontier trusted clock failed"); }
+        if (!instant(value)) throw new Error("Ready frontier trusted clock returned an invalid instant");
+        const current = Date.parse(value);
+        if (current < lastAuthorizedTime || current < Date.parse(authorization.authorizedAt)
+          || standingPolicy.state !== "active" || readyPolicy.state !== "active"
+          || current < Date.parse(standingPolicy.effectiveAt) || current >= Date.parse(standingPolicy.expiresAt)
+          || current < Date.parse(readyPolicy.effectiveAt) || current >= Date.parse(readyPolicy.expiresAt)
+          || current >= Date.parse(receipt.reservation.expiresAt)
+          || current >= Date.parse(receipt.handoff.expiresAt)
+          || current >= Date.parse(receipt.readyJob.authority.expiresAt)) {
+          throw new Error("Ready frontier promotion authorization is no longer current");
+        }
+        if (requireFreshPromotion && (current < Date.parse(receipt.promotedAt)
+          || current - Date.parse(receipt.promotedAt) > 5_000
+          || current < Date.parse(authorization.materializedAt)
+          || current - Date.parse(authorization.materializedAt) > readyPolicy.maximumMaterializationAgeSeconds * 1_000)) {
+          throw new Error("Ready frontier promotion request is stale at the write boundary");
+        }
+        lastAuthorizedTime = current;
+        return value;
+      };
+      return await this.db.transaction(async (tx) => {
       const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
       if (!tenant.rows[0]) throw new Error("Ready frontier tenant not found");
       const priorRequest = await tx.query<{ request_digest: string; status: string; result: {
@@ -522,6 +587,7 @@ export class CanonicalStore {
         `SELECT request_digest,status,result FROM control_idempotency
          WHERE tenant_id=$1 AND operation_scope='ready-frontier-promotion' AND idempotency_key=$2 FOR UPDATE`,
         [input.tenantId, input.requestId]);
+      let transactionNow = currentAuthorizationTime(!priorRequest.rows[0]);
       if (priorRequest.rows[0]) {
         const prior = priorRequest.rows[0];
         if (prior.request_digest !== input.requestDigest || prior.status !== "completed"
@@ -619,25 +685,28 @@ export class CanonicalStore {
         "SELECT capacity_units FROM control_resource_reservation_heads WHERE tenant_id=$1 AND resource_key=$2 FOR UPDATE",
         [input.tenantId, input.reservation.resourceKey]);
       if (Number(head.rows[0]?.capacity_units) !== input.reservation.capacityUnits) throw new Error("Ready frontier resource capacity conflict");
+      transactionNow = currentAuthorizationTime(true);
       await tx.query(`UPDATE control_resource_reservations SET state='expired'
         WHERE tenant_id=$1 AND resource_key=$2 AND state='active' AND expires_at <= $3`,
-      [input.tenantId, input.reservation.resourceKey, input.occurredAt]);
+      [input.tenantId, input.reservation.resourceKey, transactionNow]);
       const existingReservation = await tx.query<{ id: string }>(
         "SELECT id FROM control_resource_reservations WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [input.tenantId, input.reservation.id]);
       if (existingReservation.rows[0]) throw new Error("Ready frontier reservation replay without handoff");
       const used = await tx.query<{ used_units: string }>(`SELECT COALESCE(SUM(units),0)::text used_units
         FROM control_resource_reservations WHERE tenant_id=$1 AND resource_key=$2 AND state='active' AND expires_at > $3`,
-      [input.tenantId, input.reservation.resourceKey, input.occurredAt]);
+      [input.tenantId, input.reservation.resourceKey, transactionNow]);
       if (Number(used.rows[0]?.used_units ?? 0) + input.reservation.units > input.reservation.capacityUnits) {
         throw new Error("Ready frontier resource unavailable");
       }
+      currentAuthorizationTime(true);
       await tx.query(`INSERT INTO control_resource_reservations
         (id,tenant_id,project_id,work_item_id,route_id,resource_key,units,decision_digest,state,acquired_at,expires_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)`,
       [input.reservation.id, input.tenantId, input.projectId, input.jobId, input.reservation.routeId,
         input.reservation.resourceKey, input.reservation.units, input.reservation.decisionDigest,
         input.reservation.acquiredAt, input.reservation.expiresAt]);
+      currentAuthorizationTime(true);
       const promoted = await this.transitionWith(tx, { tenantId: input.tenantId, kind: "job", entityId: input.jobId,
         expectedVersion: input.expectedJobVersion, toState: "ready", transitionId: input.transitionId,
         idempotencyKey: input.transitionIdempotencyKey, actor: input.actor, occurredAt: input.occurredAt,
@@ -653,7 +722,10 @@ export class CanonicalStore {
       [JSON.stringify({ receiptDigest: input.receiptDigest, jobId: input.jobId,
         reservationId: input.reservation.id, handoffId: input.handoff.id }), input.tenantId, input.requestId]);
       return { job: promoted.entity as JobRecord, replayed: false };
-    });
+      });
+    } finally {
+      authorization.release();
+    }
   }
 
   async get(tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity | undefined> {

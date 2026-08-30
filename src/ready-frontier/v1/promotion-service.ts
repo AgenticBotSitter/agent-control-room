@@ -18,9 +18,78 @@ function id(prefix: string, material: unknown): string { return `${prefix}:${sha
 
 export interface ReadyFrontierTrustedClockV1 { now(): string; }
 
+interface CanonicalPromotionAuthorizationBindingV1 {
+  receipt: ReadyFrontierPromotionReceiptV1;
+  standingPolicy: ReadyFrontierStandingPolicyV1;
+  readyPolicy: ReadyFrontierReadyPolicyV1;
+  materializedAt: string;
+  authorizedAt: string;
+  clock: ReadyFrontierTrustedClockV1;
+  accepting: boolean;
+  acquired: boolean;
+  uses: Set<Promise<void>>;
+}
+
+export interface ReadyFrontierCanonicalPromotionAuthorizationUseV1 {
+  receipt: ReadyFrontierPromotionReceiptV1;
+  standingPolicy: ReadyFrontierStandingPolicyV1;
+  readyPolicy: ReadyFrontierReadyPolicyV1;
+  materializedAt: string;
+  authorizedAt: string;
+  now(): string;
+  release(): void;
+}
+
+const activeCanonicalPromotionAuthorizations = new WeakMap<object, CanonicalPromotionAuthorizationBindingV1>();
+
+function exactClone<T>(value: T): T { return exactReadyFrontierJsonV1(value) as T; }
+
+/** CanonicalStore can acquire a use, but only this module can mint the opaque authorization object. */
+export function acquireReadyFrontierCanonicalPromotionAuthorizationV1(
+  value: unknown): ReadyFrontierCanonicalPromotionAuthorizationUseV1 | undefined {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined;
+  const binding = activeCanonicalPromotionAuthorizations.get(value as object);
+  if (!binding?.accepting || binding.acquired) return undefined;
+  binding.acquired = true;
+  let finish!: () => void;
+  const completed = new Promise<void>((resolve) => { finish = resolve; });
+  binding.uses.add(completed);
+  let released = false;
+  return {
+    receipt: exactClone(binding.receipt),
+    standingPolicy: exactClone(binding.standingPolicy),
+    readyPolicy: exactClone(binding.readyPolicy),
+    materializedAt: binding.materializedAt,
+    authorizedAt: binding.authorizedAt,
+    now: () => binding.clock.now(),
+    release: () => {
+      if (released) return;
+      released = true;
+      binding.uses.delete(completed);
+      finish();
+    },
+  };
+}
+
+async function withCanonicalPromotionAuthorizationV1<T>(bindingInput: Omit<CanonicalPromotionAuthorizationBindingV1,
+  "accepting" | "acquired" | "uses">, operation: (authorization: object) => Promise<T>): Promise<T> {
+  const authorization = Object.freeze(Object.create(null)) as object;
+  const binding: CanonicalPromotionAuthorizationBindingV1 = {
+    ...bindingInput, accepting: true, acquired: false, uses: new Set(),
+  };
+  activeCanonicalPromotionAuthorizations.set(authorization, binding);
+  try {
+    return await operation(authorization);
+  } finally {
+    binding.accepting = false;
+    await Promise.allSettled([...binding.uses]);
+    activeCanonicalPromotionAuthorizations.delete(authorization);
+  }
+}
+
 async function persistPromotion(input: { canonicalStore: CanonicalStore; receipt: ReadyFrontierPromotionReceiptV1;
   standingPolicy: ReadyFrontierStandingPolicyV1; readyPolicy: ReadyFrontierReadyPolicyV1;
-  standingPolicyGuard: object; readyPolicyGuard: object;
+  operationAuthorization: object;
   evaluationKey: unknown; readyPolicyKey: unknown }):
   Promise<{ receipt: ReadyFrontierPromotionReceiptV1; replayed: boolean }> {
   const receipt = parseReadyFrontierPromotionV1(input.receipt, input.evaluationKey);
@@ -35,9 +104,10 @@ async function persistPromotion(input: { canonicalStore: CanonicalStore; receipt
     requestId: receipt.requestId, requestDigest: receipt.promotionRequestDigest, receiptDigest: receipt.receiptDigest,
     readyJobDigest: sha256Digest(receipt.readyJob),
     standingPolicy: { policyId: receipt.standingPolicyId, revision: receipt.standingPolicyRevision,
-      policyDigest: receipt.standingPolicyDigest, activeGuard: input.standingPolicyGuard },
+      policyDigest: receipt.standingPolicyDigest },
     readyPolicy: { policyId: receipt.readyPolicyId, revision: receipt.readyPolicyRevision,
-      policyDigest: receipt.readyPolicyDigest, activeGuard: input.readyPolicyGuard },
+      policyDigest: receipt.readyPolicyDigest },
+    operationAuthorization: input.operationAuthorization,
     expectedJobVersion: 0, expectedJobDigest: receipt.proposedJobDigest,
     maximumActiveReadyGlobal: policy.maximumActiveReadyGlobal, maximumActiveReadyProject: project.maximumActiveReady,
     transitionId: id("transition:frontier-ready", { receiptId: receipt.receiptId }),
@@ -84,18 +154,20 @@ export class ReadyFrontierPromotionServiceV1 {
       if (error instanceof ReadyFrontierContractErrorV1) throw error; fail("invalid_input");
     }
     const request = envelope.request, materialization = envelope.materializationReceipt;
-    let trustedNow: string;
-    try { trustedNow = this.clock.now(); } catch { fail("integrity_failed"); }
     const evaluation = this.evaluations.evaluation(materialization.cycleId);
     if (!evaluation) fail("integrity_failed");
     return this.standingPolicies.withCurrentPolicy(request.standingPolicyId, request.standingPolicyRevision,
-      request.standingPolicyDigest, (standingPolicy, standingPolicyGuard) => this.readyPolicies.withCurrentPolicy(request.readyPolicyId,
-        request.readyPolicyRevision, request.readyPolicyDigest, async (readyPolicy, readyPolicyGuard) => {
+      request.standingPolicyDigest, (standingPolicy) => this.readyPolicies.withCurrentPolicy(request.readyPolicyId,
+        request.readyPolicyRevision, request.readyPolicyDigest, async (readyPolicy) => {
+          let trustedNow: string;
+          try { trustedNow = this.clock.now(); } catch { fail("integrity_failed"); }
           const receipt = buildReadyFrontierPromotionV1(envelope, this.evaluationKey, this.standingPolicyKey,
             this.readyPolicyKey, evaluation, standingPolicy, readyPolicy, trustedNow);
-          return persistPromotion({ canonicalStore: this.canonicalStore, receipt, standingPolicy, readyPolicy,
-            standingPolicyGuard, readyPolicyGuard,
-            evaluationKey: this.evaluationKey, readyPolicyKey: this.readyPolicyKey });
+          return withCanonicalPromotionAuthorizationV1({ receipt, standingPolicy, readyPolicy,
+            materializedAt: materialization.materializedAt, authorizedAt: trustedNow, clock: this.clock },
+          (operationAuthorization) => persistPromotion({ canonicalStore: this.canonicalStore, receipt,
+            standingPolicy, readyPolicy, operationAuthorization,
+            evaluationKey: this.evaluationKey, readyPolicyKey: this.readyPolicyKey }));
         }));
   }
 
