@@ -1,6 +1,6 @@
 # CR11B-AUTO-040 Candidate Acceptance Record
 
-Status: initial candidate rejected; first remediation received a split verdict; second and third remediations rejected; fourth remediation complete; different-agent security re-review pending
+Status: accepted for exact effect-free commit `fb549ebbcf5a2cbd9ca3d3cbef6842578e280074`; production activation remains blocked
 
 Date: 2026-08-30
 
@@ -119,15 +119,16 @@ surface is then installed as non-writable, non-configurable own descriptors on t
 prototype changes cannot enter `query`, `transaction`, `exec`, their internal dispatch, or cleanup. The raw receiver is
 still withheld and only the frozen outer client receives the private repository-simulation brand.
 
-This record is not final acceptance. The accepted durability verdict remains bounded to the first-remediation commit. A
-new different independent security reviewer must review the exact committed fourth remediation, reproduce the
-`AUTO040-STRR-001` pre-factory prototype path, `AUTO040-SSRR-001` receiver-delegate attack, and every earlier `SAR` path,
-attack the fixed-fake/collaborator/capability boundary,
-durable marker/restart semantics,
-clock and deadline rules, replay and rollback behavior, projection sanitation, activation packet completeness, and absence
-of operational authority. Any finding keeps AUTO-040 open and requires another different-agent re-review.
+A fresh different independent reviewer accepted exact fourth-remediation commit
+`fb549ebbcf5a2cbd9ca3d3cbef6842578e280074` with disposition
+`ACCEPTED_SECURITY_AUTHORITY_FOURTH_REMEDIATION`. Its unchanged report has SHA-256
+`bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`. The reviewer independently varied all 34
+executable PGlite descriptors before factory construction and together after private receiver creation, repeated the
+alternate database and four-checkpoint matrices, and re-ran ordinary completion, replay, ambiguity, rollback, activation,
+and negative-authority cases. No changed callback, alternate consumer, delivery path, or concrete defect was found.
 
-Only an accepted unchanged security report may close the repository snapshot. That acceptance still cannot enroll production policy or authorize any real effect.
+This record accepts only the exact local, single-process, effect-free repository snapshot. It does not enroll production
+policy, authorize a real consumer, or grant any external effect.
 
 ## Residual boundary
 

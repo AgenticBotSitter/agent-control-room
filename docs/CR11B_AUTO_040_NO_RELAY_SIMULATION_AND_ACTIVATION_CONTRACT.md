@@ -116,5 +116,11 @@ The fourth remediation validates the pinned PGlite 0.3.14 constructor and comple
 receiver construction. Descriptor shapes and function-source digests must match exactly. It then installs the verified
 surface as non-writable, non-configurable own descriptors on the withheld receiver, so both pre-factory drift and later
 shared-prototype changes fail without entering acknowledged behavior. A new different independent security review of the
-exact committed fourth remediation remains mandatory.
-Passing repository tests is necessary but cannot make the phase accepted or authorize production activation.
+exact committed fourth remediation was mandatory; repository tests alone could not accept the phase or authorize
+production activation.
+
+A fresh different independent reviewer accepted exact fourth-remediation commit
+`fb549ebbcf5a2cbd9ca3d3cbef6842578e280074`. The unchanged report has SHA-256
+`bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07` and disposition
+`ACCEPTED_SECURITY_AUTHORITY_FOURTH_REMEDIATION`. That acceptance closes the repository-only AUTO-040 snapshot and does
+not change this contract's production stop boundary.

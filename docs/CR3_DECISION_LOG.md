@@ -1393,3 +1393,24 @@ reproduce `AUTO040-STRR-001`, vary every accepted PGlite executable descriptor b
 creation, and repeat all `SAR` and `SSRR` paths plus ordinary completion, replay, ambiguity, rollback, blocked activation,
 and negative-authority checks. Any admitted changed behavior, alternate consumer/effect seam, or false acknowledgement
 keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-110 — AUTO-040 closes only on exact independent evidence and remains non-production
+
+**Decision:** Exact fourth-remediation commit `fb549ebbcf5a2cbd9ca3d3cbef6842578e280074` is accepted for the local,
+single-process, effect-free AUTO-040 repository simulation. The accepting independent report is immutable at SHA-256
+`bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`. Its acceptance closes `SAR-001`, `SAR-002`,
+`DR-001` through `DR-004`, `SSRR-001`, and `STRR-001` only for that exact snapshot.
+
+**Why:** The fresh reviewer independently varied all 34 executable PGlite descriptors before factory construction and
+together after private receiver creation, repeated alternate database and four-checkpoint matrices, re-ran complete
+completion/replay/ambiguity/rollback/activation evidence, and found no concrete defect or alternate effect path. Producer
+tests alone did not close the phase; the exact different-reviewer evidence did.
+
+**Trade-off:** Source and descriptor pinning intentionally couples the repository fixture to PGlite 0.3.14. The accepted
+simulation still does not prove hosted PostgreSQL, protected clock/key/checkpoint/policy custody, multi-process convergence,
+a real consumer, credential brokerage, cross-service ambiguity reconciliation, or production isolation.
+
+**Reevaluate:** Any PGlite change, dependency-manifest change, accepted receiver-surface change, real consumer, hosted
+database, protected policy enrollment, or activation design requires a new bounded contract and proportionate fresh
+review. Private GitHub transfer may preserve the accepted bytes, but merge still requires owner approval and cannot grant
+production authority.

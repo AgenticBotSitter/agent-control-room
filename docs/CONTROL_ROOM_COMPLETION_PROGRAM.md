@@ -255,7 +255,7 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | CR11B-AUTO-010 | Codex | Authenticated canonical-source adapter, local cycle service, and portfolio/Project Workspace frontier views | COMPLETE — four authenticated reads, manual durable cycle, safe frontier views |
 | CR11B-AUTO-020 | Codex | Standing owner work-policy contract and atomic frontier-to-canonical proposed-work materialization | COMPLETE — authenticated repository policy lifecycle and atomic non-runnable canonical bundle |
 | CR11B-AUTO-030 | Codex | Protected automatic ready promotion and scheduler/jobber handoff under exact standing policy | COMPLETE — fourth remediation independently accepted at exact effect-free commit `adf0804` |
-| CR11B-AUTO-040 | Codex + Owner | End-to-end no-relay agent-job simulation and separately authorized protected activation packet | FOURTH REMEDIATION COMPLETE — durability accepted the first remediation; three security re-reviews found collaborator, receiver, and pre-factory dependency-provenance seams; exact database/checkpoint provenance plus pinned PGlite implementation identity now await a fresh different-agent security re-review; effects remain owner-gated |
+| CR11B-AUTO-040 | Codex + Owner | End-to-end no-relay agent-job simulation and separately authorized protected activation packet | COMPLETE — exact effect-free commit `fb549eb` independently accepted after four remediations; production consumer, policy custody, hosting, and effects remain owner-gated |
 
 ## Block acceptance and promotion
 
