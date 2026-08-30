@@ -105,6 +105,7 @@ Before any hosted use, the existing production contract still requires private C
 | CR11A-TEAM-030 | Reviewed handoff materialization into canonical proposed work and Action Inbox | Sol/high | no dispatch |
 | CR11A-TEAM-040 | Read-only pinned Hermes Bot Mode normalization and conformance harness | Sol/xhigh | injected fixtures only |
 | CR11A-TEAM-050 | Owner-authorized one-profile/one-room native read qualification or disabled disposition | Sol/xhigh | one frozen read-only attempt |
+| CR11A-TEAM-060 | Metadata-only filtered Hermes read bridge contract and upstream method requirements | Sol/high | repository-only; no native contact |
 
 CR11A-TEAM-000/010 do not install or update Hermes, call a provider, create a routine, dispatch an agent, retain full messages, mutate a workspace, deploy Control Room, or use the reserved domain.
 
@@ -113,3 +114,5 @@ CR11A-TEAM-020 is accepted for the authenticated local fake-persistence boundary
 CR11A-TEAM-030 is accepted for the local reviewed-materialization boundary. One authenticated exact owner decision records accepted, rejected, or withdrawn truth. Accepted review alone can atomically create a draft request, proposed workflow, proposed zero-effect job, and resolved Action Inbox item. Exact replay is inert, conflict rolls back every new record, and no attempt, lease, approval, dispatch, provider, network, or effect authority exists. See `CR11A_TEAM_030_REVIEWED_HANDOFF_CONTRACT.md` and `CR11A_TEAM_030_ACCEPTANCE.md`.
 
 CR11A-TEAM-040 is accepted for the repository-only injected-fixture boundary. The exact pinned adapter normalizes profiles, routines, rooms, and safe-summary events into the existing safe workspace while retaining digest-only identity and collection truth. It has no native reader, runtime client, provider path, message body, write method, schedule mutation, materializer, approval, dispatch, or executor. TEAM-050 remains a separate owner gate. See `CR11A_TEAM_040_HERMES_BOT_MODE_CONTRACT.md` and `CR11A_TEAM_040_ACCEPTANCE.md`.
+
+CR11A-TEAM-050 is accepted with `blocked_before_attempt`. Exact installed-source inspection found no native read that can select one profile and one room and remove content before crossing the reader boundary. The official list RPC returns every profile plus raw room-message text; describe reads SOUL and configuration; direct profile metadata also contains room-message text. No runtime, profile, room, provider, or write contact occurred. Native Bot Mode reads remain disabled. See `CR11A_TEAM_050_NATIVE_READ_QUALIFICATION.md` and `CR11A_TEAM_050_ACCEPTANCE.md`.

@@ -1122,3 +1122,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** The adapter is useful for deterministic development and UI-compatible projection but proves nothing about the installed Hermes method set, real profile/device identity, native sanitization boundary, or runtime behavior. Until TEAM-050, Control Room cannot truthfully claim a native Bot Mode read integration.
 
 **Reevaluate:** TEAM-050 may record a disabled disposition or, with separate exact owner authorization, execute one frozen one-profile/one-room sanitized read-only qualification. It must preserve the exact pin and empty write set, perform no provider call or full-content read, prove the native method and identity boundary, sanitize before persistence, and stop on drift. Any broader read, write, schedule, message, provider, deployment, or recurring integration requires a later contract and owner gate.
+
+## ADR-094 — Native Hermes reads stop before contact when sanitation begins after receipt
+
+**Decision:** TEAM-050 accepts `blocked_before_attempt` for Hermes package `0.20.6` at revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. Source inspection is a mandatory readiness gate and does not consume the one authorized runtime attempt. A candidate is ineligible unless the native method itself selects one profile and at most one room, returns metadata only before crossing the boundary, proves stable profile/device identity, and has no provider or write path. The official `profiles.list` result is over-broad and contains room-message text, `profiles.describe` reads SOUL and configuration, and direct `profile.yaml` parsing encounters room-message text before filtering. Therefore no native call or profile-file read occurred and native Bot Mode reads remain disabled.
+
+**Why:** Redacting after an over-broad response protects persistence but does not prevent Control Room from reading data outside the owner's exact authorization. A narrow authorization cannot be widened by hiding the excess afterward. Readiness must be proven from the exact pinned method before private runtime data crosses the boundary.
+
+**Alternatives rejected:** Call `profiles.list` and discard other profiles; call `profiles.describe` and retain only a display name; parse `profile.yaml` and ignore log text after YAML decoding; treat bounded message text as metadata; use a raw native path or model/provider as identity; claim the unused attempt can be retried later; convert source inspection into native qualification.
+
+**Trade-off:** Control Room cannot yet populate its Agent Team view from this Mac's live Hermes Bot Mode state. The accepted TEAM-040 injected-only adapter remains useful for UI and repository development, but native truth stays absent until Hermes exposes a filtered metadata-only read method.
+
+**Reevaluate:** TEAM-060 may freeze the exact upstream-safe method shape and a disabled Control Room bridge using fixtures only. Any Hermes patch, installation, native contact, profile or room read, provider call, or retry needs a later exact pin and new owner authorization.
