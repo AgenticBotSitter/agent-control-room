@@ -535,6 +535,10 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 
 /* CR11B authenticated ready-frontier explanation */
 .frontier-shell, .frontier-workspace { display: grid; gap: 12px; }
+.frontier-policy-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--blue) 22%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--panel) 88%, var(--blue) 12%); }
+.frontier-policy-strip span { display: grid; gap: 3px; }
+.frontier-policy-strip small { color: var(--muted); font-size: 7px; text-transform: uppercase; letter-spacing: .08em; }
+.frontier-policy-strip strong { font-size: 12px; }
 .frontier-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .frontier-summary > div { border: 1px solid color-mix(in srgb, var(--violet) 22%, var(--border)); border-radius: 12px; background: var(--violet-soft); padding: 11px 12px; }
 .frontier-summary small { display: block; color: var(--muted); font-size: 7px; }
@@ -806,7 +810,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .wayfarer-benchmark-summary dl { grid-template-columns: repeat(2, 1fr); }
   .wayfarer-executor-summary dl, .wayfarer-delivery-summary dl, .wayfarer-delivery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wayfarer-delivery-grid { grid-template-columns: 1fr; }
-  .frontier-summary, .frontier-lanes { grid-template-columns: 1fr; }
+  .frontier-policy-strip, .frontier-summary, .frontier-lanes { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

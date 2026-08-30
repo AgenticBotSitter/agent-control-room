@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { ControlRoomDashboard } from "./control-room-dashboard";
-import { buildReadyFrontierCycleProjectionFixtureV1 } from "@/src/ready-frontier/v1";
+import { buildReadyFrontierAutomationProjectionFixtureV1, buildReadyFrontierCycleProjectionFixtureV1 } from "@/src/ready-frontier/v1";
 
 export const metadata: Metadata = {
   title: { absolute: "Control Room" },
@@ -8,5 +8,6 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <ControlRoomDashboard readyFrontier={buildReadyFrontierCycleProjectionFixtureV1()} />;
+  return <ControlRoomDashboard readyFrontier={buildReadyFrontierCycleProjectionFixtureV1()}
+    readyFrontierAutomation={buildReadyFrontierAutomationProjectionFixtureV1()} />;
 }

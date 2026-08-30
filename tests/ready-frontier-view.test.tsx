@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReadyFrontierPortfolioView, ReadyFrontierProjectView } from "../app/components/ready-frontier-view.tsx";
-import { buildReadyFrontierCycleProjectionFixtureV1 } from "../src/ready-frontier/v1/index.ts";
+import { buildReadyFrontierAutomationProjectionFixtureV1, buildReadyFrontierCycleProjectionFixtureV1 } from "../src/ready-frontier/v1/index.ts";
 
 test("CR11B-AUTO-010 portfolio view explains cross-project proposals without controls", () => {
   const projection = buildReadyFrontierCycleProjectionFixtureV1();
@@ -10,7 +10,7 @@ test("CR11B-AUTO-010 portfolio view explains cross-project proposals without con
   assert.match(html, /What|Authenticated proposal frontier|Highest-ranked proposal/);
   assert.match(html, /Document the Unreal setup/); assert.match(html, /Research a verified AI release/);
   assert.match(html, /Draft a source-backed article/); assert.match(html, /Proposal only/);
-  assert.match(html, /cannot create, approve, ready, claim, lease, dispatch, or execute work/);
+  assert.match(html, /cannot materialize, approve, ready, schedule, claim, lease, dispatch, or execute work/);
   assert.doesNotMatch(html, /<button|<form|<input|<select|<textarea/);
 });
 
@@ -20,8 +20,20 @@ test("CR11B-AUTO-010 Project Workspace renders proposed, blocked, review, deferr
     projectId="project.blooms.content-ops" />);
   assert.match(html, /Ready frontier/); assert.match(html, /Proposed/); assert.match(html, /Blocked/);
   assert.match(html, /Needs review/); assert.match(html, /Deferred/); assert.match(html, /Draft a source-backed article/);
-  assert.match(html, /Waiting for review evidence/); assert.match(html, /Owner review has not been requested/);
+  assert.match(html, /Waiting for review evidence/); assert.match(html, /Standing policy state unavailable/);
   assert.doesNotMatch(html, /candidate\.content|intentDigest|evidenceDigest|<button|<form/);
+});
+
+test("CR11B-AUTO-020 views show honest repository policy and pending materialization truth without controls", () => {
+  const projection = buildReadyFrontierCycleProjectionFixtureV1(), automation = buildReadyFrontierAutomationProjectionFixtureV1();
+  const portfolio = renderToStaticMarkup(<ReadyFrontierPortfolioView data={{ state: "available", projection }} automation={automation} />);
+  assert.match(portfolio, /Repository simulation active/); assert.match(portfolio, /Production policy/);
+  assert.match(portfolio, /Not enrolled/); assert.match(portfolio, /Proposed work only/);
+  const project = renderToStaticMarkup(<ReadyFrontierProjectView data={{ state: "available", projection }} automation={automation}
+    projectId="project.blooms.content-ops" />);
+  assert.match(project, /Eligible in repository simulation/); assert.match(project, /materialization not requested/);
+  assert.match(project, /Production policy is not enrolled/);
+  assert.doesNotMatch(`${portfolio}${project}`, /<button|<form|<input|<select|<textarea/);
 });
 
 test("CR11B-AUTO-010 frontier views fail honestly for empty, unavailable, stale, and out-of-scope state", () => {

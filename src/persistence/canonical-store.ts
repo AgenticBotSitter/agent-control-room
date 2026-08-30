@@ -374,6 +374,62 @@ export class CanonicalStore {
     });
   }
 
+  /** Atomically records standing-policy frontier work without granting readiness or execution authority. */
+  async createReadyFrontierProposedWorkBundleWithActionInbox(input: ProposedWorkBundleWithActionInbox): Promise<ProposedWorkBundleResult & { actionInbox: ActionInboxItemV1 }> {
+    const request = domainEntitySchema.parse(input.request) as RequestRecord;
+    const workflow = domainEntitySchema.parse(input.workflow) as WorkflowRecord;
+    const job = domainEntitySchema.parse(input.job) as JobRecord;
+    const actionInbox = actionInboxItemSchemaV1.parse(input.actionInbox) as ActionInboxItemV1;
+    for (const record of [request, workflow, job]) assertNoSecretMaterial(record, `${record.kind} record`);
+    assertNoSecretMaterial(actionInbox, "action inbox item");
+    if (request.state !== "draft" || workflow.state !== "proposed" || job.state !== "proposed"
+      || actionInbox.state !== "resolved" || actionInbox.deliveryState !== "not_requested") {
+      throw new Error("Frontier proposed work must remain non-runnable");
+    }
+    if (request.tenantId !== workflow.tenantId || request.tenantId !== job.tenantId || request.tenantId !== actionInbox.tenantId
+      || request.projectId !== workflow.projectId || workflow.projectId !== job.projectId || job.projectId !== actionInbox.projectId
+      || workflow.requestId !== request.id || job.workflowId !== workflow.id || actionInbox.workItemId !== job.id
+      || workflow.jobIds.length !== 1 || workflow.jobIds[0] !== job.id) {
+      throw new Error("Frontier proposed work lineage mismatch");
+    }
+    assertAuthorityDigest(job.authority);
+    if (job.authority.projectId !== job.projectId || job.authority.networkPolicy !== "none"
+      || job.authority.allowedNetworkDestinations.length !== 0 || job.authority.credentialRefs.length !== 0
+      || job.authority.filesystemRoots.length !== 0 || job.authority.effectPolicy !== "none"
+      || job.authority.maxConcurrentEffects !== 0 || job.authority.maxCostUsd !== 0
+      || job.authority.allowedOperations.length !== 1 || job.authority.allowedOperations[0] !== "prepare.repository-work"
+      || job.specVersion !== "ready-frontier-work-order/v1" || !job.jobType.startsWith("frontier.repository-work.")
+      || !job.requiredCapability.startsWith("capability.")) throw new Error("Frontier proposed work exceeds the materialization ceiling");
+    if (actionInbox.kind !== "review" || actionInbox.reasonCode !== "ready_frontier_materialized_proposed"
+      || actionInbox.requestedAction !== "Standing policy recorded this item as proposed work"
+      || actionInbox.blockedWorkItemIds.length !== 0 || actionInbox.legalResponses.length !== 1
+      || actionInbox.legalResponses[0]?.kind !== "open_source" || actionInbox.evidence.length !== 3
+      || actionInbox.evidence.some((item) => item.kind !== "audit" || !item.digest || !item.observedAt)) {
+      throw new Error("Frontier proposed work attention contract mismatch");
+    }
+    return this.db.transaction(async (tx) => {
+      let replayed = true;
+      for (const entity of [request, workflow, job] as DomainEntity[]) {
+        const existing = await this.getWith(tx, entity.tenantId, entity.kind, entity.id);
+        if (existing) {
+          if (sha256Digest(existing) !== sha256Digest(entity)) throw new Error("Frontier proposed work replay conflict");
+        } else { await this.insertWith(tx, entity); replayed = false; }
+      }
+      const prior = await tx.query<{ payload: unknown }>(
+        "SELECT payload FROM control_action_inbox WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [actionInbox.tenantId, actionInbox.id]);
+      if (prior.rows[0]) {
+        if (sha256Digest(prior.rows[0].payload) !== sha256Digest(actionInbox)) throw new Error("Frontier proposed work attention conflict");
+      } else {
+        await tx.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`, [actionInbox.id, actionInbox.tenantId, actionInbox.projectId ?? null,
+          actionInbox.workItemId ?? null, actionInbox.kind, actionInbox.state, actionInbox.deliveryState, actionInbox.createdAt,
+          actionInbox.expiresAt ?? null, JSON.stringify(actionInbox)]);
+        replayed = false;
+      }
+      return { request, workflow, job, actionInbox, replayed };
+    });
+  }
+
   async get(tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity | undefined> {
     return this.getWith(this.db, tenantId, kind, id);
   }

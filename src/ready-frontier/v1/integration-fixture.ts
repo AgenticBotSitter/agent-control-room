@@ -11,6 +11,7 @@ import {
   type ReadyFrontierIntegrationFixtureV1,
   type ReadyFrontierReadRequestV1,
 } from "./integration-types";
+import type { ReadyFrontierEvaluationV1 } from "./types";
 
 const sourceKey = () => new Uint8Array(32).fill(0x51);
 const evaluationKey = () => new Uint8Array(32).fill(0x52);
@@ -105,7 +106,7 @@ export function buildReadyFrontierIntegrationFixtureV1(integrityKeyValue: unknow
 }
 
 /** Server-rendered repository fixture only. It performs no read, write, provider, network, schedule, or agent action. */
-export function buildReadyFrontierCycleProjectionFixtureV1(): ReadyFrontierCycleProjectionV1 {
+export function buildReadyFrontierRepositoryFixtureEvaluationV1(): ReadyFrontierEvaluationV1 {
   const fixture = buildReadyFrontierFixtureV1(), key = evaluationKey();
   const projectId = (value: string): string => ({
     "project.abs-news": "project.abs.ai-tech-news",
@@ -124,6 +125,13 @@ export function buildReadyFrontierCycleProjectionFixtureV1(): ReadyFrontierCycle
   const { policyDigest: _policyDigest, ...policyInput } = fixture.policy; void _policyDigest;
   const policy = buildReadyFrontierPolicyV1({ ...policyInput,
     projectPolicies: fixture.policy.projectPolicies.map((item) => ({ ...item, projectId: projectId(item.projectId) })) });
-  try { return projectReadyFrontierCycleV1(evaluateReadyFrontierV1({ ...fixture, source, policy }, key), key); }
+  try { return evaluateReadyFrontierV1({ ...fixture, source, policy }, key); }
+  finally { key.fill(0); }
+}
+
+/** Server-rendered repository fixture only. It performs no read, write, provider, network, schedule, or agent action. */
+export function buildReadyFrontierCycleProjectionFixtureV1(): ReadyFrontierCycleProjectionV1 {
+  const key = evaluationKey();
+  try { return projectReadyFrontierCycleV1(buildReadyFrontierRepositoryFixtureEvaluationV1(), key); }
   finally { key.fill(0); }
 }
