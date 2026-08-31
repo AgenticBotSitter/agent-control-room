@@ -42,7 +42,11 @@ const numberIsNaNV1 = Number.isNaN;
 const numberIsSafeIntegerV1 = Number.isSafeInteger;
 const jsonStringifyV1 = JSON.stringify;
 const dateConstructorV1 = Date;
+const datePrototypeV1 = Date.prototype;
 const dateParseV1 = Date.parse;
+const dateGetTimeV1 = Date.prototype.getTime;
+const dateToISOStringV1 = Date.prototype.toISOString;
+const reflectApplyV1 = Reflect.apply;
 const bufferConstructorV1 = Buffer;
 const bufferFromV1 = Buffer.from;
 
@@ -74,6 +78,8 @@ function assertCanonicalRuntimeV1(): void {
     || !exactOwnMethodV1(numberConstructorV1, "isSafeInteger", numberIsSafeIntegerV1)
     || !exactOwnMethodV1(jsonObjectV1, "stringify", jsonStringifyV1)
     || !exactOwnMethodV1(dateConstructorV1, "parse", dateParseV1)
+    || !exactOwnMethodV1(datePrototypeV1, "getTime", dateGetTimeV1)
+    || !exactOwnMethodV1(datePrototypeV1, "toISOString", dateToISOStringV1)
     || !exactOwnMethodV1(bufferConstructorV1, "from", bufferFromV1)
     || sha256Digest(runtimeSentinelMaterialV1) !== runtimeSentinelDigestV1
     || hmacSha256Tag(runtimeSentinelKeyV1, runtimeSentinelMaterialV1) !== runtimeSentinelAuthTagV1) {
@@ -93,7 +99,9 @@ const authTagSchemaV1 = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
 const timeSchemaV1 = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
   .refine((value) => {
     const parsed = new dateConstructorV1(value);
-    return !numberIsNaNV1(parsed.getTime()) && parsed.toISOString() === value;
+    const epoch = reflectApplyV1(dateGetTimeV1, parsed, []) as number;
+    const canonical = numberIsNaNV1(epoch) ? "" : reflectApplyV1(dateToISOStringV1, parsed, []) as string;
+    return !numberIsNaNV1(epoch) && canonical === value && dateParseV1(value) === epoch;
   }, "invalid canonical instant");
 const gateSchemaV1 = z.enum(READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1);
 const scenarioSchemaV1 = z.enum(readyFrontierProductionCustodyScenarioCodesV1);
@@ -605,7 +613,7 @@ export function runReadyFrontierProductionCustodyFakeQualificationV1(inputValue:
       qualificationKey);
     const injectedFault = input.injectedFault ?? "none";
     if (dateParseV1(input.startedAt) < dateParseV1(plan.plannedAt)
-      || dateParseV1(input.completedAt) < dateParseV1(input.startedAt)
+      || dateParseV1(input.completedAt) <= dateParseV1(input.startedAt)
       || dateParseV1(input.completedAt) >= dateParseV1(plan.expiresAt)) fail("policy_denied");
     const scenarioResults = buildScenarioResultsV1(injectedFault, plan.planDigest, input.runId,
       input.startedAt, input.completedAt);
@@ -668,7 +676,7 @@ export function parseReadyFrontierProductionCustodyReportV1(value: unknown,
       || report.productionBoundaryAssessmentId !== plan.productionBoundaryAssessmentId
       || report.productionBoundaryAssessmentDigest !== plan.productionBoundaryAssessmentDigest
       || dateParseV1(report.startedAt) < dateParseV1(plan.plannedAt)
-      || dateParseV1(report.completedAt) < dateParseV1(report.startedAt)
+      || dateParseV1(report.completedAt) <= dateParseV1(report.startedAt)
       || dateParseV1(report.completedAt) >= dateParseV1(plan.expiresAt)
       || !sameList(reportedScenarioCodes,
         readyFrontierProductionCustodyScenarioCodesV1)

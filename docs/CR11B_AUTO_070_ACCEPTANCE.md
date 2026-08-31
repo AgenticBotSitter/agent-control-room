@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Acceptance Record
 
-Status: two candidates rejected; second remediation implemented; third different independent review pending
+Status: three candidates rejected; third remediation implemented; fourth different independent review pending
 
 Date: 2026-08-30
 
@@ -28,9 +28,9 @@ qualified proofs, and every authority/effect flag false.
 
 ## Producer verification
 
-- focused AUTO-070 tests: 14/14 passing;
-- combined CR11B tests: 133/133 passing;
-- registered pretests: 715/715 passing;
+- focused AUTO-070 tests: 15/15 passing;
+- combined CR11B tests: 134/134 passing;
+- registered pretests: 716/716 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -75,6 +75,23 @@ use scalars, while fixed output collections use array literals that create own i
 installs the inherited setter, requires all eight faults to fail exactly once, checks deep freezing and negative authority,
 restores the prototype, and re-verifies the authentic drift-time report. This finding remains open until a third different
 reviewer accepts the exact second-remediation commit.
+
+## Second-remediation re-review and third remediation
+
+A third different reviewer rejected exact second-remediation commit
+`2cea5975e2c346cf171dbd49c5ab55592ab18578`, tree
+`a1eca854dc027078a915834b80418583a9d3b0b0`. The unchanged report is
+`docs/reviews/CR11B_AUTO_070_SECOND_REMEDIATION_REREVIEW.md`, SHA-256
+`7e759fdb942ee07f6647f31ce365c0d9ff5883f178ed310fb30e058dc6cba763`.
+
+Finding `AUTO070-RR2-001` proved that mutable `Date.prototype.getTime` and `Date.prototype.toISOString` could make an
+impossible canonical-shaped instant pass schema validation while captured static parsing returned `NaN`, causing all
+chronology denial comparisons to be false. The third remediation captures both instance methods, checks their exact
+descriptors before every exported operation, invokes only the captured methods for schema validation, cross-checks the
+captured static parse epoch, and rejects equal as well as reversed run boundaries. Its hostile regression changes both
+instance methods after module load, requires invalid/equal/reversed plan and run operations to fail closed, restores the
+methods, and re-verifies the pre-existing valid authenticated plan and report. A fourth different reviewer must accept the
+exact third-remediation commit.
 
 ## Negative authority
 

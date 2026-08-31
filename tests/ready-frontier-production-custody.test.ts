@@ -348,6 +348,46 @@ test("CR11B-AUTO-070 inherited numeric Array setters cannot change any authentic
     f.activationKey, f.qualificationKey), aliasReport);
 });
 
+test("CR11B-AUTO-070 captures Date instance methods and denies invalid, equal, and reversed chronology", () => {
+  const f = fixture(), defineProperty = Object.defineProperty;
+  const getTimeDescriptor = Object.getOwnPropertyDescriptor(Date.prototype, "getTime")!;
+  const toISOStringDescriptor = Object.getOwnPropertyDescriptor(Date.prototype, "toISOString")!;
+  const invalidInstant = "2026-13-01T20:03:00.000Z";
+  try {
+    defineProperty(Date.prototype, "getTime", { ...getTimeDescriptor, value: () => 0 });
+    defineProperty(Date.prototype, "toISOString", { ...toISOStringDescriptor, value: () => invalidInstant });
+    assert.throws(() => buildReadyFrontierProductionCustodyPlanV1({
+      planId: "frontier.production-custody.invalid-date", assessment: f.assessment,
+      plannedAt: invalidInstant, expiresAt: invalidInstant,
+    }, f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.throws(() => buildReadyFrontierProductionCustodyPlanV1({
+      planId: "frontier.production-custody.equal-date", assessment: f.assessment,
+      plannedAt: "2026-08-30T20:08:00.000Z", expiresAt: "2026-08-30T20:08:00.000Z",
+    }, f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.throws(() => buildReadyFrontierProductionCustodyPlanV1({
+      planId: "frontier.production-custody.reversed-date", assessment: f.assessment,
+      plannedAt: "2026-08-30T20:09:00.000Z", expiresAt: "2026-08-30T20:08:00.000Z",
+    }, f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.throws(() => runReadyFrontierProductionCustodyFakeQualificationV1({
+      runId: "frontier.production-custody-run.equal-date", plan: f.plan,
+      startedAt: "2026-08-30T20:09:00.000Z", completedAt: "2026-08-30T20:09:00.000Z",
+    }, f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.throws(() => runReadyFrontierProductionCustodyFakeQualificationV1({
+      runId: "frontier.production-custody-run.reversed-date", plan: f.plan,
+      startedAt: "2026-08-30T20:10:00.000Z", completedAt: "2026-08-30T20:09:00.000Z",
+    }, f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.throws(() => parseReadyFrontierProductionCustodyPlanV1(f.plan,
+      f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+  } finally {
+    defineProperty(Date.prototype, "getTime", getTimeDescriptor);
+    defineProperty(Date.prototype, "toISOString", toISOStringDescriptor);
+  }
+  assert.deepEqual(parseReadyFrontierProductionCustodyPlanV1(f.plan,
+    f.activationKey, f.qualificationKey), f.plan);
+  assert.deepEqual(parseReadyFrontierProductionCustodyReportV1(f.report, f.plan,
+    f.activationKey, f.qualificationKey), f.report);
+});
+
 test("CR11B-AUTO-070 fails closed when canonical digest helpers drift after module load", () => {
   const f = fixture(), defineProperty = Object.defineProperty;
   const mapDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "map")!;

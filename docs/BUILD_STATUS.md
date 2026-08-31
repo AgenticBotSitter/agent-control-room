@@ -82,7 +82,7 @@
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
-| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Two candidates rejected; second remediation implemented; different review required | Captured runtime operations plus scalar/fixed-literal scenario truth close shared-helper and inherited-index findings; eight fake scenarios retain all nine blockers |
+| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Three candidates rejected; third remediation implemented; fourth different review required | Captured runtime and explicit Date-prototype integrity plus scalar/fixed-literal scenario truth; eight fake scenarios retain all nine blockers |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -103,11 +103,16 @@ operations, removed shared collections, and pinned canonical digest helpers. A d
 into an authenticated eight-pass report. That unchanged report has SHA-256
 `2d212bfa071437b1af10c0ac9c00432df0d4823d2196a3ee235e8feaec17ebab`. The second remediation removes every inherited
 indexed write from trusted scenario logic, uses scalar three-way decisions and fixed array literals, and reproduces the
-numeric-setter case across all eight faults. Focused tests pass 14/14, combined CR11B passes 133/133, registered pretests
-pass 715/715, core passes 414/416 with two intentional platform skips and zero failures, and public post-tests pass 52/52.
+numeric-setter case across all eight faults. A third reviewer accepted that closure but rejected exact commit `2cea597`,
+tree `a1eca85`, because mutable `Date.prototype.getTime` and `toISOString` could admit impossible equal timestamps while
+captured chronology parsing produced `NaN`. That unchanged report has SHA-256
+`7e759fdb942ee07f6647f31ce365c0d9ff5883f178ed310fb30e058dc6cba763`. The third remediation captures the instance
+methods, requires their exact runtime descriptors before artifact work, cross-checks instance and static parsing, and
+denies equal run boundaries. Focused tests pass 15/15, combined CR11B passes 134/134, registered pretests pass 716/716,
+core passes 414/416 with two intentional platform skips and zero failures, and public post-tests pass 52/52.
 Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and
 whitespace validation pass. All nine production gates remain blocking, zero proofs are qualified, and every live/effect
-capability remains false. A third different fresh independent review of the exact second remediation is still required.
+capability remains false. A fourth different fresh independent review of the exact third remediation is still required.
 
 Prior accepted boundary: CR11B-AUTO-060 is complete for exact effect-free commit
 `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`. The first two immutable

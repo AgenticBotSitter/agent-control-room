@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Protected Custody Qualification Foundation Contract
 
-Status: two candidates rejected; exact second remediation requires a third different independent review
+Status: three candidates rejected; exact third remediation requires a fourth different independent review
 
 Date: 2026-08-30
 
@@ -142,3 +142,16 @@ fixed literals. Its hostile regression installs the numeric setter before scenar
 to produce one failure, checks deep freezing and all negative-authority fields, restores the prototype, and re-verifies
 the authentic drift-time report. Only a third different independent reviewer can accept the exact second-remediation
 commit.
+
+A third different reviewer accepted the inherited-index closure but rejected exact second-remediation commit
+`2cea5975e2c346cf171dbd49c5ab55592ab18578`, tree
+`a1eca854dc027078a915834b80418583a9d3b0b0`, in unchanged report SHA-256
+`7e759fdb942ee07f6647f31ce365c0d9ff5883f178ed310fb30e058dc6cba763`.
+
+`AUTO070-RR2-001` showed that substituted Date instance methods could make an impossible canonical-shaped instant pass
+schema validation while captured static parsing returned `NaN`, bypassing chronology comparisons. The third remediation
+captures `getTime` and `toISOString`, verifies their exact descriptors before artifact work, invokes only the captured
+methods, cross-checks their epoch with captured static parsing, and makes equal completion/start boundaries invalid. Its
+hostile regression substitutes both methods after module load, requires invalid, equal, and reversed plan/run operations
+to fail closed, restores the methods, and re-verifies the stable pre-existing plan and report. Only a fourth different
+independent reviewer can accept the exact third-remediation commit.

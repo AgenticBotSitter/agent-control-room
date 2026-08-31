@@ -1581,3 +1581,15 @@ comparison, and projection status use complete array literals with own indexed d
 numeric setter, requires all eight faults to fail exactly once with deeply frozen artifacts and all nine blockers,
 restores the prototype, and re-verifies the authentic report. A third different reviewer must accept the exact second
 remediation commit.
+
+**Second-remediation re-review amendment:** A third different reviewer accepted the inherited-index closure but rejected
+exact remediation `2cea5975e2c346cf171dbd49c5ab55592ab18578`, tree
+`a1eca854dc027078a915834b80418583a9d3b0b0`, in immutable report SHA-256
+`7e759fdb942ee07f6647f31ce365c0d9ff5883f178ed310fb30e058dc6cba763`. Substituted
+`Date.prototype.getTime` and `Date.prototype.toISOString` could make an impossible timestamp pass schema validation while
+captured `Date.parse` returned `NaN`, bypassing every chronology denial comparison. Production authority stayed false.
+The third remediation captures the instance methods, verifies their exact descriptors before artifact work, invokes only
+the captured methods for canonical validation, cross-checks the captured static epoch, and denies equal as well as
+reversed run boundaries. A hostile regression changes both Date methods, requires invalid/equal/reversed operations to
+fail closed, restores them, and re-verifies the stable authenticated plan and report. A fourth different reviewer must
+accept the exact third-remediation commit.
