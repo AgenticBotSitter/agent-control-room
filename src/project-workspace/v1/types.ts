@@ -1,4 +1,5 @@
 export const PROJECT_WORKSPACE_CONTRACT_V1 = "control-room-project-workspace/v1" as const;
+export const PROJECT_WORKSPACE_READ_CONTRACT_V1 = "control-room-project-workspace-read/v1" as const;
 
 export const PROJECT_WORKSPACE_CORE_SECTIONS_V1 = [
   { sectionId: "overview", kind: "overview", label: "Overview" },
@@ -97,3 +98,41 @@ export interface ProjectWorkspaceSnapshotInputV1 {
   failedItemCount: number;
   snapshotHighWaterDigest?: string;
 }
+
+export interface ProjectWorkspaceReadIdentityV1 {
+  tenantId: string;
+  workspaceId: string;
+  projectId: string;
+}
+
+export interface AuthorizedProjectWorkspaceReadScopeV1 extends ProjectWorkspaceReadIdentityV1 {
+  actorId: string;
+  grantedAt: string;
+}
+
+export interface ProjectWorkspaceReadModelV1 extends ProjectWorkspaceReadIdentityV1 {
+  contractVersion: typeof PROJECT_WORKSPACE_READ_CONTRACT_V1;
+  sourceMode: "protected_operator_surface";
+  freshness: "current" | "stale";
+  safeStatusCode: "protected_read_current" | "protected_read_stale";
+  readAt: string;
+  sourceGeneratedAt: string;
+  portfolio: import("../../operator-surfaces/v1").PortfolioProjectProjectionV1;
+  activeWork: import("../../operator-surfaces/v1").ActiveWorkProjectionV1[];
+  services: import("../../operator-surfaces/v1").ServiceProjectionV1[];
+  schedules: import("../../operator-surfaces/v1").ScheduleProjectionV1[];
+  serviceIncidents: import("../../operator-surfaces/v1").ServiceIncidentProjectionV1[];
+  actionInbox: import("../../operator-surfaces/v1").ActionInboxItemV1[];
+  ownerFocus: import("../../operator-surfaces/v1").OwnerFocusPinV1[];
+  presentationOnly: true;
+  grantsApproval: false;
+  grantsNetworkAuthority: false;
+  grantsCommandAuthority: false;
+  grantsLeaseAuthority: false;
+  grantsExecutionAuthority: false;
+  readDigest: string;
+}
+
+export type ProjectWorkspaceReadResultV1 =
+  | { state: "available"; model: ProjectWorkspaceReadModelV1 }
+  | { state: "unavailable"; code: "project_not_found" | "protected_source_unavailable" };

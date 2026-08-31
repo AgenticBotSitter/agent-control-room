@@ -483,7 +483,13 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .project-workspace-status-grid span { color: var(--muted); font-size: 8px; }
 .project-workspace-sources { margin: 12px 0; }
 .project-workspace-boundary { border-left: 3px solid var(--amber); margin: 12px 0 20px; background: var(--amber-soft); color: var(--muted); padding: 10px 12px; font-size: 9px; }
+.project-workspace-fixture-boundary { margin: -10px 0 20px; color: var(--faint); font-size: 8px; }
 .project-workspace-content { display: grid; gap: 14px; scroll-margin-top: 76px; }
+.protected-project-read { display: grid; gap: 12px; border-left: 3px solid var(--blue); }
+.protected-project-read.is-stale { border-left-color: var(--amber); }
+.protected-project-read-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.protected-project-read-heading h3 { margin: 2px 0 0; font-family: Georgia, serif; font-size: 19px; font-weight: 500; }
+.protected-project-read .project-stats dd { overflow-wrap: anywhere; }
 .project-workspace-section-heading { margin-bottom: 0; }
 .project-workspace-empty { min-height: 180px; align-content: center; text-align: center; }
 .project-workspace-empty h3 { margin: 0; font-family: Georgia, serif; font-size: 22px; font-weight: 500; }

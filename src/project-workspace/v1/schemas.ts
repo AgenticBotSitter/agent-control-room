@@ -1,5 +1,14 @@
 import { z } from "zod";
-import { PROJECT_WORKSPACE_CONTRACT_V1 } from "./types";
+import {
+  actionInboxItemSchemaV1,
+  activeWorkProjectionSchemaV1,
+  ownerFocusPinSchemaV1,
+  portfolioProjectProjectionSchemaV1,
+  scheduleProjectionSchemaV1,
+  serviceIncidentProjectionSchemaV1,
+  serviceProjectionSchemaV1,
+} from "../../operator-surfaces/v1/validators";
+import { PROJECT_WORKSPACE_CONTRACT_V1, PROJECT_WORKSPACE_READ_CONTRACT_V1 } from "./types";
 
 export const projectWorkspaceDigestSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const projectWorkspaceTimeSchemaV1 = z.string().datetime({ offset: true });
@@ -102,3 +111,70 @@ export const projectWorkspaceSnapshotInputSchemaV1 = z.object({
   failedItemCount: z.number().int().min(0).max(1_000_000),
   snapshotHighWaterDigest: projectWorkspaceDigestSchemaV1.optional(),
 }).strict();
+
+export const projectWorkspaceReadIdentitySchemaV1 = z.object({
+  tenantId: projectWorkspaceSafeIdSchemaV1,
+  workspaceId: projectWorkspaceSafeIdSchemaV1,
+  projectId: projectWorkspaceSafeIdSchemaV1,
+}).strict();
+
+export const authorizedProjectWorkspaceReadScopeSchemaV1 = projectWorkspaceReadIdentitySchemaV1.extend({
+  actorId: projectWorkspaceSafeIdSchemaV1,
+  grantedAt: projectWorkspaceTimeSchemaV1,
+}).strict();
+
+export const projectWorkspaceReadModelSchemaV1 = z.object({
+  contractVersion: z.literal(PROJECT_WORKSPACE_READ_CONTRACT_V1),
+  tenantId: projectWorkspaceSafeIdSchemaV1,
+  workspaceId: projectWorkspaceSafeIdSchemaV1,
+  projectId: projectWorkspaceSafeIdSchemaV1,
+  sourceMode: z.literal("protected_operator_surface"),
+  freshness: z.enum(["current", "stale"]),
+  safeStatusCode: z.enum(["protected_read_current", "protected_read_stale"]),
+  readAt: projectWorkspaceTimeSchemaV1,
+  sourceGeneratedAt: projectWorkspaceTimeSchemaV1,
+  portfolio: portfolioProjectProjectionSchemaV1.strict(),
+  activeWork: z.array(activeWorkProjectionSchemaV1.strict()).max(1_000),
+  services: z.array(serviceProjectionSchemaV1.strict()).max(1_000),
+  schedules: z.array(scheduleProjectionSchemaV1.strict()).max(1_000),
+  serviceIncidents: z.array(serviceIncidentProjectionSchemaV1.strict()).max(1_000),
+  actionInbox: z.array(actionInboxItemSchemaV1.strict()).max(1_000),
+  ownerFocus: z.array(ownerFocusPinSchemaV1.strict()).max(100),
+  presentationOnly: z.literal(true),
+  grantsApproval: z.literal(false),
+  grantsNetworkAuthority: z.literal(false),
+  grantsCommandAuthority: z.literal(false),
+  grantsLeaseAuthority: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+  readDigest: projectWorkspaceDigestSchemaV1,
+}).strict().superRefine((value, context) => {
+  const expectedStatus = value.freshness === "current" ? "protected_read_current" : "protected_read_stale";
+  if (value.safeStatusCode !== expectedStatus) context.addIssue({ code: "custom", message: "freshness and status must agree" });
+  if (value.portfolio.projectId !== value.projectId
+    || value.activeWork.some((item) => item.projectId !== value.projectId)
+    || value.services.some((item) => item.projectId !== value.projectId)
+    || value.schedules.some((item) => item.projectId !== value.projectId)
+    || value.actionInbox.some((item) => item.tenantId !== value.tenantId || item.projectId !== value.projectId)
+    || value.ownerFocus.some((item) => item.tenantId !== value.tenantId || item.projectId !== value.projectId)) {
+    context.addIssue({ code: "custom", message: "project read records must share the exact scope" });
+  }
+  const serviceIds = new Set(value.services.map((item) => item.serviceId));
+  if (value.serviceIncidents.some((item) => !serviceIds.has(item.serviceId))) {
+    context.addIssue({ code: "custom", message: "incidents require a project service" });
+  }
+  if (value.schedules.some((item) => item.targetType === "service_check" && !serviceIds.has(item.targetId))) {
+    context.addIssue({ code: "custom", message: "service schedules require a project service" });
+  }
+  const incidentIds = new Set(value.serviceIncidents.map((item) => item.id));
+  if (value.actionInbox.some((item) => item.evidence.some((evidence) => evidence.kind === "incident" && !incidentIds.has(evidence.id)))) {
+    context.addIssue({ code: "custom", message: "incident evidence must reference a project incident" });
+  }
+  const waitingApprovalCount = value.activeWork.filter((item) => item.state === "waiting_approval").length;
+  if (value.activeWork.length > value.portfolio.activeJobCount || waitingApprovalCount > value.portfolio.waitingApprovalJobCount) {
+    context.addIssue({ code: "custom", message: "project work counts cannot exceed portfolio counts" });
+  }
+  const age = Date.parse(value.readAt) - Date.parse(value.sourceGeneratedAt);
+  if (age < 0 || (value.freshness === "current" && age > 300_000) || (value.freshness === "stale" && age <= 300_000)) {
+    context.addIssue({ code: "custom", message: "read freshness is invalid" });
+  }
+});
