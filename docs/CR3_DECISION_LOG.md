@@ -1736,3 +1736,59 @@ rollback and cleanup rules, and independent review.
 
 ADR-115 supersedes the disposable hosted-provider path as the current next step. AUTO-080 remains accepted historical
 evidence for its exact inert request boundary, but it is not a mandate to select or contact a hosted database provider.
+
+## ADR-116 — Readiness composition preserves every source gate and cannot infer live evidence
+
+**Decision:** CR11B-AUTO-100 composes the twelve AUTO-090 production-database prerequisites, eighteen CR10A deployment
+gates, and nine CR11B automatic-work production proofs into one ordered 39-gate packet. Gates retain their source lane
+even when their subjects overlap. Only the three repository contracts already marked present by CR10A are recorded as
+present, and they remain repository evidence only. The other 36 gates block readiness. The packet and its
+disabled-before-host-contact disposition bind the exact Hostinger target, CR10A topology/release/plan/assessment/
+disposition chain, and accepted AUTO-040/AUTO-070 identities. They grant no approval, owner-window eligibility,
+deployment authority, execution authority, or external effects.
+
+**Why:** Database-target prerequisites, deployment operations, and automatic-work safety proofs answer different
+questions. De-duplicating similar names or allowing one repository contract to satisfy a live proof could incorrectly
+turn partial design evidence into production authority. A source-preserving packet gives the later owner-controlled phase
+one honest checklist without expanding its authority.
+
+**Alternatives rejected:** Collapse overlapping gates; count a written contract as native host evidence; accept the
+owner-relayed host report as qualification; let a safe projection omit blockers; embed production connection values;
+construct a host/database runner in the readiness phase; treat a valid digest, producer test, or general chat approval as
+permission to contact the VPS.
+
+**Trade-off:** The same operational subject may appear more than once and must be satisfied independently in its proper
+lane. The 39-gate count is intentionally conservative. It produces a larger checklist, but it keeps architecture,
+operations, production proof, independent review, and owner effect authority distinct.
+
+**Reevaluate:** Only after a different independent reviewer accepts the exact AUTO-100 candidate may a later phase
+prepare an exact owner-authorized native rehearsal. Evidence changes require a new packet. No live work begins from this
+ADR or its repository artifacts.
+
+**Pre-review hardening amendment:** Two report-only review runs were interrupted before producing an immutable verdict.
+The first run nevertheless identified four plausible candidate seams. The remediation binds every cross-object ID and
+time in addition to exact canonical current-source identities; captures, verifies, and freezes all gate registries used
+after module initialization; withholds the AUTO-100 Zod schemas from public mutation; and requires projection parsing to
+re-verify the exact packet and disposition digests. New regressions cover a completely re-digested identity fork, source
+registry mutation, private schema custody, and cross-packet projection substitution. This amendment is producer
+remediation evidence only and still requires a fresh different reviewer.
+
+**Independent rejection and first-review remediation:** A different reviewer rejected exact commit
+`0b5f67c8eb2e2d0ac304b26ab26eba767af8cc3a` in immutable report SHA-256
+`998dee3f114217e1ccb76aa88e80739f1fbac6becab76e5113b83aea8a4ea8da`. A caller could change and re-digest the AUTO-090
+decision ID because the expected target was rebuilt from the supplied identity. A caller could also mutate the public
+Project Workspace time schema after module load, execute changed behavior, admit an invalid time, and make relational
+chronology comparisons fail open on `NaN`. The remediation captures the complete exact AUTO-090 target and CR10A source
+snapshots at clean initialization, compares later inputs to those identities without re-entering public source schemas,
+uses private ID/digest/time schemas, captures trusted date parsing, and rejects every non-finite time before comparison.
+New regressions cover re-digested decision-ID/time forks and the reviewer's public-schema mutation with zero hostile
+calls.
+
+**Independent acceptance amendment:** A different independent reviewer accepted exact remediation commit
+`34750ed8ec5cf34134d166505f3df50897afe3f7`, tree `59da1931c4df41fc903e73bfc68c756438dbf5fe`, in unchanged report
+SHA-256 `aa2116b832ed6e5587c72705dcf6dc826f8ef0e7201c5b284c7876b93f53c0a9`. The reviewer independently rejected changed
+and re-digested AUTO-090 decision IDs and times in both build and parse paths, rejected invalid packet and disposition
+times with zero hostile public-schema callbacks, confirmed exact 39-gate and three-present/36-blocked truth, and found no
+new reproducible correctness defect. AUTO-100 is accepted only for that exact effect-free implementation snapshot.
+Stacked integration remains pending; all 36 live blockers and the later fresh owner-authorization requirement remain in
+force.
