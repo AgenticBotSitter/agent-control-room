@@ -1134,3 +1134,15 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** Control Room cannot yet populate its Agent Team view from this Mac's live Hermes Bot Mode state. The accepted TEAM-040 injected-only adapter remains useful for UI and repository development, but native truth stays absent until Hermes exposes a filtered metadata-only read method.
 
 **Reevaluate:** TEAM-060 may freeze the exact upstream-safe method shape and a disabled Control Room bridge using fixtures only. Any Hermes patch, installation, native contact, profile or room read, provider call, or retry needs a later exact pin and new owner authorization.
+
+## ADR-095 — A future Hermes bridge starts with signed producer minimization and an empty runtime pin set
+
+**Decision:** TEAM-060 fixes the future Hermes method to `profiles.control_room_projection`. Requests contain one profile digest selector, one optional room digest selector, and one nonce digest. Responses contain exactly one profile and zero or one room as bounded metadata, explicit omission claims, and negative provider/write truth, signed for at most sixty seconds by a separately pinned Ed25519 device key. Control Room validates injected signed fixtures into digest-bound safe results but retains no raw key or signature. The bridge is disabled, has no native reader or effect method, and its accepted Hermes revision list is empty.
+
+**Why:** TEAM-050 demonstrated that redacting a broad native response after receipt is not compatible with a narrow authorization. Producer-side allowlisting removes message and configuration content before it crosses the native boundary. Signed profile/device identity, nonce binding, and a separate exact runtime pin prevent metadata shape alone from masquerading as authenticated current native truth.
+
+**Alternatives rejected:** Wrap `profiles.list`; parse `profile.yaml` in Control Room; trust bounded message text; accept a version range; infer device identity from a path or hostname; let a result carry its own unpinned key; retain public key or signature in the project projection; activate from fixture conformance; add a generic RPC or native-reader method to the bridge; use unsigned display metadata as identity proof.
+
+**Trade-off:** The contract requires a small Hermes producer change, stable protected device-key custody, a private selector mapping, nonce consumption, and a new native qualification. Until those exist, the bridge remains unable to populate the live Agent Team view.
+
+**Reevaluate:** A later owner-authorized phase may review an exact upstream Hermes commit and native packet. Separately, CR11B-AUTO-000 may continue product progress by defining the continuous real-work ready frontier without depending on native Hermes reads.
