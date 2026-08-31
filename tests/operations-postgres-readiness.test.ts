@@ -19,6 +19,7 @@ import {
   READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1,
   readyFrontierProductionEvidenceClassesV1,
 } from "../src/ready-frontier/v1";
+import { projectWorkspaceTimeSchemaV1 } from "../src/project-workspace/v1";
 import { sha256Digest } from "../src/security";
 import { observedProxy } from "./proxy-test-helper";
 
@@ -154,6 +155,40 @@ test("CR11B-AUTO-100 rejects a completely re-digested cross-object identity fork
   assert.throws(() => parseOperationsPostgresReadinessPacketV1(drift), OperationsContractErrorV1);
 });
 
+test("CR11B-AUTO-100 rejects re-digested AUTO-090 decision identity and time forks", () => {
+  const { packet } = fixture();
+  for (const target of [
+    redigest({ ...packet.databaseTarget, decisionId: "decision:operations:production-database:hostinger:fork" },
+      "decisionDigest"),
+    redigest({ ...packet.databaseTarget, decidedAt: "2026-08-31T18:00:00.001Z" }, "decisionDigest"),
+  ]) {
+    assert.throws(() => buildOperationsPostgresReadinessPacketV1({
+      packetId: packet.packetId, databaseTarget: target, operations: packet.operations, preparedAt: packet.preparedAt,
+    }), OperationsContractErrorV1);
+    assert.throws(() => parseOperationsPostgresReadinessPacketV1(redigest({ ...packet, databaseTarget: target },
+      "packetDigest")), OperationsContractErrorV1);
+  }
+});
+
+test("CR11B-AUTO-100 does not execute mutated public time-schema behavior and rejects invalid time", () => {
+  const { packet } = fixture();
+  const runtime = (projectWorkspaceTimeSchemaV1 as unknown as { _zod: { run: (...args: unknown[]) => unknown } })._zod;
+  const original = runtime.run;
+  let calls = 0;
+  runtime.run = () => { calls += 1; throw new Error("hostile shared time schema executed"); };
+  try {
+    assert.throws(() => buildOperationsPostgresReadinessPacketV1({
+      packetId: packet.packetId, databaseTarget: packet.databaseTarget, operations: packet.operations,
+      preparedAt: "not-a-time",
+    }), OperationsContractErrorV1);
+    const forged = redigest({ ...packet, preparedAt: "not-a-time" }, "packetDigest");
+    assert.throws(() => parseOperationsPostgresReadinessPacketV1(forged), OperationsContractErrorV1);
+    assert.equal(calls, 0);
+  } finally {
+    runtime.run = original;
+  }
+});
+
 test("CR11B-AUTO-100 freezes every source gate registry used after module initialization", () => {
   for (const values of [OPERATIONS_PRODUCTION_DATABASE_BLOCKERS_V1, OPERATIONS_DEPLOYMENT_GATE_IDS_V1,
     READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1, readyFrontierProductionEvidenceClassesV1,
@@ -193,7 +228,7 @@ test("CR11B-AUTO-100 source contains no host, process, database, provider, crede
   const source = await readFile(new URL("../src/operations/v1/postgres-readiness.ts", import.meta.url), "utf8");
   for (const forbidden of ["child_process", "exec(", "spawn(", "fetch(", "axios", "@aws-sdk", "aws-sdk",
     "from \"postgres\"", "from 'postgres'", "DATABASE_URL", "AWS_ACCESS_KEY_ID", "RDS_",
-    "operationsPostgresReadinessSchemasV1"]) {
+    "operationsPostgresReadinessSchemasV1", "projectWorkspaceTimeSchemaV1"]) {
     assert.equal(source.includes(forbidden), false, forbidden);
   }
 });

@@ -7,19 +7,10 @@ import {
   READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1,
   readyFrontierProductionEvidenceClassesV1,
 } from "../../ready-frontier/v1";
-import {
-  projectWorkspaceDigestSchemaV1 as digest,
-  projectWorkspaceSafeIdSchemaV1 as id,
-  projectWorkspaceTimeSchemaV1 as time,
-} from "../../project-workspace/v1";
 import { sha256Digest } from "../../security";
 import {
   OPERATIONS_DEPLOYMENT_GATE_IDS_V1,
   buildCurrentOperationsDeploymentDisabledV1,
-  parseOperationsDeploymentDisabledDispositionV1,
-  parseOperationsDeploymentPlanV1,
-  parseOperationsDeploymentReadinessAssessmentV1,
-  parseOperationsReleaseCandidateV1,
   type OperationsDeploymentDisabledDispositionV1,
   type OperationsDeploymentGateIdV1,
   type OperationsDeploymentPlanV1,
@@ -29,16 +20,19 @@ import {
 import {
   OPERATIONS_PRODUCTION_DATABASE_BLOCKERS_V1,
   buildOperationsProductionDatabaseTargetV1,
-  parseOperationsProductionDatabaseTargetV1,
   type OperationsProductionDatabaseBlockerV1,
   type OperationsProductionDatabaseTargetV1,
 } from "./database-target";
 import { OperationsContractErrorV1 } from "./errors";
 import { parseExactOperationsV1, verifyOperationsDigestV1 } from "./exact";
-import {
-  parseOperationsProductionTopologyV1,
-  type OperationsProductionTopologyV1,
-} from "./topology";
+import { type OperationsProductionTopologyV1 } from "./topology";
+
+const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const time = z.string().datetime({ offset: true });
+const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+const unknownSnapshotSchema = z.unknown();
+const trustedDateParse = Date.parse.bind(Date);
+const trustedNumberIsFinite = Number.isFinite;
 
 export const OPERATIONS_POSTGRES_READINESS_CONTRACT_V1 =
   "control-room-operations-postgres-readiness/v1" as const;
@@ -312,7 +306,13 @@ const projectionSchema = z.object({ contractVersion: z.literal(OPERATIONS_POSTGR
   canRunBackupOrRestore: z.literal(false), canActivateConsumer: z.literal(false), canDeploy: z.literal(false),
   projectionDigest: digest }).strict();
 
+const currentDatabaseTarget = buildOperationsProductionDatabaseTargetV1({
+  decisionId: "decision:operations:production-database:hostinger:1",
+  decidedAt: "2026-08-31T18:00:00.000Z",
+});
+const CURRENT_DATABASE_TARGET_SNAPSHOT_DIGEST_V1 = sha256Digest(currentDatabaseTarget);
 const currentOperations = buildCurrentOperationsDeploymentDisabledV1();
+const CURRENT_OPERATIONS_SNAPSHOT_DIGEST_V1 = sha256Digest(currentOperations);
 const CURRENT_OPERATIONS_IDENTITY_V1 = Object.freeze({
   topologyId: currentOperations.topology.topologyId,
   topologyDigest: currentOperations.topology.topologyDigest,
@@ -347,12 +347,22 @@ function gateDigests(gates: readonly OperationsPostgresReadinessGateV1[]): strin
 }
 
 function parseCanonicalDatabaseTarget(value: unknown): OperationsProductionDatabaseTargetV1 {
-  const target = parseOperationsProductionDatabaseTargetV1(value);
-  const canonical = buildOperationsProductionDatabaseTargetV1({ decisionId: target.decisionId, decidedAt: target.decidedAt });
-  if (target.decisionDigest !== canonical.decisionDigest || !sameList(target.blockers, DATABASE_TARGET_BLOCKERS_V1)) {
+  const target = parseExactOperationsV1(unknownSnapshotSchema, value,
+    "operations production database target snapshot") as unknown as OperationsProductionDatabaseTargetV1;
+  if (sha256Digest(target) !== CURRENT_DATABASE_TARGET_SNAPSHOT_DIGEST_V1
+    || target.decisionId !== currentDatabaseTarget.decisionId
+    || target.decidedAt !== currentDatabaseTarget.decidedAt
+    || target.decisionDigest !== currentDatabaseTarget.decisionDigest
+    || !sameList(target.blockers, DATABASE_TARGET_BLOCKERS_V1)) {
     throw new OperationsContractErrorV1("scope_mismatch");
   }
   return target;
+}
+
+function timestamp(value: string): number {
+  const parsed = trustedDateParse(value);
+  if (!trustedNumberIsFinite(parsed)) throw new OperationsContractErrorV1("invalid_input");
+  return parsed;
 }
 
 function parseGate(value: unknown): OperationsPostgresReadinessGateV1 {
@@ -381,11 +391,10 @@ function buildGate(input: Omit<OperationsPostgresReadinessGateV1, "gateKey" | "r
 
 function parseSources(value: unknown): OperationsPostgresReadinessSourcesV1 {
   const input = parseExactOperationsV1(sourcesSchema, value, "operations postgres readiness sources");
-  const topology = parseOperationsProductionTopologyV1(input.topology);
-  const release = parseOperationsReleaseCandidateV1(input.release);
-  const plan = parseOperationsDeploymentPlanV1(input.plan);
-  const assessment = parseOperationsDeploymentReadinessAssessmentV1(input.assessment);
-  const disposition = parseOperationsDeploymentDisabledDispositionV1(input.disposition);
+  if (sha256Digest(input) !== CURRENT_OPERATIONS_SNAPSHOT_DIGEST_V1) {
+    throw new OperationsContractErrorV1("scope_mismatch");
+  }
+  const { topology, release, plan, assessment, disposition } = input as unknown as OperationsPostgresReadinessSourcesV1;
   if (topology.topologyId !== plan.topologyId || topology.deploymentId !== plan.deploymentId
     || release.releaseId !== plan.releaseId || topology.topologyDigest !== plan.topologyDigest
     || topology.topologyDigest !== assessment.topologyDigest || release.releaseDigest !== plan.releaseDigest
@@ -395,11 +404,11 @@ function parseSources(value: unknown): OperationsPostgresReadinessSourcesV1 {
     || assessment.deploymentId !== disposition.deploymentId
     || assessment.assessmentDigest !== disposition.assessmentDigest
     || !sameList(assessment.blockingGateIds, disposition.blockingGateIds)
-    || Date.parse(release.builtAt) > Date.parse(plan.plannedAt)
-    || Date.parse(topology.createdAt) > Date.parse(release.builtAt)
-    || Date.parse(plan.plannedAt) > Date.parse(assessment.assessedAt)
-    || Date.parse(assessment.assessedAt) > Date.parse(disposition.recordedAt)
-    || Date.parse(assessment.assessedAt) >= Date.parse(plan.expiresAt)
+    || timestamp(release.builtAt) > timestamp(plan.plannedAt)
+    || timestamp(topology.createdAt) > timestamp(release.builtAt)
+    || timestamp(plan.plannedAt) > timestamp(assessment.assessedAt)
+    || timestamp(assessment.assessedAt) > timestamp(disposition.recordedAt)
+    || timestamp(assessment.assessedAt) >= timestamp(plan.expiresAt)
     || topology.topologyId !== CURRENT_OPERATIONS_IDENTITY_V1.topologyId
     || topology.topologyDigest !== CURRENT_OPERATIONS_IDENTITY_V1.topologyDigest
     || release.releaseId !== CURRENT_OPERATIONS_IDENTITY_V1.releaseId
@@ -446,9 +455,9 @@ export function buildOperationsPostgresReadinessPacketV1(inputValue: unknown): O
   const input = parseExactOperationsV1(packetInputSchema, inputValue, "operations postgres readiness packet input");
   const databaseTarget = parseCanonicalDatabaseTarget(input.databaseTarget);
   const operations = parseSources(input.operations);
-  if (Date.parse(input.preparedAt) < Date.parse(databaseTarget.decidedAt)
-    || Date.parse(input.preparedAt) < Date.parse(operations.assessment.assessedAt)
-    || Date.parse(input.preparedAt) < Date.parse(operations.disposition.recordedAt)) {
+  if (timestamp(input.preparedAt) < timestamp(databaseTarget.decidedAt)
+    || timestamp(input.preparedAt) < timestamp(operations.assessment.assessedAt)
+    || timestamp(input.preparedAt) < timestamp(operations.disposition.recordedAt)) {
     throw new OperationsContractErrorV1("invalid_input");
   }
   const gates = buildGates(databaseTarget, operations);
@@ -487,9 +496,9 @@ export function parseOperationsPostgresReadinessPacketV1(value: unknown): Operat
     || !sameList(packet.automaticWorkGateCodes, AUTOMATIC_WORK_GATES_V1)
     || !sameList(gateDigests(packet.gates), gateDigests(expectedGates))
     || !sameList(packet.blockingGateKeys, blockers)
-    || Date.parse(packet.preparedAt) < Date.parse(databaseTarget.decidedAt)
-    || Date.parse(packet.preparedAt) < Date.parse(operations.assessment.assessedAt)
-    || Date.parse(packet.preparedAt) < Date.parse(operations.disposition.recordedAt)) {
+    || timestamp(packet.preparedAt) < timestamp(databaseTarget.decidedAt)
+    || timestamp(packet.preparedAt) < timestamp(operations.assessment.assessedAt)
+    || timestamp(packet.preparedAt) < timestamp(operations.disposition.recordedAt)) {
     throw new OperationsContractErrorV1("scope_mismatch");
   }
   verifyOperationsDigestV1(packet as unknown as Record<string, unknown>, "packetDigest", packet.packetDigest);
@@ -500,7 +509,7 @@ export function buildOperationsPostgresReadinessDispositionV1(inputValue: unknow
   const input = parseExactOperationsV1(dispositionInputSchema, inputValue,
     "operations postgres readiness disposition input");
   const packet = parseOperationsPostgresReadinessPacketV1(input.packet);
-  if (Date.parse(input.recordedAt) < Date.parse(packet.preparedAt)) throw new OperationsContractErrorV1("invalid_input");
+  if (timestamp(input.recordedAt) < timestamp(packet.preparedAt)) throw new OperationsContractErrorV1("invalid_input");
   const material: Omit<OperationsPostgresReadinessDispositionV1, "dispositionDigest"> = {
     contractVersion: OPERATIONS_POSTGRES_READINESS_DISPOSITION_V1,
     dispositionId: `disposition:operations:postgres-readiness:${packet.packetDigest.slice(7, 31)}`,
@@ -522,7 +531,7 @@ export function parseOperationsPostgresReadinessDispositionV1(value: unknown, pa
   if (disposition.dispositionId !== `disposition:operations:postgres-readiness:${packet.packetDigest.slice(7, 31)}`
     || disposition.packetId !== packet.packetId || disposition.packetDigest !== packet.packetDigest
     || !sameList(disposition.blockingGateKeys, packet.blockingGateKeys)
-    || Date.parse(disposition.recordedAt) < Date.parse(packet.preparedAt)) {
+    || timestamp(disposition.recordedAt) < timestamp(packet.preparedAt)) {
     throw new OperationsContractErrorV1("scope_mismatch");
   }
   verifyOperationsDigestV1(disposition as unknown as Record<string, unknown>, "dispositionDigest",

@@ -1772,3 +1772,14 @@ after module initialization; withholds the AUTO-100 Zod schemas from public muta
 re-verify the exact packet and disposition digests. New regressions cover a completely re-digested identity fork, source
 registry mutation, private schema custody, and cross-packet projection substitution. This amendment is producer
 remediation evidence only and still requires a fresh different reviewer.
+
+**Independent rejection and first-review remediation:** A different reviewer rejected exact commit
+`0b5f67c8eb2e2d0ac304b26ab26eba767af8cc3a` in immutable report SHA-256
+`998dee3f114217e1ccb76aa88e80739f1fbac6becab76e5113b83aea8a4ea8da`. A caller could change and re-digest the AUTO-090
+decision ID because the expected target was rebuilt from the supplied identity. A caller could also mutate the public
+Project Workspace time schema after module load, execute changed behavior, admit an invalid time, and make relational
+chronology comparisons fail open on `NaN`. The remediation captures the complete exact AUTO-090 target and CR10A source
+snapshots at clean initialization, compares later inputs to those identities without re-entering public source schemas,
+uses private ID/digest/time schemas, captures trusted date parsing, and rejects every non-finite time before comparison.
+New regressions cover re-digested decision-ID/time forks and the reviewer's public-schema mutation with zero hostile
+calls. The rejection remains authoritative until a different reviewer accepts the exact remediation.

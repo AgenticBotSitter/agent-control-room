@@ -18,7 +18,8 @@ eligible for an owner window and its exact disposition is `disabled_before_host_
 - strict packet, per-gate, disposition, and safe-projection schemas;
 - canonical digests for every gate and complete artifact;
 - exact AUTO-090 target and CR10A topology/release/plan/assessment/disposition lineage;
-- clean-start capture of the exact current CR10A source identities plus independent cross-object ID and chronology checks;
+- clean-start capture of the exact current AUTO-090 target and CR10A source identities plus independent cross-object ID
+  and chronology checks;
 - fixed accepted AUTO-040 and AUTO-070 implementation/review identities;
 - twelve production-database prerequisites, eighteen deployment gates, and nine automatic-work proofs kept in separate
   ordered lanes;
@@ -26,13 +27,13 @@ eligible for an owner window and its exact disposition is `disabled_before_host_
 - fail-closed chronology, substitution, reordering, omission, and re-digested false-readiness checks;
 - immutable locally captured gate registries, frozen source registries, and private non-exported schemas;
 - projection parsing bound to the exact packet and disposition digests;
-- accessor and Proxy rejection before caller behavior can execute; and
+- accessor, Proxy, and post-load public-schema mutation rejection before caller behavior can execute; and
 - an operator projection in which host, reference, service, configuration, database, migration, backup/restore,
   consumer, and deployment capabilities are all false.
 
 ## Focused verification
 
-The dedicated thirteen-case suite passes and covers:
+The dedicated fifteen-case suite passes and covers:
 
 - exact 39-gate composition and source order;
 - the three-present/36-blocked disposition;
@@ -41,8 +42,10 @@ The dedicated thirteen-case suite passes and covers:
 - false authority and effect flags;
 - nested target and operations substitution;
 - a complete cross-object identity fork after every affected object is re-digested;
+- re-digested AUTO-090 decision-ID and decision-time forks;
 - gate reorder, omission, and false-readiness forgery after re-digesting;
 - post-initialization source-registry mutation and public-schema-custody checks;
+- hostile mutation of the public shared time schema with zero hostile calls and invalid-time rejection;
 - projection substitution across otherwise valid packet/disposition pairs;
 - exact packet/disposition binding and chronology;
 - accessor and Proxy attacks with zero hostile callbacks or traps; and
@@ -50,10 +53,10 @@ The dedicated thirteen-case suite passes and covers:
 
 Complete local verification passes:
 
-- dedicated AUTO-100: 13/13;
-- combined CR11B: 168/168;
-- combined CR10A: 164/164;
-- registered pretests: 750/750;
+- dedicated AUTO-100: 15/15;
+- combined CR11B: 170/170;
+- combined CR10A: 166/166;
+- registered pretests: 752/752;
 - core tests: 414/416 with zero failures and two intentional platform skips;
 - public post-tests: 52/52;
 - TypeScript check and full lint;
@@ -72,6 +75,15 @@ The first provided provisional descriptions of four plausible seams. Codex repro
 than treating the interrupted review as acceptance: complete cross-object identity drift, mutable gate/schema custody,
 source-registry mutation, and an insufficiently bound projection parser. A fresh reviewer must assess the exact
 remediation commit.
+
+A subsequent different reviewer rejected exact hardening commit `0b5f67c8eb2e2d0ac304b26ab26eba767af8cc3a`
+in the unchanged report `docs/reviews/CR11B_AUTO_100_INDEPENDENT_REVIEW.md`, SHA-256
+`998dee3f114217e1ccb76aa88e80739f1fbac6becab76e5113b83aea8a4ea8da`. It reproduced two remaining exactness defects:
+the target check rebuilt its expectation from a caller-selected AUTO-090 decision identity, and private schemas still
+embedded the public mutable Project Workspace time schema. The first-review remediation pins the complete exact
+AUTO-090 target snapshot, compares the complete CR10A source snapshot without re-entering caller-mutable upstream
+schemas, constructs private ID/digest/time schemas, captures date parsing, rejects non-finite time, and adds both
+reproductions to the gate. A different reviewer must assess the exact remediation commit.
 
 ## Negative authority
 

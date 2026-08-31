@@ -25,9 +25,9 @@ All nested identities and digests must form one exact chain. Target, topology, r
 substitution fails closed. Preparation cannot predate the target decision, readiness assessment, or disabled
 disposition.
 
-The exact current CR10A source identities are captured at module initialization. Every target and operations artifact is
-re-derived or compared with that clean-start identity before it can enter a packet. Cross-object IDs and chronology are
-checked separately from the artifact digests, so a complete re-digested fork is still rejected.
+The exact current AUTO-090 target and CR10A source identities are captured at module initialization. Every target and
+operations snapshot must match those complete clean-start identities before it can enter a packet. Cross-object IDs and
+chronology are checked separately from the artifact digests, so a complete re-digested fork is still rejected.
 
 ## Preserved gate lanes
 
@@ -46,7 +46,9 @@ evidence, grants approval, or grants deployment or execution authority.
 
 AUTO-100 keeps private immutable copies of every expected source-gate registry, verifies them against upstream at module
 initialization, and freezes the shared source arrays it must depend on. Its Zod schemas are private implementation state,
-not exported caller-mutable authority.
+not exported caller-mutable authority. It constructs private ID, digest, and timestamp schemas rather than embedding the
+public Project Workspace schema objects. Trusted date parsing is captured at module initialization and every parsed time
+must be finite before chronology is compared.
 
 ## Safe disposition and projection
 
