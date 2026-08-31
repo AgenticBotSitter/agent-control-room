@@ -29,6 +29,7 @@ import { PortfolioProjection } from "./components/portfolio-projection";
 import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceDataStateV1 } from "@/src/operator-surfaces/v1/http-client";
 import { ReadyFrontierPortfolioView } from "./components/ready-frontier-view";
 import type { ReadyFrontierCycleProjectionV1 } from "@/src/ready-frontier/v1/integration-types";
+import type { ReadyFrontierAutomationProjectionV1 } from "@/src/ready-frontier/v1/automation-types";
 
 type Scope = "all" | string;
 type ScenarioKey = keyof typeof transcriptionScenarios;
@@ -53,7 +54,8 @@ function projectName(projectId: string): string {
   return projects.find((project) => project.id === projectId)?.workspaceName ?? "Control Room";
 }
 
-export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleProjectionV1 }) {
+export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleProjectionV1;
+  readyFrontierAutomation: ReadyFrontierAutomationProjectionV1 }) {
   const [scope, setScope] = useState<Scope>("all");
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("automatic");
@@ -263,7 +265,8 @@ export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleP
             <div><p className="eyebrow">CR11B authenticated local cycle</p><h2>What should be proposed next</h2></div>
             <span className="simulation-only">Repository fixture · no work created</span>
           </div>
-          <ReadyFrontierPortfolioView data={{ state: "available", projection: props.readyFrontier }} projectIds={scopedIds} />
+          <ReadyFrontierPortfolioView data={{ state: "available", projection: props.readyFrontier }}
+            automation={props.readyFrontierAutomation} projectIds={scopedIds} />
         </section>
 
         <div className="dashboard-columns">

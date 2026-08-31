@@ -199,6 +199,10 @@ export class ReadyFrontierSimulationStoreV1 {
   }
 
   listEvaluations(): ReadyFrontierEvaluationV1[] { return this.verifyState().records.map((item) => item.evaluation); }
+  evaluation(cycleId: string): ReadyFrontierEvaluationV1 | undefined {
+    parseExactReadyFrontierV1(readyFrontierIdSchemaV1, cycleId);
+    return this.verifyState().records.find((item) => item.evaluation.cycleId === cycleId)?.evaluation;
+  }
   latestOperatorProjection(): ReadyFrontierOperatorProjectionV1 | undefined {
     const latest = this.verifyState().records.at(-1)?.evaluation;
     return latest ? projectReadyFrontierOperatorV1(latest, this.integrityKey) : undefined;

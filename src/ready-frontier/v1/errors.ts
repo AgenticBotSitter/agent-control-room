@@ -5,7 +5,10 @@ export type ReadyFrontierSafeCodeV1 =
   | "digest_mismatch"
   | "integrity_failed"
   | "replay_drift"
-  | "capacity_exceeded";
+  | "capacity_exceeded"
+  | "policy_inactive"
+  | "policy_denied"
+  | "stale_proposal";
 
 export class ReadyFrontierContractErrorV1 extends Error {
   constructor(readonly safeCode: ReadyFrontierSafeCodeV1) {

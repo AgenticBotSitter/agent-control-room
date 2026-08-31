@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import type { ReadyFrontierCycleProjectViewV1, ReadyFrontierCycleProjectionV1 } from "@/src/ready-frontier/v1/integration-types";
+import type { ReadyFrontierAutomationProjectionV1 } from "@/src/ready-frontier/v1/automation-types";
 
 export type ReadyFrontierViewStateV1 =
   | { state: "available"; projection: ReadyFrontierCycleProjectionV1 }
@@ -20,11 +21,17 @@ function stateMessage(state: Exclude<ReadyFrontierViewStateV1, { state: "availab
   return <p className="operator-data-status unavailable" role="status">{message} No work was created or sent.</p>;
 }
 
-export function ReadyFrontierPortfolioView(props: { data: ReadyFrontierViewStateV1; projectIds?: ReadonlySet<string> }): JSX.Element {
+export function ReadyFrontierPortfolioView(props: { data: ReadyFrontierViewStateV1; automation?: ReadyFrontierAutomationProjectionV1;
+  projectIds?: ReadonlySet<string> }): JSX.Element {
   if (props.data.state !== "available") return stateMessage(props.data);
   const projects = props.data.projection.projects.filter((project) => !props.projectIds || props.projectIds.has(project.projectId));
   if (!projects.length) return <p className="empty-state">No proposal-frontier projects are in this view.</p>;
   return <div className="frontier-shell" aria-label="Authenticated proposal frontier">
+    {props.automation ? <div className="frontier-policy-strip" role="status">
+      <span><small>Standing policy</small><strong>{props.automation.standingPolicyState === "repository_fixture_active" ? "Repository simulation active" : label(props.automation.standingPolicyState)}</strong></span>
+      <span><small>Production policy</small><strong>Not enrolled</strong></span>
+      <span><small>Automatic next step</small><strong>Proposed work only</strong></span>
+    </div> : null}
     <div className="frontier-summary">
       <div><small>Proposed</small><strong>{projects.reduce((sum, project) => sum + project.proposed.length, 0)}</strong></div>
       <div><small>Blocked</small><strong>{projects.reduce((sum, project) => sum + project.blocked.length, 0)}</strong></div>
@@ -46,7 +53,7 @@ export function ReadyFrontierPortfolioView(props: { data: ReadyFrontierViewState
         <a href={`/projects/${encodeURIComponent(project.projectId)}#ready-frontier`}>Inspect frontier <span aria-hidden="true">→</span></a>
       </article>)}
     </div>
-    <p className="frontier-boundary">Repository-only proposal evidence. Owner review is required; this view cannot create, approve, ready, claim, lease, dispatch, or execute work.</p>
+    <p className="frontier-boundary">Repository-only proposal and policy evidence. No real standing policy is enrolled; this view cannot materialize, approve, ready, schedule, claim, lease, dispatch, or execute work.</p>
   </div>;
 }
 
@@ -60,9 +67,11 @@ function GateList(props: { title: string; items: ReadyFrontierCycleProjectViewV1
   </section>;
 }
 
-export function ReadyFrontierProjectView(props: { data: ReadyFrontierViewStateV1; projectId: string }): JSX.Element {
+export function ReadyFrontierProjectView(props: { data: ReadyFrontierViewStateV1; projectId: string;
+  automation?: ReadyFrontierAutomationProjectionV1 }): JSX.Element {
   if (props.data.state !== "available") return <section id="ready-frontier" className="detail-card section-block"><h2>Ready frontier</h2>{stateMessage(props.data)}</section>;
   const project = props.data.projection.projects.find((item) => item.projectId === props.projectId);
+  const automation = props.automation?.projects.find((item) => item.projectId === props.projectId);
   if (!project) return <section id="ready-frontier" className="detail-card section-block"><h2>Ready frontier</h2><p className="empty-state">This project is not present in the authenticated proposal cycle.</p></section>;
   return <section id="ready-frontier" className="detail-card section-block frontier-workspace">
     <div className="section-heading"><div><p className="eyebrow">Authenticated repository cycle</p><h2>Ready frontier</h2></div><span className="simulation-only">Proposal only · owner review required</span></div>
@@ -70,18 +79,24 @@ export function ReadyFrontierProjectView(props: { data: ReadyFrontierViewStateV1
     <div className="frontier-lanes">
       <section className="frontier-lane frontier-proposed">
         <div className="frontier-lane-title"><h3>Proposed</h3><span>{project.proposed.length}</span></div>
-        {project.proposed.length ? <div className="frontier-lane-items">{project.proposed.map((item) => <article key={item.itemId}>
-          <small>Rank {item.rank} · Priority {item.priority}</small>
-          <strong>{item.title}</strong>
-          <p>{label(item.platform)} · {label(item.risk)} risk · {item.routeId}</p>
-          <em>Owner review has not been requested.</em>
-        </article>)}</div> : <p className="empty-state">No new work is eligible for proposal.</p>}
+        {project.proposed.length ? <div className="frontier-lane-items">{project.proposed.map((item) => {
+          const policy = automation?.proposals.find((proposal) => proposal.proposalId === item.proposalId);
+          const policyText = policy?.materializationState === "materialized_proposed" ? `Recorded as proposed work · ${policy.materializedJobId}`
+            : policy?.policyDisposition === "eligible_repository_simulation" ? "Eligible in repository simulation · materialization not requested"
+              : policy ? `${label(policy.policyDisposition)} · no work created` : "Standing policy state unavailable · no work created";
+          return <article key={item.itemId}>
+            <small>Rank {item.rank} · Priority {item.priority}</small>
+            <strong>{item.title}</strong>
+            <p>{label(item.platform)} · {label(item.risk)} risk · {item.routeId}</p>
+            <em>{policyText}</em>
+          </article>;
+        })}</div> : <p className="empty-state">No new work is eligible for proposal.</p>}
       </section>
       <GateList title="Blocked" items={project.blocked} />
       <GateList title="Needs review" items={project.needsReview} />
       <GateList title="Deferred" items={project.deferred} />
     </div>
     {project.suppressedCount > 0 ? <p className="frontier-suppressed">{project.suppressedCount} unchanged or duplicate candidate{project.suppressedCount === 1 ? " was" : "s were"} safely suppressed.</p> : null}
-    <p className="frontier-boundary">This is a read-only explanation of a local manual cycle. It contains no work-creation, approval, scheduling, agent-message, or execution control.</p>
+    <p className="frontier-boundary">This is a read-only explanation of local repository policy and materialization truth. Production policy is not enrolled, and this surface contains no materialization, approval, scheduling, agent-message, or execution control.</p>
   </section>;
 }
