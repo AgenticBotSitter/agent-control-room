@@ -291,6 +291,63 @@ test("CR11B-AUTO-070 captured freeze and private duplicate logic ignore post-loa
     f.activationKey, f.qualificationKey), driftReport);
 });
 
+test("CR11B-AUTO-070 inherited numeric Array setters cannot change any authenticated fault result", () => {
+  const f = fixture(), defineProperty = Object.defineProperty;
+  const numericDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "1");
+  const faults = readyFrontierProductionCustodyFaultCodesV1.filter((fault) => fault !== "none");
+  const originalIsFrozen = Object.isFrozen;
+  let digestRewriteCount = 0;
+  let allFaultsFailedOnce = true, allArtifactsFrozen = true, allAuthorityNegative = true;
+  let aliasReport: ReadyFrontierProductionCustodyReportV1 | undefined;
+  const rewriteDigest = (value: string): string => {
+    digestRewriteCount += 1;
+    const replacement = (digestRewriteCount % 16).toString(16);
+    return `${value.slice(0, -1)}${replacement}`;
+  };
+  try {
+    defineProperty(Array.prototype, "1", { configurable: true,
+      set(this: unknown[], value: unknown) {
+        if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value)) {
+          defineProperty(this, "1", { configurable: true, enumerable: true, writable: true, value });
+          return;
+        }
+        let stored = rewriteDigest(value);
+        defineProperty(this, "1", { configurable: true, enumerable: true,
+          get: () => stored,
+          set: (next: unknown) => { stored = typeof next === "string"
+            && /^sha256:[a-f0-9]{64}$/.test(next) ? rewriteDigest(next) : String(next); } });
+      } });
+    for (const fault of faults) {
+      const report = runReadyFrontierProductionCustodyFakeQualificationV1({
+        runId: `frontier.production-custody-run.numeric-setter.${fault}`, plan: f.plan,
+        startedAt: "2026-08-30T20:06:00.000Z", completedAt: "2026-08-30T20:07:00.000Z",
+        injectedFault: fault,
+      }, f.activationKey, f.qualificationKey);
+      const projection = projectReadyFrontierProductionCustodyReportV1(report, f.plan,
+        f.activationKey, f.qualificationKey);
+      allFaultsFailedOnce = allFaultsFailedOnce && report.status === "simulated_failure"
+        && report.simulatedPassCount === 7 && report.simulatedFailureCount === 1;
+      allArtifactsFrozen = allArtifactsFrozen && originalIsFrozen(report)
+        && originalIsFrozen(report.scenarioResults) && originalIsFrozen(projection)
+        && originalIsFrozen(projection.scenarioStatuses);
+      allAuthorityNegative = allAuthorityNegative && report.blockingGateCodes.length === 9
+        && report.qualifiedProofCount === 0 && !report.grantsExternalEffects
+        && !projection.canActivateProduction && !projection.canDispatchOrExecute;
+      if (fault === "service_identity_alias") aliasReport = report;
+    }
+  } finally {
+    if (numericDescriptor) defineProperty(Array.prototype, "1", numericDescriptor);
+    else delete (Array.prototype as unknown as Record<string, unknown>)["1"];
+  }
+  assert.equal(allFaultsFailedOnce, true);
+  assert.equal(allArtifactsFrozen, true);
+  assert.equal(allAuthorityNegative, true);
+  assert.ok(aliasReport);
+  assert.equal(aliasReport.scenarioResults[0]!.status, "simulated_failure");
+  assert.deepEqual(parseReadyFrontierProductionCustodyReportV1(aliasReport, f.plan,
+    f.activationKey, f.qualificationKey), aliasReport);
+});
+
 test("CR11B-AUTO-070 fails closed when canonical digest helpers drift after module load", () => {
   const f = fixture(), defineProperty = Object.defineProperty;
   const mapDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "map")!;

@@ -306,39 +306,32 @@ function deepFreeze<T>(value: T): T {
 const PROCESS_IDS_V1 = objectFreezeV1(["custody.qualifier.a", "custody.qualifier.b",
   "custody.qualifier.c"] as const);
 function serviceRolesV1(): ReadyFrontierProductionCustodyServiceRoleV1[] {
-  const roles: Array<Pick<ReadyFrontierProductionCustodyServiceRoleV1, "role" | "serviceIdentityId"
-    | "mayWriteProofLedger" | "mayVerifyProofLedger" | "mayAdvanceCheckpoint">> = [
+  return [
     { role: "proof_ingress_writer", serviceIdentityId: "custody.service.proof-writer",
-      mayWriteProofLedger: true, mayVerifyProofLedger: false, mayAdvanceCheckpoint: false },
+      keyIdentityDigest: sha256Digest({ repositoryFakeKeyIdentity: "custody.service.proof-writer" }),
+      independenceDomainDigest: sha256Digest({ repositoryFakeIndependenceDomain: "proof_ingress_writer" }),
+      mayWriteProofLedger: true, mayVerifyProofLedger: false, mayAdvanceCheckpoint: false,
+      mayIssueProof: false, mayApproveProduction: false, mayActivateProduction: false },
     { role: "proof_read_verifier", serviceIdentityId: "custody.service.proof-verifier",
-      mayWriteProofLedger: false, mayVerifyProofLedger: true, mayAdvanceCheckpoint: false },
+      keyIdentityDigest: sha256Digest({ repositoryFakeKeyIdentity: "custody.service.proof-verifier" }),
+      independenceDomainDigest: sha256Digest({ repositoryFakeIndependenceDomain: "proof_read_verifier" }),
+      mayWriteProofLedger: false, mayVerifyProofLedger: true, mayAdvanceCheckpoint: false,
+      mayIssueProof: false, mayApproveProduction: false, mayActivateProduction: false },
     { role: "rollback_checkpoint_custodian", serviceIdentityId: "custody.service.checkpoint-custodian",
-      mayWriteProofLedger: false, mayVerifyProofLedger: false, mayAdvanceCheckpoint: true },
+      keyIdentityDigest: sha256Digest({ repositoryFakeKeyIdentity: "custody.service.checkpoint-custodian" }),
+      independenceDomainDigest: sha256Digest({ repositoryFakeIndependenceDomain: "rollback_checkpoint_custodian" }),
+      mayWriteProofLedger: false, mayVerifyProofLedger: false, mayAdvanceCheckpoint: true,
+      mayIssueProof: false, mayApproveProduction: false, mayActivateProduction: false },
   ];
-  const result: ReadyFrontierProductionCustodyServiceRoleV1[] = [];
-  for (let index = 0; index < roles.length; index += 1) {
-    const role = roles[index]!;
-    result[index] = { ...role,
-      keyIdentityDigest: sha256Digest({ repositoryFakeKeyIdentity: role.serviceIdentityId }),
-      independenceDomainDigest: sha256Digest({ repositoryFakeIndependenceDomain: role.role }),
-      mayIssueProof: false, mayApproveProduction: false, mayActivateProduction: false };
-  }
-  return result;
 }
 
-function uniqueTextCountV1(values: readonly string[]): number {
-  let unique = 0;
-  for (let index = 0; index < values.length; index += 1) {
-    let seen = false;
-    for (let prior = 0; prior < index; prior += 1) if (values[prior] === values[index]) { seen = true; break; }
-    if (!seen) unique += 1;
-  }
-  return unique;
+function uniqueTripleTextCountV1(first: string, second: string, third: string): number {
+  if (first === second && second === third) return 1;
+  if (first === second || first === third || second === third) return 2;
+  return 3;
 }
-function trueCountV1(values: readonly boolean[]): number {
-  let count = 0;
-  for (let index = 0; index < values.length; index += 1) if (values[index]) count += 1;
-  return count;
+function trueTripleCountV1(first: boolean, second: boolean, third: boolean): number {
+  return Number(first) + Number(second) + Number(third);
 }
 function statusCountV1(results: readonly ReadyFrontierProductionCustodyScenarioResultV1[],
   status: ReadyFrontierProductionCustodyScenarioResultV1["status"]): number {
@@ -407,19 +400,21 @@ function scenarioTranscriptV1(scenarioCode: ReadyFrontierProductionCustodyScenar
   const faultActive = injectedFault === faultForScenario[scenarioCode];
   if (scenarioCode === "service_identity_separation") {
     const roles = serviceRolesV1();
-    const identityIds: string[] = [], keyDigests: string[] = [], domainDigests: string[] = [];
-    const writers: boolean[] = [], readers: boolean[] = [], custodians: boolean[] = [];
-    for (let index = 0; index < roles.length; index += 1) {
-      const role = roles[index]!;
-      identityIds[index] = role.serviceIdentityId; keyDigests[index] = role.keyIdentityDigest;
-      domainDigests[index] = role.independenceDomainDigest; writers[index] = role.mayWriteProofLedger;
-      readers[index] = role.mayVerifyProofLedger; custodians[index] = role.mayAdvanceCheckpoint;
-    }
-    if (faultActive) keyDigests[1] = keyDigests[0]!;
-    const uniqueIdentityCount = uniqueTextCountV1(identityIds), uniqueKeyCount = uniqueTextCountV1(keyDigests);
-    const uniqueDomainCount = uniqueTextCountV1(domainDigests);
+    const first = roles[0]!, second = roles[1]!, third = roles[2]!;
+    const secondKeyDigest = faultActive ? first.keyIdentityDigest : second.keyIdentityDigest;
+    const uniqueIdentityCount = uniqueTripleTextCountV1(first.serviceIdentityId,
+      second.serviceIdentityId, third.serviceIdentityId);
+    const uniqueKeyCount = uniqueTripleTextCountV1(first.keyIdentityDigest,
+      secondKeyDigest, third.keyIdentityDigest);
+    const uniqueDomainCount = uniqueTripleTextCountV1(first.independenceDomainDigest,
+      second.independenceDomainDigest, third.independenceDomainDigest);
     const passed = uniqueIdentityCount === 3 && uniqueKeyCount === 3 && uniqueDomainCount === 3
-      && trueCountV1(writers) === 1 && trueCountV1(readers) === 1 && trueCountV1(custodians) === 1;
+      && trueTripleCountV1(first.mayWriteProofLedger, second.mayWriteProofLedger,
+        third.mayWriteProofLedger) === 1
+      && trueTripleCountV1(first.mayVerifyProofLedger, second.mayVerifyProofLedger,
+        third.mayVerifyProofLedger) === 1
+      && trueTripleCountV1(first.mayAdvanceCheckpoint, second.mayAdvanceCheckpoint,
+        third.mayAdvanceCheckpoint) === 1;
     return { passed, transcript: { identityCount: 3, uniqueKeyCount,
       uniqueDomainCount,
       singlePurposeRoleCount: 3 } };
@@ -443,24 +438,18 @@ function scenarioTranscriptV1(scenarioCode: ReadyFrontierProductionCustodyScenar
   if (scenarioCode === "revocation_cross_process_convergence") {
     const state = new RepositoryFakeCustodyStateV1(); state.advancePolicy(2); state.revokeAt(2);
     const views = faultActive ? [2, 1, 2] : [2, 2, 2];
-    const accepted: boolean[] = [];
-    for (let index = 0; index < views.length; index += 1) {
-      accepted[index] = state.acceptsCredentialAt(views[index]!);
-    }
-    const acceptedCount = trueCountV1(accepted);
+    const acceptedCount = trueTripleCountV1(state.acceptsCredentialAt(views[0]!),
+      state.acceptsCredentialAt(views[1]!), state.acceptsCredentialAt(views[2]!));
     return { passed: acceptedCount === 0, transcript: { processViews: views,
       credentialAcceptedCount: acceptedCount, revocationHighWater: 2 } };
   }
   if (scenarioCode === "serializable_claim_uniqueness") {
     const state = new RepositoryFakeCustodyStateV1();
-    const accepted: boolean[] = [];
-    for (let index = 0; index < PROCESS_IDS_V1.length; index += 1) {
-      accepted[index] = state.claim(PROCESS_IDS_V1[index]!);
-    }
-    if (faultActive) accepted[1] = true;
-    const acceptedCount = trueCountV1(accepted);
-    let ownerIndex = -1;
-    for (let index = 0; index < accepted.length; index += 1) if (accepted[index]) { ownerIndex = index; break; }
+    const firstAccepted = state.claim(PROCESS_IDS_V1[0]!);
+    const secondAccepted = faultActive || state.claim(PROCESS_IDS_V1[1]!);
+    const thirdAccepted = state.claim(PROCESS_IDS_V1[2]!);
+    const acceptedCount = trueTripleCountV1(firstAccepted, secondAccepted, thirdAccepted);
+    const ownerIndex = firstAccepted ? 0 : secondAccepted ? 1 : thirdAccepted ? 2 : -1;
     return { passed: acceptedCount === 1,
       transcript: { processCount: 3, acceptedClaimCount: acceptedCount,
         deterministicOwnerIndex: ownerIndex } };
@@ -491,21 +480,31 @@ function scenarioTranscriptV1(scenarioCode: ReadyFrontierProductionCustodyScenar
       terminalState, automaticRetryAllowed } };
 }
 
+function buildScenarioResultV1(scenarioCode: ReadyFrontierProductionCustodyScenarioCodeV1,
+  fault: ReadyFrontierProductionCustodyFaultCodeV1, planDigest: string, runId: string,
+  startedAt: string, completedAt: string): ReadyFrontierProductionCustodyScenarioResultV1 {
+  const outcome = scenarioTranscriptV1(scenarioCode, fault);
+  const safeFindingCode = outcome.passed ? "expected_boundary_observed" : faultForScenario[scenarioCode];
+  return { scenarioCode, status: outcome.passed ? "simulated_pass" : "simulated_failure",
+    safeFindingCode, processCount: 3,
+    evidenceDigest: sha256Digest({ schema: "control-room-ready-frontier-production-custody-transcript/v1",
+      planDigest, runId, startedAt, completedAt, scenarioCode, safeFindingCode,
+      repositoryFakeOnly: true, transcript: outcome.transcript }) };
+}
+
 function buildScenarioResultsV1(fault: ReadyFrontierProductionCustodyFaultCodeV1,
   planDigest: string, runId: string, startedAt: string, completedAt: string):
   ReadyFrontierProductionCustodyScenarioResultV1[] {
-  const results: ReadyFrontierProductionCustodyScenarioResultV1[] = [];
-  for (let index = 0; index < readyFrontierProductionCustodyScenarioCodesV1.length; index += 1) {
-    const scenarioCode = readyFrontierProductionCustodyScenarioCodesV1[index]!;
-    const outcome = scenarioTranscriptV1(scenarioCode, fault);
-    const safeFindingCode = outcome.passed ? "expected_boundary_observed" : faultForScenario[scenarioCode];
-    results[index] = { scenarioCode, status: outcome.passed ? "simulated_pass" : "simulated_failure",
-      safeFindingCode, processCount: 3,
-      evidenceDigest: sha256Digest({ schema: "control-room-ready-frontier-production-custody-transcript/v1",
-        planDigest, runId, startedAt, completedAt, scenarioCode, safeFindingCode,
-        repositoryFakeOnly: true, transcript: outcome.transcript }) };
-  }
-  return results;
+  return [
+    buildScenarioResultV1("service_identity_separation", fault, planDigest, runId, startedAt, completedAt),
+    buildScenarioResultV1("owner_policy_high_water", fault, planDigest, runId, startedAt, completedAt),
+    buildScenarioResultV1("protected_clock_commit_boundary", fault, planDigest, runId, startedAt, completedAt),
+    buildScenarioResultV1("revocation_cross_process_convergence", fault, planDigest, runId, startedAt, completedAt),
+    buildScenarioResultV1("serializable_claim_uniqueness", fault, planDigest, runId, startedAt, completedAt),
+    buildScenarioResultV1("checkpoint_compare_and_swap", fault, planDigest, runId, startedAt, completedAt),
+    buildScenarioResultV1("backup_restore_rollback_detection", fault, planDigest, runId, startedAt, completedAt),
+    buildScenarioResultV1("post_marker_ambiguity", fault, planDigest, runId, startedAt, completedAt),
+  ];
 }
 
 export function buildReadyFrontierProductionCustodyPlanV1(inputValue: unknown,
@@ -656,10 +655,12 @@ export function parseReadyFrontierProductionCustodyReportV1(value: unknown,
     const expectedResults = buildScenarioResultsV1(report.injectedFault, plan.planDigest, report.runId,
       report.startedAt, report.completedAt);
     const passCount = statusCountV1(report.scenarioResults, "simulated_pass");
-    const reportedScenarioCodes: ReadyFrontierProductionCustodyScenarioCodeV1[] = [];
-    for (let index = 0; index < report.scenarioResults.length; index += 1) {
-      reportedScenarioCodes[index] = report.scenarioResults[index]!.scenarioCode;
-    }
+    const reportedScenarioCodes: ReadyFrontierProductionCustodyScenarioCodeV1[] = [
+      report.scenarioResults[0]!.scenarioCode, report.scenarioResults[1]!.scenarioCode,
+      report.scenarioResults[2]!.scenarioCode, report.scenarioResults[3]!.scenarioCode,
+      report.scenarioResults[4]!.scenarioCode, report.scenarioResults[5]!.scenarioCode,
+      report.scenarioResults[6]!.scenarioCode, report.scenarioResults[7]!.scenarioCode,
+    ];
     const expectedId = `frontier.production-custody-report.${sha256Digest({ runId: report.runId,
       planDigest: plan.planDigest }).slice(7, 31)}`;
     if (report.reportId !== expectedId || report.planId !== plan.planId || report.planDigest !== plan.planDigest
@@ -690,11 +691,16 @@ export function projectReadyFrontierProductionCustodyReportV1(reportValue: unkno
   assertCanonicalRuntimeV1();
   const report = parseReadyFrontierProductionCustodyReportV1(reportValue, planValue,
     activationPacketIntegrityKey, qualificationIntegrityKey);
-  const scenarioStatuses: ReadyFrontierProductionCustodyProjectionV1["scenarioStatuses"] = [];
-  for (let index = 0; index < report.scenarioResults.length; index += 1) {
-    const result = report.scenarioResults[index]!;
-    scenarioStatuses[index] = { scenarioCode: result.scenarioCode, status: result.status };
-  }
+  const scenarioStatuses: ReadyFrontierProductionCustodyProjectionV1["scenarioStatuses"] = [
+    { scenarioCode: report.scenarioResults[0]!.scenarioCode, status: report.scenarioResults[0]!.status },
+    { scenarioCode: report.scenarioResults[1]!.scenarioCode, status: report.scenarioResults[1]!.status },
+    { scenarioCode: report.scenarioResults[2]!.scenarioCode, status: report.scenarioResults[2]!.status },
+    { scenarioCode: report.scenarioResults[3]!.scenarioCode, status: report.scenarioResults[3]!.status },
+    { scenarioCode: report.scenarioResults[4]!.scenarioCode, status: report.scenarioResults[4]!.status },
+    { scenarioCode: report.scenarioResults[5]!.scenarioCode, status: report.scenarioResults[5]!.status },
+    { scenarioCode: report.scenarioResults[6]!.scenarioCode, status: report.scenarioResults[6]!.status },
+    { scenarioCode: report.scenarioResults[7]!.scenarioCode, status: report.scenarioResults[7]!.status },
+  ];
   const material: Omit<ReadyFrontierProductionCustodyProjectionV1, "projectionDigest"> = {
     schema: READY_FRONTIER_PRODUCTION_CUSTODY_PROJECTION_V1,
     tenantId: report.tenantId, workspaceId: report.workspaceId,

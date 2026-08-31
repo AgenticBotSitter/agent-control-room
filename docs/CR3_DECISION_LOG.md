@@ -1569,3 +1569,15 @@ pins the canonical digest runtime surface with an exact-method and private senti
 finding paths before and after artifact construction, keep all eight faults canonical, and make other shared-helper drift
 fail closed. A different reviewer must accept the exact remediation commit; passing producer tests cannot close the
 finding.
+
+**First-remediation re-review amendment:** A different reviewer rejected exact remediation
+`1dff163808ef2866eb44ec83394ff64789959f57`, tree `4829070eb0b4429dc577404daaaea697f439b2b0`, in immutable report
+SHA-256 `2d212bfa071437b1af10c0ac9c00432df0d4823d2196a3ee235e8feaec17ebab`. An inherited setter at numeric
+`Array.prototype` index `1` could intercept trusted writes into initially empty arrays and make the modeled
+service-identity alias authenticate as an eight-pass report. Negative production authority remained intact, but
+qualification truth was again rejected. The second remediation removes inherited indexed writes from the trusted path:
+three-way identity, role, revocation, and claim decisions use scalars, and service roles, scenario results, report-order
+comparison, and projection status use complete array literals with own indexed data. A hostile regression installs the
+numeric setter, requires all eight faults to fail exactly once with deeply frozen artifacts and all nine blockers,
+restores the prototype, and re-verifies the authentic report. A third different reviewer must accept the exact second
+remediation commit.

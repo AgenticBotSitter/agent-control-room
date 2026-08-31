@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Protected Custody Qualification Foundation Contract
 
-Status: first candidate rejected; exact remediation requires different independent review
+Status: two candidates rejected; exact second remediation requires a third different independent review
 
 Date: 2026-08-30
 
@@ -74,7 +74,9 @@ Even when all eight scenarios pass, the report remains `blocked_fake_qualificati
 
 Exact replay is deterministic. Accessors and Proxies are rejected before their behavior executes. Plans and reports are
 deep-frozen after authoritative parsing. Freeze, frozen-state, and nested-value operations are captured before the module
-is exposed. Duplicate identity/key/domain detection uses private pairwise comparison rather than a shared collection.
+is exposed. Duplicate identity/key/domain detection uses private scalar three-way comparison rather than a shared
+collection or an inherited indexed write. Trusted fixed collections are created as complete array literals, never by
+assigning numbered slots on an empty array.
 Canonical JSON/digest helpers are pinned by exact runtime references and a private digest/HMAC sentinel; drift fails closed
 before plan, report, or projection work.
 
@@ -127,4 +129,16 @@ shared array helpers from scenario truth, uses private pairwise/counting loops, 
 surface plus sentinel on every exported operation. New hostile cases change freeze/value/frozen-state and selective Set
 behavior both before and after artifact construction, require the identity-alias fault to remain one failure, require all
 artifacts to remain frozen, re-parse the drift-time report after helper restoration, and require other canonical helper
-drift to fail closed. Only a different independent reviewer can accept the exact remediation commit.
+drift to fail closed. A different reviewer then rejected exact first-remediation commit
+`1dff163808ef2866eb44ec83394ff64789959f57`, tree
+`4829070eb0b4429dc577404daaaea697f439b2b0`, in unchanged report SHA-256
+`2d212bfa071437b1af10c0ac9c00432df0d4823d2196a3ee235e8feaec17ebab`.
+
+`AUTO070-RR1-001` showed that an inherited numeric setter on `Array.prototype[1]` could intercept writes to initially
+empty private arrays and keep the identity-alias fault looking unique. The second remediation removes every inherited
+indexed write from trusted scenario truth. Service roles and the canonical eight results are complete literals;
+identity, role, revocation, and claim decisions use explicit scalars; report comparison and projection collections are
+fixed literals. Its hostile regression installs the numeric setter before scenario execution, requires all eight faults
+to produce one failure, checks deep freezing and all negative-authority fields, restores the prototype, and re-verifies
+the authentic drift-time report. Only a third different independent reviewer can accept the exact second-remediation
+commit.

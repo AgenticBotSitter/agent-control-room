@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Acceptance Record
 
-Status: first candidate rejected; remediation implemented; different independent review pending
+Status: two candidates rejected; second remediation implemented; third different independent review pending
 
 Date: 2026-08-30
 
@@ -28,9 +28,9 @@ qualified proofs, and every authority/effect flag false.
 
 ## Producer verification
 
-- focused AUTO-070 tests: 13/13 passing;
-- combined CR11B tests: 132/132 passing;
-- registered pretests: 714/714 passing;
+- focused AUTO-070 tests: 14/14 passing;
+- combined CR11B tests: 133/133 passing;
+- registered pretests: 715/715 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -58,6 +58,23 @@ immutability and identity-duplicate classification. The remediation captures and
 removes shared collections and array helpers from scenario decisions, retains a private digest/HMAC runtime sentinel,
 and adds two hostile shared-helper tests. All thirteen focused cases and 132 combined CR11B cases now pass. This does not
 close the finding; a different reviewer must accept the exact remediation commit.
+
+## First-remediation re-review and second remediation
+
+A different reviewer rejected exact first-remediation commit
+`1dff163808ef2866eb44ec83394ff64789959f57`, tree
+`4829070eb0b4429dc577404daaaea697f439b2b0`. The unchanged report is
+`docs/reviews/CR11B_AUTO_070_FIRST_REMEDIATION_REREVIEW.md`, SHA-256
+`2d212bfa071437b1af10c0ac9c00432df0d4823d2196a3ee235e8feaec17ebab`.
+
+Finding `AUTO070-RR1-001` proved that a post-load inherited setter at numeric `Array.prototype` index `1` could intercept
+trusted writes into initially empty arrays and make `service_identity_alias` authenticate as eight passes. The second
+remediation eliminates inherited indexed writes from service-role construction, identity decisions, revocation and claim
+decisions, scenario-result construction, report comparison, and projection construction. Trusted three-way decisions now
+use scalars, while fixed output collections use array literals that create own indexed data directly. A new hostile case
+installs the inherited setter, requires all eight faults to fail exactly once, checks deep freezing and negative authority,
+restores the prototype, and re-verifies the authentic drift-time report. This finding remains open until a third different
+reviewer accepts the exact second-remediation commit.
 
 ## Negative authority
 
