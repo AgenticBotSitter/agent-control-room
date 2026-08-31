@@ -38,6 +38,8 @@ test("server-renders project and worker drill-down routes", async () => {
   assert.match(projectHtml, /Project Workspace/);
   assert.match(projectHtml, /Shared project view/);
   assert.match(projectHtml, /presentation-only/i);
+  assert.match(projectHtml, /Development fixture mode/);
+  assert.match(projectHtml, /Protected project read is loading/);
 
   const wayfarerExtension = await render("/projects/project.wayfarer.lazy-river/media-graph");
   assert.equal(wayfarerExtension.status, 200);

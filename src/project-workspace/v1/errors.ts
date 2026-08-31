@@ -1,5 +1,6 @@
 export type ProjectWorkspaceSafeCodeV1 =
   | "invalid_input"
+  | "invalid_read_scope"
   | "digest_mismatch"
   | "scope_mismatch"
   | "redaction_rejected"

@@ -1,7 +1,7 @@
 import { AgentTeamWorkspace } from "@/app/components/agent-team-workspace";
 import { AbsNewsWorkspace } from "@/app/components/abs-news-workspace";
 import { ProjectWorkspaceShell } from "@/app/components/project-workspace-shell";
-import { ProtectedProjectDetailStatus } from "@/app/components/protected-detail-status";
+import { ProtectedProjectWorkspaceRead } from "@/app/components/protected-project-workspace-read";
 import { ReadyFrontierProjectView } from "@/app/components/ready-frontier-view";
 import { WayfarerWorkspace } from "@/app/components/wayfarer-workspace";
 import { buildProjectWorkspaceUiFixtureV1 } from "@/app/fixtures/project-workspace-ui";
@@ -39,7 +39,6 @@ export function ProjectWorkspacePage({ projectId, sectionId = "overview" }: { pr
   let content;
   if (sectionId === "overview") {
     content = <>
-      <ProtectedProjectDetailStatus projectId={projectId} />
       <section className="metric-grid" aria-label="Project summary">
         <article className="metric-card"><span className="metric-icon green">↗</span><div><small>Progress</small><strong>{project.progressPercent ?? 0}%</strong><em>{label(project.domainState)}</em></div></article>
         <article className="metric-card"><span className="metric-icon amber">!</span><div><small>Needs attention</small><strong>{projectAttention.length}</strong><em>{projectBlockers.length} blockers observed</em></div></article>
@@ -110,5 +109,5 @@ export function ProjectWorkspacePage({ projectId, sectionId = "overview" }: { pr
   }
 
   return <ProjectWorkspaceShell snapshot={snapshot} workspaceName={project.workspaceName} health={project.health}
-    currentSectionId={sectionId}>{content}</ProjectWorkspaceShell>;
+    currentSectionId={sectionId}><ProtectedProjectWorkspaceRead projectId={projectId} sectionId={sectionId} />{content}</ProjectWorkspaceShell>;
 }

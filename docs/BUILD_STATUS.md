@@ -87,10 +87,22 @@
 | CR11B-AUTO-090 Hostinger PostgreSQL production target | Complete and integrated through PR #172 | One self-managed private PostgreSQL primary is fixed as sole global authority; AWS RDS, production PGlite, public DB access, and R2 state are denied; exact target `fd29af5`; see `CR11B_AUTO_090_ACCEPTANCE.md` |
 | CR11B-AUTO-100 Hostinger PostgreSQL readiness packet | Independently accepted and integrated through PR #173 | Exact implementation `34750ed`; all 39 gates remain source-separated; 3 repository contracts are present and 36 production gates block host contact; accepted re-review SHA-256 `aa2116b8...c0a9`; final `main` CI passed; see `CR11B_AUTO_100_ACCEPTANCE.md` |
 | CR11B-AUTO-110 owner-directed PostgreSQL rehearsal packet | Effect-free packet independently accepted and integrated through PR #175; native rehearsal blocked | Exact remediation `f3b6449` closes caller-mintable owner provenance; merge `16c3689` and post-merge CI run `33422467720` passed; all 36 live blockers remain; see `CR11B_AUTO_110_ACCEPTANCE.md` |
-| CR12A-PILOT-000 navigable Project Workspaces | Complete locally for the presentation-only pilot snapshot | Every registered project now has one shared shell and working Overview, Inbox, Work, Agents, Automations, Files/artifacts, Reviews, Activity, and Settings deep links; ABS News and Wayfarer retain their project-specific views; see `CR12A_PILOT_000_PROJECT_WORKSPACE_ACCEPTANCE.md` |
+| CR12A-PILOT-000 navigable Project Workspaces | Complete and integrated through PR #176 | Shared shell and real core routes merged at `062c0a7`; post-merge CI run `33427691048` passed in 7m40s; see `CR12A_PILOT_000_PROJECT_WORKSPACE_ACCEPTANCE.md` |
+| CR12A-PILOT-010 protected project reads | Complete locally for the protected read-composition snapshot | Exact server-owned project scope, existing authenticated operator read adapter, current/stale/unavailable truth, project-only endpoint and browser panel, hostile isolation tests; see `CR12A_PILOT_010_PROTECTED_PROJECT_READ_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
+
+CR12A-PILOT-010 composes the existing authenticated tenant-scoped operator read service into one stricter
+tenant/workspace/project read. The server owns the registry and resolves tenant and workspace scope; the browser submits
+only a project path. The model contains only protected portfolio counts, active jobs, services, schedules, incidents,
+Action Inbox, and Owner Focus records for that exact project. It retains stale data with a warning, reports missing or
+unavailable data honestly, rejects orphaned relations and cross-project substitution, verifies a canonical digest in the
+browser, and grants no operational authority. Every Project Workspace route now displays the protected state separately
+from an explicit development-fixture mode. The focused gate passes 35/35, registered pretests 769/769, core tests
+414/416 with zero failures and two intentional platform skips, and public plus CR12A post-tests 68/68. Typecheck, full
+lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, desktop and 390-pixel browser
+checks, macOS stage zero, and whitespace validation pass. No production system was contacted.
 
 CR12A-PILOT-000 turns the accepted Project Workspace contract into one coherent local operator experience. The project
 header, navigation, counts, source status, and negative-authority boundary are shared across every registered project.
@@ -396,13 +408,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12A-PILOT-010 — replace fixture-only Project Workspace summaries with one protected project-scoped read composition
-Set model: gpt-5.6-terra
+Block: CR12A-PILOT-015 — protected project catalog and local owner-session boundary
+Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the navigation and presentation boundary are now established. The next work is a substantial but bounded application-integration tranche: compose existing authenticated Control Room read services into project-scoped summaries and preserve an explicit fixture-only development mode.
-Expected output: one strict project-read view model, tenant/workspace/project isolation tests, honest unavailable and stale states, server-rendered Project Workspace sections backed by existing protected read ports, and no new write or effect authority.
-Owner action: none for repository implementation. A later native or hosted pilot remains separately owner-controlled.
-Stop before: production database or host contact, new credentials, live collection, project writes, approval, dispatch, command execution, provider calls, deployment, DNS, Cloudflare, or any external effect.
+Why: protected reads now work, but the current project catalog is still a synthetic application registry and authentication is represented by a trusted deployment header. The next security tranche must freeze real catalog provenance and owner-session claims before any non-production pilot can trust identity.
+Expected output: one authenticated server-side project catalog port, exact catalog high-water and revocation semantics, owner-session-to-read-scope derivation, no caller-mintable tenant/workspace/project identity, and a disabled non-production pilot disposition until those facts are configured.
+Owner action: none for repository implementation. Selecting a real non-production profile and attending the later pilot remain owner-controlled.
+Stop before: production database or host contact, credential access, session installation, live login, protected catalog configuration, project writes, approval, dispatch, execution, provider calls, deployment, DNS, Cloudflare, or any external effect.
 ```
 
 ## Update rule

@@ -66,6 +66,10 @@ export function ProjectWorkspaceShell(props: {
           This workspace is presentation-only. Navigation grants no approval, network, command, lease, dispatch, or execution authority.
         </p>
 
+        <p className="project-workspace-fixture-boundary">
+          Development fixture mode: the server-rendered project detail below is synthetic. Protected records appear only in the separate protected-read panel and never fall back silently to fixture data.
+        </p>
+
         <section id="project-workspace-content" className="project-workspace-content" aria-labelledby="project-workspace-section-title">
           <div className="section-heading project-workspace-section-heading">
             <div><p className="eyebrow">{current?.kind === "project_extension" ? "Project extension" : "Shared project view"}</p>

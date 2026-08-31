@@ -1872,3 +1872,33 @@ replace fixture-only summaries through existing protected read ports without tur
 
 **Reevaluate:** After CR12A-PILOT-010 proves tenant/workspace/project isolation and stale/unavailable behavior, run one
 owner-attended non-production local pilot. Production data, hosting, writes, and effects remain separate later decisions.
+
+**Integration amendment:** PR #176 merged PILOT-000 into `main` at
+`062c0a7d9bbec52acc180d957d74a4c4daa8b8e5`. Post-merge CI run `33427691048` passed the complete repository gate in
+7m40s. Integration creates no live project read, write, or effect authority.
+
+## ADR-119 — protected Project Workspace reads compose the existing operator surface
+
+**Decision:** Project Workspace protected data is one project-only composition over the existing authenticated,
+tenant-scoped operator read service. A server-owned registry binds tenant, workspace, and project before the source is
+called. The browser submits only the project path and independently verifies the strict response schema, exact project,
+relations, and canonical digest. Protected data is current, stale, missing, or unavailable; none of those states may
+silently become development-fixture data.
+
+**Why:** Reusing the accepted operator port preserves one database read boundary and its canonical validation while the
+project composition adds the missing workspace/project isolation and relationship checks. Separating the protected panel
+from the fixture view makes the pilot useful without falsely claiming that fixture progress, agents, artifacts, or
+extensions came from authenticated storage.
+
+**Alternatives rejected:** Add direct page queries; accept tenant or workspace in a URL/query/body; fetch the full tenant
+snapshot and filter only in the browser; treat source failure as an empty project; discard stale truth; join incidents to
+foreign services; expose private bodies or locators; silently fall back to fixtures; or make the read panel a command
+surface.
+
+**Trade-off:** The current application project registry is still synthetic and therefore cannot serve as deployment
+identity for an owner-attended data pilot. The read path is real and protected, but unconfigured local runs correctly show
+authentication or source unavailable. A separate protected catalog/session block is required before pilot activation.
+
+**Reevaluate:** After PILOT-015 accepts catalog provenance, high-water/revocation behavior, and owner-session scope
+derivation, prepare one owner-attended non-production pilot packet. This ADR never authorizes a live login, catalog
+configuration, production database contact, write, approval, dispatch, or effect.
