@@ -28,9 +28,14 @@ const objectFreezeV1 = Object.freeze;
 const objectIsFrozenV1 = Object.isFrozen;
 const objectValuesV1 = Object.values;
 const objectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOfV1 = Object.getPrototypeOf;
+const globalObjectV1 = globalThis;
+const uint8ArrayConstructorV1 = Uint8Array;
 const uint8ArrayPrototypeV1 = Uint8Array.prototype;
-const typedArrayPrototypeV1 = Object.getPrototypeOf(uint8ArrayPrototypeV1) as object;
+const typedArrayPrototypeV1 = objectGetPrototypeOfV1(uint8ArrayPrototypeV1) as object;
 const uint8ArrayFillV1 = Uint8Array.prototype.fill;
+const typedArrayByteLengthGetterV1 = objectGetOwnPropertyDescriptorV1(
+  typedArrayPrototypeV1, "byteLength")?.get;
 const dateConstructorV1 = Date;
 const dateParseV1 = Date.parse;
 const dateGetTimeV1 = Date.prototype.getTime;
@@ -155,11 +160,22 @@ const projectionParserV1 = bindPrivateParserV1(projectionSchemaV1);
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never {
   throw new ReadyFrontierContractErrorV1(code);
 }
+function exactDataValueV1(value: object, key: PropertyKey, expected: unknown): boolean {
+  const descriptor = objectGetOwnPropertyDescriptorV1(value, key);
+  return Boolean(descriptor && "value" in descriptor && descriptor.value === expected);
+}
 function assertDisposableRuntimeV1(): void {
-  const ownDescriptor = objectGetOwnPropertyDescriptorV1(uint8ArrayPrototypeV1, "fill");
-  const inheritedDescriptor = objectGetOwnPropertyDescriptorV1(typedArrayPrototypeV1, "fill");
-  if (ownDescriptor || !inheritedDescriptor || !("value" in inheritedDescriptor)
-    || inheritedDescriptor.value !== uint8ArrayFillV1) {
+  const ownFill = objectGetOwnPropertyDescriptorV1(uint8ArrayPrototypeV1, "fill");
+  const ownByteLength = objectGetOwnPropertyDescriptorV1(uint8ArrayPrototypeV1, "byteLength");
+  const fillDescriptor = objectGetOwnPropertyDescriptorV1(typedArrayPrototypeV1, "fill");
+  const byteLengthDescriptor = objectGetOwnPropertyDescriptorV1(typedArrayPrototypeV1, "byteLength");
+  if (!typedArrayByteLengthGetterV1
+    || !exactDataValueV1(globalObjectV1, "Uint8Array", uint8ArrayConstructorV1)
+    || !exactDataValueV1(uint8ArrayConstructorV1, "prototype", uint8ArrayPrototypeV1)
+    || objectGetPrototypeOfV1(uint8ArrayPrototypeV1) !== typedArrayPrototypeV1
+    || ownFill || ownByteLength
+    || !fillDescriptor || !("value" in fillDescriptor) || fillDescriptor.value !== uint8ArrayFillV1
+    || !byteLengthDescriptor || byteLengthDescriptor.get !== typedArrayByteLengthGetterV1) {
     fail("integrity_failed");
   }
 }

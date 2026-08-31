@@ -1,6 +1,7 @@
 import { types as nodeUtilTypes } from "node:util";
 
 const isProxy = nodeUtilTypes.isProxy;
+const isUint8Array = nodeUtilTypes.isUint8Array;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
@@ -23,7 +24,6 @@ const typedArrayLengthGetter = objectGetOwnPropertyDescriptor(typedArrayPrototyp
 const arrayBufferByteLengthGetter = objectGetOwnPropertyDescriptor(arrayBufferPrototype, "byteLength")?.get;
 const arrayBufferDetachedGetter = objectGetOwnPropertyDescriptor(arrayBufferPrototype, "detached")?.get;
 const uint8ArrayAt = uint8ArrayPrototype.at;
-const uint8ArrayFill = uint8ArrayPrototype.fill;
 const uint8ArraySet = uint8ArrayPrototype.set;
 
 if (!typedArrayBufferGetter || !typedArrayByteLengthGetter || !typedArrayByteOffsetGetter
@@ -155,6 +155,28 @@ export interface ExactHostUint8ArrayV1 {
   wipe(): void;
 }
 
+/** Read byte length through captured host operations without property lookup. */
+export function hostUint8ArrayByteLengthV1(value: unknown): number | undefined {
+  if (!value || typeof value !== "object" || isHostProxyV1(value) || !isUint8Array(value)) return undefined;
+  try {
+    const byteLength = reflectApply(typedArrayByteLengthGetter!, value, []) as number;
+    return numberIsSafeInteger(byteLength) && byteLength >= 0 ? byteLength : undefined;
+  } catch { return undefined; }
+}
+
+function wipeArrayBufferV1(buffer: ArrayBufferLike): boolean {
+  try {
+    const wholeBuffer = new uint8ArrayConstructor(buffer);
+    const byteLength = reflectApply(typedArrayByteLengthGetter!, wholeBuffer, []) as number;
+    if (!numberIsSafeInteger(byteLength) || byteLength < 0) return false;
+    for (let index = 0; index < byteLength; index += 1) wholeBuffer[index] = 0;
+    for (let index = 0; index < byteLength; index += 1) {
+      if (reflectApply(uint8ArrayAt, wholeBuffer, [index]) !== 0) return false;
+    }
+    return true;
+  } catch { return false; }
+}
+
 /**
  * Observe an exact Uint8Array through captured native intrinsics only. This
  * rejects shared/detached or partial backing stores, subclasses, prototype
@@ -193,8 +215,7 @@ export function exactHostUint8ArrayV1(value: unknown, maximum: number): ExactHos
         return copy;
       },
       wipe() {
-        const wholeBuffer = new uint8ArrayConstructor(buffer);
-        reflectApply(uint8ArrayFill, wholeBuffer, [0]);
+        if (!wipeArrayBufferV1(buffer)) throw new Error("binary wipe failed");
       },
     });
   } catch { return undefined; }
@@ -205,9 +226,7 @@ export function wipeHostUint8ArrayV1(value: unknown): boolean {
   if (!value || typeof value !== "object" || isHostProxyV1(value)) return false;
   try {
     const buffer = reflectApply(typedArrayBufferGetter!, value, []) as ArrayBufferLike;
-    const wholeBuffer = new uint8ArrayConstructor(buffer);
-    reflectApply(uint8ArrayFill, wholeBuffer, [0]);
-    return true;
+    return wipeArrayBufferV1(buffer);
   } catch { return false; }
 }
 

@@ -1,6 +1,6 @@
 # CR11B-AUTO-080 Disposable Hosted Qualification Preparation Contract
 
-Status: first candidate rejected; first remediation requires a different independent re-review
+Status: first remediation rejected; second remediation requires another different independent re-review
 
 Date: 2026-08-30
 
@@ -124,3 +124,17 @@ backing store only through the host-value boundary's captured native intrinsic. 
 after module load, requires zero hostile calls and no retained receiver, demonstrates captured full-buffer erasure,
 restores the descriptor, and proves unchanged request replay, projection, and negative authority. Only a different
 independent reviewer can accept the exact remediation commit.
+
+The different first-remediation reviewer rejected exact commit
+`10eb807c8edd859261aa8dae09bcd5e116f42420`, tree
+`a7b764ea434ff9fd93db5e16cc4d162da7bf1092`, in unchanged report SHA-256
+`bbe1a02b1f442c74f4f7e1e07ba038dcf620a2e3d43595c399a20f0427ec4421`. `AUTO080-RR1-001` showed that shared HMAC
+validation still passed the private copied key through mutable global-constructor identity and inherited byte-length
+behavior before cleanup.
+
+The second remediation makes HMAC key-length validation a captured host operation, makes full-buffer erasure a verified
+indexed overwrite with no typed-array method dispatch, and checks the relevant post-load binary runtime identities
+before any AUTO-080 key copy. Its regressions require zero hostile key-surface calls or retained key, complete erasure,
+and restored success, denial, projection, and negative-authority behavior. The boundary explicitly assumes clean module
+initialization; proving native provenance inside an already compromised process is not claimed. Another different
+independent reviewer must accept the exact second-remediation commit.

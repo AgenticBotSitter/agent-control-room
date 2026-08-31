@@ -290,7 +290,7 @@ test("CR11B-AUTO-080 exact boundaries reject accessors and Proxies without calle
   assert.equal(proxyCalls, 0);
 });
 
-test("CR11B-AUTO-080 fails closed before ambient typed-array fill and uses captured key erasure", () => {
+test("CR11B-AUTO-080 key erasure never dispatches through ambient fill before or after helper load", async () => {
   const f = fixture();
   const defineProperty = Object.defineProperty;
   const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object;
@@ -299,6 +299,7 @@ test("CR11B-AUTO-080 fails closed before ambient typed-array fill and uses captu
   let retainedReceiver: Uint8Array | undefined;
   const retain = (value: Uint8Array) => { retainedReceiver = value; };
   const cleanupProbe = new Uint8Array([9, 8, 7, 6]);
+  const preloadedProbe = new Uint8Array([5, 4, 3, 2]);
   try {
     defineProperty(typedArrayPrototype, "fill", {
       ...descriptor,
@@ -321,6 +322,10 @@ test("CR11B-AUTO-080 fails closed before ambient typed-array fill and uses captu
     assert.equal(retainedReceiver, undefined);
     assert.equal(wipeHostUint8ArrayV1(cleanupProbe), true);
     assert.deepEqual([...cleanupProbe], [0, 0, 0, 0]);
+    const freshModulePath = "../src/security/host-value.ts?auto080-preloaded-fill";
+    const freshHostValue = await import(freshModulePath) as typeof import("../src/security/host-value.ts");
+    assert.equal(freshHostValue.wipeHostUint8ArrayV1(preloadedProbe), true);
+    assert.deepEqual([...preloadedProbe], [0, 0, 0, 0]);
     assert.equal(hostileCalls, 0);
   } finally {
     defineProperty(typedArrayPrototype, "fill", descriptor);
@@ -333,8 +338,84 @@ test("CR11B-AUTO-080 fails closed before ambient typed-array fill and uses captu
   assert.equal(projection.canRunLiveQualification, false);
   const source = readFileSync(new URL(
     "../src/ready-frontier/v1/disposable-qualification.ts", import.meta.url), "utf8");
+  const hostValueSource = readFileSync(new URL("../src/security/host-value.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /requestKey\.fill\s*\(/);
   assert.equal((source.match(/wipeKeyV1\(requestKey\)/g) ?? []).length, 2);
+  assert.doesNotMatch(hostValueSource, /uint8ArrayFill|\.fill\s*\(\s*0\s*\)/);
+});
+
+test("CR11B-AUTO-080 HMAC never exposes private key copies to mutable binary metadata", () => {
+  const f = fixture();
+  const defineProperty = Object.defineProperty;
+  const globalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Uint8Array")!;
+  const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object;
+  const byteLengthDescriptor = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!;
+  const tampered = clone(f.request);
+  tampered.requestAuthTag = tampered.requestAuthTag.endsWith("0")
+    ? `${tampered.requestAuthTag.slice(0, -1)}1`
+    : `${tampered.requestAuthTag.slice(0, -1)}0`;
+  let hostileCalls = 0;
+  let retainedKey: unknown;
+  const retain = (value: unknown) => { retainedKey = value; };
+  const hmacMaterial = { auto080: "host-verified-key" };
+  const expectedHmac = hmacSha256Tag(f.requestKey, hmacMaterial);
+  const verifyGuardedOperations = () => {
+    assert.throws(() => parseReadyFrontierDisposableQualificationRequestV1(
+      f.request, f.activationKey, f.qualificationKey, f.requestKey), errorCode("integrity_failed"));
+    assert.throws(() => buildReadyFrontierDisposableQualificationRequestV1({
+      requestId: "frontier.disposable-qualification.auto080.binary-runtime-drift",
+      sourceCustodyPlan: f.plan,
+      sourceCustodyReport: f.report,
+      requestedAt: "2026-08-30T20:06:00.000Z",
+      expiresAt: "2026-08-30T20:58:00.000Z",
+    }, f.activationKey, f.qualificationKey, f.requestKey), errorCode("integrity_failed"));
+    assert.throws(() => parseReadyFrontierDisposableQualificationRequestV1(
+      tampered, f.activationKey, f.qualificationKey, f.requestKey), errorCode("integrity_failed"));
+  };
+
+  const hostileConstructor = function HostileUint8Array() { return undefined; };
+  defineProperty(hostileConstructor, Symbol.hasInstance, { value(value: unknown) {
+    hostileCalls += 1;
+    retain(value);
+    return true;
+  } });
+  try {
+    defineProperty(globalThis, "Uint8Array", { ...globalDescriptor, value: hostileConstructor });
+    assert.equal(hmacSha256Tag(f.requestKey, hmacMaterial), expectedHmac);
+    verifyGuardedOperations();
+    assert.equal(hostileCalls, 0);
+    assert.equal(retainedKey, undefined);
+  } finally {
+    defineProperty(globalThis, "Uint8Array", globalDescriptor);
+  }
+
+  try {
+    defineProperty(typedArrayPrototype, "byteLength", {
+      ...byteLengthDescriptor,
+      get(this: unknown) {
+        hostileCalls += 1;
+        retain(this);
+        return 32;
+      },
+    });
+    assert.equal(hmacSha256Tag(f.requestKey, hmacMaterial), expectedHmac);
+    verifyGuardedOperations();
+    assert.equal(hostileCalls, 0);
+    assert.equal(retainedKey, undefined);
+  } finally {
+    defineProperty(typedArrayPrototype, "byteLength", byteLengthDescriptor);
+  }
+
+  const replay = parseReadyFrontierDisposableQualificationRequestV1(
+    f.request, f.activationKey, f.qualificationKey, f.requestKey);
+  assert.deepEqual(replay, f.request);
+  assert.throws(() => parseReadyFrontierDisposableQualificationRequestV1(
+    tampered, f.activationKey, f.qualificationKey, f.requestKey), errorCode("digest_mismatch"));
+  const projection = projectReadyFrontierDisposableQualificationRequestV1(
+    replay, f.activationKey, f.qualificationKey, f.requestKey);
+  assert.equal(projection.canRunLiveQualification, false);
+  const digestSource = readFileSync(new URL("../src/security/digest.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(digestSource, /key\s+instanceof\s+Uint8Array|key\.byteLength/);
 });
 
 test("CR11B-AUTO-080 rejects added credential and provider material instead of retaining it", () => {

@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { AuthorityEnvelope, EffectIntentRecord } from "../domain/v1/types";
+import { hostUint8ArrayByteLengthV1 } from "./host-value";
 
 function canonicalize(value: unknown, path: string): string {
   if (value === null) return "null";
@@ -35,7 +36,8 @@ export function sha256Digest(value: unknown): string {
 
 /** Authenticates mutable-store evidence with a key that must remain outside that store. */
 export function hmacSha256Tag(key: Uint8Array, value: unknown): string {
-  if (!(key instanceof Uint8Array) || key.byteLength < 32) throw new Error("integrity key invalid");
+  const byteLength = hostUint8ArrayByteLengthV1(key);
+  if (byteLength === undefined || byteLength < 32) throw new Error("integrity key invalid");
   return `hmac-sha256:${createHmac("sha256", key).update(canonicalJson(value), "utf8").digest("hex")}`;
 }
 

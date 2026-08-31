@@ -1,6 +1,6 @@
 # CR11B-AUTO-080 Acceptance Record
 
-Status: first candidate rejected; first remediation implemented; different independent re-review required
+Status: first remediation rejected; second remediation implemented; another different independent re-review required
 
 Date: 2026-08-30
 
@@ -29,9 +29,9 @@ contact, cleanup, live qualification, production activation, dispatch, execution
 
 ## Candidate verification
 
-- focused AUTO-080 tests: 10/10 passing;
-- combined CR11B tests: 147/147 passing;
-- registered pretests: 729/729 passing;
+- focused AUTO-080 tests: 11/11 passing;
+- combined CR11B tests: 148/148 passing;
+- registered pretests: 730/730 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -62,7 +62,31 @@ request work, and erases private copies through the repository host-value bounda
 hostile regression replaces the ambient method after module load, requires builder and parser to fail closed with zero
 hostile calls and no retained receiver, directly proves the captured erasure primitive zeros a complete backing store,
 restores the descriptor, and re-verifies exact request replay, safe projection, and negative authority. A different
-independent reviewer must accept the exact remediation commit.
+independent reviewer was required to assess the exact remediation commit.
+
+## First remediation re-review and second remediation
+
+A different independent reviewer rejected exact first-remediation commit
+`10eb807c8edd859261aa8dae09bcd5e116f42420`, tree
+`a7b764ea434ff9fd93db5e16cc4d162da7bf1092`. The unchanged report is
+`docs/reviews/CR11B_AUTO_080_FIRST_REMEDIATION_REREVIEW.md`, SHA-256
+`bbe1a02b1f442c74f4f7e1e07ba038dcf620a2e3d43595c399a20f0427ec4421`.
+
+Finding `AUTO080-RR1-001` proved that the shared HMAC helper still applied mutable `instanceof Uint8Array` and inherited
+`key.byteLength` behavior to the private copied request key before cleanup. A post-load global constructor or inherited
+getter replacement could execute caller behavior and retain a second key copy that cleanup could not reach.
+
+The second remediation validates HMAC key byte length through captured host operations with no key property lookup,
+removes typed-array `fill` from the shared full-buffer erasure helper, and verifies the global constructor, exact
+prototype link, constructor prototype, inherited fill identity, and inherited byte-length getter before any AUTO-080
+key copy. Hostile regressions cover correct and tampered requests, construction and parsing, global constructor
+replacement, inherited byte-length replacement, post-load fill replacement, and a helper imported after fill
+replacement. They require zero hostile key-surface calls, no retained key or receiver, complete backing-buffer erasure,
+restored exact replay, sanitized projection, and unchanged negative authority.
+
+This remains an in-process clean-start boundary: it trusts the runtime intrinsics present when the security modules
+initialize. It does not claim that an already compromised process can prove native provenance after the fact. Another
+different independent reviewer must accept the exact second-remediation commit.
 
 ## Negative authority
 

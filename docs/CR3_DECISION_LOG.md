@@ -1676,3 +1676,14 @@ wipes complete copied backing stores through the host-value boundary's captured 
 requires method drift to fail closed before the substitute executes, proves the captured primitive zeros a complete
 buffer, restores the runtime, and re-verifies request replay, projection, and negative authority. A different independent
 reviewer must accept the exact remediation; no rejection, fix, or test grants live qualification or effect authority.
+
+**First-remediation re-review amendment:** A different reviewer rejected exact commit
+`10eb807c8edd859261aa8dae09bcd5e116f42420`, tree `a7b764ea434ff9fd93db5e16cc4d162da7bf1092`, in immutable report
+SHA-256 `bbe1a02b1f442c74f4f7e1e07ba038dcf620a2e3d43595c399a20f0427ec4421`. The fill-specific reproduction was closed,
+but shared HMAC validation still exposed the private copied key to mutable global `Uint8Array` identity and inherited
+`byteLength` behavior before cleanup. The second remediation moves HMAC length validation behind captured host
+operations, erases full backing stores through verified indexed writes without typed-array method dispatch, and checks
+the relevant post-load binary runtime identities before any AUTO-080 key copy. Clean module initialization is an
+explicit trust assumption; the boundary does not claim native provenance can be recovered inside an already compromised
+process. Another different independent review must close `AUTO080-IR-001` and `AUTO080-RR1-001`; all live and effect
+authority remains false.
