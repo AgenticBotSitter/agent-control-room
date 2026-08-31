@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Acceptance Record
 
-Status: three candidates rejected; third remediation implemented; fourth different independent review pending
+Status: four candidates rejected; fourth remediation implemented; fifth different independent review pending
 
 Date: 2026-08-30
 
@@ -28,9 +28,9 @@ qualified proofs, and every authority/effect flag false.
 
 ## Producer verification
 
-- focused AUTO-070 tests: 15/15 passing;
-- combined CR11B tests: 134/134 passing;
-- registered pretests: 716/716 passing;
+- focused AUTO-070 tests: 16/16 passing;
+- combined CR11B tests: 135/135 passing;
+- registered pretests: 717/717 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -92,6 +92,22 @@ captured static parse epoch, and rejects equal as well as reversed run boundarie
 instance methods after module load, requires invalid/equal/reversed plan and run operations to fail closed, restores the
 methods, and re-verifies the pre-existing valid authenticated plan and report. A fourth different reviewer must accept the
 exact third-remediation commit.
+
+## Third-remediation re-review and fourth remediation
+
+A fourth different reviewer closed the three prior findings but rejected exact third-remediation commit
+`941b6d624bd06dab2a17ab490f33dcd5ac4c6fc2`, tree
+`748d90175e3d64d7352e362df97fb6fda63e276c`. The unchanged report is
+`docs/reviews/CR11B_AUTO_070_THIRD_REMEDIATION_REREVIEW.md`, SHA-256
+`4d9517bdb99b93258b23edfac37320ced6c023c13687f815e8e07d4c1840e695`.
+
+Finding `AUTO070-RR3-001` proved that current `String.prototype.slice` semantics controlled the digest-derived report ID,
+so a report authenticated under substituted semantics failed after restoration. The fourth remediation captures the
+string prototype and slice intrinsic before exposure, checks their exact descriptor before every exported operation,
+and derives both new and expected report IDs only through the captured intrinsic. Its hostile regression changes slice
+after module load, requires construction and parsing to fail closed before artifact work, restores the method, and proves
+exact replay plus parsing return the original stable authenticated report. A fifth different reviewer must accept the
+exact fourth-remediation commit.
 
 ## Negative authority
 

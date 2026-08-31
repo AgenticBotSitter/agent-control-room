@@ -1593,3 +1593,14 @@ the captured methods for canonical validation, cross-checks the captured static 
 reversed run boundaries. A hostile regression changes both Date methods, requires invalid/equal/reversed operations to
 fail closed, restores them, and re-verifies the stable authenticated plan and report. A fourth different reviewer must
 accept the exact third-remediation commit.
+
+**Third-remediation re-review amendment:** A fourth different reviewer closed the prior three findings but rejected exact
+remediation `941b6d624bd06dab2a17ab490f33dcd5ac4c6fc2`, tree
+`748d90175e3d64d7352e362df97fb6fda63e276c`, in immutable report SHA-256
+`4d9517bdb99b93258b23edfac37320ced6c023c13687f815e8e07d4c1840e695`. Current
+`String.prototype.slice` semantics controlled the digest-derived report ID, allowing an authenticated artifact to change
+validity after helper restoration. Negative production authority stayed intact. The fourth remediation captures the
+string prototype and slice intrinsic, verifies their exact descriptor before artifact work, and uses the captured
+intrinsic for both report-ID construction and re-derivation. A hostile regression substitutes slice, requires
+construction and parsing to fail closed, restores it, and proves exact replay and parsing stability. A fifth different
+reviewer must accept the exact fourth-remediation commit.

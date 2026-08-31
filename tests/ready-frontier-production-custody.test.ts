@@ -388,6 +388,27 @@ test("CR11B-AUTO-070 captures Date instance methods and denies invalid, equal, a
     f.activationKey, f.qualificationKey), f.report);
 });
 
+test("CR11B-AUTO-070 fails closed when mutable string slicing could change authenticated identity", () => {
+  const f = fixture(), defineProperty = Object.defineProperty;
+  const sliceDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "slice")!;
+  try {
+    defineProperty(String.prototype, "slice", { ...sliceDescriptor,
+      value: () => "mutable-runtime-id" });
+    assert.throws(() => runReadyFrontierProductionCustodyFakeQualificationV1({
+      runId: "frontier.production-custody-run.string-helper-drift", plan: f.plan,
+      startedAt: "2026-08-30T20:09:00.000Z", completedAt: "2026-08-30T20:10:00.000Z",
+    }, f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.throws(() => parseReadyFrontierProductionCustodyReportV1(f.report, f.plan,
+      f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+  } finally { defineProperty(String.prototype, "slice", sliceDescriptor); }
+  const replay = runReadyFrontierProductionCustodyFakeQualificationV1({
+    runId: f.report.runId, plan: f.plan, startedAt: f.report.startedAt, completedAt: f.report.completedAt,
+  }, f.activationKey, f.qualificationKey);
+  assert.deepEqual(replay, f.report);
+  assert.deepEqual(parseReadyFrontierProductionCustodyReportV1(f.report, f.plan,
+    f.activationKey, f.qualificationKey), f.report);
+});
+
 test("CR11B-AUTO-070 fails closed when canonical digest helpers drift after module load", () => {
   const f = fixture(), defineProperty = Object.defineProperty;
   const mapDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "map")!;

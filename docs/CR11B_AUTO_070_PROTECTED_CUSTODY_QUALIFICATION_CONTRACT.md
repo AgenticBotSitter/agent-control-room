@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Protected Custody Qualification Foundation Contract
 
-Status: three candidates rejected; exact third remediation requires a fourth different independent review
+Status: four candidates rejected; exact fourth remediation requires a fifth different independent review
 
 Date: 2026-08-30
 
@@ -155,3 +155,15 @@ methods, cross-checks their epoch with captured static parsing, and makes equal 
 hostile regression substitutes both methods after module load, requires invalid, equal, and reversed plan/run operations
 to fail closed, restores the methods, and re-verifies the stable pre-existing plan and report. Only a fourth different
 independent reviewer can accept the exact third-remediation commit.
+
+A fourth different reviewer closed the prior three findings but rejected exact third-remediation commit
+`941b6d624bd06dab2a17ab490f33dcd5ac4c6fc2`, tree
+`748d90175e3d64d7352e362df97fb6fda63e276c`, in unchanged report SHA-256
+`4d9517bdb99b93258b23edfac37320ced6c023c13687f815e8e07d4c1840e695`.
+
+`AUTO070-RR3-001` showed that mutable current `String.prototype.slice` semantics could change the digest-derived report
+ID and make an authenticated artifact invalid after restoration. The fourth remediation captures the string prototype
+and slice intrinsic, verifies the exact descriptor before artifact work, and derives both construction-time and
+parse-time report IDs through the captured intrinsic. Its hostile regression substitutes slice, requires report
+construction and parsing to fail closed, restores the method, and proves the original authenticated report retains exact
+replay and parsing validity. Only a fifth different independent reviewer can accept the exact fourth-remediation commit.

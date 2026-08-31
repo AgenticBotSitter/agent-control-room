@@ -46,6 +46,8 @@ const datePrototypeV1 = Date.prototype;
 const dateParseV1 = Date.parse;
 const dateGetTimeV1 = Date.prototype.getTime;
 const dateToISOStringV1 = Date.prototype.toISOString;
+const stringPrototypeV1 = String.prototype;
+const stringSliceV1 = String.prototype.slice;
 const reflectApplyV1 = Reflect.apply;
 const bufferConstructorV1 = Buffer;
 const bufferFromV1 = Buffer.from;
@@ -80,6 +82,7 @@ function assertCanonicalRuntimeV1(): void {
     || !exactOwnMethodV1(dateConstructorV1, "parse", dateParseV1)
     || !exactOwnMethodV1(datePrototypeV1, "getTime", dateGetTimeV1)
     || !exactOwnMethodV1(datePrototypeV1, "toISOString", dateToISOStringV1)
+    || !exactOwnMethodV1(stringPrototypeV1, "slice", stringSliceV1)
     || !exactOwnMethodV1(bufferConstructorV1, "from", bufferFromV1)
     || sha256Digest(runtimeSentinelMaterialV1) !== runtimeSentinelDigestV1
     || hmacSha256Tag(runtimeSentinelKeyV1, runtimeSentinelMaterialV1) !== runtimeSentinelAuthTagV1) {
@@ -270,6 +273,9 @@ function key(value: unknown): Uint8Array {
 function sameText(left: string, right: string): boolean {
   const a = bufferFromV1(left), b = bufferFromV1(right);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+function digestIdentitySegmentV1(digest: string): string {
+  return reflectApplyV1(stringSliceV1, digest, [7, 31]) as string;
 }
 function sameList(left: readonly string[], right: readonly string[]): boolean {
   if (left.length !== right.length) return false;
@@ -619,8 +625,8 @@ export function runReadyFrontierProductionCustodyFakeQualificationV1(inputValue:
       input.startedAt, input.completedAt);
     const simulatedPassCount = statusCountV1(scenarioResults, "simulated_pass");
     const simulatedFailureCount = scenarioResults.length - simulatedPassCount;
-    const reportId = `frontier.production-custody-report.${sha256Digest({ runId: input.runId,
-      planDigest: plan.planDigest }).slice(7, 31)}`;
+    const reportId = `frontier.production-custody-report.${digestIdentitySegmentV1(sha256Digest({
+      runId: input.runId, planDigest: plan.planDigest }))}`;
     const material: Omit<ReadyFrontierProductionCustodyReportV1, "reportDigest" | "reportAuthTag"> = {
       schema: READY_FRONTIER_PRODUCTION_CUSTODY_REPORT_V1,
       reportId, runId: input.runId, planId: plan.planId, planDigest: plan.planDigest,
@@ -669,8 +675,8 @@ export function parseReadyFrontierProductionCustodyReportV1(value: unknown,
       report.scenarioResults[4]!.scenarioCode, report.scenarioResults[5]!.scenarioCode,
       report.scenarioResults[6]!.scenarioCode, report.scenarioResults[7]!.scenarioCode,
     ];
-    const expectedId = `frontier.production-custody-report.${sha256Digest({ runId: report.runId,
-      planDigest: plan.planDigest }).slice(7, 31)}`;
+    const expectedId = `frontier.production-custody-report.${digestIdentitySegmentV1(sha256Digest({
+      runId: report.runId, planDigest: plan.planDigest }))}`;
     if (report.reportId !== expectedId || report.planId !== plan.planId || report.planDigest !== plan.planDigest
       || report.tenantId !== plan.tenantId || report.workspaceId !== plan.workspaceId
       || report.productionBoundaryAssessmentId !== plan.productionBoundaryAssessmentId
