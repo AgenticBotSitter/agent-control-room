@@ -83,7 +83,7 @@
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
 | CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Complete for exact independently accepted effect-free commit `20eeb14` | Six remediations closed mutable-runtime integrity attacks; eight fake scenarios retain all nine blockers and qualify zero production proofs; see `CR11B_AUTO_070_ACCEPTANCE.md` |
-| CR11B-AUTO-080 disposable hosted qualification preparation | First remediation rejected; second key-custody remediation implemented; another different re-review required | Host-verified HMAC validation and method-free full-buffer erasure close both recorded private-key seams; every live capability remains false |
+| CR11B-AUTO-080 disposable hosted qualification preparation | Second remediation rejected; third key-custody remediation implemented; fourth different review required | Captured keyed-HMAC finalization, host-verified key validation, and method-free erasure address all three recorded custody seams; every live capability remains false |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -106,10 +106,15 @@ report has SHA-256 `343da8c163bda9d437d3b850186a4a6b3623b9c255b9b9ab3eec5deaaf53
 `bbe1a02b1f442c74f4f7e1e07ba038dcf620a2e3d43595c399a20f0427ec4421`: shared HMAC validation still exposed the copied
 key to mutable `Uint8Array` identity and inherited `byteLength` behavior. The second remediation validates HMAC key shape
 only through captured host operations, removes typed-array `fill` from full-buffer erasure, verifies the relevant runtime
-identities before any AUTO-080 key copy, and tests global constructor, inherited byte-length, post-load fill, and
-pre-helper-load fill attacks with zero hostile key-surface calls or retained key. It explicitly trusts clean module
-initialization; independently establishing hostile pre-load runtime provenance remains outside this in-process boundary.
-Focused tests pass 11/11, combined CR11B passes 148/148, registered pretests pass 730/730, core passes 414/416 with zero
+identities before any AUTO-080 key copy. Third reviewer rejection report SHA-256
+`c105ed8ef640ca4cd4aeb0c5f548d57e4ec5f9f3a9b3144c800dfb3f0c92f239` accepted those raw-key closures but found that
+ambient `Hmac.update` or `Hmac.digest` could retain a keyed native signing context. The third remediation canonicalizes
+material before creating a keyed object, captures and verifies the clean-start HMAC prototype methods, invokes them only
+through captured `Reflect.apply`, and makes AUTO-080 reject HMAC drift before any private key copy. Its hostile tests cover
+update accessors/methods and digest accessors/methods across correct, tampered, build, parse, success, and failure paths
+with zero hostile calls or retained keyed capability. It explicitly trusts clean module initialization; independently
+establishing hostile pre-load runtime provenance remains outside this in-process boundary. Focused tests pass 12/12,
+combined CR11B passes 149/149, registered pretests pass 731/731, core passes 414/416 with zero
 failures and two intentional platform skips, and public posttests pass 52/52.
 Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and
 whitespace validation pass. A different independent review of the exact remediation commit is required.
@@ -363,11 +368,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-080-DISPOSABLE-HOSTED-QUALIFICATION — independently re-review the exact second key-custody remediation before any live authorization can be considered
+Block: CR11B-AUTO-080-DISPOSABLE-HOSTED-QUALIFICATION — independently review the exact third key-custody remediation before any live authorization can be considered
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the first re-review confirmed the fill repair but found mutable HMAC key validation. The second remediation now removes method-dispatched erasure, uses host-verified HMAC key validation, and guards all relevant post-load binary identities before key copying. Only another different reviewer can close both findings.
-Expected output: immutable independent report over the exact second-remediation commit, closure of `AUTO080-IR-001` and `AUTO080-RR1-001`, clean-start trust-boundary review, all focused and combined gates, source/substitution/runtime/projection/privacy review, and an explicit accepted or rejected disposition.
+Why: the third reviewer accepted both raw-key closures but found that ambient HMAC update/digest dispatch could retain a keyed native signing capability. The third remediation now captures, verifies, and directly applies both HMAC methods after canonicalization, while AUTO-080 fails before key copying on method drift. Only a fourth different reviewer can close all findings.
+Expected output: immutable independent report over the exact third-remediation commit, closure of `AUTO080-IR-001`, `AUTO080-RR1-001`, and `AUTO080-RR2-001`, clean-start trust-boundary review, complete keyed-object lifetime review, all focused and combined gates, and an explicit accepted or rejected disposition.
 Owner action: keep `gpt-5.6-sol` at xhigh. The existing authorization for independent reviews is sufficient for the effect-free re-review. A later live attempt still needs fresh exact authority for the named disposable provider/resources, call ceiling, duration, protected access, retained evidence, and cleanup actions.
 Stop before: provider selection, protected-reference or credential access, any network/database/process call, resource creation or destruction, backup/restore, raw evidence, owner-signature simulation, production policy/key/data, public endpoint, consumer activation, dispatch, execution, DNS, Cloudflare, hosting deployment, or external effect.
 ```

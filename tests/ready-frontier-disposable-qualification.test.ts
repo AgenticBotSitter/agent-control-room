@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
@@ -416,6 +417,82 @@ test("CR11B-AUTO-080 HMAC never exposes private key copies to mutable binary met
   assert.equal(projection.canRunLiveQualification, false);
   const digestSource = readFileSync(new URL("../src/security/digest.ts", import.meta.url), "utf8");
   assert.doesNotMatch(digestSource, /key\s+instanceof\s+Uint8Array|key\.byteLength/);
+});
+
+test("CR11B-AUTO-080 HMAC finalization never dispatches through mutable keyed-object methods", () => {
+  const f = fixture();
+  const defineProperty = Object.defineProperty;
+  const probe = createHmac("sha256", new Uint8Array(32));
+  const hmacPrototype = Object.getPrototypeOf(probe) as object;
+  probe.digest("hex");
+  const updateDescriptor = Object.getOwnPropertyDescriptor(hmacPrototype, "update")!;
+  const digestDescriptor = Object.getOwnPropertyDescriptor(hmacPrototype, "digest")!;
+  const tampered = clone(f.request);
+  tampered.requestAuthTag = tampered.requestAuthTag.endsWith("0")
+    ? `${tampered.requestAuthTag.slice(0, -1)}1`
+    : `${tampered.requestAuthTag.slice(0, -1)}0`;
+  let hostileCalls = 0;
+  let retainedCapability: unknown;
+  const retain = (value: unknown) => { retainedCapability = value; };
+  const verifyGuardedOperations = () => {
+    assert.throws(() => hmacSha256Tag(f.requestKey, { auto080: "keyed-object-drift" }), /HMAC runtime invalid/);
+    assert.throws(() => parseReadyFrontierDisposableQualificationRequestV1(
+      f.request, f.activationKey, f.qualificationKey, f.requestKey), errorCode("integrity_failed"));
+    assert.throws(() => buildReadyFrontierDisposableQualificationRequestV1({
+      requestId: "frontier.disposable-qualification.auto080.hmac-runtime-drift",
+      sourceCustodyPlan: f.plan,
+      sourceCustodyReport: f.report,
+      requestedAt: "2026-08-30T20:06:00.000Z",
+      expiresAt: "2026-08-30T20:58:00.000Z",
+    }, f.activationKey, f.qualificationKey, f.requestKey), errorCode("integrity_failed"));
+    assert.throws(() => parseReadyFrontierDisposableQualificationRequestV1(
+      tampered, f.activationKey, f.qualificationKey, f.requestKey), errorCode("integrity_failed"));
+  };
+  const attacks = [
+    { property: "update", descriptor: updateDescriptor, kind: "accessor" },
+    { property: "update", descriptor: updateDescriptor, kind: "method" },
+    { property: "digest", descriptor: digestDescriptor, kind: "accessor" },
+    { property: "digest", descriptor: digestDescriptor, kind: "method" },
+  ] as const;
+  for (const attack of attacks) {
+    try {
+      if (attack.kind === "accessor") {
+        defineProperty(hmacPrototype, attack.property, {
+          configurable: true,
+          enumerable: attack.descriptor.enumerable,
+          get(this: unknown) {
+            hostileCalls += 1;
+            retain(this);
+            throw new Error("hostile HMAC accessor executed");
+          },
+        });
+      } else {
+        defineProperty(hmacPrototype, attack.property, {
+          ...attack.descriptor,
+          value(this: unknown) {
+            hostileCalls += 1;
+            retain(this);
+            throw new Error("hostile HMAC method executed");
+          },
+        });
+      }
+      verifyGuardedOperations();
+      assert.equal(hostileCalls, 0);
+      assert.equal(retainedCapability, undefined);
+    } finally {
+      defineProperty(hmacPrototype, attack.property, attack.descriptor);
+    }
+  }
+  const replay = parseReadyFrontierDisposableQualificationRequestV1(
+    f.request, f.activationKey, f.qualificationKey, f.requestKey);
+  assert.deepEqual(replay, f.request);
+  assert.throws(() => parseReadyFrontierDisposableQualificationRequestV1(
+    tampered, f.activationKey, f.qualificationKey, f.requestKey), errorCode("digest_mismatch"));
+  const projection = projectReadyFrontierDisposableQualificationRequestV1(
+    replay, f.activationKey, f.qualificationKey, f.requestKey);
+  assert.equal(projection.canRunLiveQualification, false);
+  const digestSource = readFileSync(new URL("../src/security/digest.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(digestSource, /createHmac\([^\n]+\)\.update|\bhmac\.(?:update|digest)\s*\(/);
 });
 
 test("CR11B-AUTO-080 rejects added credential and provider material instead of retaining it", () => {

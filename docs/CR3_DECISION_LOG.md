@@ -1687,3 +1687,12 @@ the relevant post-load binary runtime identities before any AUTO-080 key copy. C
 explicit trust assumption; the boundary does not claim native provenance can be recovered inside an already compromised
 process. Another different independent review must close `AUTO080-IR-001` and `AUTO080-RR1-001`; all live and effect
 authority remains false.
+
+**Second-remediation re-review amendment:** A third different reviewer rejected exact commit
+`b8287d75dca597196723e7705ba864ae153e48ac`, tree `b4abfd8f941f9b6f1f62e66a99529d26b362a387`, in immutable report
+SHA-256 `c105ed8ef640ca4cd4aeb0c5f548d57e4ec5f9f3a9b3144c800dfb3f0c92f239`. Both recorded raw-key exposures were closed,
+but ambient HMAC update/digest dispatch could retain an unfinalized keyed native signing context after byte-array erasure.
+The third remediation canonicalizes before creating that context, captures and verifies the clean-start HMAC prototype
+methods, invokes both only through captured host application, and makes AUTO-080 reject method drift before request-key
+copying. A fourth different independent reviewer must close `AUTO080-IR-001`, `AUTO080-RR1-001`, and
+`AUTO080-RR2-001`; no repository evidence grants live qualification or effect authority.

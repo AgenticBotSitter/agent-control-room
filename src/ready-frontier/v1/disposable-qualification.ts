@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { hmacSha256Tag, sha256Digest } from "../../security";
+import { assertHmacSha256RuntimeV1, hmacSha256Tag, sha256Digest } from "../../security";
 import { exactHostUint8ArrayV1, wipeHostUint8ArrayV1 } from "../../security/host-value";
 import {
   READY_FRONTIER_ACCEPTED_AUTO070_COMMIT_V1,
@@ -176,6 +176,11 @@ function assertDisposableRuntimeV1(): void {
     || ownFill || ownByteLength
     || !fillDescriptor || !("value" in fillDescriptor) || fillDescriptor.value !== uint8ArrayFillV1
     || !byteLengthDescriptor || byteLengthDescriptor.get !== typedArrayByteLengthGetterV1) {
+    fail("integrity_failed");
+  }
+  try {
+    assertHmacSha256RuntimeV1();
+  } catch {
     fail("integrity_failed");
   }
 }

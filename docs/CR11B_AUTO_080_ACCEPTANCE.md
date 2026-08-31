@@ -1,6 +1,6 @@
 # CR11B-AUTO-080 Acceptance Record
 
-Status: first remediation rejected; second remediation implemented; another different independent re-review required
+Status: second remediation rejected; third remediation implemented; fourth different independent review required
 
 Date: 2026-08-30
 
@@ -29,9 +29,9 @@ contact, cleanup, live qualification, production activation, dispatch, execution
 
 ## Candidate verification
 
-- focused AUTO-080 tests: 11/11 passing;
-- combined CR11B tests: 148/148 passing;
-- registered pretests: 730/730 passing;
+- focused AUTO-080 tests: 12/12 passing;
+- combined CR11B tests: 149/149 passing;
+- registered pretests: 731/731 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -87,6 +87,28 @@ restored exact replay, sanitized projection, and unchanged negative authority.
 This remains an in-process clean-start boundary: it trusts the runtime intrinsics present when the security modules
 initialize. It does not claim that an already compromised process can prove native provenance after the fact. Another
 different independent reviewer must accept the exact second-remediation commit.
+
+## Second remediation re-review and third remediation
+
+A third different independent reviewer rejected exact second-remediation commit
+`b8287d75dca597196723e7705ba864ae153e48ac`, tree
+`b4abfd8f941f9b6f1f62e66a99529d26b362a387`. The unchanged report is
+`docs/reviews/CR11B_AUTO_080_SECOND_REMEDIATION_REREVIEW.md`, SHA-256
+`c105ed8ef640ca4cd4aeb0c5f548d57e4ec5f9f3a9b3144c800dfb3f0c92f239`.
+
+The reviewer closed the exact raw-key mechanisms in `AUTO080-IR-001` and `AUTO080-RR1-001`, but finding
+`AUTO080-RR2-001` proved that ambient `.update()` or `.digest()` lookup on a newly keyed Node HMAC object could execute
+caller behavior, retain the unfinalized keyed native context, and leave a one-use signing capability after the byte-array
+key was erased.
+
+The third remediation fully canonicalizes material before a keyed object exists; captures the clean-start HMAC prototype,
+`update`, `digest`, descriptor reader, prototype reader, and invocation primitive; verifies both method identities before
+keyed-object creation; and applies both captured methods directly without ambient property lookup. AUTO-080 includes the
+HMAC runtime check before any private request-key copy. Hostile regressions replace update with an accessor and method and
+replace digest with an accessor and method. Across correct and tampered requests, construction, parsing, direct shared
+HMAC use, success, and failure, the replacements receive zero calls and retain no raw key or keyed capability; exact
+replay, projection privacy, and all false authority fields are restored afterward. A fourth different independent
+reviewer must accept the exact third-remediation commit.
 
 ## Negative authority
 

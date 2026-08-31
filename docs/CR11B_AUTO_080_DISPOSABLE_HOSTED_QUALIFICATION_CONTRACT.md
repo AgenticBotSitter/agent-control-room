@@ -1,6 +1,6 @@
 # CR11B-AUTO-080 Disposable Hosted Qualification Preparation Contract
 
-Status: first remediation rejected; second remediation requires another different independent re-review
+Status: second remediation rejected; third remediation requires a fourth different independent review
 
 Date: 2026-08-30
 
@@ -138,3 +138,16 @@ before any AUTO-080 key copy. Its regressions require zero hostile key-surface c
 and restored success, denial, projection, and negative-authority behavior. The boundary explicitly assumes clean module
 initialization; proving native provenance inside an already compromised process is not claimed. Another different
 independent reviewer must accept the exact second-remediation commit.
+
+A third different reviewer rejected exact second-remediation commit
+`b8287d75dca597196723e7705ba864ae153e48ac`, tree
+`b4abfd8f941f9b6f1f62e66a99529d26b362a387`, in unchanged report SHA-256
+`c105ed8ef640ca4cd4aeb0c5f548d57e4ec5f9f3a9b3144c800dfb3f0c92f239`. It closed the raw-key mechanisms in
+`AUTO080-IR-001` and `AUTO080-RR1-001`, but `AUTO080-RR2-001` showed that ambient HMAC update/digest dispatch could
+retain an unfinalized keyed native signing context after byte-array cleanup.
+
+The third remediation canonicalizes before keyed-object creation, captures and verifies the clean-start HMAC prototype
+methods, invokes update and digest only through captured `Reflect.apply`, and makes AUTO-080 reject method drift before
+copying its request key. Hostile accessor and method regressions for both operations require zero calls and no retained
+keyed capability across success and failure, then re-verify replay, denial, projection, and negative authority. A fourth
+different independent reviewer must close all three recorded findings on the exact third-remediation commit.
