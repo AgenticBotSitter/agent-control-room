@@ -32,3 +32,6 @@ export * from "./no-relay";
 export * from "./no-relay-store";
 export * from "./no-relay-coordinator";
 export * from "./no-relay-fixture";
+export * from "./production-boundary-types";
+export * from "./production-boundary-schemas";
+export * from "./production-boundary";

@@ -80,6 +80,7 @@
 | CR11B-AUTO-020 standing policy and atomic materialization | Complete for the authenticated repository-only no-ready/no-dispatch snapshot | Revisioned HMAC/checkpoint policy lifecycle, exact frontier/source/policy lineage, atomic non-runnable canonical bundle plus Action Inbox, safe UI truth, and `CR11B_AUTO_020_ACCEPTANCE.md` |
 | CR11B-AUTO-030 ready promotion and internal scheduler/jobber handoff | Complete for exact independently accepted effect-free commit `adf0804` | Token-only exact-operation authorization, transaction-owner pre-commit and post-transaction trusted time, request idempotency, dedicated non-delivery handoff table, protected ready/claim paths, historical receipt projection, concurrency/rollback tests, accepted fifth review, and `CR11B_AUTO_030_ACCEPTANCE.md` |
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
+| CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -87,20 +88,23 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-040 is complete for exact effect-free commit
-`fb549ebbcf5a2cbd9ca3d3cbef6842578e280074`. A fresh different reviewer accepted all four remediation layers in unchanged
-report SHA-256 `bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`. Verification passes 20/20 focused,
-87/87 combined CR11B, 669/669 registered pretests, 414/416 core with two intentional platform skips and zero failures,
-52/52 public posttests, typecheck, lint, build, 2/2 rendered routes, 27 migrations/97 tables, macOS stage zero, and whitespace
-validation. Private GitHub transfer is complete in stacked PR #167. GitHub reports the stack mergeable; the ordinary CI
-workflow intentionally waits until the PR is retargeted from its `codex/**` parent to `main`. No missing check is counted
-as a pass, and no merge is self-authorized. No real consumer, agent message,
+Active: CR11B-AUTO-050 is complete for exact default-disabled commit `2a47f57c3b1015b279ee51e95690d10d147b112a`.
+The first reviewer rejected `f046ccee` for re-digested chronology and cross-artifact identity substitution. A different
+reviewer reproduced both defects on that old snapshot and accepted the keyed-provenance and exact-chain remediation in
+unchanged report SHA-256 `fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. Verification passes 12/12 focused, 99/99 combined
+CR11B, 681/681 registered pretests, 414/416 core with two intentional
+platform skips and zero failures, 52/52 public posttests, typecheck, full lint, build, 2/2 rendered routes, 27 migrations/97
+tables, macOS stage zero, and whitespace validation. Producer evidence cannot accept the phase. No real consumer, agent message,
 claim, lease, dispatch, provider contact, recurrence, credential, native read, hosting, deployment, or production activation
 is authorized. CR11A-TEAM-000 through TEAM-060 remain complete, and the TEAM-060 Hermes bridge remains disabled with no
 accepted runtime pin or native reader. `agentcontrolroom.xyz` remains future inventory only; DNS, Cloudflare, hosting, and
 deployment are untouched. Public-release policy/resources remain postponed by owner direction. CR10A-OPS-120/130 real
 drills, CR9C, the actual Unreal benchmark, ABS live read, CR9A-CB-080/090, deployment, deletion, and every external effect
 remain separately owner-controlled.
+Private GitHub transfer is complete in stacked PR #168. GitHub reports the exact five-commit AUTO-050 sequence open and
+cleanly mergeable above PR #167. The ordinary CI workflow intentionally does not run while the PR targets a `codex/**`
+parent; the absent check is recorded as expected and is not counted as a pass. The PR is unmerged and grants no production
+authority.
 GitHub checkpoint: the owner lifted the temporary local-only hold on 2026-08-30. Private integration PR #159 now preserves the accumulated CR5D-through-CR11A build on `codex/cr7-cr11-local-build-checkpoint`; commit `0a3f8f653dab02267446ddc23757585b323c30cd` restored the exact digest-bound CR10Q independent-review bytes after CI caught whitespace drift. The new read-only GitHub CI gate passed stage-zero preparation, frozen dependency installation, type checking, lint, the full test lifecycle, production build and rendered-route verification, and database migration verification. The PR is open, cleanly mergeable, and not owner-approved or merged.
 TEAM-040 GitHub transfer: private PR #160 stacks the exact injected-only Hermes Bot Mode phase on PR #159. PR #159 must merge first; PR #160 must then be retargeted to `main` and pass the ordinary GitHub gate before integration. Neither PR is self-approved or merged.
 TEAM-050 GitHub transfer: private PR #161 stacks the exact blocked-before-attempt native qualification on PR #160 at commit `0361b84eb247168c3de73405031b45a1a0541ad6`. PR #159 must merge first, then PR #160; PR #161 must then be retargeted to `main` and pass the ordinary GitHub gate before integration. It is not self-approved or merged.
@@ -148,10 +152,9 @@ CR10B-PUB-000 through PUB-080, CR10C-MECH-010 through MECH-050, and CR10Q-SEC-00
 CR10Q independent verification passes the same 22/22 focused security and packet gate; CR10B passes 41/41, CR10C mechanical passes 7/7, and CR10C disposition passes 9/9. The independently repeated registered suite reports pretest 521/521; main 416 total with 414 passed, zero failed, and two intentional platform skips; and expanded public post-test 52/52. Type checking, full lint, production build, 2/2 rendered routes, migration verification through 0026/96 tables, and diff whitespace validation pass. The remediated mechanical audit covers 36 files and reports zero bounded private-data findings; the 17-gate disposition remains blocked. The original independent report remains unchanged at `sha256:11a4710620e3e8487a5834df30277b5c915959ac52224fb25322d15b13a0919f`; the accepted different-reviewer report is `sha256:4e4847bde0ee6e09cb9555c58be33ae14bd05eb99361d556c27b8a43611390fd`. No dependency installation, archive, registry, network, provider, signer, upload, publication, deployment, native harness, credential, or external effect occurred during that acceptance. The temporary local-only hold was later lifted on 2026-08-30, as recorded in the active GitHub checkpoint above.
 CR11A-TEAM-000/010 are complete locally. A strict digest-bound Agent Team view now appears in every Project Workspace with evidence-backed presence, device-disambiguated handles, reviewed role/model/package summaries, non-authorizing routines, owner attention, bounded two-to-six-member War Rooms, and exact mention-to-draft handoffs. Rooms stop at three rounds, ten messages, four reciprocal pair messages, thirty minutes, 100,000 reasoning units, or US$25. Handoffs require an exact source mention and owner review, create no work item, request no dispatch, and grant no approval, command, lease, provider, or execution authority. The dedicated hostile and UI gate passes 11/11; registered pretest passes 532/532; the main suite reports 416 total with 414 passed, zero failed, and two intentional platform skips; public post-test passes 52/52. Type checking, full lint, production build, 2/2 rendered routes, migrations through 0026/96 tables, localhost project rendering, and diff validation pass. `agentcontrolroom.xyz` is future hosting inventory only. No package, Hermes, provider, schedule, message-retention, DNS, Cloudflare, hosting, deployment, Git commit, push, or external effect was used. See `docs/CR11A_AGENT_TEAM_AND_WAR_ROOM_CONTRACT.md` and `docs/CR11A_TEAM_000_010_ACCEPTANCE.md`.
 Open risks: Native Codex saved authentication is readable across the tested read-only command boundary, so native execution remains disabled. Authenticated executor IPC, actual spawned-process image/UID/argv/cwd/environment identity, trusted real paths and ownership, executor-bound turn receipts, provider-side output authority, remote interrupt/descendant cleanup, separate OS identities, native file permissions, broker-private provisioning/settlement, broker-only provider egress, and executor egress denial remain unproved and explicit eligibility failures. Approval response is unqualified; Hermes empty/invalid toolset configuration fails open to configured tools, so the exact valid zero-tool selection and observed count are mandatory. CR-8B does not issue the separately signed node approval attestation, and its protected production API, authenticated identity ingress, policy service, integrity-key custody, rollback-resistant checkpoint implementation, and split-commit recovery remain undeployed. MCP network transport, OAuth/issuer operation, TLS termination, revocation/rotation operations, canonical proposal materialization, and protected registry service/API also remain undeployed and require later review. Telegram protected key/checkpoint custody, recipient enrollment, production transport, monitoring, and live behavior remain unimplemented and unqualified. The CR-8E catalog remains in-memory and the durable ledger is effect-free code only; production rollback-checkpoint custody, native provider runner/authentication transport, authenticated IPC, key custody, OS identity, actual path/binary proof, broker-only egress, consumer egress denial, real rotation/revocation, and owner-attended cleanup remain unimplemented. No live provider is eligible.
-Owner input required next: approve the stacked integration sequence only when ready to merge it; PR #167 cannot receive its
-ordinary full CI result until the accepted parent stack is integrated and the PR is retargeted to `main`. AUTO-040 is
-independently accepted only for its exact repository snapshot. Owner approval is required before merge, and a separate
-explicit owner gate remains required for real standing-policy enrollment, agent
+Owner input required next: none for continued effect-free contract work. Stacked integration remains separate: PR #168
+depends on PR #167, and neither can receive its ordinary full CI result until its accepted parent is integrated and the PR
+is retargeted to `main`. Owner approval is required before merge, and a separate explicit owner gate remains required for real standing-policy enrollment, agent
 messaging, schedule activation, provider contact, hosting, deployment, or any external effect. Use `gpt-5.6-sol` at xhigh
 reasoning before any production-activation design or evidence review. A future native Hermes retry still requires a new
 exact method pin and separate owner authorization. Public supported-version, disclosure, licensing, reporting, signing,
@@ -232,6 +235,25 @@ targets its `codex/**` parent. After the parent stack is integrated, retarget PR
 CI result before merge. No absent check is counted as a pass. PR #167 is not owner-approved or merged and grants no
 production authority.
 
+CR11B-AUTO-050 accepted first remediation: the production boundary binds exact accepted AUTO-040 implementation/review
+evidence and turns all nine activation blockers into fixed unobserved proof requirements. The immutable first review,
+SHA-256 `866e00877956b05f7623814e1b6ba34a4276518465557bc314a2731d9c3288f4`, rejected public-digest chronology rewriting and
+cross-artifact identity aliasing. Keyed plan provenance, downstream chronology checks, deterministic disposition identity,
+and complete shared-field checks remediate both findings. A different reviewer accepted exact commit `2a47f57` in unchanged
+report SHA-256 `fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. Repository code cannot submit qualified evidence. The assessment
+remains `blocked_design_only`, the disposition stops before consumer construction, and the reconciliation table makes every
+post-marker unknown non-retriable. Verification passes 12/12 focused, 99/99 combined CR11B, 681/681
+registered pretests, 414/416 core with two intentional platform skips and zero failures, 52/52 public posttests, typecheck,
+full lint, production build, 2/2 rendered routes, all 27 migrations/97 tables, macOS stage zero, and whitespace validation.
+Acceptance is limited to this exact default-disabled repository snapshot and grants no production authority.
+
+AUTO-050 GitHub transfer: private PR #168 targets accepted AUTO-040 branch
+`codex/cr11b-auto-040-no-relay-simulation` from `codex/cr11b-auto-050-production-boundary`. It contains the exact rejected
+candidate, immutable rejection, accepted remediation `2a47f57c3b1015b279ee51e95690d10d147b112a`, immutable acceptance report,
+and acceptance checkpoint. GitHub reports the PR open and cleanly mergeable. No check is expected while it targets its
+`codex/**` parent; after the parent stack is integrated, retarget to `main` and require the ordinary full CI result. PR #168
+is not merged and authorizes no production proof, consumer, deployment, or effect.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -247,13 +269,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-050-PRODUCTION-BOUNDARY — design the protected multi-process consumer, policy-custody, reconciliation, and activation-evidence contract without activating it
+Block: CR11B-AUTO-060-PROTECTED-PROOF-INGRESS — define authenticated external-proof intake without accepting production readiness
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: AUTO-040 and its independent review are complete, and private stacked PR #167 preserves the result. The next work crosses from a single-process repository simulation into production authority, custody, ambiguity, and deployment architecture.
-Expected output: a versioned, testable, default-disabled production-boundary contract and implementation plan that closes every blocked activation-packet gate without enrolling policy, starting a consumer, contacting an agent/provider, using credentials, or deploying anything.
-Owner action: switch to `gpt-5.6-sol` at xhigh before this block. Stacked merge approval remains separate; no production effect is part of the design block.
-Stop before: self-merging, changing immutable reviewer evidence, real policy enrollment, live scheduling or delivery, agent/provider contact, claim, lease, dispatch, execution, recurrence activation, credentials, native reads, DNS, Cloudflare, hosting, deployment, or any production effect.
+Why: AUTO-050 now fixes what all nine production proofs must contain and who may issue them. The next security boundary is a rollback-resistant, identity-bound intake and evidence ledger that can validate submitted proof envelopes without turning repository fixtures or one proof into activation authority.
+Expected output: a versioned, effect-free proof-envelope, verifier-boundary, authenticated ledger, replay/rollback, expiry/revocation, independence, safe-projection, and partial-assessment contract with hostile tests. All nine gates remain unqualified unless separately observed under future protected custody.
+Owner action: switch to `gpt-5.6-sol` at xhigh before implementation. No GitHub merge or production authority is required for the effect-free design block.
+Stop before: real evidence collection, production keys, owner approval issuance, hosted database use, consumer construction, live scheduling or delivery, protected-reference access, agent/provider contact, claim, lease, dispatch, execution, recurrence activation, native reads, DNS, Cloudflare, hosting, deployment, or any production effect.
 ```
 
 ## Update rule

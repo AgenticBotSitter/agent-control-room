@@ -1414,3 +1414,47 @@ a real consumer, credential brokerage, cross-service ambiguity reconciliation, o
 database, protected policy enrollment, or activation design requires a new bounded contract and proportionate fresh
 review. Private GitHub transfer may preserve the accepted bytes, but merge still requires owner approval and cannot grant
 production authority.
+
+## ADR-111 — AUTO-050 describes every production proof but cannot mint production readiness
+
+**Decision:** CR11B-AUTO-050 consumes an authenticated AUTO-040 activation packet and converts its nine blockers into
+exact ordered production-proof requirements. Each requirement fixes one evidence class, proof authority, complete binding
+set, freshness rule, and independence rule, but repository output is always `unobserved` with no evidence digest and no
+authority. The plan fixes a separate-service-principal, mutually authenticated consumer, transactional single-owner
+handoff claim, hosted PostgreSQL, node-local protected-reference broker, protected clock, owner-signed policy high-water,
+and destination-evidence ambiguity model without implementing any of them. Assessment is always `blocked_design_only`;
+the only disposition is disabled before consumer construction. A pure reconciliation table makes every post-marker
+unknown non-retriable and performs no action.
+
+**Why:** AUTO-040 made the remaining production work visible but left only names for nine gates. The next safe step is to
+define exactly what each gate must bind and who may prove it, while preventing caller booleans, repository fixtures, or a
+successful simulation from becoming production readiness. Separating design truth from proof ingestion also prevents a
+future verifier from being smuggled into this candidate as an arbitrary callback or structural port.
+
+**Alternatives rejected:** Accept caller-supplied `qualified` states or evidence digests; let repository tests satisfy a
+production gate; treat independent review as owner approval; build a consumer or database client before the proof
+contract; embed protected configuration or reference values; allow destination absence immediately after a marker to
+authorize retry; expose an activation method or operational UI control; treat the accepted AUTO-040 packet as authority;
+merge or activate based on producer tests.
+
+**Trade-off:** AUTO-050 provides a complete, testable production-boundary blueprint but deliberately leaves all nine gates
+unproved. A later proof-ingress service must verify external attestations under protected custody and will require its own
+contract, storage, rollback, identity, and concurrency review. A later consumer remains a separate owner-authorized block.
+
+**Reevaluate:** A fresh independent reviewer must attack the exact committed AUTO-050 candidate, all nine gate mappings,
+packet and chronology binding, qualified-evidence forgery, reconciliation transitions, secret-safe projection, and source
+absence of effect clients. Any real verifier, evidence store, hosted database, process, consumer, broker, network,
+destination contact, policy enrollment, owner-decision ingress, deployment, or activation code reopens security review and
+requires explicit owner authority.
+
+**First-review amendment:** Independent review of `f046ccee689fc41ed91c7827f885a255f9eb8024` rejected the candidate
+because public digest rewriting could discard authenticated packet chronology and could alias disposition plan/assessment
+IDs across artifacts. The first remediation therefore adds keyed plan provenance, repeats its verification and full
+chronology at downstream assessment boundaries, enforces the deterministic disposition ID, and checks every shared
+identity and chronology before projection. The negative report remains immutable. Only a different reviewer may accept an
+exact remediation commit, and that acceptance still cannot satisfy any of the nine production gates.
+
+**Acceptance amendment:** A different reviewer independently reproduced both defects on the rejected snapshot and accepted
+exact default-disabled remediation commit `2a47f57c3b1015b279ee51e95690d10d147b112a`. Accepted report SHA-256 is
+`fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. This closes AUTO-050 design integrity only; all
+nine production proofs remain unobserved and no production verifier, consumer, deployment, or external effect is accepted.
