@@ -1,5 +1,8 @@
 export const PROJECT_WORKSPACE_CONTRACT_V1 = "control-room-project-workspace/v1" as const;
 export const PROJECT_WORKSPACE_READ_CONTRACT_V1 = "control-room-project-workspace-read/v1" as const;
+export const PROJECT_WORKSPACE_CATALOG_CONTRACT_V1 = "control-room-project-workspace-catalog/v1" as const;
+export const PROJECT_WORKSPACE_CATALOG_HIGH_WATER_CONTRACT_V1 = "control-room-project-workspace-catalog-high-water/v1" as const;
+export const PROJECT_WORKSPACE_OWNER_SESSION_CONTRACT_V1 = "control-room-project-workspace-owner-session/v1" as const;
 
 export const PROJECT_WORKSPACE_CORE_SECTIONS_V1 = [
   { sectionId: "overview", kind: "overview", label: "Overview" },
@@ -108,6 +111,77 @@ export interface ProjectWorkspaceReadIdentityV1 {
 export interface AuthorizedProjectWorkspaceReadScopeV1 extends ProjectWorkspaceReadIdentityV1 {
   actorId: string;
   grantedAt: string;
+  expiresAt: string;
+  sessionDigest: string;
+  catalogId: string;
+  catalogRevision: number;
+  catalogDigest: string;
+  catalogCheckpointDigest: string;
+}
+
+export interface ProtectedProjectCatalogEntryV1 extends ProjectWorkspaceReadIdentityV1 {
+  projectType: string;
+  state: "active" | "revoked";
+  recordedAt: string;
+}
+
+export interface ProtectedProjectCatalogV1 {
+  contractVersion: typeof PROJECT_WORKSPACE_CATALOG_CONTRACT_V1;
+  catalogId: string;
+  tenantId: string;
+  revision: number;
+  previousCatalogDigest: string | null;
+  state: "active" | "revoked";
+  sourceKind: "protected_server_catalog";
+  sourceIdentityDigest: string;
+  recordedAt: string;
+  entries: ProtectedProjectCatalogEntryV1[];
+  grantsApproval: false;
+  grantsNetworkAuthority: false;
+  grantsCommandAuthority: false;
+  grantsLeaseAuthority: false;
+  grantsExecutionAuthority: false;
+  catalogDigest: string;
+  catalogAuthTag: string;
+}
+
+export interface ProtectedProjectCatalogHighWaterProjectV1 extends ProjectWorkspaceReadIdentityV1 {
+  projectType: string;
+  identityDigest: string;
+  state: "active" | "revoked";
+}
+
+export interface ProtectedProjectCatalogHighWaterV1 {
+  contractVersion: typeof PROJECT_WORKSPACE_CATALOG_HIGH_WATER_CONTRACT_V1;
+  checkpointId: string;
+  catalogId: string;
+  tenantId: string;
+  revision: number;
+  catalogDigest: string;
+  catalogState: "active" | "revoked";
+  sourceIdentityDigest: string;
+  projects: ProtectedProjectCatalogHighWaterProjectV1[];
+  recordedAt: string;
+  previousCheckpointDigest: string | null;
+  checkpointDigest: string;
+  checkpointAuthTag: string;
+}
+
+export interface ProjectWorkspaceVerifiedOwnerSessionV1 {
+  contractVersion: typeof PROJECT_WORKSPACE_OWNER_SESSION_CONTRACT_V1;
+  tenantId: string;
+  provider: string;
+  subject: string;
+  sessionIdDigest: string;
+  authenticatedAt: string;
+  expiresAt: string;
+  readOnly: true;
+  grantsApproval: false;
+  grantsNetworkAuthority: false;
+  grantsCommandAuthority: false;
+  grantsLeaseAuthority: false;
+  grantsExecutionAuthority: false;
+  sessionDigest: string;
 }
 
 export interface ProjectWorkspaceReadModelV1 extends ProjectWorkspaceReadIdentityV1 {

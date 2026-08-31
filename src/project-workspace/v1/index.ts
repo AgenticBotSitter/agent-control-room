@@ -5,3 +5,4 @@ export * from "./types";
 export * from "./workspace";
 export * from "./read-service";
 export * from "./http-client";
+export * from "./catalog-session";

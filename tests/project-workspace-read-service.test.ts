@@ -12,7 +12,12 @@ const tenantId = "tenant.owner";
 const workspaceId = "workspace.alpha";
 const projectId = "project.alpha";
 const now = "2026-08-31T18:00:00.000Z";
-const scope = { tenantId, workspaceId, projectId, actorId: "actor.owner", grantedAt: "2026-08-31T17:59:00.000Z" };
+const boundDigest = `sha256:${"a".repeat(64)}`;
+const scope = {
+  tenantId, workspaceId, projectId, actorId: "actor.owner", grantedAt: "2026-08-31T17:59:00.000Z",
+  expiresAt: "2026-08-31T18:01:00.000Z", sessionDigest: boundDigest, catalogId: "catalog.owner",
+  catalogRevision: 1, catalogDigest: boundDigest, catalogCheckpointDigest: boundDigest,
+};
 
 function snapshot(generatedAt = "2026-08-31T17:59:00.000Z"): OperatorSurfaceSnapshotV1 {
   return buildOperatorSurfaceSnapshotV1({
@@ -106,6 +111,7 @@ test("CR12A-PILOT-010 rejects tenant, workspace, project, chronology, and expire
     { ...scope, projectId: "project.foreign" },
     { ...scope, grantedAt: "2026-08-31T18:00:01.000Z" },
     { ...scope, grantedAt: "2026-08-31T17:44:59.000Z" },
+    { ...scope, expiresAt: now },
   ]) await assert.rejects(reader.read({ scope: changed, now }), ProjectWorkspaceContractErrorV1);
   assert.equal(calls, 0);
 });

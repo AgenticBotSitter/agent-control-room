@@ -40,6 +40,13 @@ export interface RecordedDecision extends PolicyDecision {
   expiresAt: string;
 }
 
+export interface AuthorizedReadPrincipal extends PolicyDecision {
+  identityId: string;
+  expiresAt: string;
+  grantsApproval: false;
+  grantsExternalEffect: false;
+}
+
 function subjectDigest(provider: string, subject: string): string {
   return sha256Digest({ provider, subject });
 }
@@ -142,6 +149,75 @@ export class SecurityStore {
           json(decision.matchedGrantIds), decision.strongFactorEvidenceId ?? null, decision.requestDigest, request.occurredAt, expiresAt],
       );
       return { ...decision, id: input.decisionId, identityId: actor.id, expiresAt };
+    });
+  }
+
+  /**
+   * Resolves one low-risk, effect-free read without writing a policy decision.
+   * The required role narrows eligible grants and can never widen authorization.
+   */
+  async authorizeRead(input: {
+    authentication: VerifiedAuthentication;
+    request: AuthorizationRequest;
+    requiredRoleKey: "owner" | "operator" | "policy";
+  }): Promise<AuthorizedReadPrincipal> {
+    const { authentication, request } = input;
+    assertNoSecretMaterial(request, "Read authorization request");
+    if (request.externalEffect || request.risk !== "low" || authentication.tenantId !== request.tenantId) {
+      throw new Error("Read authorization denied");
+    }
+    if (![authentication.verifiedAt, authentication.expiresAt, request.occurredAt].every((value) => Number.isFinite(Date.parse(value)))
+      || Date.parse(authentication.verifiedAt) > Date.parse(request.occurredAt)
+      || Date.parse(authentication.expiresAt) <= Date.parse(request.occurredAt)) {
+      throw new Error("Read authorization denied");
+    }
+
+    return this.db.transaction(async (tx) => {
+      const identity = await tx.query<{ id: string; actor_type: AuthenticatedPrincipal["actorType"]; state: string }>(
+        `SELECT id,actor_type,state FROM control_identities
+         WHERE tenant_id=$1 AND auth_provider=$2 AND auth_subject_digest=$3 FOR UPDATE`,
+        [authentication.tenantId, authentication.provider, subjectDigest(authentication.provider, authentication.subject)],
+      );
+      const actor = identity.rows[0];
+      if (!actor || actor.actor_type !== "human" || actor.state !== "active") throw new Error("Read authorization denied");
+
+      const rows = await tx.query<{
+        id: string; role_key: string; allowed_actions: string[]; project_ids: string[]; risk_ceiling: RoleGrant["riskCeiling"];
+        allow_external_effects: boolean; require_strong_factor: boolean; expires_at?: string; revoked_at?: string;
+      }>(
+        `SELECT id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,expires_at,revoked_at
+         FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2 FOR UPDATE`,
+        [authentication.tenantId, actor.id],
+      );
+      const acceptedRoles = input.requiredRoleKey === "operator" ? new Set(["operator", "owner"]) : new Set([input.requiredRoleKey]);
+      const grants: RoleGrant[] = rows.rows.filter((row) => acceptedRoles.has(row.role_key)).map((row) => ({
+        id: row.id,
+        allowedActions: row.allowed_actions,
+        projectIds: row.project_ids,
+        riskCeiling: row.risk_ceiling,
+        allowExternalEffects: row.allow_external_effects,
+        requireStrongFactor: row.require_strong_factor,
+        expiresAt: row.expires_at,
+        revokedAt: row.revoked_at,
+      }));
+      const principal: AuthenticatedPrincipal = {
+        tenantId: authentication.tenantId,
+        identityId: actor.id,
+        actorType: actor.actor_type,
+        authenticatedAt: authentication.verifiedAt,
+        expiresAt: authentication.expiresAt,
+        strongFactor: authentication.strongFactor,
+      };
+      const decision = evaluatePolicy(principal, grants, request);
+      if (!decision.allowed) throw new Error("Read authorization denied");
+      const expiresAt = new Date(Math.min(Date.parse(authentication.expiresAt), Date.parse(request.occurredAt) + 60_000)).toISOString();
+      return {
+        ...decision,
+        identityId: actor.id,
+        expiresAt,
+        grantsApproval: false,
+        grantsExternalEffect: false,
+      };
     });
   }
 }

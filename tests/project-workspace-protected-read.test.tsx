@@ -7,6 +7,7 @@ import { buildOperatorSurfaceSnapshotV1, OPERATOR_SURFACES_CONTRACT_V1 } from ".
 
 const now = "2026-08-31T18:00:00.000Z";
 const identity = { tenantId: "tenant.owner", workspaceId: "workspace.alpha", projectId: "project.alpha" };
+const boundDigest = `sha256:${"a".repeat(64)}`;
 
 async function model() {
   const source: ProjectWorkspaceOperatorReadSourceV1 = { read: async () => buildOperatorSurfaceSnapshotV1({
@@ -14,7 +15,11 @@ async function model() {
     fleet: [], bottlenecks: [], activeWork: [], services: [], schedules: [], serviceIncidents: [], actionInbox: [], ownerFocus: [],
     portfolio: [{ projectId: identity.projectId, workflowCount: 1, activeJobCount: 0, waitingApprovalJobCount: 0, failedJobCount: 0, lastActivityAt: now }],
   }) };
-  const result = await new ProjectWorkspaceReadServiceV1(source, [identity]).read({ scope: { ...identity, actorId: "actor.owner", grantedAt: now }, now });
+  const result = await new ProjectWorkspaceReadServiceV1(source, [identity]).read({ scope: {
+    ...identity, actorId: "actor.owner", grantedAt: now, expiresAt: "2026-08-31T18:01:00.000Z",
+    sessionDigest: boundDigest, catalogId: "catalog.owner", catalogRevision: 1,
+    catalogDigest: boundDigest, catalogCheckpointDigest: boundDigest,
+  }, now });
   assert.equal(result.state, "available");
   if (result.state !== "available") throw new Error("model unavailable");
   return result.model;
@@ -42,6 +47,7 @@ test("CR12A protected HTTP reader validates scope, status, body, and digest", as
   const available = await fetchProjectWorkspaceReadModelV1(identity.projectId, async () => Response.json({ model: value }));
   assert.equal(available.state, "available");
   assert.deepEqual(await fetchProjectWorkspaceReadModelV1(identity.projectId, async () => new Response(null, { status: 401 })), { state: "unavailable", code: "authentication_required" });
+  assert.deepEqual(await fetchProjectWorkspaceReadModelV1(identity.projectId, async () => new Response(null, { status: 403 })), { state: "unavailable", code: "project_read_forbidden" });
   assert.deepEqual(await fetchProjectWorkspaceReadModelV1(identity.projectId, async () => new Response(null, { status: 404 })), { state: "unavailable", code: "project_not_found" });
   assert.deepEqual(await fetchProjectWorkspaceReadModelV1(identity.projectId, async () => Response.json({ model: { ...value, projectId: "project.foreign" } })), { state: "unavailable", code: "invalid_response" });
   assert.deepEqual(await fetchProjectWorkspaceReadModelV1(identity.projectId, async () => Response.json({ model: value, hiddenAuthority: true })), { state: "unavailable", code: "invalid_response" });
