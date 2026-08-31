@@ -252,7 +252,7 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | ID | Owner | Deliverable | Gate |
 |---|---|---|---|
 | CR11B-AUTO-000 | Codex | Continuous ready-frontier proposal controller contract and safe simulation | COMPLETE — authenticated proposal-only controller and restart-safe fake ledger |
-| CR11B-AUTO-010 | Codex | Authenticated canonical-source adapter, local cycle service, and portfolio/Project Workspace frontier views | AUTO-000; repository-only |
+| CR11B-AUTO-010 | Codex | Authenticated canonical-source adapter, local cycle service, and portfolio/Project Workspace frontier views | COMPLETE — four authenticated reads, manual durable cycle, safe frontier views |
 | CR11B-AUTO-020 | Codex | Standing owner work-policy contract and atomic frontier-to-canonical proposed-work materialization | AUTO-010; no ready/dispatch |
 | CR11B-AUTO-030 | Codex | Protected automatic ready promotion and scheduler/jobber handoff under exact standing policy | AUTO-020 plus independent security review |
 | CR11B-AUTO-040 | Codex + Owner | End-to-end no-relay agent-job simulation and separately authorized protected activation packet | AUTO-030; effects remain owner-gated |

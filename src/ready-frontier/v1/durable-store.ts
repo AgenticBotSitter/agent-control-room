@@ -15,10 +15,12 @@ import {
 import { exactHostUint8ArrayV1 } from "../../security/host-value";
 import { buildReadyFrontierSourceV1, evaluateReadyFrontierV1, parseReadyFrontierEvaluationV1,
   parseReadyFrontierSourceV1, projectReadyFrontierOperatorV1 } from "./controller";
+import { projectReadyFrontierCycleV1 } from "./cycle-projection";
 import { ReadyFrontierContractErrorV1 } from "./errors";
 import { parseExactReadyFrontierV1 } from "./exact";
 import { readyFrontierCycleInputSchemaV1, readyFrontierIdSchemaV1 } from "./schemas";
 import type { ReadyFrontierCycleInputV1, ReadyFrontierEvaluationV1, ReadyFrontierOperatorProjectionV1 } from "./types";
+import type { ReadyFrontierCycleProjectionV1 } from "./integration-types";
 
 interface MetadataRowV1 {
   tenant_id: string; revision: number; record_count: number; state_digest: string; state_auth_tag: string;
@@ -200,6 +202,20 @@ export class ReadyFrontierSimulationStoreV1 {
   latestOperatorProjection(): ReadyFrontierOperatorProjectionV1 | undefined {
     const latest = this.verifyState().records.at(-1)?.evaluation;
     return latest ? projectReadyFrontierOperatorV1(latest, this.integrityKey) : undefined;
+  }
+  cycleProjection(cycleId: string): ReadyFrontierCycleProjectionV1 | undefined {
+    parseExactReadyFrontierV1(readyFrontierIdSchemaV1, cycleId);
+    const evaluation = this.verifyState().records.find((item) => item.evaluation.cycleId === cycleId)?.evaluation;
+    return evaluation ? projectReadyFrontierCycleV1(evaluation, this.integrityKey) : undefined;
+  }
+  latestCycleProjection(): ReadyFrontierCycleProjectionV1 | undefined {
+    const latest = this.verifyState().records.at(-1)?.evaluation;
+    return latest ? projectReadyFrontierCycleV1(latest, this.integrityKey) : undefined;
+  }
+  cycleProjectionHistory(limit = 20): ReadyFrontierCycleProjectionV1[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail("invalid_input");
+    return this.verifyState().records.slice(-limit).reverse()
+      .map((item) => projectReadyFrontierCycleV1(item.evaluation, this.integrityKey));
   }
   closeDatabase(): void { this.integrityKey.fill(0); this.db.close(); }
 
