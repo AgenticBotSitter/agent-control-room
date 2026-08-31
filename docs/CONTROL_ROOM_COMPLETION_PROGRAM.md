@@ -258,7 +258,7 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | CR11B-AUTO-040 | Codex + Owner | End-to-end no-relay agent-job simulation and separately authorized protected activation packet | COMPLETE — exact effect-free commit `fb549eb` independently accepted after four remediations; production consumer, policy custody, hosting, and effects remain owner-gated |
 | CR11B-AUTO-050 | Codex + independent review | Protected multi-process consumer, custody, reconciliation, and production-proof boundary | COMPLETE — exact default-disabled commit `2a47f57` independently accepted after keyed-provenance and artifact-chain remediation; nine proofs remain unobserved and no consumer or production effect exists |
 | CR11B-AUTO-060 | Codex + independent review | Authenticated protected-proof ingress, revocation-aware local evidence ledger, and partial assessment | COMPLETE — exact effect-free commit `be01058` independently accepted after three remediations; every proof remains unqualified |
-| CR11B-AUTO-070 | Codex + independent review | Protected custody and hosted PostgreSQL qualification foundation with multi-process and clock/revocation evidence contracts | ACTIVE — effect-free qualification machinery only; no live database, production key, policy enrollment, consumer, activation, or effect authority |
+| CR11B-AUTO-070 | Codex + independent review | Protected custody and hosted PostgreSQL qualification foundation with multi-process and clock/revocation evidence contracts | IMPLEMENTED / REVIEW REQUIRED — eight authenticated repository-fake custody scenarios; no live database, production key, policy enrollment, consumer, activation, or effect authority |
 
 ## Block acceptance and promotion
 

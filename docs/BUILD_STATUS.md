@@ -82,7 +82,7 @@
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
-| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Active; contract and effect-free qualification machinery next | Multi-process, protected clock/key/revocation/checkpoint, and hosted PostgreSQL evidence remain unproved; no live connection or activation authority |
+| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Implemented locally; independent review required | Eight authenticated repository-fake scenarios cover identity, policy, clock, revocation, serializable claim, checkpoint, restore, and ambiguity boundaries; all nine production gates remain blocked |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -90,10 +90,15 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-070 will define the protected custody and hosted PostgreSQL qualification foundation without connecting
-to a live database or enrolling production keys. It must bind protected service identity, owner-signed policy high-water,
-clock/revocation/checkpoint custody, transaction isolation, multi-process convergence, rollback/restore, and safe
-qualification evidence while preserving all nine blockers and every negative-authority flag.
+Active: CR11B-AUTO-070 now implements the protected custody and hosted PostgreSQL qualification foundation without
+connecting to a live database or enrolling production keys. It binds authenticated AUTO-050/AUTO-060 lineage, three
+single-purpose service identities, eight deterministic fake scenarios for policy high-water, protected commit time,
+revocation convergence, serializable claims, checkpoint CAS, restore rollback, and terminal ambiguity, plus authenticated
+reports and a safe disabled projection. Focused tests pass 11/11, combined CR11B passes 130/130, registered pretests pass
+712/712, core passes 414/416 with two intentional platform skips and zero failures, and public post-tests pass 52/52.
+Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and
+whitespace validation pass. All nine production gates remain blocking, zero proofs are qualified, and every live/effect
+capability remains false. A fresh independent review is still required.
 
 Prior accepted boundary: CR11B-AUTO-060 is complete for exact effect-free commit
 `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`. The first two immutable

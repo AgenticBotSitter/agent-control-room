@@ -38,3 +38,5 @@ export * from "./production-boundary";
 export * from "./production-proof-types";
 export * from "./production-proof";
 export * from "./production-proof-store";
+export * from "./production-custody-types";
+export * from "./production-custody";

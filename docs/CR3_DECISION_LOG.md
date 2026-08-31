@@ -1527,3 +1527,33 @@ on every exported frozen production parser, retried the prior changed-binding en
 restart integrity. All `IR`, `FRR`, and `SRR` findings are closed only for that exact effect-free snapshot. AUTO-060 is
 complete, but every fixture proof remains unqualified and all protected custody, hosted database, policy, consumer,
 activation, deployment, and effect gates remain blocked.
+
+## ADR-113 — AUTO-070 qualifies the qualification machinery, never the production environment
+
+**Decision:** CR11B-AUTO-070 carries the complete authenticated AUTO-050 assessment and accepted AUTO-060 identities into
+an HMAC-bound, one-hour repository-fake qualification plan. Three distinct single-purpose logical service identities and
+eight canonical scenarios model policy high-water, database-boundary time, terminal revocation convergence, serializable
+claim uniqueness, external checkpoint CAS, restore rollback detection, and post-marker ambiguity. The private in-process
+fake accepts no collaborator ports. Its authenticated report is re-derived on every parse, exposes only transcript
+digests, and always retains all nine blockers and zero qualified proofs. The public projection omits authentication,
+identity, evidence, protected material, and controls and makes every production capability false.
+
+**Why:** AUTO-060 can authenticate fixture evidence but cannot safely jump straight to a hosted environment. The next
+boundary must first make the distributed-state and custody claims precise and make their negative paths reproducible.
+Calling this output a fake qualification, and cryptographically binding that mode into every artifact, prevents a green
+repository rehearsal from being mistaken for production proof.
+
+**Alternatives rejected:** Connect to a caller-selected database; accept caller-supplied clock, checkpoint, process, or
+adapter callbacks; treat local PGlite or SQLite as hosted PostgreSQL; let a successful rehearsal remove blockers; expose
+raw transcripts or identity details; trust a report after only digest/HMAC recomputation; perform a disposable live run
+without a separate controlled-effect packet; construct the production consumer in the qualification block.
+
+**Trade-off:** The foundation proves contract completeness and deterministic failure classification, not real process
+isolation, hosted database semantics, availability, custody, backup/restore, or operational readiness. A later live
+qualification remains a separately owner-authorized controlled effect and must retain sanitized evidence and exact
+cleanup. The fake produces no artifact that can be promoted into AUTO-060 production proof.
+
+**Reevaluate:** A fresh independent reviewer must attack the exact committed candidate before acceptance. Any live
+database/provider contact, process or worker start, production key or policy enrollment, protected clock/checkpoint read,
+credential-store access, live evidence collection, consumer, owner approval, activation, deployment, or effect requires a
+new bounded contract and explicit authority.
