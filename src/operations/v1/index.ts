@@ -10,6 +10,7 @@ export * from "./fake-recovery";
 export * from "./health";
 export * from "./monitoring";
 export * from "./postgres-readiness";
+export * from "./postgres-rehearsal";
 export * from "./privacy-retention";
 export * from "./retention-cleanup-dry-run";
 export * from "./probe-adapters";

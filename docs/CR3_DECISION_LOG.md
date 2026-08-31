@@ -1800,3 +1800,31 @@ gate before merge. AUTO-090 target commit `fd29af5580f77d2ad5fa1f17027ca3e759b3a
 and its immutable review evidence merged through PR #173 at `883a3ca6f02c5d779ba8263acb531f8e8469428f`.
 Post-merge `main` CI run `33409911669` passed the complete test lifecycle, production build, rendered routes, and database
 verification. Integration grants no live authority and does not satisfy any of the 36 production blockers.
+
+## ADR-117 — AUTO-110 separates owner phase direction from live PostgreSQL effect authority
+
+**Decision:** CR11B-AUTO-110 records the owner's direction to begin packet preparation, binds it to the exact accepted
+AUTO-100 implementation and review, and carries all 36 live blockers into one bounded native-rehearsal request. The
+request fixes one attempt, one host session, four database sessions, a 30-minute duration, a 1 MiB sanitized-evidence
+ceiling, mandatory rollback, separately authorized cleanup, and no automatic retry. Phase preparation is explicitly
+true; strong-factor live authorization, protected access, independent acceptance, host/database contact, migration,
+backup/restore, cleanup, deployment, and every external-effect permission remain false.
+
+**Why:** The owner's instruction is sufficient to resume repository design, implementation, verification, and review,
+but it does not itself supply protected host identity, a safe access path, current evidence for the 36 blockers, an
+effect-scoped claim, rollback material, a cleanup authority, or an expiring strong-factor operation window. Keeping those
+facts separate prevents a conversational direction or its digest from becoming a credential or executable capability.
+
+**Alternatives rejected:** Treat general chat approval as a live host credential; omit the unresolved AUTO-100 gates;
+contact the VPS merely to discover whether prerequisites exist; permit service installation or control inside the
+rehearsal; retain raw evidence; write to an existing production schema; retry after uncertainty; let cleanup inherit the
+original effect authority; or allow the request/projection to become a runner.
+
+**Trade-off:** AUTO-110 can finish its effect-free packet and independent review without owner relay, but a real attempt
+cannot begin until protected prerequisites are assembled out of band and the owner approves the final exact effect
+window. This intentionally adds a last human security stop before touching the production host.
+
+**Reevaluate:** After a different independent reviewer accepts the exact candidate, rebuild the readiness packet from
+fresh evidence. If any of the 36 blockers remains, retain the disabled disposition. If every blocker is accepted, prepare
+a new strong-factor owner packet bound to exact protected references, operations, start/expiry, rollback, cleanup, and
+evidence limits. This ADR never authorizes host contact by itself.
