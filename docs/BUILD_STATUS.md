@@ -84,8 +84,8 @@
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
 | CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Complete for exact independently accepted effect-free commit `20eeb14` | Six remediations closed mutable-runtime integrity attacks; eight fake scenarios retain all nine blockers and qualify zero production proofs; see `CR11B_AUTO_070_ACCEPTANCE.md` |
 | CR11B-AUTO-080 disposable hosted qualification preparation | Complete for exact independently accepted effect-free commit `091ff11` | Three remediations close raw-key cleanup, mutable binary metadata, and keyed-HMAC capability escape; every live capability remains false |
-| CR11B-AUTO-090 Hostinger PostgreSQL production target | Complete locally for the effect-free candidate; integration pending | One self-managed private PostgreSQL primary is fixed as sole global authority; AWS RDS, production PGlite, public DB access, and R2 state are denied; see `CR11B_AUTO_090_ACCEPTANCE.md` |
-| CR11B-AUTO-100 Hostinger PostgreSQL readiness packet | Independently accepted for exact effect-free implementation `34750ed`; integration pending | All 39 target, deployment, and automatic-work gates remain source-separated; 3 repository contracts are present and 36 production gates block host contact; accepted re-review SHA-256 `aa2116b8...c0a9`; see `CR11B_AUTO_100_ACCEPTANCE.md` |
+| CR11B-AUTO-090 Hostinger PostgreSQL production target | Complete and integrated through PR #172 | One self-managed private PostgreSQL primary is fixed as sole global authority; AWS RDS, production PGlite, public DB access, and R2 state are denied; exact target `fd29af5`; see `CR11B_AUTO_090_ACCEPTANCE.md` |
+| CR11B-AUTO-100 Hostinger PostgreSQL readiness packet | Independently accepted and integrated through PR #173 | Exact implementation `34750ed`; all 39 gates remain source-separated; 3 repository contracts are present and 36 production gates block host contact; accepted re-review SHA-256 `aa2116b8...c0a9`; final `main` CI passed; see `CR11B_AUTO_100_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -93,7 +93,7 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-100 joins the owner-selected Hostinger PostgreSQL target, the CR10A deployment gates, and the CR11B
+Integrated boundary: CR11B-AUTO-100 joins the owner-selected Hostinger PostgreSQL target, the CR10A deployment gates, and the CR11B
 automatic-work production proofs without performing live work. All 39 gates remain in separate authoritative source
 lanes: twelve database-target prerequisites, eighteen deployment gates, and nine automatic-work proofs. Only the
 topology, release-identity, and health-probe repository contracts are present. The other 36 gates block readiness, owner
@@ -108,8 +108,10 @@ zero, and whitespace validation pass. No provider, host, process, database, cred
 deployment, or external effect occurred. A different independent reviewer accepted exact implementation commit
 `34750ed8ec5cf34134d166505f3df50897afe3f7`, tree `59da1931c4df41fc903e73bfc68c756438dbf5fe`, after closing both
 remaining identity/time-schema findings. The unchanged accepted report has SHA-256
-`aa2116b832ed6e5587c72705dcf6dc826f8ef0e7201c5b284c7876b93f53c0a9`. Stacked integration remains pending, and all
-36 live production gates remain blocked.
+`aa2116b832ed6e5587c72705dcf6dc826f8ef0e7201c5b284c7876b93f53c0a9`. PRs #159 through #173 were retargeted and
+merged in dependency order with identical incremental scope, unchanged heads, history-preserving merge commits, and a
+green full CI gate at every step. PR #173 merged at `883a3ca6f02c5d779ba8263acb531f8e8469428f`; final post-merge `main`
+run `33409911669` passed in 8m29s. All 36 live production gates remain blocked.
 
 Accepted boundary: CR11B-AUTO-070 is complete for exact effect-free commit
 `20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`. It binds authenticated
@@ -360,12 +362,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-100-INTEGRATION — preserve and integrate the accepted private stack in dependency order
+Block: CR11B-AUTO-110-DEFERRED-OWNER-GATE — hold the native PostgreSQL rehearsal until a future exact authorization
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the code boundary is independently accepted, but the long private PR stack must be retargeted and merged without losing exact implementation, review, or negative-authority evidence.
-Expected output: preserved accepted commits and reports, green ordinary CI on each main-targeting integration step, and no deployment or native-host action.
-Owner action: keep `gpt-5.6-sol` at xhigh. Approve individual private PR merges only when Codex presents a verified clean integration step; no VPS, database, or credential action is needed.
+Why: AUTO-090 and AUTO-100 are integrated, but 36 production gates still block host contact and the owner explicitly deferred real PostgreSQL rehearsal and deployment.
+Expected output: no live action while deferred. A future packet must bind exact host resources, effects, rollback, cleanup, sanitized evidence, and independent review before one bounded attempt.
+Owner action: none now. Keep this gate deferred; select `gpt-5.6-sol` at xhigh only when authorizing the later security-sensitive rehearsal phase.
 Stop before: host or provider contact, protected-reference or credential access, installation, configuration, service control, any network/database/process call, migration, backup/restore, raw evidence, public endpoint, consumer activation, dispatch, execution, DNS, Cloudflare, hosting deployment, or external effect.
 ```
 

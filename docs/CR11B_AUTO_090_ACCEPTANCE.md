@@ -1,6 +1,7 @@
 # CR11B-AUTO-090 Acceptance Record
 
-Status: complete locally for the effect-free production-database target contract; integration is pending
+Status: integrated into `main` through PR #172 at merge commit
+`b51de2909f09b5040d2c7b7a212fdc1e58758ba4`
 
 Date: 2026-08-31
 
@@ -41,6 +42,12 @@ transactional state, a lock, a lease store, or a command bus.
 - working-tree whitespace validation: passing.
 
 Independent review is required before any live preparation or rehearsal can begin.
+
+## Integration evidence
+
+Exact target commit `fd29af5580f77d2ad5fa1f17027ca3e759b3ad82` was retargeted to `main` without scope or head drift, passed the complete
+main-targeting Control Room CI gate, and merged through PR #172 with history preserved. Integration changes no target
+truth and grants no live authority.
 
 ## Reported host context
 
