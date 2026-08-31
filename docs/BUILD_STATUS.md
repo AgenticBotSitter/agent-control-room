@@ -86,7 +86,7 @@
 | CR11B-AUTO-080 disposable hosted qualification preparation | Complete for exact independently accepted effect-free commit `091ff11` | Three remediations close raw-key cleanup, mutable binary metadata, and keyed-HMAC capability escape; every live capability remains false |
 | CR11B-AUTO-090 Hostinger PostgreSQL production target | Complete and integrated through PR #172 | One self-managed private PostgreSQL primary is fixed as sole global authority; AWS RDS, production PGlite, public DB access, and R2 state are denied; exact target `fd29af5`; see `CR11B_AUTO_090_ACCEPTANCE.md` |
 | CR11B-AUTO-100 Hostinger PostgreSQL readiness packet | Independently accepted and integrated through PR #173 | Exact implementation `34750ed`; all 39 gates remain source-separated; 3 repository contracts are present and 36 production gates block host contact; accepted re-review SHA-256 `aa2116b8...c0a9`; final `main` CI passed; see `CR11B_AUTO_100_ACCEPTANCE.md` |
-| CR11B-AUTO-110 owner-directed PostgreSQL rehearsal packet | In progress — effect-free candidate implemented; independent review pending | Exact AUTO-100 lineage, all 36 blockers, one-attempt/30-minute/1-MiB ceilings, mandatory rollback and separate cleanup, with every live capability false; see `CR11B_AUTO_110_ACCEPTANCE.md` |
+| CR11B-AUTO-110 owner-directed PostgreSQL rehearsal packet | In progress — first review rejected false owner provenance; remediation implemented; different re-review pending | Exact immutable owner-direction snapshot replaces caller-selected digest/time; AUTO-100 lineage, all 36 blockers, one-attempt/30-minute/1-MiB ceilings, mandatory rollback and separate cleanup remain; every live capability is false; see `CR11B_AUTO_110_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -121,11 +121,16 @@ native attempt, one host session, four database sessions, 30 minutes, and 1 MiB 
 public endpoints, existing production-schema writes, service installation/control, raw evidence, and automatic retry are
 excluded. Rollback and separately authorized, receipt-backed cleanup are mandatory. The request, disabled disposition,
 and safe projection reject source substitution, re-digested authority, reordering, chronology drift, accessors, and
-Proxies. Focused tests pass 12/12, combined CR11B passes 182/182, combined CR10A passes 178/178, registered pretests pass
+Proxies. The first reviewer rejected exact candidate `7750c9b` in immutable report SHA-256
+`a71a54a8a2dc8af6243e5c9a2b36da77b1c59bde968b1b139e7ccb742f5ac626` because caller-selected bare direction digests
+and times could mint the claim `phasePreparationAuthorized: true`. The remediation removes those public inputs, captures
+one exact repository-accepted owner-direction snapshot, and rejects caller extras plus fully re-digested direction-ID and
+time forks. Focused tests pass 13/13, combined CR11B passes 182/182, combined CR10A passes 178/178, registered pretests pass
 764/764, core tests pass 414/416 with zero failures and two intentional platform skips, and public post-tests pass 52/52.
 Typecheck, full lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero,
-and whitespace validation pass. Independent review remains pending. No protected reference, host, process, database,
-credential, migration, backup/restore, cleanup, consumer, deployment, or external system was contacted or changed.
+and whitespace validation pass. Broad results precede the remediation and will be refreshed; a different independent
+re-review remains pending. No protected reference, host, process, database, credential, migration, backup/restore,
+cleanup, consumer, deployment, or external system was contacted or changed.
 
 Accepted boundary: CR11B-AUTO-070 is complete for exact effect-free commit
 `20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`. It binds authenticated
@@ -376,11 +381,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-110-INDEPENDENT-REVIEW — verify the owner-directed, effect-free PostgreSQL rehearsal packet
+Block: CR11B-AUTO-110-FIRST-REMEDIATION-REREVIEW — close the caller-mintable owner-direction finding
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the owner authorized AUTO-110 packet preparation. The candidate binds exact AUTO-100 lineage, preserves all 36 blockers, and defines a one-attempt envelope while granting no live authority. A different independent reviewer must now challenge that exact code and contract.
-Expected output: an immutable accepted or rejected security report for the exact candidate. Rejection returns to remediation; acceptance still leaves host contact blocked until fresh evidence closes every live gate and the owner issues a strong-factor exact effect window.
+Why: the first reviewer proved ordinary callers could mint false phase-preparation provenance. The remediation removes caller-selected direction identity and time, binds one immutable repository-accepted owner snapshot, and retains all 36 blockers and false live capabilities. A different reviewer must reproduce the old attack and verify the exact fix.
+Expected output: an immutable accepted or rejected re-review for the exact remediation commit. Acceptance still leaves host contact blocked until fresh evidence closes every live gate and the owner issues a strong-factor exact effect window.
 Owner action: none for review. Protected host values and a live effect decision are not requested unless the independently accepted packet later proves all other prerequisites.
 Stop before: host or provider contact, protected-reference or credential access, installation, configuration, service control, any network/database/process call, migration, backup/restore, raw evidence, public endpoint, consumer activation, dispatch, execution, DNS, Cloudflare, hosting deployment, or external effect.
 ```

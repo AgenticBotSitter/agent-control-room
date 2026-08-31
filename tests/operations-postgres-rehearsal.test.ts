@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   OPERATIONS_ACCEPTED_AUTO100_COMMIT_V1,
   OPERATIONS_ACCEPTED_AUTO100_REVIEW_SHA256_V1,
+  OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_AT_V1,
+  OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_ID_V1,
   OPERATIONS_POSTGRES_REHEARSAL_MAX_DATABASE_SESSIONS_V1,
   OPERATIONS_POSTGRES_REHEARSAL_MAX_DURATION_SECONDS_V1,
   OPERATIONS_POSTGRES_REHEARSAL_MAX_EVIDENCE_BYTES_V1,
@@ -44,8 +46,6 @@ function fixture() {
     requestId: "request:operations:postgres-rehearsal:auto110",
     sourceReadinessPacket: readinessPacket,
     sourceReadinessDisposition: readinessDisposition,
-    ownerPhaseDirectionDigest: sha256Digest({ direction: "prepare-auto110", scope: "repository-only" }),
-    ownerPhaseDirectionRecordedAt: "2026-08-31T19:00:00.000Z",
     requestedAt: "2026-08-31T19:01:00.000Z",
     expiresAt: "2026-08-31T20:01:00.000Z",
   });
@@ -90,7 +90,14 @@ test("CR11B-AUTO-110 defines one bounded attempt, exact stages, and cleanup and 
 
 test("CR11B-AUTO-110 treats the owner direction as phase preparation, never live effect authority", () => {
   const { request } = fixture();
-  assert.equal(request.ownerPhaseDirectionKind, "owner_direction_to_prepare_auto110_not_live_effect_authority");
+  assert.equal(request.ownerPhaseDirectionId, OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_ID_V1);
+  assert.equal(request.ownerPhaseDirection.acceptedAt, OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_AT_V1);
+  assert.equal(request.ownerPhaseDirection.source, "repository_accepted_owner_direction_snapshot");
+  assert.equal(request.ownerPhaseDirection.scope,
+    "auto110_effect_free_packet_preparation_and_independent_review_only");
+  assert.equal(request.ownerPhaseDirection.liveEffectAuthorization, false);
+  assert.equal(request.ownerPhaseDirection.protectedReferenceAuthority, false);
+  assert.equal(request.ownerPhaseDirection.hostContactAuthority, false);
   for (const value of [request.exactLiveEffectAuthorizationPresent, request.ownerStrongFactorPresent,
     request.ownerEffectWindowPresent, request.protectedHostReferencePresent, request.protectedAccessPathPresent,
     request.effectClaimPresent, request.rollbackMaterialPresent, request.cleanupAuthorizationPresent,
@@ -104,6 +111,28 @@ test("CR11B-AUTO-110 treats the owner direction as phase preparation, never live
   assert.equal(request.existingProductionSchemaWritesAllowed, false);
   assert.equal(request.rawEvidenceRetentionAllowed, false);
   assert.equal(request.automaticRetryAllowed, false);
+});
+
+test("CR11B-AUTO-110 rejects caller-selected and re-digested owner-direction identity forks", () => {
+  const f = fixture();
+  assert.throws(() => buildOperationsPostgresRehearsalRequestV1({
+    requestId: "request:operations:postgres-rehearsal:caller-selected",
+    sourceReadinessPacket: f.readinessPacket, sourceReadinessDisposition: f.readinessDisposition,
+    ownerPhaseDirectionDigest: sha256Digest({ caller: "selected" }),
+    ownerPhaseDirectionRecordedAt: "2026-08-31T19:00:00.000Z",
+    requestedAt: f.request.requestedAt, expiresAt: f.request.expiresAt,
+  }), OperationsContractErrorV1);
+
+  for (const fork of [
+    { directionId: "owner-direction:operations:postgres-rehearsal:auto110:fork" },
+    { acceptedAt: "2026-08-31T16:58:35.001Z" },
+  ]) {
+    const direction = redigest({ ...f.request.ownerPhaseDirection, ...fork }, "directionDigest");
+    const changed = redigest({ ...f.request, ownerPhaseDirection: direction,
+      ownerPhaseDirectionId: direction.directionId,
+      ownerPhaseDirectionDigest: direction.directionDigest }, "requestDigest");
+    assert.throws(() => parseOperationsPostgresRehearsalRequestV1(changed), OperationsContractErrorV1);
+  }
 });
 
 test("CR11B-AUTO-110 emits only a disabled disposition and safe operator projection", () => {
@@ -163,15 +192,12 @@ test("CR11B-AUTO-110 rejects forged authority even when the request is re-digest
 test("CR11B-AUTO-110 enforces source, owner-direction, request, expiry, and disposition chronology", () => {
   const f = fixture();
   const base = { requestId: f.request.requestId, sourceReadinessPacket: f.readinessPacket,
-    sourceReadinessDisposition: f.readinessDisposition, ownerPhaseDirectionDigest: f.request.ownerPhaseDirectionDigest };
+    sourceReadinessDisposition: f.readinessDisposition };
   assert.throws(() => buildOperationsPostgresRehearsalRequestV1({ ...base,
-    ownerPhaseDirectionRecordedAt: "2026-08-31T18:01:59.999Z", requestedAt: "2026-08-31T19:01:00.000Z",
+    requestedAt: "2026-08-31T18:01:59.999Z",
     expiresAt: "2026-08-31T20:01:00.000Z" }), OperationsContractErrorV1);
   assert.throws(() => buildOperationsPostgresRehearsalRequestV1({ ...base,
-    ownerPhaseDirectionRecordedAt: "2026-08-31T19:00:00.000Z", requestedAt: "2026-08-31T18:59:59.999Z",
-    expiresAt: "2026-08-31T20:01:00.000Z" }), OperationsContractErrorV1);
-  assert.throws(() => buildOperationsPostgresRehearsalRequestV1({ ...base,
-    ownerPhaseDirectionRecordedAt: "2026-08-31T19:00:00.000Z", requestedAt: "2026-08-31T19:01:00.000Z",
+    requestedAt: "2026-08-31T19:01:00.000Z",
     expiresAt: "2026-08-31T20:01:00.001Z" }), OperationsContractErrorV1);
   assert.throws(() => buildOperationsPostgresRehearsalDispositionV1({ request: f.request,
     recordedAt: "2026-08-31T19:00:59.999Z" }), OperationsContractErrorV1);
@@ -183,8 +209,6 @@ test("CR11B-AUTO-110 binds disposition and projection to one exact request", () 
   const request = buildOperationsPostgresRehearsalRequestV1({
     requestId: "request:operations:postgres-rehearsal:auto110:second",
     sourceReadinessPacket: first.readinessPacket, sourceReadinessDisposition: first.readinessDisposition,
-    ownerPhaseDirectionDigest: first.request.ownerPhaseDirectionDigest,
-    ownerPhaseDirectionRecordedAt: first.request.ownerPhaseDirectionRecordedAt,
     requestedAt: first.request.requestedAt, expiresAt: first.request.expiresAt,
   });
   assert.throws(() => parseOperationsPostgresRehearsalDispositionV1(first.disposition, request),
@@ -205,9 +229,7 @@ test("CR11B-AUTO-110 rejects accessors and Proxies without executing caller beha
   const f = fixture();
   let calls = 0;
   const accessor = { requestId: f.request.requestId, sourceReadinessPacket: f.readinessPacket,
-    sourceReadinessDisposition: f.readinessDisposition, ownerPhaseDirectionDigest: f.request.ownerPhaseDirectionDigest,
-    ownerPhaseDirectionRecordedAt: f.request.ownerPhaseDirectionRecordedAt, requestedAt: f.request.requestedAt,
-    expiresAt: f.request.expiresAt };
+    sourceReadinessDisposition: f.readinessDisposition, requestedAt: f.request.requestedAt, expiresAt: f.request.expiresAt };
   Object.defineProperty(accessor, "sourceReadinessPacket", { enumerable: true,
     get() { calls += 1; return f.readinessPacket; } });
   assert.throws(() => buildOperationsPostgresRehearsalRequestV1(accessor), OperationsContractErrorV1);

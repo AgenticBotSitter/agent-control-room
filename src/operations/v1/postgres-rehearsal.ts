@@ -32,6 +32,11 @@ export const OPERATIONS_POSTGRES_REHEARSAL_MAX_DATABASE_SESSIONS_V1 = 4 as const
 export const OPERATIONS_POSTGRES_REHEARSAL_MAX_DURATION_SECONDS_V1 = 1_800 as const;
 export const OPERATIONS_POSTGRES_REHEARSAL_MAX_EVIDENCE_BYTES_V1 = 1_048_576 as const;
 
+export const OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_ID_V1 =
+  "owner-direction:operations:postgres-rehearsal:auto110:1" as const;
+export const OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_AT_V1 =
+  "2026-08-31T16:58:35.000Z" as const;
+
 export const operationsPostgresRehearsalStageCodesV1 = Object.freeze([
   "verify_protected_host_identity",
   "verify_private_network_boundary",
@@ -63,6 +68,17 @@ export const operationsPostgresRehearsalRequirementCodesV1 = Object.freeze([
 export type OperationsPostgresRehearsalRequirementCodeV1 =
   (typeof operationsPostgresRehearsalRequirementCodesV1)[number];
 
+export interface OperationsPostgresRehearsalOwnerPhaseDirectionV1 {
+  directionId: typeof OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_ID_V1;
+  source: "repository_accepted_owner_direction_snapshot";
+  scope: "auto110_effect_free_packet_preparation_and_independent_review_only";
+  acceptedAt: typeof OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_AT_V1;
+  liveEffectAuthorization: false;
+  protectedReferenceAuthority: false;
+  hostContactAuthority: false;
+  directionDigest: string;
+}
+
 export interface OperationsPostgresRehearsalRequestV1 {
   contractVersion: typeof OPERATIONS_POSTGRES_REHEARSAL_REQUEST_V1;
   requestId: string;
@@ -74,9 +90,9 @@ export interface OperationsPostgresRehearsalRequestV1 {
   sourceReadinessDisposition: OperationsPostgresReadinessDispositionV1;
   acceptedAuto100Commit: typeof OPERATIONS_ACCEPTED_AUTO100_COMMIT_V1;
   acceptedAuto100ReviewSha256: typeof OPERATIONS_ACCEPTED_AUTO100_REVIEW_SHA256_V1;
-  ownerPhaseDirectionKind: "owner_direction_to_prepare_auto110_not_live_effect_authority";
+  ownerPhaseDirectionId: typeof OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_ID_V1;
   ownerPhaseDirectionDigest: string;
-  ownerPhaseDirectionRecordedAt: string;
+  ownerPhaseDirection: OperationsPostgresRehearsalOwnerPhaseDirectionV1;
   packetKind: "controlled_effect_request_not_authority";
   rehearsalMode: "owner_attended_native_private_postgresql";
   targetClass: "owner_selected_hostinger_kvm2_private_postgresql_target";
@@ -190,16 +206,35 @@ export interface OperationsPostgresRehearsalProjectionV1 {
 const safeCode = z.string().min(1).max(180).regex(/^[a-z0-9][a-z0-9._:-]*$/);
 const stageCode = z.enum(operationsPostgresRehearsalStageCodesV1);
 const requirementCode = z.enum(operationsPostgresRehearsalRequirementCodesV1);
+const ownerPhaseDirectionSchema = z.object({
+  directionId: z.literal(OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_ID_V1),
+  source: z.literal("repository_accepted_owner_direction_snapshot"),
+  scope: z.literal("auto110_effect_free_packet_preparation_and_independent_review_only"),
+  acceptedAt: z.literal(OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_AT_V1),
+  liveEffectAuthorization: z.literal(false), protectedReferenceAuthority: z.literal(false),
+  hostContactAuthority: z.literal(false), directionDigest: digest,
+}).strict();
+const acceptedOwnerPhaseDirectionMaterial = {
+  directionId: OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_ID_V1,
+  source: "repository_accepted_owner_direction_snapshot" as const,
+  scope: "auto110_effect_free_packet_preparation_and_independent_review_only" as const,
+  acceptedAt: OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_AT_V1,
+  liveEffectAuthorization: false as const,
+  protectedReferenceAuthority: false as const,
+  hostContactAuthority: false as const,
+};
+const acceptedOwnerPhaseDirection = Object.freeze({ ...acceptedOwnerPhaseDirectionMaterial,
+  directionDigest: sha256Digest(acceptedOwnerPhaseDirectionMaterial) });
+const acceptedOwnerPhaseDirectionSnapshotDigest = sha256Digest(acceptedOwnerPhaseDirection);
 const requestInputSchema = z.object({ requestId: id, sourceReadinessPacket: z.unknown(),
-  sourceReadinessDisposition: z.unknown(), ownerPhaseDirectionDigest: digest,
-  ownerPhaseDirectionRecordedAt: time, requestedAt: time, expiresAt: time }).strict();
+  sourceReadinessDisposition: z.unknown(), requestedAt: time, expiresAt: time }).strict();
 const requestSchema = z.object({ contractVersion: z.literal(OPERATIONS_POSTGRES_REHEARSAL_REQUEST_V1), requestId: id,
   sourceReadinessPacketId: id, sourceReadinessPacketDigest: digest, sourceReadinessDispositionId: id,
   sourceReadinessDispositionDigest: digest, sourceReadinessPacket: z.unknown(), sourceReadinessDisposition: z.unknown(),
   acceptedAuto100Commit: z.literal(OPERATIONS_ACCEPTED_AUTO100_COMMIT_V1),
   acceptedAuto100ReviewSha256: z.literal(OPERATIONS_ACCEPTED_AUTO100_REVIEW_SHA256_V1),
-  ownerPhaseDirectionKind: z.literal("owner_direction_to_prepare_auto110_not_live_effect_authority"),
-  ownerPhaseDirectionDigest: digest, ownerPhaseDirectionRecordedAt: time,
+  ownerPhaseDirectionId: z.literal(OPERATIONS_ACCEPTED_AUTO110_OWNER_DIRECTION_ID_V1),
+  ownerPhaseDirectionDigest: digest, ownerPhaseDirection: z.unknown(),
   packetKind: z.literal("controlled_effect_request_not_authority"),
   rehearsalMode: z.literal("owner_attended_native_private_postgresql"),
   targetClass: z.literal("owner_selected_hostinger_kvm2_private_postgresql_target"),
@@ -275,6 +310,18 @@ function timestamp(value: string): number {
   return parsed;
 }
 
+function parseCanonicalOwnerPhaseDirection(value: unknown): OperationsPostgresRehearsalOwnerPhaseDirectionV1 {
+  const direction = parseExactOperationsV1(ownerPhaseDirectionSchema, value,
+    "operations postgres rehearsal owner phase direction");
+  verifyOperationsDigestV1(direction as unknown as Record<string, unknown>, "directionDigest",
+    direction.directionDigest);
+  if (sha256Digest(direction) !== acceptedOwnerPhaseDirectionSnapshotDigest
+    || direction.directionDigest !== acceptedOwnerPhaseDirection.directionDigest) {
+    throw new OperationsContractErrorV1("scope_mismatch");
+  }
+  return direction;
+}
+
 function parseSource(packetValue: unknown, dispositionValue: unknown): {
   packet: OperationsPostgresReadinessPacketV1;
   disposition: OperationsPostgresReadinessDispositionV1;
@@ -292,9 +339,10 @@ function parseSource(packetValue: unknown, dispositionValue: unknown): {
 export function buildOperationsPostgresRehearsalRequestV1(inputValue: unknown): OperationsPostgresRehearsalRequestV1 {
   const input = parseExactOperationsV1(requestInputSchema, inputValue, "operations postgres rehearsal request input");
   const { packet, disposition } = parseSource(input.sourceReadinessPacket, input.sourceReadinessDisposition);
-  const directionAt = timestamp(input.ownerPhaseDirectionRecordedAt), requestedAt = timestamp(input.requestedAt),
-    expiresAt = timestamp(input.expiresAt);
-  if (directionAt < timestamp(disposition.recordedAt) || requestedAt < directionAt || expiresAt <= requestedAt
+  const direction = parseCanonicalOwnerPhaseDirection(acceptedOwnerPhaseDirection);
+  const requestedAt = timestamp(input.requestedAt), expiresAt = timestamp(input.expiresAt);
+  if (requestedAt < timestamp(direction.acceptedAt) || requestedAt < timestamp(disposition.recordedAt)
+    || expiresAt <= requestedAt
     || expiresAt - requestedAt > OPERATIONS_POSTGRES_REHEARSAL_MAX_REQUEST_LIFETIME_SECONDS_V1 * 1_000) {
     throw new OperationsContractErrorV1("invalid_input");
   }
@@ -305,9 +353,8 @@ export function buildOperationsPostgresRehearsalRequestV1(inputValue: unknown): 
     sourceReadinessDispositionDigest: disposition.dispositionDigest, sourceReadinessPacket: packet,
     sourceReadinessDisposition: disposition, acceptedAuto100Commit: OPERATIONS_ACCEPTED_AUTO100_COMMIT_V1,
     acceptedAuto100ReviewSha256: OPERATIONS_ACCEPTED_AUTO100_REVIEW_SHA256_V1,
-    ownerPhaseDirectionKind: "owner_direction_to_prepare_auto110_not_live_effect_authority",
-    ownerPhaseDirectionDigest: input.ownerPhaseDirectionDigest,
-    ownerPhaseDirectionRecordedAt: input.ownerPhaseDirectionRecordedAt,
+    ownerPhaseDirectionId: direction.directionId, ownerPhaseDirectionDigest: direction.directionDigest,
+    ownerPhaseDirection: direction,
     packetKind: "controlled_effect_request_not_authority", rehearsalMode: "owner_attended_native_private_postgresql",
     targetClass: "owner_selected_hostinger_kvm2_private_postgresql_target",
     resourceClass: "disposable_nonproduction_database_on_selected_private_host",
@@ -342,16 +389,19 @@ export function parseOperationsPostgresRehearsalRequestV1(value: unknown): Opera
   const request = parseExactOperationsV1(requestSchema, value,
     "operations postgres rehearsal request") as unknown as OperationsPostgresRehearsalRequestV1;
   const { packet, disposition } = parseSource(request.sourceReadinessPacket, request.sourceReadinessDisposition);
-  const directionAt = timestamp(request.ownerPhaseDirectionRecordedAt), requestedAt = timestamp(request.requestedAt),
-    expiresAt = timestamp(request.expiresAt);
+  const direction = parseCanonicalOwnerPhaseDirection(request.ownerPhaseDirection);
+  const requestedAt = timestamp(request.requestedAt), expiresAt = timestamp(request.expiresAt);
   if (request.sourceReadinessPacketId !== packet.packetId
     || request.sourceReadinessPacketDigest !== packet.packetDigest
     || request.sourceReadinessDispositionId !== disposition.dispositionId
     || request.sourceReadinessDispositionDigest !== disposition.dispositionDigest
+    || request.ownerPhaseDirectionId !== direction.directionId
+    || request.ownerPhaseDirectionDigest !== direction.directionDigest
     || !sameList(request.requestedStageCodes, operationsPostgresRehearsalStageCodesV1)
     || !sameList(request.blockingRequirementCodes, operationsPostgresRehearsalRequirementCodesV1)
     || !sameList(request.readinessBlockingGateKeys, packet.blockingGateKeys)
-    || directionAt < timestamp(disposition.recordedAt) || requestedAt < directionAt || expiresAt <= requestedAt
+    || requestedAt < timestamp(direction.acceptedAt) || requestedAt < timestamp(disposition.recordedAt)
+    || expiresAt <= requestedAt
     || expiresAt - requestedAt > OPERATIONS_POSTGRES_REHEARSAL_MAX_REQUEST_LIFETIME_SECONDS_V1 * 1_000) {
     throw new OperationsContractErrorV1("scope_mismatch");
   }

@@ -1,6 +1,6 @@
 # CR11B-AUTO-110 Candidate Acceptance Record
 
-Status: owner-directed effect-free repository candidate; independent review pending
+Status: first-review remediation candidate; different independent re-review pending
 
 Date: 2026-08-31
 
@@ -17,7 +17,7 @@ No protected host value is present. No host or database has been contacted. The 
 - exact accepted AUTO-100 implementation and review binding;
 - complete embedded AUTO-100 readiness-packet and disabled-disposition verification;
 - all 36 blocker keys preserved in canonical order;
-- phase-preparation direction separated from strong, effect-specific owner authorization;
+- exact immutable repository-accepted phase-preparation direction separated from strong, effect-specific owner authorization;
 - ten ordered rehearsal stages;
 - one native attempt, one host session, four database sessions, 30 minutes, and 1 MiB of sanitized evidence at most;
 - no production data, public endpoint, existing production-schema write, service installation, or service control;
@@ -29,10 +29,10 @@ No protected host value is present. No host or database has been contacted. The 
 
 ## Current verification
 
-- dedicated AUTO-110: 12/12 passing;
-- combined CR11B: 182/182 passing;
-- combined CR10A: 178/178 passing;
-- registered pretests: 764/764 passing;
+- dedicated AUTO-110: 13/13 passing;
+- combined CR11B: 183/183 passing;
+- combined CR10A: 179/179 passing;
+- registered pretests: 765/765 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check and full lint: passing;
@@ -41,7 +41,22 @@ No protected host value is present. No host or database has been contacted. The 
 - macOS stage zero: `ready_for_runtime_check`; and
 - working-tree whitespace validation: passing.
 
-Independent-review evidence is recorded only after it completes.
+The broad results above were refreshed after the first-review remediation. Different-reviewer evidence remains pending
+until the exact remediation commit is frozen and reviewed.
+
+## First independent rejection and remediation
+
+The first independent reviewer rejected exact candidate `7750c9b179d9f07ac05041ff4ac0dd19dd7766e7`, tree
+`86ff495485cb649c9cb458c63aeaca443f5016fa`, in immutable report
+`docs/reviews/CR11B_AUTO_110_INDEPENDENT_REVIEW.md`, SHA-256
+`a71a54a8a2dc8af6243e5c9a2b36da77b1c59bde968b1b139e7ccb742f5ac626`. Finding `AUTO110-IR-001` reproduced that
+arbitrary caller-selected direction digests and times could mint the repository claim `phasePreparationAuthorized: true`,
+although all live capabilities stayed false.
+
+The remediation removes owner-direction identity and time from public input. It captures one exact immutable
+repository-accepted snapshot and requires its ID, scope, accepted time, digest, and false live-authority facts in build
+and parse paths. New hostile coverage rejects caller-supplied extras and fully re-digested direction-ID and time forks.
+This remediation is not accepted until a different independent reviewer closes `AUTO110-IR-001`.
 
 ## Remaining gate
 

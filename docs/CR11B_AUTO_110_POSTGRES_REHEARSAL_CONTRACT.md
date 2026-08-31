@@ -1,6 +1,6 @@
 # CR11B-AUTO-110 PostgreSQL Rehearsal Contract
 
-Status: owner-directed, effect-free repository candidate; independent review pending
+Status: first-review remediation candidate; different independent re-review pending
 
 Date: 2026-08-31
 
@@ -15,8 +15,11 @@ AUTO-100 readiness packet and disabled disposition, and carries all 36 unresolve
 
 ## Two distinct owner gates
 
-The request records `phasePreparationAuthorized: true`. That means Codex may prepare, test, document, and independently
-review the AUTO-110 packet.
+The request records `phasePreparationAuthorized: true` only because it embeds the one immutable repository-accepted
+owner-direction snapshot. Public construction accepts no direction ID, digest, or time from a caller. The private parser
+requires the exact snapshot ID, scope, accepted time, digest, and three false live-authority facts. This means Codex may
+prepare, test, document, and independently review the AUTO-110 packet; it does not mean the caller possesses owner
+authority.
 
 The same request fixes all live-effect fields to false. A future effect window requires a fresh exact owner decision with
 a strong factor, the protected host reference and access path, the precise allowed operations, current start and expiry,
@@ -58,9 +61,24 @@ It embeds the complete readiness packet and disabled disposition, re-runs their 
 and digests, and preserves the 36 blocker keys in their canonical order. Source substitution, re-digested identity drift,
 stage or blocker reordering, false authority, and cross-request disposition or projection reuse fail closed.
 
-The owner phase-direction record contains only a digest and time. Raw conversation, host identity, hostname, address,
-port, username, protected locator, credential reference, credential value, connection string, or deployable
-configuration is forbidden from the request and projection.
+The owner phase-direction record contains only its fixed repository ID, effect-free scope, accepted time, digest, and
+false live-authority facts. Caller-selected direction identity, digest, and time forks are rejected even after complete
+re-digesting. Raw conversation, host identity, hostname, address, port, username, protected locator, credential
+reference, credential value, connection string, or deployable configuration is forbidden from the request and
+projection.
+
+## First independent rejection and bounded remediation
+
+The first independent reviewer rejected exact candidate `7750c9b179d9f07ac05041ff4ac0dd19dd7766e7`, tree
+`86ff495485cb649c9cb458c63aeaca443f5016fa`, in unchanged report
+`docs/reviews/CR11B_AUTO_110_INDEPENDENT_REVIEW.md`, SHA-256
+`a71a54a8a2dc8af6243e5c9a2b36da77b1c59bde968b1b139e7ccb742f5ac626`. `AUTO110-IR-001` proved that two unrelated
+caller-supplied digests and times each produced a valid request claiming owner-directed preparation.
+
+The remediation removes both direction fields from the public builder, captures one complete immutable
+repository-accepted owner-direction snapshot, embeds it in every request, re-verifies it against the clean-start snapshot,
+and rejects caller extras plus re-digested direction-ID and accepted-time forks. This is producer remediation evidence;
+a different independent reviewer must close the finding.
 
 ## Safe disposition and projection
 

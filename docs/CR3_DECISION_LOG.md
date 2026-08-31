@@ -1828,3 +1828,13 @@ window. This intentionally adds a last human security stop before touching the p
 fresh evidence. If any of the 36 blockers remains, retain the disabled disposition. If every blocker is accepted, prepare
 a new strong-factor owner packet bound to exact protected references, operations, start/expiry, rollback, cleanup, and
 evidence limits. This ADR never authorizes host contact by itself.
+
+**First independent rejection and remediation:** A different reviewer rejected exact candidate
+`7750c9b179d9f07ac05041ff4ac0dd19dd7766e7`, tree `86ff495485cb649c9cb458c63aeaca443f5016fa`, in immutable report
+SHA-256 `a71a54a8a2dc8af6243e5c9a2b36da77b1c59bde968b1b139e7ccb742f5ac626`. `AUTO110-IR-001` reproduced that two
+unrelated caller-selected bare direction digests and times could each mint a valid request claiming owner-directed phase
+preparation. Live authority remained false, but repository provenance was untrustworthy. The remediation removes all
+owner-direction fields from public request input, captures one complete repository-accepted owner-direction snapshot at
+module initialization, embeds and re-verifies its exact ID, scope, accepted time, digest, and false live-authority facts,
+and adds regressions for caller extras and fully re-digested ID/time forks. A different independent reviewer must close
+the finding before AUTO-110 can be accepted.
