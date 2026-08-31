@@ -1,6 +1,7 @@
 # CR11B-AUTO-100 Candidate Acceptance Record
 
-Status: complete locally for the effect-free candidate; independent review and integration are pending
+Status: independently accepted for exact effect-free implementation commit
+`34750ed8ec5cf34134d166505f3df50897afe3f7`; integration is pending
 
 Date: 2026-08-31
 
@@ -65,10 +66,16 @@ Complete local verification passes:
 - macOS stage zero at `ready_for_runtime_check`; and
 - working-tree whitespace validation.
 
-## Open gate
+## Independent acceptance
 
-Independent security and authority review must accept the exact candidate commit before AUTO-100 can be integrated or a
-later owner-controlled rehearsal can be prepared. Producer tests and this acceptance record do not satisfy that gate.
+The different independent re-reviewer accepted exact implementation commit
+`34750ed8ec5cf34134d166505f3df50897afe3f7`, tree
+`59da1931c4df41fc903e73bfc68c756438dbf5fe`, in the unchanged report
+`docs/reviews/CR11B_AUTO_100_FIRST_REMEDIATION_REREVIEW.md`, SHA-256
+`aa2116b832ed6e5587c72705dcf6dc826f8ef0e7201c5b284c7876b93f53c0a9`. The reviewer independently reproduced the
+two prior attacks, verified both are closed, confirmed the exact 39-gate composition and three-present/36-blocked truth,
+and found no new reproducible correctness defect. Acceptance is scoped to that exact effect-free implementation commit;
+later evidence and status commits do not widen the reviewed code boundary.
 
 Two attempted report-only review runs were stopped by the review platform before either produced a report or verdict.
 The first provided provisional descriptions of four plausible seams. Codex reproduced and remediated those seams rather
@@ -83,7 +90,13 @@ the target check rebuilt its expectation from a caller-selected AUTO-090 decisio
 embedded the public mutable Project Workspace time schema. The first-review remediation pins the complete exact
 AUTO-090 target snapshot, compares the complete CR10A source snapshot without re-entering caller-mutable upstream
 schemas, constructs private ID/digest/time schemas, captures date parsing, rejects non-finite time, and adds both
-reproductions to the gate. A different reviewer must assess the exact remediation commit.
+reproductions to the gate. The different re-reviewer accepted that exact remediation as recorded above.
+
+## Remaining gate
+
+AUTO-100 still requires ordinary stacked integration. The later native PostgreSQL rehearsal remains separately deferred
+and requires a new exact owner-authorized packet, current host evidence, rollback and cleanup bounds, and fresh
+independent review. This acceptance does not satisfy any of the 36 live production blockers.
 
 ## Negative authority
 

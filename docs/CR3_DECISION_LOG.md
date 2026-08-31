@@ -1782,4 +1782,13 @@ chronology comparisons fail open on `NaN`. The remediation captures the complete
 snapshots at clean initialization, compares later inputs to those identities without re-entering public source schemas,
 uses private ID/digest/time schemas, captures trusted date parsing, and rejects every non-finite time before comparison.
 New regressions cover re-digested decision-ID/time forks and the reviewer's public-schema mutation with zero hostile
-calls. The rejection remains authoritative until a different reviewer accepts the exact remediation.
+calls.
+
+**Independent acceptance amendment:** A different independent reviewer accepted exact remediation commit
+`34750ed8ec5cf34134d166505f3df50897afe3f7`, tree `59da1931c4df41fc903e73bfc68c756438dbf5fe`, in unchanged report
+SHA-256 `aa2116b832ed6e5587c72705dcf6dc826f8ef0e7201c5b284c7876b93f53c0a9`. The reviewer independently rejected changed
+and re-digested AUTO-090 decision IDs and times in both build and parse paths, rejected invalid packet and disposition
+times with zero hostile public-schema callbacks, confirmed exact 39-gate and three-present/36-blocked truth, and found no
+new reproducible correctness defect. AUTO-100 is accepted only for that exact effect-free implementation snapshot.
+Stacked integration remains pending; all 36 live blockers and the later fresh owner-authorization requirement remain in
+force.

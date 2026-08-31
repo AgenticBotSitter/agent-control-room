@@ -85,7 +85,7 @@
 | CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Complete for exact independently accepted effect-free commit `20eeb14` | Six remediations closed mutable-runtime integrity attacks; eight fake scenarios retain all nine blockers and qualify zero production proofs; see `CR11B_AUTO_070_ACCEPTANCE.md` |
 | CR11B-AUTO-080 disposable hosted qualification preparation | Complete for exact independently accepted effect-free commit `091ff11` | Three remediations close raw-key cleanup, mutable binary metadata, and keyed-HMAC capability escape; every live capability remains false |
 | CR11B-AUTO-090 Hostinger PostgreSQL production target | Complete locally for the effect-free candidate; integration pending | One self-managed private PostgreSQL primary is fixed as sole global authority; AWS RDS, production PGlite, public DB access, and R2 state are denied; see `CR11B_AUTO_090_ACCEPTANCE.md` |
-| CR11B-AUTO-100 Hostinger PostgreSQL readiness packet | Complete locally for the effect-free candidate; independent review and integration pending | All 39 target, deployment, and automatic-work gates remain source-separated; 3 repository contracts are present and 36 production gates block host contact; see `CR11B_AUTO_100_ACCEPTANCE.md` |
+| CR11B-AUTO-100 Hostinger PostgreSQL readiness packet | Independently accepted for exact effect-free implementation `34750ed`; integration pending | All 39 target, deployment, and automatic-work gates remain source-separated; 3 repository contracts are present and 36 production gates block host contact; accepted re-review SHA-256 `aa2116b8...c0a9`; see `CR11B_AUTO_100_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -105,7 +105,11 @@ no production values or live client. Focused tests pass 15/15, combined CR11B 17
 registered pretests 752/752, core 414/416 with zero failures and two intentional platform skips, and public post-tests
 52/52. Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage
 zero, and whitespace validation pass. No provider, host, process, database, credential, migration, backup, restore,
-deployment, or external effect occurred. Independent review and integration remain pending.
+deployment, or external effect occurred. A different independent reviewer accepted exact implementation commit
+`34750ed8ec5cf34134d166505f3df50897afe3f7`, tree `59da1931c4df41fc903e73bfc68c756438dbf5fe`, after closing both
+remaining identity/time-schema findings. The unchanged accepted report has SHA-256
+`aa2116b832ed6e5587c72705dcf6dc826f8ef0e7201c5b284c7876b93f53c0a9`. Stacked integration remains pending, and all
+36 live production gates remain blocked.
 
 Accepted boundary: CR11B-AUTO-070 is complete for exact effect-free commit
 `20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`. It binds authenticated
@@ -356,12 +360,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-100-INDEPENDENT-REVIEW — independently test the exact Hostinger PostgreSQL readiness candidate before integration
+Block: CR11B-AUTO-100-INTEGRATION — preserve and integrate the accepted private stack in dependency order
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the producer suite cannot accept its own security boundary. A different reviewer must attack exact source binding, gate preservation, digest/chronology checks, safe projection, and negative authority before integration.
-Expected output: an immutable accepted or rejected report tied to the exact candidate commit. Any finding is remediated and reviewed by a different reviewer before AUTO-100 closes.
-Owner action: keep `gpt-5.6-sol` at xhigh. No VPS, database, or credential action is needed for the review.
+Why: the code boundary is independently accepted, but the long private PR stack must be retargeted and merged without losing exact implementation, review, or negative-authority evidence.
+Expected output: preserved accepted commits and reports, green ordinary CI on each main-targeting integration step, and no deployment or native-host action.
+Owner action: keep `gpt-5.6-sol` at xhigh. Approve individual private PR merges only when Codex presents a verified clean integration step; no VPS, database, or credential action is needed.
 Stop before: host or provider contact, protected-reference or credential access, installation, configuration, service control, any network/database/process call, migration, backup/restore, raw evidence, public endpoint, consumer activation, dispatch, execution, DNS, Cloudflare, hosting deployment, or external effect.
 ```
 
