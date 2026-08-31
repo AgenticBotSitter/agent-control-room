@@ -3,6 +3,7 @@ export * from "./backup-dry-run";
 export * from "./backup-fake-runner";
 export * from "./canary-rollback-planner";
 export * from "./compose-reference";
+export * from "./database-target";
 export * from "./deployment";
 export * from "./fake-lifecycle-ledger";
 export * from "./fake-recovery";

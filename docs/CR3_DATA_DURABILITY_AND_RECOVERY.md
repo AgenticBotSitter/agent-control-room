@@ -1,6 +1,6 @@
 # CR-3 data, durability, and recovery architecture
 
-**Status:** Accepted 2026-08-22
+**Status:** Accepted 2026-08-22; production-database target amended 2026-08-31
 **Decision:** One PostgreSQL authority with encrypted backups and bounded node journals; no multi-writer worker replication
 
 ## PostgreSQL in plain language
@@ -22,7 +22,7 @@ Letting every worker hold a writable copy requires distributed consensus, confli
 The chosen model is:
 
 ```text
-PostgreSQL primary on Control Room host
+Self-managed PostgreSQL primary on the Hostinger KVM2 Control Room host
   = one writable global truth
 
 R2 + optional offline copies
@@ -53,11 +53,11 @@ The value the user identified—recovering after a server failure—is real. It 
 
 ## Central persistence architecture
 
-Production uses supported PostgreSQL with:
+Production targets supported, self-managed PostgreSQL on the Hostinger KVM2 VPS, not AWS RDS. It uses:
 
 - one application database;
 - separate roles for migration, application, read-only operations, and backup;
-- loopback/private-container-only listening;
+- host-local socket/loopback/private-network-only access;
 - TLS for any non-loopback connection;
 - least-privilege grants;
 - foreign keys, checks, unique idempotency constraints, and transactional state transitions;
@@ -66,6 +66,11 @@ Production uses supported PostgreSQL with:
 - inbox/deduplication records for node, adapter, webhook, Telegram, and MCP mutations.
 
 PGlite remains a development and contract-test tool. It is not the initial production database.
+
+The target is an architecture decision, not a live attachment. The reported VPS state has PostgreSQL client tools but no
+running PostgreSQL service or container. Installation, deployment-mode selection, role and credential setup, migrations,
+backup/WAL configuration, monitoring, and a real restore rehearsal remain gated work and must not be inferred from client
+tool availability.
 
 ## V1 domain additions
 
@@ -187,7 +192,8 @@ These are targets to prove, not promises until restore drills pass.
 
 1. PostgreSQL crash recovery on the primary disk.
 2. Encrypted daily logical backup for portability and inspection.
-3. Encrypted periodic base backup plus continuous WAL archive to an R2 prefix dedicated to backups.
+3. Encrypted periodic base backup plus continuous WAL archive to an R2 prefix dedicated to backups; R2 never becomes
+   transactional or coordination state.
 4. Hostinger's included weekly backup as an additional provider-level safety net, not the sole backup.
 5. Optional encrypted backup pull to the home PC/Mac for provider-diversity.
 6. Independently backed-up deployment configuration, migration versions, and recovery runbooks.
