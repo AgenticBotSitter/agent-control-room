@@ -1458,3 +1458,72 @@ exact remediation commit, and that acceptance still cannot satisfy any of the ni
 exact default-disabled remediation commit `2a47f57c3b1015b279ee51e95690d10d147b112a`. Accepted report SHA-256 is
 `fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. This closes AUTO-050 design integrity only; all
 nine production proofs remain unobserved and no production verifier, consumer, deployment, or external effect is accepted.
+
+## ADR-112 — AUTO-060 authenticates fixture proof observations without qualifying production
+
+**Decision:** CR11B-AUTO-060 accepts only owner-, issuer-, and where required independent-verifier-signed Ed25519 proof
+envelopes under literal `repository_fixture_only` trust. Each proof binds the complete authenticated AUTO-050 plan,
+assessment, gate requirement, ordered binding digests, evidence aggregate, identity/key, trust revision, and chronology.
+The private local SQLite ledger authenticates every row and whole state with keys held outside the database and compares a
+separate rollback checkpoint. Trust revisions are linear; exact replay is inert; expiry, revocation, and later trust
+revision remain visible. Every observation is `observed_unqualified`; even nine current observations retain all nine
+blockers and zero qualified proofs.
+
+**Why:** AUTO-050 named exact proof requirements but intentionally had no verifier or evidence store. The next safe seam is
+to make cryptographic and persistence attacks testable without letting repository-generated keys, fixtures, or booleans
+mint production readiness. Binding trust mode and negative authority into every artifact prevents successful fixture
+verification from being relabelled as protected custody.
+
+**Alternatives rejected:** Accept a caller `qualified` flag; let a proof digest satisfy a gate without every ordered
+binding; accept a verifier sharing issuer identity, key, or signed independence domain; trust an unchained or rolled-back
+bundle; store raw evidence or private keys; keep rollback truth inside the protected database; let nine fixture proofs
+unlock owner approval or activation; add a consumer, protected-reference resolver, hosted database, network client, or
+effect path to proof intake.
+
+**Trade-off:** The root and rollback checkpoint are repository-fixture/test references, SQLite is local and
+single-process, and no production clock, key, revocation, database, or evidence custody is proved. A trust update
+supersedes earlier observations even when the same key remains active, deliberately requiring renewed evidence. This is
+safer but more operationally expensive.
+
+**Reevaluate:** A different independent reviewer must attack the exact frozen candidate before acceptance. Any production
+root, durable protected checkpoint, hosted multi-process ledger, real evidence collection, owner approval issuance,
+consumer, activation, deployment, or external effect is a new owner-authorized block with fresh security review. AUTO-060
+fixture observations can never be migrated or relabelled into production qualification.
+
+**First-review amendment:** Independent review rejected exact candidate
+`f77108fc3c556970bff4cc94c4b952a0336a8cac` in immutable report SHA-256
+`fc22ddd3ee62f432eeaee5d5cbc0aca6715872fa7733e095979ac1ea3457f9cf`. Canonical signatures, store-only chronological
+assessment, irreversible full-chain identity revocation, trust-advance-safe exact replay, and per-operation private-file
+and exact-schema checks remediate its five findings. The original negative report remains unchanged. A different reviewer
+must accept an exact remediation commit; no producer test or remediation itself closes AUTO-060.
+
+**Second-review amendment:** A new different reviewer rejected exact first-remediation commit
+`fb2f0a3dd4e2e128ae6076daadad10938fec1438` in immutable report SHA-256
+`1aa0119e9eb8504d471586c88d62ab44b533f16190d2c9c57fbe58cad30e9dc2`. Although the direct raw-observation assessor was
+gone, a caller could still modify store-derived gate status, recompute the public assessment digest, and obtain a forged
+observed-status projection through exported parsers. The second remediation removes every public digest-only assessment
+or projection trust consumer and the public raw-assessment method. The only trusted view is now built and deep-frozen
+inside one authenticated store operation after complete ledger, checkpoint, trust, and AUTO-050 chain verification.
+Public digests remain content identity only. A third different reviewer must accept the new exact commit; negative
+authority stayed intact throughout both rejections.
+
+**Third-review amendment:** A third different reviewer rejected exact second-remediation commit
+`0d7287fbdc06af3f8c220dad8227f0f99855b64a` in immutable report SHA-256
+`303133e1297cb28a475b14bc51e0a77d20436a93cf4c23b410ebb544f2624323`. The public assessment and projection path was
+closed, but the verifier still consulted a mutable schema object exported by the direct proof-schema module. Own-method
+substitution made it authenticate one valid package while the ledger stored another changed envelope; restoration exposed
+the mismatch as an integrity failure. The third remediation deletes that module, moves proof and ledger schemas plus their
+primitive dependencies behind module-private state, and captures original parser operations into frozen closures. AUTO-050
+boundary schemas now use private primitives and expose only frozen captured parser closures, so public schema aliases,
+own-method replacement, deletion, and prototype drift are non-authoritative. A fourth different reviewer was required to
+accept the exact third-remediation commit. No rejection or remediation grants production proof, approval, activation, consumer,
+network, dispatch, deployment, or effect authority.
+
+**Acceptance amendment:** A fourth different reviewer accepted exact third-remediation commit
+`be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`, in immutable report
+SHA-256 `8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`. It independently mutated public schema
+methods and a shared prototype before and after store construction, attempted change, deletion, and prototype replacement
+on every exported frozen production parser, retried the prior changed-binding envelope, and verified zero append plus clean
+restart integrity. All `IR`, `FRR`, and `SRR` findings are closed only for that exact effect-free snapshot. AUTO-060 is
+complete, but every fixture proof remains unqualified and all protected custody, hosted database, policy, consumer,
+activation, deployment, and effect gates remain blocked.

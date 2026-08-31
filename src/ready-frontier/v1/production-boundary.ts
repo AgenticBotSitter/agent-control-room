@@ -4,17 +4,17 @@ import { ReadyFrontierContractErrorV1 } from "./errors";
 import { parseExactReadyFrontierV1 } from "./exact";
 import { READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1, parseReadyFrontierActivationPacketV1 } from "./no-relay";
 import {
-  readyFrontierProductionBoundaryAssessmentInputSchemaV1,
-  readyFrontierProductionBoundaryAssessmentSchemaV1,
-  readyFrontierProductionBoundaryPlanInputSchemaV1,
-  readyFrontierProductionBoundaryPlanSchemaV1,
-  readyFrontierProductionBoundaryProjectionSchemaV1,
-  readyFrontierProductionDisabledDispositionInputSchemaV1,
-  readyFrontierProductionDisabledDispositionSchemaV1,
-  readyFrontierProductionGateRequirementSchemaV1,
-  readyFrontierProductionReconciliationDecisionSchemaV1,
-  readyFrontierProductionReconciliationEventSchemaV1,
-  readyFrontierProductionReconciliationStateSchemaV1,
+  readyFrontierProductionBoundaryAssessmentInputSyntaxParserV1 as productionBoundaryAssessmentInputParserV1,
+  readyFrontierProductionBoundaryAssessmentSyntaxParserV1 as productionBoundaryAssessmentParserV1,
+  readyFrontierProductionBoundaryPlanInputSyntaxParserV1 as productionBoundaryPlanInputParserV1,
+  readyFrontierProductionBoundaryPlanSyntaxParserV1 as productionBoundaryPlanParserV1,
+  readyFrontierProductionBoundaryProjectionSyntaxParserV1 as productionBoundaryProjectionParserV1,
+  readyFrontierProductionDisabledDispositionInputSyntaxParserV1 as productionDisabledDispositionInputParserV1,
+  readyFrontierProductionDisabledDispositionSyntaxParserV1 as productionDisabledDispositionParserV1,
+  readyFrontierProductionGateRequirementSyntaxParserV1 as productionGateRequirementParserV1,
+  readyFrontierProductionReconciliationDecisionSyntaxParserV1 as productionReconciliationDecisionParserV1,
+  readyFrontierProductionReconciliationEventSyntaxParserV1 as productionReconciliationEventParserV1,
+  readyFrontierProductionReconciliationStateSyntaxParserV1 as productionReconciliationStateParserV1,
 } from "./production-boundary-schemas";
 import {
   READY_FRONTIER_ACCEPTED_AUTO040_COMMIT_V1,
@@ -197,7 +197,7 @@ export function buildReadyFrontierProductionGateRequirementsV1(): ReadyFrontierP
 
 export function parseReadyFrontierProductionGateRequirementV1(value: unknown):
   ReadyFrontierProductionGateRequirementV1 {
-  const parsed = parseExactReadyFrontierV1(readyFrontierProductionGateRequirementSchemaV1,
+  const parsed = parseExactReadyFrontierV1(productionGateRequirementParserV1,
     value) as ReadyFrontierProductionGateRequirementV1;
   const expected = requirementMaterial(parsed.gateCode);
   if (parsed.evidenceClass !== expected.evidenceClass
@@ -213,7 +213,7 @@ export function buildReadyFrontierProductionBoundaryPlanV1(inputValue: unknown,
   activationPacketIntegrityKey: unknown): ReadyFrontierProductionBoundaryPlanV1 {
   const planKey = key(activationPacketIntegrityKey);
   try {
-    const input = parseExactReadyFrontierV1(readyFrontierProductionBoundaryPlanInputSchemaV1, inputValue);
+    const input = parseExactReadyFrontierV1(productionBoundaryPlanInputParserV1, inputValue);
     const packet = parseReadyFrontierActivationPacketV1(input.activationPacket, planKey);
     if (Date.parse(input.plannedAt) < Date.parse(packet.createdAt)
       || Date.parse(input.expiresAt) <= Date.parse(input.plannedAt)
@@ -269,7 +269,7 @@ export function parseReadyFrontierProductionBoundaryPlanV1(value: unknown,
   activationPacketIntegrityKey: unknown): ReadyFrontierProductionBoundaryPlanV1 {
   const planKey = key(activationPacketIntegrityKey);
   try {
-    const parsed = parseExactReadyFrontierV1(readyFrontierProductionBoundaryPlanSchemaV1,
+    const parsed = parseExactReadyFrontierV1(productionBoundaryPlanParserV1,
       value) as ReadyFrontierProductionBoundaryPlanV1;
     if (!same(parsed.requiredProductionGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
       || Date.parse(parsed.plannedAt) < Date.parse(parsed.activationPacketCreatedAt)
@@ -285,7 +285,7 @@ export function parseReadyFrontierProductionBoundaryPlanV1(value: unknown,
 export function buildReadyFrontierProductionBoundaryAssessmentV1(inputValue: unknown,
   activationPacketIntegrityKey: unknown):
   ReadyFrontierProductionBoundaryAssessmentV1 {
-  const input = parseExactReadyFrontierV1(readyFrontierProductionBoundaryAssessmentInputSchemaV1, inputValue);
+  const input = parseExactReadyFrontierV1(productionBoundaryAssessmentInputParserV1, inputValue);
   const plan = parseReadyFrontierProductionBoundaryPlanV1(input.plan, activationPacketIntegrityKey);
   if (Date.parse(input.assessedAt) < Date.parse(plan.plannedAt)
     || Date.parse(input.assessedAt) >= Date.parse(plan.expiresAt)) fail("policy_denied");
@@ -332,7 +332,7 @@ export function parseReadyFrontierProductionBoundaryAssessmentV1(value: unknown,
   ReadyFrontierProductionBoundaryAssessmentV1 {
   const planKey = key(activationPacketIntegrityKey);
   try {
-    const parsed = parseExactReadyFrontierV1(readyFrontierProductionBoundaryAssessmentSchemaV1,
+    const parsed = parseExactReadyFrontierV1(productionBoundaryAssessmentParserV1,
       value) as ReadyFrontierProductionBoundaryAssessmentV1;
     const requirements = parsed.requirements.map(parseReadyFrontierProductionGateRequirementV1);
     const planEvidence = { planId: parsed.planId, planDigest: parsed.planDigest,
@@ -362,7 +362,7 @@ export function parseReadyFrontierProductionBoundaryAssessmentV1(value: unknown,
 export function buildReadyFrontierProductionDisabledDispositionV1(inputValue: unknown,
   activationPacketIntegrityKey: unknown):
   ReadyFrontierProductionDisabledDispositionV1 {
-  const input = parseExactReadyFrontierV1(readyFrontierProductionDisabledDispositionInputSchemaV1, inputValue);
+  const input = parseExactReadyFrontierV1(productionDisabledDispositionInputParserV1, inputValue);
   const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment, activationPacketIntegrityKey);
   if (Date.parse(input.recordedAt) < Date.parse(assessment.assessedAt)) fail("policy_denied");
   const material: Omit<ReadyFrontierProductionDisabledDispositionV1, "dispositionDigest"> = {
@@ -400,7 +400,7 @@ export function buildReadyFrontierProductionDisabledDispositionV1(inputValue: un
 
 export function parseReadyFrontierProductionDisabledDispositionV1(value: unknown):
   ReadyFrontierProductionDisabledDispositionV1 {
-  const parsed = parseExactReadyFrontierV1(readyFrontierProductionDisabledDispositionSchemaV1,
+  const parsed = parseExactReadyFrontierV1(productionDisabledDispositionParserV1,
     value) as ReadyFrontierProductionDisabledDispositionV1;
   const expectedDispositionId = `frontier.production-disabled.${parsed.assessmentDigest.slice(7, 31)}`;
   if (parsed.dispositionId !== expectedDispositionId
@@ -423,8 +423,8 @@ const reconciliationTransitions = new Map<string, ReadyFrontierProductionReconci
 
 export function evaluateReadyFrontierProductionReconciliationV1(fromStateValue: unknown,
   eventValue: unknown): ReadyFrontierProductionReconciliationDecisionV1 {
-  const fromState = parseExactReadyFrontierV1(readyFrontierProductionReconciliationStateSchemaV1, fromStateValue);
-  const event = parseExactReadyFrontierV1(readyFrontierProductionReconciliationEventSchemaV1, eventValue);
+  const fromState = parseExactReadyFrontierV1(productionReconciliationStateParserV1, fromStateValue);
+  const event = parseExactReadyFrontierV1(productionReconciliationEventParserV1, eventValue);
   const toState = reconciliationTransitions.get(`${fromState}|${event}`) ?? null;
   const destinationEvidence = event === "qualified_destination_confirmed"
     || event === "qualified_destination_absence_observed"
@@ -451,7 +451,7 @@ export function evaluateReadyFrontierProductionReconciliationV1(fromStateValue: 
 
 export function parseReadyFrontierProductionReconciliationDecisionV1(value: unknown):
   ReadyFrontierProductionReconciliationDecisionV1 {
-  const parsed = parseExactReadyFrontierV1(readyFrontierProductionReconciliationDecisionSchemaV1,
+  const parsed = parseExactReadyFrontierV1(productionReconciliationDecisionParserV1,
     value) as ReadyFrontierProductionReconciliationDecisionV1;
   const expected = reconciliationTransitions.get(`${parsed.fromState}|${parsed.event}`) ?? null;
   const destinationEvidence = parsed.event === "qualified_destination_confirmed"
@@ -502,7 +502,7 @@ export function projectReadyFrontierProductionBoundaryV1(assessmentValue: unknow
 
 export function parseReadyFrontierProductionBoundaryProjectionV1(value: unknown):
   ReadyFrontierProductionBoundaryProjectionV1 {
-  const parsed = parseExactReadyFrontierV1(readyFrontierProductionBoundaryProjectionSchemaV1,
+  const parsed = parseExactReadyFrontierV1(productionBoundaryProjectionParserV1,
     value) as ReadyFrontierProductionBoundaryProjectionV1;
   if (!same(parsed.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
     || parsed.projectionDigest !== sha256Digest(unsigned(parsed as unknown as Record<string, unknown>,

@@ -81,6 +81,8 @@
 | CR11B-AUTO-030 ready promotion and internal scheduler/jobber handoff | Complete for exact independently accepted effect-free commit `adf0804` | Token-only exact-operation authorization, transaction-owner pre-commit and post-transaction trusted time, request idempotency, dedicated non-delivery handoff table, protected ready/claim paths, historical receipt projection, concurrency/rollback tests, accepted fifth review, and `CR11B_AUTO_030_ACCEPTANCE.md` |
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
+| CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
+| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Active; contract and effect-free qualification machinery next | Multi-process, protected clock/key/revocation/checkpoint, and hosted PostgreSQL evidence remain unproved; no live connection or activation authority |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -88,7 +90,40 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-050 is complete for exact default-disabled commit `2a47f57c3b1015b279ee51e95690d10d147b112a`.
+Active: CR11B-AUTO-070 will define the protected custody and hosted PostgreSQL qualification foundation without connecting
+to a live database or enrolling production keys. It must bind protected service identity, owner-signed policy high-water,
+clock/revocation/checkpoint custody, transaction isolation, multi-process convergence, rollback/restore, and safe
+qualification evidence while preserving all nine blockers and every negative-authority flag.
+
+Prior accepted boundary: CR11B-AUTO-060 is complete for exact effect-free commit
+`be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`. The first two immutable
+rejections retain SHA-256
+`fc22ddd3ee62f432eeaee5d5cbc0aca6715872fa7733e095979ac1ea3457f9cf` and
+`1aa0119e9eb8504d471586c88d62ab44b533f16190d2c9c57fbe58cad30e9dc2`; their signature, chronology, revocation,
+replay, file/schema, and public digest-only projection findings remain closed. A third reviewer rejected exact
+second-remediation commit `0d7287fbdc06af3f8c220dad8227f0f99855b64a` because mutable exported proof-schema state could make verification
+authenticate one package while the ledger stored another. That unchanged report has SHA-256
+`303133e1297cb28a475b14bc51e0a77d20436a93cf4c23b410ebb544f2624323`.
+The third remediation deletes the public proof-schema module and makes authoritative proof, ledger, and AUTO-050 boundary
+schemas private with captured frozen parser closures. Public own-method replacement, deletion, and prototype drift are
+non-authoritative before and after ledger construction. Focused tests pass 20/20, combined CR11B passes 119/119,
+registered pretests pass 701/701, core passes 414/416 with two intentional platform skips and zero failures, and public
+posttests pass 52/52. Typecheck, full lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL
+tables, macOS stage zero, and whitespace validation pass. The required fourth different-agent review accepted the exact
+snapshot in unchanged report SHA-256
+`8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e` after independently closing all earlier findings,
+including parser mutation before and after store construction, exact-package custody, and restart integrity.
+The repository-fixture-only verifier binds owner, issuer, and distinct independent-verifier Ed25519 signatures to the exact
+AUTO-050 plan/assessment/requirement chain. Its private local ledger authenticates rows and whole state and compares an
+external rollback checkpoint. Partial, expired, revoked, and superseded proof truth is visible, but nine accepted fixture
+proofs still produce zero qualified proofs and retain all nine blockers. The rejected candidate had passed 13/13 focused,
+112/112 combined CR11B, 694/694 registered pretests, 414/416 core with two intentional platform skips and zero failures,
+52/52 public posttests, typecheck, full lint, production build, 2/2 rendered routes, 27 migrations/97 tables, macOS stage
+zero, and whitespace validation, proving why producer tests cannot accept the phase. No production proof or authority
+exists. Acceptance is limited to the exact effect-free commit and grants no production proof or authority.
+
+Prior accepted boundary: CR11B-AUTO-050 is complete for exact default-disabled commit
+`2a47f57c3b1015b279ee51e95690d10d147b112a`.
 The first reviewer rejected `f046ccee` for re-digested chronology and cross-artifact identity substitution. A different
 reviewer reproduced both defects on that old snapshot and accepted the keyed-provenance and exact-chain remediation in
 unchanged report SHA-256 `fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. Verification passes 12/12 focused, 99/99 combined
@@ -254,6 +289,32 @@ and acceptance checkpoint. GitHub reports the PR open and cleanly mergeable. No 
 `codex/**` parent; after the parent stack is integrated, retarget to `main` and require the ordinary full CI result. PR #168
 is not merged and authorizes no production proof, consumer, deployment, or effect.
 
+CR11B-AUTO-060 is independently accepted after three remediations. The unchanged initial report
+SHA-256 `fc22ddd3ee62f432eeaee5d5cbc0aca6715872fa7733e095979ac1ea3457f9cf` rejected signature aliases, unsigned
+assessment/backdating, revocation resurrection, old-proof replay drift, and open-store boundary drift. The unchanged
+first-remediation report SHA-256 `1aa0119e9eb8504d471586c88d62ab44b533f16190d2c9c57fbe58cad30e9dc2` rejected a
+remaining public digest-only assessment/projector path. The third reviewer confirmed both repair sets but rejected exact
+second-remediation commit `0d7287fbdc06af3f8c220dad8227f0f99855b64a` because a mutable exported verification-input
+schema could make the verifier authenticate one package while the ledger persisted another. Its immutable report SHA-256
+is `303133e1297cb28a475b14bc51e0a77d20436a93cf4c23b410ebb544f2624323`. The third remediation deletes the public
+proof-schema module, makes every proof/ledger schema and primitive private, and changes AUTO-050 boundary schemas to expose
+only frozen parser closures captured over private schema instances. A hostile regression proves public own-method and
+prototype changes are inert before and after ledger construction and cannot alter stored or projected truth. Verification
+passes 20/20 focused tests, 119/119 combined CR11B tests, 701/701 registered pretests, 414/416 core tests with two
+intentional platform skips and zero failures, 52/52 public posttests, typecheck, full lint, production build, 2/2 rendered
+routes, all 27 migrations/97 tables, macOS stage zero, and whitespace validation. A fourth different reviewer accepted
+exact commit `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2` in unchanged report SHA-256
+`8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`. Every observation remains unqualified and all
+nine production gates remain blocking.
+
+AUTO-060 GitHub transfer: private stacked PR #169 targets accepted AUTO-050 branch
+`codex/cr11b-auto-050-production-boundary` from `codex/cr11b-auto-060-proof-ingress`. It preserves the exact accepted
+implementation `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, all three immutable rejections, accepted report SHA-256
+`8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`, and acceptance checkpoint
+`ff433d1456fba45d096872c4371f35636c624a6f`. GitHub reports the PR open and cleanly mergeable. No check is expected while
+it targets its `codex/**` parent; after the parent stack is integrated, retarget to `main` and require ordinary full CI.
+PR #169 is not merged and authorizes no production proof, consumer, activation, deployment, or effect.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -269,13 +330,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-060-PROTECTED-PROOF-INGRESS — define authenticated external-proof intake without accepting production readiness
+Block: CR11B-AUTO-070-PROTECTED-CUSTODY-QUALIFICATION — define the production custody and hosted-database qualification foundation without live production contact
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: AUTO-050 now fixes what all nine production proofs must contain and who may issue them. The next security boundary is a rollback-resistant, identity-bound intake and evidence ledger that can validate submitted proof envelopes without turning repository fixtures or one proof into activation authority.
-Expected output: a versioned, effect-free proof-envelope, verifier-boundary, authenticated ledger, replay/rollback, expiry/revocation, independence, safe-projection, and partial-assessment contract with hostile tests. All nine gates remain unqualified unless separately observed under future protected custody.
-Owner action: switch to `gpt-5.6-sol` at xhigh before implementation. No GitHub merge or production authority is required for the effect-free design block.
-Stop before: real evidence collection, production keys, owner approval issuance, hosted database use, consumer construction, live scheduling or delivery, protected-reference access, agent/provider contact, claim, lease, dispatch, execution, recurrence activation, native reads, DNS, Cloudflare, hosting, deployment, or any production effect.
+Why: AUTO-060 can now authenticate fixture proof packages without trusting caller-mutable parsers, but it deliberately proves none of the custody and multi-process properties needed for production. The next security boundary is the qualification machinery that can later test those properties without silently turning a local fixture into production authority.
+Expected output: versioned protected service-identity, owner-policy high-water, clock/revocation/checkpoint custody, hosted PostgreSQL isolation/concurrency, backup/restore, ambiguity, and safe qualification-evidence contracts; deterministic fake multi-process adapters and hostile tests; default-disabled projection with all production capabilities false.
+Owner action: keep `gpt-5.6-sol` at xhigh for this security and distributed-systems block. No live database, credential, keychain, deployment, or GitHub merge authority is required for the effect-free foundation.
+Stop before: any real database or provider connection, production credential/key enrollment, owner approval issuance, live evidence collection, consumer construction, protected-reference access, scheduling, claim, lease, dispatch, execution, recurrence activation, native reads, DNS, Cloudflare, hosting, deployment, or external effect.
 ```
 
 ## Update rule
