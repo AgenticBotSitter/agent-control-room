@@ -68,8 +68,11 @@ export class ProjectWorkspaceReadServiceV1 {
 
   async read(inputValue: unknown): Promise<ProjectWorkspaceReadResultV1> {
     const input = parseExactProjectWorkspaceV1(zReadInput, inputValue) as { scope: AuthorizedProjectWorkspaceReadScopeV1; now: string };
-    const nowMs = Date.parse(input.now), grantedMs = Date.parse(input.scope.grantedAt);
-    if (grantedMs > nowMs || nowMs - grantedMs > MAX_SCOPE_AGE_MS) throw new ProjectWorkspaceContractErrorV1("invalid_read_scope");
+    const nowMs = Date.parse(input.now), grantedMs = Date.parse(input.scope.grantedAt), expiresMs = Date.parse(input.scope.expiresAt);
+    if (grantedMs > nowMs || nowMs - grantedMs > MAX_SCOPE_AGE_MS || expiresMs <= nowMs
+      || expiresMs <= grantedMs || expiresMs - grantedMs > MAX_SCOPE_AGE_MS) {
+      throw new ProjectWorkspaceContractErrorV1("invalid_read_scope");
+    }
     const registered = this.registry.find((entry) => sameIdentity(entry, input.scope));
     if (!registered) throw new ProjectWorkspaceContractErrorV1("scope_mismatch");
 

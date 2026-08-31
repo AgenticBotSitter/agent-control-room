@@ -269,8 +269,8 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | ID | Owner | Deliverable | Gate |
 |---|---|---|---|
 | CR12A-PILOT-000 | Codex | Shared navigable Project Workspace with real core deep links and retained project extensions | COMPLETE AND INTEGRATED — presentation-only synthetic pilot; no new authority |
-| CR12A-PILOT-010 | Codex | Protected project-scoped read composition, isolation, freshness, and honest unavailable states | COMPLETE LOCALLY — existing protected operator read port; no production connection |
-| CR12A-PILOT-015 | Codex | Protected project catalog provenance, revocation, and owner-session read-scope derivation | PILOT-010; no live session or configured catalog |
+| CR12A-PILOT-010 | Codex | Protected project-scoped read composition, isolation, freshness, and honest unavailable states | COMPLETE AND INTEGRATED — PR #177; existing protected operator read port; no production connection |
+| CR12A-PILOT-015 | Codex | Protected project catalog provenance, revocation, and owner-session read-scope derivation | COMPLETE LOCALLY — strict protected ports and disabled runtime; no live session or configured catalog |
 | CR12A-PILOT-020 | Codex + Owner | Owner-attended local pilot against an explicitly selected non-production data profile | OWNER; after PILOT-015 acceptance |
 | CR12A-PILOT-030 | Codex | Pilot findings, usability remediation, and go/no-go disposition for later hosted beta | PILOT-020 evidence |
 

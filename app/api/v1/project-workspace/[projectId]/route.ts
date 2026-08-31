@@ -1,12 +1,11 @@
-import { projects } from "@/src/fixtures/data";
-import { createPostgresClient } from "@/src/persistence/database";
 import {
-  OperatorSurfaceProjectWorkspaceReadSourceV1,
   ProjectWorkspaceContractErrorV1,
   ProjectWorkspaceReadServiceV1,
 } from "@/src/project-workspace/v1";
-import { DatabaseOperatorFleetReadSourceV1, OperatorSurfaceReadServiceV1, OperatorSurfaceStoreV1 } from "@/src/operator-surfaces/v1";
-import { ServiceIncidentStore } from "@/src/services/v1";
+import {
+  getProjectWorkspaceProtectedRuntimeV1,
+  type ProjectWorkspaceProtectedRuntimeV1,
+} from "@/app/project-workspace-protected-runtime";
 
 const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/;
 
@@ -14,46 +13,38 @@ function json(body: unknown, status: number): Response {
   return Response.json(body, { status, headers: { "cache-control": "no-store", "x-control-room-data-class": "protected-project-projection" } });
 }
 
-/** Protected project read. Tenant and workspace scope are resolved on the server and never accepted from query input. */
-export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }): Promise<Response> {
-  const actorId = request.headers.get("oai-authenticated-user-id");
-  if (!actorId || !safeId.test(actorId)) return json({ error: "authentication_required" }, 401);
-  const { projectId } = await context.params;
-  const project = projects.find((candidate) => candidate.id === projectId);
-  if (!project) return json({ error: "project_not_found" }, 404);
-  const tenantId = process.env.CONTROL_ROOM_TENANT_ID;
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!tenantId || !safeId.test(tenantId) || !databaseUrl) return json({ error: "protected_source_unavailable" }, 503);
-  const now = new Date().toISOString();
-  let close: (() => Promise<void>) | undefined;
-  try {
-    const database = createPostgresClient(databaseUrl);
-    close = database.close;
-    const operatorService = new OperatorSurfaceReadServiceV1(
-      new OperatorSurfaceStoreV1(database.client),
-      new ServiceIncidentStore(database.client),
-      new DatabaseOperatorFleetReadSourceV1(database.client),
-    );
-    const service = new ProjectWorkspaceReadServiceV1(
-      new OperatorSurfaceProjectWorkspaceReadSourceV1(operatorService),
-      [{ tenantId, workspaceId: project.source.workspaceId, projectId }],
-    );
-    const result = await service.read({
-      scope: { tenantId, workspaceId: project.source.workspaceId, projectId, actorId, grantedAt: now },
-      now,
-    });
-    if (result.state === "unavailable") return json({ error: result.code }, result.code === "project_not_found" ? 404 : 503);
-    return Response.json({ model: result.model }, {
-      headers: {
-        "cache-control": "no-store",
-        "x-control-room-contract": result.model.contractVersion,
-        "x-control-room-data-class": "protected-project-projection",
-      },
-    });
-  } catch (error) {
-    const code = error instanceof ProjectWorkspaceContractErrorV1 ? error.safeCode : "protected_source_unavailable";
-    return json({ error: code === "scope_mismatch" || code === "invalid_read_scope" ? code : "protected_source_unavailable" }, 503);
-  } finally {
-    if (close) await close().catch(() => undefined);
-  }
+function safeFailure(error: unknown): Response {
+  if (!(error instanceof ProjectWorkspaceContractErrorV1)) return json({ error: "protected_source_unavailable" }, 503);
+  if (error.safeCode === "authentication_required") return json({ error: "authentication_required" }, 401);
+  if (error.safeCode === "policy_denied") return json({ error: "project_read_forbidden" }, 403);
+  if (error.safeCode === "not_found" || error.safeCode === "catalog_revoked") return json({ error: "project_not_found" }, 404);
+  return json({ error: "protected_source_unavailable" }, 503);
 }
+
+/** Protected project read. HTTP input supplies only the selected project and opaque session credential. */
+export function createProjectWorkspaceProtectedReadHandlerV1(runtime?: ProjectWorkspaceProtectedRuntimeV1) {
+  return async function protectedProjectRead(request: Request, context: { params: Promise<{ projectId: string }> }): Promise<Response> {
+    if (!runtime) return json({ error: "protected_identity_boundary_unavailable" }, 503);
+    const { projectId } = await context.params;
+    if (!safeId.test(projectId)) return json({ error: "project_not_found" }, 404);
+    const now = new Date().toISOString();
+    try {
+      const scope = await runtime.scopeAuthority.authorize({ credential: request, projectId, now });
+      const result = await new ProjectWorkspaceReadServiceV1(runtime.readSource, [{
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        projectId: scope.projectId,
+      }]).read({ scope, now });
+      if (result.state === "unavailable") return json({ error: result.code }, result.code === "project_not_found" ? 404 : 503);
+      return Response.json({ model: result.model }, {
+        headers: {
+          "cache-control": "no-store",
+          "x-control-room-contract": result.model.contractVersion,
+          "x-control-room-data-class": "protected-project-projection",
+        },
+      });
+    } catch (error) { return safeFailure(error); }
+  };
+}
+
+export const GET = createProjectWorkspaceProtectedReadHandlerV1(getProjectWorkspaceProtectedRuntimeV1());

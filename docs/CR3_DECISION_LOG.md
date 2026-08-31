@@ -1902,3 +1902,39 @@ authentication or source unavailable. A separate protected catalog/session block
 **Reevaluate:** After PILOT-015 accepts catalog provenance, high-water/revocation behavior, and owner-session scope
 derivation, prepare one owner-attended non-production pilot packet. This ADR never authorizes a live login, catalog
 configuration, production database contact, write, approval, dispatch, or effect.
+
+**Integration amendment:** PR #177 merged PILOT-010 into `main` at
+`cb0ac3901aaf1c32a74237ffba91a933ee738961`. Post-merge CI run `33432880966` passed the complete repository gate in
+6m39s. Integration creates no configured identity, catalog, database, write, or effect authority.
+
+## ADR-120 — protected project identity requires session, catalog, high-water, and owner policy agreement
+
+**Decision:** A protected Project Workspace read scope is derived server-side only when four independent checks agree:
+a trusted session adapter supplies one exact, short-lived, read-only owner-session proof; a protected HMAC catalog binds
+the selected project to one tenant, workspace, and project type; an independently supplied high-water in a distinct HMAC
+key domain matches that catalog's exact revision and every project identity; and the existing security store resolves the
+proof to an active human identity with an active owner grant for the exact low-risk, effect-free read. The resulting
+internal scope binds the session and catalog evidence and expires after at most sixty seconds. It is never returned as a
+browser credential.
+
+**Why:** A URL, ordinary header, fixture registry, or application environment variable is caller-mintable or too weak to
+serve as project identity. Requiring exact agreement prevents a valid session from being redirected to another tenant or
+workspace, prevents a catalog rollback from restoring removed authority, and makes project and whole-catalog revocation
+terminal. Reusing the existing policy engine preserves one owner-role authority source without creating a policy write
+for every page read.
+
+**Alternatives rejected:** Trust an identity header; accept tenant or workspace from the browser; use the synthetic
+application registry as protected identity; trust a signed catalog without a separate high-water; allow revision gaps,
+project removal, identity remapping, or revocation reversal; let an operator grant satisfy the owner pilot; persist a
+policy decision for every page read; expose the derived scope to the browser; or configure a live adapter implicitly.
+
+**Trade-off:** The repository now contains the strict contracts and composition boundary but deliberately contains no
+real session adapter, protected catalog, durable high-water adapter, or runtime configuration. Owner grant revocation is
+rechecked for each request before its internal read scope is created; this block does not claim instantaneous revocation
+across the small transaction boundary. The disabled default is less convenient but prevents an unfinished pilot from
+silently falling back to spoofable identity or fixture truth.
+
+**Reevaluate:** CR12A-PILOT-020 may install one explicitly selected local non-production composition during an
+owner-attended read-only pilot. It must retain server-only catalog key custody, durable independent high-water storage,
+sanitized evidence, and the disabled production boundary. This ADR does not authorize credential access, live login,
+production data or host contact, project writes, approval, dispatch, execution, deployment, DNS, or any external effect.

@@ -6,7 +6,7 @@ type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respo
 export type ProjectWorkspaceProtectedDataStateV1 =
   | { state: "loading" }
   | { state: "available"; model: ProjectWorkspaceReadModelV1 }
-  | { state: "unavailable"; code: "authentication_required" | "project_not_found" | "protected_source_unavailable" | "invalid_response" | "request_failed" };
+  | { state: "unavailable"; code: "authentication_required" | "project_read_forbidden" | "project_not_found" | "protected_source_unavailable" | "invalid_response" | "request_failed" };
 
 const safeProjectId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/;
 
@@ -34,6 +34,7 @@ export async function fetchProjectWorkspaceReadModelV1(projectId: string, fetche
   try {
     const response = await fetcher(`/api/v1/project-workspace/${encodeURIComponent(projectId)}`, { credentials: "same-origin", cache: "no-store" });
     if (response.status === 401) return { state: "unavailable", code: "authentication_required" };
+    if (response.status === 403) return { state: "unavailable", code: "project_read_forbidden" };
     if (response.status === 404) return { state: "unavailable", code: "project_not_found" };
     if (!response.ok) return { state: "unavailable", code: "protected_source_unavailable" };
     const body: unknown = await response.json();

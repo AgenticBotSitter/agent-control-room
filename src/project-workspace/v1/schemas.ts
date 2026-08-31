@@ -8,9 +8,16 @@ import {
   serviceIncidentProjectionSchemaV1,
   serviceProjectionSchemaV1,
 } from "../../operator-surfaces/v1/validators";
-import { PROJECT_WORKSPACE_CONTRACT_V1, PROJECT_WORKSPACE_READ_CONTRACT_V1 } from "./types";
+import {
+  PROJECT_WORKSPACE_CATALOG_CONTRACT_V1,
+  PROJECT_WORKSPACE_CATALOG_HIGH_WATER_CONTRACT_V1,
+  PROJECT_WORKSPACE_CONTRACT_V1,
+  PROJECT_WORKSPACE_OWNER_SESSION_CONTRACT_V1,
+  PROJECT_WORKSPACE_READ_CONTRACT_V1,
+} from "./types";
 
 export const projectWorkspaceDigestSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+export const projectWorkspaceAuthTagSchemaV1 = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
 export const projectWorkspaceTimeSchemaV1 = z.string().datetime({ offset: true });
 export const projectWorkspaceSafeIdSchemaV1 = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 export const projectWorkspaceSafeCodeSchemaV1 = z.string().min(1).max(120).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -121,6 +128,106 @@ export const projectWorkspaceReadIdentitySchemaV1 = z.object({
 export const authorizedProjectWorkspaceReadScopeSchemaV1 = projectWorkspaceReadIdentitySchemaV1.extend({
   actorId: projectWorkspaceSafeIdSchemaV1,
   grantedAt: projectWorkspaceTimeSchemaV1,
+  expiresAt: projectWorkspaceTimeSchemaV1,
+  sessionDigest: projectWorkspaceDigestSchemaV1,
+  catalogId: projectWorkspaceSafeIdSchemaV1,
+  catalogRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  catalogDigest: projectWorkspaceDigestSchemaV1,
+  catalogCheckpointDigest: projectWorkspaceDigestSchemaV1,
+}).strict();
+
+export const protectedProjectCatalogEntrySchemaV1 = projectWorkspaceReadIdentitySchemaV1.extend({
+  projectType: projectWorkspaceSafeCodeSchemaV1,
+  state: z.enum(["active", "revoked"]),
+  recordedAt: projectWorkspaceTimeSchemaV1,
+}).strict();
+
+export const protectedProjectCatalogSchemaV1 = z.object({
+  contractVersion: z.literal(PROJECT_WORKSPACE_CATALOG_CONTRACT_V1),
+  catalogId: projectWorkspaceSafeIdSchemaV1,
+  tenantId: projectWorkspaceSafeIdSchemaV1,
+  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  previousCatalogDigest: projectWorkspaceDigestSchemaV1.nullable(),
+  state: z.enum(["active", "revoked"]),
+  sourceKind: z.literal("protected_server_catalog"),
+  sourceIdentityDigest: projectWorkspaceDigestSchemaV1,
+  recordedAt: projectWorkspaceTimeSchemaV1,
+  entries: z.array(protectedProjectCatalogEntrySchemaV1).min(1).max(1_000),
+  grantsApproval: z.literal(false),
+  grantsNetworkAuthority: z.literal(false),
+  grantsCommandAuthority: z.literal(false),
+  grantsLeaseAuthority: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+  catalogDigest: projectWorkspaceDigestSchemaV1,
+  catalogAuthTag: projectWorkspaceAuthTagSchemaV1,
+}).strict().superRefine((value, context) => {
+  if ((value.revision === 1) !== (value.previousCatalogDigest === null)) {
+    context.addIssue({ code: "custom", message: "catalog origin and prior digest must agree" });
+  }
+  if (value.entries.some((entry) => entry.tenantId !== value.tenantId || Date.parse(entry.recordedAt) > Date.parse(value.recordedAt))) {
+    context.addIssue({ code: "custom", message: "catalog entries must share tenant and chronology" });
+  }
+  const ids = value.entries.map((entry) => entry.projectId);
+  if (new Set(ids).size !== ids.length || ids.some((id, index) => index > 0 && ids[index - 1]! >= id)) {
+    context.addIssue({ code: "custom", message: "catalog projects must be unique and sorted" });
+  }
+  if (value.state === "revoked" && value.entries.some((entry) => entry.state !== "revoked")) {
+    context.addIssue({ code: "custom", message: "revoked catalog cannot expose active projects" });
+  }
+  if (value.state === "active" && !value.entries.some((entry) => entry.state === "active")) {
+    context.addIssue({ code: "custom", message: "active catalog requires an active project" });
+  }
+});
+
+export const protectedProjectCatalogHighWaterProjectSchemaV1 = projectWorkspaceReadIdentitySchemaV1.extend({
+  projectType: projectWorkspaceSafeCodeSchemaV1,
+  identityDigest: projectWorkspaceDigestSchemaV1,
+  state: z.enum(["active", "revoked"]),
+}).strict();
+
+export const protectedProjectCatalogHighWaterSchemaV1 = z.object({
+  contractVersion: z.literal(PROJECT_WORKSPACE_CATALOG_HIGH_WATER_CONTRACT_V1),
+  checkpointId: projectWorkspaceSafeIdSchemaV1,
+  catalogId: projectWorkspaceSafeIdSchemaV1,
+  tenantId: projectWorkspaceSafeIdSchemaV1,
+  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  catalogDigest: projectWorkspaceDigestSchemaV1,
+  catalogState: z.enum(["active", "revoked"]),
+  sourceIdentityDigest: projectWorkspaceDigestSchemaV1,
+  projects: z.array(protectedProjectCatalogHighWaterProjectSchemaV1).min(1).max(1_000),
+  recordedAt: projectWorkspaceTimeSchemaV1,
+  previousCheckpointDigest: projectWorkspaceDigestSchemaV1.nullable(),
+  checkpointDigest: projectWorkspaceDigestSchemaV1,
+  checkpointAuthTag: projectWorkspaceAuthTagSchemaV1,
+}).strict().superRefine((value, context) => {
+  if ((value.revision === 1) !== (value.previousCheckpointDigest === null)) {
+    context.addIssue({ code: "custom", message: "checkpoint origin and prior digest must agree" });
+  }
+  const ids = value.projects.map((entry) => entry.projectId);
+  if (new Set(ids).size !== ids.length || ids.some((id, index) => index > 0 && ids[index - 1]! >= id)
+    || value.projects.some((entry) => entry.tenantId !== value.tenantId)) {
+    context.addIssue({ code: "custom", message: "checkpoint projects must be unique, sorted, and tenant-bound" });
+  }
+  if (value.catalogState === "revoked" && value.projects.some((entry) => entry.state !== "revoked")) {
+    context.addIssue({ code: "custom", message: "revoked checkpoint cannot retain active projects" });
+  }
+});
+
+export const projectWorkspaceVerifiedOwnerSessionSchemaV1 = z.object({
+  contractVersion: z.literal(PROJECT_WORKSPACE_OWNER_SESSION_CONTRACT_V1),
+  tenantId: projectWorkspaceSafeIdSchemaV1,
+  provider: projectWorkspaceSafeCodeSchemaV1,
+  subject: z.string().min(1).max(320).refine((value) => !/[\r\n]/.test(value), "session subject must be one line"),
+  sessionIdDigest: projectWorkspaceDigestSchemaV1,
+  authenticatedAt: projectWorkspaceTimeSchemaV1,
+  expiresAt: projectWorkspaceTimeSchemaV1,
+  readOnly: z.literal(true),
+  grantsApproval: z.literal(false),
+  grantsNetworkAuthority: z.literal(false),
+  grantsCommandAuthority: z.literal(false),
+  grantsLeaseAuthority: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+  sessionDigest: projectWorkspaceDigestSchemaV1,
 }).strict();
 
 export const projectWorkspaceReadModelSchemaV1 = z.object({

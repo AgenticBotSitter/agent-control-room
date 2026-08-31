@@ -1,6 +1,12 @@
 export type ProjectWorkspaceSafeCodeV1 =
   | "invalid_input"
   | "invalid_read_scope"
+  | "authentication_required"
+  | "session_unavailable"
+  | "catalog_unavailable"
+  | "catalog_rollback"
+  | "catalog_revoked"
+  | "policy_denied"
   | "digest_mismatch"
   | "scope_mismatch"
   | "redaction_rejected"
