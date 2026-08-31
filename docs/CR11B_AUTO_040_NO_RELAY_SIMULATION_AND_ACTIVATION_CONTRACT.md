@@ -1,6 +1,6 @@
 # CR11B-AUTO-040 No-Relay Simulation and Protected Activation Contract
 
-Status: second remediation candidate after split first-remediation review; different-agent security re-review required
+Status: accepted for exact effect-free commit `fb549ebbcf5a2cbd9ca3d3cbef6842578e280074`; production activation remains blocked
 
 Date: 2026-08-30
 
