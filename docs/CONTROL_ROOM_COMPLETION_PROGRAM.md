@@ -264,6 +264,15 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | CR11B-AUTO-100 | Codex + independent review | Effect-free Hostinger PostgreSQL readiness packet joining operations and automatic-work production gates | COMPLETE, INDEPENDENTLY ACCEPTED, AND INTEGRATED — exact implementation `34750ed` retains 3 repository contracts and 36 production blockers; PR #173 and final `main` CI passed |
 | CR11B-AUTO-110 | Codex + Owner + independent review | Later owner-authorized native PostgreSQL rehearsal, sanitized evidence, and verified disposition | EFFECT-FREE PACKET COMPLETE — exact remediation `f3b6449` independently accepted after closing caller-mintable owner provenance; native rehearsal remains blocked by all 36 live gates and a fresh strong-factor owner effect window |
 
+## CR-12A — local operator pilot
+
+| ID | Owner | Deliverable | Gate |
+|---|---|---|---|
+| CR12A-PILOT-000 | Codex | Shared navigable Project Workspace with real core deep links and retained project extensions | COMPLETE LOCALLY — presentation-only synthetic pilot; no new authority |
+| CR12A-PILOT-010 | Codex | Protected project-scoped read composition, isolation, freshness, and honest unavailable states | PILOT-000; no production connection |
+| CR12A-PILOT-020 | Codex + Owner | Owner-attended local pilot against an explicitly selected non-production data profile | OWNER; after protected read acceptance |
+| CR12A-PILOT-030 | Codex | Pilot findings, usability remediation, and go/no-go disposition for later hosted beta | PILOT-020 evidence |
+
 ## Block acceptance and promotion
 
 Every bot contribution passes capsule intake and focused tests. Every integration branch then runs, as applicable:

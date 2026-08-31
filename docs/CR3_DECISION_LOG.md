@@ -1846,3 +1846,29 @@ original implementation, then accepted exact remediation commit `f3b64498c2313c8
 fully re-digested direction forks, 53 authority forks, six lineage forks, and nested accessor and Proxy probes all fail
 closed. `AUTO110-IR-001` is closed with no new finding. Acceptance is limited to the exact effect-free repository
 snapshot; all 36 live gates and the fresh strong-factor owner effect-window requirement remain blocking.
+
+**Integration amendment:** PR #175 merged the accepted AUTO-110 history into `main` at
+`16c368983790e5a8fd6a24e3c31441d4d23efdf3`. Post-merge CI run `33422467720` passed the complete repository gate in
+8m12s. Integration does not qualify any live gate or authorize the native rehearsal.
+
+## ADR-118 — Project Workspace navigation is a real read-only routing boundary
+
+**Decision:** Every registered project uses one shared Project Workspace shell and the nine exact core sections defined
+by the accepted v1 contract are real deep-linkable routes. Project extensions are composed inside that shell instead of
+replacing it. Every route filters synthetic records to the selected project, exposes source and freshness truth, and
+retains a visible negative-authority statement. Missing authenticated data produces an explicit unavailable state.
+
+**Why:** A project view is useful only when an owner can move predictably between the project inbox, work, agents,
+automations, evidence, reviews, activity, settings, and specialist tools. Keeping those routes behind one strict snapshot
+also prevents each project adapter from inventing a different navigation or authority model.
+
+**Alternatives rejected:** Keep a single long project page; render dead navigation labels; let ABS News or Wayfarer own
+the common project structure; show cross-project fixture records; invent an artifact list; or let a route transition imply
+approval, dispatch, command, lease, execution, or network authority.
+
+**Trade-off:** The first pilot still uses clearly labeled synthetic fixtures, so the navigation can be evaluated before
+an authenticated read composition exists. Some sections honestly show an empty or unavailable state. The next block must
+replace fixture-only summaries through existing protected read ports without turning the page into a new write surface.
+
+**Reevaluate:** After CR12A-PILOT-010 proves tenant/workspace/project isolation and stale/unavailable behavior, run one
+owner-attended non-production local pilot. Production data, hosting, writes, and effects remain separate later decisions.

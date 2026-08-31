@@ -15,7 +15,7 @@ function label(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-export function AbsNewsWorkspace({ fixture }: { fixture: AbsNewsSyntheticWorkspaceV1 }) {
+export function AbsNewsWorkspace({ fixture, showNavigation = true }: { fixture: AbsNewsSyntheticWorkspaceV1; showNavigation?: boolean }) {
   const [state, dispatch] = useReducer(
     (current: AbsNewsWorkspaceUiStateV1, action: AbsNewsWorkspaceUiActionV1) => reduceAbsNewsWorkspaceUiV1(fixture, current, action),
     undefined,
@@ -33,13 +33,13 @@ export function AbsNewsWorkspace({ fixture }: { fixture: AbsNewsSyntheticWorkspa
 
   return (
     <section className="abs-workspace section-block" aria-label="Synthetic ABS AI and Tech News project workspace">
-      <nav className="project-workspace-nav" aria-label="Project workspace navigation">
+      {showNavigation ? <nav className="project-workspace-nav" aria-label="Project workspace navigation">
         {fixture.workspace.sections.map((section, index) => (
           <button key={section.sectionId} type="button" className={index === 0 ? "current" : "planned"} aria-current={index === 0 ? "page" : undefined}>
             {section.label}{section.itemCount !== undefined ? <small>{section.label === "Research Queue" ? state.drafts.length : section.itemCount}</small> : null}
           </button>
         ))}
-      </nav>
+      </nav> : null}
 
       <div className="abs-workspace-banner">
         <div><p className="eyebrow">Daily brief · Local synthetic workspace</p><h2>What matters in AI and tech today</h2><p>Verified discoveries can prepare bounded agent work-order drafts. Nothing on this screen dispatches, fetches, installs, publishes, or authorizes an effect.</p></div>

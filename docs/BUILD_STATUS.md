@@ -86,10 +86,22 @@
 | CR11B-AUTO-080 disposable hosted qualification preparation | Complete for exact independently accepted effect-free commit `091ff11` | Three remediations close raw-key cleanup, mutable binary metadata, and keyed-HMAC capability escape; every live capability remains false |
 | CR11B-AUTO-090 Hostinger PostgreSQL production target | Complete and integrated through PR #172 | One self-managed private PostgreSQL primary is fixed as sole global authority; AWS RDS, production PGlite, public DB access, and R2 state are denied; exact target `fd29af5`; see `CR11B_AUTO_090_ACCEPTANCE.md` |
 | CR11B-AUTO-100 Hostinger PostgreSQL readiness packet | Independently accepted and integrated through PR #173 | Exact implementation `34750ed`; all 39 gates remain source-separated; 3 repository contracts are present and 36 production gates block host contact; accepted re-review SHA-256 `aa2116b8...c0a9`; final `main` CI passed; see `CR11B_AUTO_100_ACCEPTANCE.md` |
-| CR11B-AUTO-110 owner-directed PostgreSQL rehearsal packet | Effect-free packet independently accepted; native rehearsal blocked | Exact remediation `f3b6449` closes caller-mintable owner provenance; AUTO-100 lineage, all 36 blockers, one-attempt/30-minute/1-MiB ceilings, mandatory rollback and separate cleanup remain; every live capability is false; see `CR11B_AUTO_110_ACCEPTANCE.md` |
+| CR11B-AUTO-110 owner-directed PostgreSQL rehearsal packet | Effect-free packet independently accepted and integrated through PR #175; native rehearsal blocked | Exact remediation `f3b6449` closes caller-mintable owner provenance; merge `16c3689` and post-merge CI run `33422467720` passed; all 36 live blockers remain; see `CR11B_AUTO_110_ACCEPTANCE.md` |
+| CR12A-PILOT-000 navigable Project Workspaces | Complete locally for the presentation-only pilot snapshot | Every registered project now has one shared shell and working Overview, Inbox, Work, Agents, Automations, Files/artifacts, Reviews, Activity, and Settings deep links; ABS News and Wayfarer retain their project-specific views; see `CR12A_PILOT_000_PROJECT_WORKSPACE_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
+
+CR12A-PILOT-000 turns the accepted Project Workspace contract into one coherent local operator experience. The project
+header, navigation, counts, source status, and negative-authority boundary are shared across every registered project.
+Each core section is now a real deep-linkable route with project-filtered synthetic data, while ABS News and Wayfarer
+keep their existing project extensions inside the same shell. The artifacts page explicitly reports that no authenticated
+index is connected instead of inventing one. Desktop and 390-pixel browser checks pass without page overflow; the long
+project navigation scrolls inside its own bar. This tranche remains presentation-only and introduces no database,
+approval, command, dispatch, network, credential, or external-effect path. The focused gate passes 19/19, registered
+pretests 769/769, core tests 414/416 with zero failures and two intentional platform skips, and public post-tests 52/52.
+Typecheck, full lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, desktop and
+390-pixel browser checks, macOS stage zero, and whitespace validation pass.
 
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
@@ -384,13 +396,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-110-INTEGRATION — publish the accepted effect-free packet and require ordinary main-targeting CI
+Block: CR12A-PILOT-010 — replace fixture-only Project Workspace summaries with one protected project-scoped read composition
 Set model: gpt-5.6-terra
 Set reasoning effort: high
-Why: the security design and different-agent review are complete. The remaining work is bounded GitHub transfer, full CI verification, owner-approved merge, and post-merge confirmation without widening production authority.
-Expected output: one private main-targeting PR containing the exact accepted implementation, both immutable review reports, and the acceptance checkpoint; green full CI before merge and green post-merge main verification.
-Owner action: approve the exact PR merge after CI passes. No protected host value or live effect decision is requested.
-Stop before: host or provider contact, protected-reference or credential access, installation, configuration, service control, any network/database/process call, migration, backup/restore, raw evidence, public endpoint, consumer activation, dispatch, execution, DNS, Cloudflare, hosting deployment, or external effect.
+Why: the navigation and presentation boundary are now established. The next work is a substantial but bounded application-integration tranche: compose existing authenticated Control Room read services into project-scoped summaries and preserve an explicit fixture-only development mode.
+Expected output: one strict project-read view model, tenant/workspace/project isolation tests, honest unavailable and stale states, server-rendered Project Workspace sections backed by existing protected read ports, and no new write or effect authority.
+Owner action: none for repository implementation. A later native or hosted pilot remains separately owner-controlled.
+Stop before: production database or host contact, new credentials, live collection, project writes, approval, dispatch, command execution, provider calls, deployment, DNS, Cloudflare, or any external effect.
 ```
 
 ## Update rule
