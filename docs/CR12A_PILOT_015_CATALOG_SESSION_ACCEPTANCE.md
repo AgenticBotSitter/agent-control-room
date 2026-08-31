@@ -50,10 +50,10 @@ revoked, forbidden, malformed, or unavailable states are mapped to bounded no-st
 
 ## Verification
 
-- dedicated CR12A gate: 45/45 passing;
+- dedicated CR12A gate: 46/46 passing;
 - registered pretests: 769/769 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
-- public and CR12A post-tests: 78/78 passing;
+- public and CR12A post-tests: 79/79 passing;
 - TypeScript check and full lint: passing;
 - production build and rendered-route checks: passing, including the protected project API route and 2/2 rendered pages;
 - database verification: all 27 migrations and 97 PostgreSQL tables;

@@ -101,8 +101,8 @@ one exact read-only owner proof, and the existing security store must resolve th
 active owner grant before deriving a maximum sixty-second internal read scope. The browser supplies only the project
 path and opaque Request. Caller identity, tenant, and workspace headers cannot activate the route. The repository ships
 no real session, catalog, high-water, database, or deployment composition, so the default endpoint fails closed until the
-owner-attended local pilot. The focused gate passes 45/45, registered pretests 769/769, core tests 414/416 with zero
-failures and two intentional platform skips, and public plus CR12A post-tests 78/78. Typecheck, lint, production build,
+owner-attended local pilot. The focused gate passes 46/46, registered pretests 769/769, core tests 414/416 with zero
+failures and two intentional platform skips, and public plus CR12A post-tests 79/79. Typecheck, lint, production build,
 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and whitespace validation pass. No
 production system, credential, provider, or host was contacted.
 

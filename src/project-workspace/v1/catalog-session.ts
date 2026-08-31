@@ -1,6 +1,6 @@
 import { createHmac, createSecretKey, timingSafeEqual, type KeyObject } from "node:crypto";
 import { canonicalJson, SecurityStore, sha256Digest, type VerifiedAuthentication } from "../../security";
-import { isHostProxyV1 } from "../../security/host-value";
+import { exactHostDataSnapshotV1, exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
 import { ProjectWorkspaceContractErrorV1 } from "./errors";
 import { exactProjectWorkspaceJsonV1, parseExactProjectWorkspaceV1 } from "./exact";
 import {
@@ -28,10 +28,11 @@ type CheckpointUnsignedV1 = Omit<ProtectedProjectCatalogHighWaterV1, "checkpoint
 type SessionUnsignedV1 = Omit<ProjectWorkspaceVerifiedOwnerSessionV1, "sessionDigest">;
 
 function protectedKey(value: Uint8Array): KeyObject {
-  if (!(value instanceof Uint8Array) || isHostProxyV1(value) || value.byteLength < 32 || value.byteLength > 64) {
-    throw new ProjectWorkspaceContractErrorV1("invalid_input");
-  }
-  return createSecretKey(Buffer.from(value));
+  const observed = exactHostUint8ArrayV1(value, 64);
+  if (!observed || observed.byteLength < 32) throw new ProjectWorkspaceContractErrorV1("invalid_input");
+  const copy = observed.copy();
+  try { return createSecretKey(copy); }
+  finally { copy.fill(0); }
 }
 
 function authTag(value: unknown, key: KeyObject): string {
@@ -113,13 +114,15 @@ export function buildProtectedProjectCatalogHighWaterV1(input: {
   checkpointId: string;
   recordedAt: string;
 }, catalogKeyBytes: Uint8Array, highWaterKeyBytes: Uint8Array): ProtectedProjectCatalogHighWaterV1 {
+  const captured = exactHostDataSnapshotV1(input, ["catalog", "checkpointId", "recordedAt"], ["prior"]);
+  if (!captured) throw new ProjectWorkspaceContractErrorV1("invalid_input");
   const catalogKey = protectedKey(catalogKeyBytes), highWaterKey = protectedKey(highWaterKeyBytes);
-  const catalog = parseProtectedProjectCatalogV1(input.catalog, catalogKey);
-  const prior = input.prior ? parseProtectedProjectCatalogHighWaterV1(input.prior, highWaterKey) : undefined;
+  const catalog = parseProtectedProjectCatalogV1(captured.catalog, catalogKey);
+  const prior = captured.prior ? parseProtectedProjectCatalogHighWaterV1(captured.prior, highWaterKey) : undefined;
   assertCatalogTransition(prior, catalog);
   const material: CheckpointUnsignedV1 = {
     contractVersion: PROJECT_WORKSPACE_CATALOG_HIGH_WATER_CONTRACT_V1,
-    checkpointId: projectWorkspaceSafeIdSchemaV1.parse(input.checkpointId),
+    checkpointId: projectWorkspaceSafeIdSchemaV1.parse(captured.checkpointId),
     catalogId: catalog.catalogId,
     tenantId: catalog.tenantId,
     revision: catalog.revision,
@@ -127,7 +130,7 @@ export function buildProtectedProjectCatalogHighWaterV1(input: {
     catalogState: catalog.state,
     sourceIdentityDigest: catalog.sourceIdentityDigest,
     projects: catalog.entries.map((entry) => ({ ...projectIdentity(entry), identityDigest: projectIdentityDigest(entry), state: entry.state })),
-    recordedAt: projectWorkspaceTimeSchemaV1.parse(input.recordedAt),
+    recordedAt: projectWorkspaceTimeSchemaV1.parse(captured.recordedAt),
     previousCheckpointDigest: prior?.checkpointDigest ?? null,
   };
   if (Date.parse(material.recordedAt) < Date.parse(catalog.recordedAt)) throw new ProjectWorkspaceContractErrorV1("invalid_input");
@@ -203,18 +206,23 @@ export class InMemoryProjectWorkspaceCatalogHighWaterStoreV1 implements ProjectW
 export class ProjectWorkspaceProtectedCatalogAuthorityV1 {
   readonly #catalogKey: KeyObject;
   readonly #highWaterKey: KeyObject;
+  private readonly expected: Readonly<{ catalogId: string; tenantId: string; sourceIdentityDigest: string }>;
   constructor(
     private readonly source: ProjectWorkspaceProtectedCatalogSourceV1,
     private readonly highWater: ProjectWorkspaceCatalogHighWaterStoreV1,
-    private readonly expected: { catalogId: string; tenantId: string; sourceIdentityDigest: string },
-    keys: { catalog: Uint8Array; highWater: Uint8Array },
+    expectedValue: unknown,
+    catalogKeyBytes: Uint8Array,
+    highWaterKeyBytes: Uint8Array,
   ) {
-    this.#catalogKey = protectedKey(keys.catalog);
-    this.#highWaterKey = protectedKey(keys.highWater);
-    projectWorkspaceSafeIdSchemaV1.parse(expected.catalogId);
-    projectWorkspaceSafeIdSchemaV1.parse(expected.tenantId);
-    if (!/^sha256:[a-f0-9]{64}$/.test(expected.sourceIdentityDigest)) throw new ProjectWorkspaceContractErrorV1("invalid_input");
-    this.expected = Object.freeze({ ...expected });
+    const expected = exactHostDataSnapshotV1(expectedValue, ["catalogId", "tenantId", "sourceIdentityDigest"]);
+    if (!expected) throw new ProjectWorkspaceContractErrorV1("invalid_input");
+    this.#catalogKey = protectedKey(catalogKeyBytes);
+    this.#highWaterKey = protectedKey(highWaterKeyBytes);
+    const catalogId = projectWorkspaceSafeIdSchemaV1.parse(expected.catalogId);
+    const tenantId = projectWorkspaceSafeIdSchemaV1.parse(expected.tenantId);
+    const sourceIdentityDigest = typeof expected.sourceIdentityDigest === "string" ? expected.sourceIdentityDigest : "";
+    if (!/^sha256:[a-f0-9]{64}$/.test(sourceIdentityDigest)) throw new ProjectWorkspaceContractErrorV1("invalid_input");
+    this.expected = Object.freeze({ catalogId, tenantId, sourceIdentityDigest });
   }
 
   async resolve(projectId: string, now: string): Promise<{

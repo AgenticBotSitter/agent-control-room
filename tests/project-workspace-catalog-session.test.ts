@@ -92,7 +92,8 @@ function catalogBoundary(initial = catalog()) {
     { read: async () => { calls += 1; return current; } },
     highWater,
     { catalogId: initial.catalogId, tenantId, sourceIdentityDigest },
-    { catalog: key, highWater: highWaterKey },
+    key,
+    highWaterKey,
   );
   return { authority, highWater, checkpoint, set(value: unknown) { current = value; }, calls: () => calls };
 }
@@ -234,4 +235,27 @@ test("CR12A-PILOT-015 catalog builder retains a complete sorted identity high-wa
   assert.deepEqual(checkpoint.projects.map((entry) => [entry.projectId, entry.workspaceId, entry.projectType, entry.state]),
     [[projectId, workspaceId, "project.test", "active"]]);
   assert.equal(checkpoint.catalogDigest, first.catalogDigest);
+});
+
+test("CR12A-PILOT-015 protected configuration rejects key subclasses, Proxies, and accessor-bearing setup", () => {
+  let traps = 0;
+  class KeySubclass extends Uint8Array {}
+  const first = catalog();
+  const { catalogDigest: _digest, catalogAuthTag: _tag, ...unsigned } = first;
+  void _digest; void _tag;
+  assert.throws(() => buildProtectedProjectCatalogV1(unsigned, new KeySubclass(32)), ProjectWorkspaceContractErrorV1);
+  const proxyKey = new Proxy(new Uint8Array(32), { get() { traps += 1; throw new Error("trap"); } });
+  assert.throws(() => buildProtectedProjectCatalogV1(unsigned, proxyKey), ProjectWorkspaceContractErrorV1);
+  const hostileInput = new Proxy({ catalog: first, checkpointId: "checkpoint.hostile", recordedAt: authenticatedAt }, {
+    ownKeys() { traps += 1; throw new Error("trap"); },
+  });
+  assert.throws(() => buildProtectedProjectCatalogHighWaterV1(hostileInput, key, highWaterKey), ProjectWorkspaceContractErrorV1);
+  const store = new InMemoryProjectWorkspaceCatalogHighWaterStoreV1(highWaterKey, { testOnly: true });
+  const hostileExpected = new Proxy({ catalogId: first.catalogId, tenantId, sourceIdentityDigest }, {
+    ownKeys() { traps += 1; throw new Error("trap"); },
+  });
+  assert.throws(() => new ProjectWorkspaceProtectedCatalogAuthorityV1(
+    { read: async () => first }, store, hostileExpected, key, highWaterKey,
+  ), ProjectWorkspaceContractErrorV1);
+  assert.equal(traps, 0);
 });
