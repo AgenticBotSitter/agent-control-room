@@ -1666,3 +1666,13 @@ asked for a new exact authorization naming the disposable provider/resources, pr
 ceilings, retained evidence, and cleanup. Any change to provider, resources, operations, ceilings, evidence, or cleanup
 requires a new packet and signature. Production resources, consumer activation, and public deployment remain outside
 AUTO-080.
+
+**First-review amendment:** Independent review rejected exact candidate
+`85199ab146c8362a216dc9b2cdd3285efc3008b7`, tree `99bc9a386b234c7bb937a53d5074f2315d0b2b15`, in immutable report
+SHA-256 `343da8c163bda9d437d3b850186a4a6b3623b9c255b9b9ab3eec5deaaf532f8c`. Both request-key cleanup paths called ambient
+`Uint8Array.prototype.fill`, so post-load replacement could execute caller behavior, retain the private copied HMAC key,
+and prevent erasure. The first remediation verifies the captured fill descriptor before any exported AUTO-080 work and
+wipes complete copied backing stores through the host-value boundary's captured native intrinsic. A hostile regression
+requires method drift to fail closed before the substitute executes, proves the captured primitive zeros a complete
+buffer, restores the runtime, and re-verifies request replay, projection, and negative authority. A different independent
+reviewer must accept the exact remediation; no rejection, fix, or test grants live qualification or effect authority.

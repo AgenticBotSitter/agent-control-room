@@ -1,6 +1,6 @@
 # CR11B-AUTO-080 Disposable Hosted Qualification Preparation Contract
 
-Status: effect-free candidate implemented; independent review required before acceptance
+Status: first candidate rejected; first remediation requires a different independent re-review
 
 Date: 2026-08-30
 
@@ -111,3 +111,16 @@ be relabelled as that authority.
 An independent reviewer must verify the exact source chain, fixed operations and blockers, request ceilings, fail-closed
 chronology and substitution behavior, accessor/Proxy rejection without caller behavior, sanitized projection, and the
 absence of any live-effect path. Any finding keeps AUTO-080 open and no live attempt may begin.
+
+## First review and remediation
+
+The first independent review rejected exact candidate commit `85199ab146c8362a216dc9b2cdd3285efc3008b7`, tree
+`99bc9a386b234c7bb937a53d5074f2315d0b2b15`, in immutable report SHA-256
+`343da8c163bda9d437d3b850186a4a6b3623b9c255b9b9ab3eec5deaaf532f8c`.
+
+`AUTO080-IR-001` showed that ambient typed-array fill controlled both private request-key cleanup paths. The first
+remediation checks the exact captured fill descriptor before any exported AUTO-080 work and wipes each complete copied
+backing store only through the host-value boundary's captured native intrinsic. The hostile regression substitutes fill
+after module load, requires zero hostile calls and no retained receiver, demonstrates captured full-buffer erasure,
+restores the descriptor, and proves unchanged request replay, projection, and negative authority. Only a different
+independent reviewer can accept the exact remediation commit.

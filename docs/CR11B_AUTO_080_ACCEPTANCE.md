@@ -1,6 +1,6 @@
 # CR11B-AUTO-080 Acceptance Record
 
-Status: effect-free candidate implemented; independent review pending
+Status: first candidate rejected; first remediation implemented; different independent re-review required
 
 Date: 2026-08-30
 
@@ -29,9 +29,9 @@ contact, cleanup, live qualification, production activation, dispatch, execution
 
 ## Candidate verification
 
-- focused AUTO-080 tests: 9/9 passing;
-- combined CR11B tests: 146/146 passing;
-- registered pretests: 728/728 passing;
+- focused AUTO-080 tests: 10/10 passing;
+- combined CR11B tests: 147/147 passing;
+- registered pretests: 729/729 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -47,6 +47,22 @@ Producer tests cannot accept this boundary. A different independent reviewer mus
 rerun the focused and combined gates, attack source substitution, re-signing, chronology, strict schema, projection,
 accessor/Proxy, and mutable-runtime seams, confirm that no live-effect path exists, and preserve a sanitized immutable
 report. Any finding keeps AUTO-080 open.
+
+## First review disposition and remediation
+
+The first independent review rejected exact candidate commit `85199ab146c8362a216dc9b2cdd3285efc3008b7`, tree
+`99bc9a386b234c7bb937a53d5074f2315d0b2b15`. The unchanged report is
+`docs/reviews/CR11B_AUTO_080_INDEPENDENT_REVIEW.md`, SHA-256
+`343da8c163bda9d437d3b850186a4a6b3623b9c255b9b9ab3eec5deaaf532f8c`.
+
+Finding `AUTO080-IR-001` proved that both request-key cleanup paths used ambient
+`Uint8Array.prototype.fill`. A post-load replacement could execute caller behavior, retain the private copied HMAC key,
+and prevent erasure. The first remediation captures the exact typed-array fill identity, rejects drift before source or
+request work, and erases private copies through the repository host-value boundary's captured native intrinsic. Its
+hostile regression replaces the ambient method after module load, requires builder and parser to fail closed with zero
+hostile calls and no retained receiver, directly proves the captured erasure primitive zeros a complete backing store,
+restores the descriptor, and re-verifies exact request replay, safe projection, and negative authority. A different
+independent reviewer must accept the exact remediation commit.
 
 ## Negative authority
 

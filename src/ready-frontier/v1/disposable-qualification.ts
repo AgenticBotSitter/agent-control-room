@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { hmacSha256Tag, sha256Digest } from "../../security";
-import { exactHostUint8ArrayV1 } from "../../security/host-value";
+import { exactHostUint8ArrayV1, wipeHostUint8ArrayV1 } from "../../security/host-value";
 import {
   READY_FRONTIER_ACCEPTED_AUTO070_COMMIT_V1,
   READY_FRONTIER_ACCEPTED_AUTO070_REVIEW_SHA256_V1,
@@ -27,6 +27,10 @@ import { readyFrontierProductionCustodyScenarioCodesV1 } from "./production-cust
 const objectFreezeV1 = Object.freeze;
 const objectIsFrozenV1 = Object.isFrozen;
 const objectValuesV1 = Object.values;
+const objectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
+const uint8ArrayPrototypeV1 = Uint8Array.prototype;
+const typedArrayPrototypeV1 = Object.getPrototypeOf(uint8ArrayPrototypeV1) as object;
+const uint8ArrayFillV1 = Uint8Array.prototype.fill;
 const dateConstructorV1 = Date;
 const dateParseV1 = Date.parse;
 const dateGetTimeV1 = Date.prototype.getTime;
@@ -151,10 +155,21 @@ const projectionParserV1 = bindPrivateParserV1(projectionSchemaV1);
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never {
   throw new ReadyFrontierContractErrorV1(code);
 }
+function assertDisposableRuntimeV1(): void {
+  const ownDescriptor = objectGetOwnPropertyDescriptorV1(uint8ArrayPrototypeV1, "fill");
+  const inheritedDescriptor = objectGetOwnPropertyDescriptorV1(typedArrayPrototypeV1, "fill");
+  if (ownDescriptor || !inheritedDescriptor || !("value" in inheritedDescriptor)
+    || inheritedDescriptor.value !== uint8ArrayFillV1) {
+    fail("integrity_failed");
+  }
+}
 function key(value: unknown): Uint8Array {
   const parsed = exactHostUint8ArrayV1(value, 128);
   if (!parsed || parsed.byteLength < 32) fail("integrity_failed");
   return parsed.copy();
+}
+function wipeKeyV1(value: Uint8Array): void {
+  if (!wipeHostUint8ArrayV1(value)) fail("integrity_failed");
 }
 function sameText(left: string, right: string): boolean {
   const a = bufferFromV1(left), b = bufferFromV1(right);
@@ -250,6 +265,7 @@ function validateSourceV1(planValue: unknown, reportValue: unknown,
 export function buildReadyFrontierDisposableQualificationRequestV1(inputValue: unknown,
   activationPacketIntegrityKey: unknown, qualificationIntegrityKey: unknown,
   requestIntegrityKey: unknown): ReadyFrontierDisposableQualificationRequestV1 {
+  assertDisposableRuntimeV1();
   const requestKey = key(requestIntegrityKey);
   try {
     const input = parseExactReadyFrontierV1(requestInputParserV1, inputValue);
@@ -324,13 +340,14 @@ export function buildReadyFrontierDisposableQualificationRequestV1(inputValue: u
       requestAuthTag: hmacSha256Tag(requestKey, requestAuthMaterial({ ...material, requestDigest })),
     }, activationPacketIntegrityKey, qualificationIntegrityKey, requestKey);
   } finally {
-    requestKey.fill(0);
+    wipeKeyV1(requestKey);
   }
 }
 
 export function parseReadyFrontierDisposableQualificationRequestV1(value: unknown,
   activationPacketIntegrityKey: unknown, qualificationIntegrityKey: unknown,
   requestIntegrityKey: unknown): ReadyFrontierDisposableQualificationRequestV1 {
+  assertDisposableRuntimeV1();
   const requestKey = key(requestIntegrityKey);
   try {
     const request = parseExactReadyFrontierV1(requestParserV1, value) as
@@ -356,13 +373,14 @@ export function parseReadyFrontierDisposableQualificationRequestV1(value: unknow
     }
     return deepFreeze(request);
   } finally {
-    requestKey.fill(0);
+    wipeKeyV1(requestKey);
   }
 }
 
 export function projectReadyFrontierDisposableQualificationRequestV1(value: unknown,
   activationPacketIntegrityKey: unknown, qualificationIntegrityKey: unknown,
   requestIntegrityKey: unknown): ReadyFrontierDisposableQualificationProjectionV1 {
+  assertDisposableRuntimeV1();
   const request = parseReadyFrontierDisposableQualificationRequestV1(value,
     activationPacketIntegrityKey, qualificationIntegrityKey, requestIntegrityKey);
   const material: Omit<ReadyFrontierDisposableQualificationProjectionV1, "projectionDigest"> = {

@@ -26,6 +26,7 @@ import {
   type ReadyFrontierProductionCustodyReportV1,
 } from "../src/ready-frontier/v1/index.ts";
 import { hmacSha256Tag, sha256Digest } from "../src/security/index.ts";
+import { wipeHostUint8ArrayV1 } from "../src/security/host-value.ts";
 
 const errorCode = (safeCode: ReadyFrontierContractErrorV1["safeCode"]) => (error: unknown) =>
   error instanceof ReadyFrontierContractErrorV1 && error.safeCode === safeCode;
@@ -287,6 +288,53 @@ test("CR11B-AUTO-080 exact boundaries reject accessors and Proxies without calle
   assert.throws(() => buildReadyFrontierDisposableQualificationRequestV1(
     proxied, f.activationKey, f.qualificationKey, f.requestKey), errorCode("invalid_input"));
   assert.equal(proxyCalls, 0);
+});
+
+test("CR11B-AUTO-080 fails closed before ambient typed-array fill and uses captured key erasure", () => {
+  const f = fixture();
+  const defineProperty = Object.defineProperty;
+  const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object;
+  const descriptor = Object.getOwnPropertyDescriptor(typedArrayPrototype, "fill")!;
+  let hostileCalls = 0;
+  let retainedReceiver: Uint8Array | undefined;
+  const retain = (value: Uint8Array) => { retainedReceiver = value; };
+  const cleanupProbe = new Uint8Array([9, 8, 7, 6]);
+  try {
+    defineProperty(typedArrayPrototype, "fill", {
+      ...descriptor,
+      value(this: Uint8Array) {
+        hostileCalls += 1;
+        retain(this);
+        return this;
+      },
+    });
+    assert.throws(() => parseReadyFrontierDisposableQualificationRequestV1(
+      f.request, f.activationKey, f.qualificationKey, f.requestKey), errorCode("integrity_failed"));
+    assert.throws(() => buildReadyFrontierDisposableQualificationRequestV1({
+      requestId: "frontier.disposable-qualification.auto080.fill-drift",
+      sourceCustodyPlan: f.plan,
+      sourceCustodyReport: f.report,
+      requestedAt: "2026-08-30T20:06:00.000Z",
+      expiresAt: "2026-08-30T20:58:00.000Z",
+    }, f.activationKey, f.qualificationKey, f.requestKey), errorCode("integrity_failed"));
+    assert.equal(hostileCalls, 0);
+    assert.equal(retainedReceiver, undefined);
+    assert.equal(wipeHostUint8ArrayV1(cleanupProbe), true);
+    assert.deepEqual([...cleanupProbe], [0, 0, 0, 0]);
+    assert.equal(hostileCalls, 0);
+  } finally {
+    defineProperty(typedArrayPrototype, "fill", descriptor);
+  }
+  const replay = parseReadyFrontierDisposableQualificationRequestV1(
+    f.request, f.activationKey, f.qualificationKey, f.requestKey);
+  assert.deepEqual(replay, f.request);
+  const projection = projectReadyFrontierDisposableQualificationRequestV1(
+    replay, f.activationKey, f.qualificationKey, f.requestKey);
+  assert.equal(projection.canRunLiveQualification, false);
+  const source = readFileSync(new URL(
+    "../src/ready-frontier/v1/disposable-qualification.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /requestKey\.fill\s*\(/);
+  assert.equal((source.match(/wipeKeyV1\(requestKey\)/g) ?? []).length, 2);
 });
 
 test("CR11B-AUTO-080 rejects added credential and provider material instead of retaining it", () => {
