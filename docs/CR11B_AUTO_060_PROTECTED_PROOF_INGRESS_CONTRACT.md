@@ -1,6 +1,6 @@
 # CR11B-AUTO-060 Protected Proof Ingress Contract
 
-Status: third remediation implemented after three independent rejections; fourth different-agent re-review required
+Status: accepted for exact effect-free commit `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`; production remains blocked
 
 Date: 2026-08-30
 
@@ -164,6 +164,14 @@ The candidate must prove:
 - proof ingress imports no network, provider, deployment, secret-resolution, claim, dispatch, or effect client.
 
 ## Stop boundary
+
+Independent acceptance is limited to exact commit `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree
+`f8b16104082ade92812c82792c04611a1c40073e`, in immutable report
+`docs/reviews/CR11B_AUTO_060_THIRD_REMEDIATION_REREVIEW.md`, SHA-256
+`8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`. The reviewer independently closed every
+initial, first-remediation, and second-remediation finding, including public parser mutation before and after ledger
+construction and exact restart custody. This accepts only the repository-local negative-authority boundary; it accepts no
+production proof or effect.
 
 AUTO-060 does not collect real evidence, enroll a production root, store private signing keys, issue owner approval,
 qualify any production gate, resolve protected references, contact a hosted database or destination, construct a consumer,

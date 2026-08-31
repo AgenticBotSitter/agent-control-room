@@ -1,6 +1,6 @@
 # CR11B-AUTO-060 Candidate Acceptance Record
 
-Status: third remediation implemented locally after three independent rejections; fourth different-agent re-review pending
+Status: complete for exact independently accepted effect-free commit `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`
 
 Date: 2026-08-30
 
@@ -140,12 +140,17 @@ deletes another own method, substitutes its prototype, constructs and uses the l
 proves the trusted result remains unchanged. It also proves the old proof-schema file and old mutable schema exports are
 absent.
 
-All three rejection reports remain immutable. A fourth different agent—not the implementer or any prior reviewer—must
-review the exact third-remediation commit before AUTO-060 can close.
+All three rejection reports remain immutable. A fourth different agent—not the implementer or any prior reviewer—reviewed
+the exact third-remediation commit as recorded below.
 
-## Required independent review
+## Independent acceptance
 
-A fourth different independent agent must re-review the exact frozen third-remediation commit. At minimum, it must attack:
+A fourth different independent agent reviewed exact commit `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree
+`f8b16104082ade92812c82792c04611a1c40073e`. The immutable accepted report is
+`docs/reviews/CR11B_AUTO_060_THIRD_REMEDIATION_REREVIEW.md`, SHA-256
+`8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`.
+
+The reviewer independently covered:
 
 1. root/key canonicalization and signature-material completeness;
 2. trust-chain skip, fork, rollback, duplicate identity/key, revocation, expiry, and current-revision behavior;
@@ -158,8 +163,15 @@ A fourth different independent agent must re-review the exact frozen third-remed
    construction, own-method replacement, prototype drift, and verification-versus-storage disagreement; and
 9. imports/calls for any network, provider, destination, protected-reference, consumer, activation, dispatch, or effect path.
 
-Any concrete finding rejects the candidate. The report is immutable once written. Remediation requires a new exact commit
-and a different-agent re-review.
+The reviewer confirmed all three earlier report hashes, reproduced the rejected mechanisms from source and preserved
+evidence, ran 20/20 focused and 119/119 combined CR11B tests, typecheck, lint, stage zero, and exact diff checks, and used a
+disposable generated-key/private-SQLite probe. It changed public schema methods and a shared prototype before and after
+ledger construction, attempted replacement, deletion, and prototype substitution on all eleven exported frozen AUTO-050
+parser wrappers, retried the prior changed-binding unsigned envelope, and verified denial with zero new row. The exact
+canonical valid package persisted, restart integrity passed after restoration, and the old proof-schema module remained
+absent. It found no alternate authority or effect path and accepted only the exact effect-free commit and tree above.
+
+Any source or tree change reopens review. The report is immutable.
 
 ## Residual boundary
 

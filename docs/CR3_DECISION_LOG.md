@@ -1515,6 +1515,15 @@ substitution made it authenticate one valid package while the ledger stored anot
 the mismatch as an integrity failure. The third remediation deletes that module, moves proof and ledger schemas plus their
 primitive dependencies behind module-private state, and captures original parser operations into frozen closures. AUTO-050
 boundary schemas now use private primitives and expose only frozen captured parser closures, so public schema aliases,
-own-method replacement, deletion, and prototype drift are non-authoritative. A fourth different reviewer must accept the
-exact third-remediation commit. No rejection or remediation grants production proof, approval, activation, consumer,
+own-method replacement, deletion, and prototype drift are non-authoritative. A fourth different reviewer was required to
+accept the exact third-remediation commit. No rejection or remediation grants production proof, approval, activation, consumer,
 network, dispatch, deployment, or effect authority.
+
+**Acceptance amendment:** A fourth different reviewer accepted exact third-remediation commit
+`be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`, in immutable report
+SHA-256 `8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`. It independently mutated public schema
+methods and a shared prototype before and after store construction, attempted change, deletion, and prototype replacement
+on every exported frozen production parser, retried the prior changed-binding envelope, and verified zero append plus clean
+restart integrity. All `IR`, `FRR`, and `SRR` findings are closed only for that exact effect-free snapshot. AUTO-060 is
+complete, but every fixture proof remains unqualified and all protected custody, hosted database, policy, consumer,
+activation, deployment, and effect gates remain blocked.
