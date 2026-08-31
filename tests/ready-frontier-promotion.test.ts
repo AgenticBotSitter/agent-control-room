@@ -31,7 +31,6 @@ import {
   type ReadyFrontierStandingPolicyV1,
 } from "../src/ready-frontier/v1/index.ts";
 import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/index.ts";
-import { sha256Digest } from "../src/security/index.ts";
 import { observedProxy } from "./proxy-test-helper.ts";
 
 const code = (safeCode: ReadyFrontierContractErrorV1["safeCode"]) => (error: unknown) =>
@@ -221,7 +220,7 @@ test("CR11B-AUTO-030 captured policy guards cannot mint the exact-operation cano
   } finally { await db.close(); close(resource); }
 });
 
-test("CR11B-AUTO-030 canonical port accepts only the opaque token and derives every write fact from its hidden binding", async () => {
+test("CR11B-AUTO-030 frozen canonical port accepts only the opaque token and derives every write fact from its hidden binding", async () => {
   const resource = resources(), db = await database();
   try {
     const canonical = new CanonicalStore(adaptPglite(db));
@@ -229,28 +228,15 @@ test("CR11B-AUTO-030 canonical port accepts only the opaque token and derives ev
     const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey);
     resource.readyPolicies.recordPolicy(readyPolicy);
     const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
-    const original = canonical.promoteReadyFrontierJobWithInternalHandoff.bind(canonical);
-    canonical.promoteReadyFrontierJobWithInternalHandoff = async (token) => {
-      let accessorTouches = 0, proxyTouches = 0;
-      const accessor = Object.create(null) as Record<string, unknown>;
-      Object.defineProperty(accessor, "operationAuthorization", { enumerable: true,
-        get: () => { accessorTouches += 1; return token; } });
-      await assert.rejects(() => original(accessor), /active exact-operation authorization/);
-      const proxy = new Proxy(token as object, { get: () => { proxyTouches += 1; throw new Error("proxy trap"); } });
-      await assert.rejects(() => original(proxy), /active exact-operation authorization/);
-      assert.deepEqual({ accessorTouches, proxyTouches }, { accessorTouches: 0, proxyTouches: 0 });
-      const callerControlled = { operationAuthorization: token, maximumActiveReadyGlobal: 999,
-        maximumActiveReadyProject: 999, requestDigest: sha256Digest({ substituted: "request" }),
-        receiptDigest: sha256Digest({ substituted: "receipt" }),
-        reservation: { resourceKey: "resource:expanded", units: 999, capacityUnits: 999 },
-        handoff: { payload: { permitsClaimOrLease: true, permitsDispatchOrExecution: true } } };
-      callerControlled.maximumActiveReadyGlobal = 1000;
-      return original(callerControlled.operationAuthorization);
-    };
+    const original = canonical.promoteReadyFrontierJobWithInternalHandoff;
+    assert.equal(Object.isFrozen(canonical), true);
+    assert.throws(() => { canonical.promoteReadyFrontierJobWithInternalHandoff = async () => {
+      throw new Error("must not replace exact canonical port");
+    }; });
+    assert.equal(canonical.promoteReadyFrontierJobWithInternalHandoff, original);
     const service = promoter(resource, canonical);
     const result = await service.promote(envelope); service.close();
     assert.equal(result.replayed, false);
-    canonical.promoteReadyFrontierJobWithInternalHandoff = original;
     const counts = await db.query<Record<string, string>>(`SELECT
       (SELECT count(*) FROM control_jobs WHERE state='ready')::text ready,
       (SELECT count(*) FROM control_resource_reservations)::text reservations,
@@ -272,7 +258,7 @@ test("CR11B-AUTO-030 canonical port accepts only the opaque token and derives ev
   } finally { await db.close(); close(resource); }
 });
 
-test("CR11B-AUTO-030 an unawaited canonical call cannot escape authorization lifetime or be overtaken by revocation", async () => {
+test("CR11B-AUTO-030 a frozen canonical call cannot escape authorization lifetime or be overtaken by revocation", async () => {
   const resource = resources(), db = await database();
   try {
     const base = adaptPglite(db);
@@ -293,12 +279,9 @@ test("CR11B-AUTO-030 an unawaited canonical call cannot escape authorization lif
     const readyPolicy = buildReadyFrontierReadyPolicyFixtureV1(evaluation, standing, resource.readyKey);
     resource.readyPolicies.recordPolicy(readyPolicy);
     const envelope = buildReadyFrontierPromotionEnvelopeFixtureV1(materialization, readyPolicy);
-    const original = canonical.promoteReadyFrontierJobWithInternalHandoff.bind(canonical);
-    let escaped!: ReturnType<typeof original>;
-    canonical.promoteReadyFrontierJobWithInternalHandoff = (input) => {
-      escaped = original(input);
-      return Promise.resolve({ job: materialization.job, replayed: false });
-    };
+    assert.equal(Object.isFrozen(canonical), true);
+    assert.throws(() => { canonical.promoteReadyFrontierJobWithInternalHandoff = async () =>
+      Promise.resolve({ job: materialization.job, replayed: false }); });
     delayPromotion = true;
     const service = promoter(resource, canonical);
     const pending = service.promote(envelope);
@@ -307,7 +290,7 @@ test("CR11B-AUTO-030 an unawaited canonical call cannot escape authorization lif
       { action: "revoke", state: "revoked", revision: 2, recordedAt: "2026-08-30T18:10:00.000Z" }, resource.readyKey);
     assert.throws(() => resource.readyPolicies.recordPolicy(revoked), code("policy_inactive"));
     release();
-    const result = await pending; await escaped;
+    const result = await pending;
     assert.equal(result.receipt.state, "ready_handoff_pending");
     assert.equal(resource.readyPolicies.latestPolicy(readyPolicy.policyId)?.state, "active");
     assert.equal(resource.readyPolicies.recordPolicy(revoked).replayed, false);

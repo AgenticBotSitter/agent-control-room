@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { assertPrivateSqliteSchemaV1 } from "../../harness/codex-v1/private-sqlite-schema";
 import {
   canonicalJson,
+  bindInMemoryRollbackCheckpointStoreV1,
   hmacSha256Tag,
   ROLLBACK_CHECKPOINT_SCHEMA_V1,
   rollbackCheckpointDigestV1,
@@ -12,7 +13,7 @@ import {
   type RollbackCheckpointStoreV1,
   type RollbackCheckpointV1,
 } from "../../security";
-import { exactHostUint8ArrayV1 } from "../../security/host-value";
+import { exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
 import { buildReadyFrontierSourceV1, evaluateReadyFrontierV1, parseReadyFrontierEvaluationV1,
   parseReadyFrontierSourceV1, projectReadyFrontierOperatorV1 } from "./controller";
 import { projectReadyFrontierCycleV1 } from "./cycle-projection";
@@ -92,30 +93,37 @@ function preparePrivatePath(path: string): void {
   }
 }
 
-export class ReadyFrontierSimulationStoreV1 {
-  private readonly db: DatabaseSync;
-  private readonly integrityKey: Uint8Array;
-  private readonly checkpointRead: RollbackCheckpointStoreV1["read"];
-  private readonly checkpointInitialize: RollbackCheckpointStoreV1["initialize"];
-  private readonly checkpointAdvance: RollbackCheckpointStoreV1["advance"];
+const simulationStores = new WeakSet<object>();
 
-  constructor(path: string, private readonly tenantId: string, integrityKeyValue: unknown,
-    checkpointStore: RollbackCheckpointStoreV1, private readonly maximumCycles = 1_000) {
+export class ReadyFrontierSimulationStoreV1 {
+  readonly #db: DatabaseSync;
+  readonly #integrityKey: Uint8Array;
+  readonly #checkpointRead: RollbackCheckpointStoreV1["read"];
+  readonly #checkpointInitialize: RollbackCheckpointStoreV1["initialize"];
+  readonly #checkpointAdvance: RollbackCheckpointStoreV1["advance"];
+  readonly #tenantId: string;
+  readonly #maximumCycles: number;
+
+  constructor(path: string, tenantId: string, integrityKeyValue: unknown,
+    checkpointStore: RollbackCheckpointStoreV1, maximumCycles = 1_000) {
     const key = exactHostUint8ArrayV1(integrityKeyValue, 128);
     if (!key || key.byteLength < 32 || !Number.isSafeInteger(maximumCycles) || maximumCycles < 1 || maximumCycles > 10_000) {
       fail("integrity_failed");
     }
     parseExactReadyFrontierV1(readyFrontierIdSchemaV1, tenantId);
-    this.integrityKey = key.copy();
-    this.checkpointRead = checkpointStore.read.bind(checkpointStore);
-    this.checkpointInitialize = checkpointStore.initialize.bind(checkpointStore);
-    this.checkpointAdvance = checkpointStore.advance.bind(checkpointStore);
-    preparePrivatePath(path); this.db = new DatabaseSync(path);
+    const checkpoint = bindInMemoryRollbackCheckpointStoreV1(checkpointStore);
+    if (!checkpoint) fail("integrity_failed");
+    this.#tenantId = tenantId; this.#maximumCycles = maximumCycles;
+    this.#integrityKey = key.copy();
+    this.#checkpointRead = checkpoint.read;
+    this.#checkpointInitialize = checkpoint.initialize;
+    this.#checkpointAdvance = checkpoint.advance;
+    preparePrivatePath(path); this.#db = new DatabaseSync(path);
     try {
-      const version = (this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+      const version = (this.#db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
       if (version !== 0 && version !== SCHEMA_VERSION) fail("integrity_failed");
-      this.db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000");
-      if (version === 0) this.db.exec(`
+      this.#db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000");
+      if (version === 0) this.#db.exec(`
         CREATE TABLE ready_frontier_metadata (
           singleton INTEGER PRIMARY KEY CHECK(singleton=1), tenant_id TEXT NOT NULL,
           revision INTEGER NOT NULL CHECK(revision>=1), record_count INTEGER NOT NULL CHECK(record_count>=0),
@@ -130,22 +138,23 @@ export class ReadyFrontierSimulationStoreV1 {
         CREATE INDEX idx_ready_frontier_cycle_evaluated ON ready_frontier_cycle(evaluated_at,ledger_sequence);
         PRAGMA user_version=1;
       `);
-      assertPrivateSqliteSchemaV1(this.db, EXPECTED_OBJECTS, EXPECTED_COLUMNS, EXPECTED_SQL);
-      this.initializeOrVerify();
+      assertPrivateSqliteSchemaV1(this.#db, EXPECTED_OBJECTS, EXPECTED_COLUMNS, EXPECTED_SQL);
+      this.#initializeOrVerify();
     } catch (error) {
-      this.integrityKey.fill(0); this.db.close();
+      this.#integrityKey.fill(0); this.#db.close();
       if (error instanceof ReadyFrontierContractErrorV1) throw error;
       fail("integrity_failed");
     }
+    simulationStores.add(this); Object.freeze(this);
   }
 
   runCycle(input: ReadyFrontierCycleInputV1): { evaluation: ReadyFrontierEvaluationV1; replayed: boolean } {
     const parsed = parseExactReadyFrontierV1(readyFrontierCycleInputSchemaV1, input) as ReadyFrontierCycleInputV1;
     const source = parseReadyFrontierSourceV1(parsed.source);
-    if (source.tenantId !== this.tenantId) fail("scope_mismatch");
+    if (source.tenantId !== this.#tenantId) fail("scope_mismatch");
     const relevantIntents = new Set(source.candidates.map((candidate) => candidate.intentDigest));
     const priorById = new Map(source.priorProposals.map((proposal) => [proposal.proposalId, proposal]));
-    const current = this.verifyState(), existing = current.records.find((record) => record.evaluation.cycleId === parsed.cycleId);
+    const current = this.#verifyState(), existing = current.records.find((record) => record.evaluation.cycleId === parsed.cycleId);
     const history = existing ? current.records.filter((record) => record.row.ledger_sequence < existing.row.ledger_sequence) : current.records;
     let added = 0;
     for (const record of history) for (const proposal of record.evaluation.proposals) {
@@ -163,135 +172,147 @@ export class ReadyFrontierSimulationStoreV1 {
     const { sourceDigest: _sourceDigest, ...sourceWithoutDigest } = source; void _sourceDigest;
     const effectiveSource = added === 0 ? source : buildReadyFrontierSourceV1({ ...sourceWithoutDigest,
       historyRevision: source.historyRevision + added, priorProposals: [...priorById.values()] });
-    return this.recordEvaluation(evaluateReadyFrontierV1({ ...parsed, source: effectiveSource }, this.integrityKey));
+    return this.recordEvaluation(evaluateReadyFrontierV1({ ...parsed, source: effectiveSource }, this.#integrityKey));
   }
 
   recordEvaluation(value: unknown): { evaluation: ReadyFrontierEvaluationV1; replayed: boolean } {
-    const evaluation = parseReadyFrontierEvaluationV1(value, this.integrityKey);
-    if (evaluation.tenantId !== this.tenantId) fail("scope_mismatch");
-    this.db.exec("BEGIN IMMEDIATE");
+    const evaluation = parseReadyFrontierEvaluationV1(value, this.#integrityKey);
+    if (evaluation.tenantId !== this.#tenantId) fail("scope_mismatch");
+    this.#db.exec("BEGIN IMMEDIATE");
     try {
-      const current = this.verifyState(), existing = current.records.find((item) => item.row.cycle_id === evaluation.cycleId);
+      const current = this.#verifyState(), existing = current.records.find((item) => item.row.cycle_id === evaluation.cycleId);
       if (existing) {
         if (!same(existing.row.evaluation_digest, evaluation.evaluationDigest)) fail("replay_drift");
-        this.db.exec("COMMIT"); return { evaluation: existing.evaluation, replayed: true };
+        this.#db.exec("COMMIT"); return { evaluation: existing.evaluation, replayed: true };
       }
-      if (current.metadata.record_count >= this.maximumCycles) fail("capacity_exceeded");
+      if (current.metadata.record_count >= this.#maximumCycles) fail("capacity_exceeded");
       const ledgerSequence = current.metadata.record_count + 1;
-      const rowMaterial = { tenantId: this.tenantId, ledgerSequence, cycleId: evaluation.cycleId, evaluatedAt: evaluation.evaluatedAt,
+      const rowMaterial = { tenantId: this.#tenantId, ledgerSequence, cycleId: evaluation.cycleId, evaluatedAt: evaluation.evaluatedAt,
         sourceDigest: evaluation.sourceDigest, policyDigest: evaluation.policyDigest, evaluationDigest: evaluation.evaluationDigest };
-      const recordAuthTag = hmacSha256Tag(this.integrityKey, rowMaterial);
-      this.db.prepare(`INSERT INTO ready_frontier_cycle(ledger_sequence,cycle_id,evaluated_at,source_digest,policy_digest,evaluation_digest,evaluation_json,record_auth_tag)
+      const recordAuthTag = hmacSha256Tag(this.#integrityKey, rowMaterial);
+      this.#db.prepare(`INSERT INTO ready_frontier_cycle(ledger_sequence,cycle_id,evaluated_at,source_digest,policy_digest,evaluation_digest,evaluation_json,record_auth_tag)
         VALUES(?,?,?,?,?,?,?,?)`).run(ledgerSequence, evaluation.cycleId, evaluation.evaluatedAt, evaluation.sourceDigest,
         evaluation.policyDigest, evaluation.evaluationDigest, canonicalJson(evaluation), recordAuthTag);
-      const nextRows = this.rows(), revision = current.metadata.revision + 1, recordCount = current.metadata.record_count + 1;
-      const stateDigest = this.computeStateDigest(nextRows), stateAuthTag = this.stateTag(revision, recordCount, stateDigest);
-      this.db.prepare("UPDATE ready_frontier_metadata SET revision=?,record_count=?,state_digest=?,state_auth_tag=? WHERE singleton=1")
+      const nextRows = this.#rows(), revision = current.metadata.revision + 1, recordCount = current.metadata.record_count + 1;
+      const stateDigest = this.#computeStateDigest(nextRows), stateAuthTag = this.#stateTag(revision, recordCount, stateDigest);
+      this.#db.prepare("UPDATE ready_frontier_metadata SET revision=?,record_count=?,state_digest=?,state_auth_tag=? WHERE singleton=1")
         .run(revision, recordCount, stateDigest, stateAuthTag);
-      this.checkpointAdvance(rollbackCheckpointDigestV1(this.checkpoint(current.metadata.revision, current.metadata.record_count,
-        current.metadata.state_digest, current.metadata.state_auth_tag)), this.checkpoint(revision, recordCount, stateDigest, stateAuthTag));
-      this.verifyState(); this.db.exec("COMMIT"); return { evaluation, replayed: false };
+      this.#checkpointAdvance(rollbackCheckpointDigestV1(this.#checkpoint(current.metadata.revision, current.metadata.record_count,
+        current.metadata.state_digest, current.metadata.state_auth_tag)), this.#checkpoint(revision, recordCount, stateDigest, stateAuthTag));
+      this.#verifyState(); this.#db.exec("COMMIT"); return { evaluation, replayed: false };
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      this.#db.exec("ROLLBACK");
       if (error instanceof ReadyFrontierContractErrorV1) throw error;
       fail("integrity_failed");
     }
   }
 
-  listEvaluations(): ReadyFrontierEvaluationV1[] { return this.verifyState().records.map((item) => item.evaluation); }
+  listEvaluations(): ReadyFrontierEvaluationV1[] { return this.#verifyState().records.map((item) => item.evaluation); }
   evaluation(cycleId: string): ReadyFrontierEvaluationV1 | undefined {
     parseExactReadyFrontierV1(readyFrontierIdSchemaV1, cycleId);
-    return this.verifyState().records.find((item) => item.evaluation.cycleId === cycleId)?.evaluation;
+    return this.#verifyState().records.find((item) => item.evaluation.cycleId === cycleId)?.evaluation;
   }
   latestOperatorProjection(): ReadyFrontierOperatorProjectionV1 | undefined {
-    const latest = this.verifyState().records.at(-1)?.evaluation;
-    return latest ? projectReadyFrontierOperatorV1(latest, this.integrityKey) : undefined;
+    const latest = this.#verifyState().records.at(-1)?.evaluation;
+    return latest ? projectReadyFrontierOperatorV1(latest, this.#integrityKey) : undefined;
   }
   cycleProjection(cycleId: string): ReadyFrontierCycleProjectionV1 | undefined {
     parseExactReadyFrontierV1(readyFrontierIdSchemaV1, cycleId);
-    const evaluation = this.verifyState().records.find((item) => item.evaluation.cycleId === cycleId)?.evaluation;
-    return evaluation ? projectReadyFrontierCycleV1(evaluation, this.integrityKey) : undefined;
+    const evaluation = this.#verifyState().records.find((item) => item.evaluation.cycleId === cycleId)?.evaluation;
+    return evaluation ? projectReadyFrontierCycleV1(evaluation, this.#integrityKey) : undefined;
   }
   latestCycleProjection(): ReadyFrontierCycleProjectionV1 | undefined {
-    const latest = this.verifyState().records.at(-1)?.evaluation;
-    return latest ? projectReadyFrontierCycleV1(latest, this.integrityKey) : undefined;
+    const latest = this.#verifyState().records.at(-1)?.evaluation;
+    return latest ? projectReadyFrontierCycleV1(latest, this.#integrityKey) : undefined;
   }
   cycleProjectionHistory(limit = 20): ReadyFrontierCycleProjectionV1[] {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail("invalid_input");
-    return this.verifyState().records.slice(-limit).reverse()
-      .map((item) => projectReadyFrontierCycleV1(item.evaluation, this.integrityKey));
+    return this.#verifyState().records.slice(-limit).reverse()
+      .map((item) => projectReadyFrontierCycleV1(item.evaluation, this.#integrityKey));
   }
-  closeDatabase(): void { this.integrityKey.fill(0); this.db.close(); }
+  closeDatabase(): void { this.#integrityKey.fill(0); this.#db.close(); }
 
-  private initializeOrVerify(): void {
-    this.db.exec("BEGIN IMMEDIATE");
+  #initializeOrVerify(): void {
+    this.#db.exec("BEGIN IMMEDIATE");
     try {
-      const metadata = this.metadata(), rowCount = (this.db.prepare("SELECT COUNT(*) AS count FROM ready_frontier_cycle").get() as { count: number }).count;
-      const checkpoint = this.readCheckpoint();
+      const metadata = this.#metadata(), rowCount = (this.#db.prepare("SELECT COUNT(*) AS count FROM ready_frontier_cycle").get() as { count: number }).count;
+      const checkpoint = this.#readCheckpoint();
       if (!metadata) {
         if (rowCount !== 0 || checkpoint) fail("integrity_failed");
-        const revision = 1, recordCount = 0, stateDigest = this.computeStateDigest([]), stateAuthTag = this.stateTag(revision, recordCount, stateDigest);
-        this.db.prepare("INSERT INTO ready_frontier_metadata(singleton,tenant_id,revision,record_count,state_digest,state_auth_tag) VALUES(1,?,?,?,?,?)")
-          .run(this.tenantId, revision, recordCount, stateDigest, stateAuthTag);
-        this.checkpointInitialize(this.checkpoint(revision, recordCount, stateDigest, stateAuthTag));
-      } else this.verifyState();
-      this.db.exec("COMMIT");
+        const revision = 1, recordCount = 0, stateDigest = this.#computeStateDigest([]), stateAuthTag = this.#stateTag(revision, recordCount, stateDigest);
+        this.#db.prepare("INSERT INTO ready_frontier_metadata(singleton,tenant_id,revision,record_count,state_digest,state_auth_tag) VALUES(1,?,?,?,?,?)")
+          .run(this.#tenantId, revision, recordCount, stateDigest, stateAuthTag);
+        this.#checkpointInitialize(this.#checkpoint(revision, recordCount, stateDigest, stateAuthTag));
+      } else this.#verifyState();
+      this.#db.exec("COMMIT");
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      this.#db.exec("ROLLBACK");
       if (error instanceof ReadyFrontierContractErrorV1) throw error;
       fail("integrity_failed");
     }
   }
 
-  private verifyState(): { metadata: MetadataRowV1; records: Array<{ row: CycleRowV1; evaluation: ReadyFrontierEvaluationV1 }> } {
-    const metadata = this.metadata(); if (!metadata || metadata.tenant_id !== this.tenantId) fail("scope_mismatch");
-    const rows = this.rows();
+  #verifyState(): { metadata: MetadataRowV1; records: Array<{ row: CycleRowV1; evaluation: ReadyFrontierEvaluationV1 }> } {
+    const metadata = this.#metadata(); if (!metadata || metadata.tenant_id !== this.#tenantId) fail("scope_mismatch");
+    const rows = this.#rows();
     if (metadata.record_count !== rows.length || metadata.revision !== rows.length + 1) fail("integrity_failed");
     const records: Array<{ row: CycleRowV1; evaluation: ReadyFrontierEvaluationV1 }> = [];
     for (const [index, row] of rows.entries()) {
       if (row.ledger_sequence !== index + 1) fail("integrity_failed");
       let raw: unknown; try { raw = JSON.parse(row.evaluation_json); } catch { fail("integrity_failed"); }
       let evaluation: ReadyFrontierEvaluationV1;
-      try { evaluation = parseReadyFrontierEvaluationV1(raw, this.integrityKey); } catch { fail("integrity_failed"); }
+      try { evaluation = parseReadyFrontierEvaluationV1(raw, this.#integrityKey); } catch { fail("integrity_failed"); }
       if (canonicalJson(evaluation) !== row.evaluation_json || row.cycle_id !== evaluation.cycleId
         || row.evaluated_at !== evaluation.evaluatedAt || row.source_digest !== evaluation.sourceDigest
         || row.policy_digest !== evaluation.policyDigest || row.evaluation_digest !== evaluation.evaluationDigest
-        || evaluation.tenantId !== this.tenantId
-        || !same(row.record_auth_tag, hmacSha256Tag(this.integrityKey, { tenantId: this.tenantId,
+        || evaluation.tenantId !== this.#tenantId
+        || !same(row.record_auth_tag, hmacSha256Tag(this.#integrityKey, { tenantId: this.#tenantId,
           ledgerSequence: row.ledger_sequence, cycleId: row.cycle_id, evaluatedAt: row.evaluated_at,
           sourceDigest: row.source_digest, policyDigest: row.policy_digest, evaluationDigest: row.evaluation_digest }))) fail("integrity_failed");
       records.push({ row, evaluation });
     }
-    const stateDigest = this.computeStateDigest(rows);
+    const stateDigest = this.#computeStateDigest(rows);
     if (!same(metadata.state_digest, stateDigest) || !same(metadata.state_auth_tag,
-      this.stateTag(metadata.revision, metadata.record_count, stateDigest))) fail("integrity_failed");
-    const checkpoint = this.readCheckpoint();
-    if (!checkpoint || rollbackCheckpointDigestV1(checkpoint) !== rollbackCheckpointDigestV1(this.checkpoint(metadata.revision,
+      this.#stateTag(metadata.revision, metadata.record_count, stateDigest))) fail("integrity_failed");
+    const checkpoint = this.#readCheckpoint();
+    if (!checkpoint || rollbackCheckpointDigestV1(checkpoint) !== rollbackCheckpointDigestV1(this.#checkpoint(metadata.revision,
       metadata.record_count, metadata.state_digest, metadata.state_auth_tag))) fail("integrity_failed");
     return { metadata, records };
   }
 
-  private metadata(): MetadataRowV1 | undefined {
-    return this.db.prepare("SELECT tenant_id,revision,record_count,state_digest,state_auth_tag FROM ready_frontier_metadata WHERE singleton=1")
+  #metadata(): MetadataRowV1 | undefined {
+    return this.#db.prepare("SELECT tenant_id,revision,record_count,state_digest,state_auth_tag FROM ready_frontier_metadata WHERE singleton=1")
       .get() as MetadataRowV1 | undefined;
   }
-  private rows(): CycleRowV1[] {
-    return this.db.prepare(`SELECT ledger_sequence,cycle_id,evaluated_at,source_digest,policy_digest,evaluation_digest,evaluation_json,record_auth_tag
+  #rows(): CycleRowV1[] {
+    return this.#db.prepare(`SELECT ledger_sequence,cycle_id,evaluated_at,source_digest,policy_digest,evaluation_digest,evaluation_json,record_auth_tag
       FROM ready_frontier_cycle ORDER BY ledger_sequence`).all() as unknown as CycleRowV1[];
   }
-  private computeStateDigest(rows: CycleRowV1[]): string {
-    return sha256Digest({ tenantId: this.tenantId, records: rows.map((row) => ({ ledgerSequence: row.ledger_sequence,
+  #computeStateDigest(rows: CycleRowV1[]): string {
+    return sha256Digest({ tenantId: this.#tenantId, records: rows.map((row) => ({ ledgerSequence: row.ledger_sequence,
       cycleId: row.cycle_id, evaluatedAt: row.evaluated_at, sourceDigest: row.source_digest, policyDigest: row.policy_digest,
       evaluationDigest: row.evaluation_digest, recordAuthTag: row.record_auth_tag })) });
   }
-  private stateTag(revision: number, recordCount: number, stateDigest: string): string {
-    return hmacSha256Tag(this.integrityKey, { tenantId: this.tenantId, revision, recordCount, stateDigest });
+  #stateTag(revision: number, recordCount: number, stateDigest: string): string {
+    return hmacSha256Tag(this.#integrityKey, { tenantId: this.#tenantId, revision, recordCount, stateDigest });
   }
-  private checkpointScope(): string { return `ready-frontier:${sha256Digest({ tenantId: this.tenantId })}`; }
-  private checkpoint(revision: number, recordCount: number, stateDigest: string, stateAuthTag: string): RollbackCheckpointV1 {
-    return { schema: ROLLBACK_CHECKPOINT_SCHEMA_V1, scope: this.checkpointScope(), revision, recordCount, stateDigest, stateAuthTag };
+  #checkpointScope(): string { return `ready-frontier:${sha256Digest({ tenantId: this.#tenantId })}`; }
+  #checkpoint(revision: number, recordCount: number, stateDigest: string, stateAuthTag: string): RollbackCheckpointV1 {
+    return { schema: ROLLBACK_CHECKPOINT_SCHEMA_V1, scope: this.#checkpointScope(), revision, recordCount, stateDigest, stateAuthTag };
   }
-  private readCheckpoint(): RollbackCheckpointV1 | undefined {
-    try { return this.checkpointRead(this.checkpointScope()); } catch { fail("integrity_failed"); }
+  #readCheckpoint(): RollbackCheckpointV1 | undefined {
+    try { return this.#checkpointRead(this.#checkpointScope()); } catch { fail("integrity_failed"); }
   }
+}
+
+const simulationEvaluation = ReadyFrontierSimulationStoreV1.prototype.evaluation;
+Object.freeze(ReadyFrontierSimulationStoreV1.prototype);
+
+/** Captures the exact registered simulation lookup without later dynamic dispatch through the caller-held store. */
+export function bindReadyFrontierSimulationEvaluationV1(value: unknown):
+  ((cycleId: string) => ReadyFrontierEvaluationV1 | undefined) | undefined {
+  if (!value || typeof value !== "object" || isHostProxyV1(value) || !simulationStores.has(value)
+    || Object.getPrototypeOf(value) !== ReadyFrontierSimulationStoreV1.prototype || !Object.isFrozen(value)) return undefined;
+  const store = value as ReadyFrontierSimulationStoreV1;
+  return (cycleId: string) => simulationEvaluation.call(store, cycleId);
 }

@@ -31,6 +31,8 @@ import { ReadyFrontierPortfolioView } from "./components/ready-frontier-view";
 import type { ReadyFrontierCycleProjectionV1 } from "@/src/ready-frontier/v1/integration-types";
 import type { ReadyFrontierAutomationProjectionV1 } from "@/src/ready-frontier/v1/automation-types";
 import type { ReadyFrontierPromotionProjectionV1 } from "@/src/ready-frontier/v1/ready-policy-types";
+import type { ReadyFrontierNoRelayProjectionV1 } from "@/src/ready-frontier/v1/no-relay-types";
+import type { ActionInboxItemV1 } from "@/src/operator-surfaces/v1/types";
 
 type Scope = "all" | string;
 type ScenarioKey = keyof typeof transcriptionScenarios;
@@ -57,7 +59,9 @@ function projectName(projectId: string): string {
 
 export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleProjectionV1;
   readyFrontierAutomation: ReadyFrontierAutomationProjectionV1;
-  readyFrontierPromotion: ReadyFrontierPromotionProjectionV1 }) {
+  readyFrontierPromotion: ReadyFrontierPromotionProjectionV1;
+  readyFrontierNoRelay: ReadyFrontierNoRelayProjectionV1;
+  readyFrontierNoRelayAttention: ActionInboxItemV1[] }) {
   const [scope, setScope] = useState<Scope>("all");
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("automatic");
@@ -119,7 +123,8 @@ export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleP
   const scopedProjects = useMemo(() => activeScope === "all" ? projects : projects.filter((project) => project.id === activeScope), [activeScope]);
   const scopedIds = new Set(operatorSnapshot ? (activeScope === "all" ? operatorSnapshot.portfolio.map((project) => project.projectId) : [activeScope]) : scopedProjects.map((project) => project.id));
   const scopedPortfolio = operatorSnapshot?.portfolio.filter((project) => scopedIds.has(project.projectId));
-  const actionInbox = operatorSnapshot?.actionInbox ?? cr6eActionInboxFixture;
+  const actionInbox = [...(operatorSnapshot?.actionInbox ?? cr6eActionInboxFixture),
+    ...props.readyFrontierNoRelayAttention];
   const ownerFocus = operatorSnapshot?.ownerFocus ?? cr6eOwnerFocusFixture;
   const scopedActionInbox = actionInbox.filter((item) => !item.projectId || scopedIds.has(item.projectId));
   const scopedOwnerFocus = ownerFocus.filter((pin) => scopedIds.has(pin.projectId));
@@ -268,7 +273,8 @@ export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleP
             <span className="simulation-only">Repository fixture · no work created</span>
           </div>
           <ReadyFrontierPortfolioView data={{ state: "available", projection: props.readyFrontier }}
-            automation={props.readyFrontierAutomation} promotion={props.readyFrontierPromotion} projectIds={scopedIds} />
+            automation={props.readyFrontierAutomation} promotion={props.readyFrontierPromotion}
+            noRelay={props.readyFrontierNoRelay} projectIds={scopedIds} />
         </section>
 
         <div className="dashboard-columns">

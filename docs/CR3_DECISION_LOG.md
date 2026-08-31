@@ -1254,3 +1254,163 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 **Trade-off:** AUTO-030 deliberately ends with a pending dedicated handoff and no consumer. Multi-process hosted PostgreSQL, protected production policy/clock/key/checkpoint custody, current-state ingress, and cross-service ambiguity reconciliation remain unproved. The accepted snapshot is therefore a safe repository bridge, not an operational scheduler.
 
 **Reevaluate:** AUTO-040 may compose the accepted repository modules through an injected fake no-relay consumer and durable reconciliation ledger, and may generate a separately digest-bound protected activation packet. AUTO-040 must remain effect-free, must not activate itself, and needs a fresh independent review. Any real policy enrollment, consumer, GitHub/agent/provider contact, scheduling, claim, lease, dispatch, execution, recurrence, hosting, deployment, or production effect remains separately owner-authorized.
+
+## ADR-105 — No-relay evidence terminates at an exact fixed fake and cannot activate production
+
+**Decision:** CR11B-AUTO-040 composes the accepted proposal, materialization, and ready-promotion modules only through one privately registered exact in-memory fake. The coordinator captures the fake's base method, rejects subclasses and caller-selected ports, writes a durable delivery marker before contact, and permits one attempt. A matched acknowledgement inside the authenticated delivery window is terminal success; thrown, malformed, early, late, or restart-unsettled delivery is terminal ambiguity with no retry. A private HMAC-authenticated SQLite ledger plus external rollback checkpoint preserves exact terminal replay and detects state rollback. The operator projection is sanitized and non-authorizing. A separately keyed activation packet binds the exact simulation run and accepted AUTO-030 evidence, enumerates every missing production gate, and always remains blocked with every effect permission false.
+
+**Why:** The product needs to prove that work can travel through the full internal repository path without the owner relaying messages, while preventing a successful simulation from becoming an accidental production switch. A fixed fake removes arbitrary callback and consumer behavior from the proof. The pre-contact marker and fail-ambiguous restart rule prevent an uncertain delivery from being repeated. A separate activation packet makes remaining production work explicit without conflating evidence with authority.
+
+**Alternatives rejected:** Accept an arbitrary injected delivery callback; dispatch through generic outbox or agent/GitHub clients; retry after a post-marker exception; accept an acknowledgement outside its start/deadline window; infer current state from an unauthenticated receipt; expose authentication or handoff payloads in the UI; let a simulation success flip a production flag; omit hosted database, multi-process, clock, policy, credential, consumer, reconciliation, owner, or independent-review gates from activation evidence.
+
+**Trade-off:** The repository now proves one complete no-owner-relay simulation, but the fixed fake is deliberately not a production consumer. The local ledger and injected clocks/keys/checkpoints do not prove hosted multi-process operation or protected custody. Terminal ambiguity requires later reconciliation rather than automatic retry. The production activation packet is useful planning evidence but grants no capability.
+
+**Reevaluate:** A fresh independent reviewer must attack the exact AUTO-040 candidate before the repository snapshot can be accepted. Any real consumer channel, policy enrollment, hosted PostgreSQL, protected clock/key/checkpoint or credential custody, agent/provider/GitHub contact, scheduling, claim, lease, dispatch, execution, recurrence, hosting, deployment, or external effect requires a later contract, production proof, fresh owner approval, and any required independent review.
+
+## ADR-106 — AUTO-040 composition uses runtime-private capabilities, not caller assertions
+
+**Decision:** The rejected AUTO-040 candidate is not accepted. Its first remediation captures exact registered materialization,
+promotion, store, fake, and fixed repository-clock implementations in ECMAScript-private slots or closures, freezes their
+instances and prototype surfaces, and invokes captured base methods. Ledger mutation requires a module-private capability
+held only by that coordinator. A packet can be built only from the exact frozen acknowledged run object returned by the
+composed operation. Start state, start/deadline chronology, and complete terminal-row capacity are durable facts, and the
+complete packet input is snapshotted once without executing caller behavior.
+
+**Why:** Separate reviewers proved that TypeScript `private readonly` fields were writable runtime properties, a Proxy
+replacement could execute after the marker and produce acknowledged success, activation time could change between reads,
+the public store could authenticate fabricated success, replay ignored changed start state, deadline state could be false,
+and a completion could exceed the configured row ceiling. These were structural failures even though every original test
+passed. Runtime-private bindings and capabilities remove the alternate mutation path; frozen eligible-run identity prevents
+a valid HMAC-shaped clone from becoming composed-path evidence; preflight capacity prevents partial canonical progress.
+
+**Alternatives rejected:** Treat TypeScript privacy or source-string scans as runtime isolation; expose the store mutation
+token; accept any HMAC-valid run as coordinator evidence; re-read hostile input after validation; validate chronology only
+in the coordinator; reserve only marker capacity; rewrite either negative report; interpret the blocked packet as authority.
+
+**Trade-off:** The repository fixed clock is deterministic and cannot represent a production clock. Activation eligibility
+is intentionally process-local and must be re-established by an exact coordinator replay after restart. The local SQLite
+ledger, in-memory checkpoint, and same-process capacity preflight still do not prove hosted multi-process convergence.
+
+**Reevaluate:** Different independent reviewers must reproduce all `AUTO040-SAR` and `AUTO040-DR` findings against the
+exact remediation commit. Any remaining finding keeps AUTO-040 open. Production consumer, reconciliation, database,
+clock/key/checkpoint/policy custody, credential brokerage, owner approval, deployment, and effects remain later gates.
+
+## ADR-107 — AUTO-040 binds the complete collaborator graph, not only the coordinator surface
+
+**Decision:** The first AUTO-040 remediation remains rejected for security acceptance despite its accepted durability
+re-review. Its second remediation makes every collaborator admitted to the repository-only composed path a registered exact
+runtime object whose mutable state is ECMAScript-private and whose instance, prototype, database operations, and accepted
+base operation are captured before use. Materialization and promotion retain only exact evaluation, policy-guard,
+canonical-write, and clock closures. The no-relay promotion binder accepts only a promotion service constructed with the
+registered fixed repository clock. Generic AUTO-030 clocks remain available to the earlier isolated contract but cannot
+enter AUTO-040. The canonical database adapter captures raw query and transaction functions once and freezes its exposed
+client, preventing later caller replacement from entering the captured canonical path.
+
+**Why:** The first security re-review replaced neither the frozen coordinator nor either frozen service. Instead it added
+an own `evaluation` method to the still externally held simulation store after the whole composition existed. Both services
+dynamically dispatched through that alias, executed the hostile callback twice, contacted the fake, and returned an
+acknowledged run. Top-level privacy therefore did not close the dependency graph. Capturing only the exact complete graph,
+including policy stores, canonical persistence, and promotion time, removes the arbitrary-callback seam before any marker
+or canonical mutation can occur.
+
+**Alternatives rejected:** Treat a frozen coordinator as proof that nested objects are immutable; capture only the public
+evaluation method while leaving database, verification, or guard helpers runtime-public; trust a caller-held canonical
+store or clock because its TypeScript type is narrow; repair only the exact reproduced method name; discard the accepted
+durability report or rewrite the negative security report; infer security acceptance from producer tests.
+
+**Trade-off:** Repository store and canonical instances are intentionally frozen, so test instrumentation must occur at the
+captured database or clock boundary rather than by replacing accepted repository methods. This is a stronger local runtime
+boundary but still does not establish hostile-process isolation, protected production clock/key/checkpoint custody, hosted
+multi-process PostgreSQL convergence, or a qualified real consumer.
+
+**Reevaluate:** A fresh reviewer different from all implementation and earlier review agents must reproduce the nested
+alias attack and probe assignment, deletion, `defineProperty`, Proxy, subclass, own-method, and prototype replacement for
+evaluation, both policy stores, canonical persistence, and both clock uses on the exact second-remediation commit. Any
+remaining callback or alternate consumer/effect seam keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-108 — AUTO-040 repository provenance is exact; structural persistence ports are not authority
+
+**Decision:** The second AUTO-040 remediation remains rejected. Its third remediation separates generic persistence from
+repository-simulation provenance. Only a client created and privately registered by the module-owned test-only PGlite
+factory can mark a `CanonicalStore` as eligible for the no-relay composition; generic PGlite adapters, inherited wrappers,
+ordinary ducks, and the networked PostgreSQL client remain usable elsewhere but cannot bind the AUTO-040 materialization or
+promotion services. The raw PGlite receiver remains inside the factory closure. Each of the four frontier SQLite stores
+accepts rollback-checkpoint operations only through a binder for the exact registered in-memory reference implementation,
+and that binder invokes captured base methods over ECMAScript-private state. Canonical database-method discovery uses data
+descriptors and rejects accessor or Proxy behavior without invoking it.
+
+**Why:** The second-remediation reviewer changed only caller-owned delegate state beneath already captured database and
+checkpoint method identities. Those methods still consulted their mutable receivers, executed arbitrary callbacks, and
+then allowed an acknowledged repository simulation. The same structural canonical boundary admitted a client backed by
+networked PostgreSQL. Freezing and branding outer objects therefore did not prove the behavior or provenance of their
+nested ports. Private factory state and captured exact checkpoint implementations remove the receiver-alias path rather
+than adding another surface assertion.
+
+**Alternatives rejected:** Treat captured function identity as captured behavior; allow any object satisfying
+`DatabaseClient` or `RollbackCheckpointStoreV1` into AUTO-040; brand every `adaptPglite` result; identify PGlite by a
+caller-visible constructor check while retaining the raw receiver; freeze a caller-owned receiver without controlling its
+closure state; remove generic PostgreSQL support from unrelated contracts; alter the negative review report.
+
+**Trade-off:** AUTO-040 now uses a test-only module-private PGlite factory and the in-memory checkpoint reference, so it
+still does not prove hosted PostgreSQL, durable protected checkpoint custody, multi-process convergence, or production
+runtime isolation. Those are explicit later gates. The exact factory is loaded only when the repository simulation calls
+it and is not bundled into the production application.
+
+**Reevaluate:** A fresh reviewer different from every implementation and prior review agent must attack the exact
+third-remediation commit. It must reproduce `AUTO040-SSRR-001`, test mutable receiver and closure state, ordinary ducks,
+network-capable clients, accessors, Proxies, subclasses, and inherited wrappers across the database and all four checkpoint
+seams, and repeat every earlier `SAR` path. Any callback, network-capable alternate path, false acknowledgement, or other
+consumer/effect seam keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-109 — AUTO-040 pins dependency implementation provenance before constructing a trusted receiver
+
+**Decision:** The third AUTO-040 remediation remains rejected. Its fourth remediation treats exact pinned dependency
+implementation identity as part of the repository-simulation authority boundary. Before constructing a PGlite receiver,
+the factory verifies the PGlite 0.3.14 constructor, both prototype levels, every executable method/getter descriptor,
+descriptor flags, and function-source SHA-256 against an in-repository manifest. Drift fails before construction. The
+complete verified executable surface is then installed as non-writable, non-configurable own descriptors on the withheld
+receiver. The exposed frozen client binds only verified operations, and only that client can receive the private
+repository-simulation brand.
+
+**Why:** The third-remediation reviewer changed the shared PGlite `transaction` prototype before calling the private
+factory. Factory ownership alone then branded the changed method, which ran twice during an otherwise acknowledged
+simulation. Withholding and freezing the returned client did not prove the implementation from which its captured
+operation came. A pinned manifest rejects earlier drift, while a sealed private receiver prevents later shared-prototype
+changes from affecting dynamic internal dispatch.
+
+**Alternatives rejected:** Treat a module-private factory as sufficient provenance; validate only `query`, `transaction`,
+and `exec` while leaving their dynamically dispatched helpers mutable; freeze the shared third-party prototypes globally;
+bundle PGlite into the production application solely to capture early references; accept package-lock identity without
+runtime implementation validation; alter the immutable third-remediation report.
+
+**Trade-off:** The manifest deliberately binds this repository-only fixture to exact PGlite 0.3.14 executable source.
+Updating that development dependency requires an explicit manifest review and new evidence. This remains local test
+database evidence; it does not prove hosted PostgreSQL, process isolation, durable protected checkpoint custody, or a
+qualified production consumer.
+
+**Reevaluate:** A fresh reviewer different from the implementation author and all earlier AUTO-040 reviewers must
+reproduce `AUTO040-STRR-001`, vary every accepted PGlite executable descriptor before construction and after receiver
+creation, and repeat all `SAR` and `SSRR` paths plus ordinary completion, replay, ambiguity, rollback, blocked activation,
+and negative-authority checks. Any admitted changed behavior, alternate consumer/effect seam, or false acknowledgement
+keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-110 — AUTO-040 closes only on exact independent evidence and remains non-production
+
+**Decision:** Exact fourth-remediation commit `fb549ebbcf5a2cbd9ca3d3cbef6842578e280074` is accepted for the local,
+single-process, effect-free AUTO-040 repository simulation. The accepting independent report is immutable at SHA-256
+`bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`. Its acceptance closes `SAR-001`, `SAR-002`,
+`DR-001` through `DR-004`, `SSRR-001`, and `STRR-001` only for that exact snapshot.
+
+**Why:** The fresh reviewer independently varied all 34 executable PGlite descriptors before factory construction and
+together after private receiver creation, repeated alternate database and four-checkpoint matrices, re-ran complete
+completion/replay/ambiguity/rollback/activation evidence, and found no concrete defect or alternate effect path. Producer
+tests alone did not close the phase; the exact different-reviewer evidence did.
+
+**Trade-off:** Source and descriptor pinning intentionally couples the repository fixture to PGlite 0.3.14. The accepted
+simulation still does not prove hosted PostgreSQL, protected clock/key/checkpoint/policy custody, multi-process convergence,
+a real consumer, credential brokerage, cross-service ambiguity reconciliation, or production isolation.
+
+**Reevaluate:** Any PGlite change, dependency-manifest change, accepted receiver-surface change, real consumer, hosted
+database, protected policy enrollment, or activation design requires a new bounded contract and proportionate fresh
+review. Private GitHub transfer may preserve the accepted bytes, but merge still requires owner approval and cannot grant
+production authority.
