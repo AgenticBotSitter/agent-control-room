@@ -1,6 +1,6 @@
 # CR11B-AUTO-080 Acceptance Record
 
-Status: second remediation rejected; third remediation implemented; fourth different independent review required
+Status: complete for exact independently accepted effect-free commit `091ff116c8735aa980608c9c5c0b468436537cae`
 
 Date: 2026-08-30
 
@@ -41,12 +41,12 @@ contact, cleanup, live qualification, production activation, dispatch, execution
 - macOS stage zero: `ready_for_runtime_check`; and
 - working-tree whitespace validation: passing.
 
-## Required independent review
+## Independent review boundary
 
-Producer tests cannot accept this boundary. A different independent reviewer must examine the exact committed candidate,
-rerun the focused and combined gates, attack source substitution, re-signing, chronology, strict schema, projection,
-accessor/Proxy, and mutable-runtime seams, confirm that no live-effect path exists, and preserve a sanitized immutable
-report. Any finding keeps AUTO-080 open.
+Producer tests did not accept this boundary. Four different independent reviewers examined successive exact candidates,
+reran the focused and combined gates, attacked source substitution, re-signing, chronology, strict schema, projection,
+accessor/Proxy, raw-key, keyed-context, and mutable-runtime seams, and confirmed the absence of a live-effect path. Three
+immutable rejections remain part of the acceptance chain; only the exact third-remediation implementation is accepted.
 
 ## First review disposition and remediation
 
@@ -86,7 +86,7 @@ restored exact replay, sanitized projection, and unchanged negative authority.
 
 This remains an in-process clean-start boundary: it trusts the runtime intrinsics present when the security modules
 initialize. It does not claim that an already compromised process can prove native provenance after the fact. Another
-different independent reviewer must accept the exact second-remediation commit.
+different independent reviewer was required to assess the exact second-remediation commit.
 
 ## Second remediation re-review and third remediation
 
@@ -108,7 +108,21 @@ HMAC runtime check before any private request-key copy. Hostile regressions repl
 replace digest with an accessor and method. Across correct and tampered requests, construction, parsing, direct shared
 HMAC use, success, and failure, the replacements receive zero calls and retain no raw key or keyed capability; exact
 replay, projection privacy, and all false authority fields are restored afterward. A fourth different independent
-reviewer must accept the exact third-remediation commit.
+reviewer was required to assess the exact third-remediation commit.
+
+## Third remediation acceptance
+
+A fourth different independent reviewer accepted exact implementation
+`091ff116c8735aa980608c9c5c0b468436537cae`, tree
+`0153f5d2b794eaa05d30c88add8398d2c5ec2898`. The unchanged report is
+`docs/reviews/CR11B_AUTO_080_THIRD_REMEDIATION_REREVIEW.md`, SHA-256
+`10d7e0e32d59dadb5d435c8fda01e767e7234327105120fff95fec3fb034b118`.
+
+The review closed `AUTO080-IR-001`, `AUTO080-RR1-001`, and `AUTO080-RR2-001`; independently passed 12/12 focused,
+149/149 combined CR11B, 731/731 registered pretests, 414/416 core with two intentional skips, 52/52 public post-tests,
+typecheck, lint, production build, 2/2 rendered routes, 27 migrations/97 tables, and macOS stage zero; and found no live
+provider, network, process, database, credential, cleanup, dispatch, execution, or deployment path. AUTO-080 is complete
+only for this exact effect-free request boundary.
 
 ## Negative authority
 

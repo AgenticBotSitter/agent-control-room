@@ -83,7 +83,7 @@
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
 | CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Complete for exact independently accepted effect-free commit `20eeb14` | Six remediations closed mutable-runtime integrity attacks; eight fake scenarios retain all nine blockers and qualify zero production proofs; see `CR11B_AUTO_070_ACCEPTANCE.md` |
-| CR11B-AUTO-080 disposable hosted qualification preparation | Second remediation rejected; third key-custody remediation implemented; fourth different review required | Captured keyed-HMAC finalization, host-verified key validation, and method-free erasure address all three recorded custody seams; every live capability remains false |
+| CR11B-AUTO-080 disposable hosted qualification preparation | Complete for exact independently accepted effect-free commit `091ff11` | Three remediations close raw-key cleanup, mutable binary metadata, and keyed-HMAC capability escape; every live capability remains false |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -117,7 +117,11 @@ establishing hostile pre-load runtime provenance remains outside this in-process
 combined CR11B passes 149/149, registered pretests pass 731/731, core passes 414/416 with zero
 failures and two intentional platform skips, and public posttests pass 52/52.
 Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and
-whitespace validation pass. A different independent review of the exact remediation commit is required.
+whitespace validation pass. A fourth different independent reviewer accepted exact implementation
+`091ff116c8735aa980608c9c5c0b468436537cae`, tree `0153f5d2b794eaa05d30c88add8398d2c5ec2898`, in immutable report
+SHA-256 `10d7e0e32d59dadb5d435c8fda01e767e7234327105120fff95fec3fb034b118`. All three findings are closed for that exact
+effect-free boundary. The acceptance does not authorize any provider, protected reference, process, database, cleanup,
+live qualification, production activation, or external effect.
 
 Accepted boundary: CR11B-AUTO-070 is complete for exact effect-free commit
 `20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`. It binds authenticated
@@ -368,12 +372,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-080-DISPOSABLE-HOSTED-QUALIFICATION — independently review the exact third key-custody remediation before any live authorization can be considered
+Block: CR11B-AUTO-090-DISPOSABLE-HOSTED-LIVE-QUALIFICATION — obtain a new exact owner-authorized controlled-effect packet before building or running any live path
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the third reviewer accepted both raw-key closures but found that ambient HMAC update/digest dispatch could retain a keyed native signing capability. The third remediation now captures, verifies, and directly applies both HMAC methods after canonicalization, while AUTO-080 fails before key copying on method drift. Only a fourth different reviewer can close all findings.
-Expected output: immutable independent report over the exact third-remediation commit, closure of `AUTO080-IR-001`, `AUTO080-RR1-001`, and `AUTO080-RR2-001`, clean-start trust-boundary review, complete keyed-object lifetime review, all focused and combined gates, and an explicit accepted or rejected disposition.
-Owner action: keep `gpt-5.6-sol` at xhigh. The existing authorization for independent reviews is sufficient for the effect-free re-review. A later live attempt still needs fresh exact authority for the named disposable provider/resources, call ceiling, duration, protected access, retained evidence, and cleanup actions.
+Why: AUTO-080 is independently accepted as a request only. The next block crosses credential, provider, network, process, database, backup/restore, and resource-cleanup boundaries, so neither repository evidence nor prior general authorization can start it.
+Expected output: before implementation, one owner-signed packet binding the named private hosted PostgreSQL provider, two exact disposable non-production resources, three service identities, protected-reference route, 40-call and 1,800-second ceilings, sanitized evidence limit, checkpoint/clock/revocation custodians, and separately authorized cleanup plus receipt. Only then may a bounded runner and independent live-result review be built.
+Owner action: keep `gpt-5.6-sol` at xhigh. Select the exact provider/resources and explicitly authorize the named controlled effects and cleanup when ready. Until then, AUTO-090 remains blocked before implementation or contact.
 Stop before: provider selection, protected-reference or credential access, any network/database/process call, resource creation or destruction, backup/restore, raw evidence, owner-signature simulation, production policy/key/data, public endpoint, consumer activation, dispatch, execution, DNS, Cloudflare, hosting deployment, or external effect.
 ```
 
