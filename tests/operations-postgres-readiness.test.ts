@@ -15,7 +15,10 @@ import {
   parseOperationsPostgresReadinessProjectionV1,
   projectOperationsPostgresReadinessV1,
 } from "../src/operations/v1";
-import { READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1 } from "../src/ready-frontier/v1";
+import {
+  READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1,
+  readyFrontierProductionEvidenceClassesV1,
+} from "../src/ready-frontier/v1";
 import { sha256Digest } from "../src/security";
 import { observedProxy } from "./proxy-test-helper";
 
@@ -97,7 +100,7 @@ test("CR11B-AUTO-100 disposition and projection remain disabled before host cont
   const { packet, disposition, projection } = fixture();
   assert.deepEqual(parseOperationsPostgresReadinessPacketV1(packet), packet);
   assert.deepEqual(parseOperationsPostgresReadinessDispositionV1(disposition, packet), disposition);
-  assert.deepEqual(parseOperationsPostgresReadinessProjectionV1(projection), projection);
+  assert.deepEqual(parseOperationsPostgresReadinessProjectionV1(projection, packet, disposition), projection);
   assert.equal(disposition.status, "disabled_before_host_contact");
   for (const value of [disposition.hostContacted, disposition.protectedReferenceResolved,
     disposition.serviceInstalledOrStarted, disposition.configurationWritten, disposition.databaseContacted,
@@ -140,6 +143,39 @@ test("CR11B-AUTO-100 binds disposition to the exact packet and chronology", () =
     recordedAt: "2026-08-31T17:59:00.000Z" }), OperationsContractErrorV1);
 });
 
+test("CR11B-AUTO-100 rejects a completely re-digested cross-object identity fork", () => {
+  const { packet } = fixture();
+  const plan = redigest({ ...packet.operations.plan, topologyId: "topology:operations:foreign:1" }, "planDigest");
+  const assessment = redigest({ ...packet.operations.assessment, planDigest: plan.planDigest }, "assessmentDigest");
+  const dispositionId = `disposition:operations:deployment:${assessment.assessmentDigest.slice(7, 31)}`;
+  const disposition = redigest({ ...packet.operations.disposition, dispositionId, planDigest: plan.planDigest,
+    assessmentDigest: assessment.assessmentDigest }, "dispositionDigest");
+  const drift = redigest({ ...packet, operations: { ...packet.operations, plan, assessment, disposition } }, "packetDigest");
+  assert.throws(() => parseOperationsPostgresReadinessPacketV1(drift), OperationsContractErrorV1);
+});
+
+test("CR11B-AUTO-100 freezes every source gate registry used after module initialization", () => {
+  for (const values of [OPERATIONS_PRODUCTION_DATABASE_BLOCKERS_V1, OPERATIONS_DEPLOYMENT_GATE_IDS_V1,
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1, readyFrontierProductionEvidenceClassesV1,
+    OPERATIONS_POSTGRES_READINESS_REPOSITORY_MET_GATES_V1]) {
+    assert.equal(Object.isFrozen(values), true);
+    assert.throws(() => { (values as unknown as string[])[0] = "forged_gate"; }, TypeError);
+  }
+  assert.deepEqual(parseOperationsPostgresReadinessPacketV1(fixture().packet), fixture().packet);
+});
+
+test("CR11B-AUTO-100 projection parsing requires the exact packet and disposition", () => {
+  const first = fixture();
+  const packet = buildOperationsPostgresReadinessPacketV1({ packetId: "packet:operations:postgres-readiness:2",
+    databaseTarget: first.packet.databaseTarget, operations: first.packet.operations, preparedAt: first.packet.preparedAt });
+  const disposition = buildOperationsPostgresReadinessDispositionV1({ packet, recordedAt: first.disposition.recordedAt });
+  assert.throws(() => parseOperationsPostgresReadinessProjectionV1(first.projection, packet, disposition),
+    OperationsContractErrorV1);
+  const forged = redigest({ ...first.projection, packetDigest: packet.packetDigest }, "projectionDigest");
+  assert.throws(() => parseOperationsPostgresReadinessProjectionV1(forged, first.packet, first.disposition),
+    OperationsContractErrorV1);
+});
+
 test("CR11B-AUTO-100 rejects accessors and Proxies without executing caller behavior", () => {
   const { packet } = fixture();
   let calls = 0;
@@ -156,7 +192,8 @@ test("CR11B-AUTO-100 rejects accessors and Proxies without executing caller beha
 test("CR11B-AUTO-100 source contains no host, process, database, provider, credential, or deployment client", async () => {
   const source = await readFile(new URL("../src/operations/v1/postgres-readiness.ts", import.meta.url), "utf8");
   for (const forbidden of ["child_process", "exec(", "spawn(", "fetch(", "axios", "@aws-sdk", "aws-sdk",
-    "from \"postgres\"", "from 'postgres'", "DATABASE_URL", "AWS_ACCESS_KEY_ID", "RDS_"]) {
+    "from \"postgres\"", "from 'postgres'", "DATABASE_URL", "AWS_ACCESS_KEY_ID", "RDS_",
+    "operationsPostgresReadinessSchemasV1"]) {
     assert.equal(source.includes(forbidden), false, forbidden);
   }
 });

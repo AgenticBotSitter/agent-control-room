@@ -1764,3 +1764,11 @@ operations, production proof, independent review, and owner effect authority dis
 **Reevaluate:** Only after a different independent reviewer accepts the exact AUTO-100 candidate may a later phase
 prepare an exact owner-authorized native rehearsal. Evidence changes require a new packet. No live work begins from this
 ADR or its repository artifacts.
+
+**Pre-review hardening amendment:** Two report-only review runs were interrupted before producing an immutable verdict.
+The first run nevertheless identified four plausible candidate seams. The remediation binds every cross-object ID and
+time in addition to exact canonical current-source identities; captures, verifies, and freezes all gate registries used
+after module initialization; withholds the AUTO-100 Zod schemas from public mutation; and requires projection parsing to
+re-verify the exact packet and disposition digests. New regressions cover a completely re-digested identity fork, source
+registry mutation, private schema custody, and cross-packet projection substitution. This amendment is producer
+remediation evidence only and still requires a fresh different reviewer.

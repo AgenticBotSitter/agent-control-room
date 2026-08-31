@@ -25,6 +25,10 @@ All nested identities and digests must form one exact chain. Target, topology, r
 substitution fails closed. Preparation cannot predate the target decision, readiness assessment, or disabled
 disposition.
 
+The exact current CR10A source identities are captured at module initialization. Every target and operations artifact is
+re-derived or compared with that clean-start identity before it can enter a packet. Cross-object IDs and chronology are
+checked separately from the artifact digests, so a complete re-digested fork is still rejected.
+
 ## Preserved gate lanes
 
 The packet contains all 39 gates in their authoritative source order. Similar wording does not merge gates across source
@@ -40,6 +44,10 @@ Only three CR10A repository contracts are present:
 Those three are recorded as repository contracts only. The remaining 36 gates block readiness. No gate accepts live
 evidence, grants approval, or grants deployment or execution authority.
 
+AUTO-100 keeps private immutable copies of every expected source-gate registry, verifies them against upstream at module
+initialization, and freezes the shared source arrays it must depend on. Its Zod schemas are private implementation state,
+not exported caller-mutable authority.
+
 ## Safe disposition and projection
 
 The derived disposition is always `disabled_before_host_contact`. It is bound to the exact packet and records that no
@@ -47,8 +55,9 @@ host, protected reference, service, configuration, database, migration, backup, 
 touched. Any evidence change requires a new packet; automatic retry is forbidden.
 
 The operator projection contains only the fixed Hostinger target, counts, blocker keys, safe reason, and false capability
-flags. It contains no hostname, address, port, credential reference, credential value, connection string, deployable
-configuration, raw host evidence, or executable operation.
+flags. Its parser requires and re-verifies the exact packet and disposition and binds both digests. It contains no
+hostname, address, port, credential reference, credential value, connection string, deployable configuration, raw host
+evidence, or executable operation.
 
 ## Architecture retained
 

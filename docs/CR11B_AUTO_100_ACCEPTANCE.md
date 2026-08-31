@@ -18,18 +18,21 @@ eligible for an owner window and its exact disposition is `disabled_before_host_
 - strict packet, per-gate, disposition, and safe-projection schemas;
 - canonical digests for every gate and complete artifact;
 - exact AUTO-090 target and CR10A topology/release/plan/assessment/disposition lineage;
+- clean-start capture of the exact current CR10A source identities plus independent cross-object ID and chronology checks;
 - fixed accepted AUTO-040 and AUTO-070 implementation/review identities;
 - twelve production-database prerequisites, eighteen deployment gates, and nine automatic-work proofs kept in separate
   ordered lanes;
 - exactly three repository-contract observations and 36 blockers;
 - fail-closed chronology, substitution, reordering, omission, and re-digested false-readiness checks;
+- immutable locally captured gate registries, frozen source registries, and private non-exported schemas;
+- projection parsing bound to the exact packet and disposition digests;
 - accessor and Proxy rejection before caller behavior can execute; and
 - an operator projection in which host, reference, service, configuration, database, migration, backup/restore,
   consumer, and deployment capabilities are all false.
 
 ## Focused verification
 
-The dedicated ten-case suite passes and covers:
+The dedicated thirteen-case suite passes and covers:
 
 - exact 39-gate composition and source order;
 - the three-present/36-blocked disposition;
@@ -37,17 +40,20 @@ The dedicated ten-case suite passes and covers:
 - Hostinger/private-PostgreSQL selection and explicit AWS RDS, production PGlite, public-database, and R2-state denial;
 - false authority and effect flags;
 - nested target and operations substitution;
+- a complete cross-object identity fork after every affected object is re-digested;
 - gate reorder, omission, and false-readiness forgery after re-digesting;
+- post-initialization source-registry mutation and public-schema-custody checks;
+- projection substitution across otherwise valid packet/disposition pairs;
 - exact packet/disposition binding and chronology;
 - accessor and Proxy attacks with zero hostile callbacks or traps; and
 - static absence of host, process, database, provider, credential, and deployment clients.
 
 Complete local verification passes:
 
-- dedicated AUTO-100: 10/10;
-- combined CR11B: 165/165;
-- combined CR10A: 161/161;
-- registered pretests: 747/747;
+- dedicated AUTO-100: 13/13;
+- combined CR11B: 168/168;
+- combined CR10A: 164/164;
+- registered pretests: 750/750;
 - core tests: 414/416 with zero failures and two intentional platform skips;
 - public post-tests: 52/52;
 - TypeScript check and full lint;
@@ -60,6 +66,12 @@ Complete local verification passes:
 
 Independent security and authority review must accept the exact candidate commit before AUTO-100 can be integrated or a
 later owner-controlled rehearsal can be prepared. Producer tests and this acceptance record do not satisfy that gate.
+
+Two attempted report-only review runs were stopped by the review platform before either produced a report or verdict.
+The first provided provisional descriptions of four plausible seams. Codex reproduced and remediated those seams rather
+than treating the interrupted review as acceptance: complete cross-object identity drift, mutable gate/schema custody,
+source-registry mutation, and an insufficiently bound projection parser. A fresh reviewer must assess the exact
+remediation commit.
 
 ## Negative authority
 
