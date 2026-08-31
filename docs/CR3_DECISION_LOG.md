@@ -1496,3 +1496,13 @@ fixture observations can never be migrated or relabelled into production qualifi
 assessment, irreversible full-chain identity revocation, trust-advance-safe exact replay, and per-operation private-file
 and exact-schema checks remediate its five findings. The original negative report remains unchanged. A different reviewer
 must accept an exact remediation commit; no producer test or remediation itself closes AUTO-060.
+
+**Second-review amendment:** A new different reviewer rejected exact first-remediation commit
+`fb2f0a3dd4e2e128ae6076daadad10938fec1438` in immutable report SHA-256
+`1aa0119e9eb8504d471586c88d62ab44b533f16190d2c9c57fbe58cad30e9dc2`. Although the direct raw-observation assessor was
+gone, a caller could still modify store-derived gate status, recompute the public assessment digest, and obtain a forged
+observed-status projection through exported parsers. The second remediation removes every public digest-only assessment
+or projection trust consumer and the public raw-assessment method. The only trusted view is now built and deep-frozen
+inside one authenticated store operation after complete ledger, checkpoint, trust, and AUTO-050 chain verification.
+Public digests remain content identity only. A third different reviewer must accept the new exact commit; negative
+authority stayed intact throughout both rejections.

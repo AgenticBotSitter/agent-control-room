@@ -6,13 +6,10 @@ import {
 } from "./production-boundary-types";
 import {
   READY_FRONTIER_PRODUCTION_INDEPENDENT_VERIFICATION_V1,
-  READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1,
   READY_FRONTIER_PRODUCTION_PROOF_ENVELOPE_V1,
   READY_FRONTIER_PRODUCTION_PROOF_OBSERVATION_V1,
-  READY_FRONTIER_PRODUCTION_PROOF_PROJECTION_V1,
   READY_FRONTIER_PRODUCTION_TRUST_BUNDLE_V1,
   READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
-  readyFrontierProductionObservedGateStatusesV1,
 } from "./production-proof-types";
 import {
   readyFrontierDigestSchemaV1,
@@ -152,74 +149,6 @@ export const readyFrontierProductionProofObservationSchemaV1 = z.object({
   grantsDispatchOrExecution: z.literal(false),
   grantsExternalEffects: z.literal(false),
   observationDigest: readyFrontierDigestSchemaV1,
-}).strict();
-
-export const readyFrontierProductionGateObservationStatusSchemaV1 = z.object({
-  gateCode: gateCodeSchemaV1,
-  status: z.enum(readyFrontierProductionObservedGateStatusesV1),
-  proofId: readyFrontierIdSchemaV1.nullable(),
-  observationId: readyFrontierIdSchemaV1.nullable(),
-  observedAt: readyFrontierTimeSchemaV1.nullable(),
-  expiresAt: readyFrontierTimeSchemaV1.nullable(),
-}).strict();
-
-export const readyFrontierProductionProofAssessmentSchemaV1 = z.object({
-  schema: z.literal(READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1),
-  proofAssessmentId: readyFrontierIdSchemaV1,
-  tenantId: readyFrontierIdSchemaV1,
-  workspaceId: readyFrontierIdSchemaV1,
-  planId: readyFrontierIdSchemaV1,
-  planDigest: readyFrontierDigestSchemaV1,
-  assessmentId: readyFrontierIdSchemaV1,
-  assessmentDigest: readyFrontierDigestSchemaV1,
-  trustBundleId: readyFrontierIdSchemaV1,
-  trustBundleRevision: z.number().int().min(1).max(2_147_483_647),
-  trustBundleDigest: readyFrontierDigestSchemaV1,
-  trustMode: z.literal(READY_FRONTIER_PRODUCTION_TRUST_MODE_V1),
-  gateStatuses: z.array(readyFrontierProductionGateObservationStatusSchemaV1).length(9),
-  blockingGateCodes: z.array(gateCodeSchemaV1).length(9),
-  observedUnqualifiedCount: z.number().int().min(0).max(9),
-  qualifiedProofCount: z.literal(0),
-  remainingQualifiedProofCount: z.literal(9),
-  state: z.literal("blocked_fixture_proof_only"),
-  safeReason: z.literal("protected_production_custody_unavailable"),
-  evaluatedAt: readyFrontierTimeSchemaV1,
-  eligibleForOwnerApproval: z.literal(false),
-  eligibleForActivation: z.literal(false),
-  requiresProtectedProductionReassessment: z.literal(true),
-  requiresFreshStrongOwnerApproval: z.literal(true),
-  requiresIndependentSecurityReview: z.literal(true),
-  activationAuthorized: z.literal(false),
-  grantsApproval: z.literal(false),
-  grantsActivationAuthority: z.literal(false),
-  grantsClaimOrLease: z.literal(false),
-  grantsDispatchOrExecution: z.literal(false),
-  grantsExternalEffects: z.literal(false),
-  proofAssessmentDigest: readyFrontierDigestSchemaV1,
-}).strict();
-
-export const readyFrontierProductionProofProjectionSchemaV1 = z.object({
-  schema: z.literal(READY_FRONTIER_PRODUCTION_PROOF_PROJECTION_V1),
-  tenantId: readyFrontierIdSchemaV1,
-  workspaceId: readyFrontierIdSchemaV1,
-  planId: readyFrontierIdSchemaV1,
-  assessmentId: readyFrontierIdSchemaV1,
-  proofAssessmentId: readyFrontierIdSchemaV1,
-  status: z.literal("blocked_fixture_proof_only"),
-  safeReason: z.literal("protected_production_custody_unavailable"),
-  gateStatuses: z.array(z.object({ gateCode: gateCodeSchemaV1,
-    status: z.enum(readyFrontierProductionObservedGateStatusesV1) }).strict()).length(9),
-  blockingGateCodes: z.array(gateCodeSchemaV1).length(9),
-  observedUnqualifiedCount: z.number().int().min(0).max(9),
-  qualifiedProofCount: z.literal(0),
-  remainingQualifiedProofCount: z.literal(9),
-  canActivateProduction: z.literal(false),
-  canConstructConsumer: z.literal(false),
-  canResolveProtectedReferences: z.literal(false),
-  canContactNetwork: z.literal(false),
-  canClaimOrLease: z.literal(false),
-  canDispatchOrExecute: z.literal(false),
-  projectionDigest: readyFrontierDigestSchemaV1,
 }).strict();
 
 export const readyFrontierProductionProofVerificationInputSchemaV1 = z.object({

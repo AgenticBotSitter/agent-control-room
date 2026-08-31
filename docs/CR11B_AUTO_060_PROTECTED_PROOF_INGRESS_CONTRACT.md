@@ -1,6 +1,6 @@
 # CR11B-AUTO-060 Protected Proof Ingress Contract
 
-Status: first remediation implemented after independent rejection; different-agent re-review required
+Status: second remediation implemented after two independent rejections; different-agent re-review required
 
 Date: 2026-08-30
 
@@ -101,9 +101,10 @@ tables/indexes/triggers/views fail before state is returned or an append is acce
 The repository checkpoint implementation is deliberately in-memory and test-only. Durable protected checkpoint custody,
 hosted multi-process locking, backup/restore, availability, and production concurrency remain unproved.
 
-## Partial assessment and revocation truth
+## Store-private assessment and revocation truth
 
-The only assessment builder is owned by the authenticated store. There is no exported raw-observation assessor. It
+The only assessment builder is owned by the authenticated store. There is no exported raw-observation assessor, proof
+assessment parser/projector, projection parser, public aggregate assessment/projection schema, or raw assessment method. It
 re-verifies the AUTO-050 assessment with its protected HMAC context, verifies current ledger state and the owner-signed
 fixture bundle, filters ledger-derived observations to the exact assessment chain, and rejects an evaluation time earlier
 than the latest authenticated ledger record or the AUTO-050 assessment. Each gate is one of:
@@ -125,7 +126,11 @@ cryptographically valid repository-fixture observations still leave the state `b
 
 ## Safe projection
 
-The projection contains only tenant/workspace, plan/assessment/proof-assessment IDs, safe gate/status pairs, counts, all
+`projectAssessment` is the only trusted projection operation. In one call it re-verifies the private file and exact schema,
+every ledger package and authentication tag, the rollback checkpoint, current trust chain, and exact AUTO-050 assessment;
+derives assessment state without accepting a caller proof assessment; and deep-freezes the returned safe view. Public
+SHA-256 remains content identity, never proof of ledger provenance. The projection contains only
+tenant/workspace, plan/assessment/proof-assessment IDs, safe gate/status pairs, counts, all
 nine blocking gate codes, and false capability flags. It excludes evidence and binding digests, signatures, public keys,
 key and identity detail, trust-bundle detail, authentication tags, private locators, protected references, evidence bodies,
 and operational controls.
@@ -143,6 +148,7 @@ The candidate must prove:
 - trust revisions cannot skip, fork, or roll back;
 - SQLite tampering and database rollback fail against authenticated state and external checkpoint;
 - partial and all-nine proof assessments remain unqualified and blocked;
+- no caller-re-digested assessment or projection can enter a trusted exported consumer;
 - the safe projection omits protected proof material; and
 - proof ingress imports no network, provider, deployment, secret-resolution, claim, dispatch, or effect client.
 

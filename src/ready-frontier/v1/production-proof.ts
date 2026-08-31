@@ -2,13 +2,10 @@ import { createHash, createPublicKey, timingSafeEqual, verify, type KeyObject } 
 import { canonicalJson, sha256Digest } from "../../security";
 import { ReadyFrontierContractErrorV1 } from "./errors";
 import { parseExactReadyFrontierV1 } from "./exact";
-import { READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1 } from "./no-relay";
 import { parseReadyFrontierProductionBoundaryAssessmentV1 } from "./production-boundary";
 import {
-  readyFrontierProductionProofAssessmentSchemaV1,
   readyFrontierProductionProofEnvelopeSchemaV1,
   readyFrontierProductionProofObservationSchemaV1,
-  readyFrontierProductionProofProjectionSchemaV1,
   readyFrontierProductionProofVerificationInputSchemaV1,
   readyFrontierProductionTrustAnchorSchemaV1,
   readyFrontierProductionTrustBundleSchemaV1,
@@ -17,15 +14,12 @@ import {
   READY_FRONTIER_PRODUCTION_INDEPENDENT_VERIFICATION_V1,
   READY_FRONTIER_PRODUCTION_PROOF_MAX_LIFETIME_SECONDS_V1,
   READY_FRONTIER_PRODUCTION_PROOF_OBSERVATION_V1,
-  READY_FRONTIER_PRODUCTION_PROOF_PROJECTION_V1,
   READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
   type ReadyFrontierProductionIndependentVerificationV1,
-  type ReadyFrontierProductionProofAssessmentV1,
   type ReadyFrontierProductionProofBindingV1,
   type ReadyFrontierProductionProofBodyV1,
   type ReadyFrontierProductionProofEnvelopeV1,
   type ReadyFrontierProductionProofObservationV1,
-  type ReadyFrontierProductionProofProjectionV1,
   type ReadyFrontierProductionTrustAnchorV1,
   type ReadyFrontierProductionTrustBundleBodyV1,
   type ReadyFrontierProductionTrustBundleV1,
@@ -229,7 +223,7 @@ export function verifyReadyFrontierProductionProofEnvelopeV1(inputValue: unknown
     observationDigest: sha256Digest(material) });
 }
 
-export function parseReadyFrontierProductionProofObservationV1(value: unknown):
+function parseReadyFrontierProductionProofObservationV1(value: unknown):
   ReadyFrontierProductionProofObservationV1 {
   const observation = parseExactReadyFrontierV1(readyFrontierProductionProofObservationSchemaV1,
     value) as ReadyFrontierProductionProofObservationV1;
@@ -237,51 +231,4 @@ export function parseReadyFrontierProductionProofObservationV1(value: unknown):
     || observation.observationDigest !== sha256Digest(without(
       observation as unknown as Record<string, unknown>, "observationDigest"))) fail("digest_mismatch");
   return observation;
-}
-
-export function parseReadyFrontierProductionProofAssessmentV1(value: unknown):
-  ReadyFrontierProductionProofAssessmentV1 {
-  const assessment = parseExactReadyFrontierV1(readyFrontierProductionProofAssessmentSchemaV1,
-    value) as ReadyFrontierProductionProofAssessmentV1;
-  if (!sameList(assessment.gateStatuses.map((item) => item.gateCode), READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
-    || !sameList(assessment.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
-    || assessment.observedUnqualifiedCount !== assessment.gateStatuses.filter(
-      (item) => item.status === "observed_unqualified").length
-    || assessment.proofAssessmentDigest !== sha256Digest(without(
-      assessment as unknown as Record<string, unknown>, "proofAssessmentDigest"))) fail("digest_mismatch");
-  return assessment;
-}
-
-export function projectReadyFrontierProductionProofAssessmentV1(value: unknown):
-  ReadyFrontierProductionProofProjectionV1 {
-  const assessment = parseReadyFrontierProductionProofAssessmentV1(value);
-  const material: Omit<ReadyFrontierProductionProofProjectionV1, "projectionDigest"> = {
-    schema: READY_FRONTIER_PRODUCTION_PROOF_PROJECTION_V1,
-    tenantId: assessment.tenantId, workspaceId: assessment.workspaceId,
-    planId: assessment.planId, assessmentId: assessment.assessmentId,
-    proofAssessmentId: assessment.proofAssessmentId, status: assessment.state,
-    safeReason: assessment.safeReason,
-    gateStatuses: assessment.gateStatuses.map(({ gateCode, status }) => ({ gateCode, status })),
-    blockingGateCodes: [...assessment.blockingGateCodes],
-    observedUnqualifiedCount: assessment.observedUnqualifiedCount,
-    qualifiedProofCount: 0, remainingQualifiedProofCount: 9,
-    canActivateProduction: false, canConstructConsumer: false,
-    canResolveProtectedReferences: false, canContactNetwork: false,
-    canClaimOrLease: false, canDispatchOrExecute: false,
-  };
-  return parseReadyFrontierProductionProofProjectionV1({ ...material,
-    projectionDigest: sha256Digest(material) });
-}
-
-export function parseReadyFrontierProductionProofProjectionV1(value: unknown):
-  ReadyFrontierProductionProofProjectionV1 {
-  const projection = parseExactReadyFrontierV1(readyFrontierProductionProofProjectionSchemaV1,
-    value) as ReadyFrontierProductionProofProjectionV1;
-  if (!sameList(projection.gateStatuses.map((item) => item.gateCode), READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
-    || !sameList(projection.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
-    || projection.observedUnqualifiedCount !== projection.gateStatuses.filter(
-      (item) => item.status === "observed_unqualified").length
-    || projection.projectionDigest !== sha256Digest(without(
-      projection as unknown as Record<string, unknown>, "projectionDigest"))) fail("digest_mismatch");
-  return projection;
 }
