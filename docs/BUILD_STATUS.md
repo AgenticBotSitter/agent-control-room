@@ -83,6 +83,7 @@
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
 | CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Complete for exact independently accepted effect-free commit `20eeb14` | Six remediations closed mutable-runtime integrity attacks; eight fake scenarios retain all nine blockers and qualify zero production proofs; see `CR11B_AUTO_070_ACCEPTANCE.md` |
+| CR11B-AUTO-080 disposable hosted qualification preparation | Complete for exact independently accepted effect-free commit `091ff11` | Three remediations close raw-key cleanup, mutable binary metadata, and keyed-HMAC capability escape; every live capability remains false |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -90,6 +91,38 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
+Active: CR11B-AUTO-080 implements the effect-free preparation for one later owner-authorized disposable hosted PostgreSQL
+qualification. It re-verifies the complete accepted AUTO-070 plan/report and exact implementation/review identities,
+requires a successful no-fault fake, and emits one HMAC-bound request for two disposable databases, three isolated
+processes, seven fixed operations, at most 40 provider calls, at most 1,800 seconds of live activity, at most 1,048,576
+bytes of sanitized evidence, and mandatory separately authorized cleanup with a receipt. Ten explicit blockers retain
+owner signature, provider/resource selection, protected access, independent service identities, checkpoint, clock,
+revocation, cleanup, and result review. The repository contains no live runner or authorization path. Provider selection,
+protected-reference resolution, network, process, database, cleanup, qualification, production activation, dispatch,
+execution, and external effects are all false. The first independent review rejected exact candidate `85199ab`, tree
+`99bc9a3`, because ambient `Uint8Array.prototype.fill` controlled private request-key cleanup. The unchanged rejection
+report has SHA-256 `343da8c163bda9d437d3b850186a4a6b3623b9c255b9b9ab3eec5deaaf532f8c`. First remediation commit `10eb807`, tree
+`a7b764e`, closed the post-load fill reproduction, but a different reviewer rejected it in unchanged report SHA-256
+`bbe1a02b1f442c74f4f7e1e07ba038dcf620a2e3d43595c399a20f0427ec4421`: shared HMAC validation still exposed the copied
+key to mutable `Uint8Array` identity and inherited `byteLength` behavior. The second remediation validates HMAC key shape
+only through captured host operations, removes typed-array `fill` from full-buffer erasure, verifies the relevant runtime
+identities before any AUTO-080 key copy. Third reviewer rejection report SHA-256
+`c105ed8ef640ca4cd4aeb0c5f548d57e4ec5f9f3a9b3144c800dfb3f0c92f239` accepted those raw-key closures but found that
+ambient `Hmac.update` or `Hmac.digest` could retain a keyed native signing context. The third remediation canonicalizes
+material before creating a keyed object, captures and verifies the clean-start HMAC prototype methods, invokes them only
+through captured `Reflect.apply`, and makes AUTO-080 reject HMAC drift before any private key copy. Its hostile tests cover
+update accessors/methods and digest accessors/methods across correct, tampered, build, parse, success, and failure paths
+with zero hostile calls or retained keyed capability. It explicitly trusts clean module initialization; independently
+establishing hostile pre-load runtime provenance remains outside this in-process boundary. Focused tests pass 12/12,
+combined CR11B passes 149/149, registered pretests pass 731/731, core passes 414/416 with zero
+failures and two intentional platform skips, and public posttests pass 52/52.
+Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and
+whitespace validation pass. A fourth different independent reviewer accepted exact implementation
+`091ff116c8735aa980608c9c5c0b468436537cae`, tree `0153f5d2b794eaa05d30c88add8398d2c5ec2898`, in immutable report
+SHA-256 `10d7e0e32d59dadb5d435c8fda01e767e7234327105120fff95fec3fb034b118`. All three findings are closed for that exact
+effect-free boundary. The acceptance does not authorize any provider, protected reference, process, database, cleanup,
+live qualification, production activation, or external effect.
+
 Accepted boundary: CR11B-AUTO-070 is complete for exact effect-free commit
 `20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`. It binds authenticated
 AUTO-050/AUTO-060 lineage, three single-purpose service identities, and eight deterministic fake scenarios for policy
@@ -339,13 +372,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-080-DISPOSABLE-HOSTED-QUALIFICATION — define and, only under a fresh exact owner authorization, run the first disposable hosted PostgreSQL qualification
+Block: CR11B-AUTO-090-DISPOSABLE-HOSTED-LIVE-QUALIFICATION — obtain a new exact owner-authorized controlled-effect packet before building or running any live path
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: AUTO-070 now provides independently accepted test machinery, but its results are deliberately fake and qualify none of the nine production proofs. The next boundary must turn a tightly scoped disposable run into sanitized evidence without granting production authority or allowing credentials and infrastructure details into the repository.
-Expected output: exact controlled-effect authorization packet, disposable-resource and cleanup contract, separate service identities, protected clock/revocation/checkpoint observations, hosted PostgreSQL isolation/concurrency and restore evidence, sanitized authenticated report, negative/ambiguity paths, and independent review of the exact result.
-Owner action: keep `gpt-5.6-sol` at xhigh. Before any real connection or process starts, provide fresh explicit authority for the exact disposable provider/resources, call ceiling, duration, evidence retention, and cleanup actions. The effect-free packet and tests may be built before that authority.
-Stop before: any unspecified provider or database, production credential/key/policy, non-disposable resource, public endpoint, consumer activation, scheduling, claim, lease, dispatch, execution, recurrence, DNS, Cloudflare, hosting deployment, or external effect outside the exact controlled packet.
+Why: AUTO-080 is independently accepted as a request only. The next block crosses credential, provider, network, process, database, backup/restore, and resource-cleanup boundaries, so neither repository evidence nor prior general authorization can start it.
+Expected output: before implementation, one owner-signed packet binding the named private hosted PostgreSQL provider, two exact disposable non-production resources, three service identities, protected-reference route, 40-call and 1,800-second ceilings, sanitized evidence limit, checkpoint/clock/revocation custodians, and separately authorized cleanup plus receipt. Only then may a bounded runner and independent live-result review be built.
+Owner action: keep `gpt-5.6-sol` at xhigh. Select the exact provider/resources and explicitly authorize the named controlled effects and cleanup when ready. Until then, AUTO-090 remains blocked before implementation or contact.
+Stop before: provider selection, protected-reference or credential access, any network/database/process call, resource creation or destruction, backup/restore, raw evidence, owner-signature simulation, production policy/key/data, public endpoint, consumer activation, dispatch, execution, DNS, Cloudflare, hosting deployment, or external effect.
 ```
 
 ## Update rule

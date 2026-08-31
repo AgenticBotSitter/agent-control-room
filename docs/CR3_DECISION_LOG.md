@@ -1635,3 +1635,72 @@ the complete captured runtime/reflection boundary and exact seven-pass/one-failu
 focused and 137-case combined CR11B gates, and confirmed that the implementation contains no live effect path. AUTO-070
 is complete only for that exact effect-free implementation. Its fake output retains all nine production blockers and zero
 qualified proofs; any disposable hosted qualification remains a new, exactly owner-authorized controlled effect.
+
+## ADR-114 — AUTO-080 separates a disposable qualification request from live authority
+
+**Decision:** CR11B-AUTO-080 re-verifies the independently accepted AUTO-070 successful no-fault plan/report and produces
+one authenticated request for a later owner-authorized disposable hosted PostgreSQL qualification. The request fixes two
+new non-production databases, three isolated processes, seven ordered operations, ten blocking requirements, a 40-call
+provider ceiling, a 1,800-second live ceiling, a 1,048,576-byte sanitized-evidence ceiling, and mandatory separately
+authorized cleanup with a receipt. It embeds no provider or resource identity, protected reference, credential, raw
+evidence, production data, or public endpoint. Every provider, network, process, database, cleanup, qualification,
+production activation, dispatch, execution, and effect capability is false, and no function can authorize or run it.
+
+**Why:** An accepted fake qualification defines what must be tested but cannot justify contact with real infrastructure.
+Separating the bounded request from the later owner signature makes the intended work reviewable without turning a
+repository HMAC, test result, general chat approval, or fixture into effect authority. Fixing cleanup and evidence ceilings
+before provider selection prevents the live packet from quietly expanding its operational or privacy scope.
+
+**Alternatives rejected:** Build a live runner before review; let a provider adapter choose resources; accept a connection
+string or provider identifier in the repository request; use one database for both original and restore testing; inherit
+general owner authorization; treat the request HMAC as an owner signature; retain raw database/process evidence; make
+cleanup implicit after expiry; allow wildcard SQL, process commands, provider calls, retry, or public endpoints.
+
+**Trade-off:** AUTO-080 preparation cannot qualify any AUTO-050 production proof or show that a provider, clock,
+revocation feed, checkpoint, backup, restore, process boundary, or cleanup works. It creates one more review gate before a
+live attempt. That delay is intentional because the next step crosses a credential, network, process, and resource-effect
+boundary.
+
+**Reevaluate:** The exact effect-free candidate is independently accepted. The owner may now be asked for a new exact
+authorization naming the disposable provider/resources, protected access path, call and duration ceilings, retained
+evidence, and cleanup. Any change to provider, resources, operations, ceilings, evidence, or cleanup requires a new
+packet and signature. Production resources, consumer activation, and public deployment remain outside AUTO-080.
+
+**First-review amendment:** Independent review rejected exact candidate
+`85199ab146c8362a216dc9b2cdd3285efc3008b7`, tree `99bc9a386b234c7bb937a53d5074f2315d0b2b15`, in immutable report
+SHA-256 `343da8c163bda9d437d3b850186a4a6b3623b9c255b9b9ab3eec5deaaf532f8c`. Both request-key cleanup paths called ambient
+`Uint8Array.prototype.fill`, so post-load replacement could execute caller behavior, retain the private copied HMAC key,
+and prevent erasure. The first remediation verifies the captured fill descriptor before any exported AUTO-080 work and
+wipes complete copied backing stores through the host-value boundary's captured native intrinsic. A hostile regression
+requires method drift to fail closed before the substitute executes, proves the captured primitive zeros a complete
+buffer, restores the runtime, and re-verifies request replay, projection, and negative authority. A different independent
+reviewer was required to assess the exact remediation; no rejection, fix, or test granted live qualification or effect
+authority.
+
+**First-remediation re-review amendment:** A different reviewer rejected exact commit
+`10eb807c8edd859261aa8dae09bcd5e116f42420`, tree `a7b764ea434ff9fd93db5e16cc4d162da7bf1092`, in immutable report
+SHA-256 `bbe1a02b1f442c74f4f7e1e07ba038dcf620a2e3d43595c399a20f0427ec4421`. The fill-specific reproduction was closed,
+but shared HMAC validation still exposed the private copied key to mutable global `Uint8Array` identity and inherited
+`byteLength` behavior before cleanup. The second remediation moves HMAC length validation behind captured host
+operations, erases full backing stores through verified indexed writes without typed-array method dispatch, and checks
+the relevant post-load binary runtime identities before any AUTO-080 key copy. Clean module initialization is an
+explicit trust assumption; the boundary does not claim native provenance can be recovered inside an already compromised
+process. Another different independent review was required to close `AUTO080-IR-001` and `AUTO080-RR1-001`; all live
+and effect authority remained false.
+
+**Second-remediation re-review amendment:** A third different reviewer rejected exact commit
+`b8287d75dca597196723e7705ba864ae153e48ac`, tree `b4abfd8f941f9b6f1f62e66a99529d26b362a387`, in immutable report
+SHA-256 `c105ed8ef640ca4cd4aeb0c5f548d57e4ec5f9f3a9b3144c800dfb3f0c92f239`. Both recorded raw-key exposures were closed,
+but ambient HMAC update/digest dispatch could retain an unfinalized keyed native signing context after byte-array erasure.
+The third remediation canonicalizes before creating that context, captures and verifies the clean-start HMAC prototype
+methods, invokes both only through captured host application, and makes AUTO-080 reject method drift before request-key
+copying. A fourth different independent reviewer was required to close `AUTO080-IR-001`, `AUTO080-RR1-001`, and
+`AUTO080-RR2-001`; no repository evidence granted live qualification or effect authority.
+
+**Third-remediation acceptance amendment:** A fourth different reviewer accepted exact implementation
+`091ff116c8735aa980608c9c5c0b468436537cae`, tree `0153f5d2b794eaa05d30c88add8398d2c5ec2898`, in immutable report
+SHA-256 `10d7e0e32d59dadb5d435c8fda01e767e7234327105120fff95fec3fb034b118`. It closed `AUTO080-IR-001`,
+`AUTO080-RR1-001`, and `AUTO080-RR2-001`, reran the full deterministic gate set, and confirmed that the exact source has
+no live-effect path. AUTO-080 is complete only for that effect-free request boundary. Any provider selection, protected
+access, process or database contact, backup/restore, evidence collection, cleanup, or live result remains a new exact
+owner-authorized and independently reviewed controlled effect.

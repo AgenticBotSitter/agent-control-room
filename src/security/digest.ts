@@ -1,5 +1,34 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { AuthorityEnvelope, EffectIntentRecord } from "../domain/v1/types";
+import { hostUint8ArrayByteLengthV1 } from "./host-value";
+
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const reflectApply = Reflect.apply;
+const hmacProbe = createHmac("sha256", new Uint8Array(32));
+const hmacPrototype = objectGetPrototypeOf(hmacProbe);
+const hmacUpdateCandidate = objectGetOwnPropertyDescriptor(hmacPrototype, "update")?.value as unknown;
+const hmacDigestCandidate = objectGetOwnPropertyDescriptor(hmacPrototype, "digest")?.value as unknown;
+if (typeof hmacUpdateCandidate !== "function" || typeof hmacDigestCandidate !== "function") {
+  throw new Error("HMAC runtime unavailable");
+}
+const hmacUpdate = hmacUpdateCandidate as (...args: unknown[]) => unknown;
+const hmacDigest = hmacDigestCandidate as (...args: unknown[]) => unknown;
+reflectApply(hmacUpdate, hmacProbe, ["", "utf8"]);
+reflectApply(hmacDigest, hmacProbe, ["hex"]);
+
+function assertHmacRuntime(): void {
+  const updateDescriptor = objectGetOwnPropertyDescriptor(hmacPrototype, "update");
+  const digestDescriptor = objectGetOwnPropertyDescriptor(hmacPrototype, "digest");
+  if (!updateDescriptor || !("value" in updateDescriptor) || updateDescriptor.value !== hmacUpdate
+    || !digestDescriptor || !("value" in digestDescriptor) || digestDescriptor.value !== hmacDigest) {
+    throw new Error("HMAC runtime invalid");
+  }
+}
+
+export function assertHmacSha256RuntimeV1(): void {
+  assertHmacRuntime();
+}
 
 function canonicalize(value: unknown, path: string): string {
   if (value === null) return "null";
@@ -35,8 +64,13 @@ export function sha256Digest(value: unknown): string {
 
 /** Authenticates mutable-store evidence with a key that must remain outside that store. */
 export function hmacSha256Tag(key: Uint8Array, value: unknown): string {
-  if (!(key instanceof Uint8Array) || key.byteLength < 32) throw new Error("integrity key invalid");
-  return `hmac-sha256:${createHmac("sha256", key).update(canonicalJson(value), "utf8").digest("hex")}`;
+  const byteLength = hostUint8ArrayByteLengthV1(key);
+  if (byteLength === undefined || byteLength < 32) throw new Error("integrity key invalid");
+  const material = canonicalJson(value);
+  assertHmacRuntime();
+  const hmac = createHmac("sha256", key);
+  reflectApply(hmacUpdate, hmac, [material, "utf8"]);
+  return `hmac-sha256:${reflectApply(hmacDigest, hmac, ["hex"]) as string}`;
 }
 
 export function digestMatches(value: unknown, expected: string): boolean {
