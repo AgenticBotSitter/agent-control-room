@@ -446,6 +446,91 @@ test("CR11B-AUTO-070 fails closed before mutable array iteration can omit a prod
     ]);
 });
 
+test("CR11B-AUTO-070 exact input truth survives hostile reflection and property-definition helpers", () => {
+  const f = fixture(), defineProperty = Object.defineProperty;
+  const runInput = {
+    runId: "frontier.production-custody-run.reflection-drift", plan: f.plan,
+    startedAt: "2026-08-30T20:09:00.000Z", completedAt: "2026-08-30T20:10:00.000Z",
+    injectedFault: "service_identity_alias" as const,
+  };
+  const descriptorsDescriptor = Object.getOwnPropertyDescriptor(Object, "getOwnPropertyDescriptors")!;
+  const originalDescriptors = descriptorsDescriptor.value as typeof Object.getOwnPropertyDescriptors;
+  let targetedDescriptorCalls = 0;
+  try {
+    defineProperty(Object, "getOwnPropertyDescriptors", { ...descriptorsDescriptor,
+      value: (value: object): PropertyDescriptorMap => {
+        const descriptors = Reflect.apply(originalDescriptors, Object, [value]) as PropertyDescriptorMap;
+        if (value !== runInput) return descriptors;
+        targetedDescriptorCalls += 1;
+        return { ...descriptors, injectedFault: { ...descriptors.injectedFault, value: "none" } };
+      } });
+    assert.throws(() => runReadyFrontierProductionCustodyFakeQualificationV1(runInput,
+      f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.equal(targetedDescriptorCalls, 0);
+  } finally { defineProperty(Object, "getOwnPropertyDescriptors", descriptorsDescriptor); }
+
+  const getPrototypeDescriptor = Object.getOwnPropertyDescriptor(Object, "getPrototypeOf")!;
+  const originalGetPrototypeOf = getPrototypeDescriptor.value as typeof Object.getPrototypeOf;
+  let targetedPrototypeCalls = 0;
+  try {
+    defineProperty(Object, "getPrototypeOf", { ...getPrototypeDescriptor, value: (value: object): object | null => {
+      if (value === runInput) { targetedPrototypeCalls += 1; return null; }
+      return Reflect.apply(originalGetPrototypeOf, Object, [value]) as object | null;
+    } });
+    assert.throws(() => runReadyFrontierProductionCustodyFakeQualificationV1(runInput,
+      f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.equal(targetedPrototypeCalls, 0);
+  } finally { defineProperty(Object, "getPrototypeOf", getPrototypeDescriptor); }
+
+  const ownKeysDescriptor = Object.getOwnPropertyDescriptor(Reflect, "ownKeys")!;
+  const originalOwnKeys = ownKeysDescriptor.value as typeof Reflect.ownKeys;
+  let targetedOwnKeyCalls = 0;
+  try {
+    defineProperty(Reflect, "ownKeys", { ...ownKeysDescriptor, value: (value: object): (string | symbol)[] => {
+      const keys = Reflect.apply(originalOwnKeys, Reflect, [value]) as (string | symbol)[];
+      if (value !== runInput) return keys;
+      targetedOwnKeyCalls += 1;
+      return keys.filter((key) => key !== "injectedFault");
+    } });
+    assert.throws(() => runReadyFrontierProductionCustodyFakeQualificationV1(runInput,
+      f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.equal(targetedOwnKeyCalls, 0);
+  } finally { defineProperty(Reflect, "ownKeys", ownKeysDescriptor); }
+
+  const definePropertyDescriptor = Object.getOwnPropertyDescriptor(Object, "defineProperty")!;
+  const originalDefineProperty = definePropertyDescriptor.value as typeof Object.defineProperty;
+  let targetedDefinitionCalls = 0;
+  try {
+    defineProperty(Object, "defineProperty", { ...definePropertyDescriptor,
+      value: (target: object, property: PropertyKey, attributes: PropertyDescriptor): object => {
+        if (property === "injectedFault") { targetedDefinitionCalls += 1; return target; }
+        return Reflect.apply(originalDefineProperty, Object, [target, property, attributes]) as object;
+      } });
+    assert.throws(() => runReadyFrontierProductionCustodyFakeQualificationV1(runInput,
+      f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.equal(targetedDefinitionCalls, 0);
+  } finally { defineProperty(Object, "defineProperty", definePropertyDescriptor); }
+
+  const aliasReport = runReadyFrontierProductionCustodyFakeQualificationV1(runInput,
+    f.activationKey, f.qualificationKey);
+  assert.equal(aliasReport.injectedFault, "service_identity_alias");
+  assert.equal(aliasReport.simulatedPassCount, 7);
+  assert.equal(aliasReport.simulatedFailureCount, 1);
+  assert.equal(aliasReport.scenarioResults[0]!.status, "simulated_failure");
+  assert.deepEqual(parseReadyFrontierProductionCustodyReportV1(f.report, f.plan,
+    f.activationKey, f.qualificationKey), f.report);
+  const originalProjection = projectReadyFrontierProductionCustodyReportV1(f.report, f.plan,
+    f.activationKey, f.qualificationKey);
+  assert.deepEqual(originalProjection.blockingGateCodes,
+    [
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[0], READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[1],
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[2], READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[3],
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[4], READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[5],
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[6], READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[7],
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[8],
+    ]);
+});
+
 test("CR11B-AUTO-070 fails closed when canonical digest helpers drift after module load", () => {
   const f = fixture(), defineProperty = Object.defineProperty;
   const mapDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "map")!;

@@ -5,26 +5,42 @@ import { ReadyFrontierContractErrorV1 } from "./errors";
 
 interface BudgetV1 { remaining: number; }
 
+const objectPrototypeV1 = Object.prototype;
+const objectGetPrototypeOfV1 = Object.getPrototypeOf;
+const objectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
+const objectDefinePropertyV1 = Object.defineProperty;
+const reflectOwnKeysV1 = Reflect.ownKeys;
+const arrayIsArrayV1 = Array.isArray;
+const numberIsFiniteV1 = Number.isFinite;
+
 function snapshot(value: unknown, budget: BudgetV1, depth: number): unknown {
   if (depth > 24 || budget.remaining-- <= 0) throw new ReadyFrontierContractErrorV1("invalid_input");
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "number" && numberIsFiniteV1(value)) return value;
   if (!value || typeof value !== "object" || isHostProxyV1(value)) throw new ReadyFrontierContractErrorV1("invalid_input");
-  if (Array.isArray(value)) {
+  if (arrayIsArrayV1(value)) {
     const items = exactHostDataArrayV1(value, 20_000);
     if (!items) throw new ReadyFrontierContractErrorV1("invalid_input");
-    return items.map((item) => snapshot(item, budget, depth + 1));
+    const result: unknown[] = [];
+    for (let index = 0; index < items.length; index += 1) {
+      objectDefinePropertyV1(result, `${index}`, {
+        value: snapshot(items[index], budget, depth + 1), enumerable: true, configurable: true, writable: true,
+      });
+    }
+    return result;
   }
-  if (Object.getPrototypeOf(value) !== Object.prototype) throw new ReadyFrontierContractErrorV1("invalid_input");
-  const keys = Reflect.ownKeys(value);
-  if (keys.length > 500 || keys.some((key) => typeof key !== "string")) throw new ReadyFrontierContractErrorV1("invalid_input");
-  const descriptors = Object.getOwnPropertyDescriptors(value), result: Record<string, unknown> = {};
-  for (const key of keys as string[]) {
-    const descriptor = descriptors[key];
+  if (objectGetPrototypeOfV1(value) !== objectPrototypeV1) throw new ReadyFrontierContractErrorV1("invalid_input");
+  const keys = reflectOwnKeysV1(value);
+  if (keys.length > 500) throw new ReadyFrontierContractErrorV1("invalid_input");
+  const result: Record<string, unknown> = {};
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (typeof key !== "string") throw new ReadyFrontierContractErrorV1("invalid_input");
+    const descriptor = objectGetOwnPropertyDescriptorV1(value, key);
     if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set || !descriptor.enumerable || descriptor.value === undefined) {
       throw new ReadyFrontierContractErrorV1("invalid_input");
     }
-    Object.defineProperty(result, key, {
+    objectDefinePropertyV1(result, key, {
       value: snapshot(descriptor.value, budget, depth + 1), enumerable: true, configurable: true, writable: true,
     });
   }

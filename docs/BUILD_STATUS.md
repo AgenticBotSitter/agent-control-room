@@ -82,7 +82,7 @@
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
-| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Five candidates rejected; fifth remediation implemented; sixth different review required | Captured runtime plus explicit Date, string, and array-iterator integrity with indexed fixed-list construction; eight fake scenarios retain all nine blockers |
+| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Six candidates rejected; sixth remediation implemented; seventh different review required | Captured exact-data reflection, array, Date, string, and iterator operations with indexed fixed-list construction; eight fake scenarios retain all nine blockers |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -118,11 +118,17 @@ mutable `Array.prototype[Symbol.iterator]` could duplicate one blocker and omit 
 projection. That unchanged report has SHA-256
 `8e65da402e9e4ea045ced9387294e5caa6ba8ecaf84f9ede73471ab6fcc61db0`. The fifth remediation captures and checks the
 exact iterator before every exported operation and removes iterable spread from every trusted fixed-list construction;
-the projection copies the nine already verified blocker positions explicitly. Focused tests pass 17/17, combined CR11B
-passes 136/136, and the registered pretest passes 718/718.
+the projection copies the nine already verified blocker positions explicitly. A sixth reviewer closed the five prior
+reproductions but rejected exact commit `bf1a663`, tree `83c885c`, because mutable
+`Object.getOwnPropertyDescriptors` could erase an explicit identity-alias fault before exact parsing and produce an
+authenticated eight-pass report. That unchanged report has SHA-256
+`69cff1f40382323fdb5edfa4d962b353bbdf7edec258d8e898083c9a3f238dcf`. The sixth remediation hardens the shared exact
+snapshot and host-array boundary with captured prototype, key, descriptor, definition, array-shape, and copy operations,
+while AUTO-070 explicitly checks the reflection surface before every exported operation. Focused tests pass 18/18 and
+combined CR11B passes 137/137; the registered pretest passes 719/719.
 Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and
 whitespace validation pass. All nine production gates remain blocking, zero proofs are qualified, and every live/effect
-capability remains false. A sixth different fresh independent review of the exact fifth remediation is still required.
+capability remains false. A seventh different fresh independent review of the exact sixth remediation is still required.
 
 Prior accepted boundary: CR11B-AUTO-060 is complete for exact effect-free commit
 `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`. The first two immutable

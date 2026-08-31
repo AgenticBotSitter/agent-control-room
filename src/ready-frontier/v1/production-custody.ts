@@ -32,6 +32,9 @@ const objectFreezeV1 = Object.freeze;
 const objectIsFrozenV1 = Object.isFrozen;
 const objectValuesV1 = Object.values;
 const objectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
+const objectGetOwnPropertyDescriptorsV1 = Object.getOwnPropertyDescriptors;
+const objectGetPrototypeOfV1 = Object.getPrototypeOf;
+const objectDefinePropertyV1 = Object.defineProperty;
 const objectKeysV1 = Object.keys;
 const arrayIsArrayV1 = Array.isArray;
 const arrayMapV1 = Array.prototype.map;
@@ -49,7 +52,9 @@ const dateGetTimeV1 = Date.prototype.getTime;
 const dateToISOStringV1 = Date.prototype.toISOString;
 const stringPrototypeV1 = String.prototype;
 const stringSliceV1 = String.prototype.slice;
+const reflectObjectV1 = Reflect;
 const reflectApplyV1 = Reflect.apply;
+const reflectOwnKeysV1 = Reflect.ownKeys;
 const bufferConstructorV1 = Buffer;
 const bufferFromV1 = Buffer.from;
 
@@ -71,7 +76,11 @@ function assertCanonicalRuntimeV1(): void {
   if (!exactGlobalValueV1("Object", objectConstructorV1) || !exactGlobalValueV1("Array", arrayConstructorV1)
     || !exactGlobalValueV1("Number", numberConstructorV1) || !exactGlobalValueV1("JSON", jsonObjectV1)
     || !exactGlobalValueV1("Date", dateConstructorV1)
+    || !exactGlobalValueV1("Reflect", reflectObjectV1)
     || !exactOwnMethodV1(objectConstructorV1, "keys", objectKeysV1)
+    || !exactOwnMethodV1(objectConstructorV1, "getOwnPropertyDescriptors", objectGetOwnPropertyDescriptorsV1)
+    || !exactOwnMethodV1(objectConstructorV1, "getPrototypeOf", objectGetPrototypeOfV1)
+    || !exactOwnMethodV1(objectConstructorV1, "defineProperty", objectDefinePropertyV1)
     || !exactOwnMethodV1(arrayConstructorV1, "isArray", arrayIsArrayV1)
     || !exactOwnMethodV1(Array.prototype, "map", arrayMapV1)
     || !exactOwnMethodV1(Array.prototype, "join", arrayJoinV1)
@@ -85,6 +94,7 @@ function assertCanonicalRuntimeV1(): void {
     || !exactOwnMethodV1(datePrototypeV1, "getTime", dateGetTimeV1)
     || !exactOwnMethodV1(datePrototypeV1, "toISOString", dateToISOStringV1)
     || !exactOwnMethodV1(stringPrototypeV1, "slice", stringSliceV1)
+    || !exactOwnMethodV1(reflectObjectV1, "ownKeys", reflectOwnKeysV1)
     || !exactOwnMethodV1(bufferConstructorV1, "from", bufferFromV1)
     || sha256Digest(runtimeSentinelMaterialV1) !== runtimeSentinelDigestV1
     || hmacSha256Tag(runtimeSentinelKeyV1, runtimeSentinelMaterialV1) !== runtimeSentinelAuthTagV1) {

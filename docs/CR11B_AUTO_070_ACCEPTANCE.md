@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Acceptance Record
 
-Status: five candidates rejected; fifth remediation implemented; sixth different independent review pending
+Status: six candidates rejected; sixth remediation implemented; seventh different independent review pending
 
 Date: 2026-08-30
 
@@ -28,9 +28,9 @@ qualified proofs, and every authority/effect flag false.
 
 ## Producer verification
 
-- focused AUTO-070 tests: 17/17 passing;
-- combined CR11B tests: 136/136 passing;
-- registered pretests: 718/718 passing;
+- focused AUTO-070 tests: 18/18 passing;
+- combined CR11B tests: 137/137 passing;
+- registered pretests: 719/719 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -125,6 +125,25 @@ projection collection. Fixed array literals use explicit own indexed values, inc
 report blockers. Its hostile regression substitutes the iterator after module load, requires plan and projection work to
 fail closed before the changed blocker iterator runs, restores it, and proves the original report projects to the exact
 same ordered nine blockers and digest. A sixth different reviewer must accept the exact fifth-remediation commit.
+
+## Fifth-remediation re-review and sixth remediation
+
+A sixth different reviewer closed the five prior concrete attacks but rejected exact fifth-remediation commit
+`bf1a66325b9bbb7cf107b9e4857bd5d4b6874a38`, tree
+`83c885c270aa095ebb39534944636658d33e1297`. The unchanged report is
+`docs/reviews/CR11B_AUTO_070_FIFTH_REMEDIATION_REREVIEW.md`, SHA-256
+`69cff1f40382323fdb5edfa4d962b353bbdf7edec258d8e898083c9a3f238dcf`.
+
+Finding `AUTO070-RR5-001` proved that current `Object.getOwnPropertyDescriptors` semantics could rewrite the exact run
+input snapshot from explicit `service_identity_alias` to `none`, leading the harness to authenticate eight passes and
+zero failures. The sixth remediation audits and hardens the shared exact snapshot plus exact host-array boundary: native
+prototype, own-key, descriptor, property-definition, array-shape, and bounded-copy operations are captured before module
+exposure and trusted copies use indexed loops plus captured own-property definition. AUTO-070 also verifies the exact
+plural-descriptor, prototype, definition, and own-key operations before every exported operation. Hostile regressions
+substitute plural descriptors, omit the explicit fault through own-key drift, and suppress property definition; each
+fails closed before targeted behavior. Restoration proves the explicit alias fault remains exactly seven passes and one
+failure and the original report/projection retain exact validity. A seventh different reviewer must accept the exact
+sixth-remediation commit.
 
 ## Negative authority
 

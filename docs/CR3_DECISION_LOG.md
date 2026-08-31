@@ -1616,3 +1616,14 @@ trusted fixed-list construction, and copies the nine authenticated report blocke
 literals. A hostile regression substitutes the iterator, requires plan and projection work to fail closed before it can
 touch the blocker list, restores it, and proves exact projection replay. A sixth different reviewer must accept the exact
 fifth-remediation commit.
+
+**Fifth-remediation re-review amendment:** A sixth different reviewer closed the prior five concrete reproductions but
+rejected exact remediation `bf1a66325b9bbb7cf107b9e4857bd5d4b6874a38`, tree
+`83c885c270aa095ebb39534944636658d33e1297`, in immutable report SHA-256
+`69cff1f40382323fdb5edfa4d962b353bbdf7edec258d8e898083c9a3f238dcf`. Current plural-descriptor reflection could erase
+an explicit identity-alias fault from the exact input snapshot, leading to an authenticated eight-pass report. Production
+authority remained false, but qualification truth was rejected. The sixth remediation captures prototype, own-key,
+descriptor, property-definition, array-shape, and bounded-copy operations throughout the shared exact-data path and
+checks the complete reflection surface at every AUTO-070 entry. Hostile regressions substitute descriptors, omit keys,
+and suppress definition, then restore the runtime and prove exact alias-failure and artifact stability. A seventh
+different reviewer must accept the exact sixth-remediation commit.

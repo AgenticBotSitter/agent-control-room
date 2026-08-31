@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Protected Custody Qualification Foundation Contract
 
-Status: five candidates rejected; exact fifth remediation requires a sixth different independent review
+Status: six candidates rejected; exact sixth remediation requires a seventh different independent review
 
 Date: 2026-08-30
 
@@ -80,7 +80,9 @@ assigning numbered slots on an empty array. Canonical JSON/digest helpers are pi
 private digest/HMAC sentinel; drift fails closed before plan, report, or projection work. The array iterator is also
 captured and checked before every exported operation, and no trusted process, scenario, blocker, or projection collection
 is copied through iterable spread. The safe projection copies the nine authenticated blocker positions into a complete
-array literal.
+array literal. The shared exact-data snapshot and host-array boundary capture prototype lookup, own-key enumeration,
+descriptor lookup, property definition, array recognition, numeric validation, and native array-copy operations before
+exposure. AUTO-070 verifies the exact reflection surface before accepting plan, run, report, or projection input.
 
 ## Safe projection
 
@@ -182,3 +184,16 @@ removes iterable spread from trusted fixed-list construction, and copies all nin
 complete indexed literal. Its hostile regression requires iterator drift to fail closed before the targeted iterator can
 touch the blocker list, restores the descriptor, and proves exact projection replay with all nine ordered blockers. Only
 a sixth different independent reviewer can accept the exact fifth-remediation commit.
+
+A sixth different reviewer closed the prior five concrete reproductions but rejected exact fifth-remediation commit
+`bf1a66325b9bbb7cf107b9e4857bd5d4b6874a38`, tree
+`83c885c270aa095ebb39534944636658d33e1297`, in unchanged report SHA-256
+`69cff1f40382323fdb5edfa4d962b353bbdf7edec258d8e898083c9a3f238dcf`.
+
+`AUTO070-RR5-001` showed that selective post-load replacement of `Object.getOwnPropertyDescriptors` could change an
+ordinary run input's explicit identity-alias fault to `none` before schema parsing, causing an authenticated eight-pass
+report. The sixth remediation captures and uses all reflection and property-definition operations on the shared exact
+snapshot path, removes array-method and inherited indexed writes from its bounded copy, and checks the reflection surface
+at every AUTO-070 entry. Companion regressions cover descriptor-value substitution, own-key omission, and suppressed data
+property definition, restore every descriptor, and prove exact one-failure alias truth plus stable original artifacts.
+Only a seventh different independent reviewer can accept the exact sixth-remediation commit.
