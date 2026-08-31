@@ -1800,3 +1800,49 @@ gate before merge. AUTO-090 target commit `fd29af5580f77d2ad5fa1f17027ca3e759b3a
 and its immutable review evidence merged through PR #173 at `883a3ca6f02c5d779ba8263acb531f8e8469428f`.
 Post-merge `main` CI run `33409911669` passed the complete test lifecycle, production build, rendered routes, and database
 verification. Integration grants no live authority and does not satisfy any of the 36 production blockers.
+
+## ADR-117 — AUTO-110 separates owner phase direction from live PostgreSQL effect authority
+
+**Decision:** CR11B-AUTO-110 records the owner's direction to begin packet preparation, binds it to the exact accepted
+AUTO-100 implementation and review, and carries all 36 live blockers into one bounded native-rehearsal request. The
+request fixes one attempt, one host session, four database sessions, a 30-minute duration, a 1 MiB sanitized-evidence
+ceiling, mandatory rollback, separately authorized cleanup, and no automatic retry. Phase preparation is explicitly
+true; strong-factor live authorization, protected access, independent acceptance, host/database contact, migration,
+backup/restore, cleanup, deployment, and every external-effect permission remain false.
+
+**Why:** The owner's instruction is sufficient to resume repository design, implementation, verification, and review,
+but it does not itself supply protected host identity, a safe access path, current evidence for the 36 blockers, an
+effect-scoped claim, rollback material, a cleanup authority, or an expiring strong-factor operation window. Keeping those
+facts separate prevents a conversational direction or its digest from becoming a credential or executable capability.
+
+**Alternatives rejected:** Treat general chat approval as a live host credential; omit the unresolved AUTO-100 gates;
+contact the VPS merely to discover whether prerequisites exist; permit service installation or control inside the
+rehearsal; retain raw evidence; write to an existing production schema; retry after uncertainty; let cleanup inherit the
+original effect authority; or allow the request/projection to become a runner.
+
+**Trade-off:** AUTO-110 can finish its effect-free packet and independent review without owner relay, but a real attempt
+cannot begin until protected prerequisites are assembled out of band and the owner approves the final exact effect
+window. This intentionally adds a last human security stop before touching the production host.
+
+**Reevaluate:** After a different independent reviewer accepts the exact candidate, rebuild the readiness packet from
+fresh evidence. If any of the 36 blockers remains, retain the disabled disposition. If every blocker is accepted, prepare
+a new strong-factor owner packet bound to exact protected references, operations, start/expiry, rollback, cleanup, and
+evidence limits. This ADR never authorizes host contact by itself.
+
+**First independent rejection and remediation:** A different reviewer rejected exact candidate
+`7750c9b179d9f07ac05041ff4ac0dd19dd7766e7`, tree `86ff495485cb649c9cb458c63aeaca443f5016fa`, in immutable report
+SHA-256 `a71a54a8a2dc8af6243e5c9a2b36da77b1c59bde968b1b139e7ccb742f5ac626`. `AUTO110-IR-001` reproduced that two
+unrelated caller-selected bare direction digests and times could each mint a valid request claiming owner-directed phase
+preparation. Live authority remained false, but repository provenance was untrustworthy. The remediation removes all
+owner-direction fields from public request input, captures one complete repository-accepted owner-direction snapshot at
+module initialization, embeds and re-verifies its exact ID, scope, accepted time, digest, and false live-authority facts,
+and adds regressions for caller extras and fully re-digested ID/time forks. A different independent reviewer must close
+the finding before AUTO-110 can be accepted.
+
+**First-remediation independent acceptance:** A different reviewer independently reproduced `AUTO110-IR-001` on the
+original implementation, then accepted exact remediation commit `f3b64498c2313c86d50f63e4c62cf7c7eba5fcd6`, tree
+`d2ab467adf2032504f31a0b6d1c852f77a3ddf58`, in unchanged report SHA-256
+`6a6186d27c9ca262598c13af36d17e84e6896d9ad68b4b9cd0a453aabaa8e1a3`. Four caller-direction input families, nine
+fully re-digested direction forks, 53 authority forks, six lineage forks, and nested accessor and Proxy probes all fail
+closed. `AUTO110-IR-001` is closed with no new finding. Acceptance is limited to the exact effect-free repository
+snapshot; all 36 live gates and the fresh strong-factor owner effect-window requirement remain blocking.
