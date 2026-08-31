@@ -173,6 +173,15 @@ absent. It found no alternate authority or effect path and accepted only the exa
 
 Any source or tree change reopens review. The report is immutable.
 
+## Private GitHub transfer
+
+Private stacked PR #169 targets `codex/cr11b-auto-050-production-boundary` from
+`codex/cr11b-auto-060-proof-ingress`. It contains exact accepted implementation
+`be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, all three immutable rejection reports, the immutable accepted report, and
+acceptance checkpoint `ff433d1456fba45d096872c4371f35636c624a6f`. GitHub reports it open and cleanly mergeable. No CI check is expected
+while the base is a stacked `codex/**` branch; after its parent is integrated, retarget to `main` and require the ordinary
+full CI result. The PR remains unmerged and grants no production authority.
+
 ## Residual boundary
 
 No production proof is accepted. Protected root/key/revocation/checkpoint/clock custody, hosted database qualification,

@@ -307,6 +307,14 @@ exact commit `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2` in unchanged report SHA-
 `8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`. Every observation remains unqualified and all
 nine production gates remain blocking.
 
+AUTO-060 GitHub transfer: private stacked PR #169 targets accepted AUTO-050 branch
+`codex/cr11b-auto-050-production-boundary` from `codex/cr11b-auto-060-proof-ingress`. It preserves the exact accepted
+implementation `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, all three immutable rejections, accepted report SHA-256
+`8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`, and acceptance checkpoint
+`ff433d1456fba45d096872c4371f35636c624a6f`. GitHub reports the PR open and cleanly mergeable. No check is expected while
+it targets its `codex/**` parent; after the parent stack is integrated, retarget to `main` and require ordinary full CI.
+PR #169 is not merged and authorizes no production proof, consumer, activation, deployment, or effect.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
