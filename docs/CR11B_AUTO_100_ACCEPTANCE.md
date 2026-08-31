@@ -1,7 +1,8 @@
 # CR11B-AUTO-100 Candidate Acceptance Record
 
 Status: independently accepted for exact effect-free implementation commit
-`34750ed8ec5cf34134d166505f3df50897afe3f7`; integration is pending
+`34750ed8ec5cf34134d166505f3df50897afe3f7`; integrated into `main` through PR #173 at merge commit
+`883a3ca6f02c5d779ba8263acb531f8e8469428f`
 
 Date: 2026-08-31
 
@@ -92,11 +93,19 @@ AUTO-090 target snapshot, compares the complete CR10A source snapshot without re
 schemas, constructs private ID/digest/time schemas, captures date parsing, rejects non-finite time, and adds both
 reproductions to the gate. The different re-reviewer accepted that exact remediation as recorded above.
 
-## Remaining gate
+## Integration evidence
 
-AUTO-100 still requires ordinary stacked integration. The later native PostgreSQL rehearsal remains separately deferred
-and requires a new exact owner-authorized packet, current host evidence, rollback and cleanup bounds, and fresh
-independent review. This acceptance does not satisfy any of the 36 live production blockers.
+PRs #159 through #173 were retargeted and merged into `main` in dependency order with merge commits. Each incremental
+scope was identical before and after retargeting, every exact head remained unchanged, and every PR passed the complete
+main-targeting Control Room CI gate before merge. PR #173 preserved exact accepted implementation commit `34750ed` and
+the immutable accepted report, then merged at `883a3ca6f02c5d779ba8263acb531f8e8469428f`. The post-merge `main` run
+`33409911669` passed the complete test lifecycle, production build, rendered-route checks, and database verification.
+
+## Remaining live gate
+
+The later native PostgreSQL rehearsal remains separately deferred and requires a new exact owner-authorized packet,
+current host evidence, rollback and cleanup bounds, and fresh independent review. Repository integration does not
+satisfy any of the 36 live production blockers.
 
 ## Negative authority
 

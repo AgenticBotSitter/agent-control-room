@@ -1790,5 +1790,13 @@ SHA-256 `aa2116b832ed6e5587c72705dcf6dc826f8ef0e7201c5b284c7876b93f53c0a9`. The 
 and re-digested AUTO-090 decision IDs and times in both build and parse paths, rejected invalid packet and disposition
 times with zero hostile public-schema callbacks, confirmed exact 39-gate and three-present/36-blocked truth, and found no
 new reproducible correctness defect. AUTO-100 is accepted only for that exact effect-free implementation snapshot.
-Stacked integration remains pending; all 36 live blockers and the later fresh owner-authorization requirement remain in
-force.
+All 36 live blockers and the later fresh owner-authorization requirement remain in force.
+
+**Integration amendment:** PRs #159 through #173 were retargeted and merged into `main` in dependency order with
+history-preserving merge commits. Every retarget retained identical incremental additions, deletions, and changed-file
+counts; every exact head remained unchanged; and every PR passed the ordinary complete main-targeting Control Room CI
+gate before merge. AUTO-090 target commit `fd29af5580f77d2ad5fa1f17027ca3e759b3ad82` merged through PR #172 at
+`b51de2909f09b5040d2c7b7a212fdc1e58758ba4`. AUTO-100 accepted implementation `34750ed8ec5cf34134d166505f3df50897afe3f7`
+and its immutable review evidence merged through PR #173 at `883a3ca6f02c5d779ba8263acb531f8e8469428f`.
+Post-merge `main` CI run `33409911669` passed the complete test lifecycle, production build, rendered routes, and database
+verification. Integration grants no live authority and does not satisfy any of the 36 production blockers.
