@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync,
+  unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,7 +15,6 @@ import {
   READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
   ReadyFrontierContractErrorV1,
   ReadyFrontierProductionProofStoreV1,
-  assessReadyFrontierProductionProofsV1,
   buildReadyFrontierProductionBoundaryAssessmentV1,
   buildReadyFrontierProductionBoundaryPlanV1,
   parseReadyFrontierActivationPacketV1,
@@ -42,6 +42,15 @@ import { InMemoryRollbackCheckpointStoreV1, canonicalJson, hmacSha256Tag, sha256
 const errorCode = (safeCode: ReadyFrontierContractErrorV1["safeCode"]) => (error: unknown) =>
   error instanceof ReadyFrontierContractErrorV1 && error.safeCode === safeCode;
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
+function signatureAlias(value: string): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const decoded = Buffer.from(value, "base64url");
+  for (const tail of alphabet) {
+    const candidate = `${value.slice(0, -1)}${tail}`;
+    if (candidate !== value && Buffer.from(candidate, "base64url").equals(decoded)) return candidate;
+  }
+  throw new Error("signature alias fixture unavailable");
+}
 function keyDigest(publicKey: KeyObject): string {
   const spki = publicKey.export({ format: "der", type: "spki" });
   return `sha256:${createHash("sha256").update(spki).digest("hex")}`;
@@ -200,6 +209,20 @@ test("CR11B-AUTO-060 rejects forged roots, issuer signatures, and independent si
   assert.throws(() => observe(f, verifierDrift), errorCode("integrity_failed"));
 });
 
+test("CR11B-AUTO-060 rejects noncanonical textual aliases for every signature role", () => {
+  const f = fixture();
+  const ownerAlias = clone(f.bundle); ownerAlias.ownerSignature = signatureAlias(ownerAlias.ownerSignature);
+  assert.throws(() => verifyReadyFrontierProductionTrustBundleV1(ownerAlias, f.anchor),
+    errorCode("integrity_failed"));
+  const envelope = proof(f, "consumer_channel_unqualified");
+  const issuerAlias = clone(envelope); issuerAlias.issuerSignature = signatureAlias(issuerAlias.issuerSignature);
+  assert.throws(() => observe(f, issuerAlias), errorCode("integrity_failed"));
+  const verifierAlias = clone(envelope);
+  verifierAlias.independentVerification!.signature = signatureAlias(
+    verifierAlias.independentVerification!.signature);
+  assert.throws(() => observe(f, verifierAlias), errorCode("integrity_failed"));
+});
+
 test("CR11B-AUTO-060 rejects cross-scope substitution and incomplete or reordered bindings", () => {
   const f = fixture(), envelope = proof(f, "ambiguity_reconciliation_unproved");
   for (const mutate of [
@@ -242,44 +265,56 @@ test("CR11B-AUTO-060 rejects stale, future, overlong, and post-plan proof chrono
 });
 
 test("CR11B-AUTO-060 keeps all nine blockers after all nine fixture proofs are observed", () => {
-  const f = fixture();
-  const observations = READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1.map((gate) => observe(f, proof(f, gate)));
-  const assessment = assessReadyFrontierProductionProofsV1({
-    proofAssessmentId: "frontier.production-proof-assessment.all-nine", assessment: f.assessment,
-    currentTrustBundle: f.bundle, observations, evaluatedAt: "2026-08-30T20:07:00.000Z",
-  }, f.planKey, f.anchor);
-  assert.equal(assessment.observedUnqualifiedCount, 9);
-  assert.equal(assessment.qualifiedProofCount, 0);
-  assert.equal(assessment.remainingQualifiedProofCount, 9);
-  assert.deepEqual(assessment.blockingGateCodes, [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1]);
-  assert.equal(assessment.eligibleForActivation, false);
-  assert.deepEqual(parseReadyFrontierProductionProofAssessmentV1(assessment), assessment);
+  const f = fixture(), directory = privateDirectory("all-nine"), path = join(directory, "proof.sqlite");
+  const store = new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
+    f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor,
+    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+  try {
+    store.recordTrustBundle(f.bundle, "2026-08-30T20:02:20.000Z");
+    for (const gate of READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1) store.recordProof({
+      envelope: proof(f, gate), assessment: f.assessment, receivedAt: "2026-08-30T20:06:00.000Z" });
+    const assessment = store.assess("frontier.production-proof-assessment.all-nine", f.assessment,
+      "2026-08-30T20:07:00.000Z");
+    assert.equal(assessment.observedUnqualifiedCount, 9);
+    assert.equal(assessment.qualifiedProofCount, 0);
+    assert.equal(assessment.remainingQualifiedProofCount, 9);
+    assert.deepEqual(assessment.blockingGateCodes, [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1]);
+    assert.equal(assessment.eligibleForActivation, false);
+    assert.deepEqual(parseReadyFrontierProductionProofAssessmentV1(assessment), assessment);
+  } finally { store.closeDatabase(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("CR11B-AUTO-060 reports partial, expired, superseded, and revoked evidence without promotion", () => {
-  const f = fixture(), envelope = proof(f, "hosted_postgresql_unqualified"), observation = observe(f, envelope);
-  const partial = assessReadyFrontierProductionProofsV1({ proofAssessmentId: "frontier.proof-assessment.partial",
-    assessment: f.assessment, currentTrustBundle: f.bundle, observations: [observation],
-    evaluatedAt: "2026-08-30T20:07:00.000Z" }, f.planKey, f.anchor);
-  assert.equal(partial.observedUnqualifiedCount, 1);
-  assert.equal(partial.gateStatuses.find((item) => item.gateCode === envelope.body.gateCode)!.status,
-    "observed_unqualified");
-  const activeV2 = signBundle(f, 2, f.bundle.body.bodyDigest, undefined, "2026-08-30T20:30:00.000Z");
-  const superseded = assessReadyFrontierProductionProofsV1({ proofAssessmentId: "frontier.proof-assessment.superseded",
-    assessment: f.assessment, currentTrustBundle: activeV2, observations: [observation],
-    evaluatedAt: "2026-08-30T20:31:00.000Z" }, f.planKey, f.anchor);
-  assert.equal(superseded.gateStatuses.find((item) => item.gateCode === envelope.body.gateCode)!.status,
-    "superseded");
-  const revokedIdentities = clone(f.identities.map((item) => item.identity));
-  const revoked = revokedIdentities.find((item) => item.identityId === envelope.body.issuerIdentityId)!;
-  revoked.state = "revoked"; revoked.revokedAt = "2026-08-30T20:29:00.000Z";
-  const revokedV2 = signBundle(f, 2, f.bundle.body.bodyDigest, revokedIdentities, "2026-08-30T20:30:00.000Z");
-  const revokedAssessment = assessReadyFrontierProductionProofsV1({
-    proofAssessmentId: "frontier.proof-assessment.revoked", assessment: f.assessment,
-    currentTrustBundle: revokedV2, observations: [observation], evaluatedAt: "2026-08-30T20:31:00.000Z",
-  }, f.planKey, f.anchor);
-  assert.equal(revokedAssessment.gateStatuses.find((item) => item.gateCode === envelope.body.gateCode)!.status,
-    "revoked");
+  const f = fixture(), envelope = proof(f, "hosted_postgresql_unqualified"),
+    directory = privateDirectory("statuses"), path = join(directory, "proof.sqlite");
+  const store = new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
+    f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor,
+    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+  try {
+    store.recordTrustBundle(f.bundle, "2026-08-30T20:02:20.000Z");
+    store.recordProof({ envelope, assessment: f.assessment, receivedAt: "2026-08-30T20:06:00.000Z" });
+    const partial = store.assess("frontier.proof-assessment.partial", f.assessment,
+      "2026-08-30T20:07:00.000Z");
+    assert.equal(partial.observedUnqualifiedCount, 1);
+    assert.equal(partial.gateStatuses.find((item) => item.gateCode === envelope.body.gateCode)!.status,
+      "observed_unqualified");
+    const activeV2 = signBundle(f, 2, f.bundle.body.bodyDigest, undefined, "2026-08-30T20:30:00.000Z");
+    store.recordTrustBundle(activeV2, "2026-08-30T20:31:00.000Z");
+    const superseded = store.assess("frontier.proof-assessment.superseded", f.assessment,
+      "2026-08-30T20:32:00.000Z");
+    assert.equal(superseded.gateStatuses.find((item) => item.gateCode === envelope.body.gateCode)!.status,
+      "superseded");
+    const revokedIdentities = clone(f.identities.map((item) => item.identity));
+    const revoked = revokedIdentities.find((item) => item.identityId === envelope.body.issuerIdentityId)!;
+    revoked.state = "revoked"; revoked.revokedAt = "2026-08-30T20:39:00.000Z";
+    const revokedV3 = signBundle(f, 3, activeV2.body.bodyDigest, revokedIdentities,
+      "2026-08-30T20:40:00.000Z");
+    store.recordTrustBundle(revokedV3, "2026-08-30T20:41:00.000Z");
+    const revokedAssessment = store.assess("frontier.proof-assessment.revoked", f.assessment,
+      "2026-08-30T20:42:00.000Z");
+    assert.equal(revokedAssessment.gateStatuses.find((item) => item.gateCode === envelope.body.gateCode)!.status,
+      "revoked");
+  } finally { store.closeDatabase(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 function privateDirectory(label: string): string {
@@ -327,6 +362,72 @@ test("CR11B-AUTO-060 ledger rejects same-ID drift and stale trust revisions", ()
   } finally { store.closeDatabase(); rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("CR11B-AUTO-060 assessment is ledger-only and rejects time before authenticated state", () => {
+  const f = fixture(), directory = privateDirectory("chronology"), path = join(directory, "proof.sqlite");
+  const store = new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
+    f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor,
+    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+  try {
+    store.recordTrustBundle(f.bundle, "2026-08-30T20:02:20.000Z");
+    store.recordProof({ envelope: proof(f, "credential_broker_unbound"), assessment: f.assessment,
+      receivedAt: "2026-08-30T20:06:00.000Z" });
+    assert.throws(() => store.assess("frontier.proof-assessment.backdated", f.assessment,
+      "2026-08-30T20:05:59.999Z"), errorCode("scope_mismatch"));
+    const source = readFileSync(new URL("../src/ready-frontier/v1/production-proof.ts", import.meta.url), "utf8");
+    assert.equal(source.includes("export function assessReadyFrontierProductionProofsV1"), false);
+  } finally { store.closeDatabase(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("CR11B-AUTO-060 terminal revocation cannot reactivate, disappear, or change identity binding", () => {
+  const f = fixture(), directory = privateDirectory("revocation"), path = join(directory, "proof.sqlite");
+  const store = new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
+    f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor,
+    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+  try {
+    store.recordTrustBundle(f.bundle, "2026-08-30T20:02:20.000Z");
+    const revokedGate = f.identities[0]!.identity.authorizedGateCodes[0]!;
+    const oldProofRequest = { envelope: proof(f, revokedGate), assessment: f.assessment,
+      receivedAt: "2026-08-30T20:06:00.000Z" };
+    store.recordProof(oldProofRequest);
+    const identitiesV2 = clone(f.identities.map((item) => item.identity)), target = identitiesV2[0]!;
+    target.state = "revoked"; target.revokedAt = "2026-08-30T20:29:00.000Z";
+    const revokedV2 = signBundle(f, 2, f.bundle.body.bodyDigest, identitiesV2,
+      "2026-08-30T20:30:00.000Z");
+    store.recordTrustBundle(revokedV2, "2026-08-30T20:31:00.000Z");
+    assert.equal(store.recordProof(oldProofRequest).replayed, true);
+    const reactivatedV3 = signBundle(f, 3, revokedV2.body.bodyDigest, undefined,
+      "2026-08-30T20:40:00.000Z");
+    assert.throws(() => store.recordTrustBundle(reactivatedV3, "2026-08-30T20:41:00.000Z"),
+      errorCode("policy_denied"));
+    const omitted = clone(identitiesV2).slice(1);
+    const omittedV3 = signBundle(f, 3, revokedV2.body.bodyDigest, omitted, "2026-08-30T20:40:00.000Z");
+    assert.throws(() => store.recordTrustBundle(omittedV3, "2026-08-30T20:41:00.000Z"),
+      errorCode("policy_denied"));
+    const changed = clone(identitiesV2); changed[0]!.independenceDomainDigest = sha256Digest({ changed: "domain" });
+    const changedV3 = signBundle(f, 3, revokedV2.body.bodyDigest, changed, "2026-08-30T20:40:00.000Z");
+    assert.throws(() => store.recordTrustBundle(changedV3, "2026-08-30T20:41:00.000Z"),
+      errorCode("policy_denied"));
+  } finally { store.closeDatabase(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("CR11B-AUTO-060 exact old proof replay remains inert after trust advances and at capacity", () => {
+  const f = fixture(), directory = privateDirectory("old-replay"), path = join(directory, "proof.sqlite");
+  const store = new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
+    f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor,
+    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }), 3);
+  try {
+    store.recordTrustBundle(f.bundle, "2026-08-30T20:02:20.000Z");
+    const envelope = proof(f, "production_owner_approval_missing"), request = { envelope,
+      assessment: f.assessment, receivedAt: "2026-08-30T20:06:00.000Z" };
+    store.recordProof(request);
+    const activeV2 = signBundle(f, 2, f.bundle.body.bodyDigest, undefined, "2026-08-30T20:30:00.000Z");
+    store.recordTrustBundle(activeV2, "2026-08-30T20:31:00.000Z");
+    assert.equal(store.recordProof(request).replayed, true);
+    const drift = clone(request); drift.receivedAt = "2026-08-30T20:06:00.001Z";
+    assert.throws(() => store.recordProof(drift), errorCode("replay_drift"));
+  } finally { store.closeDatabase(); rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("CR11B-AUTO-060 ledger detects SQLite artifact tampering", () => {
   const f = fixture(), directory = privateDirectory("tamper"), path = join(directory, "proof.sqlite");
   const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
@@ -339,6 +440,26 @@ test("CR11B-AUTO-060 ledger detects SQLite artifact tampering", () => {
   assert.throws(() => new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
     f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor, checkpoints), errorCode("integrity_failed"));
   rmSync(directory, { recursive: true, force: true });
+});
+
+test("CR11B-AUTO-060 open ledger rechecks mode, link count, path identity, and exact schema", () => {
+  const f = fixture(), directory = privateDirectory("open-boundary"), path = join(directory, "proof.sqlite"),
+    linkPath = join(directory, "proof-link.sqlite"), movedPath = join(directory, "proof-moved.sqlite");
+  const store = new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
+    f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor,
+    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+  store.recordTrustBundle(f.bundle, "2026-08-30T20:02:20.000Z");
+  chmodSync(path, 0o644);
+  assert.throws(() => store.currentTrustBundle(), errorCode("integrity_failed"));
+  chmodSync(path, 0o600); linkSync(path, linkPath);
+  assert.throws(() => store.listObservations(), errorCode("integrity_failed"));
+  unlinkSync(linkPath);
+  const db = new DatabaseSync(path); db.exec("CREATE TABLE hostile_extra(value TEXT)"); db.close();
+  assert.throws(() => store.currentTrustBundle(), errorCode("integrity_failed"));
+  const cleanup = new DatabaseSync(path); cleanup.exec("DROP TABLE hostile_extra"); cleanup.close();
+  renameSync(path, movedPath); copyFileSync(movedPath, path); chmodSync(path, 0o600);
+  assert.throws(() => store.currentTrustBundle(), errorCode("integrity_failed"));
+  store.closeDatabase(); rmSync(directory, { recursive: true, force: true });
 });
 
 test("CR11B-AUTO-060 external checkpoint detects database rollback", () => {
@@ -356,20 +477,28 @@ test("CR11B-AUTO-060 external checkpoint detects database rollback", () => {
 });
 
 test("CR11B-AUTO-060 projection discloses only safe status and cannot activate", () => {
-  const f = fixture(), observation = observe(f, proof(f, "production_clock_custody_unproved"));
-  const assessment = assessReadyFrontierProductionProofsV1({ proofAssessmentId: "frontier.proof-assessment.projection",
-    assessment: f.assessment, currentTrustBundle: f.bundle, observations: [observation],
-    evaluatedAt: "2026-08-30T20:07:00.000Z" }, f.planKey, f.anchor);
-  const projection = projectReadyFrontierProductionProofAssessmentV1(assessment);
-  const serialized = JSON.stringify(projection);
-  for (const protectedValue of [f.bundle.ownerSignature, f.bundle.body.identities[0]!.publicKeySpki,
-    observation.evidenceDigest, observation.proofBodyDigest, observation.envelopeDigest]) {
-    assert.equal(serialized.includes(protectedValue), false);
-  }
-  assert.equal(projection.canActivateProduction, false);
-  assert.equal(projection.canContactNetwork, false);
-  assert.equal(projection.canDispatchOrExecute, false);
-  assert.deepEqual(parseReadyFrontierProductionProofProjectionV1(projection), projection);
+  const f = fixture(), envelope = proof(f, "production_clock_custody_unproved"),
+    directory = privateDirectory("projection"), path = join(directory, "proof.sqlite");
+  const store = new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
+    f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor,
+    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+  try {
+    store.recordTrustBundle(f.bundle, "2026-08-30T20:02:20.000Z");
+    const observation = store.recordProof({ envelope, assessment: f.assessment,
+      receivedAt: "2026-08-30T20:06:00.000Z" }).observation;
+    const assessment = store.assess("frontier.proof-assessment.projection", f.assessment,
+      "2026-08-30T20:07:00.000Z");
+    const projection = projectReadyFrontierProductionProofAssessmentV1(assessment);
+    const serialized = JSON.stringify(projection);
+    for (const protectedValue of [f.bundle.ownerSignature, f.bundle.body.identities[0]!.publicKeySpki,
+      observation.evidenceDigest, observation.proofBodyDigest, observation.envelopeDigest]) {
+      assert.equal(serialized.includes(protectedValue), false);
+    }
+    assert.equal(projection.canActivateProduction, false);
+    assert.equal(projection.canContactNetwork, false);
+    assert.equal(projection.canDispatchOrExecute, false);
+    assert.deepEqual(parseReadyFrontierProductionProofProjectionV1(projection), projection);
+  } finally { store.closeDatabase(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("CR11B-AUTO-060 proof ingress has no network, provider, deployment, or secret-resolution client", () => {

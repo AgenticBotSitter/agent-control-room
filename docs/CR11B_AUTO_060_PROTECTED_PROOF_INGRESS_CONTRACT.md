@@ -1,6 +1,6 @@
 # CR11B-AUTO-060 Protected Proof Ingress Contract
 
-Status: implemented candidate; independent security and authority review required
+Status: first remediation implemented after independent rejection; different-agent re-review required
 
 Date: 2026-08-30
 
@@ -30,9 +30,15 @@ An owner-signed trust bundle binds:
 - whether the identity may independently verify; and
 - active or terminally revoked state and revocation time.
 
-The bundle body digest excludes only itself. The owner signature covers the complete body including that digest. Identity
+The bundle body digest excludes only itself. The owner signature covers the complete body including that digest. Every
+Ed25519 signature must decode to exactly 64 bytes and round-trip to the exact supplied base64url string before verification.
+Textual aliases for the same signature bytes are rejected. Identity
 and key IDs and public keys are unique; identities, authorities, and gate codes are canonical. Active identities have no
 revocation time. A revoked identity must have been revoked no later than the signed bundle revision.
+
+The authenticated trust history retains every identity binding. An existing identity cannot disappear or change identity
+ID, key ID, public key, key digest, independence domain, proof roles, gate roles, or verifier role. Active may transition
+once to revoked at a monotonic signed time. Revoked can never return active. New identities require wholly new key identity.
 
 No private key, credential, locator, evidence body, production root, or protected-reference value belongs in the bundle,
 envelope, ledger, projection, fixture, test, log, or repository.
@@ -82,17 +88,25 @@ count, canonical JSON, row sequence, row identity, signatures, proof derivation,
 on every read and mutation.
 
 Trust revisions must start at one and advance one revision at a time with the exact prior digest and increasing issue time.
-Only the current stored bundle may admit a new proof. An exact repeated bundle or proof is inert. Reusing an ID with a
+Only the current stored bundle may admit a new proof. An exact repeated bundle or proof is inert, including an old exact
+proof replay after active or revoking trust advances and when ledger capacity is full. Reusing an ID with a
 different digest is replay drift. Store capacity is checked before append. SQLite tampering and database rollback fail
 closed.
+
+The ledger retains the original private file path and device/inode identity. Before and after each read or mutation it
+rechecks private parent and file ownership/mode, regular non-symlink form, single-link count, unchanged device/inode, and
+the complete exact SQLite objects, columns, and SQL. Open-store permission drift, hard links, path replacement, or added
+tables/indexes/triggers/views fail before state is returned or an append is accepted.
 
 The repository checkpoint implementation is deliberately in-memory and test-only. Durable protected checkpoint custody,
 hosted multi-process locking, backup/restore, availability, and production concurrency remain unproved.
 
 ## Partial assessment and revocation truth
 
-The assessor re-verifies the AUTO-050 assessment with its protected HMAC context, verifies the current owner-signed fixture
-bundle, and consumes only ledger-derived observations from the exact same artifact chain. Each gate is one of:
+The only assessment builder is owned by the authenticated store. There is no exported raw-observation assessor. It
+re-verifies the AUTO-050 assessment with its protected HMAC context, verifies current ledger state and the owner-signed
+fixture bundle, filters ledger-derived observations to the exact assessment chain, and rejects an evaluation time earlier
+than the latest authenticated ledger record or the AUTO-050 assessment. Each gate is one of:
 
 - `unobserved`;
 - `observed_unqualified`;

@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { closeSync, lstatSync, openSync, statSync } from "node:fs";
+import { closeSync, lstatSync, openSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { assertPrivateSqliteSchemaV1 } from "../../harness/codex-v1/private-sqlite-schema";
@@ -18,19 +18,26 @@ import { ReadyFrontierContractErrorV1 } from "./errors";
 import { parseExactReadyFrontierV1 } from "./exact";
 import { parseReadyFrontierProductionBoundaryAssessmentV1 } from "./production-boundary";
 import {
-  assessReadyFrontierProductionProofsV1,
+  parseReadyFrontierProductionProofAssessmentV1,
+  parseReadyFrontierProductionProofEnvelopeV1,
   parseReadyFrontierProductionProofObservationV1,
   parseReadyFrontierProductionTrustAnchorV1,
   verifyReadyFrontierProductionProofEnvelopeV1,
   verifyReadyFrontierProductionTrustBundleV1,
 } from "./production-proof";
+import { READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1 } from "./no-relay";
 import { readyFrontierIdSchemaV1, readyFrontierTimeSchemaV1 } from "./schemas";
 import type {
   ReadyFrontierProductionProofAssessmentV1,
   ReadyFrontierProductionProofEnvelopeV1,
   ReadyFrontierProductionProofObservationV1,
+  ReadyFrontierProductionGateObservationStatusV1,
   ReadyFrontierProductionTrustAnchorV1,
   ReadyFrontierProductionTrustBundleV1,
+} from "./production-proof-types";
+import {
+  READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1,
+  READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
 } from "./production-proof-types";
 import type { ReadyFrontierProductionBoundaryAssessmentV1 } from "./production-boundary-types";
 
@@ -47,6 +54,7 @@ interface StoredProofV1 {
   envelope: ReadyFrontierProductionProofEnvelopeV1;
   observation: ReadyFrontierProductionProofObservationV1;
 }
+interface FileIdentityV1 { device: number; inode: number; }
 
 const EXPECTED_OBJECTS = ["index:idx_frontier_production_proof_artifact_identity",
   "table:frontier_production_proof_artifact", "table:frontier_production_proof_metadata"] as const;
@@ -100,18 +108,59 @@ function key(value: unknown): Uint8Array {
   if (!parsed || parsed.byteLength < 32) fail("integrity_failed");
   return parsed.copy();
 }
-function prepare(path: string): void {
+function privateFileIdentity(path: string, expected?: FileIdentityV1): FileIdentityV1 {
   if (!isAbsolute(path) || !process.getuid) fail("integrity_failed");
-  const uid = process.getuid(), parent = statSync(dirname(path));
-  if (!parent.isDirectory() || parent.uid !== uid || (parent.mode & 0o077) !== 0) fail("integrity_failed");
+  const uid = process.getuid(), parent = lstatSync(dirname(path));
+  if (!parent.isDirectory() || parent.isSymbolicLink() || parent.uid !== uid
+    || (parent.mode & 0o077) !== 0) fail("integrity_failed");
+  const value = lstatSync(path);
+  if (!value.isFile() || value.isSymbolicLink() || value.uid !== uid || value.nlink !== 1
+    || (value.mode & 0o077) !== 0) fail("integrity_failed");
+  const identity = { device: value.dev, inode: value.ino };
+  if (expected && (identity.device !== expected.device || identity.inode !== expected.inode)) fail("integrity_failed");
+  return identity;
+}
+function prepare(path: string): FileIdentityV1 {
+  if (!isAbsolute(path) || !process.getuid) fail("integrity_failed");
   try {
-    const value = lstatSync(path);
-    if (!value.isFile() || value.isSymbolicLink() || value.uid !== uid || value.nlink !== 1
-      || (value.mode & 0o077) !== 0) fail("integrity_failed");
+    return privateFileIdentity(path);
   } catch (error) {
     if (error instanceof ReadyFrontierContractErrorV1) throw error;
     if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") fail("integrity_failed");
     closeSync(openSync(path, "wx", 0o600));
+    return privateFileIdentity(path);
+  }
+}
+
+function sameIdentityBinding(left: ReadyFrontierProductionTrustBundleV1["body"]["identities"][number],
+  right: ReadyFrontierProductionTrustBundleV1["body"]["identities"][number]): boolean {
+  return left.identityId === right.identityId && left.keyId === right.keyId
+    && left.publicKeySpki === right.publicKeySpki && left.keyDigest === right.keyDigest
+    && left.independenceDomainDigest === right.independenceDomainDigest
+    && left.canIndependentlyVerify === right.canIndependentlyVerify
+    && canonicalJson(left.proofAuthorities) === canonicalJson(right.proofAuthorities)
+    && canonicalJson(left.authorizedGateCodes) === canonicalJson(right.authorizedGateCodes);
+}
+function assertTrustTransition(prior: ReadyFrontierProductionTrustBundleV1,
+  next: ReadyFrontierProductionTrustBundleV1): void {
+  if (next.body.revision !== prior.body.revision + 1
+    || next.body.previousBundleDigest !== prior.body.bodyDigest
+    || Date.parse(next.body.issuedAt) <= Date.parse(prior.body.issuedAt)) fail("replay_drift");
+  const priorByIdentity = new Map(prior.body.identities.map((identity) => [identity.identityId, identity]));
+  for (const priorIdentity of prior.body.identities) {
+    const current = next.body.identities.find((identity) => identity.identityId === priorIdentity.identityId);
+    if (!current || !sameIdentityBinding(priorIdentity, current)) fail("policy_denied");
+    if (priorIdentity.state === "revoked") {
+      if (current.state !== "revoked" || current.revokedAt !== priorIdentity.revokedAt) fail("policy_denied");
+    } else if (current.state === "revoked") {
+      if (!current.revokedAt || Date.parse(current.revokedAt) < Date.parse(prior.body.issuedAt)
+        || Date.parse(current.revokedAt) > Date.parse(next.body.issuedAt)) fail("policy_denied");
+    } else if (current.revokedAt !== null) fail("policy_denied");
+  }
+  for (const current of next.body.identities) {
+    if (priorByIdentity.has(current.identityId)) continue;
+    if (prior.body.identities.some((identity) => identity.keyId === current.keyId
+      || identity.keyDigest === current.keyDigest || identity.publicKeySpki === current.publicKeySpki)) fail("policy_denied");
   }
 }
 
@@ -123,6 +172,8 @@ export class ReadyFrontierProductionProofStoreV1 {
   readonly #workspaceId: string;
   readonly #anchor: ReadyFrontierProductionTrustAnchorV1;
   readonly #maximumRecords: number;
+  readonly #path: string;
+  readonly #fileIdentity: FileIdentityV1;
   readonly #checkpointRead: RollbackCheckpointStoreV1["read"];
   readonly #checkpointInitialize: RollbackCheckpointStoreV1["initialize"];
   readonly #checkpointAdvance: RollbackCheckpointStoreV1["advance"];
@@ -143,7 +194,7 @@ export class ReadyFrontierProductionProofStoreV1 {
       if (!checkpoint) fail("integrity_failed");
       this.#checkpointRead = checkpoint.read; this.#checkpointInitialize = checkpoint.initialize;
       this.#checkpointAdvance = checkpoint.advance;
-      prepare(path); this.#db = new DatabaseSync(path);
+      this.#path = path; this.#fileIdentity = prepare(path); this.#db = new DatabaseSync(path);
       const version = (this.#db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
       if (version !== 0 && version !== 1) fail("integrity_failed");
       this.#db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000");
@@ -187,9 +238,8 @@ export class ReadyFrontierProductionProofStoreV1 {
       const prior = current.bundles.at(-1)?.bundle;
       if (!prior) {
         if (bundle.body.revision !== 1 || bundle.body.previousBundleDigest !== null) fail("replay_drift");
-      } else if (bundle.body.revision !== prior.body.revision + 1
-        || bundle.body.previousBundleDigest !== prior.body.bodyDigest
-        || Date.parse(bundle.body.issuedAt) <= Date.parse(prior.body.issuedAt)) fail("replay_drift");
+      } else assertTrustTransition(prior, bundle);
+      if (current.rows.length > 0 && receivedAt < current.rows.at(-1)!.recorded_at) fail("replay_drift");
       this.#append("trust_bundle", bundle.body.bundleId, bundle.body.bodyDigest, receivedAt, bundle, current.metadata);
       return { bundle, replayed: false };
     });
@@ -203,20 +253,24 @@ export class ReadyFrontierProductionProofStoreV1 {
         || typeof item.receivedAt !== "string") throw new Error("invalid");
       return item;
     } }, value) as Record<string, unknown>;
+    const envelope = parseReadyFrontierProductionProofEnvelopeV1(input.envelope);
+    const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment, this.#planKey);
+    const receivedAt = parseExactReadyFrontierV1(readyFrontierTimeSchemaV1, input.receivedAt);
     return this.#mutate(() => {
-      const current = this.#verify(), bundle = current.bundles.at(-1)?.bundle;
-      if (!bundle) fail("policy_inactive");
-      const observation = verifyReadyFrontierProductionProofEnvelopeV1({ envelope: input.envelope,
-        assessment: input.assessment, trustBundle: bundle, receivedAt: input.receivedAt },
-      this.#planKey, this.#anchor);
-      const envelope = input.envelope as ReadyFrontierProductionProofEnvelopeV1;
-      const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment, this.#planKey);
-      const exact = current.proofs.find((item) => item.observation.proofId === observation.proofId);
+      const current = this.#verify();
+      const exact = current.proofs.find((item) => item.observation.proofId === envelope.body.proofId);
       if (exact) {
-        if (!same(exact.observation.envelopeDigest, observation.envelopeDigest)
-          || !same(exact.observation.observationDigest, observation.observationDigest)) fail("replay_drift");
+        if (canonicalJson(exact.envelope) !== canonicalJson(envelope)
+          || canonicalJson(exact.assessment) !== canonicalJson(assessment)
+          || exact.observation.receivedAt !== receivedAt) fail("replay_drift");
         return { observation: exact.observation, replayed: true };
       }
+      const bundleEntry = current.bundles.at(-1), bundle = bundleEntry?.bundle;
+      if (!bundle || !bundleEntry) fail("policy_inactive");
+      if (receivedAt < bundleEntry.row.recorded_at
+        || (current.rows.length > 0 && receivedAt < current.rows.at(-1)!.recorded_at)) fail("replay_drift");
+      const observation = verifyReadyFrontierProductionProofEnvelopeV1({ envelope,
+        assessment, trustBundle: bundle, receivedAt }, this.#planKey, this.#anchor);
       if (current.rows.length >= this.#maximumRecords) fail("capacity_exceeded");
       const stored: StoredProofV1 = { assessment, envelope, observation };
       this.#append("proof", observation.proofId, observation.envelopeDigest,
@@ -229,11 +283,56 @@ export class ReadyFrontierProductionProofStoreV1 {
     ReadyFrontierProductionProofAssessmentV1 {
     parseExactReadyFrontierV1(readyFrontierIdSchemaV1, proofAssessmentId);
     parseExactReadyFrontierV1(readyFrontierTimeSchemaV1, evaluatedAt);
+    const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(assessmentValue, this.#planKey);
     const current = this.#verify(), bundle = current.bundles.at(-1)?.bundle;
-    if (!bundle) fail("policy_inactive");
-    return assessReadyFrontierProductionProofsV1({ proofAssessmentId, assessment: assessmentValue,
-      currentTrustBundle: bundle, observations: current.proofs.map((item) => item.observation), evaluatedAt },
-    this.#planKey, this.#anchor);
+    if (!bundle || current.rows.length === 0) fail("policy_inactive");
+    const evaluated = Date.parse(evaluatedAt);
+    if (evaluated < Date.parse(current.rows.at(-1)!.recorded_at)
+      || evaluated < Date.parse(assessment.assessedAt)
+      || bundle.body.tenantId !== assessment.tenantId || bundle.body.workspaceId !== assessment.workspaceId) {
+      fail("scope_mismatch");
+    }
+    const observations = current.proofs.filter((item) => item.assessment.assessmentId === assessment.assessmentId
+      && item.assessment.assessmentDigest === assessment.assessmentDigest).map((item) => item.observation);
+    const gateStatuses: ReadyFrontierProductionGateObservationStatusV1[] =
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1.map((gateCode) => {
+        const latest = observations.filter((item) => item.gateCode === gateCode)
+          .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt)).at(-1);
+        if (!latest) return { gateCode, status: "unobserved", proofId: null, observationId: null,
+          observedAt: null, expiresAt: null };
+        let status: ReadyFrontierProductionGateObservationStatusV1["status"] = "observed_unqualified";
+        const issuer = bundle.body.identities.find((identity) => identity.identityId === latest.issuerIdentityId);
+        const verifier = latest.verifierIdentityId === null ? undefined
+          : bundle.body.identities.find((identity) => identity.identityId === latest.verifierIdentityId);
+        if (!issuer || issuer.state !== "active" || issuer.keyId !== latest.issuerKeyId
+          || (latest.verifierIdentityId !== null && (!verifier || verifier.state !== "active"
+            || verifier.keyId !== latest.verifierKeyId))) status = "revoked";
+        else if (latest.trustBundleRevision !== bundle.body.revision
+          || latest.trustBundleDigest !== bundle.body.bodyDigest) status = "superseded";
+        else if (evaluated >= Date.parse(latest.expiresAt)
+          || evaluated >= Date.parse(bundle.body.expiresAt)) status = "expired";
+        return { gateCode, status, proofId: latest.proofId, observationId: latest.observationId,
+          observedAt: latest.observedAt, expiresAt: latest.expiresAt };
+      });
+    const observedUnqualifiedCount = gateStatuses.filter((item) => item.status === "observed_unqualified").length;
+    const material: Omit<ReadyFrontierProductionProofAssessmentV1, "proofAssessmentDigest"> = {
+      schema: READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1, proofAssessmentId,
+      tenantId: assessment.tenantId, workspaceId: assessment.workspaceId,
+      planId: assessment.planId, planDigest: assessment.planDigest,
+      assessmentId: assessment.assessmentId, assessmentDigest: assessment.assessmentDigest,
+      trustBundleId: bundle.body.bundleId, trustBundleRevision: bundle.body.revision,
+      trustBundleDigest: bundle.body.bodyDigest, trustMode: READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
+      gateStatuses, blockingGateCodes: [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1],
+      observedUnqualifiedCount, qualifiedProofCount: 0, remainingQualifiedProofCount: 9,
+      state: "blocked_fixture_proof_only", safeReason: "protected_production_custody_unavailable",
+      evaluatedAt, eligibleForOwnerApproval: false, eligibleForActivation: false,
+      requiresProtectedProductionReassessment: true, requiresFreshStrongOwnerApproval: true,
+      requiresIndependentSecurityReview: true, activationAuthorized: false, grantsApproval: false,
+      grantsActivationAuthority: false, grantsClaimOrLease: false,
+      grantsDispatchOrExecution: false, grantsExternalEffects: false,
+    };
+    return parseReadyFrontierProductionProofAssessmentV1({ ...material,
+      proofAssessmentDigest: sha256Digest(material) });
   }
 
   listObservations(): ReadyFrontierProductionProofObservationV1[] {
@@ -254,8 +353,10 @@ export class ReadyFrontierProductionProofStoreV1 {
     if (this.#operationActive) fail("policy_inactive");
     this.#operationActive = true; let began = false;
     try {
+      this.#assertBoundary();
       this.#db.exec("BEGIN IMMEDIATE"); began = true;
-      const result = operation(); this.#db.exec("COMMIT"); began = false; return result;
+      const result = operation(); this.#db.exec("COMMIT"); began = false;
+      this.#assertBoundary(); return result;
     } catch (error) {
       if (began) { try { this.#db.exec("ROLLBACK"); } catch { /* preserve original */ } }
       if (error instanceof ReadyFrontierContractErrorV1) throw error; fail("integrity_failed");
@@ -300,7 +401,8 @@ export class ReadyFrontierProductionProofStoreV1 {
         this.#checkpointInitialize(this.#checkpoint({ tenant_id: this.#tenantId,
           workspace_id: this.#workspaceId, revision, record_count: recordCount,
           state_digest: stateDigest, state_auth_tag: stateAuthTag }));
-      } else this.#verify();
+      }
+      this.#verify();
       this.#db.exec("COMMIT");
     } catch (error) {
       try { this.#db.exec("ROLLBACK"); } catch { /* preserve original */ }
@@ -310,16 +412,22 @@ export class ReadyFrontierProductionProofStoreV1 {
 
   #verify(): { metadata: MetadataRowV1; rows: ArtifactRowV1[];
     bundles: Array<{ row: ArtifactRowV1; bundle: ReadyFrontierProductionTrustBundleV1 }>;
-    proofs: Array<{ row: ArtifactRowV1; observation: ReadyFrontierProductionProofObservationV1 }> } {
+    proofs: Array<{ row: ArtifactRowV1; assessment: ReadyFrontierProductionBoundaryAssessmentV1;
+      envelope: ReadyFrontierProductionProofEnvelopeV1;
+      observation: ReadyFrontierProductionProofObservationV1 }> } {
+    this.#assertBoundary();
     const metadata = this.#metadata(), rows = this.#rows();
     if (!metadata || metadata.tenant_id !== this.#tenantId || metadata.workspace_id !== this.#workspaceId
       || metadata.record_count !== rows.length || metadata.revision !== rows.length + 1) fail("integrity_failed");
     const bundles: Array<{ row: ArtifactRowV1; bundle: ReadyFrontierProductionTrustBundleV1 }> = [];
-    const proofs: Array<{ row: ArtifactRowV1; observation: ReadyFrontierProductionProofObservationV1 }> = [];
+    const proofs: Array<{ row: ArtifactRowV1; assessment: ReadyFrontierProductionBoundaryAssessmentV1;
+      envelope: ReadyFrontierProductionProofEnvelopeV1;
+      observation: ReadyFrontierProductionProofObservationV1 }> = [];
     const ids = new Set<string>(), digests = new Set<string>();
     for (const [index, row] of rows.entries()) {
       if (row.ledger_sequence !== index + 1 || ids.has(`${row.artifact_kind}:${row.artifact_id}`)
-        || digests.has(row.artifact_digest)) fail("integrity_failed");
+        || digests.has(row.artifact_digest)
+        || (index > 0 && row.recorded_at < rows[index - 1]!.recorded_at)) fail("integrity_failed");
       ids.add(`${row.artifact_kind}:${row.artifact_id}`); digests.add(row.artifact_digest);
       const recordMaterial = { tenantId: this.#tenantId, workspaceId: this.#workspaceId,
         ledgerSequence: row.ledger_sequence, artifactKind: row.artifact_kind,
@@ -332,12 +440,10 @@ export class ReadyFrontierProductionProofStoreV1 {
         catch { fail("integrity_failed"); }
         const prior = bundles.at(-1)?.bundle;
         if ((!prior && (bundle.body.revision !== 1 || bundle.body.previousBundleDigest !== null))
-          || (prior && (bundle.body.revision !== prior.body.revision + 1
-            || bundle.body.previousBundleDigest !== prior.body.bodyDigest
-            || Date.parse(bundle.body.issuedAt) <= Date.parse(prior.body.issuedAt)))
           || row.artifact_id !== bundle.body.bundleId || row.artifact_digest !== bundle.body.bodyDigest
           || row.recorded_at < bundle.body.issuedAt || row.recorded_at >= bundle.body.expiresAt
           || canonicalJson(bundle) !== row.artifact_json) fail("integrity_failed");
+        if (prior) { try { assertTrustTransition(prior, bundle); } catch { fail("integrity_failed"); } }
         bundles.push({ row, bundle });
       } else {
         if (!raw || typeof raw !== "object" || Array.isArray(raw)
@@ -356,7 +462,7 @@ export class ReadyFrontierProductionProofStoreV1 {
         if (canonicalJson(expected) !== canonicalJson(observation) || canonicalJson(stored) !== row.artifact_json
           || row.artifact_id !== observation.proofId || row.artifact_digest !== observation.envelopeDigest
           || row.recorded_at !== observation.receivedAt) fail("integrity_failed");
-        proofs.push({ row, observation });
+        proofs.push({ row, assessment: stored.assessment, envelope: stored.envelope, observation });
       }
     }
     if (!same(metadata.state_digest, this.#stateDigest(rows))
@@ -365,6 +471,7 @@ export class ReadyFrontierProductionProofStoreV1 {
     const checkpoint = this.#readCheckpoint();
     if (!checkpoint || rollbackCheckpointDigestV1(checkpoint)
       !== rollbackCheckpointDigestV1(this.#checkpoint(metadata))) fail("integrity_failed");
+    this.#assertBoundary();
     return { metadata, rows, bundles, proofs };
   }
 
@@ -400,6 +507,12 @@ export class ReadyFrontierProductionProofStoreV1 {
   #readCheckpoint(): RollbackCheckpointV1 | undefined {
     try { return this.#checkpointRead(this.#checkpointScope()); }
     catch { fail("integrity_failed"); }
+  }
+  #assertBoundary(): void {
+    try {
+      privateFileIdentity(this.#path, this.#fileIdentity);
+      assertPrivateSqliteSchemaV1(this.#db, EXPECTED_OBJECTS, EXPECTED_COLUMNS, EXPECTED_SQL);
+    } catch { fail("integrity_failed"); }
   }
 }
 

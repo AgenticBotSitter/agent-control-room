@@ -15,12 +15,10 @@ import {
 } from "./production-proof-schemas";
 import {
   READY_FRONTIER_PRODUCTION_INDEPENDENT_VERIFICATION_V1,
-  READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1,
   READY_FRONTIER_PRODUCTION_PROOF_MAX_LIFETIME_SECONDS_V1,
   READY_FRONTIER_PRODUCTION_PROOF_OBSERVATION_V1,
   READY_FRONTIER_PRODUCTION_PROOF_PROJECTION_V1,
   READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
-  type ReadyFrontierProductionGateObservationStatusV1,
   type ReadyFrontierProductionIndependentVerificationV1,
   type ReadyFrontierProductionProofAssessmentV1,
   type ReadyFrontierProductionProofBindingV1,
@@ -33,7 +31,6 @@ import {
   type ReadyFrontierProductionTrustBundleV1,
   type ReadyFrontierProductionTrustIdentityV1,
 } from "./production-proof-types";
-import type { ReadyFrontierProductionBoundaryAssessmentV1 } from "./production-boundary-types";
 
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never {
   throw new ReadyFrontierContractErrorV1(code);
@@ -55,8 +52,16 @@ function canonicalEd25519Key(spki: string): { key: KeyObject; digest: string } {
     return { key, digest: `sha256:${createHash("sha256").update(canonical).digest("hex")}` };
   } catch { fail("integrity_failed"); }
 }
+function canonicalEd25519Signature(signature: string): Buffer {
+  try {
+    const decoded = Buffer.from(signature, "base64url");
+    if (decoded.byteLength !== 64 || decoded.toString("base64url") !== signature) throw new Error("invalid");
+    return decoded;
+  } catch { fail("integrity_failed"); }
+}
 function validSignature(material: unknown, signature: string, key: KeyObject): boolean {
-  try { return verify(null, Buffer.from(canonicalJson(material)), key, Buffer.from(signature, "base64url")); }
+  const canonical = canonicalEd25519Signature(signature);
+  try { return verify(null, Buffer.from(canonicalJson(material)), key, canonical); }
   catch { return false; }
 }
 function without<T extends Record<string, unknown>>(value: T, field: keyof T): Record<string, unknown> {
@@ -232,80 +237,6 @@ export function parseReadyFrontierProductionProofObservationV1(value: unknown):
     || observation.observationDigest !== sha256Digest(without(
       observation as unknown as Record<string, unknown>, "observationDigest"))) fail("digest_mismatch");
   return observation;
-}
-
-export interface ReadyFrontierProductionProofAssessmentInputV1 {
-  proofAssessmentId: string;
-  assessment: ReadyFrontierProductionBoundaryAssessmentV1;
-  currentTrustBundle: ReadyFrontierProductionTrustBundleV1;
-  observations: ReadyFrontierProductionProofObservationV1[];
-  evaluatedAt: string;
-}
-
-export function assessReadyFrontierProductionProofsV1(inputValue: unknown,
-  activationPacketIntegrityKey: unknown, anchorValue: unknown): ReadyFrontierProductionProofAssessmentV1 {
-  const input = parseExactReadyFrontierV1({ parse(value: unknown) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid");
-    const item = value as Record<string, unknown>;
-    const keys = Object.keys(item).sort();
-    if (!sameList(keys, ["assessment", "currentTrustBundle", "evaluatedAt", "observations", "proofAssessmentId"])) throw new Error("invalid");
-    if (typeof item.proofAssessmentId !== "string" || !Array.isArray(item.observations)
-      || typeof item.evaluatedAt !== "string") throw new Error("invalid");
-    return item;
-  } }, inputValue) as unknown as ReadyFrontierProductionProofAssessmentInputV1;
-  const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment,
-    activationPacketIntegrityKey);
-  const anchor = parseReadyFrontierProductionTrustAnchorV1(anchorValue);
-  const bundle = verifyReadyFrontierProductionTrustBundleV1(input.currentTrustBundle, anchor);
-  const evaluated = Date.parse(input.evaluatedAt);
-  if (!Number.isFinite(evaluated) || bundle.body.tenantId !== assessment.tenantId
-    || bundle.body.workspaceId !== assessment.workspaceId || evaluated < Date.parse(bundle.body.issuedAt)) fail("scope_mismatch");
-  const observations = input.observations.map(parseReadyFrontierProductionProofObservationV1);
-  for (const observation of observations) {
-    if (observation.tenantId !== assessment.tenantId || observation.workspaceId !== assessment.workspaceId
-      || observation.planId !== assessment.planId || observation.planDigest !== assessment.planDigest
-      || observation.assessmentId !== assessment.assessmentId
-      || observation.assessmentDigest !== assessment.assessmentDigest) fail("scope_mismatch");
-  }
-  const gateStatuses: ReadyFrontierProductionGateObservationStatusV1[] =
-    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1.map((gateCode) => {
-      const matching = observations.filter((item) => item.gateCode === gateCode)
-        .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt));
-      const latest = matching.at(-1);
-      if (!latest) return { gateCode, status: "unobserved", proofId: null, observationId: null,
-        observedAt: null, expiresAt: null };
-      let status: ReadyFrontierProductionGateObservationStatusV1["status"] = "observed_unqualified";
-      const currentIdentity = bundle.body.identities.find((identity) => identity.identityId === latest.issuerIdentityId);
-      const currentVerifier = latest.verifierIdentityId === null ? undefined
-        : bundle.body.identities.find((identity) => identity.identityId === latest.verifierIdentityId);
-      if (!currentIdentity || currentIdentity.state !== "active" || currentIdentity.keyId !== latest.issuerKeyId
-        || (latest.verifierIdentityId !== null && (!currentVerifier || currentVerifier.state !== "active"
-          || currentVerifier.keyId !== latest.verifierKeyId))) status = "revoked";
-      else if (latest.trustBundleRevision !== bundle.body.revision
-        || latest.trustBundleDigest !== bundle.body.bodyDigest) status = "superseded";
-      else if (evaluated >= Date.parse(latest.expiresAt) || evaluated >= Date.parse(bundle.body.expiresAt)) status = "expired";
-      return { gateCode, status, proofId: latest.proofId, observationId: latest.observationId,
-        observedAt: latest.observedAt, expiresAt: latest.expiresAt };
-    });
-  const observedUnqualifiedCount = gateStatuses.filter((item) => item.status === "observed_unqualified").length;
-  const material: Omit<ReadyFrontierProductionProofAssessmentV1, "proofAssessmentDigest"> = {
-    schema: READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1,
-    proofAssessmentId: input.proofAssessmentId, tenantId: assessment.tenantId,
-    workspaceId: assessment.workspaceId, planId: assessment.planId, planDigest: assessment.planDigest,
-    assessmentId: assessment.assessmentId, assessmentDigest: assessment.assessmentDigest,
-    trustBundleId: bundle.body.bundleId, trustBundleRevision: bundle.body.revision,
-    trustBundleDigest: bundle.body.bodyDigest, trustMode: READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
-    gateStatuses, blockingGateCodes: [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1],
-    observedUnqualifiedCount, qualifiedProofCount: 0, remainingQualifiedProofCount: 9,
-    state: "blocked_fixture_proof_only", safeReason: "protected_production_custody_unavailable",
-    evaluatedAt: input.evaluatedAt, eligibleForOwnerApproval: false, eligibleForActivation: false,
-    requiresProtectedProductionReassessment: true, requiresFreshStrongOwnerApproval: true,
-    requiresIndependentSecurityReview: true, activationAuthorized: false, grantsApproval: false,
-    grantsActivationAuthority: false, grantsClaimOrLease: false,
-    grantsDispatchOrExecution: false, grantsExternalEffects: false,
-  };
-  return parseReadyFrontierProductionProofAssessmentV1({ ...material,
-    proofAssessmentDigest: sha256Digest(material) });
 }
 
 export function parseReadyFrontierProductionProofAssessmentV1(value: unknown):

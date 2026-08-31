@@ -1489,3 +1489,10 @@ safer but more operationally expensive.
 root, durable protected checkpoint, hosted multi-process ledger, real evidence collection, owner approval issuance,
 consumer, activation, deployment, or external effect is a new owner-authorized block with fresh security review. AUTO-060
 fixture observations can never be migrated or relabelled into production qualification.
+
+**First-review amendment:** Independent review rejected exact candidate
+`f77108fc3c556970bff4cc94c4b952a0336a8cac` in immutable report SHA-256
+`fc22ddd3ee62f432eeaee5d5cbc0aca6715872fa7733e095979ac1ea3457f9cf`. Canonical signatures, store-only chronological
+assessment, irreversible full-chain identity revocation, trust-advance-safe exact replay, and per-operation private-file
+and exact-schema checks remediate its five findings. The original negative report remains unchanged. A different reviewer
+must accept an exact remediation commit; no producer test or remediation itself closes AUTO-060.
