@@ -77,6 +77,7 @@ export interface ReadyFrontierProductionBoundaryPlanV1 {
   workspaceId: string;
   activationPacketId: string;
   activationPacketDigest: string;
+  activationPacketCreatedAt: string;
   simulationRunId: string;
   simulationRunDigest: string;
   acceptedAuto040Commit: typeof READY_FRONTIER_ACCEPTED_AUTO040_COMMIT_V1;
@@ -109,6 +110,7 @@ export interface ReadyFrontierProductionBoundaryPlanV1 {
   plannedAt: string;
   expiresAt: string;
   planDigest: string;
+  planAuthTag: string;
 }
 
 export interface ReadyFrontierProductionBoundaryAssessmentV1 {
@@ -118,7 +120,14 @@ export interface ReadyFrontierProductionBoundaryAssessmentV1 {
   planDigest: string;
   tenantId: string;
   workspaceId: string;
+  activationPacketId: string;
   activationPacketDigest: string;
+  activationPacketCreatedAt: string;
+  simulationRunId: string;
+  simulationRunDigest: string;
+  plannedAt: string;
+  planExpiresAt: string;
+  planAuthTag: string;
   requirements: ReadyFrontierProductionGateRequirementV1[];
   blockingGateCodes: ReadyFrontierProductionGateCodeV1[];
   remainingProofCount: 9;

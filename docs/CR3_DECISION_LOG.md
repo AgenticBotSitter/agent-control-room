@@ -1446,3 +1446,10 @@ packet and chronology binding, qualified-evidence forgery, reconciliation transi
 absence of effect clients. Any real verifier, evidence store, hosted database, process, consumer, broker, network,
 destination contact, policy enrollment, owner-decision ingress, deployment, or activation code reopens security review and
 requires explicit owner authority.
+
+**First-review amendment:** Independent review of `f046ccee689fc41ed91c7827f885a255f9eb8024` rejected the candidate
+because public digest rewriting could discard authenticated packet chronology and could alias disposition plan/assessment
+IDs across artifacts. The first remediation therefore adds keyed plan provenance, repeats its verification and full
+chronology at downstream assessment boundaries, enforces the deterministic disposition ID, and checks every shared
+identity and chronology before projection. The negative report remains immutable. Only a different reviewer may accept an
+exact remediation commit, and that acceptance still cannot satisfy any of the nine production gates.

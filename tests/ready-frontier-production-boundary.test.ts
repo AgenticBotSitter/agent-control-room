@@ -29,6 +29,13 @@ import { observedProxy } from "./proxy-test-helper.ts";
 const errorCode = (safeCode: ReadyFrontierContractErrorV1["safeCode"]) => (error: unknown) =>
   error instanceof ReadyFrontierContractErrorV1 && error.safeCode === safeCode;
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
+function recomputeDigest(value: Record<string, unknown>, digestField: string,
+  excludedFields: string[] = []): string {
+  const material = clone(value);
+  delete material[digestField];
+  for (const field of excludedFields) delete material[field];
+  return sha256Digest(material);
+}
 
 function activationPacketFixture(key = readyFrontierRepositoryFixtureActivationPacketKeyV1()):
   ReadyFrontierActivationPacketV1 {
@@ -78,12 +85,12 @@ function fixture() {
       assessmentId: "frontier.production-assessment.auto050.0001",
       plan,
       assessedAt: "2026-08-30T20:02:00.000Z",
-    });
+    }, key);
     const disposition = buildReadyFrontierProductionDisabledDispositionV1({
       assessment,
       recordedAt: "2026-08-30T20:03:00.000Z",
-    });
-    const projection = projectReadyFrontierProductionBoundaryV1(assessment, disposition);
+    }, key);
+    const projection = projectReadyFrontierProductionBoundaryV1(assessment, disposition, key);
     return { packet, plan, assessment, disposition, projection };
   } finally { key.fill(0); }
 }
@@ -102,7 +109,9 @@ test("CR11B-AUTO-050 binds the accepted packet to an exact default-disabled prod
     disabled: true, configuration: false, consumer: false, policy: false, authorized: false,
     protectedReferences: false, network: false, contact: false, claims: false, execution: false, effects: false,
   });
-  assert.deepEqual(parseReadyFrontierProductionBoundaryPlanV1(plan), plan);
+  const key = readyFrontierRepositoryFixtureActivationPacketKeyV1();
+  try { assert.deepEqual(parseReadyFrontierProductionBoundaryPlanV1(plan, key), plan); }
+  finally { key.fill(0); }
 });
 
 test("CR11B-AUTO-050 turns all nine production blockers into immutable proof requirements", () => {
@@ -145,33 +154,41 @@ test("CR11B-AUTO-050 assessment and disposition remain blocked before consumer c
   assert.equal(projection.canContactNetwork, false);
   assert.equal(projection.canClaimOrLease, false);
   assert.equal(projection.canDispatchOrExecute, false);
-  assert.deepEqual(parseReadyFrontierProductionBoundaryAssessmentV1(assessment), assessment);
+  const key = readyFrontierRepositoryFixtureActivationPacketKeyV1();
+  try { assert.deepEqual(parseReadyFrontierProductionBoundaryAssessmentV1(assessment, key), assessment); }
+  finally { key.fill(0); }
   assert.deepEqual(parseReadyFrontierProductionDisabledDispositionV1(disposition), disposition);
   assert.deepEqual(parseReadyFrontierProductionBoundaryProjectionV1(projection), projection);
 });
 
 test("CR11B-AUTO-050 cannot convert caller-declared qualified evidence into readiness", () => {
   const { assessment } = fixture();
+  const key = readyFrontierRepositoryFixtureActivationPacketKeyV1();
+  try {
   const forged = clone(assessment);
   Object.assign(forged.requirements[0]!, { status: "qualified", evidenceDigest: sha256Digest({ forged: true }),
     repositoryCanSatisfy: true });
-  assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(forged), errorCode("invalid_input"));
+  assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(forged, key), errorCode("invalid_input"));
   const dropped = clone(assessment); dropped.requirements.pop();
-  assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(dropped), errorCode("invalid_input"));
+  assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(dropped, key), errorCode("invalid_input"));
   const reordered = clone(assessment); reordered.requirements.reverse();
-  assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(reordered), errorCode("digest_mismatch"));
+  assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(reordered, key), errorCode("digest_mismatch"));
+  } finally { key.fill(0); }
 });
 
 test("CR11B-AUTO-050 rejects packet, plan, assessment, and projection drift", () => {
   const { plan, assessment, disposition, projection } = fixture();
+  const key = readyFrontierRepositoryFixtureActivationPacketKeyV1();
+  try {
   const planDrift = clone(plan); planDrift.consumerImplemented = true as false;
-  assert.throws(() => parseReadyFrontierProductionBoundaryPlanV1(planDrift), errorCode("invalid_input"));
+  assert.throws(() => parseReadyFrontierProductionBoundaryPlanV1(planDrift, key), errorCode("invalid_input"));
   const assessmentDrift = clone(assessment); assessmentDrift.blockingGateCodes.pop();
-  assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(assessmentDrift), errorCode("invalid_input"));
+  assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(assessmentDrift, key), errorCode("invalid_input"));
   const dispositionDrift = clone(disposition); dispositionDrift.databaseContacted = true as false;
   assert.throws(() => parseReadyFrontierProductionDisabledDispositionV1(dispositionDrift), errorCode("invalid_input"));
   const projectionDrift = clone(projection); projectionDrift.planId = "frontier.production-boundary.alias";
   assert.throws(() => parseReadyFrontierProductionBoundaryProjectionV1(projectionDrift), errorCode("digest_mismatch"));
+  } finally { key.fill(0); }
 });
 
 test("CR11B-AUTO-050 rejects wrong packet keys, chronology drift, accessors, and Proxies without callbacks", () => {
@@ -203,6 +220,92 @@ test("CR11B-AUTO-050 rejects wrong packet keys, chronology drift, accessors, and
       plannedAt: "2026-08-30T20:01:00.000Z", expiresAt: "2026-08-30T21:01:00.000Z" }, "throwing");
     assert.throws(() => buildReadyFrontierProductionBoundaryPlanV1(proxied.value, key), errorCode("invalid_input"));
     assert.equal(proxied.trapCount(), 0);
+  } finally { key.fill(0); }
+});
+
+test("CR11B-AUTO-050 rejects re-digested plan provenance and assessment chronology", () => {
+  const { plan, assessment } = fixture();
+  const key = readyFrontierRepositoryFixtureActivationPacketKeyV1();
+  try {
+    const shifted = clone(plan) as unknown as Record<string, unknown>;
+    shifted.plannedAt = "2025-01-01T00:00:00.000Z";
+    shifted.expiresAt = "2025-01-01T01:00:00.000Z";
+    shifted.planDigest = recomputeDigest(shifted, "planDigest", ["planAuthTag"]);
+    assert.throws(() => parseReadyFrontierProductionBoundaryPlanV1(shifted, key),
+      errorCode("digest_mismatch"));
+
+    for (const [field, replacement] of [
+      ["activationPacketId", "frontier.activation-packet.alias"],
+      ["activationPacketDigest", sha256Digest({ packet: "alias" })],
+      ["simulationRunId", "frontier.no-relay-run.alias"],
+      ["simulationRunDigest", sha256Digest({ run: "alias" })],
+    ] as const) {
+      const substituted = clone(plan) as unknown as Record<string, unknown>;
+      substituted[field] = replacement;
+      substituted.planDigest = recomputeDigest(substituted, "planDigest", ["planAuthTag"]);
+      assert.throws(() => parseReadyFrontierProductionBoundaryPlanV1(substituted, key),
+        errorCode("digest_mismatch"), field);
+    }
+
+    for (const assessedAt of ["2026-08-30T20:00:59.999Z", "2026-08-30T21:01:00.000Z"]) {
+      const outsideWindow = clone(assessment) as unknown as Record<string, unknown>;
+      outsideWindow.assessedAt = assessedAt;
+      outsideWindow.assessmentDigest = recomputeDigest(outsideWindow, "assessmentDigest");
+      assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(outsideWindow, key),
+        errorCode("digest_mismatch"));
+    }
+
+    for (const [field, replacement] of [
+      ["planId", "frontier.production-boundary.alias"],
+      ["planDigest", sha256Digest({ plan: "alias" })],
+      ["tenantId", "tenant.alias"],
+      ["workspaceId", "workspace.alias"],
+      ["activationPacketId", "frontier.activation-packet.alias"],
+      ["activationPacketDigest", sha256Digest({ packet: "alias" })],
+      ["activationPacketCreatedAt", "2026-08-30T19:59:00.000Z"],
+      ["simulationRunId", "frontier.no-relay-run.alias"],
+      ["simulationRunDigest", sha256Digest({ run: "alias" })],
+      ["plannedAt", "2026-08-30T20:00:30.000Z"],
+      ["planExpiresAt", "2026-08-30T20:30:00.000Z"],
+      ["planAuthTag", `hmac-sha256:${"0".repeat(64)}`],
+    ] as const) {
+      const substituted = clone(assessment) as unknown as Record<string, unknown>;
+      substituted[field] = replacement;
+      substituted.assessmentDigest = recomputeDigest(substituted, "assessmentDigest");
+      assert.throws(() => parseReadyFrontierProductionBoundaryAssessmentV1(substituted, key),
+        ReadyFrontierContractErrorV1, field);
+    }
+  } finally { key.fill(0); }
+});
+
+test("CR11B-AUTO-050 rejects every re-digested cross-artifact disposition substitution", () => {
+  const { assessment, disposition } = fixture();
+  const key = readyFrontierRepositoryFixtureActivationPacketKeyV1();
+  try {
+    for (const [field, replacement] of [
+      ["planId", "frontier.production-boundary.alias"],
+      ["planDigest", sha256Digest({ plan: "alias" })],
+      ["assessmentId", "frontier.production-assessment.alias"],
+      ["assessmentDigest", sha256Digest({ assessment: "alias" })],
+      ["tenantId", "tenant.alias"],
+      ["workspaceId", "workspace.alias"],
+      ["recordedAt", "2026-08-30T20:01:59.999Z"],
+    ] as const) {
+      const substituted = clone(disposition) as unknown as Record<string, unknown>;
+      substituted[field] = replacement;
+      if (field === "assessmentDigest") {
+        substituted.dispositionId = `frontier.production-disabled.${replacement.slice(7, 31)}`;
+      }
+      substituted.dispositionDigest = recomputeDigest(substituted, "dispositionDigest");
+      assert.throws(() => projectReadyFrontierProductionBoundaryV1(assessment, substituted, key),
+        errorCode("scope_mismatch"), field);
+    }
+
+    const aliasedId = clone(disposition) as unknown as Record<string, unknown>;
+    aliasedId.dispositionId = "frontier.production-disabled.alias";
+    aliasedId.dispositionDigest = recomputeDigest(aliasedId, "dispositionDigest");
+    assert.throws(() => parseReadyFrontierProductionDisabledDispositionV1(aliasedId),
+      errorCode("digest_mismatch"));
   } finally { key.fill(0); }
 });
 

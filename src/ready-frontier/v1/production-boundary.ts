@@ -1,4 +1,5 @@
-import { sha256Digest } from "../../security";
+import { hmacSha256Tag, sha256Digest } from "../../security";
+import { exactHostUint8ArrayV1 } from "../../security/host-value";
 import { ReadyFrontierContractErrorV1 } from "./errors";
 import { parseExactReadyFrontierV1 } from "./exact";
 import { READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1, parseReadyFrontierActivationPacketV1 } from "./no-relay";
@@ -43,10 +44,43 @@ function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never {
 function same(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
+function key(value: unknown): Uint8Array {
+  const parsed = exactHostUint8ArrayV1(value, 128);
+  if (!parsed || parsed.byteLength < 32) fail("integrity_failed");
+  return parsed.copy();
+}
+function equal(left: string, right: string): boolean {
+  return left.length === right.length && left === right;
+}
 function unsigned<T extends Record<string, unknown>, K extends keyof T>(value: T, key: K): Omit<T, K> {
   const copy = { ...value };
   delete copy[key];
   return copy;
+}
+
+function planUnsigned(plan: ReadyFrontierProductionBoundaryPlanV1):
+  Omit<ReadyFrontierProductionBoundaryPlanV1, "planDigest" | "planAuthTag"> {
+  const { planDigest: _digest, planAuthTag: _tag, ...material } = plan;
+  void _digest; void _tag;
+  return material;
+}
+
+function planAuthMaterial(plan: Pick<ReadyFrontierProductionBoundaryPlanV1, "planId" | "planDigest"
+  | "tenantId" | "workspaceId" | "activationPacketId" | "activationPacketDigest" | "activationPacketCreatedAt"
+  | "simulationRunId" | "simulationRunDigest" | "plannedAt" | "expiresAt">) {
+  return {
+    planId: plan.planId,
+    planDigest: plan.planDigest,
+    tenantId: plan.tenantId,
+    workspaceId: plan.workspaceId,
+    activationPacketId: plan.activationPacketId,
+    activationPacketDigest: plan.activationPacketDigest,
+    activationPacketCreatedAt: plan.activationPacketCreatedAt,
+    simulationRunId: plan.simulationRunId,
+    simulationRunDigest: plan.simulationRunDigest,
+    plannedAt: plan.plannedAt,
+    expiresAt: plan.expiresAt,
+  };
 }
 
 interface GateDefinitionV1 {
@@ -177,19 +211,22 @@ export function parseReadyFrontierProductionGateRequirementV1(value: unknown):
 
 export function buildReadyFrontierProductionBoundaryPlanV1(inputValue: unknown,
   activationPacketIntegrityKey: unknown): ReadyFrontierProductionBoundaryPlanV1 {
-  const input = parseExactReadyFrontierV1(readyFrontierProductionBoundaryPlanInputSchemaV1, inputValue);
-  const packet = parseReadyFrontierActivationPacketV1(input.activationPacket, activationPacketIntegrityKey);
-  if (Date.parse(input.plannedAt) < Date.parse(packet.createdAt)
-    || Date.parse(input.expiresAt) <= Date.parse(input.plannedAt)
-    || Date.parse(input.expiresAt) - Date.parse(input.plannedAt)
-      > READY_FRONTIER_PRODUCTION_PLAN_MAX_LIFETIME_SECONDS_V1 * 1_000) fail("policy_denied");
-  const material: Omit<ReadyFrontierProductionBoundaryPlanV1, "planDigest"> = {
+  const planKey = key(activationPacketIntegrityKey);
+  try {
+    const input = parseExactReadyFrontierV1(readyFrontierProductionBoundaryPlanInputSchemaV1, inputValue);
+    const packet = parseReadyFrontierActivationPacketV1(input.activationPacket, planKey);
+    if (Date.parse(input.plannedAt) < Date.parse(packet.createdAt)
+      || Date.parse(input.expiresAt) <= Date.parse(input.plannedAt)
+      || Date.parse(input.expiresAt) - Date.parse(input.plannedAt)
+        > READY_FRONTIER_PRODUCTION_PLAN_MAX_LIFETIME_SECONDS_V1 * 1_000) fail("policy_denied");
+    const material: Omit<ReadyFrontierProductionBoundaryPlanV1, "planDigest" | "planAuthTag"> = {
     schema: READY_FRONTIER_PRODUCTION_BOUNDARY_PLAN_V1,
     planId: input.planId,
     tenantId: packet.tenantId,
     workspaceId: packet.workspaceId,
     activationPacketId: packet.packetId,
     activationPacketDigest: packet.packetDigest,
+    activationPacketCreatedAt: packet.createdAt,
     simulationRunId: packet.simulationRunId,
     simulationRunDigest: packet.simulationRunDigest,
     acceptedAuto040Commit: READY_FRONTIER_ACCEPTED_AUTO040_COMMIT_V1,
@@ -221,27 +258,35 @@ export function buildReadyFrontierProductionBoundaryPlanV1(inputValue: unknown,
     permitsExternalEffects: false,
     plannedAt: input.plannedAt,
     expiresAt: input.expiresAt,
-  };
-  return parseReadyFrontierProductionBoundaryPlanV1({ ...material, planDigest: sha256Digest(material) });
+    };
+    const withDigest = { ...material, planDigest: sha256Digest(material) };
+    return parseReadyFrontierProductionBoundaryPlanV1({ ...withDigest,
+      planAuthTag: hmacSha256Tag(planKey, planAuthMaterial(withDigest)) }, planKey);
+  } finally { planKey.fill(0); }
 }
 
-export function parseReadyFrontierProductionBoundaryPlanV1(value: unknown): ReadyFrontierProductionBoundaryPlanV1 {
-  const parsed = parseExactReadyFrontierV1(readyFrontierProductionBoundaryPlanSchemaV1,
-    value) as ReadyFrontierProductionBoundaryPlanV1;
-  if (!same(parsed.requiredProductionGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
-    || Date.parse(parsed.expiresAt) <= Date.parse(parsed.plannedAt)
-    || Date.parse(parsed.expiresAt) - Date.parse(parsed.plannedAt)
-      > READY_FRONTIER_PRODUCTION_PLAN_MAX_LIFETIME_SECONDS_V1 * 1_000
-    || parsed.planDigest !== sha256Digest(unsigned(parsed as unknown as Record<string, unknown>, "planDigest"))) {
-    fail("digest_mismatch");
-  }
-  return parsed;
+export function parseReadyFrontierProductionBoundaryPlanV1(value: unknown,
+  activationPacketIntegrityKey: unknown): ReadyFrontierProductionBoundaryPlanV1 {
+  const planKey = key(activationPacketIntegrityKey);
+  try {
+    const parsed = parseExactReadyFrontierV1(readyFrontierProductionBoundaryPlanSchemaV1,
+      value) as ReadyFrontierProductionBoundaryPlanV1;
+    if (!same(parsed.requiredProductionGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
+      || Date.parse(parsed.plannedAt) < Date.parse(parsed.activationPacketCreatedAt)
+      || Date.parse(parsed.expiresAt) <= Date.parse(parsed.plannedAt)
+      || Date.parse(parsed.expiresAt) - Date.parse(parsed.plannedAt)
+        > READY_FRONTIER_PRODUCTION_PLAN_MAX_LIFETIME_SECONDS_V1 * 1_000
+      || parsed.planDigest !== sha256Digest(planUnsigned(parsed))
+      || !equal(parsed.planAuthTag, hmacSha256Tag(planKey, planAuthMaterial(parsed)))) fail("digest_mismatch");
+    return parsed;
+  } finally { planKey.fill(0); }
 }
 
-export function buildReadyFrontierProductionBoundaryAssessmentV1(inputValue: unknown):
+export function buildReadyFrontierProductionBoundaryAssessmentV1(inputValue: unknown,
+  activationPacketIntegrityKey: unknown):
   ReadyFrontierProductionBoundaryAssessmentV1 {
   const input = parseExactReadyFrontierV1(readyFrontierProductionBoundaryAssessmentInputSchemaV1, inputValue);
-  const plan = parseReadyFrontierProductionBoundaryPlanV1(input.plan);
+  const plan = parseReadyFrontierProductionBoundaryPlanV1(input.plan, activationPacketIntegrityKey);
   if (Date.parse(input.assessedAt) < Date.parse(plan.plannedAt)
     || Date.parse(input.assessedAt) >= Date.parse(plan.expiresAt)) fail("policy_denied");
   const requirements = buildReadyFrontierProductionGateRequirementsV1();
@@ -252,7 +297,14 @@ export function buildReadyFrontierProductionBoundaryAssessmentV1(inputValue: unk
     planDigest: plan.planDigest,
     tenantId: plan.tenantId,
     workspaceId: plan.workspaceId,
+    activationPacketId: plan.activationPacketId,
     activationPacketDigest: plan.activationPacketDigest,
+    activationPacketCreatedAt: plan.activationPacketCreatedAt,
+    simulationRunId: plan.simulationRunId,
+    simulationRunDigest: plan.simulationRunDigest,
+    plannedAt: plan.plannedAt,
+    planExpiresAt: plan.expiresAt,
+    planAuthTag: plan.planAuthTag,
     requirements,
     blockingGateCodes: [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1],
     remainingProofCount: 9,
@@ -272,26 +324,46 @@ export function buildReadyFrontierProductionBoundaryAssessmentV1(inputValue: unk
     grantsExternalEffects: false,
   };
   return parseReadyFrontierProductionBoundaryAssessmentV1({ ...material,
-    assessmentDigest: sha256Digest(material) });
+    assessmentDigest: sha256Digest(material) }, activationPacketIntegrityKey);
 }
 
-export function parseReadyFrontierProductionBoundaryAssessmentV1(value: unknown):
+export function parseReadyFrontierProductionBoundaryAssessmentV1(value: unknown,
+  activationPacketIntegrityKey: unknown):
   ReadyFrontierProductionBoundaryAssessmentV1 {
-  const parsed = parseExactReadyFrontierV1(readyFrontierProductionBoundaryAssessmentSchemaV1,
-    value) as ReadyFrontierProductionBoundaryAssessmentV1;
-  const requirements = parsed.requirements.map(parseReadyFrontierProductionGateRequirementV1);
-  if (!same(requirements.map((item) => item.gateCode), READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
-    || !same(parsed.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
-    || parsed.assessmentDigest !== sha256Digest(unsigned(parsed as unknown as Record<string, unknown>, "assessmentDigest"))) {
-    fail("digest_mismatch");
-  }
-  return parsed;
+  const planKey = key(activationPacketIntegrityKey);
+  try {
+    const parsed = parseExactReadyFrontierV1(readyFrontierProductionBoundaryAssessmentSchemaV1,
+      value) as ReadyFrontierProductionBoundaryAssessmentV1;
+    const requirements = parsed.requirements.map(parseReadyFrontierProductionGateRequirementV1);
+    const planEvidence = { planId: parsed.planId, planDigest: parsed.planDigest,
+      tenantId: parsed.tenantId, workspaceId: parsed.workspaceId,
+      activationPacketId: parsed.activationPacketId,
+      activationPacketDigest: parsed.activationPacketDigest,
+      activationPacketCreatedAt: parsed.activationPacketCreatedAt,
+      simulationRunId: parsed.simulationRunId, simulationRunDigest: parsed.simulationRunDigest,
+      plannedAt: parsed.plannedAt,
+      expiresAt: parsed.planExpiresAt };
+    if (!same(requirements.map((item) => item.gateCode), READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
+      || !same(parsed.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
+      || Date.parse(parsed.plannedAt) < Date.parse(parsed.activationPacketCreatedAt)
+      || Date.parse(parsed.planExpiresAt) <= Date.parse(parsed.plannedAt)
+      || Date.parse(parsed.planExpiresAt) - Date.parse(parsed.plannedAt)
+        > READY_FRONTIER_PRODUCTION_PLAN_MAX_LIFETIME_SECONDS_V1 * 1_000
+      || Date.parse(parsed.assessedAt) < Date.parse(parsed.plannedAt)
+      || Date.parse(parsed.assessedAt) >= Date.parse(parsed.planExpiresAt)
+      || !equal(parsed.planAuthTag, hmacSha256Tag(planKey, planAuthMaterial(planEvidence)))
+      || parsed.assessmentDigest !== sha256Digest(unsigned(parsed as unknown as Record<string, unknown>, "assessmentDigest"))) {
+      fail("digest_mismatch");
+    }
+    return parsed;
+  } finally { planKey.fill(0); }
 }
 
-export function buildReadyFrontierProductionDisabledDispositionV1(inputValue: unknown):
+export function buildReadyFrontierProductionDisabledDispositionV1(inputValue: unknown,
+  activationPacketIntegrityKey: unknown):
   ReadyFrontierProductionDisabledDispositionV1 {
   const input = parseExactReadyFrontierV1(readyFrontierProductionDisabledDispositionInputSchemaV1, inputValue);
-  const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment);
+  const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment, activationPacketIntegrityKey);
   if (Date.parse(input.recordedAt) < Date.parse(assessment.assessedAt)) fail("policy_denied");
   const material: Omit<ReadyFrontierProductionDisabledDispositionV1, "dispositionDigest"> = {
     schema: READY_FRONTIER_PRODUCTION_DISABLED_DISPOSITION_V1,
@@ -330,7 +402,9 @@ export function parseReadyFrontierProductionDisabledDispositionV1(value: unknown
   ReadyFrontierProductionDisabledDispositionV1 {
   const parsed = parseExactReadyFrontierV1(readyFrontierProductionDisabledDispositionSchemaV1,
     value) as ReadyFrontierProductionDisabledDispositionV1;
-  if (!same(parsed.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
+  const expectedDispositionId = `frontier.production-disabled.${parsed.assessmentDigest.slice(7, 31)}`;
+  if (parsed.dispositionId !== expectedDispositionId
+    || !same(parsed.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
     || parsed.dispositionDigest !== sha256Digest(unsigned(parsed as unknown as Record<string, unknown>,
       "dispositionDigest"))) fail("digest_mismatch");
   return parsed;
@@ -396,13 +470,16 @@ export function parseReadyFrontierProductionReconciliationDecisionV1(value: unkn
 }
 
 export function projectReadyFrontierProductionBoundaryV1(assessmentValue: unknown,
-  dispositionValue: unknown): ReadyFrontierProductionBoundaryProjectionV1 {
-  const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(assessmentValue);
+  dispositionValue: unknown, activationPacketIntegrityKey: unknown): ReadyFrontierProductionBoundaryProjectionV1 {
+  const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(assessmentValue, activationPacketIntegrityKey);
   const disposition = parseReadyFrontierProductionDisabledDispositionV1(dispositionValue);
-  if (disposition.assessmentDigest !== assessment.assessmentDigest
+  if (disposition.planId !== assessment.planId
+    || disposition.assessmentId !== assessment.assessmentId
+    || disposition.assessmentDigest !== assessment.assessmentDigest
     || disposition.planDigest !== assessment.planDigest
     || disposition.tenantId !== assessment.tenantId
-    || disposition.workspaceId !== assessment.workspaceId) fail("scope_mismatch");
+    || disposition.workspaceId !== assessment.workspaceId
+    || Date.parse(disposition.recordedAt) < Date.parse(assessment.assessedAt)) fail("scope_mismatch");
   const material: Omit<ReadyFrontierProductionBoundaryProjectionV1, "projectionDigest"> = {
     schema: READY_FRONTIER_PRODUCTION_BOUNDARY_PROJECTION_V1,
     tenantId: assessment.tenantId,

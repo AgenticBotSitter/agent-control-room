@@ -1,6 +1,6 @@
 # CR11B-AUTO-050 Candidate Acceptance Record
 
-Status: candidate pending independent security and authority review
+Status: first remediation candidate pending different independent security and authority re-review
 
 Date: 2026-08-30
 
@@ -17,6 +17,7 @@ external effect.
 ## Implemented boundary
 
 - exact plan binding to the authenticated AUTO-040 packet and accepted AUTO-040 commit/review;
+- keyed plan provenance repeated at every plan/assessment boundary, with packet, plan, and assessment chronology;
 - nine canonical proof requirements with fixed evidence classes, authorities, bindings, freshness, and independence;
 - a default-disabled assessment with all nine blockers retained;
 - an explicit disabled-before-construction disposition with zero observed effects;
@@ -24,18 +25,36 @@ external effect.
 - a pure reconciliation decision table with durable-marker and terminal-ambiguity rules; and
 - no runtime consumer, persistence, process, protected-reference, network, delivery, dispatch, or deployment client.
 
+## Independent rejection and remediation
+
+The first independent reviewer rejected exact commit `f046ccee689fc41ed91c7827f885a255f9eb8024`. Immutable report
+`docs/reviews/CR11B_AUTO_050_INDEPENDENT_REVIEW.md`, SHA-256
+`866e00877956b05f7623814e1b6ba34a4276518465557bc314a2731d9c3288f4`, reproduced two medium contract-integrity defects:
+
+1. a caller could time-shift or substitute plan facts, recompute an unkeyed plan digest, and pass downstream plan use
+   without re-verifiable authenticated packet provenance; and
+2. a caller could substitute disposition plan/assessment IDs, recompute the disposition digest, and pass projection
+   because every shared identity was not cross-checked.
+
+The first remediation adds an opaque HMAC plan-provenance tag bound to the plan digest, activation-packet digest and
+creation time, plan identity, and complete plan time window. Plan and assessment parsing require the protected verification
+context, verify the tag, and enforce chronology. Projection now checks plan ID, plan digest, assessment ID, assessment
+digest, tenant, workspace, and chronology; the disposition parser independently enforces its deterministic ID. New hostile
+tests rewrite packet/run identities, plan and assessment chronology, every plan-provenance field, every shared disposition
+identity, and public digests. The immutable negative report remains unchanged and cannot accept the remediation.
+
 ## Candidate tests
 
-The dedicated AUTO-050 suite contains ten cases covering exact plan binding, all nine immutable requirements, blocked
+The dedicated AUTO-050 suite contains twelve cases covering exact plan binding, all nine immutable requirements, blocked
 assessment and disposition, qualified-evidence forgery, digest and schema drift, wrong packet key, chronology, accessor
-and Proxy rejection, post-marker ambiguity, impossible transitions, safe projection, and structural absence of effect
-clients.
+and Proxy rejection, re-digested provenance and cross-artifact substitution, post-marker ambiguity, impossible transitions,
+safe projection, and structural absence of effect clients.
 
 Candidate validation passes:
 
-- dedicated AUTO-050: 10/10;
-- combined CR11B: 97/97;
-- registered pretests: 679/679;
+- dedicated AUTO-050: 12/12;
+- combined CR11B: 99/99;
+- registered pretests: 681/681;
 - core suite: 414/416 with two intentional platform skips and zero failures;
 - public posttests: 52/52;
 - type checking and full lint;
@@ -50,7 +69,8 @@ contact, deployment, or external effect occurred. Passing producer tests cannot 
 
 ## Required review
 
-A fresh reviewer must inspect the exact committed candidate, independently attack each of the nine proof requirements,
+A different fresh reviewer must inspect the exact committed remediation, independently reproduce both first-review
+findings, attack each of the nine proof requirements,
 attempt to manufacture eligibility or authority, vary all digested identities and chronology, test accessors/Proxies,
 exhaust the reconciliation transition matrix, and verify that the implementation has no alternate consumer or effect
 path. The reviewer must preserve a separate immutable report and either reject with concrete findings or accept only the

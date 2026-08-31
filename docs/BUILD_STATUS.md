@@ -80,7 +80,7 @@
 | CR11B-AUTO-020 standing policy and atomic materialization | Complete for the authenticated repository-only no-ready/no-dispatch snapshot | Revisioned HMAC/checkpoint policy lifecycle, exact frontier/source/policy lineage, atomic non-runnable canonical bundle plus Action Inbox, safe UI truth, and `CR11B_AUTO_020_ACCEPTANCE.md` |
 | CR11B-AUTO-030 ready promotion and internal scheduler/jobber handoff | Complete for exact independently accepted effect-free commit `adf0804` | Token-only exact-operation authorization, transaction-owner pre-commit and post-transaction trusted time, request idempotency, dedicated non-delivery handoff table, protected ready/claim paths, historical receipt projection, concurrency/rollback tests, accepted fifth review, and `CR11B_AUTO_030_ACCEPTANCE.md` |
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
-| CR11B-AUTO-050 protected production boundary | Candidate fully validated; independent review pending | Nine immutable unobserved proof requirements, default-disabled assessment/disposition, and non-retriable reconciliation decision table; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
+| CR11B-AUTO-050 protected production boundary | First remediation candidate fully validated; different independent re-review pending | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -88,10 +88,11 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-050 is a fully validated default-disabled candidate awaiting independent security and authority review.
-It binds the accepted AUTO-040 packet to nine exact unobserved production-proof requirements, a separate-process consumer
-blueprint, a blocked assessment and disabled-before-construction disposition, and a pure non-retriable ambiguity table.
-Verification passes 10/10 focused, 97/97 combined CR11B, 679/679 registered pretests, 414/416 core with two intentional
+Active: CR11B-AUTO-050 first remediation is a fully validated default-disabled candidate awaiting a different independent
+security and authority re-review. The first reviewer rejected exact commit `f046ccee` for re-digested chronology and
+cross-artifact identity substitution. The remediation adds keyed packet-to-plan provenance, repeats verification and time
+checks downstream, and cross-checks every shared artifact identity. Verification passes 12/12 focused, 99/99 combined
+CR11B, 681/681 registered pretests, 414/416 core with two intentional
 platform skips and zero failures, 52/52 public posttests, typecheck, full lint, build, 2/2 rendered routes, 27 migrations/97
 tables, macOS stage zero, and whitespace validation. Producer evidence cannot accept the phase. No real consumer, agent message,
 claim, lease, dispatch, provider contact, recurrence, credential, native read, hosting, deployment, or production activation
@@ -147,7 +148,7 @@ CR10B-PUB-000 through PUB-080, CR10C-MECH-010 through MECH-050, and CR10Q-SEC-00
 CR10Q independent verification passes the same 22/22 focused security and packet gate; CR10B passes 41/41, CR10C mechanical passes 7/7, and CR10C disposition passes 9/9. The independently repeated registered suite reports pretest 521/521; main 416 total with 414 passed, zero failed, and two intentional platform skips; and expanded public post-test 52/52. Type checking, full lint, production build, 2/2 rendered routes, migration verification through 0026/96 tables, and diff whitespace validation pass. The remediated mechanical audit covers 36 files and reports zero bounded private-data findings; the 17-gate disposition remains blocked. The original independent report remains unchanged at `sha256:11a4710620e3e8487a5834df30277b5c915959ac52224fb25322d15b13a0919f`; the accepted different-reviewer report is `sha256:4e4847bde0ee6e09cb9555c58be33ae14bd05eb99361d556c27b8a43611390fd`. No dependency installation, archive, registry, network, provider, signer, upload, publication, deployment, native harness, credential, or external effect occurred during that acceptance. The temporary local-only hold was later lifted on 2026-08-30, as recorded in the active GitHub checkpoint above.
 CR11A-TEAM-000/010 are complete locally. A strict digest-bound Agent Team view now appears in every Project Workspace with evidence-backed presence, device-disambiguated handles, reviewed role/model/package summaries, non-authorizing routines, owner attention, bounded two-to-six-member War Rooms, and exact mention-to-draft handoffs. Rooms stop at three rounds, ten messages, four reciprocal pair messages, thirty minutes, 100,000 reasoning units, or US$25. Handoffs require an exact source mention and owner review, create no work item, request no dispatch, and grant no approval, command, lease, provider, or execution authority. The dedicated hostile and UI gate passes 11/11; registered pretest passes 532/532; the main suite reports 416 total with 414 passed, zero failed, and two intentional platform skips; public post-test passes 52/52. Type checking, full lint, production build, 2/2 rendered routes, migrations through 0026/96 tables, localhost project rendering, and diff validation pass. `agentcontrolroom.xyz` is future hosting inventory only. No package, Hermes, provider, schedule, message-retention, DNS, Cloudflare, hosting, deployment, Git commit, push, or external effect was used. See `docs/CR11A_AGENT_TEAM_AND_WAR_ROOM_CONTRACT.md` and `docs/CR11A_TEAM_000_010_ACCEPTANCE.md`.
 Open risks: Native Codex saved authentication is readable across the tested read-only command boundary, so native execution remains disabled. Authenticated executor IPC, actual spawned-process image/UID/argv/cwd/environment identity, trusted real paths and ownership, executor-bound turn receipts, provider-side output authority, remote interrupt/descendant cleanup, separate OS identities, native file permissions, broker-private provisioning/settlement, broker-only provider egress, and executor egress denial remain unproved and explicit eligibility failures. Approval response is unqualified; Hermes empty/invalid toolset configuration fails open to configured tools, so the exact valid zero-tool selection and observed count are mandatory. CR-8B does not issue the separately signed node approval attestation, and its protected production API, authenticated identity ingress, policy service, integrity-key custody, rollback-resistant checkpoint implementation, and split-commit recovery remain undeployed. MCP network transport, OAuth/issuer operation, TLS termination, revocation/rotation operations, canonical proposal materialization, and protected registry service/API also remain undeployed and require later review. Telegram protected key/checkpoint custody, recipient enrollment, production transport, monitoring, and live behavior remain unimplemented and unqualified. The CR-8E catalog remains in-memory and the durable ledger is effect-free code only; production rollback-checkpoint custody, native provider runner/authentication transport, authenticated IPC, key custody, OS identity, actual path/binary proof, broker-only egress, consumer egress denial, real rotation/revocation, and owner-attended cleanup remain unimplemented. No live provider is eligible.
-Owner input required next: none for the already authorized AUTO-050 independent review. Stacked integration remains
+Owner input required next: none for the already authorized AUTO-050 different-agent re-review. Stacked integration remains
 separate: PR #167 cannot receive its ordinary full CI result until the accepted parent stack is integrated and the PR is
 retargeted to `main`. Owner approval is required before merge, and a separate explicit owner gate remains required for real standing-policy enrollment, agent
 messaging, schedule activation, provider contact, hosting, deployment, or any external effect. Use `gpt-5.6-sol` at xhigh
@@ -230,10 +231,13 @@ targets its `codex/**` parent. After the parent stack is integrated, retarget PR
 CI result before merge. No absent check is counted as a pass. PR #167 is not owner-approved or merged and grants no
 production authority.
 
-CR11B-AUTO-050 candidate: the production boundary binds exact accepted AUTO-040 implementation/review evidence and turns
-all nine activation blockers into fixed unobserved proof requirements. Repository code cannot submit qualified evidence.
-The assessment remains `blocked_design_only`, the disposition stops before consumer construction, and the reconciliation
-table makes every post-marker unknown non-retriable. Verification passes 10/10 focused, 97/97 combined CR11B, 679/679
+CR11B-AUTO-050 first remediation candidate: the production boundary binds exact accepted AUTO-040 implementation/review
+evidence and turns all nine activation blockers into fixed unobserved proof requirements. The immutable first review,
+SHA-256 `866e00877956b05f7623814e1b6ba34a4276518465557bc314a2731d9c3288f4`, rejected public-digest chronology rewriting and
+cross-artifact identity aliasing. Keyed plan provenance, downstream chronology checks, deterministic disposition identity,
+and complete shared-field checks remediate both findings. Repository code cannot submit qualified evidence. The assessment
+remains `blocked_design_only`, the disposition stops before consumer construction, and the reconciliation table makes every
+post-marker unknown non-retriable. Verification passes 12/12 focused, 99/99 combined CR11B, 681/681
 registered pretests, 414/416 core with two intentional platform skips and zero failures, 52/52 public posttests, typecheck,
 full lint, production build, 2/2 rendered routes, all 27 migrations/97 tables, macOS stage zero, and whitespace validation.
 The candidate remains unaccepted until a fresh independent security and authority review of the exact committed snapshot.
@@ -253,13 +257,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-050-INDEPENDENT-REVIEW — independently attack the exact default-disabled production-boundary candidate
+Block: CR11B-AUTO-050-FIRST-REMEDIATION-REREVIEW — a different reviewer must reproduce and close both first-review findings
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the candidate is implemented and the full local gate passes, but producer tests cannot establish security acceptance at the production-authority boundary.
-Expected output: one immutable independent report that attacks packet and chronology binding, all nine proof mappings, qualified-evidence forgery, reconciliation transitions, safe projection, and absence of alternate consumer/effect paths; it either records concrete findings or accepts only the exact disabled snapshot.
+Why: the first independent report found two real integrity defects. Keyed provenance and complete cross-artifact checks now pass hostile tests, but only a different reviewer can accept the exact remediation.
+Expected output: one new immutable report that reproduces both original attacks, tests re-digested packet/run/time and every shared artifact field, repeats the nine-gate/reconciliation/no-effect review, and either records concrete remaining findings or accepts only the exact disabled remediation snapshot.
 Owner action: none; the owner already authorized all required independent reviews. If accepted, use `gpt-5.6-terra` at high effort for private GitHub transfer. If rejected, remain on `gpt-5.6-sol` at xhigh for remediation.
-Stop before: reviewer code changes, self-acceptance, self-merging, real proof ingestion, policy enrollment, consumer construction, live scheduling or delivery, protected-reference access, agent/provider contact, claim, lease, dispatch, execution, recurrence activation, native reads, DNS, Cloudflare, hosting, deployment, or any production effect.
+Stop before: changing the first rejection report, reviewer code changes, self-acceptance, self-merging, real proof ingestion, policy enrollment, consumer construction, live scheduling or delivery, protected-reference access, agent/provider contact, claim, lease, dispatch, execution, recurrence activation, native reads, DNS, Cloudflare, hosting, deployment, or any production effect.
 ```
 
 ## Update rule

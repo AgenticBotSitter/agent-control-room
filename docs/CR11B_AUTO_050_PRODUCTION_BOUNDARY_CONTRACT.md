@@ -1,6 +1,6 @@
 # CR11B-AUTO-050 Protected Production Boundary Contract
 
-Status: repository-only candidate; independent security and authority review required
+Status: first remediation candidate after independent rejection; different independent re-review required
 
 Date: 2026-08-30
 
@@ -29,7 +29,7 @@ authority.
 
 One production-boundary plan binds:
 
-- the authenticated activation packet ID and digest;
+- the authenticated activation packet ID, digest, and creation time;
 - the accepted simulation run ID and digest;
 - the accepted AUTO-040 implementation and review identities;
 - all nine production gate codes in canonical order;
@@ -41,6 +41,12 @@ One production-boundary plan binds:
 - protected monotonic and database-boundary time evidence;
 - owner-signed policy custody with an external high-water checkpoint; and
 - destination evidence or a new owner-authorized action for ambiguity.
+
+The plan digest is accompanied by a keyed provenance tag derived only after the activation packet passes authenticated
+parsing. Every exported plan or assessment boundary requires the same protected verification context, verifies that tag,
+and rechecks packet-to-plan and plan-to-assessment chronology. An ordinary caller can recompute public SHA-256 digests but
+cannot use that rewriting to manufacture packet provenance. The assessment carries only the safe packet creation time,
+plan window, packet digest, and opaque authentication tag needed to repeat those checks; it carries no key material.
 
 The plan is `defaultDisabled: true`, contains no production configuration or protected material, and states that no
 consumer or policy is installed. Every permission and effect flag is false. Plan time must follow packet creation and
@@ -93,6 +99,10 @@ external effect occurred.
 The safe projection contains only tenant/workspace, plan/assessment identities, the nine safe gate codes, the remaining
 proof count, and false capability flags. It cannot contain protected material or an operational control.
 
+Projection requires exact equality of every shared plan, assessment, tenant, and workspace identity, requires disposition
+time to follow assessment time, and rechecks the deterministic disposition identity. Re-digesting one artifact cannot
+alias it to a different artifact chain.
+
 ## Reconciliation state machine
 
 AUTO-050 includes a pure decision table, not a consumer. It describes these allowed transitions:
@@ -117,9 +127,11 @@ unknown. Destination absence immediately after a marker cannot authorize a retry
 The candidate must prove:
 
 - exact packet authentication and chronology;
+- keyed packet-to-plan provenance at every plan-consuming boundary;
 - all nine fixed requirements and canonical ordering;
 - caller-declared qualified evidence cannot enter the assessment;
 - plan, assessment, requirement, disposition, decision, and projection digests detect drift;
+- re-digested packet/run/time substitutions and every shared cross-artifact identity fail closed;
 - accessors and Proxies reject without executing callbacks or traps;
 - every post-marker unknown is non-retriable;
 - impossible and terminal-state transitions remain inert;

@@ -14,6 +14,7 @@ import {
 } from "./production-boundary-types";
 import {
   readyFrontierDigestSchemaV1,
+  readyFrontierAuthTagSchemaV1,
   readyFrontierIdSchemaV1,
   readyFrontierSafeCodeSchemaV1,
   readyFrontierTimeSchemaV1,
@@ -54,6 +55,7 @@ export const readyFrontierProductionBoundaryPlanSchemaV1 = z.object({
   workspaceId: readyFrontierIdSchemaV1,
   activationPacketId: readyFrontierIdSchemaV1,
   activationPacketDigest: readyFrontierDigestSchemaV1,
+  activationPacketCreatedAt: readyFrontierTimeSchemaV1,
   simulationRunId: readyFrontierIdSchemaV1,
   simulationRunDigest: readyFrontierDigestSchemaV1,
   acceptedAuto040Commit: z.literal(READY_FRONTIER_ACCEPTED_AUTO040_COMMIT_V1),
@@ -86,6 +88,7 @@ export const readyFrontierProductionBoundaryPlanSchemaV1 = z.object({
   plannedAt: readyFrontierTimeSchemaV1,
   expiresAt: readyFrontierTimeSchemaV1,
   planDigest: readyFrontierDigestSchemaV1,
+  planAuthTag: readyFrontierAuthTagSchemaV1,
 }).strict();
 
 export const readyFrontierProductionBoundaryAssessmentInputSchemaV1 = z.object({
@@ -101,7 +104,14 @@ export const readyFrontierProductionBoundaryAssessmentSchemaV1 = z.object({
   planDigest: readyFrontierDigestSchemaV1,
   tenantId: readyFrontierIdSchemaV1,
   workspaceId: readyFrontierIdSchemaV1,
+  activationPacketId: readyFrontierIdSchemaV1,
   activationPacketDigest: readyFrontierDigestSchemaV1,
+  activationPacketCreatedAt: readyFrontierTimeSchemaV1,
+  simulationRunId: readyFrontierIdSchemaV1,
+  simulationRunDigest: readyFrontierDigestSchemaV1,
+  plannedAt: readyFrontierTimeSchemaV1,
+  planExpiresAt: readyFrontierTimeSchemaV1,
+  planAuthTag: readyFrontierAuthTagSchemaV1,
   requirements: z.array(readyFrontierProductionGateRequirementSchemaV1).length(9),
   blockingGateCodes: z.array(readyFrontierProductionGateCodeSchemaV1).length(9),
   remainingProofCount: z.literal(9),
