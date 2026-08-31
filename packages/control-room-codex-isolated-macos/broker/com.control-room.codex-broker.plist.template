@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Platform: macos-launchagent-broker; static template only; owner-approved install/start required. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.control-room.codex-broker</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{CONTROL_ROOM_CODEX_NODE_RUNTIME}}</string>
+    <string>{{CONTROL_ROOM_CODEX_BROKER_RELEASE_DIR}}/codex-broker-controller.js</string>
+    <string>--config</string>
+    <string>{{CONTROL_ROOM_CODEX_BROKER_CONFIG_PATH}}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{CONTROL_ROOM_CODEX_BROKER_RELEASE_DIR}}</string>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

@@ -1,0 +1,53 @@
+{
+  "schema": "control-room.agent-build-result/v2",
+  "capsulePath": "coordination/agent-build/capsules/CR5D-EXEC-002.json",
+  "capsuleId": "CR5D-EXEC-002",
+  "waveId": "CR5D-EXEC-1",
+  "baseCommit": "b523d9f6237b7d4161b70cf7524a8f683b683ac4",
+  "implementationCommit": "932172e718b76fdc38cccbbbe27fdefbce2501cc",
+  "producerRoute": "marvin-macos",
+  "changedFiles": [
+    {
+      "path": "src/node-executor/artifact-evidence.ts",
+      "additions": 201,
+      "deletions": 0
+    },
+    {
+      "path": "tests/node-artifact-evidence.test.ts",
+      "additions": 160,
+      "deletions": 0
+    }
+  ],
+  "commands": [
+    {
+      "command": "node --import tsx --test tests/node-artifact-evidence.test.ts",
+      "exitCode": 0
+    },
+    {
+      "command": "node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check integration/cr5d-synthetic-executor-1...HEAD",
+      "exitCode": 0
+    }
+  ],
+  "repairIterations": 2,
+  "failures": [
+    "Initial test draft asserted secret-material rejection for artifact text; the contract does not mandate guarding raw text (only opaqueLocator, manifest, and claim), so the assertion was corrected to match the frozen contract boundary."
+  ],
+  "assumptions": [
+    "Integration target fetched as origin/integration/cr5d-synthetic-executor-1 at head 4d79ec8e710c459e32dcb845187118a5e7bb4ae4; acceptance commands recorded with the exact capsule strings.",
+    "claimDigest is sha256Digest over the claim object excluding the claimDigest field, matching the repository canonical digest utility.",
+    "createdAt validation requires canonical RFC 3339 UTC that equals new Date(value).toISOString().",
+    "Repair iteration 2 of 2 (architect review on PR #151): claimDigest made required per contract; Unicode whitespace (NBSP/em/ideographic) rejected with deterministic test coverage; all three capsule commands rerun clean."
+  ],
+  "effectCount": 0,
+  "safety": {
+    "secretsAbsent": true,
+    "privateHostDataAbsent": true,
+    "workerDidNotApproveOrMerge": true,
+    "scopeNotExpanded": true
+  },
+  "disposition": "ready-for-intake"
+}

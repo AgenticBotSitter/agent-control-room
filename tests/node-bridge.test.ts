@@ -4,16 +4,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { PortableNodeBridge, SqliteBridgeJournal, BridgeBackpressureError, type BridgeIncomingTransport, type BridgeTransport } from "../src/node-bridge/index.ts";
+import { DurableNodeOperationHandler, PortableNodeBridge, SqliteBridgeJournal, BridgeBackpressureError, type BridgeIncomingTransport, type BridgeTransport } from "../src/node-bridge/index.ts";
 import {
   FixedWindowProtocolRateLimiter,
   NODE_PROTOCOL_V1,
   NodeProtocolAuthenticator,
   signNodeFrame,
   type SignedNodeFrame,
+  type JobEventBody,
   type TrustedKeyResolver,
   type UnsignedNodeFrame,
 } from "../src/node-protocol/v1/index.ts";
+import { buildArtifactLineageRecord, buildTextArtifactBundle } from "../src/node-executor/artifact-evidence.ts";
 
 const t0 = "2026-08-22T18:00:00.000Z";
 const t1 = "2026-08-22T18:01:00.000Z";
@@ -62,7 +64,7 @@ function serverFrame(
   privateKey: KeyObject,
   connectionId: string,
   sequence: number,
-  type: "connection.accepted" | "node.reconciliation.request" | "job.cancel" | "protocol.ack",
+  type: "connection.accepted" | "node.reconciliation.request" | "job.cancel" | "node.operation.request" | "protocol.ack",
   body: SignedNodeFrame["body"],
   causationId?: string,
 ): SignedNodeFrame {
@@ -127,6 +129,31 @@ function nodeJobEvent(privateKey: KeyObject, messageId: string, connectionId: st
       event: "progress", sequence: 1, occurredAt: t1, progressPercent: 25, artifactManifestIds: [],
     },
   }, privateKey);
+}
+
+function durableJobEvent(overrides: Partial<JobEventBody> = {}): JobEventBody {
+  return {
+    jobId: "job:durable",
+    attemptId: "attempt:durable",
+    leaseId: "lease:durable",
+    leaseEpoch: 2,
+    event: "started",
+    sequence: 1,
+    occurredAt: t1,
+    artifactManifestIds: [],
+    ...overrides,
+  };
+}
+
+function nodeOperationRequest() {
+  return {
+    requestId: "node-operation:local-1",
+    nodeId: "node:mac-mini",
+    operation: "request_drain" as const,
+    desiredState: "draining" as const,
+    expectedNodeVersion: 4,
+    requestDigest: `sha256:${"a".repeat(64)}`,
+  };
 }
 
 test("portable bridge performs signed hello, reconciliation, command queueing, acknowledgements, and heartbeat", async () => {
@@ -210,6 +237,157 @@ test("SQLite journal survives restart with unacknowledged frames and attempt rec
   assert.deepEqual(restarted.unresolvedAttempts().map((attempt) => attempt.attemptId), ["attempt:persisted"]);
   restarted.close();
   await rm(directory, { recursive: true });
+});
+
+test("durable job events survive restart and advance the attempt projection exactly once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "control-room-events-"));
+  const path = join(directory, "bridge.sqlite");
+  const started = durableJobEvent();
+  const checkpointed = durableJobEvent({ event: "checkpointed", sequence: 2, checkpointId: "checkpoint:durable" });
+  const first = new SqliteBridgeJournal(path);
+  assert.equal(first.appendJobEvent(started, t1), "recorded");
+  assert.equal(first.appendJobEvent(started, t1), "duplicate");
+  assert.equal(first.appendJobEvent(checkpointed, t1), "recorded");
+  assert.throws(
+    () => first.appendJobEvent({ ...checkpointed, checkpointId: "checkpoint:conflict" }, t1),
+    /conflicts with different content/,
+  );
+  first.close();
+
+  const restarted = new SqliteBridgeJournal(path);
+  assert.deepEqual(restarted.pendingJobEvents().map((row) => row.event.sequence), [1, 2]);
+  assert.deepEqual(restarted.unresolvedAttempts(), [{
+    attemptId: "attempt:durable",
+    jobId: "job:durable",
+    leaseId: "lease:durable",
+    leaseEpoch: 2,
+    state: "running",
+    lastEventSequence: 2,
+    checkpointIds: ["checkpoint:durable"],
+  }]);
+  assert.throws(
+    () => restarted.appendJobEvent(durableJobEvent({ sequence: 3, leaseEpoch: 3 }), t1),
+    /authority conflicts/,
+  );
+  restarted.close();
+  await rm(directory, { recursive: true });
+});
+
+test("completed event and artifact lineage commit together and survive restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "control-room-lineage-"));
+  const path = join(directory, "bridge.sqlite");
+  const journal = new SqliteBridgeJournal(path);
+  journal.appendJobEvent(durableJobEvent(), t1);
+  const lineage = buildArtifactLineageRecord(buildTextArtifactBundle({
+    artifactId: "artifact:durable",
+    claimId: "claim:durable",
+    tenantId: "tenant:owner",
+    projectId: "project:control-room",
+    jobId: "job:durable",
+    attemptId: "attempt:durable",
+    producerId: "node:mac-mini",
+    logicalRole: "synthetic-result",
+    schemaVersion: "1.0.0",
+    storageClass: "local",
+    retentionClass: "test-memory",
+    opaqueLocator: "memory://artifact/artifact%3Adurable",
+    text: "durable result\n",
+    createdAt: t1,
+  }));
+  const completed = durableJobEvent({
+    event: "completed",
+    sequence: 2,
+    artifactManifestIds: [lineage.artifactId],
+  });
+  assert.throws(
+    () => journal.appendJobEvent(completed, t1, { ...lineage, attemptId: "attempt:other" }),
+    /lineage is inconsistent/,
+  );
+  assert.equal(journal.jobEventStatus(completed.attemptId, completed.sequence), undefined);
+  assert.equal(journal.artifactLineage(lineage.artifactId), undefined);
+  assert.equal(journal.unresolvedAttempts()[0].lastEventSequence, 1);
+
+  assert.equal(journal.appendJobEvent(completed, t1, lineage), "recorded");
+  assert.deepEqual(journal.artifactLineage(lineage.artifactId), lineage);
+  assert.deepEqual(journal.unresolvedAttempts(), []);
+  assert.equal(journal.appendJobEvent(completed, t1, lineage), "duplicate");
+  journal.close();
+
+  const restarted = new SqliteBridgeJournal(path);
+  assert.deepEqual(restarted.artifactLineage(lineage.artifactId), lineage);
+  assert.equal(restarted.jobEventStatus(completed.attemptId, completed.sequence), "pending");
+  assert.deepEqual(restarted.unresolvedAttempts(), []);
+  restarted.close();
+  await rm(directory, { recursive: true });
+});
+
+test("bridge sends durable job events after reconciliation and retires them only after server acknowledgement", async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  const event = durableJobEvent();
+  journal.appendJobEvent(event, t1);
+  let id = 0;
+  const bridge = new PortableNodeBridge(
+    { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: ["reconciliation"] }, journal,
+    { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
+    new NodeProtocolAuthenticator(serverResolver(serverKeys.spki), journal, new FixedWindowProtocolRateLimiter(100, 60)),
+    () => `durable-${++id}`,
+  );
+  const transport = new MemoryTransport();
+  await bridge.open(transport, { now: t1, transportIdentity: "tls:server" });
+  const connectionId = bridge.status().connectionId as string;
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 1, "connection.accepted", {
+    selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: ["reconciliation"], maxFrameBytes: 65_536,
+    heartbeatIntervalSeconds: 30, serverTime: t1,
+  }, transport.sent[0].messageId)), t1);
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 2, "node.reconciliation.request", {
+    lastAcknowledgedNodeSequence: 0, requestedAttemptIds: [event.attemptId],
+  })), t1);
+  const delivered = transport.sent.find((frame) => frame.type === "job.event") as SignedNodeFrame<"job.event">;
+  assert.deepEqual(delivered.body, event);
+  assert.equal(journal.jobEventStatus(event.attemptId, event.sequence), "staged");
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 3, "protocol.ack", {
+    acknowledgedMessageIds: [delivered.messageId], highestContiguousSequence: delivered.sequence, disposition: "accepted",
+  })), t1);
+  assert.equal(journal.jobEventStatus(event.attemptId, event.sequence), "acknowledged");
+  assert.equal(journal.pendingOutbound().some((row) => row.frame.messageId === delivered.messageId), false);
+  await bridge.close();
+  journal.close();
+});
+
+test("expired job-event frames return to the durable retry queue with a new delivery identity", () => {
+  const nodeKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  const event = durableJobEvent();
+  journal.appendJobEvent(event, t1);
+  const pending = journal.pendingJobEvents()[0];
+  const frame = signNodeFrame({
+    protocol: NODE_PROTOCOL_V1,
+    direction: "node_to_server",
+    messageId: pending.messageId,
+    correlationId: `correlation:attempt:${event.attemptId}`,
+    tenantId: "tenant:owner",
+    actorId: "node:mac-mini",
+    senderKind: "node",
+    keyId: "node-key:1",
+    connectionId: "connection:expired-event",
+    sequence: 1,
+    sentAt: t1,
+    expiresAt: t2,
+    nonce: "expired_job_event_nonce_12345678901234567890",
+    type: "job.event",
+    body: event,
+  }, nodeKeys.privateKey);
+  journal.stageJobEventOutbound(frame, event.attemptId, event.sequence, t1);
+  journal.markSent(frame.messageId, t1);
+  assert.equal(journal.jobEventStatus(event.attemptId, event.sequence), "staged");
+  assert.equal(journal.expireBefore(t2), 1);
+  const retry = journal.pendingJobEvents()[0];
+  assert.equal(retry.deliveryAttempt, 1);
+  assert.notEqual(retry.messageId, pending.messageId);
+  assert.equal(journal.jobEventStatus(event.attemptId, event.sequence), "pending");
+  journal.close();
 });
 
 test("journal coalesces unsent heartbeats, preserves essential reserve, and fails closed for other overflow", () => {
@@ -390,6 +568,88 @@ test("bridge never processes or acknowledges a command before its admission hand
   await bridge.receive(JSON.stringify(command), t1);
   assert.equal(calls, 2);
   assert.equal(journal.inboundStatus(command.messageId), "processed");
+  assert.equal(transport.sent.at(-1)?.type, "protocol.ack");
+  await bridge.close();
+  journal.close();
+});
+
+test("node operation is durable before cancellation and exact replay never applies it twice", async () => {
+  const journal = new SqliteBridgeJournal(":memory:");
+  journal.initializeNodeControlState({ nodeId: "node:mac-mini", nodeVersion: 4, state: "active", updatedAt: t0 });
+  const cancellations: string[] = [];
+  const handler = new DurableNodeOperationHandler("node:mac-mini", journal, {
+    requestRunningCancellation(input) { cancellations.push(input.requestId); },
+  });
+  const serverKeys = keys();
+  const frame = serverFrame(serverKeys.privateKey, "connection:control", 1, "node.operation.request", nodeOperationRequest());
+  assert.equal(await handler.handle(frame, t1), true);
+  assert.equal(handler.admissionAllowed(), false);
+  assert.equal(handler.renewalAllowed(), false);
+  assert.deepEqual(journal.nodeControlState("node:mac-mini"), {
+    nodeId: "node:mac-mini", nodeVersion: 5, state: "draining", updatedAt: t1,
+  });
+  assert.equal(handler.response(frame.messageId)?.disposition, "applied");
+  assert.deepEqual(cancellations, ["node-operation:local-1"]);
+  assert.equal(await handler.handle(frame, t1), true);
+  assert.deepEqual(cancellations, ["node-operation:local-1"]);
+  assert.deepEqual(journal.pendingNodeControlCancellations(), []);
+  journal.close();
+});
+
+test("crash after local drain persists the safety gate and recovers owed cancellation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "control-room-node-control-"));
+  const path = join(directory, "bridge.sqlite");
+  const serverKeys = keys();
+  const frame = serverFrame(serverKeys.privateKey, "connection:control", 1, "node.operation.request", nodeOperationRequest());
+  const first = new SqliteBridgeJournal(path);
+  first.initializeNodeControlState({ nodeId: "node:mac-mini", nodeVersion: 4, state: "active", updatedAt: t0 });
+  const crashing = new DurableNodeOperationHandler("node:mac-mini", first, {
+    requestRunningCancellation() { throw new Error("synthetic cancellation crash"); },
+  });
+  await assert.rejects(crashing.handle(frame, t1), /synthetic cancellation crash/);
+  assert.equal(first.nodeControlState("node:mac-mini")?.state, "draining");
+  assert.deepEqual(first.pendingNodeControlCancellations().map((row) => row.requestId), ["node-operation:local-1"]);
+  first.close();
+
+  const restarted = new SqliteBridgeJournal(path);
+  const recovered: string[] = [];
+  const handler = new DurableNodeOperationHandler("node:mac-mini", restarted, {
+    requestRunningCancellation(input) { recovered.push(input.requestId); },
+  });
+  assert.equal(handler.admissionAllowed(), false);
+  assert.equal(await handler.recoverPendingCancellations(t2), 1);
+  assert.deepEqual(recovered, ["node-operation:local-1"]);
+  assert.deepEqual(restarted.pendingNodeControlCancellations(), []);
+  restarted.close();
+  await rm(directory, { recursive: true });
+});
+
+test("bridge emits semantic node acknowledgement only after the durable local operation", async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  journal.initializeNodeControlState({ nodeId: "node:mac-mini", nodeVersion: 4, state: "active", updatedAt: t0 });
+  const handler = new DurableNodeOperationHandler("node:mac-mini", journal, { requestRunningCancellation() {} });
+  let id = 0;
+  const bridge = new PortableNodeBridge(
+    { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: [] }, journal,
+    { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
+    new NodeProtocolAuthenticator(serverResolver(serverKeys.spki), journal, new FixedWindowProtocolRateLimiter(100, 60)),
+    () => `node-control-${++id}`,
+    handler,
+  );
+  const transport = new MemoryTransport();
+  await bridge.open(transport, { now: t1, transportIdentity: "tls:server" });
+  const connectionId = bridge.status().connectionId as string;
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 1, "connection.accepted", {
+    selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: [], maxFrameBytes: 65_536, heartbeatIntervalSeconds: 30, serverTime: t1,
+  }, transport.sent[0].messageId)), t1);
+  await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 2, "node.operation.request", nodeOperationRequest())), t1);
+  const semantic = transport.sent.find((frame) => frame.type === "node.operation.ack") as SignedNodeFrame<"node.operation.ack">;
+  assert.equal(semantic.body.disposition, "applied");
+  assert.equal(semantic.body.resultingNodeVersion, 5);
+  assert.equal(bridge.status().state, "draining");
+  assert.equal(journal.nodeControlState("node:mac-mini")?.state, "draining");
   assert.equal(transport.sent.at(-1)?.type, "protocol.ack");
   await bridge.close();
   journal.close();

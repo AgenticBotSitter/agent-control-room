@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "control-room-public-observation-manifest/v1",
+  "title": "Control Room public observation adapter manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "adapterId", "adapterVersion", "harness", "harnessVersion", "harnessRevision", "runtime", "observationKinds", "eventSchemaVersion", "effectAuthority", "accessMode", "outputForms", "license", "distribution"],
+  "properties": {
+    "schemaVersion": { "const": "control-room-public-observation/v1" },
+    "adapterId": { "type": "string", "minLength": 3, "maxLength": 180 },
+    "adapterVersion": { "type": "string" },
+    "harness": { "enum": ["hermes", "codex", "example", "other"] },
+    "harnessVersion": { "type": "string" },
+    "harnessRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "runtime": { "type": "object", "additionalProperties": false, "required": ["name", "minimumVersion", "supportedPlatforms"], "properties": { "name": { "enum": ["node", "synthetic"] }, "minimumVersion": { "type": "string" }, "supportedPlatforms": { "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": { "enum": ["linux", "macos", "windows"] } } } },
+    "observationKinds": { "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": { "enum": ["discover", "stream", "usage"] } },
+    "eventSchemaVersion": { "const": "control-room-public-observation-event/v1" },
+    "effectAuthority": { "const": "none" },
+    "accessMode": { "const": "none" },
+    "outputForms": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["structured_events", "usage"] } },
+    "license": { "type": "string" },
+    "distribution": { "const": "redistributable" }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "contractVersion": "control-room-public-workspace/v1",
+  "localCandidateOnly": true,
+  "usesRepositoryDependencyInstallation": false,
+  "candidates": [
+    { "path": "packages/control-room-core", "name": "@control-room/public-core", "dependencies": ["zod"] },
+    { "path": "packages/control-room-adapter-sdk", "name": "@control-room/observation-adapter-sdk", "dependencies": ["@control-room/public-core"] },
+    { "path": "packages/control-room-conformance-kit", "name": "@control-room/conformance-kit", "dependencies": ["@control-room/observation-adapter-sdk"] },
+    { "path": "packages/reference-adapters", "name": "@control-room/synthetic-reference-adapters", "dependencies": ["@control-room/conformance-kit", "@control-room/observation-adapter-sdk", "@control-room/public-core"] },
+    { "path": "examples/synthetic", "name": "@control-room/synthetic-example", "dependencies": ["@control-room/conformance-kit", "@control-room/synthetic-reference-adapters"] }
+  ],
+  "archiveCreationAllowed": false,
+  "packageInstallationAllowed": false,
+  "registryContactAllowed": false,
+  "publicationAllowed": false
+}

@@ -1,0 +1,25 @@
+{
+  "contractVersion": "control-room-public-release-recipe/v1",
+  "candidateVersion": "0.1.0",
+  "steps": [
+    "source_inventory",
+    "manifest_validation",
+    "package_type_check",
+    "package_unit_tests",
+    "adapter_conformance",
+    "guide_validation",
+    "metadata_normalization",
+    "synthetic_reproduction",
+    "clean_room_assessment"
+  ],
+  "effectMode": "none",
+  "archiveCreationAllowed": false,
+  "packageInstallationAllowed": false,
+  "registryContactAllowed": false,
+  "networkContactAllowed": false,
+  "nativeHarnessContactAllowed": false,
+  "signingAllowed": false,
+  "publicationAllowed": false,
+  "independentEvidenceRequired": true,
+  "ownerReleaseDecisionRequired": true
+}

@@ -1,4 +1,4 @@
-import type { SignedNodeFrame } from "../node-protocol/v1";
+import type { NodeOperationAcknowledgementBody, SignedNodeFrame } from "../node-protocol/v1";
 import { sha256Digest } from "../security";
 import {
   buildWireDenialReceipt,
@@ -10,6 +10,7 @@ import {
 
 export interface BridgeCommandHandler {
   handle(frame: SignedNodeFrame, now: string): Promise<boolean>;
+  response?(messageId: string): NodeOperationAcknowledgementBody | undefined;
 }
 
 export interface AdmissionPlanV1 {

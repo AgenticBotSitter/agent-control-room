@@ -1,0 +1,8 @@
+{
+  "schema": "control-room.codex-native-qualification/v1",
+  "status": "failed",
+  "reasonCode": "credential_boundary_failed",
+  "calls": 1,
+  "profileRemoved": true,
+  "workspaceRemoved": true
+}

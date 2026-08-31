@@ -1,0 +1,11 @@
+{
+  "name": "@control-room/public-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local candidate for Control Room public observation contracts.",
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src", "README.md", "LICENSE", "NOTICE"],
+  "dependencies": { "zod": "4.1.12" }
+}

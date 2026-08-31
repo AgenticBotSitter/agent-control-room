@@ -1,0 +1,49 @@
+{
+  "schema": "control-room.agent-build-result/v2",
+  "capsulePath": "coordination/agent-build/capsules/CR5D-UI-001.json",
+  "capsuleId": "CR5D-UI-001",
+  "waveId": "CR5D-EXEC-1",
+  "baseCommit": "b523d9f6237b7d4161b70cf7524a8f683b683ac4",
+  "implementationCommit": "c5edb98c1877e2093162c84f033866e507d7dfaf",
+  "producerRoute": "johnny5-linux",
+  "changedFiles": [
+    {
+      "path": "app/components/artifact-evidence-card.tsx",
+      "additions": 122,
+      "deletions": 0
+    },
+    {
+      "path": "tests/artifact-evidence-card.test.tsx",
+      "additions": 129,
+      "deletions": 0
+    }
+  ],
+  "commands": [
+    {
+      "command": "node --import tsx --test tests/artifact-evidence-card.test.tsx",
+      "exitCode": 0
+    },
+    {
+      "command": "node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check integration/cr5d-synthetic-executor-1...HEAD",
+      "exitCode": 0
+    }
+  ],
+  "repairIterations": 1,
+  "failures": [],
+  "assumptions": [
+    "Node v22.13.0 satisfied the required Node.js >=22.13.0 tool from a pre-existing local install; no install or download was performed.",
+    "The producer claim disclaimer wording avoids the reserved words 'verified', 'accepted', and 'approved' so the producer section never characterizes a claim as independently checked."
+  ],
+  "effectCount": 0,
+  "safety": {
+    "secretsAbsent": true,
+    "privateHostDataAbsent": true,
+    "workerDidNotApproveOrMerge": true,
+    "scopeNotExpanded": true
+  },
+  "disposition": "ready-for-intake"
+}

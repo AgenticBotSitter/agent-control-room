@@ -2,6 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { projects, workers, workItems } from "@/src/fixtures/data";
+import { WorkerOperationControl } from "@/app/components/worker-operation-control";
+import type { WorkerOperationPanelModelV1, WorkerOperationRequestChoiceV1 } from "@/app/components/worker-operation-panel";
+import type { WorkerProjection } from "@/src/contracts/v1";
+import { ArtifactEvidenceCard } from "@/app/components/artifact-evidence-card";
+import { SyntheticExecutionTimeline } from "@/app/components/synthetic-execution-timeline";
+import { cr5dArtifactFixture, cr5dTimelineFixture } from "@/app/fixtures/cr5d-ui";
+import { ProtectedWorkerDetailStatus } from "@/app/components/protected-detail-status";
 
 export function generateStaticParams() {
   return workers.map((worker) => ({ workerId: worker.id }));
@@ -18,6 +25,41 @@ function label(value: string) {
 
 const historyBars = [42, 68, 58, 83, 77, 35, 92, 88, 63, 71, 46, 95, 79, 66];
 
+function operationModel(worker: WorkerProjection): WorkerOperationPanelModelV1 {
+  const requests: WorkerOperationRequestChoiceV1[] = [
+    {
+      operation: "request_drain",
+      enabled: worker.nodeState === "active",
+      reason: worker.nodeState === "active" ? "Stop new work and cancel or drain running work safely." : "Node is not active.",
+    },
+    {
+      operation: "request_resume",
+      enabled: worker.nodeState === "draining",
+      reason: worker.nodeState === "draining" ? "Allow new work after the node confirms resume." : "Node is not draining.",
+    },
+    {
+      operation: "request_quarantine",
+      enabled: ["active", "draining", "offline"].includes(worker.nodeState),
+      reason: ["active", "draining", "offline"].includes(worker.nodeState)
+        ? "Block new work and require security review."
+        : "Node is already quarantined or revoked.",
+    },
+  ];
+  return {
+    schema: "control-room.worker-operation-panel/v1",
+    workerId: worker.id,
+    nodeId: worker.nodeId,
+    nodeVersion: worker.nodeVersion,
+    nodeState: worker.nodeState,
+    displayName: worker.displayName,
+    platform: worker.os,
+    state: worker.state,
+    ...(worker.stateReason ? { stateReason: worker.stateReason } : {}),
+    lastHeartbeatAt: worker.lastHeartbeatAt,
+    requests,
+  };
+}
+
 export default async function WorkerDetail({ params }: { params: Promise<{ workerId: string }> }) {
   const { workerId } = await params;
   const worker = workers.find((candidate) => candidate.id === workerId);
@@ -28,18 +70,21 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
 
   return (
     <div className="detail-shell">
-      <main className="detail-main">
+      <a className="skip-link" href="#worker-detail">Skip to worker details</a>
+      <main id="worker-detail" className="detail-main" tabIndex={-1}>
         <Link className="detail-back" href="/#workers" prefetch={false}>← Back to workers</Link>
         <header className="detail-hero">
           <div>
-            <p className="eyebrow">Worker runtime · {worker.os}</p>
+            <p className="eyebrow">Worker runtime · {worker.os} · Synthetic fixture</p>
             <h1>{worker.displayName}</h1>
             <p>{worker.machineId} · {worker.runtimeId}</p>
           </div>
           <span className={`health ${worker.state === "idle" ? "health-healthy" : "health-watch"}`}>{label(worker.state)}</span>
         </header>
 
-        <section className="metric-grid section-block" aria-label="Worker summary">
+        <p className="operator-data-status unavailable" role="status">This worker detail is a synthetic fixture. Protected fleet status is available on the portfolio dashboard.</p>
+        <ProtectedWorkerDetailStatus workerId={worker.id} />
+        <section className="metric-grid section-block" aria-label="Synthetic worker summary">
           <article className="metric-card"><span className="metric-icon green">◫</span><div><small>Free slots</small><strong>{worker.availableSlots}/{worker.totalSlots}</strong><em>{label(worker.allocationMode)}</em></div></article>
           <article className="metric-card"><span className="metric-icon blue">⌁</span><div><small>Capability routes</small><strong>{worker.capabilities.length}</strong><em>{worker.capabilities.filter((route) => route.verification === "verified").length} verified</em></div></article>
           <article className="metric-card"><span className="metric-icon amber">▤</span><div><small>Scratch</small><strong>{label(worker.scratchClass)}</strong><em>live availability class</em></div></article>
@@ -48,7 +93,7 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
 
         <div className="detail-grid">
           <section className="detail-card">
-            <h2>Fourteen-period utilization history</h2>
+            <h2>Synthetic fourteen-period utilization history</h2>
             <div className="history-chart" aria-label="Synthetic utilization history">
               {historyBars.map((height, index) => <i key={`${height}-${index}`} style={{ height: `${height}%` }} title={`Period ${index + 1}: ${height}%`} />)}
             </div>
@@ -56,7 +101,7 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
           </section>
 
           <section className="detail-card">
-            <h2>Current assignment</h2>
+            <h2>Fixture current assignment</h2>
             <div className="capability-list">
               {currentWork.map((item) => <article key={item.id}><h3>{item.title}</h3><p>{label(item.domainState)} · {item.progressPercent}%</p><small>{projects.find((project) => project.id === item.source.projectId)?.workspaceName}</small></article>)}
               {!currentWork.length && <article><h3>Ready for compatible work</h3><p>{worker.availableSlots} free slots</p><small>{worker.stateReason}</small></article>}
@@ -77,6 +122,19 @@ export default async function WorkerDetail({ params }: { params: Promise<{ worke
             ))}
           </div>
         </section>
+
+        <section className="detail-card section-block">
+          <WorkerOperationControl model={operationModel(worker)} />
+        </section>
+
+        {worker.id === "worker.mac-m4" ? (
+          <section className="detail-card section-block" aria-label="CR-5D synthetic execution evidence fixture">
+            <h2>CR-5D execution evidence</h2>
+            <p className="hero-copy">Deterministic fixture backed by the same manifest, claim, lineage, and lifecycle contracts used by the node path.</p>
+            <SyntheticExecutionTimeline model={cr5dTimelineFixture} />
+            <ArtifactEvidenceCard model={cr5dArtifactFixture} />
+          </section>
+        ) : null}
       </main>
     </div>
   );

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "control-room-public-release-tooling/v1",
+  "title": "Control Room local public release plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "planId", "packageVersion", "sourceRevisionDigest", "dependencyLockDigest", "packageLayoutContractVersion", "packageTreeDefinitionDigests", "steps", "localCandidateOnly", "sourceMetadataOnly", "archiveCreationAllowed", "packageInstallationAllowed", "registryContactAllowed", "networkContactAllowed", "nativeHarnessContactAllowed", "signingAllowed", "publicationAllowed", "grantsReleaseAuthority", "createdAt", "planDigest"],
+  "properties": {
+    "contractVersion": { "const": "control-room-public-release-tooling/v1" },
+    "planId": { "type": "string" },
+    "packageVersion": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "sourceRevisionDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "dependencyLockDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "packageLayoutContractVersion": { "const": "control-room-public-package-layout/v1" },
+    "packageTreeDefinitionDigests": { "type": "array", "minItems": 4, "maxItems": 4, "items": { "type": "string" } },
+    "steps": { "type": "array", "minItems": 9, "maxItems": 9 },
+    "localCandidateOnly": { "const": true },
+    "sourceMetadataOnly": { "const": true },
+    "archiveCreationAllowed": { "const": false },
+    "packageInstallationAllowed": { "const": false },
+    "registryContactAllowed": { "const": false },
+    "networkContactAllowed": { "const": false },
+    "nativeHarnessContactAllowed": { "const": false },
+    "signingAllowed": { "const": false },
+    "publicationAllowed": { "const": false },
+    "grantsReleaseAuthority": { "const": false },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "planDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

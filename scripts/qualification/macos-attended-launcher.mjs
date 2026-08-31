@@ -60,6 +60,19 @@ async function runHarness(scratch, service, account) {
   });
 }
 
+async function removeScratch(scratch) {
+  const validated = await validateScratch(scratch);
+  await readdir(validated, { withFileTypes: true });
+  await rm(validated, { recursive: true });
+  try {
+    await lstat(validated);
+  } catch (error) {
+    if (error?.code === "ENOENT") return "absent";
+    throw error;
+  }
+  throw new Error("scratch_cleanup_failed");
+}
+
 async function main() {
   const { service, account } = parseArguments(process.argv.slice(2));
   if (process.platform !== "darwin") throw new Error("wrong_platform");
@@ -82,23 +95,16 @@ async function main() {
 
   const tempRoot = await realpath(tmpdir());
   const created = await mkdtemp(join(tempRoot, "control-room-cr5c9h-mac-owner-"));
-  let scratch = await validateScratch(created);
+  const scratch = await validateScratch(created);
   let harnessResult;
-  let cleanup = "not_started";
+  let harnessError;
   try {
     harnessResult = await runHarness(scratch, service, account);
-  } finally {
-    scratch = await validateScratch(scratch);
-    await readdir(scratch, { withFileTypes: true });
-    await rm(scratch, { recursive: true });
-    try {
-      await lstat(scratch);
-      throw new Error("scratch_cleanup_failed");
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
-    cleanup = "absent";
+  } catch (error) {
+    harnessError = error;
   }
+  const cleanup = await removeScratch(scratch);
+  if (harnessError !== undefined) throw harnessError;
   let harnessOutput;
   try {
     harnessOutput = JSON.parse(harnessResult.stdout);

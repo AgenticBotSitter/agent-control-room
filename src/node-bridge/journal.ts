@@ -1,6 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { assertNoSecretMaterial, sha256Digest } from "../security";
-import { opaqueTokenDigest, type ReplayGuard, type SignedNodeFrame } from "../node-protocol/v1";
+import {
+  opaqueTokenDigest,
+  type JobEventBody,
+  type NodeOperationAcknowledgementBody,
+  type NodeOperationRequestBody,
+  type ReplayGuard,
+  type SignedNodeFrame,
+} from "../node-protocol/v1";
+import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -26,6 +34,81 @@ export interface JournalOutboundFrame {
   sendAttempts: number;
 }
 
+export interface JournalJobEvent {
+  event: JobEventBody;
+  eventDigest: string;
+  deliveryAttempt: number;
+  messageId: string;
+  status: "pending" | "staged" | "acknowledged";
+}
+
+export interface JournalNodeControlState {
+  nodeId: string;
+  nodeVersion: number;
+  state: "active" | "draining" | "quarantined";
+  safeReasonCode?: string;
+  updatedAt: string;
+}
+
+export interface JournalNodeOperationResult {
+  acknowledgement: NodeOperationAcknowledgementBody;
+  cancellationRequired: boolean;
+  replayed: boolean;
+}
+
+const terminalEvents = new Set<JobEventBody["event"]>(["completed", "failed", "cancelled"]);
+
+function attemptState(event: JobEventBody["event"]): JournalAttemptSummary["state"] {
+  if (event === "completed" || event === "failed" || event === "cancelled" || event === "waiting") return event;
+  return "running";
+}
+
+function assertEventShape(event: JobEventBody): void {
+  if (!Number.isInteger(event.sequence) || event.sequence < 1) throw new Error("Job event sequence must be a positive integer");
+  if (!Number.isInteger(event.leaseEpoch) || event.leaseEpoch < 1) throw new Error("Job event lease epoch must be positive");
+  if (event.event === "progress" ? event.progressPercent === undefined : event.progressPercent !== undefined) {
+    throw new Error("Only progress events may carry progressPercent");
+  }
+  if (event.event === "checkpointed" ? !event.checkpointId : event.checkpointId !== undefined) {
+    throw new Error("Only checkpointed events may carry checkpointId");
+  }
+  if ((event.event === "failed" || event.event === "cancelled") ? !event.safeReasonCode : event.safeReasonCode !== undefined) {
+    throw new Error("Only failed and cancelled events must carry a safe reason code");
+  }
+  if (event.event !== "completed" && event.artifactManifestIds.length) {
+    throw new Error("Only completed events may expose artifact manifest IDs");
+  }
+  if (event.event !== "completed" && event.artifactLineage) {
+    throw new Error("Only completed events may expose artifact lineage");
+  }
+}
+
+function assertArtifactLineage(event: JobEventBody, lineage: ArtifactLineageRecordV1 | undefined): void {
+  if (event.event !== "completed") {
+    if (lineage) throw new Error("Only a completed event may carry artifact lineage");
+    return;
+  }
+  if (!lineage || event.artifactManifestIds.length !== 1) throw new Error("Completed event requires exactly one artifact lineage record");
+  const { lineageDigest, ...unsigned } = lineage;
+  if (
+    lineageDigest !== sha256Digest(unsigned) ||
+    lineage.artifactId !== event.artifactManifestIds[0] ||
+    lineage.jobId !== event.jobId ||
+    lineage.attemptId !== event.attemptId ||
+    lineage.manifest.id !== lineage.artifactId ||
+    lineage.producerClaim.artifactId !== lineage.artifactId ||
+    lineage.independentVerification.status !== "not_run"
+  ) {
+    throw new Error("Completed event artifact lineage is inconsistent");
+  }
+  assertNoSecretMaterial(lineage, "durable artifact lineage");
+}
+
+function deliveryEvent(event: JobEventBody, lineage: ArtifactLineageRecordV1 | undefined): JobEventBody {
+  if (!lineage) return event;
+  return { ...event, artifactLineage: structuredClone(lineage) };
+}
+
 export class SqliteBridgeJournal implements ReplayGuard {
   private readonly db: DatabaseSync;
 
@@ -40,16 +123,259 @@ export class SqliteBridgeJournal implements ReplayGuard {
     this.db.close();
   }
 
+  initializeNodeControlState(state: JournalNodeControlState): "initialized" | "duplicate" {
+    assertNoSecretMaterial(state, "local node control state");
+    if (!Number.isInteger(state.nodeVersion) || state.nodeVersion < 0) throw new Error("Local node version must be nonnegative");
+    return this.transaction(() => {
+      const prior = this.db.prepare(
+        `SELECT node_version,state,safe_reason_code,updated_at FROM bridge_node_control_state WHERE node_id=?`,
+      ).get(state.nodeId) as { node_version: number; state: JournalNodeControlState["state"]; safe_reason_code: string | null; updated_at: string } | undefined;
+      if (prior) {
+        const exact = prior.node_version === state.nodeVersion && prior.state === state.state
+          && prior.safe_reason_code === (state.safeReasonCode ?? null) && prior.updated_at === state.updatedAt;
+        if (!exact) throw new Error("Local node control state is already initialized differently");
+        return "duplicate" as const;
+      }
+      this.db.prepare(
+        `INSERT INTO bridge_node_control_state(node_id,node_version,state,safe_reason_code,updated_at) VALUES (?,?,?,?,?)`,
+      ).run(state.nodeId,state.nodeVersion,state.state,state.safeReasonCode ?? null,state.updatedAt);
+      return "initialized" as const;
+    });
+  }
+
+  nodeControlState(nodeId: string): JournalNodeControlState | undefined {
+    const row = this.db.prepare(
+      `SELECT node_id,node_version,state,safe_reason_code,updated_at FROM bridge_node_control_state WHERE node_id=?`,
+    ).get(nodeId) as { node_id: string; node_version: number; state: JournalNodeControlState["state"]; safe_reason_code: string | null; updated_at: string } | undefined;
+    return row ? { nodeId: row.node_id, nodeVersion: row.node_version, state: row.state,
+      ...(row.safe_reason_code ? { safeReasonCode: row.safe_reason_code } : {}), updatedAt: row.updated_at } : undefined;
+  }
+
+  applyNodeOperation(command: NodeOperationRequestBody, appliedAt: string): JournalNodeOperationResult {
+    assertNoSecretMaterial(command, "local node operation command");
+    const commandDigest = sha256Digest(command);
+    return this.transaction(() => {
+      const prior = this.db.prepare(
+        `SELECT command_digest,acknowledgement_json,cancellation_required,cancellation_recorded_at
+         FROM bridge_node_operation_receipts WHERE request_id=?`,
+      ).get(command.requestId) as { command_digest: string; acknowledgement_json: string; cancellation_required: number; cancellation_recorded_at: string | null } | undefined;
+      if (prior) {
+        if (prior.command_digest !== commandDigest) throw new Error("Node operation request ID conflicts with different content");
+        return { acknowledgement: JSON.parse(prior.acknowledgement_json) as NodeOperationAcknowledgementBody,
+          cancellationRequired: prior.cancellation_required === 1 && prior.cancellation_recorded_at === null, replayed: true };
+      }
+      const local = this.db.prepare(
+        `SELECT node_version,state FROM bridge_node_control_state WHERE node_id=?`,
+      ).get(command.nodeId) as { node_version: number; state: JournalNodeControlState["state"] } | undefined;
+      if (!local) throw new Error("Local node control state is not initialized");
+      const allowed = (command.operation === "request_drain" && local.state === "active")
+        || (command.operation === "request_resume" && local.state === "draining")
+        || (command.operation === "request_quarantine" && local.state !== "quarantined");
+      const canApply = local.node_version === command.expectedNodeVersion && allowed;
+      const resultingNodeVersion = canApply ? local.node_version + 1 : undefined;
+      const acknowledgement: NodeOperationAcknowledgementBody = canApply ? {
+        requestId: command.requestId,
+        nodeId: command.nodeId,
+        operation: command.operation,
+        expectedNodeVersion: command.expectedNodeVersion,
+        disposition: "applied",
+        acknowledgementId: `ack:${command.requestDigest.slice("sha256:".length)}`,
+        resultingNodeVersion: resultingNodeVersion as number,
+      } : {
+        requestId: command.requestId,
+        nodeId: command.nodeId,
+        operation: command.operation,
+        expectedNodeVersion: command.expectedNodeVersion,
+        disposition: "rejected",
+        acknowledgementId: `ack:${command.requestDigest.slice("sha256:".length)}`,
+        safeResultCode: local.node_version === command.expectedNodeVersion ? "local_state_conflict" : "stale_node_version",
+      };
+      const cancellationRequired = canApply && command.operation !== "request_resume";
+      if (canApply) {
+        this.db.prepare(
+          `UPDATE bridge_node_control_state SET node_version=?,state=?,safe_reason_code=?,updated_at=? WHERE node_id=? AND node_version=?`,
+        ).run(resultingNodeVersion as number,command.desiredState,command.safeReasonCode ?? null,appliedAt,command.nodeId,local.node_version);
+      }
+      this.db.prepare(
+        `INSERT INTO bridge_node_operation_receipts
+         (request_id,request_digest,command_json,command_digest,acknowledgement_json,disposition,cancellation_required,recorded_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      ).run(command.requestId,command.requestDigest,JSON.stringify(command),commandDigest,JSON.stringify(acknowledgement),
+        acknowledgement.disposition,cancellationRequired ? 1 : 0,appliedAt);
+      return { acknowledgement, cancellationRequired, replayed: false };
+    });
+  }
+
+  pendingNodeControlCancellations(): Array<{ requestId: string; operation: NodeOperationRequestBody["operation"] }> {
+    return (this.db.prepare(
+      `SELECT request_id,command_json FROM bridge_node_operation_receipts
+       WHERE cancellation_required=1 AND cancellation_recorded_at IS NULL ORDER BY recorded_at`,
+    ).all() as Array<{ request_id: string; command_json: string }>).map((row) => ({
+      requestId: row.request_id,
+      operation: (JSON.parse(row.command_json) as NodeOperationRequestBody).operation,
+    }));
+  }
+
+  markNodeControlCancellationRequested(requestId: string, recordedAt: string): void {
+    const changed = this.db.prepare(
+      `UPDATE bridge_node_operation_receipts SET cancellation_recorded_at=?
+       WHERE request_id=? AND cancellation_required=1 AND cancellation_recorded_at IS NULL`,
+    ).run(recordedAt,requestId).changes;
+    if (changed !== 1) throw new Error("Node control cancellation is not pending");
+  }
+
   nextOutboundSequence(connectionId: string): number {
     const prior = this.db.prepare(`SELECT last_sequence FROM bridge_sequences WHERE connection_id=? AND direction='node_to_server'`).get(connectionId) as { last_sequence: number } | undefined;
     return (prior?.last_sequence ?? 0) + 1;
   }
 
   stageOutbound(frame: SignedNodeFrame, essential: boolean, createdAt: string): "staged" | "duplicate" | "coalesced" {
-    if (frame.direction !== "node_to_server" || frame.senderKind !== "node") throw new Error("Only node-to-server frames enter the bridge outbox");
-    assertNoSecretMaterial(frame.body, "bridge outbox frame");
-    const frameDigest = sha256Digest(frame);
+    return this.transaction(() => this.stageOutboundWithinTransaction(frame, essential, createdAt));
+  }
+
+  appendJobEvent(event: JobEventBody, recordedAt: string, artifactLineage?: ArtifactLineageRecordV1): "recorded" | "duplicate" {
+    assertNoSecretMaterial(event, "durable job event");
+    assertEventShape(event);
+    assertArtifactLineage(event, artifactLineage);
+    const durableEvent = deliveryEvent(event, artifactLineage);
+    const eventDigest = sha256Digest(durableEvent);
     return this.transaction(() => {
+      const duplicate = this.db.prepare(
+        `SELECT event_digest,artifact_lineage_digest FROM bridge_job_events WHERE attempt_id=? AND event_sequence=?`,
+      ).get(event.attemptId,event.sequence) as { event_digest: string; artifact_lineage_digest: string | null } | undefined;
+      if (duplicate) {
+        if (duplicate.event_digest !== eventDigest || duplicate.artifact_lineage_digest !== (artifactLineage?.lineageDigest ?? null)) {
+          throw new Error("Job event sequence conflicts with different content");
+        }
+        return "duplicate" as const;
+      }
+      const prior = this.db.prepare(
+        `SELECT job_id,lease_id,lease_epoch,state,last_event_sequence,checkpoint_ids
+         FROM bridge_attempts WHERE attempt_id=?`,
+      ).get(event.attemptId) as {
+        job_id: string; lease_id: string; lease_epoch: number; state: JournalAttemptSummary["state"];
+        last_event_sequence: number; checkpoint_ids: string;
+      } | undefined;
+      if (prior) {
+        if (prior.job_id !== event.jobId || prior.lease_id !== event.leaseId || prior.lease_epoch !== event.leaseEpoch) {
+          throw new Error("Job event authority conflicts with the durable attempt identity");
+        }
+        if (terminalEvents.has(prior.state as JobEventBody["event"])) throw new Error("A terminal attempt cannot accept another job event");
+        if (event.sequence !== prior.last_event_sequence + 1) throw new Error("Job event sequence is not monotonic");
+      } else if (event.sequence !== 1) {
+        throw new Error("A durable attempt must begin at job event sequence 1");
+      }
+      const checkpointIds = prior ? JSON.parse(prior.checkpoint_ids) as string[] : [];
+      if (event.checkpointId && !checkpointIds.includes(event.checkpointId)) checkpointIds.push(event.checkpointId);
+      this.db.prepare(
+        `INSERT INTO bridge_attempts(attempt_id,job_id,lease_id,lease_epoch,state,last_event_sequence,checkpoint_ids,updated_at)
+         VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(attempt_id) DO UPDATE SET state=excluded.state,last_event_sequence=excluded.last_event_sequence,
+           checkpoint_ids=excluded.checkpoint_ids,updated_at=excluded.updated_at`,
+      ).run(event.attemptId,event.jobId,event.leaseId,event.leaseEpoch,attemptState(event.event),event.sequence,JSON.stringify(checkpointIds),recordedAt);
+      if (artifactLineage) {
+        this.db.prepare(
+          `INSERT INTO bridge_artifact_lineage
+           (artifact_id,attempt_id,lineage_json,lineage_digest,manifest_digest,claim_digest,verification_state,recorded_at)
+           VALUES (?,?,?,?,?,?,'not_run',?)`,
+        ).run(
+          artifactLineage.artifactId,event.attemptId,JSON.stringify(artifactLineage),artifactLineage.lineageDigest,
+          artifactLineage.producerClaim.manifestDigest,artifactLineage.producerClaim.claimDigest,recordedAt,
+        );
+      }
+      this.db.prepare(
+        `INSERT INTO bridge_job_events
+         (attempt_id,event_sequence,event_json,event_digest,status,delivery_attempt,recorded_at,artifact_id,artifact_lineage_digest)
+         VALUES (?,?,?,?,'pending',0,?,?,?)`,
+      ).run(
+        event.attemptId,event.sequence,JSON.stringify(durableEvent),eventDigest,recordedAt,
+        artifactLineage?.artifactId ?? null,artifactLineage?.lineageDigest ?? null,
+      );
+      return "recorded" as const;
+    });
+  }
+
+  artifactLineage(artifactId: string): ArtifactLineageRecordV1 | undefined {
+    const row = this.db.prepare(
+      `SELECT lineage_json,lineage_digest FROM bridge_artifact_lineage WHERE artifact_id=?`,
+    ).get(artifactId) as { lineage_json: string; lineage_digest: string } | undefined;
+    if (!row) return undefined;
+    const lineage = JSON.parse(row.lineage_json) as ArtifactLineageRecordV1;
+    if (lineage.lineageDigest !== row.lineage_digest) throw new Error("Durable artifact lineage digest mismatch");
+    assertArtifactLineage({
+      jobId: lineage.jobId,
+      attemptId: lineage.attemptId,
+      leaseId: "durable-read-validation",
+      leaseEpoch: 1,
+      event: "completed",
+      sequence: 1,
+      occurredAt: lineage.recordedAt,
+      artifactManifestIds: [lineage.artifactId],
+    }, lineage);
+    return structuredClone(lineage);
+  }
+
+  pendingJobEvents(): JournalJobEvent[] {
+    const rows = this.db.prepare(
+      `SELECT event_json,event_digest,status,delivery_attempt,outbound_message_id
+       FROM bridge_job_events WHERE status='pending' ORDER BY row_id`,
+    ).all() as Array<{
+      event_json: string; event_digest: string; status: "pending"; delivery_attempt: number; outbound_message_id: string | null;
+    }>;
+    return rows.map((row) => ({
+      event: JSON.parse(row.event_json) as JobEventBody,
+      eventDigest: row.event_digest,
+      deliveryAttempt: row.delivery_attempt,
+      messageId: row.outbound_message_id ?? `message:job-event:${row.event_digest}:${row.delivery_attempt + 1}`,
+      status: row.status,
+    }));
+  }
+
+  jobEventStatus(attemptId: string, eventSequence: number): JournalJobEvent["status"] | undefined {
+    return (this.db.prepare(
+      `SELECT status FROM bridge_job_events WHERE attempt_id=? AND event_sequence=?`,
+    ).get(attemptId,eventSequence) as { status: JournalJobEvent["status"] } | undefined)?.status;
+  }
+
+  stageJobEventOutbound(
+    frame: SignedNodeFrame<"job.event">,
+    attemptId: string,
+    eventSequence: number,
+    createdAt: string,
+  ): "staged" | "duplicate" {
+    return this.transaction(() => {
+      const row = this.db.prepare(
+        `SELECT event_digest,status,delivery_attempt,outbound_message_id FROM bridge_job_events
+         WHERE attempt_id=? AND event_sequence=?`,
+      ).get(attemptId,eventSequence) as {
+        event_digest: string; status: JournalJobEvent["status"]; delivery_attempt: number; outbound_message_id: string | null;
+      } | undefined;
+      if (!row) throw new Error("Job event is not durably recorded");
+      const expectedMessageId = `message:job-event:${row.event_digest}:${row.delivery_attempt + 1}`;
+      if (row.status === "acknowledged") throw new Error("Acknowledged job event cannot be staged again");
+      if (row.status === "staged") {
+        if (row.outbound_message_id !== frame.messageId) throw new Error("Job event is already linked to another outbound frame");
+        const disposition = this.stageOutboundWithinTransaction(frame, true, createdAt);
+        if (disposition === "coalesced") throw new Error("Essential job event cannot be coalesced");
+        return disposition;
+      }
+      if (frame.messageId !== expectedMessageId || sha256Digest(frame.body) !== row.event_digest) {
+        throw new Error("Outbound job event does not match its durable record");
+      }
+      const disposition = this.stageOutboundWithinTransaction(frame, true, createdAt);
+      if (disposition === "coalesced") throw new Error("Essential job event cannot be coalesced");
+      this.db.prepare(
+        `UPDATE bridge_job_events SET status='staged',delivery_attempt=delivery_attempt+1,outbound_message_id=?,staged_at=?
+         WHERE attempt_id=? AND event_sequence=? AND status='pending'`,
+      ).run(frame.messageId,createdAt,attemptId,eventSequence);
+      return disposition;
+    });
+  }
+
+  private stageOutboundWithinTransaction(frame: SignedNodeFrame, essential: boolean, createdAt: string): "staged" | "duplicate" | "coalesced" {
+      if (frame.direction !== "node_to_server" || frame.senderKind !== "node") throw new Error("Only node-to-server frames enter the bridge outbox");
+      assertNoSecretMaterial(frame.body, "bridge outbox frame");
+      const frameDigest = sha256Digest(frame);
       const prior = this.db.prepare(`SELECT frame_digest FROM bridge_outbox WHERE message_id=?`).get(frame.messageId) as { frame_digest: string } | undefined;
       if (prior) {
         if (prior.frame_digest !== frameDigest) throw new Error("Outbound message ID conflicts with different content");
@@ -80,7 +406,6 @@ export class SqliteBridgeJournal implements ReplayGuard {
          VALUES (?,?,?,?,?,?,'pending',?,0,?,?)`,
       ).run(frame.messageId,frame.connectionId,frame.sequence,frame.type,JSON.stringify(frame),frameDigest,essential ? 1 : 0,createdAt,frame.expiresAt);
       return "staged" as const;
-    });
   }
 
   markSent(messageId: string, sentAt: string): void {
@@ -99,15 +424,38 @@ export class SqliteBridgeJournal implements ReplayGuard {
         `UPDATE bridge_outbox SET status='acknowledged',acknowledged_at=?
          WHERE message_id=? AND status IN ('pending','sent')`,
       );
-      for (const messageId of new Set(messageIds)) changed += Number(statement.run(acknowledgedAt,messageId).changes);
+      const acknowledgeEvent = this.db.prepare(
+        `UPDATE bridge_job_events SET status='acknowledged',acknowledged_at=?
+         WHERE outbound_message_id=? AND status='staged'`,
+      );
+      for (const messageId of new Set(messageIds)) {
+        changed += Number(statement.run(acknowledgedAt,messageId).changes);
+        acknowledgeEvent.run(acknowledgedAt,messageId);
+      }
       return changed;
     });
   }
 
   expireBefore(now: string): number {
-    return Number(this.db.prepare(
-      `UPDATE bridge_outbox SET status='expired' WHERE status IN ('pending','sent') AND expires_at<=?`,
-    ).run(now).changes);
+    return this.transaction(() => {
+      const expired = this.db.prepare(
+        `SELECT message_id FROM bridge_outbox WHERE status IN ('pending','sent') AND expires_at<=?`,
+      ).all(now) as Array<{ message_id: string }>;
+      if (!expired.length) return 0;
+      const expireFrame = this.db.prepare(
+        `UPDATE bridge_outbox SET status='expired' WHERE message_id=? AND status IN ('pending','sent')`,
+      );
+      const retryEvent = this.db.prepare(
+        `UPDATE bridge_job_events SET status='pending',outbound_message_id=NULL,staged_at=NULL
+         WHERE outbound_message_id=? AND status='staged'`,
+      );
+      let changed = 0;
+      for (const row of expired) {
+        changed += Number(expireFrame.run(row.message_id).changes);
+        retryEvent.run(row.message_id);
+      }
+      return changed;
+    });
   }
 
   retireSupersededControlFrames(currentConnectionId: string): number {
@@ -275,6 +623,25 @@ export class SqliteBridgeJournal implements ReplayGuard {
         received_at TEXT NOT NULL,
         handled_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS bridge_node_control_state (
+        node_id TEXT PRIMARY KEY,
+        node_version INTEGER NOT NULL CHECK(node_version>=0),
+        state TEXT NOT NULL CHECK(state IN ('active','draining','quarantined')),
+        safe_reason_code TEXT,
+        updated_at TEXT NOT NULL,
+        CHECK((state='quarantined' AND safe_reason_code IS NOT NULL) OR state<>'quarantined')
+      );
+      CREATE TABLE IF NOT EXISTS bridge_node_operation_receipts (
+        request_id TEXT PRIMARY KEY,
+        request_digest TEXT NOT NULL UNIQUE,
+        command_json TEXT NOT NULL,
+        command_digest TEXT NOT NULL,
+        acknowledgement_json TEXT NOT NULL,
+        disposition TEXT NOT NULL CHECK(disposition IN ('applied','rejected')),
+        cancellation_required INTEGER NOT NULL CHECK(cancellation_required IN (0,1)),
+        cancellation_recorded_at TEXT,
+        recorded_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS bridge_attempts (
         attempt_id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL,
@@ -285,7 +652,41 @@ export class SqliteBridgeJournal implements ReplayGuard {
         checkpoint_ids TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      PRAGMA user_version=1;
+      CREATE TABLE IF NOT EXISTS bridge_artifact_lineage (
+        artifact_id TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL,
+        lineage_json TEXT NOT NULL,
+        lineage_digest TEXT NOT NULL UNIQUE,
+        manifest_digest TEXT NOT NULL,
+        claim_digest TEXT NOT NULL,
+        verification_state TEXT NOT NULL CHECK(verification_state IN ('not_run')),
+        recorded_at TEXT NOT NULL,
+        FOREIGN KEY(attempt_id) REFERENCES bridge_attempts(attempt_id)
+      );
+      CREATE TABLE IF NOT EXISTS bridge_job_events (
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attempt_id TEXT NOT NULL,
+        event_sequence INTEGER NOT NULL CHECK(event_sequence>0),
+        event_json TEXT NOT NULL,
+        event_digest TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','staged','acknowledged')),
+        delivery_attempt INTEGER NOT NULL CHECK(delivery_attempt>=0),
+        outbound_message_id TEXT,
+        recorded_at TEXT NOT NULL,
+        staged_at TEXT,
+        acknowledged_at TEXT,
+        artifact_id TEXT,
+        artifact_lineage_digest TEXT,
+        UNIQUE(attempt_id,event_sequence),
+        FOREIGN KEY(attempt_id) REFERENCES bridge_attempts(attempt_id),
+        FOREIGN KEY(artifact_id) REFERENCES bridge_artifact_lineage(artifact_id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS bridge_job_events_outbound_message
+        ON bridge_job_events(outbound_message_id) WHERE outbound_message_id IS NOT NULL;
     `);
+    const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
+    if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
+    if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
+    this.db.exec("PRAGMA user_version=4;");
   }
 }

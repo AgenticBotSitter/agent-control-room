@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { authorityEnvelopeSchema } from "../../domain/v1";
+import { artifactManifestRecordSchema, authorityEnvelopeSchema } from "../../domain/v1";
+import { fleetSignalEnvelopeSchema } from "../../node-fleet/v1/schemas";
 import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
-import { computeAuthorityDigest } from "../../security";
+import { computeAuthorityDigest, sha256Digest } from "../../security";
 import { NODE_PROTOCOL_MAX_FRAME_BYTES, NODE_PROTOCOL_V1 } from "./types";
 
 const id = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -162,16 +163,70 @@ const leaseRenewed = z.object({
   if (Date.parse(value.expiresAt) <= Date.parse(value.renewedAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "renewed lease must expire after renewal" });
   if (value.authorityDigest !== value.authority.digest) context.addIssue({ code: "custom", path: ["authorityDigest"], message: "renewed authority digest must match the complete authority" });
 });
+const artifactLineage = z.object({
+  schema: z.literal("control-room.artifact-lineage/v1"),
+  artifactId: id,
+  tenantId: id,
+  projectId: id,
+  jobId: id,
+  attemptId: id,
+  producerId: id,
+  manifest: artifactManifestRecordSchema,
+  producerClaim: z.object({
+    schema: z.literal("control-room.artifact-verification-claim/v1"),
+    claimId: id,
+    artifactId: id,
+    tenantId: id,
+    projectId: id,
+    jobId: id,
+    attemptId: id,
+    producerId: id,
+    claim: z.literal("content_hash_matches_exact_bytes"),
+    contentHash: digest,
+    manifestDigest: digest,
+    createdAt: isoDate,
+    claimDigest: digest,
+  }).strict(),
+  independentVerification: z.object({ status: z.literal("not_run") }).strict(),
+  recordedAt: isoDate,
+  lineageDigest: digest,
+}).strict().superRefine((lineage, context) => {
+  const { lineageDigest, ...unsigned } = lineage;
+  if (sha256Digest(unsigned) !== lineageDigest) context.addIssue({ code: "custom", path: ["lineageDigest"], message: "artifact lineage digest mismatch" });
+  if (lineage.manifest.id !== lineage.artifactId || lineage.producerClaim.artifactId !== lineage.artifactId
+    || lineage.manifest.tenantId !== lineage.tenantId || lineage.producerClaim.tenantId !== lineage.tenantId
+    || lineage.manifest.projectId !== lineage.projectId || lineage.producerClaim.projectId !== lineage.projectId
+    || lineage.manifest.jobId !== lineage.jobId || lineage.producerClaim.jobId !== lineage.jobId
+    || lineage.manifest.attemptId !== lineage.attemptId || lineage.producerClaim.attemptId !== lineage.attemptId
+    || lineage.manifest.producerId !== lineage.producerId || lineage.producerClaim.producerId !== lineage.producerId
+    || lineage.manifest.contentHash !== lineage.producerClaim.contentHash
+    || sha256Digest(lineage.manifest) !== lineage.producerClaim.manifestDigest) {
+    context.addIssue({ code: "custom", message: "artifact lineage identity or producer claim mismatch" });
+  }
+  const { claimDigest, ...claimUnsigned } = lineage.producerClaim;
+  if (sha256Digest(claimUnsigned) !== claimDigest) context.addIssue({ code: "custom", path: ["producerClaim", "claimDigest"], message: "producer claim digest mismatch" });
+});
 const jobEvent = z.object({
   ...leaseIdentity,
   event: z.enum(["started", "progress", "checkpointed", "waiting", "completed", "failed", "cancelled"]),
-  sequence: z.number().int().nonnegative(),
+  sequence: z.number().int().positive(),
   occurredAt: isoDate,
   progressPercent: z.number().min(0).max(100).optional(),
   checkpointId: id.optional(),
   artifactManifestIds: z.array(id).max(1_000),
+  artifactLineage: artifactLineage.optional(),
   safeReasonCode: id.optional(),
-}).strict();
+}).strict().superRefine((event, context) => {
+  if ((event.event === "progress") !== (event.progressPercent !== undefined)) context.addIssue({ code: "custom", path: ["progressPercent"], message: "only progress events require progressPercent" });
+  if ((event.event === "checkpointed") !== (event.checkpointId !== undefined)) context.addIssue({ code: "custom", path: ["checkpointId"], message: "only checkpointed events require checkpointId" });
+  if ((event.event === "failed" || event.event === "cancelled") !== (event.safeReasonCode !== undefined)) context.addIssue({ code: "custom", path: ["safeReasonCode"], message: "failed and cancelled events require a safe reason code" });
+  if (event.event !== "completed" && event.artifactManifestIds.length) context.addIssue({ code: "custom", path: ["artifactManifestIds"], message: "only completed events may identify artifacts" });
+  if (event.event !== "completed" && event.artifactLineage) context.addIssue({ code: "custom", path: ["artifactLineage"], message: "only completed events may carry artifact lineage" });
+  if (event.artifactLineage && (event.artifactManifestIds.length !== 1 || event.artifactManifestIds[0] !== event.artifactLineage.artifactId
+    || event.jobId !== event.artifactLineage.jobId || event.attemptId !== event.artifactLineage.attemptId)) {
+    context.addIssue({ code: "custom", path: ["artifactLineage"], message: "artifact lineage must match the completed event" });
+  }
+});
 const cancelRequest = z.object({ ...leaseIdentity, reasonCode: z.enum(["owner_requested", "policy_changed", "lease_revoked", "shutdown"]) }).strict();
 const cancelAck = z.object({
   ...leaseIdentity,
@@ -202,6 +257,35 @@ const protocolAcknowledgement = z.object({
   highestContiguousSequence: z.number().int().positive(),
   disposition: z.enum(["accepted", "duplicate"]),
 }).strict();
+const nodeOperationRequest = z.object({
+  requestId: id,
+  nodeId: id,
+  operation: z.enum(["request_drain", "request_resume", "request_quarantine"]),
+  desiredState: z.enum(["active", "draining", "quarantined"]),
+  expectedNodeVersion: z.number().int().nonnegative(),
+  requestDigest: digest,
+  safeReasonCode: id.optional(),
+}).strict().superRefine((value, context) => {
+  const expectedState = value.operation === "request_drain" ? "draining" : value.operation === "request_resume" ? "active" : "quarantined";
+  if (value.desiredState !== expectedState) context.addIssue({ code: "custom", path: ["desiredState"], message: "operation and desired state must match" });
+  if (value.operation === "request_quarantine" ? !value.safeReasonCode : value.safeReasonCode !== undefined) {
+    context.addIssue({ code: "custom", path: ["safeReasonCode"], message: "only quarantine requires a safe reason code" });
+  }
+});
+const nodeOperationAcknowledgement = z.object({
+  requestId: id,
+  nodeId: id,
+  operation: z.enum(["request_drain", "request_resume", "request_quarantine"]),
+  expectedNodeVersion: z.number().int().nonnegative(),
+  disposition: z.enum(["applied", "rejected"]),
+  acknowledgementId: id,
+  safeResultCode: id.optional(),
+  resultingNodeVersion: z.number().int().nonnegative().optional(),
+}).strict().superRefine((value, context) => {
+  if (value.disposition === "applied" ? value.resultingNodeVersion === undefined || value.safeResultCode !== undefined : !value.safeResultCode || value.resultingNodeVersion !== undefined) {
+    context.addIssue({ code: "custom", path: ["disposition"], message: "operation acknowledgement fields do not match disposition" });
+  }
+});
 
 const baseFrame = {
   protocol: z.literal(NODE_PROTOCOL_V1),
@@ -230,6 +314,7 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("connection.hello", connectionHello),
   frame("connection.accepted", connectionAccepted),
   frame("node.heartbeat", heartbeat),
+  frame("node.fleet.signal", fleetSignalEnvelopeSchema),
   frame("job.offer", jobOffer),
   frame("job.offer.decision", offerDecision),
   frame("job.lease.grant", leaseGrant),
@@ -239,6 +324,8 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("job.cancel.ack", cancelAck),
   frame("node.reconciliation.request", reconciliationRequest),
   frame("node.reconciliation.report", reconciliationReport),
+  frame("node.operation.request", nodeOperationRequest),
+  frame("node.operation.ack", nodeOperationAcknowledgement),
   frame("protocol.ack", protocolAcknowledgement),
   frame("protocol.error", protocolError),
 ]).superRefine((value, context) => {
@@ -247,5 +334,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   if (value.direction === "server_to_node" && value.senderKind !== "control_room") context.addIssue({ code: "custom", path: ["senderKind"], message: "server-to-node frames must be Control Room signed" });
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "protocol.ack", "protocol.error"]);
-export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);

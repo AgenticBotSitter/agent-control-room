@@ -1,4 +1,5 @@
-import type { AuthorityEnvelope } from "../../domain/v1";
+import type { ArtifactManifestRecord, AuthorityEnvelope } from "../../domain/v1";
+import type { FleetSignalEnvelope } from "../../node-fleet/v1/schemas";
 
 export const NODE_PROTOCOL_V1 = "control-room-node/v1" as const;
 export const NODE_PROTOCOL_SUPPORTED_VERSIONS = [NODE_PROTOCOL_V1] as const;
@@ -158,7 +159,37 @@ export interface JobEventBody {
   progressPercent?: number;
   checkpointId?: string;
   artifactManifestIds: string[];
+  artifactLineage?: ArtifactLineageBody;
   safeReasonCode?: string;
+}
+
+export interface ArtifactLineageBody {
+  schema: "control-room.artifact-lineage/v1";
+  artifactId: string;
+  tenantId: string;
+  projectId: string;
+  jobId: string;
+  attemptId: string;
+  producerId: string;
+  manifest: ArtifactManifestRecord;
+  producerClaim: {
+    schema: "control-room.artifact-verification-claim/v1";
+    claimId: string;
+    artifactId: string;
+    tenantId: string;
+    projectId: string;
+    jobId: string;
+    attemptId: string;
+    producerId: string;
+    claim: "content_hash_matches_exact_bytes";
+    contentHash: string;
+    manifestDigest: string;
+    createdAt: string;
+    claimDigest: string;
+  };
+  independentVerification: { status: "not_run" };
+  recordedAt: string;
+  lineageDigest: string;
 }
 
 export interface CancelRequestBody {
@@ -201,10 +232,32 @@ export interface ProtocolAcknowledgementBody {
   disposition: "accepted" | "duplicate";
 }
 
+export interface NodeOperationRequestBody {
+  requestId: string;
+  nodeId: string;
+  operation: "request_drain" | "request_resume" | "request_quarantine";
+  desiredState: "active" | "draining" | "quarantined";
+  expectedNodeVersion: number;
+  requestDigest: string;
+  safeReasonCode?: string;
+}
+
+export interface NodeOperationAcknowledgementBody {
+  requestId: string;
+  nodeId: string;
+  operation: NodeOperationRequestBody["operation"];
+  expectedNodeVersion: number;
+  disposition: "applied" | "rejected";
+  acknowledgementId: string;
+  safeResultCode?: string;
+  resultingNodeVersion?: number;
+}
+
 export interface NodeMessageBodyMap {
   "connection.hello": ConnectionHelloBody;
   "connection.accepted": ConnectionAcceptedBody;
   "node.heartbeat": HeartbeatBody;
+  "node.fleet.signal": FleetSignalEnvelope;
   "job.offer": JobOfferBody;
   "job.offer.decision": OfferDecisionBody;
   "job.lease.grant": LeaseGrantBody;
@@ -214,6 +267,8 @@ export interface NodeMessageBodyMap {
   "job.cancel.ack": CancelAcknowledgementBody;
   "node.reconciliation.request": ReconciliationRequestBody;
   "node.reconciliation.report": ReconciliationReportBody;
+  "node.operation.request": NodeOperationRequestBody;
+  "node.operation.ack": NodeOperationAcknowledgementBody;
   "protocol.ack": ProtocolAcknowledgementBody;
   "protocol.error": ProtocolErrorBody;
 }

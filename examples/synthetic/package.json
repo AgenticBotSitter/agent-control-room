@@ -1,0 +1,14 @@
+{
+  "name": "@control-room/synthetic-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fabricated in-memory Control Room observation example.",
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src", "README.md", "LICENSE", "NOTICE"],
+  "dependencies": {
+    "@control-room/conformance-kit": "workspace:*",
+    "@control-room/synthetic-reference-adapters": "workspace:*"
+  }
+}

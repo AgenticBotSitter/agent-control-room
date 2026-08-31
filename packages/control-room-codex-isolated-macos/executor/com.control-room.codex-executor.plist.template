@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Platform: macos-launchdaemon-executor; credential-free static template; owner-approved install/start required. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.control-room.codex-executor</string>
+  <key>UserName</key>
+  <string>{{CONTROL_ROOM_CODEX_EXECUTOR_USER}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{CONTROL_ROOM_CODEX_PINNED_EXECUTABLE}}</string>
+    <string>exec-server</string>
+    <string>--strict-config</string>
+    <string>--concurrent-requests</string>
+    <string>1</string>
+    <string>--listen</string>
+    <string>{{CONTROL_ROOM_CODEX_EXECUTOR_ENDPOINT}}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CODEX_HOME</key>
+    <string>{{CONTROL_ROOM_CODEX_EXECUTOR_HOME}}</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>{{CONTROL_ROOM_CODEX_EXECUTOR_WORK_ROOT}}</string>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

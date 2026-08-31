@@ -20,10 +20,13 @@ import {
   type EffectIntentRecord,
   type JobRecord,
   type LeaseRecord,
+  type RequestRecord,
   type TransitionTable,
+  type WorkflowRecord,
 } from "../domain/v1";
 import type { DatabaseClient, DatabaseSession } from "./database";
-import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDigest } from "../security";
+import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDigest, sha256Digest } from "../security";
+import { actionInboxItemSchemaV1, type ActionInboxItemV1 } from "../operator-surfaces/v1";
 
 type EntityKind = DomainEntity["kind"];
 type EntityState = DomainEntity["state"];
@@ -72,6 +75,20 @@ export interface TransitionInput {
 export interface TransitionResult {
   entity: DomainEntity;
   replayed: boolean;
+}
+
+export interface ProposedWorkBundle {
+  request: RequestRecord;
+  workflow: WorkflowRecord;
+  job: JobRecord;
+}
+
+export interface ProposedWorkBundleResult extends ProposedWorkBundle {
+  replayed: boolean;
+}
+
+export interface ProposedWorkBundleWithActionInbox extends ProposedWorkBundle {
+  actionInbox: ActionInboxItemV1;
 }
 
 export interface ClaimJobInput {
@@ -257,6 +274,103 @@ export class CanonicalStore {
           );
         }
       }
+    });
+  }
+
+  /**
+   * Atomically creates the non-runnable canonical records produced by an
+   * already-reviewed proposal. Exact retries are safe; changed reuse of any
+   * identifier fails closed. This boundary cannot make a job ready or create
+   * an attempt, lease, approval, outbox entry, or effect intent.
+   */
+  async createProposedWorkBundle(input: ProposedWorkBundle): Promise<ProposedWorkBundleResult> {
+    const request = domainEntitySchema.parse(input.request) as RequestRecord;
+    const workflow = domainEntitySchema.parse(input.workflow) as WorkflowRecord;
+    const job = domainEntitySchema.parse(input.job) as JobRecord;
+    for (const record of [request, workflow, job]) assertNoSecretMaterial(record, `${record.kind} record`);
+    if (request.state !== "draft" || workflow.state !== "proposed" || job.state !== "proposed") {
+      throw new Error("Proposed work bundle must remain non-runnable");
+    }
+    if (request.tenantId !== workflow.tenantId || request.tenantId !== job.tenantId
+      || request.projectId !== workflow.projectId || workflow.projectId !== job.projectId
+      || workflow.requestId !== request.id || job.workflowId !== workflow.id
+      || workflow.jobIds.length !== 1 || workflow.jobIds[0] !== job.id) {
+      throw new Error("Proposed work bundle lineage mismatch");
+    }
+    assertAuthorityDigest(job.authority);
+    if (job.authority.projectId !== job.projectId || job.authority.networkPolicy !== "none"
+      || job.authority.allowedNetworkDestinations.length !== 0 || job.authority.credentialRefs.length !== 0
+      || job.authority.filesystemRoots.length !== 0 || job.authority.effectPolicy !== "none"
+      || job.authority.maxConcurrentEffects !== 0) {
+      throw new Error("Proposed work bundle exceeds the materialization ceiling");
+    }
+    return this.db.transaction(async (tx) => {
+      let replayed = true;
+      for (const entity of [request, workflow, job] as DomainEntity[]) {
+        const existing = await this.getWith(tx, entity.tenantId, entity.kind, entity.id);
+        if (existing) {
+          if (sha256Digest(existing) !== sha256Digest(entity)) throw new Error("Proposed work bundle replay conflict");
+        } else {
+          await this.insertWith(tx, entity);
+          replayed = false;
+        }
+      }
+      return { request, workflow, job, replayed };
+    });
+  }
+
+  /** Atomically records an exact reviewed proposed-work bundle and its resolved owner-attention item. */
+  async createProposedWorkBundleWithActionInbox(input: ProposedWorkBundleWithActionInbox): Promise<ProposedWorkBundleResult & { actionInbox: ActionInboxItemV1 }> {
+    const request = domainEntitySchema.parse(input.request) as RequestRecord;
+    const workflow = domainEntitySchema.parse(input.workflow) as WorkflowRecord;
+    const job = domainEntitySchema.parse(input.job) as JobRecord;
+    const actionInbox = actionInboxItemSchemaV1.parse(input.actionInbox) as ActionInboxItemV1;
+    for (const record of [request, workflow, job]) assertNoSecretMaterial(record, `${record.kind} record`);
+    assertNoSecretMaterial(actionInbox, "action inbox item");
+    if (request.state !== "draft" || workflow.state !== "proposed" || job.state !== "proposed"
+      || actionInbox.state !== "resolved" || actionInbox.deliveryState !== "not_requested") {
+      throw new Error("Reviewed proposed work must remain non-runnable");
+    }
+    if (request.tenantId !== workflow.tenantId || request.tenantId !== job.tenantId || request.tenantId !== actionInbox.tenantId
+      || request.projectId !== workflow.projectId || workflow.projectId !== job.projectId || job.projectId !== actionInbox.projectId
+      || workflow.requestId !== request.id || job.workflowId !== workflow.id || actionInbox.workItemId !== job.id
+      || workflow.jobIds.length !== 1 || workflow.jobIds[0] !== job.id) {
+      throw new Error("Reviewed proposed work lineage mismatch");
+    }
+    assertAuthorityDigest(job.authority);
+    if (job.authority.projectId !== job.projectId || job.authority.networkPolicy !== "none"
+      || job.authority.allowedNetworkDestinations.length !== 0 || job.authority.credentialRefs.length !== 0
+      || job.authority.filesystemRoots.length !== 0 || job.authority.effectPolicy !== "none"
+      || job.authority.maxConcurrentEffects !== 0 || job.authority.maxCostUsd !== 0
+      || job.authority.allowedOperations.length !== 1 || job.authority.allowedOperations[0] !== "prepare.agent-handoff"
+      || job.specVersion !== "agent-team-handoff/v1" || !job.jobType.startsWith("agent-handoff.")
+      || !job.requiredCapability.startsWith("agent.team.handoff.")) throw new Error("Reviewed proposed work exceeds the materialization ceiling");
+    if (actionInbox.kind !== "review" || actionInbox.reasonCode !== "agent_team_handoff_materialized_proposed"
+      || actionInbox.requestedAction !== "Reviewed handoff recorded as proposed work" || actionInbox.blockedWorkItemIds.length !== 0
+      || actionInbox.legalResponses.length !== 1 || actionInbox.legalResponses[0]?.kind !== "open_source"
+      || actionInbox.evidence.length !== 2 || actionInbox.evidence.some((item) => item.kind !== "audit" || !item.digest || !item.observedAt)) {
+      throw new Error("Reviewed proposed work attention contract mismatch");
+    }
+    return this.db.transaction(async (tx) => {
+      let replayed = true;
+      for (const entity of [request, workflow, job] as DomainEntity[]) {
+        const existing = await this.getWith(tx, entity.tenantId, entity.kind, entity.id);
+        if (existing) {
+          if (sha256Digest(existing) !== sha256Digest(entity)) throw new Error("Reviewed proposed work replay conflict");
+        } else { await this.insertWith(tx, entity); replayed = false; }
+      }
+      const prior = await tx.query<{ payload: unknown }>(
+        "SELECT payload FROM control_action_inbox WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [actionInbox.tenantId, actionInbox.id]);
+      if (prior.rows[0]) {
+        if (sha256Digest(prior.rows[0].payload) !== sha256Digest(actionInbox)) throw new Error("Reviewed proposed work attention conflict");
+      } else {
+        await tx.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`, [actionInbox.id, actionInbox.tenantId, actionInbox.projectId ?? null,
+          actionInbox.workItemId ?? null, actionInbox.kind, actionInbox.state, actionInbox.deliveryState, actionInbox.createdAt,
+          actionInbox.expiresAt ?? null, JSON.stringify(actionInbox)]);
+        replayed = false;
+      }
+      return { request, workflow, job, actionInbox, replayed };
     });
   }
 
