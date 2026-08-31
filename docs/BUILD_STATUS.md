@@ -82,7 +82,7 @@
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
-| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Six candidates rejected; sixth remediation implemented; seventh different review required | Captured exact-data reflection, array, Date, string, and iterator operations with indexed fixed-list construction; eight fake scenarios retain all nine blockers |
+| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Complete for exact independently accepted effect-free commit `20eeb14` | Six remediations closed mutable-runtime integrity attacks; eight fake scenarios retain all nine blockers and qualify zero production proofs; see `CR11B_AUTO_070_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -90,45 +90,19 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-070 now implements the protected custody and hosted PostgreSQL qualification foundation without
-connecting to a live database or enrolling production keys. It binds authenticated AUTO-050/AUTO-060 lineage, three
-single-purpose service identities, eight deterministic fake scenarios for policy high-water, protected commit time,
-revocation convergence, serializable claims, checkpoint CAS, restore rollback, and terminal ambiguity, plus authenticated
-reports and a safe disabled projection. The first independent reviewer rejected exact commit `28c6603`, tree `44f0568`,
-because mutable `Object.freeze` and `Set.prototype.add` could disable freezing and turn an identity-alias failure into an
-authenticated eight-pass fake report. The unchanged rejection report has SHA-256
-`4a15ae85d35fe6bd71866dc69cc36f8b2cb378d7357db9f90d6d5db697c2f86f`. The first remediation captured freeze/value
-operations, removed shared collections, and pinned canonical digest helpers. A different reviewer rejected exact commit
-`1dff163`, tree `4829070`, because an inherited numeric `Array.prototype` setter could still turn the identity-alias fault
-into an authenticated eight-pass report. That unchanged report has SHA-256
-`2d212bfa071437b1af10c0ac9c00432df0d4823d2196a3ee235e8feaec17ebab`. The second remediation removes every inherited
-indexed write from trusted scenario logic, uses scalar three-way decisions and fixed array literals, and reproduces the
-numeric-setter case across all eight faults. A third reviewer accepted that closure but rejected exact commit `2cea597`,
-tree `a1eca85`, because mutable `Date.prototype.getTime` and `toISOString` could admit impossible equal timestamps while
-captured chronology parsing produced `NaN`. That unchanged report has SHA-256
-`7e759fdb942ee07f6647f31ce365c0d9ff5883f178ed310fb30e058dc6cba763`. The third remediation captures the instance
-methods, requires their exact runtime descriptors before artifact work, cross-checks instance and static parsing, and
-denies equal run boundaries. A fourth reviewer closed the three prior findings but rejected exact commit `941b6d6`, tree
-`748d901`, because mutable `String.prototype.slice` could change the authenticated digest-derived report ID until the
-helper was restored. That unchanged report has SHA-256
-`4d9517bdb99b93258b23edfac37320ced6c023c13687f815e8e07d4c1840e695`. The fourth remediation captures the string
-intrinsic, checks its exact descriptor before artifact work, and derives report identity only through the captured
-operation. A fifth reviewer closed those four reproductions but rejected exact commit `ccdc13e`, tree `40415e8`, because
-mutable `Array.prototype[Symbol.iterator]` could duplicate one blocker and omit another from an authenticated safe
-projection. That unchanged report has SHA-256
-`8e65da402e9e4ea045ced9387294e5caa6ba8ecaf84f9ede73471ab6fcc61db0`. The fifth remediation captures and checks the
-exact iterator before every exported operation and removes iterable spread from every trusted fixed-list construction;
-the projection copies the nine already verified blocker positions explicitly. A sixth reviewer closed the five prior
-reproductions but rejected exact commit `bf1a663`, tree `83c885c`, because mutable
-`Object.getOwnPropertyDescriptors` could erase an explicit identity-alias fault before exact parsing and produce an
-authenticated eight-pass report. That unchanged report has SHA-256
-`69cff1f40382323fdb5edfa4d962b353bbdf7edec258d8e898083c9a3f238dcf`. The sixth remediation hardens the shared exact
-snapshot and host-array boundary with captured prototype, key, descriptor, definition, array-shape, and copy operations,
-while AUTO-070 explicitly checks the reflection surface before every exported operation. Focused tests pass 18/18 and
-combined CR11B passes 137/137; the registered pretest passes 719/719.
-Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and
-whitespace validation pass. All nine production gates remain blocking, zero proofs are qualified, and every live/effect
-capability remains false. A seventh different fresh independent review of the exact sixth remediation is still required.
+Accepted boundary: CR11B-AUTO-070 is complete for exact effect-free commit
+`20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`. It binds authenticated
+AUTO-050/AUTO-060 lineage, three single-purpose service identities, and eight deterministic fake scenarios for policy
+high-water, protected commit time, revocation convergence, serializable claims, checkpoint CAS, restore rollback, and
+terminal ambiguity. Six successive independent reviews found real mutable-runtime integrity defects in freeze, collection,
+array-index, Date, string-slice, array-iterator, and exact-reflection handling. The sixth remediation captures and verifies
+the complete trusted runtime surface and preserves exact one-failure truth under the hostile cases. A seventh different
+independent reviewer closed all six findings and accepted the exact implementation in immutable report SHA-256
+`07033f542a7e3b7167a95d3fa301b90ff3806ec49232cddc878e8fa84353f681`. Focused tests pass 18/18, combined CR11B passes
+137/137, registered pretests pass 719/719, core passes 414/416 with zero failures and two intentional platform skips, and
+public posttests pass 52/52. Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL
+tables, macOS stage zero, and whitespace validation pass. All nine production gates remain blocking, zero proofs are
+qualified, and every live/effect capability remains false.
 
 Prior accepted boundary: CR11B-AUTO-060 is complete for exact effect-free commit
 `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`. The first two immutable
@@ -365,13 +339,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-070-PROTECTED-CUSTODY-QUALIFICATION — define the production custody and hosted-database qualification foundation without live production contact
+Block: CR11B-AUTO-080-DISPOSABLE-HOSTED-QUALIFICATION — define and, only under a fresh exact owner authorization, run the first disposable hosted PostgreSQL qualification
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: AUTO-060 can now authenticate fixture proof packages without trusting caller-mutable parsers, but it deliberately proves none of the custody and multi-process properties needed for production. The next security boundary is the qualification machinery that can later test those properties without silently turning a local fixture into production authority.
-Expected output: versioned protected service-identity, owner-policy high-water, clock/revocation/checkpoint custody, hosted PostgreSQL isolation/concurrency, backup/restore, ambiguity, and safe qualification-evidence contracts; deterministic fake multi-process adapters and hostile tests; default-disabled projection with all production capabilities false.
-Owner action: keep `gpt-5.6-sol` at xhigh for this security and distributed-systems block. No live database, credential, keychain, deployment, or GitHub merge authority is required for the effect-free foundation.
-Stop before: any real database or provider connection, production credential/key enrollment, owner approval issuance, live evidence collection, consumer construction, protected-reference access, scheduling, claim, lease, dispatch, execution, recurrence activation, native reads, DNS, Cloudflare, hosting, deployment, or external effect.
+Why: AUTO-070 now provides independently accepted test machinery, but its results are deliberately fake and qualify none of the nine production proofs. The next boundary must turn a tightly scoped disposable run into sanitized evidence without granting production authority or allowing credentials and infrastructure details into the repository.
+Expected output: exact controlled-effect authorization packet, disposable-resource and cleanup contract, separate service identities, protected clock/revocation/checkpoint observations, hosted PostgreSQL isolation/concurrency and restore evidence, sanitized authenticated report, negative/ambiguity paths, and independent review of the exact result.
+Owner action: keep `gpt-5.6-sol` at xhigh. Before any real connection or process starts, provide fresh explicit authority for the exact disposable provider/resources, call ceiling, duration, evidence retention, and cleanup actions. The effect-free packet and tests may be built before that authority.
+Stop before: any unspecified provider or database, production credential/key/policy, non-disposable resource, public endpoint, consumer activation, scheduling, claim, lease, dispatch, execution, recurrence, DNS, Cloudflare, hosting deployment, or external effect outside the exact controlled packet.
 ```
 
 ## Update rule

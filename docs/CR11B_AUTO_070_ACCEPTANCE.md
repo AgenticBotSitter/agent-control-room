@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Acceptance Record
 
-Status: six candidates rejected; sixth remediation implemented; seventh different independent review pending
+Status: complete; exact sixth-remediation implementation independently accepted by a seventh different reviewer
 
 Date: 2026-08-30
 
@@ -42,9 +42,9 @@ qualified proofs, and every authority/effect flag false.
 
 ## Acceptance requirement
 
-Producer tests do not accept this security boundary. A fresh independent reviewer must examine the exact committed
-candidate, rerun the focused and combined gates, attack all eight failures and authenticated artifact seams, confirm the
-source has no effect path, and preserve a sanitized immutable report. Any finding keeps AUTO-070 open.
+Producer tests did not accept this security boundary. A seventh different independent reviewer examined the exact
+committed candidate, reran the focused and combined gates, attacked all eight failures and authenticated artifact seams,
+confirmed that the source has no effect path, and preserved a sanitized immutable acceptance report.
 
 ## First review disposition and remediation
 
@@ -142,8 +142,22 @@ exposure and trusted copies use indexed loops plus captured own-property definit
 plural-descriptor, prototype, definition, and own-key operations before every exported operation. Hostile regressions
 substitute plural descriptors, omit the explicit fault through own-key drift, and suppress property definition; each
 fails closed before targeted behavior. Restoration proves the explicit alias fault remains exactly seven passes and one
-failure and the original report/projection retain exact validity. A seventh different reviewer must accept the exact
-sixth-remediation commit.
+failure and the original report/projection retain exact validity.
+
+## Sixth-remediation independent acceptance
+
+A seventh different independent reviewer accepted exact implementation commit
+`20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree
+`e21fbfe7e2ec6169fccc76c76296722d870f336c`. The immutable report is
+`docs/reviews/CR11B_AUTO_070_SIXTH_REMEDIATION_REREVIEW.md`, SHA-256
+`07033f542a7e3b7167a95d3fa301b90ff3806ec49232cddc878e8fa84353f681`.
+
+The reviewer independently reproduced or inspected every prior attack family, verified that hostile plural-descriptor,
+prototype, own-key, property-definition, iterator, string, Date, inherited-index, freeze, and collection drift fails
+closed, and confirmed that restored execution retains the explicit seven-pass/one-failure identity-alias result. The
+focused AUTO-070 gate passed 18/18 and combined CR11B passed 137/137. All six findings are closed only for the exact
+effect-free implementation above. AUTO-070 is complete; the accepted fake report still leaves all nine production gates
+blocking and qualifies zero proofs.
 
 ## Negative authority
 

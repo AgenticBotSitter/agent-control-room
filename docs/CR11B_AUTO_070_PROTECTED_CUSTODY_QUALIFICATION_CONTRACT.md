@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Protected Custody Qualification Foundation Contract
 
-Status: six candidates rejected; exact sixth remediation requires a seventh different independent review
+Status: complete; exact sixth-remediation implementation independently accepted by a seventh different reviewer
 
 Date: 2026-08-30
 
@@ -196,4 +196,14 @@ report. The sixth remediation captures and uses all reflection and property-defi
 snapshot path, removes array-method and inherited indexed writes from its bounded copy, and checks the reflection surface
 at every AUTO-070 entry. Companion regressions cover descriptor-value substitution, own-key omission, and suppressed data
 property definition, restore every descriptor, and prove exact one-failure alias truth plus stable original artifacts.
-Only a seventh different independent reviewer can accept the exact sixth-remediation commit.
+
+## Independent acceptance
+
+A seventh different independent reviewer accepted exact sixth-remediation implementation commit
+`20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree
+`e21fbfe7e2ec6169fccc76c76296722d870f336c`. The unchanged report at
+`docs/reviews/CR11B_AUTO_070_SIXTH_REMEDIATION_REREVIEW.md` has SHA-256
+`07033f542a7e3b7167a95d3fa301b90ff3806ec49232cddc878e8fa84353f681`. It closes all six recorded findings and accepts
+the source only as an effect-free repository qualification foundation. The result retains all nine production blockers,
+qualifies zero production proofs, and grants no live database, credential, policy, consumer, activation, deployment, or
+external-effect authority.
