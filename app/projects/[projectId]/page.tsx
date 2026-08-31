@@ -10,7 +10,8 @@ import { WAYFARER_PRESENTATION_PROJECT_ID_V1, buildWayfarerWorkspaceViewV1 } fro
 import { AgentTeamWorkspace } from "@/app/components/agent-team-workspace";
 import { buildAgentTeamDurabilityFixtureV1, buildAgentTeamFixtureV1 } from "@/src/agent-team/v1";
 import { ReadyFrontierProjectView } from "@/app/components/ready-frontier-view";
-import { buildReadyFrontierAutomationProjectionFixtureV1, buildReadyFrontierCycleProjectionFixtureV1 } from "@/src/ready-frontier/v1";
+import { buildReadyFrontierAutomationProjectionFixtureV1, buildReadyFrontierCycleProjectionFixtureV1,
+  buildReadyFrontierPromotionProjectionFixtureV1 } from "@/src/ready-frontier/v1";
 
 export function generateStaticParams() {
   return projects.map((project) => ({ projectId: project.id }));
@@ -57,7 +58,8 @@ export default async function ProjectDetail({ params }: { params: Promise<{ proj
         <p className="operator-data-status unavailable" role="status">This project detail is a synthetic fixture. Protected project status is available on the portfolio dashboard.</p>
         <ProtectedProjectDetailStatus projectId={project.id} />
         <ReadyFrontierProjectView data={{ state: "available", projection: buildReadyFrontierCycleProjectionFixtureV1() }}
-          automation={buildReadyFrontierAutomationProjectionFixtureV1()} projectId={project.id} />
+          automation={buildReadyFrontierAutomationProjectionFixtureV1()}
+          promotion={buildReadyFrontierPromotionProjectionFixtureV1()} projectId={project.id} />
         <AgentTeamWorkspace fixture={buildAgentTeamFixtureV1(project.id)} durabilityFixture={buildAgentTeamDurabilityFixtureV1(project.id)} />
         {project.id === ABS_NEWS_PROJECT_ID_V1 ? <AbsNewsWorkspace fixture={buildAbsNewsSyntheticWorkspaceV1()} /> : null}
         {isWayfarer ? <WayfarerWorkspace fixture={buildWayfarerWorkspaceViewV1()} /> : null}

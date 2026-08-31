@@ -30,6 +30,7 @@ import { fetchOperatorSurfaceSnapshotV1, saveOwnerFocusV1, type OperatorSurfaceD
 import { ReadyFrontierPortfolioView } from "./components/ready-frontier-view";
 import type { ReadyFrontierCycleProjectionV1 } from "@/src/ready-frontier/v1/integration-types";
 import type { ReadyFrontierAutomationProjectionV1 } from "@/src/ready-frontier/v1/automation-types";
+import type { ReadyFrontierPromotionProjectionV1 } from "@/src/ready-frontier/v1/ready-policy-types";
 
 type Scope = "all" | string;
 type ScenarioKey = keyof typeof transcriptionScenarios;
@@ -55,7 +56,8 @@ function projectName(projectId: string): string {
 }
 
 export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleProjectionV1;
-  readyFrontierAutomation: ReadyFrontierAutomationProjectionV1 }) {
+  readyFrontierAutomation: ReadyFrontierAutomationProjectionV1;
+  readyFrontierPromotion: ReadyFrontierPromotionProjectionV1 }) {
   const [scope, setScope] = useState<Scope>("all");
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("automatic");
@@ -266,7 +268,7 @@ export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleP
             <span className="simulation-only">Repository fixture · no work created</span>
           </div>
           <ReadyFrontierPortfolioView data={{ state: "available", projection: props.readyFrontier }}
-            automation={props.readyFrontierAutomation} projectIds={scopedIds} />
+            automation={props.readyFrontierAutomation} promotion={props.readyFrontierPromotion} projectIds={scopedIds} />
         </section>
 
         <div className="dashboard-columns">

@@ -14,7 +14,11 @@ export const readyFrontierIdSchemaV1 = z.string().min(3).max(160).regex(/^[a-zA-
 export const readyFrontierSafeCodeSchemaV1 = z.string().min(1).max(96).regex(/^[a-z0-9][a-z0-9._:-]*$/);
 export const readyFrontierDigestSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const readyFrontierAuthTagSchemaV1 = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
-export const readyFrontierTimeSchemaV1 = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+export const readyFrontierTimeSchemaV1 = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  .refine((value) => {
+    const parsed = new Date(value);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+  }, "invalid canonical instant");
 const label = z.string().min(1).max(160);
 const objective = z.string().min(1).max(480);
 const nonNegativeInt = z.number().int().min(0);

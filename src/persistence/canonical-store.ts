@@ -27,6 +27,7 @@ import {
 import type { DatabaseClient, DatabaseSession } from "./database";
 import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDigest, sha256Digest } from "../security";
 import { actionInboxItemSchemaV1, type ActionInboxItemV1 } from "../operator-surfaces/v1";
+import { acquireReadyFrontierCanonicalPromotionAuthorizationV1 } from "../ready-frontier/v1/promotion-service";
 
 type EntityKind = DomainEntity["kind"];
 type EntityState = DomainEntity["state"];
@@ -430,6 +431,297 @@ export class CanonicalStore {
     });
   }
 
+  /** Internal AUTO-030 persistence port. Callers must enter through the policy-guarded promotion service. */
+  async promoteReadyFrontierJobWithInternalHandoff(operationAuthorization: unknown): Promise<{ job: JobRecord; replayed: boolean }> {
+    const authorization = acquireReadyFrontierCanonicalPromotionAuthorizationV1(operationAuthorization);
+    if (!authorization) throw new Error("Ready frontier promotion requires an active exact-operation authorization");
+    const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]*$/;
+    const digest = /^sha256:[a-f0-9]{64}$/;
+    const instant = (value: string): boolean => {
+      const parsed = new Date(value); return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+    };
+    try {
+      const receipt = authorization.receipt;
+      const standingPolicy = authorization.standingPolicy;
+      const readyPolicy = authorization.readyPolicy;
+      const standingProject = standingPolicy.projectPolicies.find((item) => item.projectId === receipt.readyJob.projectId);
+      const readyProject = readyPolicy.projectPolicies.find((item) => item.projectId === receipt.readyJob.projectId);
+      const expectedTransitionId = `transition:frontier-ready:${sha256Digest({ receiptId: receipt.receiptId }).slice(7, 39)}`;
+      const expectedTransitionKey = `frontier-ready-${receipt.receiptDigest.slice(7)}`;
+      const input = {
+        tenantId: receipt.tenantId,
+        projectId: receipt.readyJob.projectId,
+        jobId: receipt.readyJob.id,
+        requestId: receipt.requestId,
+        requestDigest: receipt.promotionRequestDigest,
+        receiptDigest: receipt.receiptDigest,
+        readyJobDigest: sha256Digest(receipt.readyJob),
+        standingPolicy: { policyId: receipt.standingPolicyId, revision: receipt.standingPolicyRevision,
+          policyDigest: receipt.standingPolicyDigest },
+        readyPolicy: { policyId: receipt.readyPolicyId, revision: receipt.readyPolicyRevision,
+          policyDigest: receipt.readyPolicyDigest },
+        expectedJobVersion: 0,
+        expectedJobDigest: receipt.proposedJobDigest,
+        maximumActiveReadyGlobal: readyPolicy.maximumActiveReadyGlobal,
+        maximumActiveReadyProject: readyProject?.maximumActiveReady ?? 0,
+        transitionId: expectedTransitionId,
+        transitionIdempotencyKey: expectedTransitionKey,
+        actor: { actorId: "service:ready-frontier-promoter", actorType: "service" } as ActorRef,
+        occurredAt: receipt.promotedAt,
+        reservation: {
+          id: receipt.reservation.reservationId,
+          routeId: receipt.reservation.routeId,
+          resourceKey: receipt.reservation.resourceKey,
+          units: receipt.reservation.units,
+          capacityUnits: receipt.reservation.capacityUnits,
+          decisionDigest: receipt.reservation.decisionDigest,
+          acquiredAt: receipt.reservation.acquiredAt,
+          expiresAt: receipt.reservation.expiresAt,
+        },
+        handoff: {
+          id: receipt.handoff.handoffId,
+          payloadDigest: sha256Digest(receipt.handoff),
+          availableAt: receipt.handoff.createdAt,
+          expiresAt: receipt.handoff.expiresAt,
+          payload: receipt.handoff as unknown as Record<string, unknown>,
+        },
+      };
+      if (!standingProject || !standingProject.enabled || !readyProject || !readyProject.enabled
+        || readyPolicy.parentStandingPolicyId !== standingPolicy.policyId
+        || readyPolicy.parentStandingPolicyRevision !== standingPolicy.revision
+        || readyPolicy.parentStandingPolicyDigest !== standingPolicy.policyDigest
+        || input.tenantId !== standingPolicy.tenantId || input.tenantId !== readyPolicy.tenantId
+        || standingPolicy.workspaceId !== receipt.workspaceId || readyPolicy.workspaceId !== receipt.workspaceId
+        || receipt.standingPolicyId !== standingPolicy.policyId
+        || receipt.standingPolicyRevision !== standingPolicy.revision
+        || receipt.standingPolicyDigest !== standingPolicy.policyDigest
+        || receipt.readyPolicyId !== readyPolicy.policyId || receipt.readyPolicyRevision !== readyPolicy.revision
+        || receipt.readyPolicyDigest !== readyPolicy.policyDigest
+        || receipt.reservation.projectId !== receipt.readyJob.projectId
+        || receipt.reservation.jobId !== receipt.readyJob.id
+        || receipt.reservation.routeId !== receipt.readyJob.authority.allowedExecutor
+        || input.reservation.resourceKey !== readyProject.resourceKey
+        || input.reservation.units !== readyProject.reservationUnits
+        || input.reservation.capacityUnits !== readyProject.resourceCapacityUnits
+        || receipt.handoff.tenantId !== receipt.tenantId || receipt.handoff.projectId !== receipt.readyJob.projectId
+        || receipt.handoff.jobId !== receipt.readyJob.id
+        || receipt.handoff.reservationId !== receipt.reservation.reservationId) {
+        throw new Error("Ready frontier promotion authorization mismatch");
+      }
+      if (![input.tenantId, input.projectId, input.jobId, input.requestId, input.standingPolicy.policyId,
+        input.readyPolicy.policyId, input.transitionId, input.transitionIdempotencyKey,
+        input.reservation.id, input.reservation.routeId, input.reservation.resourceKey,
+        input.handoff.id].every((value) => safeId.test(value))
+        || ![input.requestDigest, input.receiptDigest, input.readyJobDigest, input.expectedJobDigest,
+          input.standingPolicy.policyDigest, input.readyPolicy.policyDigest,
+          input.reservation.decisionDigest, input.handoff.payloadDigest].every((value) => digest.test(value))
+        || ![input.occurredAt, input.reservation.acquiredAt, input.reservation.expiresAt,
+          input.handoff.availableAt, input.handoff.expiresAt, authorization.materializedAt,
+          authorization.authorizedAt].every(instant)
+        || input.reservation.acquiredAt !== input.occurredAt
+        || Date.parse(input.reservation.expiresAt) <= Date.parse(input.occurredAt)
+        || input.handoff.availableAt !== input.occurredAt || input.handoff.expiresAt !== input.reservation.expiresAt
+        || !Number.isSafeInteger(input.maximumActiveReadyGlobal) || input.maximumActiveReadyGlobal < 1
+        || !Number.isSafeInteger(input.maximumActiveReadyProject) || input.maximumActiveReadyProject < 1
+        || !Number.isSafeInteger(input.standingPolicy.revision) || input.standingPolicy.revision < 1
+        || !Number.isSafeInteger(input.readyPolicy.revision) || input.readyPolicy.revision < 1
+        || !Number.isSafeInteger(input.reservation.units) || input.reservation.units < 1
+        || !Number.isSafeInteger(input.reservation.capacityUnits) || input.reservation.capacityUnits < input.reservation.units
+        || input.actor.actorType !== "service" || input.actor.actorId !== "service:ready-frontier-promoter") {
+        throw new Error("Invalid ready frontier promotion input");
+      }
+      assertNoSecretMaterial(input.handoff.payload, "ready frontier handoff");
+      if (input.handoff.payload.handoffId !== input.handoff.id || input.handoff.payload.tenantId !== input.tenantId
+        || input.handoff.payload.projectId !== input.projectId || input.handoff.payload.jobId !== input.jobId
+        || input.handoff.payload.reservationId !== input.reservation.id
+        || input.handoff.payload.destination !== "internal_scheduler_jobber_table"
+        || input.handoff.payload.state !== "pending_internal_handoff"
+        || input.handoff.payload.repositorySimulationOnly !== true || input.handoff.payload.permitsClaimOrLease !== false
+        || input.handoff.payload.permitsDispatchOrExecution !== false || input.handoff.payload.permitsProviderContact !== false
+        || input.handoff.payload.permitsAgentMessage !== false || input.handoff.payload.permitsGitHubMutation !== false
+        || input.handoff.payload.permitsExternalEffects !== false) throw new Error("Ready frontier handoff contract mismatch");
+      let lastAuthorizedTime = Date.parse(authorization.authorizedAt);
+      const currentAuthorizationTime = (requireFreshPromotion: boolean): string => {
+        let value: string;
+        try { value = authorization.now(); } catch { throw new Error("Ready frontier trusted clock failed"); }
+        if (!instant(value)) throw new Error("Ready frontier trusted clock returned an invalid instant");
+        const current = Date.parse(value);
+        if (current < lastAuthorizedTime || current < Date.parse(authorization.authorizedAt)
+          || standingPolicy.state !== "active" || readyPolicy.state !== "active"
+          || current < Date.parse(standingPolicy.effectiveAt) || current >= Date.parse(standingPolicy.expiresAt)
+          || current < Date.parse(readyPolicy.effectiveAt) || current >= Date.parse(readyPolicy.expiresAt)
+          || current >= Date.parse(receipt.reservation.expiresAt)
+          || current >= Date.parse(receipt.handoff.expiresAt)
+          || current >= Date.parse(receipt.readyJob.authority.expiresAt)) {
+          throw new Error("Ready frontier promotion authorization is no longer current");
+        }
+        if (requireFreshPromotion && (current < Date.parse(receipt.promotedAt)
+          || current - Date.parse(receipt.promotedAt) > 5_000
+          || current < Date.parse(authorization.materializedAt)
+          || current - Date.parse(authorization.materializedAt) > readyPolicy.maximumMaterializationAgeSeconds * 1_000)) {
+          throw new Error("Ready frontier promotion request is stale at the write boundary");
+        }
+        lastAuthorizedTime = current;
+        return value;
+      };
+      let requireFreshAtPreCommit = true;
+      const result = await this.db.transactionWithPreCommitCheck(async (tx) => {
+      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
+      if (!tenant.rows[0]) throw new Error("Ready frontier tenant not found");
+      const priorRequest = await tx.query<{ request_digest: string; status: string; result: {
+        receiptDigest?: string; jobId?: string; reservationId?: string; handoffId?: string } }>(
+        `SELECT request_digest,status,result FROM control_idempotency
+         WHERE tenant_id=$1 AND operation_scope='ready-frontier-promotion' AND idempotency_key=$2 FOR UPDATE`,
+        [input.tenantId, input.requestId]);
+      let transactionNow = currentAuthorizationTime(!priorRequest.rows[0]);
+      if (priorRequest.rows[0]) {
+        requireFreshAtPreCommit = false;
+        const prior = priorRequest.rows[0];
+        if (prior.request_digest !== input.requestDigest || prior.status !== "completed"
+          || prior.result?.receiptDigest !== input.receiptDigest || prior.result?.jobId !== input.jobId
+          || prior.result?.reservationId !== input.reservation.id || prior.result?.handoffId !== input.handoff.id) {
+          throw new Error("Ready frontier promotion request replay conflict");
+        }
+        const handoff = await tx.query<{ request_id: string; project_id: string; job_id: string; reservation_id: string;
+          state: string; payload_digest: string; available_at: string; expires_at: string; payload: Record<string, unknown> }>(
+          `SELECT request_id,project_id,job_id,reservation_id,state,payload_digest,available_at,expires_at,payload
+           FROM control_ready_frontier_handoffs WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+          [input.tenantId, input.handoff.id]);
+        const queued = handoff.rows[0];
+        if (!queued || queued.request_id !== input.requestId || queued.project_id !== input.projectId
+          || queued.job_id !== input.jobId || queued.reservation_id !== input.reservation.id
+          || queued.state !== "pending_internal_handoff" || queued.payload_digest !== input.handoff.payloadDigest
+          || new Date(queued.available_at).toISOString() !== input.handoff.availableAt
+          || new Date(queued.expires_at).toISOString() !== input.handoff.expiresAt
+          || sha256Digest(queued.payload) !== input.handoff.payloadDigest) {
+          throw new Error("Ready frontier promotion replay lacks its pending internal handoff");
+        }
+        const transition = await tx.query<{ id: string; entity_id: string; from_state: string; to_state: string;
+          from_version: number; to_version: number; actor_id: string; actor_type: string; occurred_at: string;
+          safe_metadata: Record<string, unknown> }>(
+          `SELECT id,entity_id,from_state,to_state,from_version,to_version,actor_id,actor_type,occurred_at,safe_metadata
+           FROM control_transition_events
+           WHERE tenant_id=$1 AND entity_kind='job' AND idempotency_key=$2`,
+          [input.tenantId, input.transitionIdempotencyKey]);
+        const event = transition.rows[0];
+        if (!event || event.id !== input.transitionId || event.entity_id !== input.jobId
+          || event.from_state !== "proposed" || event.to_state !== "ready"
+          || event.from_version !== input.expectedJobVersion || event.to_version !== input.expectedJobVersion + 1
+          || event.actor_id !== input.actor.actorId || event.actor_type !== input.actor.actorType
+          || new Date(event.occurred_at).toISOString() !== input.occurredAt
+          || sha256Digest(event.safe_metadata) !== sha256Digest({ readyFrontierHandoffId: input.handoff.id,
+            schedulerDecisionDigest: input.reservation.decisionDigest, handoffPayloadDigest: input.handoff.payloadDigest })) {
+          throw new Error("Ready frontier handoff replay lacks its canonical transition");
+        }
+        const reservation = await tx.query<{ project_id: string; work_item_id: string; route_id: string;
+          resource_key: string; units: number; decision_digest: string; state: string; acquired_at: string;
+          expires_at: string; capacity_units: number }>(
+          `SELECT r.project_id,r.work_item_id,r.route_id,r.resource_key,r.units,r.decision_digest,r.state,
+             r.acquired_at,r.expires_at,h.capacity_units
+           FROM control_resource_reservations r JOIN control_resource_reservation_heads h
+             ON h.tenant_id=r.tenant_id AND h.resource_key=r.resource_key
+           WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE OF r,h`,
+          [input.tenantId, input.reservation.id]);
+        const held = reservation.rows[0];
+        if (!held || held.project_id !== input.projectId || held.work_item_id !== input.jobId
+          || held.route_id !== input.reservation.routeId || held.resource_key !== input.reservation.resourceKey
+          || Number(held.units) !== input.reservation.units || held.decision_digest !== input.reservation.decisionDigest
+          || held.state !== "active" || Number(held.capacity_units) !== input.reservation.capacityUnits
+          || new Date(held.acquired_at).toISOString() !== input.reservation.acquiredAt
+          || new Date(held.expires_at).toISOString() !== input.reservation.expiresAt) {
+          throw new Error("Ready frontier handoff replay lacks its database reservation");
+        }
+        const current = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+        if (current.state !== "ready" || current.version !== input.expectedJobVersion + 1
+          || sha256Digest(current) !== input.readyJobDigest) throw new Error("Ready frontier replay job has advanced or drifted");
+        currentAuthorizationTime(false);
+        return { job: current, replayed: true };
+      }
+      await tx.query(`INSERT INTO control_idempotency
+        (tenant_id,operation_scope,idempotency_key,request_digest,status)
+        VALUES($1,'ready-frontier-promotion',$2,$3,'processing')`,
+      [input.tenantId, input.requestId, input.requestDigest]);
+      const row = await tx.query<{ payload: JobRecord }>(
+        "SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.jobId]);
+      const job = row.rows[0] ? domainEntitySchema.parse(row.rows[0].payload) as JobRecord : undefined;
+      if (!job || job.kind !== "job" || job.projectId !== input.projectId || job.state !== "proposed"
+        || job.version !== input.expectedJobVersion || sha256Digest(job) !== input.expectedJobDigest) {
+        throw new Error("Ready frontier proposed job mismatch");
+      }
+      assertAuthorityDigest(job.authority);
+      if (job.authority.projectId !== job.projectId || job.authority.allowedExecutor !== input.reservation.routeId
+        || job.authority.networkPolicy !== "none" || job.authority.allowedNetworkDestinations.length !== 0
+        || job.authority.credentialRefs.length !== 0 || job.authority.filesystemRoots.length !== 0
+        || job.authority.effectPolicy !== "none" || job.authority.maxConcurrentEffects !== 0 || job.authority.maxCostUsd !== 0
+        || job.authority.allowedOperations.length !== 1 || job.authority.allowedOperations[0] !== "prepare.repository-work"
+        || job.specVersion !== "ready-frontier-work-order/v1" || !job.jobType.startsWith("frontier.repository-work.")) {
+        throw new Error("Ready frontier job exceeds its ready ceiling");
+      }
+      const readyCounts = await tx.query<{ global_count: string; project_count: string }>(`SELECT
+        (SELECT count(*) FROM control_jobs WHERE tenant_id=$1 AND state='ready')::text global_count,
+        (SELECT count(*) FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND state='ready')::text project_count`,
+      [input.tenantId, input.projectId]);
+      if (Number(readyCounts.rows[0]?.global_count ?? 0) >= input.maximumActiveReadyGlobal
+        || Number(readyCounts.rows[0]?.project_count ?? 0) >= input.maximumActiveReadyProject) {
+        throw new Error("Ready frontier ready capacity exhausted");
+      }
+
+      await tx.query(`INSERT INTO control_resource_reservation_heads(tenant_id,resource_key,capacity_units)
+        VALUES($1,$2,$3) ON CONFLICT(tenant_id,resource_key) DO NOTHING`,
+      [input.tenantId, input.reservation.resourceKey, input.reservation.capacityUnits]);
+      const head = await tx.query<{ capacity_units: number }>(
+        "SELECT capacity_units FROM control_resource_reservation_heads WHERE tenant_id=$1 AND resource_key=$2 FOR UPDATE",
+        [input.tenantId, input.reservation.resourceKey]);
+      if (Number(head.rows[0]?.capacity_units) !== input.reservation.capacityUnits) throw new Error("Ready frontier resource capacity conflict");
+      transactionNow = currentAuthorizationTime(true);
+      await tx.query(`UPDATE control_resource_reservations SET state='expired'
+        WHERE tenant_id=$1 AND resource_key=$2 AND state='active' AND expires_at <= $3`,
+      [input.tenantId, input.reservation.resourceKey, transactionNow]);
+      const existingReservation = await tx.query<{ id: string }>(
+        "SELECT id FROM control_resource_reservations WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+        [input.tenantId, input.reservation.id]);
+      if (existingReservation.rows[0]) throw new Error("Ready frontier reservation replay without handoff");
+      const used = await tx.query<{ used_units: string }>(`SELECT COALESCE(SUM(units),0)::text used_units
+        FROM control_resource_reservations WHERE tenant_id=$1 AND resource_key=$2 AND state='active' AND expires_at > $3`,
+      [input.tenantId, input.reservation.resourceKey, transactionNow]);
+      if (Number(used.rows[0]?.used_units ?? 0) + input.reservation.units > input.reservation.capacityUnits) {
+        throw new Error("Ready frontier resource unavailable");
+      }
+      currentAuthorizationTime(true);
+      await tx.query(`INSERT INTO control_resource_reservations
+        (id,tenant_id,project_id,work_item_id,route_id,resource_key,units,decision_digest,state,acquired_at,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)`,
+      [input.reservation.id, input.tenantId, input.projectId, input.jobId, input.reservation.routeId,
+        input.reservation.resourceKey, input.reservation.units, input.reservation.decisionDigest,
+        input.reservation.acquiredAt, input.reservation.expiresAt]);
+      currentAuthorizationTime(true);
+      const promoted = await this.transitionWith(tx, { tenantId: input.tenantId, kind: "job", entityId: input.jobId,
+        expectedVersion: input.expectedJobVersion, toState: "ready", transitionId: input.transitionId,
+        idempotencyKey: input.transitionIdempotencyKey, actor: input.actor, occurredAt: input.occurredAt,
+        safeMetadata: { readyFrontierHandoffId: input.handoff.id, schedulerDecisionDigest: input.reservation.decisionDigest,
+          handoffPayloadDigest: input.handoff.payloadDigest } }, true);
+      currentAuthorizationTime(true);
+      await tx.query(`INSERT INTO control_ready_frontier_handoffs
+        (id,tenant_id,request_id,project_id,job_id,reservation_id,state,payload_digest,available_at,expires_at,payload)
+        VALUES($1,$2,$3,$4,$5,$6,'pending_internal_handoff',$7,$8,$9,$10::jsonb)`,
+      [input.handoff.id, input.tenantId, input.requestId, input.projectId, input.jobId, input.reservation.id,
+        input.handoff.payloadDigest, input.handoff.availableAt, input.handoff.expiresAt, JSON.stringify(input.handoff.payload)]);
+      currentAuthorizationTime(true);
+      await tx.query(`UPDATE control_idempotency SET status='completed',result=$1::jsonb,completed_at=now()
+        WHERE tenant_id=$2 AND operation_scope='ready-frontier-promotion' AND idempotency_key=$3 AND status='processing'`,
+      [JSON.stringify({ receiptDigest: input.receiptDigest, jobId: input.jobId,
+        reservationId: input.reservation.id, handoffId: input.handoff.id }), input.tenantId, input.requestId]);
+      currentAuthorizationTime(true);
+      return { job: promoted.entity as JobRecord, replayed: false };
+      }, () => { currentAuthorizationTime(requireFreshAtPreCommit); });
+      try { currentAuthorizationTime(false); }
+      catch { throw new Error("Ready frontier transaction completed without confirmed current authorization; canonical outcome is ambiguous"); }
+      return result;
+    } finally {
+      authorization.release();
+    }
+  }
+
   async get(tenantId: string, kind: EntityKind, id: string): Promise<DomainEntity | undefined> {
     return this.getWith(this.db, tenantId, kind, id);
   }
@@ -448,6 +740,9 @@ export class CanonicalStore {
         if (prior.rows[0].entity_id !== input.jobId || prior.rows[0].safe_metadata.attemptId !== input.attemptId
           || prior.rows[0].safe_metadata.leaseId !== input.leaseId) throw new Error("Claim idempotency key reused with different lineage");
         const job = await this.requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+        if (job.specVersion === "ready-frontier-work-order/v1") {
+          throw new Error("Ready frontier jobs require the separately reviewed internal handoff consumer");
+        }
         const attempt = await this.requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
         const lease = await this.requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
         return { job, attempt, lease, replayed: true };
@@ -459,6 +754,9 @@ export class CanonicalStore {
       );
       const job = jobRow.rows[0]?.payload;
       if (!job) throw new Error("Job not found");
+      if (job.specVersion === "ready-frontier-work-order/v1") {
+        throw new Error("Ready frontier jobs require the separately reviewed internal handoff consumer");
+      }
       if (job.state !== "ready" || job.version !== input.expectedJobVersion) throw new Error("Job is not claimable at expected version");
       if (Date.parse(job.authority.expiresAt) <= Date.parse(input.acquiredAt)) throw new Error("Job authority has expired");
       if (Date.parse(input.expiresAt) > Date.parse(job.authority.expiresAt)
@@ -857,6 +1155,12 @@ export class CanonicalStore {
       return { entity: await this.requireWith(tx, input.tenantId, input.kind, input.entityId), replayed: true };
     }
 
+    // Every new ready transition shares this tenant lock so policy-bound ready counts cannot race a generic canonical transition.
+    if (input.kind === "job" && input.toState === "ready") {
+      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
+      if (!tenant.rows[0]) throw new Error("Ready transition tenant not found");
+    }
+
     const config = entityConfigs[input.kind];
     const row = await tx.query<{ payload: DomainEntity }>(
       `SELECT payload FROM ${config.table} WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
@@ -873,6 +1177,10 @@ export class CanonicalStore {
     }
     if (!coordinated && input.kind === "job" && current.state !== "proposed") {
       throw new Error(`Job transition ${current.state} -> ${input.toState} requires a coordinated repository operation`);
+    }
+    if (!coordinated && input.kind === "job" && current.state === "proposed" && input.toState === "ready"
+      && (current as JobRecord).specVersion === "ready-frontier-work-order/v1") {
+      throw new Error("Ready frontier jobs require the policy-bound promotion operation");
     }
     if (input.kind === "job" && current.state === "proposed" && input.toState === "ready") {
       const job = current as JobRecord;
