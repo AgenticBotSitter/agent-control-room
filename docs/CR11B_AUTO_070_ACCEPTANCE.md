@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Acceptance Record
 
-Status: four candidates rejected; fourth remediation implemented; fifth different independent review pending
+Status: five candidates rejected; fifth remediation implemented; sixth different independent review pending
 
 Date: 2026-08-30
 
@@ -28,9 +28,9 @@ qualified proofs, and every authority/effect flag false.
 
 ## Producer verification
 
-- focused AUTO-070 tests: 16/16 passing;
-- combined CR11B tests: 135/135 passing;
-- registered pretests: 717/717 passing;
+- focused AUTO-070 tests: 17/17 passing;
+- combined CR11B tests: 136/136 passing;
+- registered pretests: 718/718 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -108,6 +108,23 @@ and derives both new and expected report IDs only through the captured intrinsic
 after module load, requires construction and parsing to fail closed before artifact work, restores the method, and proves
 exact replay plus parsing return the original stable authenticated report. A fifth different reviewer must accept the
 exact fourth-remediation commit.
+
+## Fourth-remediation re-review and fifth remediation
+
+A fifth different reviewer closed the four prior concrete attacks but rejected exact fourth-remediation commit
+`ccdc13e37179674891793de978ae6c32409d646f`, tree
+`40415e8b47bc779fddf06b7fe9419fe385fa4e47`. The unchanged report is
+`docs/reviews/CR11B_AUTO_070_FOURTH_REMEDIATION_REREVIEW.md`, SHA-256
+`8e65da402e9e4ea045ced9387294e5caa6ba8ecaf84f9ede73471ab6fcc61db0`.
+
+Finding `AUTO070-RR4-001` proved that current `Array.prototype[Symbol.iterator]` semantics controlled the projection's
+blocker copy. A selective iterator could duplicate the first valid blocker, omit the ninth, preserve schema length, and
+authenticate that false projection. The fifth remediation captures the array iterator before exposure, checks its exact
+descriptor before every exported operation, and removes array spread from every trusted process, scenario, gate, and
+projection collection. Fixed array literals use explicit own indexed values, including all nine already authenticated
+report blockers. Its hostile regression substitutes the iterator after module load, requires plan and projection work to
+fail closed before the changed blocker iterator runs, restores it, and proves the original report projects to the exact
+same ordered nine blockers and digest. A sixth different reviewer must accept the exact fifth-remediation commit.
 
 ## Negative authority
 

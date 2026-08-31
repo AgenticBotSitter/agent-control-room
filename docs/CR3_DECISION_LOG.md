@@ -1604,3 +1604,15 @@ string prototype and slice intrinsic, verifies their exact descriptor before art
 intrinsic for both report-ID construction and re-derivation. A hostile regression substitutes slice, requires
 construction and parsing to fail closed, restores it, and proves exact replay and parsing stability. A fifth different
 reviewer must accept the exact fourth-remediation commit.
+
+**Fourth-remediation re-review amendment:** A fifth different reviewer closed the prior four concrete reproductions but
+rejected exact remediation `ccdc13e37179674891793de978ae6c32409d646f`, tree
+`40415e8b47bc779fddf06b7fe9419fe385fa4e47`, in immutable report SHA-256
+`8e65da402e9e4ea045ced9387294e5caa6ba8ecaf84f9ede73471ab6fcc61db0`. Current array-iterator semantics controlled the
+safe projection's blocker copy, allowing one valid blocker to be duplicated while another was omitted and the changed
+projection was authenticated. Production authority stayed false, but exact blocker truth was rejected. The fifth
+remediation captures and checks `Array.prototype[Symbol.iterator]` before artifact work, removes iterable spread from all
+trusted fixed-list construction, and copies the nine authenticated report blockers through explicit indexed array
+literals. A hostile regression substitutes the iterator, requires plan and projection work to fail closed before it can
+touch the blocker list, restores it, and proves exact projection replay. A sixth different reviewer must accept the exact
+fifth-remediation commit.

@@ -409,6 +409,43 @@ test("CR11B-AUTO-070 fails closed when mutable string slicing could change authe
     f.activationKey, f.qualificationKey), f.report);
 });
 
+test("CR11B-AUTO-070 fails closed before mutable array iteration can omit a production blocker", () => {
+  const f = fixture(), defineProperty = Object.defineProperty;
+  const iteratorDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+  const originalIterator = iteratorDescriptor.value as (this: unknown[]) => ArrayIterator<unknown>;
+  const originalProjection = projectReadyFrontierProductionCustodyReportV1(f.report, f.plan,
+    f.activationKey, f.qualificationKey);
+  let blockerIteratorCalls = 0;
+  try {
+    defineProperty(Array.prototype, Symbol.iterator, { ...iteratorDescriptor,
+      value: function changedArrayIterator(this: unknown[]): ArrayIterator<unknown> {
+        if (this.length === 9
+          && this[0] === READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[0]
+          && this[8] === READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[8]) blockerIteratorCalls += 1;
+        return Reflect.apply(originalIterator, this, []) as ArrayIterator<unknown>;
+      } });
+    assert.throws(() => projectReadyFrontierProductionCustodyReportV1(f.report, f.plan,
+      f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.throws(() => buildReadyFrontierProductionCustodyPlanV1({
+      planId: "frontier.production-custody.array-iterator-drift", assessment: f.assessment,
+      plannedAt: "2026-08-30T20:06:00.000Z", expiresAt: "2026-08-30T20:58:00.000Z",
+    }, f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+    assert.equal(blockerIteratorCalls, 0,
+      "the changed iterator must not touch blockers before the integrity failure");
+  } finally { defineProperty(Array.prototype, Symbol.iterator, iteratorDescriptor); }
+  const restoredProjection = projectReadyFrontierProductionCustodyReportV1(f.report, f.plan,
+    f.activationKey, f.qualificationKey);
+  assert.deepEqual(restoredProjection, originalProjection);
+  assert.deepEqual(restoredProjection.blockingGateCodes,
+    [
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[0], READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[1],
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[2], READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[3],
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[4], READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[5],
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[6], READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[7],
+      READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[8],
+    ]);
+});
+
 test("CR11B-AUTO-070 fails closed when canonical digest helpers drift after module load", () => {
   const f = fixture(), defineProperty = Object.defineProperty;
   const mapDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "map")!;

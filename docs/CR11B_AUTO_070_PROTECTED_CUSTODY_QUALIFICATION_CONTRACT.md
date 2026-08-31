@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Protected Custody Qualification Foundation Contract
 
-Status: four candidates rejected; exact fourth remediation requires a fifth different independent review
+Status: five candidates rejected; exact fifth remediation requires a sixth different independent review
 
 Date: 2026-08-30
 
@@ -76,9 +76,11 @@ Exact replay is deterministic. Accessors and Proxies are rejected before their b
 deep-frozen after authoritative parsing. Freeze, frozen-state, and nested-value operations are captured before the module
 is exposed. Duplicate identity/key/domain detection uses private scalar three-way comparison rather than a shared
 collection or an inherited indexed write. Trusted fixed collections are created as complete array literals, never by
-assigning numbered slots on an empty array.
-Canonical JSON/digest helpers are pinned by exact runtime references and a private digest/HMAC sentinel; drift fails closed
-before plan, report, or projection work.
+assigning numbered slots on an empty array. Canonical JSON/digest helpers are pinned by exact runtime references and a
+private digest/HMAC sentinel; drift fails closed before plan, report, or projection work. The array iterator is also
+captured and checked before every exported operation, and no trusted process, scenario, blocker, or projection collection
+is copied through iterable spread. The safe projection copies the nine authenticated blocker positions into a complete
+array literal.
 
 ## Safe projection
 
@@ -167,3 +169,16 @@ and slice intrinsic, verifies the exact descriptor before artifact work, and der
 parse-time report IDs through the captured intrinsic. Its hostile regression substitutes slice, requires report
 construction and parsing to fail closed, restores the method, and proves the original authenticated report retains exact
 replay and parsing validity. Only a fifth different independent reviewer can accept the exact fourth-remediation commit.
+
+A fifth different reviewer closed the prior four concrete reproductions but rejected exact fourth-remediation commit
+`ccdc13e37179674891793de978ae6c32409d646f`, tree
+`40415e8b47bc779fddf06b7fe9419fe385fa4e47`, in unchanged report SHA-256
+`8e65da402e9e4ea045ced9387294e5caa6ba8ecaf84f9ede73471ab6fcc61db0`.
+
+`AUTO070-RR4-001` showed that a selective post-load replacement of `Array.prototype[Symbol.iterator]` could make the safe
+projection duplicate the first valid production blocker and omit the ninth while retaining length nine and receiving a
+new authenticated projection digest. The fifth remediation captures and checks the exact iterator before artifact work,
+removes iterable spread from trusted fixed-list construction, and copies all nine verified report blockers through a
+complete indexed literal. Its hostile regression requires iterator drift to fail closed before the targeted iterator can
+touch the blocker list, restores the descriptor, and proves exact projection replay with all nine ordered blockers. Only
+a sixth different independent reviewer can accept the exact fifth-remediation commit.

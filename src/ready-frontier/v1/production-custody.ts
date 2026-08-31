@@ -37,6 +37,7 @@ const arrayIsArrayV1 = Array.isArray;
 const arrayMapV1 = Array.prototype.map;
 const arrayJoinV1 = Array.prototype.join;
 const arraySortV1 = Array.prototype.sort;
+const arrayIteratorV1 = Array.prototype[Symbol.iterator];
 const numberIsFiniteV1 = Number.isFinite;
 const numberIsNaNV1 = Number.isNaN;
 const numberIsSafeIntegerV1 = Number.isSafeInteger;
@@ -75,6 +76,7 @@ function assertCanonicalRuntimeV1(): void {
     || !exactOwnMethodV1(Array.prototype, "map", arrayMapV1)
     || !exactOwnMethodV1(Array.prototype, "join", arrayJoinV1)
     || !exactOwnMethodV1(Array.prototype, "sort", arraySortV1)
+    || !exactOwnMethodV1(Array.prototype, Symbol.iterator, arrayIteratorV1)
     || !exactOwnMethodV1(numberConstructorV1, "isFinite", numberIsFiniteV1)
     || !exactOwnMethodV1(numberConstructorV1, "isNaN", numberIsNaNV1)
     || !exactOwnMethodV1(numberConstructorV1, "isSafeInteger", numberIsSafeIntegerV1)
@@ -319,6 +321,31 @@ function deepFreeze<T>(value: T): T {
 
 const PROCESS_IDS_V1 = objectFreezeV1(["custody.qualifier.a", "custody.qualifier.b",
   "custody.qualifier.c"] as const);
+function scenarioCodesV1(): ReadyFrontierProductionCustodyScenarioCodeV1[] {
+  return [
+    "service_identity_separation",
+    "owner_policy_high_water",
+    "protected_clock_commit_boundary",
+    "revocation_cross_process_convergence",
+    "serializable_claim_uniqueness",
+    "checkpoint_compare_and_swap",
+    "backup_restore_rollback_detection",
+    "post_marker_ambiguity",
+  ];
+}
+function productionGateCodesV1(): ReadyFrontierProductionCustodyPlanV1["requiredProductionGateCodes"] {
+  return [
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[0],
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[1],
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[2],
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[3],
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[4],
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[5],
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[6],
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[7],
+    READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1[8],
+  ];
+}
 function serviceRolesV1(): ReadyFrontierProductionCustodyServiceRoleV1[] {
   return [
     { role: "proof_ingress_writer", serviceIdentityId: "custody.service.proof-writer",
@@ -557,10 +584,10 @@ export function buildReadyFrontierProductionCustodyPlanV1(inputValue: unknown,
       restoreMode: "isolated_restore_then_reconcile_required",
       ambiguityMode: "post_marker_unknown_is_terminal_ambiguity",
       processCount: 3,
-      processIds: [...PROCESS_IDS_V1],
+      processIds: [PROCESS_IDS_V1[0], PROCESS_IDS_V1[1], PROCESS_IDS_V1[2]],
       serviceRoles: serviceRolesV1(),
-      scenarioCodes: [...readyFrontierProductionCustodyScenarioCodesV1],
-      requiredProductionGateCodes: [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1],
+      scenarioCodes: scenarioCodesV1(),
+      requiredProductionGateCodes: productionGateCodesV1(),
       defaultDisabled: true, repositoryFakeOnly: true, liveQualificationAuthorized: false,
       productionConfigurationPresent: false, protectedMaterialPresent: false,
       productionKeysEnrolled: false, ownerPolicyEnrolled: false,
@@ -636,7 +663,7 @@ export function runReadyFrontierProductionCustodyFakeQualificationV1(inputValue:
       qualificationMode: "repository_fake_only", injectedFault,
       status: simulatedFailureCount === 0 ? "simulated_pass" : "simulated_failure",
       scenarioResults, simulatedPassCount, simulatedFailureCount,
-      blockingGateCodes: [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1],
+      blockingGateCodes: productionGateCodesV1(),
       qualifiedProofCount: 0, remainingQualifiedProofCount: 9,
       state: "blocked_fake_qualification_only",
       safeReason: "protected_production_qualification_not_run",
@@ -721,7 +748,11 @@ export function projectReadyFrontierProductionCustodyReportV1(reportValue: unkno
     planId: report.planId, reportId: report.reportId, status: report.state,
     safeReason: report.safeReason,
     scenarioStatuses,
-    blockingGateCodes: [...report.blockingGateCodes],
+    blockingGateCodes: [
+      report.blockingGateCodes[0]!, report.blockingGateCodes[1]!, report.blockingGateCodes[2]!,
+      report.blockingGateCodes[3]!, report.blockingGateCodes[4]!, report.blockingGateCodes[5]!,
+      report.blockingGateCodes[6]!, report.blockingGateCodes[7]!, report.blockingGateCodes[8]!,
+    ],
     qualifiedProofCount: 0, remainingQualifiedProofCount: 9,
     canRunLiveQualification: false, canEnrollProductionKeys: false,
     canEnrollOwnerPolicy: false, canContactHostedDatabase: false,
