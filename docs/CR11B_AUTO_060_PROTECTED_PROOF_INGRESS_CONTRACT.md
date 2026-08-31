@@ -1,6 +1,6 @@
 # CR11B-AUTO-060 Protected Proof Ingress Contract
 
-Status: second remediation implemented after two independent rejections; different-agent re-review required
+Status: third remediation implemented after three independent rejections; fourth different-agent re-review required
 
 Date: 2026-08-30
 
@@ -98,6 +98,15 @@ rechecks private parent and file ownership/mode, regular non-symlink form, singl
 the complete exact SQLite objects, columns, and SQL. Open-store permission drift, hard links, path replacement, or added
 tables/indexes/triggers/views fail before state is returned or an append is accepted.
 
+Authoritative parsing is part of the ledger trust boundary. Proof, trust, observation, ledger assessment, projection,
+identifier, digest, and time schemas are module-private and built only from private primitives. The public
+`production-proof-schemas.ts` module does not exist. Each authoritative Zod parse operation is captured into a frozen
+closure at module initialization; the verifier and store never look up a caller-visible schema method. AUTO-050 boundary
+schemas use the same private-instance rule and expose only frozen captured parser closures. Replacing or deleting a public
+schema method, changing its prototype, importing a direct module, subclassing, or retaining an alias cannot change the
+package verified or the package stored. Verification and append always use the same exact canonical assessment and
+envelope snapshot.
+
 The repository checkpoint implementation is deliberately in-memory and test-only. Durable protected checkpoint custody,
 hosted multi-process locking, backup/restore, availability, and production concurrency remain unproved.
 
@@ -149,6 +158,8 @@ The candidate must prove:
 - SQLite tampering and database rollback fail against authenticated state and external checkpoint;
 - partial and all-nine proof assessments remain unqualified and blocked;
 - no caller-re-digested assessment or projection can enter a trusted exported consumer;
+- no public or direct-module schema object can substitute a different package at verification, append, restart, or
+  projection time, including through own-method or prototype drift before or after store construction;
 - the safe projection omits protected proof material; and
 - proof ingress imports no network, provider, deployment, secret-resolution, claim, dispatch, or effect client.
 

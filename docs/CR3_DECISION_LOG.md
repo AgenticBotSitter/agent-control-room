@@ -1506,3 +1506,15 @@ or projection trust consumer and the public raw-assessment method. The only trus
 inside one authenticated store operation after complete ledger, checkpoint, trust, and AUTO-050 chain verification.
 Public digests remain content identity only. A third different reviewer must accept the new exact commit; negative
 authority stayed intact throughout both rejections.
+
+**Third-review amendment:** A third different reviewer rejected exact second-remediation commit
+`0d7287fbdc06af3f8c220dad8227f0f99855b64a` in immutable report SHA-256
+`303133e1297cb28a475b14bc51e0a77d20436a93cf4c23b410ebb544f2624323`. The public assessment and projection path was
+closed, but the verifier still consulted a mutable schema object exported by the direct proof-schema module. Own-method
+substitution made it authenticate one valid package while the ledger stored another changed envelope; restoration exposed
+the mismatch as an integrity failure. The third remediation deletes that module, moves proof and ledger schemas plus their
+primitive dependencies behind module-private state, and captures original parser operations into frozen closures. AUTO-050
+boundary schemas now use private primitives and expose only frozen captured parser closures, so public schema aliases,
+own-method replacement, deletion, and prototype drift are non-authoritative. A fourth different reviewer must accept the
+exact third-remediation commit. No rejection or remediation grants production proof, approval, activation, consumer,
+network, dispatch, deployment, or effect authority.

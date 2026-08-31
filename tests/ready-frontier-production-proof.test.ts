@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync,
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync,
   unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -405,6 +405,61 @@ test("CR11B-AUTO-060 exposes no public digest-only assessment or projection trus
     assert.equal(store.projectAssessment("frontier.proof-assessment.authentic", f.assessment,
       "2026-08-30T20:07:00.000Z").observedUnqualifiedCount, 1);
   } finally { store.closeDatabase(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("CR11B-AUTO-060 authoritative parsing ignores public schema method and prototype drift", () => {
+  const f = fixture(), directory = privateDirectory("captured-parsers"), path = join(directory, "proof.sqlite");
+  const publicIdSchema = readyFrontierV1.readyFrontierIdSchemaV1 as unknown as {
+    parse: (value: unknown) => unknown;
+  };
+  const publicTimeSchema = readyFrontierV1.readyFrontierTimeSchemaV1 as unknown as {
+    parse: (value: unknown) => unknown;
+  };
+  const idDescriptor = Object.getOwnPropertyDescriptor(publicIdSchema, "parse")!;
+  const timeDescriptor = Object.getOwnPropertyDescriptor(publicTimeSchema, "parse")!;
+  const timePrototype = Object.getPrototypeOf(publicTimeSchema) as object;
+  const prototypeDescriptor = Object.getOwnPropertyDescriptor(timePrototype, "parse");
+  Object.defineProperty(publicIdSchema, "parse", {
+    configurable: true, enumerable: true, writable: true,
+    value: () => { throw new Error("public identifier parser drift must be inert"); },
+  });
+  delete (publicTimeSchema as { parse?: (value: unknown) => unknown }).parse;
+  Object.defineProperty(timePrototype, "parse", {
+    configurable: true, writable: true,
+    value: () => { throw new Error("public time parser prototype drift must be inert"); },
+  });
+  let store: ReadyFrontierProductionProofStoreV1 | undefined;
+  try {
+    store = new ReadyFrontierProductionProofStoreV1(path, f.assessment.tenantId,
+      f.assessment.workspaceId, f.ledgerKey, f.planKey, f.anchor,
+      new InMemoryRollbackCheckpointStoreV1({ testOnly: true }));
+    store.recordTrustBundle(f.bundle, "2026-08-30T20:02:20.000Z");
+    store.recordProof({ envelope: proof(f, "credential_broker_unbound"), assessment: f.assessment,
+      receivedAt: "2026-08-30T20:06:00.000Z" });
+    assert.equal(store.projectAssessment("frontier.proof-assessment.parser-drift", f.assessment,
+      "2026-08-30T20:07:00.000Z").observedUnqualifiedCount, 1);
+  } finally {
+    store?.closeDatabase();
+    Object.defineProperty(publicIdSchema, "parse", idDescriptor);
+    Object.defineProperty(publicTimeSchema, "parse", timeDescriptor);
+    if (prototypeDescriptor) Object.defineProperty(timePrototype, "parse", prototypeDescriptor);
+    else delete (timePrototype as { parse?: unknown }).parse;
+    rmSync(directory, { recursive: true, force: true });
+  }
+  assert.equal(existsSync(new URL(
+    "../src/ready-frontier/v1/production-proof-schemas.ts", import.meta.url)), false);
+  for (const oldSchemaExport of ["readyFrontierProductionBoundaryAssessmentSchemaV1",
+    "readyFrontierProductionGateRequirementSchemaV1", "readyFrontierProductionProofVerificationInputSchemaV1"]) {
+    assert.equal(oldSchemaExport in readyFrontierV1, false, oldSchemaExport);
+  }
+  for (const parserExport of ["readyFrontierProductionBoundaryAssessmentSyntaxParserV1",
+    "readyFrontierProductionGateRequirementSyntaxParserV1"]) {
+    const parser = (readyFrontierV1 as Record<string, unknown>)[parserExport] as { parse: (value: unknown) => unknown };
+    const descriptor = Object.getOwnPropertyDescriptor(parser, "parse")!;
+    assert.equal(Object.isFrozen(parser), true, parserExport);
+    assert.equal(descriptor.writable, false, parserExport);
+    assert.equal(descriptor.configurable, false, parserExport);
+  }
 });
 
 test("CR11B-AUTO-060 terminal revocation cannot reactivate, disappear, or change identity binding", () => {

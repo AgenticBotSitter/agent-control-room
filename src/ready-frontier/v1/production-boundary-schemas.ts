@@ -12,24 +12,26 @@ import {
   readyFrontierProductionEvidenceClassesV1,
   readyFrontierProductionProofAuthoritiesV1,
 } from "./production-boundary-types";
-import {
-  readyFrontierDigestSchemaV1,
-  readyFrontierAuthTagSchemaV1,
-  readyFrontierIdSchemaV1,
-  readyFrontierSafeCodeSchemaV1,
-  readyFrontierTimeSchemaV1,
-} from "./schemas";
+const readyFrontierIdSchemaV1 = z.string().min(3).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:@-]*$/);
+const readyFrontierSafeCodeSchemaV1 = z.string().min(1).max(96).regex(/^[a-z0-9][a-z0-9._:-]*$/);
+const readyFrontierDigestSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const readyFrontierAuthTagSchemaV1 = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
+const readyFrontierTimeSchemaV1 = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  .refine((value) => {
+    const parsed = new Date(value);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+  }, "invalid canonical instant");
 
-export const readyFrontierProductionGateCodeSchemaV1 = z.enum(READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1);
+const readyFrontierProductionGateCodeSchemaV1 = z.enum(READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1);
 
-export const readyFrontierProductionBoundaryPlanInputSchemaV1 = z.object({
+const readyFrontierProductionBoundaryPlanInputSchemaV1 = z.object({
   planId: readyFrontierIdSchemaV1,
   activationPacket: z.unknown(),
   plannedAt: readyFrontierTimeSchemaV1,
   expiresAt: readyFrontierTimeSchemaV1,
 }).strict();
 
-export const readyFrontierProductionGateRequirementSchemaV1 = z.object({
+const readyFrontierProductionGateRequirementSchemaV1 = z.object({
   schema: z.literal(READY_FRONTIER_PRODUCTION_GATE_REQUIREMENT_V1),
   gateCode: readyFrontierProductionGateCodeSchemaV1,
   evidenceClass: z.enum(readyFrontierProductionEvidenceClassesV1),
@@ -48,7 +50,7 @@ export const readyFrontierProductionGateRequirementSchemaV1 = z.object({
   requirementDigest: readyFrontierDigestSchemaV1,
 }).strict();
 
-export const readyFrontierProductionBoundaryPlanSchemaV1 = z.object({
+const readyFrontierProductionBoundaryPlanSchemaV1 = z.object({
   schema: z.literal(READY_FRONTIER_PRODUCTION_BOUNDARY_PLAN_V1),
   planId: readyFrontierIdSchemaV1,
   tenantId: readyFrontierIdSchemaV1,
@@ -91,13 +93,13 @@ export const readyFrontierProductionBoundaryPlanSchemaV1 = z.object({
   planAuthTag: readyFrontierAuthTagSchemaV1,
 }).strict();
 
-export const readyFrontierProductionBoundaryAssessmentInputSchemaV1 = z.object({
+const readyFrontierProductionBoundaryAssessmentInputSchemaV1 = z.object({
   assessmentId: readyFrontierIdSchemaV1,
   plan: z.unknown(),
   assessedAt: readyFrontierTimeSchemaV1,
 }).strict();
 
-export const readyFrontierProductionBoundaryAssessmentSchemaV1 = z.object({
+const readyFrontierProductionBoundaryAssessmentSchemaV1 = z.object({
   schema: z.literal(READY_FRONTIER_PRODUCTION_BOUNDARY_ASSESSMENT_V1),
   assessmentId: readyFrontierIdSchemaV1,
   planId: readyFrontierIdSchemaV1,
@@ -132,12 +134,12 @@ export const readyFrontierProductionBoundaryAssessmentSchemaV1 = z.object({
   assessmentDigest: readyFrontierDigestSchemaV1,
 }).strict();
 
-export const readyFrontierProductionDisabledDispositionInputSchemaV1 = z.object({
+const readyFrontierProductionDisabledDispositionInputSchemaV1 = z.object({
   assessment: z.unknown(),
   recordedAt: readyFrontierTimeSchemaV1,
 }).strict();
 
-export const readyFrontierProductionDisabledDispositionSchemaV1 = z.object({
+const readyFrontierProductionDisabledDispositionSchemaV1 = z.object({
   schema: z.literal(READY_FRONTIER_PRODUCTION_DISABLED_DISPOSITION_V1),
   dispositionId: readyFrontierIdSchemaV1,
   planId: readyFrontierIdSchemaV1,
@@ -168,16 +170,16 @@ export const readyFrontierProductionDisabledDispositionSchemaV1 = z.object({
   dispositionDigest: readyFrontierDigestSchemaV1,
 }).strict();
 
-export const readyFrontierProductionReconciliationStateSchemaV1 = z.enum([
+const readyFrontierProductionReconciliationStateSchemaV1 = z.enum([
   "pending", "claimed", "failed_before_contact", "delivery_started", "ambiguous", "confirmed",
   "reconciled_not_delivered",
 ]);
-export const readyFrontierProductionReconciliationEventSchemaV1 = z.enum([
+const readyFrontierProductionReconciliationEventSchemaV1 = z.enum([
   "claim_acquired", "definite_precontact_failure", "delivery_marker_written", "post_marker_unknown",
   "qualified_destination_confirmed", "qualified_destination_absence_observed",
   "independent_destination_absence_confirmed",
 ]);
-export const readyFrontierProductionReconciliationDecisionSchemaV1 = z.object({
+const readyFrontierProductionReconciliationDecisionSchemaV1 = z.object({
   schema: z.literal(READY_FRONTIER_PRODUCTION_RECONCILIATION_DECISION_V1),
   fromState: readyFrontierProductionReconciliationStateSchemaV1,
   event: readyFrontierProductionReconciliationEventSchemaV1,
@@ -195,7 +197,7 @@ export const readyFrontierProductionReconciliationDecisionSchemaV1 = z.object({
   decisionDigest: readyFrontierDigestSchemaV1,
 }).strict();
 
-export const readyFrontierProductionBoundaryProjectionSchemaV1 = z.object({
+const readyFrontierProductionBoundaryProjectionSchemaV1 = z.object({
   schema: z.literal(READY_FRONTIER_PRODUCTION_BOUNDARY_PROJECTION_V1),
   tenantId: readyFrontierIdSchemaV1,
   workspaceId: readyFrontierIdSchemaV1,
@@ -213,3 +215,31 @@ export const readyFrontierProductionBoundaryProjectionSchemaV1 = z.object({
   canDispatchOrExecute: z.literal(false),
   projectionDigest: readyFrontierDigestSchemaV1,
 }).strict();
+
+function bindAuthoritativeParserV1<T>(schema: { parse(value: unknown): T }): { parse(value: unknown): T } {
+  const parse = schema.parse.bind(schema);
+  return Object.freeze({ parse });
+}
+
+export const readyFrontierProductionBoundaryPlanInputSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionBoundaryPlanInputSchemaV1);
+export const readyFrontierProductionGateRequirementSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionGateRequirementSchemaV1);
+export const readyFrontierProductionBoundaryPlanSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionBoundaryPlanSchemaV1);
+export const readyFrontierProductionBoundaryAssessmentInputSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionBoundaryAssessmentInputSchemaV1);
+export const readyFrontierProductionBoundaryAssessmentSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionBoundaryAssessmentSchemaV1);
+export const readyFrontierProductionDisabledDispositionInputSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionDisabledDispositionInputSchemaV1);
+export const readyFrontierProductionDisabledDispositionSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionDisabledDispositionSchemaV1);
+export const readyFrontierProductionReconciliationStateSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionReconciliationStateSchemaV1);
+export const readyFrontierProductionReconciliationEventSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionReconciliationEventSchemaV1);
+export const readyFrontierProductionReconciliationDecisionSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionReconciliationDecisionSchemaV1);
+export const readyFrontierProductionBoundaryProjectionSyntaxParserV1 = bindAuthoritativeParserV1(
+  readyFrontierProductionBoundaryProjectionSchemaV1);

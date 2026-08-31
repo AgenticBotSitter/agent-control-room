@@ -1,6 +1,6 @@
 # CR11B-AUTO-060 Candidate Acceptance Record
 
-Status: second remediation implemented locally after two independent rejections; third different-agent re-review pending
+Status: third remediation implemented locally after three independent rejections; fourth different-agent re-review pending
 
 Date: 2026-08-30
 
@@ -26,11 +26,13 @@ qualified count zero, activation false, and protected production reassessment re
 - store-private assessment with unobserved, observed-unqualified, expired, revoked, and superseded states;
 - authenticated-store-only frozen safe projection without signatures, keys, evidence/binding digests, protected values,
   controls, or a public trust parser; and
+- module-private proof, trust, observation, ledger, and AUTO-050 syntax schemas with captured frozen parser operations;
+  no caller-visible mutable schema object is consulted by the authoritative proof path; and
 - no proof collection, consumer, network, hosted database, provider, deployment, dispatch, or effect path.
 
 ## Candidate tests
 
-The dedicated suite contains nineteen cases covering:
+The dedicated suite contains twenty cases covering:
 
 - owner, issuer, and independent Ed25519 verification;
 - noncanonical signature aliases at all three signing roles;
@@ -43,6 +45,8 @@ The dedicated suite contains nineteen cases covering:
 - exact ledger replay, same-ID drift, and stale trust revisions;
 - store-only assessment and rejection of pre-ledger evaluation time;
 - absence of every public digest-only assessment/projection trust boundary and rejection of the first-remediation forgery;
+- absence of the exported proof-schema module and resistance to public own-method and prototype parser drift before and
+  after ledger construction;
 - terminal revocation, omission, identity-binding drift, and old-proof replay after trust advancement/capacity;
 - SQLite artifact tampering and external-checkpoint rollback detection;
 - open-store permission, hard-link, schema, and path-identity drift;
@@ -51,9 +55,9 @@ The dedicated suite contains nineteen cases covering:
 
 Current candidate evidence:
 
-- dedicated AUTO-060 second-remediation gate: 19/19;
-- combined CR11B second-remediation gate: 118/118;
-- registered pretests: 700/700;
+- dedicated AUTO-060 third-remediation gate: 20/20;
+- combined CR11B third-remediation gate: 119/119;
+- registered pretests: 701/701;
 - core suite: 414/416 with two intentional platform skips and zero failures;
 - public posttests: 52/52;
 - TypeScript type checking and full lint: pass;
@@ -109,12 +113,39 @@ the rollback checkpoint, and the exact AUTO-050 assessment chain, derives assess
 deep-frozen redacted projection, and accepts no proof-assessment or projection input. A new hostile test reconstructs the
 public-digest forgery, proves it cannot enter the store, and proves the old executable trust exports are absent.
 
-Both rejection reports remain unchanged. A third different agent—not the implementer or either prior reviewer—must review
-the new exact second-remediation commit before AUTO-060 can close.
+Both rejection reports remained unchanged, and a third different agent—not the implementer or either prior reviewer—was
+therefore assigned the exact second-remediation commit reviewed below.
+
+## Second-remediation rejection and third remediation
+
+The third different reviewer independently confirmed the prior two report hashes, reproduced the first-remediation
+public-digest forgery, and verified the second remediation's direct fixes and passing focused/combined gates. It still
+rejected exact second-remediation commit `0d7287fbdc06af3f8c220dad8227f0f99855b64a` because the direct
+`production-proof-schemas.ts` module exported mutable Zod schema instances used by the verifier and store. Replacing the
+verification-input schema's own parse method made the verifier authenticate one valid package while the ledger persisted
+a different unsigned changed-binding envelope. The row and checkpoint advanced and projected one observed gate; restoring
+the parser caused the next ledger verification to fail, proving verification and custody had diverged. Negative authority
+remained intact and no external effect occurred.
+
+The immutable report is `docs/reviews/CR11B_AUTO_060_SECOND_REMEDIATION_REREVIEW.md`, SHA-256
+`303133e1297cb28a475b14bc51e0a77d20436a93cf4c23b410ebb544f2624323`.
+
+The third remediation deletes the public proof-schema module. Proof, trust, observation, ledger assessment, projection,
+identifier, digest, and time schemas are now module-private and built from private primitives. Their original parser
+operations are captured into frozen closures before any caller can receive a module export. AUTO-050 production-boundary
+schemas follow the same rule: callers receive only frozen captured parser closures, never the authoritative mutable schema
+instances, and those schemas no longer compose caller-visible base schemas. The store persists only the exact canonical
+envelope and assessment that the private verifier checks. A hostile regression replaces a public schema own method,
+deletes another own method, substitutes its prototype, constructs and uses the ledger while those changes are active, and
+proves the trusted result remains unchanged. It also proves the old proof-schema file and old mutable schema exports are
+absent.
+
+All three rejection reports remain immutable. A fourth different agent—not the implementer or any prior reviewer—must
+review the exact third-remediation commit before AUTO-060 can close.
 
 ## Required independent review
 
-A third different independent agent must re-review the exact frozen second-remediation commit. At minimum, it must attack:
+A fourth different independent agent must re-review the exact frozen third-remediation commit. At minimum, it must attack:
 
 1. root/key canonicalization and signature-material completeness;
 2. trust-chain skip, fork, rollback, duplicate identity/key, revocation, expiry, and current-revision behavior;
@@ -123,7 +154,9 @@ A third different independent agent must re-review the exact frozen second-remed
 5. proof replay, changed replay, database tampering, rollback checkpoint, capacity, restart, and concurrency semantics;
 6. all-nine proof self-promotion, owner-approval confusion, and any alternate authority path;
 7. safe projection leakage and raw evidence/private key ingress; and
-8. imports/calls for any network, provider, destination, protected-reference, consumer, activation, dispatch, or effect path.
+8. every parser/schema dependency through direct and aggregate imports, including mutation before and after store
+   construction, own-method replacement, prototype drift, and verification-versus-storage disagreement; and
+9. imports/calls for any network, provider, destination, protected-reference, consumer, activation, dispatch, or effect path.
 
 Any concrete finding rejects the candidate. The report is immutable once written. Remediation requires a new exact commit
 and a different-agent re-review.

@@ -81,7 +81,7 @@
 | CR11B-AUTO-030 ready promotion and internal scheduler/jobber handoff | Complete for exact independently accepted effect-free commit `adf0804` | Token-only exact-operation authorization, transaction-owner pre-commit and post-transaction trusted time, request idempotency, dedicated non-delivery handoff table, protected ready/claim paths, historical receipt projection, concurrency/rollback tests, accepted fifth review, and `CR11B_AUTO_030_ACCEPTANCE.md` |
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
-| CR11B-AUTO-060 protected proof ingress | Second remediation implemented after two independent rejections; third different-agent re-review required | Five original repairs retained; alternate public digest-only evidence path removed; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
+| CR11B-AUTO-060 protected proof ingress | Third remediation implemented after three independent rejections; fourth different-agent re-review required | Earlier repairs retained; mutable shared parser path removed; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -89,20 +89,21 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-060 second remediation is implemented locally and remains open pending a frozen exact commit and a third
-different-agent re-review. Independent review rejected exact candidate `f77108fc3c556970bff4cc94c4b952a0336a8cac` with
-five real integrity findings; unchanged report SHA-256 is
-`fc22ddd3ee62f432eeaee5d5cbc0aca6715872fa7733e095979ac1ea3457f9cf`. The first remediation at exact commit
-`fb2f0a3dd4e2e128ae6076daadad10938fec1438` closed their direct mechanics, but a second different reviewer reproduced a
-caller-forged observed gate through the public digest-only assessment parser/projector. That unchanged rejection report
-has SHA-256 `1aa0119e9eb8504d471586c88d62ab44b533f16190d2c9c57fbe58cad30e9dc2`.
-The second remediation retains canonical signatures, store-only chronology, irreversible identity revocation,
-trust-advance-safe exact replay, and per-operation file/schema checks while removing every public assessment/projection
-trust parser and raw assessment method. Only one authenticated store call can now re-derive and deep-freeze the redacted
-status view. Focused tests pass 19/19, combined CR11B passes 118/118, registered pretests pass 700/700, core passes
-414/416 with two intentional platform skips and zero failures, and public posttests pass 52/52. Typecheck, full lint,
-production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and whitespace
-validation pass. A third different-agent review is still required before acceptance.
+Active: CR11B-AUTO-060 third remediation is implemented locally and remains open pending a frozen exact commit and a fourth
+different-agent re-review. The first two immutable rejections retain SHA-256
+`fc22ddd3ee62f432eeaee5d5cbc0aca6715872fa7733e095979ac1ea3457f9cf` and
+`1aa0119e9eb8504d471586c88d62ab44b533f16190d2c9c57fbe58cad30e9dc2`; their signature, chronology, revocation,
+replay, file/schema, and public digest-only projection findings remain closed. A third reviewer rejected exact
+second-remediation commit `0d7287fbdc06af3f8c220dad8227f0f99855b64a` because mutable exported proof-schema state could make verification
+authenticate one package while the ledger stored another. That unchanged report has SHA-256
+`303133e1297cb28a475b14bc51e0a77d20436a93cf4c23b410ebb544f2624323`.
+The third remediation deletes the public proof-schema module and makes authoritative proof, ledger, and AUTO-050 boundary
+schemas private with captured frozen parser closures. Public own-method replacement, deletion, and prototype drift are
+non-authoritative before and after ledger construction. Focused tests pass 20/20, combined CR11B passes 119/119,
+registered pretests pass 701/701, core passes 414/416 with two intentional platform skips and zero failures, and public
+posttests pass 52/52. Typecheck, full lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL
+tables, macOS stage zero, and whitespace validation pass. A fourth different-agent review is still required before
+acceptance.
 The repository-fixture-only verifier binds owner, issuer, and distinct independent-verifier Ed25519 signatures to the exact
 AUTO-050 plan/assessment/requirement chain. Its private local ledger authenticates rows and whole state and compares an
 external rollback checkpoint. Partial, expired, revoked, and superseded proof truth is visible, but nine accepted fixture
@@ -110,7 +111,7 @@ proofs still produce zero qualified proofs and retain all nine blockers. The rej
 112/112 combined CR11B, 694/694 registered pretests, 414/416 core with two intentional platform skips and zero failures,
 52/52 public posttests, typecheck, full lint, production build, 2/2 rendered routes, 27 migrations/97 tables, macOS stage
 zero, and whitespace validation, proving why producer tests cannot accept the phase. No production proof or authority
-exists. A third different-agent second-remediation re-review is still required.
+exists. A fourth different-agent third-remediation re-review is still required.
 
 Prior accepted boundary: CR11B-AUTO-050 is complete for exact default-disabled commit
 `2a47f57c3b1015b279ee51e95690d10d147b112a`.
@@ -278,6 +279,23 @@ candidate, immutable rejection, accepted remediation `2a47f57c3b1015b279ee51e956
 and acceptance checkpoint. GitHub reports the PR open and cleanly mergeable. No check is expected while it targets its
 `codex/**` parent; after the parent stack is integrated, retarget to `main` and require the ordinary full CI result. PR #168
 is not merged and authorizes no production proof, consumer, deployment, or effect.
+
+CR11B-AUTO-060 third remediation is implemented locally after three independent rejections. The unchanged initial report
+SHA-256 `fc22ddd3ee62f432eeaee5d5cbc0aca6715872fa7733e095979ac1ea3457f9cf` rejected signature aliases, unsigned
+assessment/backdating, revocation resurrection, old-proof replay drift, and open-store boundary drift. The unchanged
+first-remediation report SHA-256 `1aa0119e9eb8504d471586c88d62ab44b533f16190d2c9c57fbe58cad30e9dc2` rejected a
+remaining public digest-only assessment/projector path. The third reviewer confirmed both repair sets but rejected exact
+second-remediation commit `0d7287fbdc06af3f8c220dad8227f0f99855b64a` because a mutable exported verification-input
+schema could make the verifier authenticate one package while the ledger persisted another. Its immutable report SHA-256
+is `303133e1297cb28a475b14bc51e0a77d20436a93cf4c23b410ebb544f2624323`. The third remediation deletes the public
+proof-schema module, makes every proof/ledger schema and primitive private, and changes AUTO-050 boundary schemas to expose
+only frozen parser closures captured over private schema instances. A hostile regression proves public own-method and
+prototype changes are inert before and after ledger construction and cannot alter stored or projected truth. Verification
+passes 20/20 focused tests, 119/119 combined CR11B tests, 701/701 registered pretests, 414/416 core tests with two
+intentional platform skips and zero failures, 52/52 public posttests, typecheck, full lint, production build, 2/2 rendered
+routes, all 27 migrations/97 tables, macOS stage zero, and whitespace validation. Every
+observation remains unqualified, all nine production gates remain blocking, and a fourth different independent reviewer
+must accept the exact third-remediation commit before AUTO-060 can close.
 
 ## Parallel build lane
 

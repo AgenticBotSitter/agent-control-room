@@ -1,19 +1,20 @@
 import { createHash, createPublicKey, timingSafeEqual, verify, type KeyObject } from "node:crypto";
+import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security";
 import { ReadyFrontierContractErrorV1 } from "./errors";
 import { parseExactReadyFrontierV1 } from "./exact";
+import { READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1 } from "./no-relay";
 import { parseReadyFrontierProductionBoundaryAssessmentV1 } from "./production-boundary";
 import {
-  readyFrontierProductionProofEnvelopeSchemaV1,
-  readyFrontierProductionProofObservationSchemaV1,
-  readyFrontierProductionProofVerificationInputSchemaV1,
-  readyFrontierProductionTrustAnchorSchemaV1,
-  readyFrontierProductionTrustBundleSchemaV1,
-} from "./production-proof-schemas";
+  readyFrontierProductionEvidenceClassesV1,
+  readyFrontierProductionProofAuthoritiesV1,
+} from "./production-boundary-types";
 import {
   READY_FRONTIER_PRODUCTION_INDEPENDENT_VERIFICATION_V1,
+  READY_FRONTIER_PRODUCTION_PROOF_ENVELOPE_V1,
   READY_FRONTIER_PRODUCTION_PROOF_MAX_LIFETIME_SECONDS_V1,
   READY_FRONTIER_PRODUCTION_PROOF_OBSERVATION_V1,
+  READY_FRONTIER_PRODUCTION_TRUST_BUNDLE_V1,
   READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
   type ReadyFrontierProductionIndependentVerificationV1,
   type ReadyFrontierProductionProofBindingV1,
@@ -25,6 +26,156 @@ import {
   type ReadyFrontierProductionTrustBundleV1,
   type ReadyFrontierProductionTrustIdentityV1,
 } from "./production-proof-types";
+
+function bindPrivateParserV1<T>(schema: { parse(value: unknown): T }): { parse(value: unknown): T } {
+  const parse = schema.parse.bind(schema);
+  return Object.freeze({ parse });
+}
+
+const idSyntaxSchemaV1 = z.string().min(3).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:@-]*$/);
+const safeCodeSyntaxSchemaV1 = z.string().min(1).max(96).regex(/^[a-z0-9][a-z0-9._:-]*$/);
+const digestSyntaxSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const timeSyntaxSchemaV1 = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  .refine((value) => {
+    const parsed = new Date(value);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+  }, "invalid canonical instant");
+const base64urlSyntaxSchemaV1 = z.string().min(16).max(16_384).regex(/^[A-Za-z0-9_-]+$/);
+const signatureSyntaxSchemaV1 = z.string().length(86).regex(/^[A-Za-z0-9_-]+$/);
+const gateCodeSyntaxSchemaV1 = z.enum(READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1);
+
+const trustIdentitySyntaxSchemaV1 = z.object({
+  identityId: idSyntaxSchemaV1,
+  keyId: idSyntaxSchemaV1,
+  publicKeySpki: base64urlSyntaxSchemaV1,
+  keyDigest: digestSyntaxSchemaV1,
+  independenceDomainDigest: digestSyntaxSchemaV1,
+  proofAuthorities: z.array(z.enum(readyFrontierProductionProofAuthoritiesV1)).min(1).max(9),
+  authorizedGateCodes: z.array(gateCodeSyntaxSchemaV1).min(1).max(9),
+  canIndependentlyVerify: z.boolean(),
+  state: z.enum(["active", "revoked"]),
+  revokedAt: timeSyntaxSchemaV1.nullable(),
+}).strict();
+const trustBundleBodySyntaxSchemaV1 = z.object({
+  schema: z.literal(READY_FRONTIER_PRODUCTION_TRUST_BUNDLE_V1),
+  bundleId: idSyntaxSchemaV1,
+  tenantId: idSyntaxSchemaV1,
+  workspaceId: idSyntaxSchemaV1,
+  trustMode: z.literal(READY_FRONTIER_PRODUCTION_TRUST_MODE_V1),
+  revision: z.number().int().min(1).max(2_147_483_647),
+  previousBundleDigest: digestSyntaxSchemaV1.nullable(),
+  ownerRootKeyId: idSyntaxSchemaV1,
+  issuedAt: timeSyntaxSchemaV1,
+  expiresAt: timeSyntaxSchemaV1,
+  identities: z.array(trustIdentitySyntaxSchemaV1).min(1).max(64),
+  bodyDigest: digestSyntaxSchemaV1,
+}).strict();
+const trustBundleSyntaxSchemaV1 = z.object({
+  body: trustBundleBodySyntaxSchemaV1,
+  signatureAlgorithm: z.literal("Ed25519"),
+  ownerSignature: signatureSyntaxSchemaV1,
+}).strict();
+const trustAnchorSyntaxSchemaV1 = z.object({
+  trustMode: z.literal(READY_FRONTIER_PRODUCTION_TRUST_MODE_V1),
+  tenantId: idSyntaxSchemaV1,
+  workspaceId: idSyntaxSchemaV1,
+  ownerRootKeyId: idSyntaxSchemaV1,
+  ownerRootPublicKeySpki: base64urlSyntaxSchemaV1,
+  ownerRootKeyDigest: digestSyntaxSchemaV1,
+}).strict();
+const proofBindingSyntaxSchemaV1 = z.object({
+  code: safeCodeSyntaxSchemaV1,
+  digest: digestSyntaxSchemaV1,
+}).strict();
+const proofBodySyntaxSchemaV1 = z.object({
+  schema: z.literal(READY_FRONTIER_PRODUCTION_PROOF_ENVELOPE_V1),
+  proofId: idSyntaxSchemaV1,
+  tenantId: idSyntaxSchemaV1,
+  workspaceId: idSyntaxSchemaV1,
+  planId: idSyntaxSchemaV1,
+  planDigest: digestSyntaxSchemaV1,
+  assessmentId: idSyntaxSchemaV1,
+  assessmentDigest: digestSyntaxSchemaV1,
+  gateCode: gateCodeSyntaxSchemaV1,
+  requirementDigest: digestSyntaxSchemaV1,
+  evidenceClass: z.enum(readyFrontierProductionEvidenceClassesV1),
+  proofAuthority: z.enum(readyFrontierProductionProofAuthoritiesV1),
+  evidenceDigest: digestSyntaxSchemaV1,
+  bindings: z.array(proofBindingSyntaxSchemaV1).min(4).max(12),
+  issuerIdentityId: idSyntaxSchemaV1,
+  issuerKeyId: idSyntaxSchemaV1,
+  trustBundleId: idSyntaxSchemaV1,
+  trustBundleRevision: z.number().int().min(1).max(2_147_483_647),
+  trustBundleDigest: digestSyntaxSchemaV1,
+  observedAt: timeSyntaxSchemaV1,
+  issuedAt: timeSyntaxSchemaV1,
+  expiresAt: timeSyntaxSchemaV1,
+  bodyDigest: digestSyntaxSchemaV1,
+}).strict();
+const independentVerificationSyntaxSchemaV1 = z.object({
+  schema: z.literal(READY_FRONTIER_PRODUCTION_INDEPENDENT_VERIFICATION_V1),
+  verifierIdentityId: idSyntaxSchemaV1,
+  verifierKeyId: idSyntaxSchemaV1,
+  proofBodyDigest: digestSyntaxSchemaV1,
+  trustBundleDigest: digestSyntaxSchemaV1,
+  verifiedAt: timeSyntaxSchemaV1,
+  signatureAlgorithm: z.literal("Ed25519"),
+  signature: signatureSyntaxSchemaV1,
+}).strict();
+const proofEnvelopeSyntaxSchemaV1 = z.object({
+  body: proofBodySyntaxSchemaV1,
+  signatureAlgorithm: z.literal("Ed25519"),
+  issuerSignature: signatureSyntaxSchemaV1,
+  independentVerification: independentVerificationSyntaxSchemaV1.nullable(),
+}).strict();
+const proofObservationSyntaxSchemaV1 = z.object({
+  schema: z.literal(READY_FRONTIER_PRODUCTION_PROOF_OBSERVATION_V1),
+  observationId: idSyntaxSchemaV1,
+  proofId: idSyntaxSchemaV1,
+  tenantId: idSyntaxSchemaV1,
+  workspaceId: idSyntaxSchemaV1,
+  planId: idSyntaxSchemaV1,
+  planDigest: digestSyntaxSchemaV1,
+  assessmentId: idSyntaxSchemaV1,
+  assessmentDigest: digestSyntaxSchemaV1,
+  gateCode: gateCodeSyntaxSchemaV1,
+  requirementDigest: digestSyntaxSchemaV1,
+  evidenceDigest: digestSyntaxSchemaV1,
+  proofBodyDigest: digestSyntaxSchemaV1,
+  envelopeDigest: digestSyntaxSchemaV1,
+  trustBundleId: idSyntaxSchemaV1,
+  trustBundleRevision: z.number().int().min(1).max(2_147_483_647),
+  trustBundleDigest: digestSyntaxSchemaV1,
+  issuerIdentityId: idSyntaxSchemaV1,
+  issuerKeyId: idSyntaxSchemaV1,
+  verifierIdentityId: idSyntaxSchemaV1.nullable(),
+  verifierKeyId: idSyntaxSchemaV1.nullable(),
+  observedAt: timeSyntaxSchemaV1,
+  issuedAt: timeSyntaxSchemaV1,
+  expiresAt: timeSyntaxSchemaV1,
+  receivedAt: timeSyntaxSchemaV1,
+  trustMode: z.literal(READY_FRONTIER_PRODUCTION_TRUST_MODE_V1),
+  status: z.literal("observed_unqualified"),
+  repositoryCanQualify: z.literal(false),
+  grantsApproval: z.literal(false),
+  grantsActivationAuthority: z.literal(false),
+  grantsClaimOrLease: z.literal(false),
+  grantsDispatchOrExecution: z.literal(false),
+  grantsExternalEffects: z.literal(false),
+  observationDigest: digestSyntaxSchemaV1,
+}).strict();
+const proofVerificationInputSyntaxSchemaV1 = z.object({
+  envelope: z.unknown(),
+  assessment: z.unknown(),
+  trustBundle: z.unknown(),
+  receivedAt: timeSyntaxSchemaV1,
+}).strict();
+
+const trustAnchorSyntaxParserV1 = bindPrivateParserV1(trustAnchorSyntaxSchemaV1);
+const trustBundleSyntaxParserV1 = bindPrivateParserV1(trustBundleSyntaxSchemaV1);
+const proofEnvelopeSyntaxParserV1 = bindPrivateParserV1(proofEnvelopeSyntaxSchemaV1);
+const proofObservationSyntaxParserV1 = bindPrivateParserV1(proofObservationSyntaxSchemaV1);
+const proofVerificationInputSyntaxParserV1 = bindPrivateParserV1(proofVerificationInputSyntaxSchemaV1);
 
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never {
   throw new ReadyFrontierContractErrorV1(code);
@@ -90,7 +241,7 @@ export function readyFrontierProductionIndependentVerificationMaterialV1(
 }
 
 export function parseReadyFrontierProductionTrustAnchorV1(value: unknown): ReadyFrontierProductionTrustAnchorV1 {
-  const anchor = parseExactReadyFrontierV1(readyFrontierProductionTrustAnchorSchemaV1,
+  const anchor = parseExactReadyFrontierV1(trustAnchorSyntaxParserV1,
     value) as ReadyFrontierProductionTrustAnchorV1;
   const root = canonicalEd25519Key(anchor.ownerRootPublicKeySpki);
   if (!sameText(root.digest, anchor.ownerRootKeyDigest)) fail("digest_mismatch");
@@ -113,7 +264,7 @@ function validateIdentity(identity: ReadyFrontierProductionTrustIdentityV1,
 export function verifyReadyFrontierProductionTrustBundleV1(value: unknown, anchorValue: unknown):
   ReadyFrontierProductionTrustBundleV1 {
   const anchor = parseReadyFrontierProductionTrustAnchorV1(anchorValue);
-  const bundle = parseExactReadyFrontierV1(readyFrontierProductionTrustBundleSchemaV1,
+  const bundle = parseExactReadyFrontierV1(trustBundleSyntaxParserV1,
     value) as ReadyFrontierProductionTrustBundleV1;
   const { body } = bundle;
   if (body.tenantId !== anchor.tenantId || body.workspaceId !== anchor.workspaceId
@@ -135,7 +286,7 @@ export function verifyReadyFrontierProductionTrustBundleV1(value: unknown, ancho
 }
 
 export function parseReadyFrontierProductionProofEnvelopeV1(value: unknown): ReadyFrontierProductionProofEnvelopeV1 {
-  const envelope = parseExactReadyFrontierV1(readyFrontierProductionProofEnvelopeSchemaV1,
+  const envelope = parseExactReadyFrontierV1(proofEnvelopeSyntaxParserV1,
     value) as ReadyFrontierProductionProofEnvelopeV1;
   if (envelope.body.bodyDigest !== readyFrontierProductionProofBodyDigestV1(envelope.body)) fail("digest_mismatch");
   return envelope;
@@ -150,7 +301,7 @@ function activeIdentity(bundle: ReadyFrontierProductionTrustBundleV1, identityId
 
 export function verifyReadyFrontierProductionProofEnvelopeV1(inputValue: unknown,
   activationPacketIntegrityKey: unknown, anchorValue: unknown): ReadyFrontierProductionProofObservationV1 {
-  const input = parseExactReadyFrontierV1(readyFrontierProductionProofVerificationInputSchemaV1, inputValue);
+  const input = parseExactReadyFrontierV1(proofVerificationInputSyntaxParserV1, inputValue);
   const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment,
     activationPacketIntegrityKey);
   const anchor = parseReadyFrontierProductionTrustAnchorV1(anchorValue);
@@ -225,7 +376,7 @@ export function verifyReadyFrontierProductionProofEnvelopeV1(inputValue: unknown
 
 function parseReadyFrontierProductionProofObservationV1(value: unknown):
   ReadyFrontierProductionProofObservationV1 {
-  const observation = parseExactReadyFrontierV1(readyFrontierProductionProofObservationSchemaV1,
+  const observation = parseExactReadyFrontierV1(proofObservationSyntaxParserV1,
     value) as ReadyFrontierProductionProofObservationV1;
   if (observation.observationId !== `frontier.production-proof-observation.${observation.proofBodyDigest.slice(7, 31)}`
     || observation.observationDigest !== sha256Digest(without(

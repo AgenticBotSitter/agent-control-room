@@ -18,8 +18,6 @@ import { exactHostUint8ArrayV1 } from "../../security/host-value";
 import { ReadyFrontierContractErrorV1 } from "./errors";
 import { parseExactReadyFrontierV1 } from "./exact";
 import { parseReadyFrontierProductionBoundaryAssessmentV1 } from "./production-boundary";
-import { readyFrontierProductionProofObservationSchemaV1 as proofObservationSyntaxSchemaV1 }
-  from "./production-proof-schemas";
 import {
   parseReadyFrontierProductionProofEnvelopeV1,
   parseReadyFrontierProductionTrustAnchorV1,
@@ -27,7 +25,6 @@ import {
   verifyReadyFrontierProductionTrustBundleV1,
 } from "./production-proof";
 import { READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1 } from "./no-relay";
-import { readyFrontierDigestSchemaV1, readyFrontierIdSchemaV1, readyFrontierTimeSchemaV1 } from "./schemas";
 import type {
   ReadyFrontierProductionProofAssessmentV1,
   ReadyFrontierProductionProofEnvelopeV1,
@@ -39,11 +36,27 @@ import type {
 } from "./production-proof-types";
 import {
   READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1,
+  READY_FRONTIER_PRODUCTION_PROOF_OBSERVATION_V1,
   READY_FRONTIER_PRODUCTION_PROOF_PROJECTION_V1,
   READY_FRONTIER_PRODUCTION_TRUST_MODE_V1,
   readyFrontierProductionObservedGateStatusesV1,
 } from "./production-proof-types";
 import type { ReadyFrontierProductionBoundaryAssessmentV1 } from "./production-boundary-types";
+
+function bindPrivateParserV1<T>(schema: { parse(value: unknown): T }): { parse(value: unknown): T } {
+  const parse = schema.parse.bind(schema);
+  return Object.freeze({ parse });
+}
+
+const readyFrontierIdSchemaV1 = z.string().min(3).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:@-]*$/);
+const readyFrontierDigestSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const readyFrontierTimeSchemaV1 = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  .refine((value) => {
+    const parsed = new Date(value);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+  }, "invalid canonical instant");
+const readyFrontierIdParserV1 = bindPrivateParserV1(readyFrontierIdSchemaV1);
+const readyFrontierTimeParserV1 = bindPrivateParserV1(readyFrontierTimeSchemaV1);
 
 interface MetadataRowV1 {
   tenant_id: string; workspace_id: string; revision: number; record_count: number;
@@ -101,6 +114,42 @@ const EXPECTED_SQL = {
 } as const;
 
 const proofGateCodeSyntaxSchemaV1 = z.enum(READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1);
+const proofObservationSyntaxSchemaV1 = z.object({
+  schema: z.literal(READY_FRONTIER_PRODUCTION_PROOF_OBSERVATION_V1),
+  observationId: readyFrontierIdSchemaV1,
+  proofId: readyFrontierIdSchemaV1,
+  tenantId: readyFrontierIdSchemaV1,
+  workspaceId: readyFrontierIdSchemaV1,
+  planId: readyFrontierIdSchemaV1,
+  planDigest: readyFrontierDigestSchemaV1,
+  assessmentId: readyFrontierIdSchemaV1,
+  assessmentDigest: readyFrontierDigestSchemaV1,
+  gateCode: proofGateCodeSyntaxSchemaV1,
+  requirementDigest: readyFrontierDigestSchemaV1,
+  evidenceDigest: readyFrontierDigestSchemaV1,
+  proofBodyDigest: readyFrontierDigestSchemaV1,
+  envelopeDigest: readyFrontierDigestSchemaV1,
+  trustBundleId: readyFrontierIdSchemaV1,
+  trustBundleRevision: z.number().int().min(1).max(2_147_483_647),
+  trustBundleDigest: readyFrontierDigestSchemaV1,
+  issuerIdentityId: readyFrontierIdSchemaV1,
+  issuerKeyId: readyFrontierIdSchemaV1,
+  verifierIdentityId: readyFrontierIdSchemaV1.nullable(),
+  verifierKeyId: readyFrontierIdSchemaV1.nullable(),
+  observedAt: readyFrontierTimeSchemaV1,
+  issuedAt: readyFrontierTimeSchemaV1,
+  expiresAt: readyFrontierTimeSchemaV1,
+  receivedAt: readyFrontierTimeSchemaV1,
+  trustMode: z.literal(READY_FRONTIER_PRODUCTION_TRUST_MODE_V1),
+  status: z.literal("observed_unqualified"),
+  repositoryCanQualify: z.literal(false),
+  grantsApproval: z.literal(false),
+  grantsActivationAuthority: z.literal(false),
+  grantsClaimOrLease: z.literal(false),
+  grantsDispatchOrExecution: z.literal(false),
+  grantsExternalEffects: z.literal(false),
+  observationDigest: readyFrontierDigestSchemaV1,
+}).strict();
 const proofGateStatusSyntaxSchemaV1 = z.object({
   gateCode: proofGateCodeSyntaxSchemaV1,
   status: z.enum(readyFrontierProductionObservedGateStatusesV1),
@@ -166,6 +215,9 @@ const proofProjectionSyntaxSchemaV1 = z.object({
   canDispatchOrExecute: z.literal(false),
   projectionDigest: readyFrontierDigestSchemaV1,
 }).strict();
+const proofObservationSyntaxParserV1 = bindPrivateParserV1(proofObservationSyntaxSchemaV1);
+const proofAssessmentSyntaxParserV1 = bindPrivateParserV1(proofAssessmentSyntaxSchemaV1);
+const proofProjectionSyntaxParserV1 = bindPrivateParserV1(proofProjectionSyntaxSchemaV1);
 
 function fail(code: ReadyFrontierContractErrorV1["safeCode"]): never {
   throw new ReadyFrontierContractErrorV1(code);
@@ -181,7 +233,7 @@ function without<T extends Record<string, unknown>>(value: T, field: keyof T): R
   const copy = { ...value }; delete copy[field]; return copy;
 }
 function parseStoredObservation(value: unknown): ReadyFrontierProductionProofObservationV1 {
-  const observation = parseExactReadyFrontierV1(proofObservationSyntaxSchemaV1,
+  const observation = parseExactReadyFrontierV1(proofObservationSyntaxParserV1,
     value) as ReadyFrontierProductionProofObservationV1;
   if (observation.observationId !== `frontier.production-proof-observation.${observation.proofBodyDigest.slice(7, 31)}`
     || observation.observationDigest !== sha256Digest(without(
@@ -189,7 +241,7 @@ function parseStoredObservation(value: unknown): ReadyFrontierProductionProofObs
   return observation;
 }
 function parseStoreDerivedAssessment(value: unknown): ReadyFrontierProductionProofAssessmentV1 {
-  const assessment = parseExactReadyFrontierV1(proofAssessmentSyntaxSchemaV1,
+  const assessment = parseExactReadyFrontierV1(proofAssessmentSyntaxParserV1,
     value) as ReadyFrontierProductionProofAssessmentV1;
   if (!sameList(assessment.gateStatuses.map((item) => item.gateCode), READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
     || !sameList(assessment.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
@@ -215,7 +267,7 @@ function projectStoreDerivedAssessment(assessment: ReadyFrontierProductionProofA
     canResolveProtectedReferences: false, canContactNetwork: false,
     canClaimOrLease: false, canDispatchOrExecute: false,
   };
-  const projection = parseExactReadyFrontierV1(proofProjectionSyntaxSchemaV1, { ...material,
+  const projection = parseExactReadyFrontierV1(proofProjectionSyntaxParserV1, { ...material,
     projectionDigest: sha256Digest(material) }) as ReadyFrontierProductionProofProjectionV1;
   if (!sameList(projection.gateStatuses.map((item) => item.gateCode), READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
     || !sameList(projection.blockingGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
@@ -306,8 +358,8 @@ export class ReadyFrontierProductionProofStoreV1 {
     checkpointStore: RollbackCheckpointStoreV1, maximumRecords = 1_000) {
     this.#ledgerKey = key(ledgerKeyValue); this.#planKey = key(activationPacketIntegrityKey);
     try {
-      this.#tenantId = parseExactReadyFrontierV1(readyFrontierIdSchemaV1, tenantId);
-      this.#workspaceId = parseExactReadyFrontierV1(readyFrontierIdSchemaV1, workspaceId);
+      this.#tenantId = parseExactReadyFrontierV1(readyFrontierIdParserV1, tenantId);
+      this.#workspaceId = parseExactReadyFrontierV1(readyFrontierIdParserV1, workspaceId);
       this.#anchor = parseReadyFrontierProductionTrustAnchorV1(anchorValue);
       if (this.#anchor.tenantId !== tenantId || this.#anchor.workspaceId !== workspaceId
         || !Number.isSafeInteger(maximumRecords) || maximumRecords < 1 || maximumRecords > 10_000) fail("scope_mismatch");
@@ -345,7 +397,7 @@ export class ReadyFrontierProductionProofStoreV1 {
   recordTrustBundle(value: unknown, receivedAtValue: unknown):
     { bundle: ReadyFrontierProductionTrustBundleV1; replayed: boolean } {
     const bundle = verifyReadyFrontierProductionTrustBundleV1(value, this.#anchor);
-    const receivedAt = parseExactReadyFrontierV1(readyFrontierTimeSchemaV1, receivedAtValue);
+    const receivedAt = parseExactReadyFrontierV1(readyFrontierTimeParserV1, receivedAtValue);
     if (bundle.body.tenantId !== this.#tenantId || bundle.body.workspaceId !== this.#workspaceId
       || Date.parse(receivedAt) < Date.parse(bundle.body.issuedAt)
       || Date.parse(receivedAt) >= Date.parse(bundle.body.expiresAt)) fail("scope_mismatch");
@@ -377,7 +429,7 @@ export class ReadyFrontierProductionProofStoreV1 {
     } }, value) as Record<string, unknown>;
     const envelope = parseReadyFrontierProductionProofEnvelopeV1(input.envelope);
     const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment, this.#planKey);
-    const receivedAt = parseExactReadyFrontierV1(readyFrontierTimeSchemaV1, input.receivedAt);
+    const receivedAt = parseExactReadyFrontierV1(readyFrontierTimeParserV1, input.receivedAt);
     return this.#mutate(() => {
       const current = this.#verify();
       const exact = current.proofs.find((item) => item.observation.proofId === envelope.body.proofId);
@@ -403,12 +455,12 @@ export class ReadyFrontierProductionProofStoreV1 {
 
   projectAssessment(proofAssessmentId: string, assessmentValue: unknown, evaluatedAt: string):
     ReadyFrontierProductionProofProjectionV1 {
-    parseExactReadyFrontierV1(readyFrontierIdSchemaV1, proofAssessmentId);
-    parseExactReadyFrontierV1(readyFrontierTimeSchemaV1, evaluatedAt);
+    const exactProofAssessmentId = parseExactReadyFrontierV1(readyFrontierIdParserV1, proofAssessmentId);
+    const exactEvaluatedAt = parseExactReadyFrontierV1(readyFrontierTimeParserV1, evaluatedAt);
     const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(assessmentValue, this.#planKey);
     const current = this.#verify(), bundle = current.bundles.at(-1)?.bundle;
     if (!bundle || current.rows.length === 0) fail("policy_inactive");
-    const evaluated = Date.parse(evaluatedAt);
+    const evaluated = Date.parse(exactEvaluatedAt);
     if (evaluated < Date.parse(current.rows.at(-1)!.recorded_at)
       || evaluated < Date.parse(assessment.assessedAt)
       || bundle.body.tenantId !== assessment.tenantId || bundle.body.workspaceId !== assessment.workspaceId) {
@@ -438,7 +490,7 @@ export class ReadyFrontierProductionProofStoreV1 {
       });
     const observedUnqualifiedCount = gateStatuses.filter((item) => item.status === "observed_unqualified").length;
     const material: Omit<ReadyFrontierProductionProofAssessmentV1, "proofAssessmentDigest"> = {
-      schema: READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1, proofAssessmentId,
+      schema: READY_FRONTIER_PRODUCTION_PROOF_ASSESSMENT_V1, proofAssessmentId: exactProofAssessmentId,
       tenantId: assessment.tenantId, workspaceId: assessment.workspaceId,
       planId: assessment.planId, planDigest: assessment.planDigest,
       assessmentId: assessment.assessmentId, assessmentDigest: assessment.assessmentDigest,
@@ -447,7 +499,7 @@ export class ReadyFrontierProductionProofStoreV1 {
       gateStatuses, blockingGateCodes: [...READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1],
       observedUnqualifiedCount, qualifiedProofCount: 0, remainingQualifiedProofCount: 9,
       state: "blocked_fixture_proof_only", safeReason: "protected_production_custody_unavailable",
-      evaluatedAt, eligibleForOwnerApproval: false, eligibleForActivation: false,
+      evaluatedAt: exactEvaluatedAt, eligibleForOwnerApproval: false, eligibleForActivation: false,
       requiresProtectedProductionReassessment: true, requiresFreshStrongOwnerApproval: true,
       requiresIndependentSecurityReview: true, activationAuthorized: false, grantsApproval: false,
       grantsActivationAuthority: false, grantsClaimOrLease: false,
