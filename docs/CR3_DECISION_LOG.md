@@ -1838,3 +1838,11 @@ owner-direction fields from public request input, captures one complete reposito
 module initialization, embeds and re-verifies its exact ID, scope, accepted time, digest, and false live-authority facts,
 and adds regressions for caller extras and fully re-digested ID/time forks. A different independent reviewer must close
 the finding before AUTO-110 can be accepted.
+
+**First-remediation independent acceptance:** A different reviewer independently reproduced `AUTO110-IR-001` on the
+original implementation, then accepted exact remediation commit `f3b64498c2313c86d50f63e4c62cf7c7eba5fcd6`, tree
+`d2ab467adf2032504f31a0b6d1c852f77a3ddf58`, in unchanged report SHA-256
+`6a6186d27c9ca262598c13af36d17e84e6896d9ad68b4b9cd0a453aabaa8e1a3`. Four caller-direction input families, nine
+fully re-digested direction forks, 53 authority forks, six lineage forks, and nested accessor and Proxy probes all fail
+closed. `AUTO110-IR-001` is closed with no new finding. Acceptance is limited to the exact effect-free repository
+snapshot; all 36 live gates and the fresh strong-factor owner effect-window requirement remain blocking.

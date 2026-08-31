@@ -1,6 +1,6 @@
 # CR11B-AUTO-110 Candidate Acceptance Record
 
-Status: first-review remediation candidate; different independent re-review pending
+Status: exact effect-free repository snapshot independently accepted; native rehearsal remains blocked
 
 Date: 2026-08-31
 
@@ -41,8 +41,8 @@ No protected host value is present. No host or database has been contacted. The 
 - macOS stage zero: `ready_for_runtime_check`; and
 - working-tree whitespace validation: passing.
 
-The broad results above were refreshed after the first-review remediation. Different-reviewer evidence remains pending
-until the exact remediation commit is frozen and reviewed.
+The broad results above were refreshed after the first-review remediation. A different independent reviewer then
+accepted the exact remediation snapshot without changing it.
 
 ## First independent rejection and remediation
 
@@ -56,14 +56,18 @@ although all live capabilities stayed false.
 The remediation removes owner-direction identity and time from public input. It captures one exact immutable
 repository-accepted snapshot and requires its ID, scope, accepted time, digest, and false live-authority facts in build
 and parse paths. New hostile coverage rejects caller-supplied extras and fully re-digested direction-ID and time forks.
-This remediation is not accepted until a different independent reviewer closes `AUTO110-IR-001`.
+The remediation was frozen at commit `f3b64498c2313c86d50f63e4c62cf7c7eba5fcd6`, tree
+`d2ab467adf2032504f31a0b6d1c852f77a3ddf58`. A different independent reviewer reproduced the original attack, rejected
+four caller-direction input families, nine fully re-digested direction forks, 53 false-to-true authority forks, six
+lineage forks, and nested accessor and Proxy probes with zero hostile callbacks. `AUTO110-IR-001` is closed with no new
+finding. The unchanged accepted report is `docs/reviews/CR11B_AUTO_110_FIRST_REMEDIATION_REREVIEW.md`, SHA-256
+`6a6186d27c9ca262598c13af36d17e84e6896d9ad68b4b9cd0a453aabaa8e1a3`.
 
 ## Remaining gate
 
-Independent security acceptance is required before this candidate can be used as the source of any later live packet.
-Even after independent acceptance, host contact remains blocked until all 36 live gates have current accepted evidence
-and a new exact, strong-factor owner effect window names the protected access path, rollback, cleanup, evidence, and time
-limits.
+Repository security acceptance is complete for the exact snapshot above. Host contact remains blocked until all 36 live
+gates have current accepted evidence and a new exact, strong-factor owner effect window names the protected access path,
+rollback, cleanup, evidence, and time limits.
 
 ## Negative authority
 

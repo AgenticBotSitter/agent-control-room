@@ -1,6 +1,6 @@
 # CR11B-AUTO-110 PostgreSQL Rehearsal Contract
 
-Status: first-review remediation candidate; different independent re-review pending
+Status: exact effect-free repository snapshot independently accepted; native rehearsal remains blocked
 
 Date: 2026-08-31
 
@@ -77,8 +77,11 @@ caller-supplied digests and times each produced a valid request claiming owner-d
 
 The remediation removes both direction fields from the public builder, captures one complete immutable
 repository-accepted owner-direction snapshot, embeds it in every request, re-verifies it against the clean-start snapshot,
-and rejects caller extras plus re-digested direction-ID and accepted-time forks. This is producer remediation evidence;
-a different independent reviewer must close the finding.
+and rejects caller extras plus re-digested direction-ID and accepted-time forks. A different independent reviewer
+reproduced the original defect and accepted exact remediation commit `f3b64498c2313c86d50f63e4c62cf7c7eba5fcd6`, tree
+`d2ab467adf2032504f31a0b6d1c852f77a3ddf58`, with no new finding. The unchanged report is
+`docs/reviews/CR11B_AUTO_110_FIRST_REMEDIATION_REREVIEW.md`, SHA-256
+`6a6186d27c9ca262598c13af36d17e84e6896d9ad68b4b9cd0a453aabaa8e1a3`.
 
 ## Safe disposition and projection
 
