@@ -1736,3 +1736,31 @@ rollback and cleanup rules, and independent review.
 
 ADR-115 supersedes the disposable hosted-provider path as the current next step. AUTO-080 remains accepted historical
 evidence for its exact inert request boundary, but it is not a mandate to select or contact a hosted database provider.
+
+## ADR-116 — Readiness composition preserves every source gate and cannot infer live evidence
+
+**Decision:** CR11B-AUTO-100 composes the twelve AUTO-090 production-database prerequisites, eighteen CR10A deployment
+gates, and nine CR11B automatic-work production proofs into one ordered 39-gate packet. Gates retain their source lane
+even when their subjects overlap. Only the three repository contracts already marked present by CR10A are recorded as
+present, and they remain repository evidence only. The other 36 gates block readiness. The packet and its
+disabled-before-host-contact disposition bind the exact Hostinger target, CR10A topology/release/plan/assessment/
+disposition chain, and accepted AUTO-040/AUTO-070 identities. They grant no approval, owner-window eligibility,
+deployment authority, execution authority, or external effects.
+
+**Why:** Database-target prerequisites, deployment operations, and automatic-work safety proofs answer different
+questions. De-duplicating similar names or allowing one repository contract to satisfy a live proof could incorrectly
+turn partial design evidence into production authority. A source-preserving packet gives the later owner-controlled phase
+one honest checklist without expanding its authority.
+
+**Alternatives rejected:** Collapse overlapping gates; count a written contract as native host evidence; accept the
+owner-relayed host report as qualification; let a safe projection omit blockers; embed production connection values;
+construct a host/database runner in the readiness phase; treat a valid digest, producer test, or general chat approval as
+permission to contact the VPS.
+
+**Trade-off:** The same operational subject may appear more than once and must be satisfied independently in its proper
+lane. The 39-gate count is intentionally conservative. It produces a larger checklist, but it keeps architecture,
+operations, production proof, independent review, and owner effect authority distinct.
+
+**Reevaluate:** Only after a different independent reviewer accepts the exact AUTO-100 candidate may a later phase
+prepare an exact owner-authorized native rehearsal. Evidence changes require a new packet. No live work begins from this
+ADR or its repository artifacts.

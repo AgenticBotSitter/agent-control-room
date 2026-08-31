@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-08-30
+**Updated:** 2026-08-31
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
 
@@ -85,6 +85,7 @@
 | CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Complete for exact independently accepted effect-free commit `20eeb14` | Six remediations closed mutable-runtime integrity attacks; eight fake scenarios retain all nine blockers and qualify zero production proofs; see `CR11B_AUTO_070_ACCEPTANCE.md` |
 | CR11B-AUTO-080 disposable hosted qualification preparation | Complete for exact independently accepted effect-free commit `091ff11` | Three remediations close raw-key cleanup, mutable binary metadata, and keyed-HMAC capability escape; every live capability remains false |
 | CR11B-AUTO-090 Hostinger PostgreSQL production target | Complete locally for the effect-free candidate; integration pending | One self-managed private PostgreSQL primary is fixed as sole global authority; AWS RDS, production PGlite, public DB access, and R2 state are denied; see `CR11B_AUTO_090_ACCEPTANCE.md` |
+| CR11B-AUTO-100 Hostinger PostgreSQL readiness packet | Complete locally for the effect-free candidate; independent review and integration pending | All 39 target, deployment, and automatic-work gates remain source-separated; 3 repository contracts are present and 36 production gates block host contact; see `CR11B_AUTO_100_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -92,19 +93,19 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-090 records the owner-selected production database target without performing live work. One
-self-managed PostgreSQL primary on the Hostinger KVM2 VPS is the sole global write authority and is reachable only over
-a host-local socket/loopback or a private network. AWS RDS is excluded. PGlite is local-development/test-only. R2 is limited to
-artifacts and encrypted backups and cannot hold coordination or transactional state. The strict digest-bound contract
-contains no production values, hostnames, addresses, ports, credential references, provider/host/database client, or
-deployable configuration. Twelve blockers retain native host qualification, deployment-mode selection, private-network
-evidence, PostgreSQL runtime preparation, role separation, credential custody, backup/WAL, restore, migration,
-monitoring, fresh owner authorization, and independent review. Johnny5's reported client-tool/no-server state is recorded
-only as owner-relayed unverified context. Focused tests pass 6/6, combined CR11B passes 155/155, combined CR10A passes,
-registered pretests pass, core passes 414/416 with zero failures and two intentional platform skips, and public posttests
-pass 52/52. Typecheck, full lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables,
-macOS stage zero, and whitespace validation pass. No provider, host, process, database, migration, backup, restore,
-deployment, or external effect occurred.
+Active: CR11B-AUTO-100 joins the owner-selected Hostinger PostgreSQL target, the CR10A deployment gates, and the CR11B
+automatic-work production proofs without performing live work. All 39 gates remain in separate authoritative source
+lanes: twelve database-target prerequisites, eighteen deployment gates, and nine automatic-work proofs. Only the
+topology, release-identity, and health-probe repository contracts are present. The other 36 gates block readiness, owner
+window eligibility, host/database contact, service control, protected-reference resolution, configuration, migrations,
+backup/restore, consumer activation, and deployment. The strict packet re-verifies the complete target and
+topology/release/plan/assessment/disposition chain, fixes accepted AUTO-040/AUTO-070 identities, rejects source
+substitution and re-digested gate manipulation, and derives a safe disabled-before-host-contact disposition. It contains
+no production values or live client. Focused tests pass 10/10, combined CR11B 165/165, combined CR10A 161/161,
+registered pretests 747/747, core 414/416 with zero failures and two intentional platform skips, and public post-tests
+52/52. Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage
+zero, and whitespace validation pass. No provider, host, process, database, credential, migration, backup, restore,
+deployment, or external effect occurred. Independent review and integration remain pending.
 
 Accepted boundary: CR11B-AUTO-070 is complete for exact effect-free commit
 `20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`. It binds authenticated
@@ -355,12 +356,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR11B-AUTO-100-HOSTINGER-POSTGRESQL-READINESS-PACKET — join the accepted operations gates and automatic-work production blockers into one effect-free readiness packet
+Block: CR11B-AUTO-100-INDEPENDENT-REVIEW — independently test the exact Hostinger PostgreSQL readiness candidate before integration
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the target is now settled, but production readiness is split across CR10A operations gates and CR11B automatic-work proof blockers. A single exact packet is needed before a later owner-controlled rehearsal can be scoped safely.
-Expected output: one strict, digest-bound repository-only readiness assessment that composes topology, service identity, private network, role custody, migration, backup/WAL, clean restore, health, resource, clock/revocation, consumer, and review evidence without embedding production values or adding a live runner.
-Owner action: keep `gpt-5.6-sol` at xhigh. No VPS or credential action is needed for AUTO-100.
+Why: the producer suite cannot accept its own security boundary. A different reviewer must attack exact source binding, gate preservation, digest/chronology checks, safe projection, and negative authority before integration.
+Expected output: an immutable accepted or rejected report tied to the exact candidate commit. Any finding is remediated and reviewed by a different reviewer before AUTO-100 closes.
+Owner action: keep `gpt-5.6-sol` at xhigh. No VPS, database, or credential action is needed for the review.
 Stop before: host or provider contact, protected-reference or credential access, installation, configuration, service control, any network/database/process call, migration, backup/restore, raw evidence, public endpoint, consumer activation, dispatch, execution, DNS, Cloudflare, hosting deployment, or external effect.
 ```
 
