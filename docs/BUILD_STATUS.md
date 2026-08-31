@@ -81,6 +81,7 @@
 | CR11B-AUTO-030 ready promotion and internal scheduler/jobber handoff | Complete for exact independently accepted effect-free commit `adf0804` | Token-only exact-operation authorization, transaction-owner pre-commit and post-transaction trusted time, request idempotency, dedicated non-delivery handoff table, protected ready/claim paths, historical receipt projection, concurrency/rollback tests, accepted fifth review, and `CR11B_AUTO_030_ACCEPTANCE.md` |
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
+| CR11B-AUTO-060 protected proof ingress | Implemented locally; independent security and authority review required | Owner/issuer/verifier Ed25519 binding, HMAC/checkpoint local ledger, replay/rollback, expiry/revocation/supersession, safe partial assessment, and all-nine negative authority; see `CR11B_AUTO_060_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -88,7 +89,17 @@
 CR-7A is accepted at Hermes package `0.20.6`, installed Git revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. A disposable provider-backed run proved zero-tool start, structured streaming, steer, interrupt, usage, persistence, restart, and resume. The lifecycle client fails before prompt submission unless the exact pin, disposable profile/workspace, ignored context files, zero MCP servers, and the valid zero-tool `context_engine` selection are attested and observed. Approval response remains observe-only. CR-6E owner acceptance, real per-platform supervisor rehearsals, and the unresolved macOS CR-5C.9H native gate remain separate owner-controlled gates.
 
 ```text
-Active: CR11B-AUTO-050 is complete for exact default-disabled commit `2a47f57c3b1015b279ee51e95690d10d147b112a`.
+Active: CR11B-AUTO-060 is implemented locally and remains open pending frozen-candidate validation and independent review.
+The repository-fixture-only verifier binds owner, issuer, and distinct independent-verifier Ed25519 signatures to the exact
+AUTO-050 plan/assessment/requirement chain. Its private local ledger authenticates rows and whole state and compares an
+external rollback checkpoint. Partial, expired, revoked, and superseded proof truth is visible, but nine accepted fixture
+proofs still produce zero qualified proofs and retain all nine blockers. Candidate validation passes 13/13 focused,
+112/112 combined CR11B, 694/694 registered pretests, 414/416 core with two intentional platform skips and zero failures,
+52/52 public posttests, typecheck, full lint, production build, 2/2 rendered routes, 27 migrations/97 tables, macOS stage
+zero, and whitespace validation. No production proof or authority exists. Independent review is still required.
+
+Prior accepted boundary: CR11B-AUTO-050 is complete for exact default-disabled commit
+`2a47f57c3b1015b279ee51e95690d10d147b112a`.
 The first reviewer rejected `f046ccee` for re-digested chronology and cross-artifact identity substitution. A different
 reviewer reproduced both defects on that old snapshot and accepted the keyed-provenance and exact-chain remediation in
 unchanged report SHA-256 `fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. Verification passes 12/12 focused, 99/99 combined

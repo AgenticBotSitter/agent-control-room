@@ -1458,3 +1458,34 @@ exact remediation commit, and that acceptance still cannot satisfy any of the ni
 exact default-disabled remediation commit `2a47f57c3b1015b279ee51e95690d10d147b112a`. Accepted report SHA-256 is
 `fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. This closes AUTO-050 design integrity only; all
 nine production proofs remain unobserved and no production verifier, consumer, deployment, or external effect is accepted.
+
+## ADR-112 — AUTO-060 authenticates fixture proof observations without qualifying production
+
+**Decision:** CR11B-AUTO-060 accepts only owner-, issuer-, and where required independent-verifier-signed Ed25519 proof
+envelopes under literal `repository_fixture_only` trust. Each proof binds the complete authenticated AUTO-050 plan,
+assessment, gate requirement, ordered binding digests, evidence aggregate, identity/key, trust revision, and chronology.
+The private local SQLite ledger authenticates every row and whole state with keys held outside the database and compares a
+separate rollback checkpoint. Trust revisions are linear; exact replay is inert; expiry, revocation, and later trust
+revision remain visible. Every observation is `observed_unqualified`; even nine current observations retain all nine
+blockers and zero qualified proofs.
+
+**Why:** AUTO-050 named exact proof requirements but intentionally had no verifier or evidence store. The next safe seam is
+to make cryptographic and persistence attacks testable without letting repository-generated keys, fixtures, or booleans
+mint production readiness. Binding trust mode and negative authority into every artifact prevents successful fixture
+verification from being relabelled as protected custody.
+
+**Alternatives rejected:** Accept a caller `qualified` flag; let a proof digest satisfy a gate without every ordered
+binding; accept a verifier sharing issuer identity, key, or signed independence domain; trust an unchained or rolled-back
+bundle; store raw evidence or private keys; keep rollback truth inside the protected database; let nine fixture proofs
+unlock owner approval or activation; add a consumer, protected-reference resolver, hosted database, network client, or
+effect path to proof intake.
+
+**Trade-off:** The root and rollback checkpoint are repository-fixture/test references, SQLite is local and
+single-process, and no production clock, key, revocation, database, or evidence custody is proved. A trust update
+supersedes earlier observations even when the same key remains active, deliberately requiring renewed evidence. This is
+safer but more operationally expensive.
+
+**Reevaluate:** A different independent reviewer must attack the exact frozen candidate before acceptance. Any production
+root, durable protected checkpoint, hosted multi-process ledger, real evidence collection, owner approval issuance,
+consumer, activation, deployment, or external effect is a new owner-authorized block with fresh security review. AUTO-060
+fixture observations can never be migrated or relabelled into production qualification.
