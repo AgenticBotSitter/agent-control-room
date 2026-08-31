@@ -24,9 +24,66 @@ import {
   type ReadyFrontierProductionCustodyServiceRoleV1,
 } from "./production-custody-types";
 
+const objectConstructorV1 = Object;
+const arrayConstructorV1 = Array;
+const numberConstructorV1 = Number;
+const jsonObjectV1 = JSON;
+const objectFreezeV1 = Object.freeze;
+const objectIsFrozenV1 = Object.isFrozen;
+const objectValuesV1 = Object.values;
+const objectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
+const objectKeysV1 = Object.keys;
+const arrayIsArrayV1 = Array.isArray;
+const arrayMapV1 = Array.prototype.map;
+const arrayJoinV1 = Array.prototype.join;
+const arraySortV1 = Array.prototype.sort;
+const numberIsFiniteV1 = Number.isFinite;
+const numberIsNaNV1 = Number.isNaN;
+const numberIsSafeIntegerV1 = Number.isSafeInteger;
+const jsonStringifyV1 = JSON.stringify;
+const dateConstructorV1 = Date;
+const dateParseV1 = Date.parse;
+const bufferConstructorV1 = Buffer;
+const bufferFromV1 = Buffer.from;
+
+const runtimeSentinelKeyV1 = new Uint8Array(32);
+for (let index = 0; index < runtimeSentinelKeyV1.length; index += 1) runtimeSentinelKeyV1[index] = 167;
+const runtimeSentinelMaterialV1 = { auto070: ["runtime", 7, true], revision: 1 };
+const runtimeSentinelDigestV1 = sha256Digest(runtimeSentinelMaterialV1);
+const runtimeSentinelAuthTagV1 = hmacSha256Tag(runtimeSentinelKeyV1, runtimeSentinelMaterialV1);
+
+function exactOwnMethodV1(value: object, key: PropertyKey, expected: unknown): boolean {
+  const descriptor = objectGetOwnPropertyDescriptorV1(value, key);
+  return Boolean(descriptor && "value" in descriptor && descriptor.value === expected);
+}
+function exactGlobalValueV1(key: PropertyKey, expected: unknown): boolean {
+  const descriptor = objectGetOwnPropertyDescriptorV1(globalThis, key);
+  return Boolean(descriptor && "value" in descriptor && descriptor.value === expected);
+}
+function assertCanonicalRuntimeV1(): void {
+  if (!exactGlobalValueV1("Object", objectConstructorV1) || !exactGlobalValueV1("Array", arrayConstructorV1)
+    || !exactGlobalValueV1("Number", numberConstructorV1) || !exactGlobalValueV1("JSON", jsonObjectV1)
+    || !exactGlobalValueV1("Date", dateConstructorV1)
+    || !exactOwnMethodV1(objectConstructorV1, "keys", objectKeysV1)
+    || !exactOwnMethodV1(arrayConstructorV1, "isArray", arrayIsArrayV1)
+    || !exactOwnMethodV1(Array.prototype, "map", arrayMapV1)
+    || !exactOwnMethodV1(Array.prototype, "join", arrayJoinV1)
+    || !exactOwnMethodV1(Array.prototype, "sort", arraySortV1)
+    || !exactOwnMethodV1(numberConstructorV1, "isFinite", numberIsFiniteV1)
+    || !exactOwnMethodV1(numberConstructorV1, "isNaN", numberIsNaNV1)
+    || !exactOwnMethodV1(numberConstructorV1, "isSafeInteger", numberIsSafeIntegerV1)
+    || !exactOwnMethodV1(jsonObjectV1, "stringify", jsonStringifyV1)
+    || !exactOwnMethodV1(dateConstructorV1, "parse", dateParseV1)
+    || !exactOwnMethodV1(bufferConstructorV1, "from", bufferFromV1)
+    || sha256Digest(runtimeSentinelMaterialV1) !== runtimeSentinelDigestV1
+    || hmacSha256Tag(runtimeSentinelKeyV1, runtimeSentinelMaterialV1) !== runtimeSentinelAuthTagV1) {
+    fail("integrity_failed");
+  }
+}
+
 function bindPrivateParserV1<T>(schema: { parse(value: unknown): T }): { parse(value: unknown): T } {
   const parse = schema.parse.bind(schema);
-  return Object.freeze({ parse });
+  return objectFreezeV1({ parse });
 }
 
 const idSchemaV1 = z.string().min(3).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:@-]*$/);
@@ -35,8 +92,8 @@ const digestSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const authTagSchemaV1 = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
 const timeSchemaV1 = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
   .refine((value) => {
-    const parsed = new Date(value);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+    const parsed = new dateConstructorV1(value);
+    return !numberIsNaNV1(parsed.getTime()) && parsed.toISOString() === value;
   }, "invalid canonical instant");
 const gateSchemaV1 = z.enum(READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1);
 const scenarioSchemaV1 = z.enum(readyFrontierProductionCustodyScenarioCodesV1);
@@ -203,11 +260,13 @@ function key(value: unknown): Uint8Array {
   return parsed.copy();
 }
 function sameText(left: string, right: string): boolean {
-  const a = Buffer.from(left), b = Buffer.from(right);
+  const a = bufferFromV1(left), b = bufferFromV1(right);
   return a.length === b.length && timingSafeEqual(a, b);
 }
 function sameList(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
+  return true;
 }
 function without<T extends Record<string, unknown>>(value: T, field: keyof T): Record<string, unknown> {
   const copy = { ...value }; delete copy[field]; return copy;
@@ -235,14 +294,16 @@ function reportAuthMaterial(report: Pick<ReadyFrontierProductionCustodyReportV1,
     workspaceId: report.workspaceId, startedAt: report.startedAt, completedAt: report.completedAt };
 }
 function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    Object.values(value as Record<string, unknown>).forEach((item) => deepFreeze(item));
+  if (value && typeof value === "object" && !objectIsFrozenV1(value)) {
+    objectFreezeV1(value);
+    if (!objectIsFrozenV1(value)) fail("integrity_failed");
+    const children = objectValuesV1(value as Record<string, unknown>);
+    for (let index = 0; index < children.length; index += 1) deepFreeze(children[index]);
   }
   return value;
 }
 
-const PROCESS_IDS_V1 = Object.freeze(["custody.qualifier.a", "custody.qualifier.b",
+const PROCESS_IDS_V1 = objectFreezeV1(["custody.qualifier.a", "custody.qualifier.b",
   "custody.qualifier.c"] as const);
 function serviceRolesV1(): ReadyFrontierProductionCustodyServiceRoleV1[] {
   const roles: Array<Pick<ReadyFrontierProductionCustodyServiceRoleV1, "role" | "serviceIdentityId"
@@ -254,10 +315,36 @@ function serviceRolesV1(): ReadyFrontierProductionCustodyServiceRoleV1[] {
     { role: "rollback_checkpoint_custodian", serviceIdentityId: "custody.service.checkpoint-custodian",
       mayWriteProofLedger: false, mayVerifyProofLedger: false, mayAdvanceCheckpoint: true },
   ];
-  return roles.map((role) => ({ ...role,
-    keyIdentityDigest: sha256Digest({ repositoryFakeKeyIdentity: role.serviceIdentityId }),
-    independenceDomainDigest: sha256Digest({ repositoryFakeIndependenceDomain: role.role }),
-    mayIssueProof: false, mayApproveProduction: false, mayActivateProduction: false }));
+  const result: ReadyFrontierProductionCustodyServiceRoleV1[] = [];
+  for (let index = 0; index < roles.length; index += 1) {
+    const role = roles[index]!;
+    result[index] = { ...role,
+      keyIdentityDigest: sha256Digest({ repositoryFakeKeyIdentity: role.serviceIdentityId }),
+      independenceDomainDigest: sha256Digest({ repositoryFakeIndependenceDomain: role.role }),
+      mayIssueProof: false, mayApproveProduction: false, mayActivateProduction: false };
+  }
+  return result;
+}
+
+function uniqueTextCountV1(values: readonly string[]): number {
+  let unique = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    let seen = false;
+    for (let prior = 0; prior < index; prior += 1) if (values[prior] === values[index]) { seen = true; break; }
+    if (!seen) unique += 1;
+  }
+  return unique;
+}
+function trueCountV1(values: readonly boolean[]): number {
+  let count = 0;
+  for (let index = 0; index < values.length; index += 1) if (values[index]) count += 1;
+  return count;
+}
+function statusCountV1(results: readonly ReadyFrontierProductionCustodyScenarioResultV1[],
+  status: ReadyFrontierProductionCustodyScenarioResultV1["status"]): number {
+  let count = 0;
+  for (let index = 0; index < results.length; index += 1) if (results[index]!.status === status) count += 1;
+  return count;
 }
 
 class RepositoryFakeCustodyStateV1 {
@@ -297,14 +384,14 @@ class RepositoryFakeCustodyStateV1 {
 class RepositoryFakeProtectedClockV1 {
   #last = 0;
   observe(value: number): boolean {
-    if (!Number.isSafeInteger(value) || value <= this.#last) return false;
+    if (!numberIsSafeIntegerV1(value) || value <= this.#last) return false;
     this.#last = value; return true;
   }
   current(): number { return this.#last; }
 }
 
 const faultForScenario: Readonly<Record<ReadyFrontierProductionCustodyScenarioCodeV1,
-  ReadyFrontierProductionCustodyFaultCodeV1>> = Object.freeze({
+  ReadyFrontierProductionCustodyFaultCodeV1>> = objectFreezeV1({
   service_identity_separation: "service_identity_alias",
   owner_policy_high_water: "policy_rollback_accepted",
   protected_clock_commit_boundary: "clock_rollback_accepted",
@@ -320,16 +407,21 @@ function scenarioTranscriptV1(scenarioCode: ReadyFrontierProductionCustodyScenar
   const faultActive = injectedFault === faultForScenario[scenarioCode];
   if (scenarioCode === "service_identity_separation") {
     const roles = serviceRolesV1();
-    const keyDigests = roles.map((item) => item.keyIdentityDigest);
+    const identityIds: string[] = [], keyDigests: string[] = [], domainDigests: string[] = [];
+    const writers: boolean[] = [], readers: boolean[] = [], custodians: boolean[] = [];
+    for (let index = 0; index < roles.length; index += 1) {
+      const role = roles[index]!;
+      identityIds[index] = role.serviceIdentityId; keyDigests[index] = role.keyIdentityDigest;
+      domainDigests[index] = role.independenceDomainDigest; writers[index] = role.mayWriteProofLedger;
+      readers[index] = role.mayVerifyProofLedger; custodians[index] = role.mayAdvanceCheckpoint;
+    }
     if (faultActive) keyDigests[1] = keyDigests[0]!;
-    const passed = new Set(roles.map((item) => item.serviceIdentityId)).size === 3
-      && new Set(keyDigests).size === 3
-      && new Set(roles.map((item) => item.independenceDomainDigest)).size === 3
-      && roles.filter((item) => item.mayWriteProofLedger).length === 1
-      && roles.filter((item) => item.mayVerifyProofLedger).length === 1
-      && roles.filter((item) => item.mayAdvanceCheckpoint).length === 1;
-    return { passed, transcript: { identityCount: 3, uniqueKeyCount: new Set(keyDigests).size,
-      uniqueDomainCount: new Set(roles.map((item) => item.independenceDomainDigest)).size,
+    const uniqueIdentityCount = uniqueTextCountV1(identityIds), uniqueKeyCount = uniqueTextCountV1(keyDigests);
+    const uniqueDomainCount = uniqueTextCountV1(domainDigests);
+    const passed = uniqueIdentityCount === 3 && uniqueKeyCount === 3 && uniqueDomainCount === 3
+      && trueCountV1(writers) === 1 && trueCountV1(readers) === 1 && trueCountV1(custodians) === 1;
+    return { passed, transcript: { identityCount: 3, uniqueKeyCount,
+      uniqueDomainCount,
       singlePurposeRoleCount: 3 } };
   }
   if (scenarioCode === "owner_policy_high_water") {
@@ -351,17 +443,27 @@ function scenarioTranscriptV1(scenarioCode: ReadyFrontierProductionCustodyScenar
   if (scenarioCode === "revocation_cross_process_convergence") {
     const state = new RepositoryFakeCustodyStateV1(); state.advancePolicy(2); state.revokeAt(2);
     const views = faultActive ? [2, 1, 2] : [2, 2, 2];
-    const accepted = views.map((revision) => state.acceptsCredentialAt(revision));
-    return { passed: accepted.every((value) => !value), transcript: { processViews: views,
-      credentialAcceptedCount: accepted.filter(Boolean).length, revocationHighWater: 2 } };
+    const accepted: boolean[] = [];
+    for (let index = 0; index < views.length; index += 1) {
+      accepted[index] = state.acceptsCredentialAt(views[index]!);
+    }
+    const acceptedCount = trueCountV1(accepted);
+    return { passed: acceptedCount === 0, transcript: { processViews: views,
+      credentialAcceptedCount: acceptedCount, revocationHighWater: 2 } };
   }
   if (scenarioCode === "serializable_claim_uniqueness") {
     const state = new RepositoryFakeCustodyStateV1();
-    const accepted = PROCESS_IDS_V1.map((processId) => state.claim(processId));
+    const accepted: boolean[] = [];
+    for (let index = 0; index < PROCESS_IDS_V1.length; index += 1) {
+      accepted[index] = state.claim(PROCESS_IDS_V1[index]!);
+    }
     if (faultActive) accepted[1] = true;
-    return { passed: accepted.filter(Boolean).length === 1,
-      transcript: { processCount: 3, acceptedClaimCount: accepted.filter(Boolean).length,
-        deterministicOwnerIndex: accepted.findIndex(Boolean) } };
+    const acceptedCount = trueCountV1(accepted);
+    let ownerIndex = -1;
+    for (let index = 0; index < accepted.length; index += 1) if (accepted[index]) { ownerIndex = index; break; }
+    return { passed: acceptedCount === 1,
+      transcript: { processCount: 3, acceptedClaimCount: acceptedCount,
+        deterministicOwnerIndex: ownerIndex } };
   }
   if (scenarioCode === "checkpoint_compare_and_swap") {
     const state = new RepositoryFakeCustodyStateV1();
@@ -392,29 +494,33 @@ function scenarioTranscriptV1(scenarioCode: ReadyFrontierProductionCustodyScenar
 function buildScenarioResultsV1(fault: ReadyFrontierProductionCustodyFaultCodeV1,
   planDigest: string, runId: string, startedAt: string, completedAt: string):
   ReadyFrontierProductionCustodyScenarioResultV1[] {
-  return readyFrontierProductionCustodyScenarioCodesV1.map((scenarioCode) => {
+  const results: ReadyFrontierProductionCustodyScenarioResultV1[] = [];
+  for (let index = 0; index < readyFrontierProductionCustodyScenarioCodesV1.length; index += 1) {
+    const scenarioCode = readyFrontierProductionCustodyScenarioCodesV1[index]!;
     const outcome = scenarioTranscriptV1(scenarioCode, fault);
     const safeFindingCode = outcome.passed ? "expected_boundary_observed" : faultForScenario[scenarioCode];
-    return { scenarioCode, status: outcome.passed ? "simulated_pass" : "simulated_failure",
+    results[index] = { scenarioCode, status: outcome.passed ? "simulated_pass" : "simulated_failure",
       safeFindingCode, processCount: 3,
       evidenceDigest: sha256Digest({ schema: "control-room-ready-frontier-production-custody-transcript/v1",
         planDigest, runId, startedAt, completedAt, scenarioCode, safeFindingCode,
         repositoryFakeOnly: true, transcript: outcome.transcript }) };
-  });
+  }
+  return results;
 }
 
 export function buildReadyFrontierProductionCustodyPlanV1(inputValue: unknown,
   activationPacketIntegrityKey: unknown, qualificationIntegrityKey: unknown):
   ReadyFrontierProductionCustodyPlanV1 {
+  assertCanonicalRuntimeV1();
   const qualificationKey = key(qualificationIntegrityKey);
   try {
     const input = parseExactReadyFrontierV1(planInputParserV1, inputValue);
     const assessment = parseReadyFrontierProductionBoundaryAssessmentV1(input.assessment,
       activationPacketIntegrityKey);
-    if (Date.parse(input.plannedAt) < Date.parse(assessment.assessedAt)
-      || Date.parse(input.expiresAt) <= Date.parse(input.plannedAt)
-      || Date.parse(input.expiresAt) > Date.parse(assessment.planExpiresAt)
-      || Date.parse(input.expiresAt) - Date.parse(input.plannedAt)
+    if (dateParseV1(input.plannedAt) < dateParseV1(assessment.assessedAt)
+      || dateParseV1(input.expiresAt) <= dateParseV1(input.plannedAt)
+      || dateParseV1(input.expiresAt) > dateParseV1(assessment.planExpiresAt)
+      || dateParseV1(input.expiresAt) - dateParseV1(input.plannedAt)
         > READY_FRONTIER_PRODUCTION_CUSTODY_MAX_LIFETIME_SECONDS_V1 * 1_000) fail("policy_denied");
     const material: Omit<ReadyFrontierProductionCustodyPlanV1, "planDigest" | "planAuthTag"> = {
       schema: READY_FRONTIER_PRODUCTION_CUSTODY_PLAN_V1,
@@ -461,6 +567,7 @@ export function buildReadyFrontierProductionCustodyPlanV1(inputValue: unknown,
 export function parseReadyFrontierProductionCustodyPlanV1(value: unknown,
   activationPacketIntegrityKey: unknown, qualificationIntegrityKey: unknown):
   ReadyFrontierProductionCustodyPlanV1 {
+  assertCanonicalRuntimeV1();
   const qualificationKey = key(qualificationIntegrityKey);
   try {
     const plan = parseExactReadyFrontierV1(planParserV1, value) as ReadyFrontierProductionCustodyPlanV1;
@@ -471,14 +578,14 @@ export function parseReadyFrontierProductionCustodyPlanV1(value: unknown,
       || plan.productionBoundaryPlanDigest !== assessment.planDigest
       || plan.productionBoundaryAssessmentId !== assessment.assessmentId
       || plan.productionBoundaryAssessmentDigest !== assessment.assessmentDigest
-      || Date.parse(plan.plannedAt) < Date.parse(assessment.assessedAt)
-      || Date.parse(plan.expiresAt) > Date.parse(assessment.planExpiresAt)
+      || dateParseV1(plan.plannedAt) < dateParseV1(assessment.assessedAt)
+      || dateParseV1(plan.expiresAt) > dateParseV1(assessment.planExpiresAt)
       || !sameList(plan.processIds, PROCESS_IDS_V1)
       || canonicalJson(plan.serviceRoles) !== canonicalJson(serviceRolesV1())
       || !sameList(plan.scenarioCodes, readyFrontierProductionCustodyScenarioCodesV1)
       || !sameList(plan.requiredProductionGateCodes, READY_FRONTIER_PRODUCTION_ACTIVATION_GATES_V1)
-      || Date.parse(plan.expiresAt) <= Date.parse(plan.plannedAt)
-      || Date.parse(plan.expiresAt) - Date.parse(plan.plannedAt)
+      || dateParseV1(plan.expiresAt) <= dateParseV1(plan.plannedAt)
+      || dateParseV1(plan.expiresAt) - dateParseV1(plan.plannedAt)
         > READY_FRONTIER_PRODUCTION_CUSTODY_MAX_LIFETIME_SECONDS_V1 * 1_000
       || !sameText(plan.planDigest, sha256Digest(planUnsigned(plan)))
       || !sameText(plan.planAuthTag, hmacSha256Tag(qualificationKey, planAuthMaterial(plan)))) {
@@ -491,18 +598,19 @@ export function parseReadyFrontierProductionCustodyPlanV1(value: unknown,
 export function runReadyFrontierProductionCustodyFakeQualificationV1(inputValue: unknown,
   activationPacketIntegrityKey: unknown, qualificationIntegrityKey: unknown):
   ReadyFrontierProductionCustodyReportV1 {
+  assertCanonicalRuntimeV1();
   const qualificationKey = key(qualificationIntegrityKey);
   try {
     const input = parseExactReadyFrontierV1(runInputParserV1, inputValue);
     const plan = parseReadyFrontierProductionCustodyPlanV1(input.plan, activationPacketIntegrityKey,
       qualificationKey);
     const injectedFault = input.injectedFault ?? "none";
-    if (Date.parse(input.startedAt) < Date.parse(plan.plannedAt)
-      || Date.parse(input.completedAt) < Date.parse(input.startedAt)
-      || Date.parse(input.completedAt) >= Date.parse(plan.expiresAt)) fail("policy_denied");
+    if (dateParseV1(input.startedAt) < dateParseV1(plan.plannedAt)
+      || dateParseV1(input.completedAt) < dateParseV1(input.startedAt)
+      || dateParseV1(input.completedAt) >= dateParseV1(plan.expiresAt)) fail("policy_denied");
     const scenarioResults = buildScenarioResultsV1(injectedFault, plan.planDigest, input.runId,
       input.startedAt, input.completedAt);
-    const simulatedPassCount = scenarioResults.filter((item) => item.status === "simulated_pass").length;
+    const simulatedPassCount = statusCountV1(scenarioResults, "simulated_pass");
     const simulatedFailureCount = scenarioResults.length - simulatedPassCount;
     const reportId = `frontier.production-custody-report.${sha256Digest({ runId: input.runId,
       planDigest: plan.planDigest }).slice(7, 31)}`;
@@ -539,6 +647,7 @@ export function runReadyFrontierProductionCustodyFakeQualificationV1(inputValue:
 export function parseReadyFrontierProductionCustodyReportV1(value: unknown,
   planValue: unknown, activationPacketIntegrityKey: unknown, qualificationIntegrityKey: unknown):
   ReadyFrontierProductionCustodyReportV1 {
+  assertCanonicalRuntimeV1();
   const qualificationKey = key(qualificationIntegrityKey);
   try {
     const plan = parseReadyFrontierProductionCustodyPlanV1(planValue, activationPacketIntegrityKey,
@@ -546,17 +655,21 @@ export function parseReadyFrontierProductionCustodyReportV1(value: unknown,
     const report = parseExactReadyFrontierV1(reportParserV1, value) as ReadyFrontierProductionCustodyReportV1;
     const expectedResults = buildScenarioResultsV1(report.injectedFault, plan.planDigest, report.runId,
       report.startedAt, report.completedAt);
-    const passCount = report.scenarioResults.filter((item) => item.status === "simulated_pass").length;
+    const passCount = statusCountV1(report.scenarioResults, "simulated_pass");
+    const reportedScenarioCodes: ReadyFrontierProductionCustodyScenarioCodeV1[] = [];
+    for (let index = 0; index < report.scenarioResults.length; index += 1) {
+      reportedScenarioCodes[index] = report.scenarioResults[index]!.scenarioCode;
+    }
     const expectedId = `frontier.production-custody-report.${sha256Digest({ runId: report.runId,
       planDigest: plan.planDigest }).slice(7, 31)}`;
     if (report.reportId !== expectedId || report.planId !== plan.planId || report.planDigest !== plan.planDigest
       || report.tenantId !== plan.tenantId || report.workspaceId !== plan.workspaceId
       || report.productionBoundaryAssessmentId !== plan.productionBoundaryAssessmentId
       || report.productionBoundaryAssessmentDigest !== plan.productionBoundaryAssessmentDigest
-      || Date.parse(report.startedAt) < Date.parse(plan.plannedAt)
-      || Date.parse(report.completedAt) < Date.parse(report.startedAt)
-      || Date.parse(report.completedAt) >= Date.parse(plan.expiresAt)
-      || !sameList(report.scenarioResults.map((item) => item.scenarioCode),
+      || dateParseV1(report.startedAt) < dateParseV1(plan.plannedAt)
+      || dateParseV1(report.completedAt) < dateParseV1(report.startedAt)
+      || dateParseV1(report.completedAt) >= dateParseV1(plan.expiresAt)
+      || !sameList(reportedScenarioCodes,
         readyFrontierProductionCustodyScenarioCodesV1)
       || canonicalJson(report.scenarioResults) !== canonicalJson(expectedResults)
       || report.simulatedPassCount !== passCount
@@ -574,14 +687,20 @@ export function parseReadyFrontierProductionCustodyReportV1(value: unknown,
 export function projectReadyFrontierProductionCustodyReportV1(reportValue: unknown,
   planValue: unknown, activationPacketIntegrityKey: unknown, qualificationIntegrityKey: unknown):
   ReadyFrontierProductionCustodyProjectionV1 {
+  assertCanonicalRuntimeV1();
   const report = parseReadyFrontierProductionCustodyReportV1(reportValue, planValue,
     activationPacketIntegrityKey, qualificationIntegrityKey);
+  const scenarioStatuses: ReadyFrontierProductionCustodyProjectionV1["scenarioStatuses"] = [];
+  for (let index = 0; index < report.scenarioResults.length; index += 1) {
+    const result = report.scenarioResults[index]!;
+    scenarioStatuses[index] = { scenarioCode: result.scenarioCode, status: result.status };
+  }
   const material: Omit<ReadyFrontierProductionCustodyProjectionV1, "projectionDigest"> = {
     schema: READY_FRONTIER_PRODUCTION_CUSTODY_PROJECTION_V1,
     tenantId: report.tenantId, workspaceId: report.workspaceId,
     planId: report.planId, reportId: report.reportId, status: report.state,
     safeReason: report.safeReason,
-    scenarioStatuses: report.scenarioResults.map(({ scenarioCode, status }) => ({ scenarioCode, status })),
+    scenarioStatuses,
     blockingGateCodes: [...report.blockingGateCodes],
     qualifiedProofCount: 0, remainingQualifiedProofCount: 9,
     canRunLiveQualification: false, canEnrollProductionKeys: false,

@@ -236,6 +236,73 @@ test("CR11B-AUTO-070 rejects accessors and Proxies without executing caller beha
   assert.equal(proxyCalls, 0);
 });
 
+test("CR11B-AUTO-070 captured freeze and private duplicate logic ignore post-load shared-helper drift", () => {
+  const f = fixture();
+  const defineProperty = Object.defineProperty;
+  const freezeDescriptor = Object.getOwnPropertyDescriptor(Object, "freeze")!;
+  const valuesDescriptor = Object.getOwnPropertyDescriptor(Object, "values")!;
+  const isFrozenDescriptor = Object.getOwnPropertyDescriptor(Object, "isFrozen")!;
+  const setAddDescriptor = Object.getOwnPropertyDescriptor(Set.prototype, "add")!;
+  const originalIsFrozen = Object.isFrozen;
+  const originalSetAdd = Set.prototype.add;
+  let rewrittenDigestAdds = 0;
+  let driftReport: ReadyFrontierProductionCustodyReportV1 | undefined;
+  let driftPlan: ReadyFrontierProductionCustodyPlanV1 | undefined;
+  try {
+    defineProperty(Object, "freeze", { ...freezeDescriptor, value: <T>(value: T) => value });
+    defineProperty(Object, "values", { ...valuesDescriptor, value: () => [] });
+    defineProperty(Object, "isFrozen", { ...isFrozenDescriptor, value: () => false });
+    defineProperty(Set.prototype, "add", { ...setAddDescriptor,
+      value(this: Set<unknown>, value: unknown) {
+        if (typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value)) {
+          rewrittenDigestAdds += 1;
+          return originalSetAdd.call(this, `${value}:${rewrittenDigestAdds}`);
+        }
+        return originalSetAdd.call(this, value);
+      } });
+    driftPlan = buildReadyFrontierProductionCustodyPlanV1({
+      planId: "frontier.production-custody.shared-helper-drift", assessment: f.assessment,
+      plannedAt: "2026-08-30T20:03:00.000Z", expiresAt: "2026-08-30T20:59:00.000Z",
+    }, f.activationKey, f.qualificationKey);
+    assert.equal(originalIsFrozen(driftPlan), true);
+    assert.equal(originalIsFrozen(driftPlan.serviceRoles), true);
+    assert.equal(originalIsFrozen(driftPlan.productionBoundaryAssessment), true);
+    driftReport = runReadyFrontierProductionCustodyFakeQualificationV1({
+      runId: "frontier.production-custody-run.shared-helper-drift", plan: driftPlan,
+      startedAt: "2026-08-30T20:04:00.000Z", completedAt: "2026-08-30T20:05:00.000Z",
+      injectedFault: "service_identity_alias",
+    }, f.activationKey, f.qualificationKey);
+    assert.equal(driftReport.status, "simulated_failure");
+    assert.equal(driftReport.simulatedFailureCount, 1);
+    assert.equal(driftReport.scenarioResults[0]!.status, "simulated_failure");
+    assert.equal(originalIsFrozen(driftReport), true);
+    const projection = projectReadyFrontierProductionCustodyReportV1(driftReport, driftPlan,
+      f.activationKey, f.qualificationKey);
+    assert.equal(originalIsFrozen(projection), true);
+    assert.equal(projection.canActivateProduction, false);
+  } finally {
+    defineProperty(Object, "freeze", freezeDescriptor);
+    defineProperty(Object, "values", valuesDescriptor);
+    defineProperty(Object, "isFrozen", isFrozenDescriptor);
+    defineProperty(Set.prototype, "add", setAddDescriptor);
+  }
+  assert.ok(driftPlan); assert.ok(driftReport);
+  assert.deepEqual(parseReadyFrontierProductionCustodyReportV1(driftReport, driftPlan,
+    f.activationKey, f.qualificationKey), driftReport);
+});
+
+test("CR11B-AUTO-070 fails closed when canonical digest helpers drift after module load", () => {
+  const f = fixture(), defineProperty = Object.defineProperty;
+  const mapDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "map")!;
+  try {
+    defineProperty(Array.prototype, "map", { ...mapDescriptor, value: () => [] });
+    assert.throws(() => runReadyFrontierProductionCustodyFakeQualificationV1({
+      runId: "frontier.production-custody-run.array-drift", plan: f.plan,
+      startedAt: "2026-08-30T20:04:00.000Z", completedAt: "2026-08-30T20:05:00.000Z",
+    }, f.activationKey, f.qualificationKey), errorCode("integrity_failed"));
+  } finally { defineProperty(Array.prototype, "map", mapDescriptor); }
+});
+
 test("CR11B-AUTO-070 emits only a frozen non-authorizing safe projection", () => {
   const f = fixture();
   const projection = projectReadyFrontierProductionCustodyReportV1(f.report, f.plan,

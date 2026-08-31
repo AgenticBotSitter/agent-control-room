@@ -1557,3 +1557,15 @@ cleanup. The fake produces no artifact that can be promoted into AUTO-060 produc
 database/provider contact, process or worker start, production key or policy enrollment, protected clock/checkpoint read,
 credential-store access, live evidence collection, consumer, owner approval, activation, deployment, or effect requires a
 new bounded contract and explicit authority.
+
+**First-review amendment:** Independent review rejected exact candidate
+`28c6603478ffbb6036dea348475f402984bfbbae`, tree `44f05681e39de44dfc979451be4bee919dc5fc5e`, in immutable report
+SHA-256 `4a15ae85d35fe6bd71866dc69cc36f8b2cb378d7357db9f90d6d5db697c2f86f`. Post-load replacement of
+`Object.freeze` disabled the claimed deep freeze, and selective `Set.prototype.add` replacement made the explicit
+service-identity-alias fault authenticate as an eight-pass fake report. Production authority stayed false, but the
+qualification truth was rejected. The remediation captures freeze/value/frozen-state operations before module exposure,
+verifies recursive freezes, replaces shared collections and array helpers in scenario decisions with private loops, and
+pins the canonical digest runtime surface with an exact-method and private sentinel check. New tests reproduce both
+finding paths before and after artifact construction, keep all eight faults canonical, and make other shared-helper drift
+fail closed. A different reviewer must accept the exact remediation commit; passing producer tests cannot close the
+finding.

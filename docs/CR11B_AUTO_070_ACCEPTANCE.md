@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Acceptance Record
 
-Status: candidate implemented; independent review pending
+Status: first candidate rejected; remediation implemented; different independent review pending
 
 Date: 2026-08-30
 
@@ -28,9 +28,9 @@ qualified proofs, and every authority/effect flag false.
 
 ## Producer verification
 
-- focused AUTO-070 tests: 11/11 passing;
-- combined CR11B tests: 130/130 passing;
-- registered pretests: 712/712 passing;
+- focused AUTO-070 tests: 13/13 passing;
+- combined CR11B tests: 132/132 passing;
+- registered pretests: 714/714 passing;
 - core tests: 414/416 passing with zero failures and two intentional platform skips;
 - public post-tests: 52/52 passing;
 - TypeScript check: passing;
@@ -45,6 +45,19 @@ qualified proofs, and every authority/effect flag false.
 Producer tests do not accept this security boundary. A fresh independent reviewer must examine the exact committed
 candidate, rerun the focused and combined gates, attack all eight failures and authenticated artifact seams, confirm the
 source has no effect path, and preserve a sanitized immutable report. Any finding keeps AUTO-070 open.
+
+## First review disposition and remediation
+
+The first independent review rejected exact commit `28c6603478ffbb6036dea348475f402984bfbbae`, tree
+`44f05681e39de44dfc979451be4bee919dc5fc5e`. The unchanged report is
+`docs/reviews/CR11B_AUTO_070_INDEPENDENT_REVIEW.md`, SHA-256
+`4a15ae85d35fe6bd71866dc69cc36f8b2cb378d7357db9f90d6d5db697c2f86f`.
+
+Finding `AUTO070-IR-001` proved that caller-mutable `Object.freeze` and `Set.prototype.add` controlled claimed
+immutability and identity-duplicate classification. The remediation captures and verifies trusted runtime operations,
+removes shared collections and array helpers from scenario decisions, retains a private digest/HMAC runtime sentinel,
+and adds two hostile shared-helper tests. All thirteen focused cases and 132 combined CR11B cases now pass. This does not
+close the finding; a different reviewer must accept the exact remediation commit.
 
 ## Negative authority
 

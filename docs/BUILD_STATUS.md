@@ -82,7 +82,7 @@
 | CR11B-AUTO-040 no-relay simulation and blocked activation | Complete for exact independently accepted effect-free commit `fb549eb` | Four remediations closed collaborator, receiver, and pinned dependency provenance; blocked activation remains non-authorizing; see `CR11B_AUTO_040_ACCEPTANCE.md` |
 | CR11B-AUTO-050 protected production boundary | Complete for exact independently accepted default-disabled commit `2a47f57` | Keyed plan provenance closes chronology rewriting, exact artifact-chain checks close identity aliasing, and all nine proofs remain unobserved; no consumer or production effect; see `CR11B_AUTO_050_ACCEPTANCE.md` |
 | CR11B-AUTO-060 protected proof ingress | Complete for exact independently accepted effect-free commit `be01058` | Three remediations closed seven integrity findings including mutable shared parser custody; all proofs remain unqualified; see `CR11B_AUTO_060_ACCEPTANCE.md` |
-| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | Implemented locally; independent review required | Eight authenticated repository-fake scenarios cover identity, policy, clock, revocation, serializable claim, checkpoint, restore, and ambiguity boundaries; all nine production gates remain blocked |
+| CR11B-AUTO-070 protected custody and hosted-database qualification foundation | First candidate rejected; remediation implemented; different review required | Shared-helper integrity finding remediated with captured runtime operations and private duplicate logic; eight fake scenarios retain all nine blockers |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -94,11 +94,16 @@ Active: CR11B-AUTO-070 now implements the protected custody and hosted PostgreSQ
 connecting to a live database or enrolling production keys. It binds authenticated AUTO-050/AUTO-060 lineage, three
 single-purpose service identities, eight deterministic fake scenarios for policy high-water, protected commit time,
 revocation convergence, serializable claims, checkpoint CAS, restore rollback, and terminal ambiguity, plus authenticated
-reports and a safe disabled projection. Focused tests pass 11/11, combined CR11B passes 130/130, registered pretests pass
-712/712, core passes 414/416 with two intentional platform skips and zero failures, and public post-tests pass 52/52.
+reports and a safe disabled projection. The first independent reviewer rejected exact commit `28c6603`, tree `44f0568`,
+because mutable `Object.freeze` and `Set.prototype.add` could disable freezing and turn an identity-alias failure into an
+authenticated eight-pass fake report. The unchanged rejection report has SHA-256
+`4a15ae85d35fe6bd71866dc69cc36f8b2cb378d7357db9f90d6d5db697c2f86f`. The remediation captures freeze/value operations,
+removes shared collection and array helpers from scenario truth, pins canonical digest helpers with a private sentinel,
+and adds before/after shared-helper regression coverage. Focused tests pass 13/13, combined CR11B passes 132/132,
+registered pretests pass 714/714, core passes 414/416 with two intentional platform skips and zero failures, and public post-tests pass 52/52.
 Typecheck, lint, production build, 2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and
 whitespace validation pass. All nine production gates remain blocking, zero proofs are qualified, and every live/effect
-capability remains false. A fresh independent review is still required.
+capability remains false. A different fresh independent review of the exact remediation is still required.
 
 Prior accepted boundary: CR11B-AUTO-060 is complete for exact effect-free commit
 `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`. The first two immutable

@@ -1,6 +1,6 @@
 # CR11B-AUTO-070 Protected Custody Qualification Foundation Contract
 
-Status: candidate; independent review required
+Status: first candidate rejected; exact remediation requires different independent review
 
 Date: 2026-08-30
 
@@ -73,7 +73,10 @@ Even when all eight scenarios pass, the report remains `blocked_fake_qualificati
 - no approval, activation, claim/lease, dispatch/execution, or effect authority.
 
 Exact replay is deterministic. Accessors and Proxies are rejected before their behavior executes. Plans and reports are
-deep-frozen after authoritative parsing.
+deep-frozen after authoritative parsing. Freeze, frozen-state, and nested-value operations are captured before the module
+is exposed. Duplicate identity/key/domain detection uses private pairwise comparison rather than a shared collection.
+Canonical JSON/digest helpers are pinned by exact runtime references and a private digest/HMAC sentinel; drift fails closed
+before plan, report, or projection work.
 
 ## Safe projection
 
@@ -108,3 +111,20 @@ GitHub, activate recurrence, operate DNS/Cloudflare/hosting, deploy, or cause an
 Independent acceptance may cover only the exact repository-fake commit. A disposable hosted qualification requires a new
 controlled-effect packet, exact owner authority, separately provided disposable resources, sanitized evidence, cleanup,
 and fresh review. Fake transcript digests can never be promoted or relabelled as production proof.
+
+## First review and remediation
+
+The first independent review rejected exact candidate commit `28c6603478ffbb6036dea348475f402984bfbbae`, tree
+`44f05681e39de44dfc979451be4bee919dc5fc5e`. Its immutable report has SHA-256
+`4a15ae85d35fe6bd71866dc69cc36f8b2cb378d7357db9f90d6d5db697c2f86f`.
+
+`AUTO070-IR-001` showed that post-load replacement of `Object.freeze` disabled the claimed freeze and that selective
+replacement of `Set.prototype.add` converted the explicit identity-alias fault into an authenticated eight-pass report.
+Negative authority remained intact, but fake qualification truth was not trustworthy.
+
+The remediation captures freeze/value operations before exposure, verifies each recursive freeze, removes `Set` and
+shared array helpers from scenario truth, uses private pairwise/counting loops, and checks the canonical digest runtime
+surface plus sentinel on every exported operation. New hostile cases change freeze/value/frozen-state and selective Set
+behavior both before and after artifact construction, require the identity-alias fault to remain one failure, require all
+artifacts to remain frozen, re-parse the drift-time report after helper restoration, and require other canonical helper
+drift to fail closed. Only a different independent reviewer can accept the exact remediation commit.
