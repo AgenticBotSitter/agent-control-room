@@ -1704,3 +1704,35 @@ SHA-256 `10d7e0e32d59dadb5d435c8fda01e767e7234327105120fff95fec3fb034b118`. It c
 no live-effect path. AUTO-080 is complete only for that effect-free request boundary. Any provider selection, protected
 access, process or database contact, backup/restore, evidence collection, cleanup, or live result remains a new exact
 owner-authorized and independently reviewed controlled effect.
+
+## ADR-115 — Production database target is one private self-managed PostgreSQL primary on Hostinger
+
+**Decision:** Control Room production targets one self-managed PostgreSQL primary on the Hostinger KVM2 VPS. It is the
+sole global write authority and may be reached only through a host-local socket/loopback or a private network. It has no
+public inbound database endpoint. AWS RDS is not part of the initial production architecture. PGlite remains limited to local
+development and tests. R2 remains limited to artifacts, immutable manifests, encrypted backups, and optional audit
+anchors; it is not coordination, transactional state, a lock, a lease store, or a command bus.
+
+**Why:** The modular monolith and PostgreSQL authority already belong on the initial always-on VPS. Co-locating one
+private primary is the smallest topology that preserves atomic leases, approvals, idempotency, and audit truth without
+adding a public database dependency or distributed consensus. The owner does not currently need an AWS account or RDS
+control plane for this architecture.
+
+**Alternatives rejected:** AWS RDS as the initial primary; PGlite in production; R2, Git, object manifests, or worker
+votes as transactional coordination; a publicly reachable PostgreSQL listener; multi-primary worker databases; treating
+installed client tools as proof that a database service exists or is production-ready.
+
+**Trade-off:** A self-managed primary makes Control Room responsible for PostgreSQL patching, least-privilege roles,
+private networking, disk and resource monitoring, WAL/archive health, tested backups, restore drills, and recovery. The
+initial availability model remains recovery-based rather than automatic failover. Managed PostgreSQL can be reconsidered
+later only through a new ADR and migration plan if measured uptime, restore time, scale, or operational capacity requires
+it; that does not silently reopen AWS RDS now.
+
+**Live boundary:** The relayed VPS observation reports PostgreSQL client tools but no running PostgreSQL service or
+container, and no configured AWS CLI, AWS configuration, or AWS/RDS environment. This is unverified context, not host
+qualification. ADR-115 does not provision, install, configure, start, connect to, migrate, back up, restore, expose, or
+deploy PostgreSQL. Those operations require a later exact owner-authorized packet, complete prerequisite evidence,
+rollback and cleanup rules, and independent review.
+
+ADR-115 supersedes the disposable hosted-provider path as the current next step. AUTO-080 remains accepted historical
+evidence for its exact inert request boundary, but it is not a mandate to select or contact a hosted database provider.

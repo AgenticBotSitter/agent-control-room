@@ -1,6 +1,6 @@
 # CR-3 consolidated architecture
 
-**Status:** Accepted 2026-08-22
+**Status:** Accepted 2026-08-22; production-database target amended 2026-08-31
 **Milestone:** CR-3
 **Scope:** Architecture and phased build plan only; no live project integration or production credential use
 
@@ -8,7 +8,7 @@
 
 Control Room is a private, project-agnostic, harness-neutral orchestration control plane. It coordinates work across machines and projects without turning any one AI harness, project, VPN, cloud, or operating system into the platform core.
 
-The initial deployment is a modular monolith on Johnny5, the Ubuntu VPS, plus a small outbound node bridge on each participating machine. A single PostgreSQL database is authoritative. Nodes retain bounded journals and caches for interruption recovery, but they are not database replicas and cannot elect a new Control Room primary.
+The initial deployment is a modular monolith on Johnny5, the Hostinger KVM2 Ubuntu VPS, plus a small outbound node bridge on each participating machine. One self-managed PostgreSQL primary on that VPS is authoritative. AWS RDS is not part of the initial production architecture. Nodes retain bounded journals and caches for interruption recovery, but they are not database replicas and cannot elect a new Control Room primary.
 
 The repository may eventually be public. The architecture therefore assumes that an attacker can read every line of source, every endpoint shape, and every protocol description. Security depends on cryptographic identity, least privilege, local enforcement, explicit approvals, isolation, replay protection, and rapid revocation—not secrecy of implementation.
 
@@ -62,6 +62,7 @@ Modules communicate through typed interfaces and transactional events. They may 
 ### 3. Data plane
 
 - PostgreSQL is the only writable global authority.
+- Production uses one self-managed PostgreSQL primary on the Hostinger KVM2 VPS; PGlite is only for local development and tests.
 - R2 stores large artifacts, immutable manifests, backup material, and optional audit anchors.
 - Source projects remain authoritative when their authority mode is `source_scheduled` or `advisory`.
 - Node-local stores contain only bounded delivery journals, leased-job envelopes, checkpoints, idempotency receipts, telemetry spool, policy snapshots, and artifact caches.
@@ -108,6 +109,11 @@ Johnny5 is the initial Control Room host because it is always on and already ope
 
 Discovery chooses the path. The architecture does not assume that Docker is currently installed merely because Hostinger offers Docker templates.
 
+The PostgreSQL primary is co-located with the modular monolith but remains a separate least-privilege service. It accepts
+only a host-local socket/loopback or a private container network. No inbound Internet route to PostgreSQL is permitted.
+Selecting this target does not install or configure it; native qualification, runtime preparation, credentials,
+backup/WAL setup, restore rehearsal, and deployment remain separately authorized later work.
+
 The current Hostinger KVM2 offering is modest—2 vCPU, 8 GB RAM, and 100 GB NVMe—so the control plane must remain lightweight. GPU rendering, transcription, and model inference belong on worker nodes, not the VPS. The VPS may run low-intensity CPU jobs when benchmarked and explicitly eligible.
 
 ### Mac node
@@ -135,7 +141,7 @@ The recommended production path is ordinary outbound TLS traffic:
 
 - `cloudflared` creates an outbound tunnel from the VPS; the origin need not expose Control Room or PostgreSQL ports publicly.
 - Node bridges initiate outbound HTTPS/WebSocket connections over port 443.
-- PostgreSQL listens only on loopback or the private container network.
+- PostgreSQL accepts only a host-local socket/loopback or the private container network.
 - Hermes dashboards and other native consoles remain localhost/tailnet/private unless accessed through a narrowly protected tunnel.
 - Tailscale remains an optional administration and repair path, not a prerequisite for job delivery.
 - Proton VPN conflicts cannot stop the core design because the bridge uses conventional outbound HTTPS; OS routing still needs an onboarding connectivity test.
@@ -305,8 +311,9 @@ The node protocol uses versioned HTTPS and WebSocket messages with explicit comp
 6. Secrets do not enter prompts, central job payloads, logs, artifacts, URLs, or audit metadata.
 7. PostgreSQL is the single writable global authority; caches are disposable and journals are reconcilable.
 8. R2 is not a lock, lease, database, or command bus.
-9. AI explanations never replace deterministic policy, validation, or verification.
-10. Live integrations require explicit phase approval and their own acceptance tests.
+9. PGlite is never a production database, and AWS RDS is not the initial production target.
+10. AI explanations never replace deterministic policy, validation, or verification.
+11. Live integrations require explicit phase approval and their own acceptance tests.
 
 ## CR-3 completion boundary
 

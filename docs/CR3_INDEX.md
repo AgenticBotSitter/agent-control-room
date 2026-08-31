@@ -1,6 +1,6 @@
 # CR-3 architecture package
 
-**Status:** Accepted 2026-08-22; operator-workflow amendment accepted 2026-08-24
+**Status:** Accepted 2026-08-22; operator-workflow amendment accepted 2026-08-24; production-database target amended 2026-08-31
 **Result:** Research is complete enough to architect; live integration tests are assigned to their implementation phases.
 
 ## Read in this order
@@ -29,6 +29,8 @@ Approving CR-3 accepts these directions, not a live deployment:
 - public-code threat model;
 - modular monolith on the initial VPS;
 - single PostgreSQL global authority;
+- one self-managed private PostgreSQL primary on the Hostinger KVM2 VPS, not AWS RDS;
+- PGlite for local development/tests only and R2 for artifacts/encrypted backups only;
 - encrypted backups/WAL and node journals instead of worker database replication;
 - outbound-only node protocol over protected HTTPS/WebSocket;
 - Cloudflare as expected edge, Tailscale optional;
