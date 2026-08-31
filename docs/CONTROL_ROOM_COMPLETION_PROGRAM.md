@@ -256,7 +256,7 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | CR11B-AUTO-020 | Codex | Standing owner work-policy contract and atomic frontier-to-canonical proposed-work materialization | COMPLETE — authenticated repository policy lifecycle and atomic non-runnable canonical bundle |
 | CR11B-AUTO-030 | Codex | Protected automatic ready promotion and scheduler/jobber handoff under exact standing policy | COMPLETE — fourth remediation independently accepted at exact effect-free commit `adf0804` |
 | CR11B-AUTO-040 | Codex + Owner | End-to-end no-relay agent-job simulation and separately authorized protected activation packet | COMPLETE — exact effect-free commit `fb549eb` independently accepted after four remediations; production consumer, policy custody, hosting, and effects remain owner-gated |
-| CR11B-AUTO-050 | Codex + independent review | Protected multi-process consumer, custody, reconciliation, and production-proof boundary | FIRST REMEDIATION CANDIDATE — keyed plan provenance and exact artifact-chain checks close two independent-review findings; nine proofs remain unobserved and no consumer or production effect exists |
+| CR11B-AUTO-050 | Codex + independent review | Protected multi-process consumer, custody, reconciliation, and production-proof boundary | COMPLETE — exact default-disabled commit `2a47f57` independently accepted after keyed-provenance and artifact-chain remediation; nine proofs remain unobserved and no consumer or production effect exists |
 
 ## Block acceptance and promotion
 

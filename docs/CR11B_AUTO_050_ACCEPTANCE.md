@@ -1,6 +1,6 @@
 # CR11B-AUTO-050 Candidate Acceptance Record
 
-Status: first remediation candidate pending different independent security and authority re-review
+Status: accepted for exact default-disabled first-remediation commit `2a47f57c3b1015b279ee51e95690d10d147b112a`
 
 Date: 2026-08-30
 
@@ -43,6 +43,20 @@ digest, tenant, workspace, and chronology; the disposition parser independently 
 tests rewrite packet/run identities, plan and assessment chronology, every plan-provenance field, every shared disposition
 identity, and public digests. The immutable negative report remains unchanged and cannot accept the remediation.
 
+## Independent acceptance
+
+A different independent reviewer reproduced both original defects against the rejected snapshot, then verified that all
+original and expanded variants fail closed at exact remediation commit
+`2a47f57c3b1015b279ee51e95690d10d147b112a`. The accepted report is
+`docs/reviews/CR11B_AUTO_050_FIRST_REMEDIATION_REREVIEW.md`, SHA-256
+`fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`, with disposition
+`ACCEPTED_DEFAULT_DISABLED_FIRST_REMEDIATION`.
+
+The reviewer independently passed 6/6 packet, 10/10 plan, 12/12 assessment-root, and 6/6 disposition cross-artifact
+substitution matrices; wrong, missing, accessor, and Proxy key-context probes; all 49 reconciliation cases; exact nine-gate
+and qualified-forgery checks; focused 12/12; combined CR11B 99/99; typecheck; full lint; macOS stage zero; and diff
+validation. The original rejection report remains unchanged at its recorded hash.
+
 ## Candidate tests
 
 The dedicated AUTO-050 suite contains twelve cases covering exact plan binding, all nine immutable requirements, blocked
@@ -69,12 +83,9 @@ contact, deployment, or external effect occurred. Passing producer tests cannot 
 
 ## Required review
 
-A different fresh reviewer must inspect the exact committed remediation, independently reproduce both first-review
-findings, attack each of the nine proof requirements,
-attempt to manufacture eligibility or authority, vary all digested identities and chronology, test accessors/Proxies,
-exhaust the reconciliation transition matrix, and verify that the implementation has no alternate consumer or effect
-path. The reviewer must preserve a separate immutable report and either reject with concrete findings or accept only the
-exact default-disabled repository snapshot.
+The required different-agent re-review is complete for the exact commit and report above. Any changed implementation,
+contract, production proof, verifier, consumer, or effect path invalidates that acceptance and requires proportionate fresh
+review.
 
 ## Residual boundary
 

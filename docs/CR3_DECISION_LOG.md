@@ -1453,3 +1453,8 @@ IDs across artifacts. The first remediation therefore adds keyed plan provenance
 chronology at downstream assessment boundaries, enforces the deterministic disposition ID, and checks every shared
 identity and chronology before projection. The negative report remains immutable. Only a different reviewer may accept an
 exact remediation commit, and that acceptance still cannot satisfy any of the nine production gates.
+
+**Acceptance amendment:** A different reviewer independently reproduced both defects on the rejected snapshot and accepted
+exact default-disabled remediation commit `2a47f57c3b1015b279ee51e95690d10d147b112a`. Accepted report SHA-256 is
+`fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. This closes AUTO-050 design integrity only; all
+nine production proofs remain unobserved and no production verifier, consumer, deployment, or external effect is accepted.

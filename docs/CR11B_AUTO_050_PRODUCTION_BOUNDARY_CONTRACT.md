@@ -1,6 +1,6 @@
 # CR11B-AUTO-050 Protected Production Boundary Contract
 
-Status: first remediation candidate after independent rejection; different independent re-review required
+Status: accepted for exact default-disabled first-remediation commit `2a47f57c3b1015b279ee51e95690d10d147b112a`
 
 Date: 2026-08-30
 
