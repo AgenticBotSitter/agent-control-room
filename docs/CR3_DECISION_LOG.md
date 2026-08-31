@@ -1938,3 +1938,28 @@ silently falling back to spoofable identity or fixture truth.
 owner-attended read-only pilot. It must retain server-only catalog key custody, durable independent high-water storage,
 sanitized evidence, and the disabled production boundary. This ADR does not authorize credential access, live login,
 production data or host contact, project writes, approval, dispatch, execution, deployment, DNS, or any external effect.
+
+## ADR-125 — Idea Lab advice is diverse and bounded; project creation remains an explicit owner act
+
+**Decision:** Business-idea deliberation uses three to six distinct identities and perspectives, including a mandatory
+skeptic, under fixed round, message, time, and cost ceilings. Retained contributions are safe injected summaries bound to
+the exact session and participant. Control Room derives the score and recommendation only after every panel member has
+contributed. The synthesis is advisory. Only a separate exact owner decision may atomically create a project and its
+initial append-only lifecycle event. Every promoted project receives the shared Project Workspace and reversible
+active/paused/completed/archived lifecycle.
+
+**Why:** Multiple agents are useful only if they provide genuinely different lenses and cannot manufacture consensus,
+spend without bounds, or turn a recommendation into an effect. Owner promotion separates exploration from commitment.
+One durable project registry prevents each new business idea from becoming a special-case page with lost history.
+
+**Alternatives rejected:** Let one agent impersonate a panel; omit dissent; trust a caller-supplied score; retain raw
+provider transcripts; create projects automatically above a threshold; hard-code every project route; delete completed
+projects; allow arbitrary state jumps; use PGlite as production authority; or claim live Bot Mode from injected fixtures.
+
+**Trade-off:** The first interface is useful for evaluating the flow but remains a clearly labeled fixture. Live Bot Mode
+requires a later authenticated coordinator and a filtered Hermes read path. That adds a deliberate integration gate while
+keeping the owner, provider, and project-write authorities separate.
+
+**Reevaluate:** CR12B-IDEA-030 may add provider-backed panels and an owner-promotion API only after exact compatibility,
+identity, filtered-read, budget, cancellation, persistence, and terminal-ambiguity gates pass. This ADR grants no provider
+contact, credential use, project write, deployment, or production effect by itself.

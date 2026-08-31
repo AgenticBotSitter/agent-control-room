@@ -109,3 +109,25 @@ test("server-renders project and worker drill-down routes", async () => {
   assert.match(workerHtml, /Skip to worker details/);
   assert.match(workerHtml, /Protected fleet status is available/);
 });
+
+test("server-renders Idea Lab and its promoted project workspace", async () => {
+  const ideas = await render("/ideas");
+  assert.equal(ideas.status, 200);
+  const ideaHtml = await ideas.text();
+  assert.match(ideaHtml, /Idea Lab/);
+  assert.match(ideaHtml, /Turn a rough business idea into a monitored project/);
+  assert.match(ideaHtml, /Customer Lens/);
+  assert.match(ideaHtml, /Red Team/);
+  assert.match(ideaHtml, /Advisory score/);
+  assert.match(ideaHtml, /No Hermes, Codex, or local-model provider was contacted/);
+  assert.doesNotMatch(ideaHtml, /<form|type="submit"|Dispatch now/i);
+
+  const project = await render("/projects/project%3Alocal-trades-ai-desk");
+  assert.equal(project.status, 200);
+  const projectHtml = await project.text();
+  assert.match(projectHtml, /Local Trades AI Desk/);
+  assert.match(projectHtml, /Owner-promoted Idea Lab session/);
+  assert.match(projectHtml, /Lifecycle version .*1/);
+  assert.match(projectHtml, /Idea origin/);
+  assert.match(projectHtml, /presentation-only/i);
+});

@@ -274,6 +274,16 @@ CR-5D exits only when one synthetic job completes with audit, restart recovery, 
 | CR12A-PILOT-020 | Codex + Owner | Owner-attended local pilot against an explicitly selected non-production data profile | OWNER; after PILOT-015 acceptance |
 | CR12A-PILOT-030 | Codex | Pilot findings, usability remediation, and go/no-go disposition for later hosted beta | PILOT-020 evidence |
 
+## CR-12B — Idea Lab and dynamic project lifecycle
+
+| ID | Owner | Deliverable | Gate |
+|---|---|---|---|
+| CR12B-IDEA-000 | Codex | Bounded diverse idea-panel, deterministic synthesis, and explicit owner-decision contracts | COMPLETE LOCALLY — effect-free exact contracts; no live provider |
+| CR12B-IDEA-010 | Codex | PostgreSQL-authoritative session, decision, project registry, and reversible lifecycle persistence | COMPLETE LOCALLY — PGlite rehearsal only; production database untouched |
+| CR12B-IDEA-020 | Codex | Idea Lab interface and standard monitoring page for every promoted project | COMPLETE LOCALLY — deterministic injected fixture; no mutation or dispatch |
+| CR12B-IDEA-030 | Codex + Owner | Authenticated Bot Mode panel coordinator and protected owner-promotion API | IDEA-000/010/020 acceptance plus separately authorized compatible provider path |
+| CR12B-IDEA-040 | Codex | Project registry protected reads, lifecycle controls, notifications, and project close/reopen usability | IDEA-030 and protected owner session |
+
 ## Block acceptance and promotion
 
 Every bot contribution passes capsule intake and focused tests. Every integration branch then runs, as applicable:

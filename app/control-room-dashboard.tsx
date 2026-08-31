@@ -165,6 +165,7 @@ export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleP
         <nav className="side-nav">
           <a className="active" href="#overview"><span aria-hidden="true">⌂</span> Overview</a>
           <a href="#projects"><span aria-hidden="true">▦</span> Projects</a>
+          <Link href="/ideas" prefetch={false}><span aria-hidden="true">✦</span> Idea Lab</Link>
           <a href="#ready-frontier"><span aria-hidden="true">◇</span> Ready frontier</a>
           <a href="#attention"><span aria-hidden="true">◆</span> Needs Me <b>{scopedActionInbox.length}</b></a>
           <a href="#workers"><span aria-hidden="true">◫</span> Workers</a>
@@ -441,7 +442,7 @@ export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleP
       <nav className="mobile-nav" aria-label="Mobile navigation">
         <a href="#overview"><span>⌂</span>Home</a>
         <a href="#projects"><span>▦</span>Projects</a>
-        <a href="#attention"><span>◆</span>Needs me</a>
+        <Link href="/ideas" prefetch={false}><span>✦</span>Ideas</Link>
         <a href="#workers"><span>◫</span>Workers</a>
       </nav>
     </div>

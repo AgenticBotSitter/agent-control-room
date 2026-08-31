@@ -90,21 +90,21 @@
 | CR12A-PILOT-000 navigable Project Workspaces | Complete and integrated through PR #176 | Shared shell and real core routes merged at `062c0a7`; post-merge CI run `33427691048` passed in 7m40s; see `CR12A_PILOT_000_PROJECT_WORKSPACE_ACCEPTANCE.md` |
 | CR12A-PILOT-010 protected project reads | Complete and integrated through PR #177 | Protected read composition merged at `cb0ac39`; post-merge CI run `33432880966` passed in 6m39s; see `CR12A_PILOT_010_PROTECTED_PROJECT_READ_ACCEPTANCE.md` |
 | CR12A-PILOT-015 protected catalog and owner session | Complete locally for the strict contract and disabled runtime snapshot | HMAC catalog and independent high-water, terminal revocation, exact owner-session scope derivation, active owner policy, no caller identity headers, hostile boundary tests; see `CR12A_PILOT_015_CATALOG_SESSION_ACCEPTANCE.md` |
+| CR12B-IDEA-000/010/020 Idea Lab and dynamic project lifecycle | Complete locally for the effect-free contracts, PostgreSQL-compatible registry, and presentation snapshot | Diverse bounded panel, deterministic synthesis, explicit owner promotion, append-only lifecycle, shared project monitoring page, 14 focused tests; see `CR12B_IDEA_000_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR12A-PILOT-015 replaces the old fixture/header authority assumption with a closed server composition. A protected HMAC
-catalog binds each project to one tenant, workspace, and project type; an independent HMAC high-water must match its
-exact revision and identities; project and whole-catalog revocation are terminal. A trusted local session port supplies
-one exact read-only owner proof, and the existing security store must resolve that proof to an active human identity and
-active owner grant before deriving a maximum sixty-second internal read scope. The browser supplies only the project
-path and opaque Request. Caller identity, tenant, and workspace headers cannot activate the route. The repository ships
-no real session, catalog, high-water, database, or deployment composition, so the default endpoint fails closed until the
-owner-attended local pilot. The focused gate passes 46/46, registered pretests 769/769, core tests 414/416 with zero
-failures and two intentional platform skips, and public plus CR12A post-tests 79/79. Typecheck, lint, production build,
-2/2 rendered routes, all 27 migrations with 97 PostgreSQL tables, macOS stage zero, and whitespace validation pass. No
-production system, credential, provider, or host was contacted.
+CR12B-IDEA-000/010/020 adds the first complete Idea Lab foundation. Three to six distinct panel identities examine an
+idea through different lenses, including mandatory dissent, inside fixed message, round, time, and cost limits. Every
+participant must contribute before Control Room derives the advisory score and recommendation. Only a separate owner
+decision can atomically promote the idea. PostgreSQL-compatible append-only tables retain the session, contributions,
+synthesis, decision, and project lifecycle events; HMAC tags and snapshot digests detect mutation. Promoted projects use
+the shared nine-tab Project Workspace and can pause, resume, complete, archive, and reopen without losing history. The
+new `/ideas` page and example project are explicitly injected fixtures: no bot was contacted and no live mutation or
+dispatch control exists. The focused gate passes 14/14; registered pretests pass 769/769; the core suite reports 414/416
+with zero failures and two intentional platform skips; posttests pass 93/93. Typecheck, full lint, production build,
+3/3 rendered routes, all 28 migrations with 102 PostgreSQL tables, and whitespace validation pass.
 
 CR12A-PILOT-000 turns the accepted Project Workspace contract into one coherent local operator experience. The project
 header, navigation, counts, source status, and negative-authority boundary are shared across every registered project.
@@ -410,13 +410,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12A-PILOT-020 — owner-attended local non-production Project Workspace pilot
-Set model: gpt-5.6-terra
+Block: CR12B-IDEA-030 — authenticated Bot Mode panel coordinator and protected owner-promotion API
+Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the protected contracts are frozen and fail closed; the next work is a bounded usability and integration pilot using one explicitly selected local, non-production read profile, where implementation breadth and operator flow matter more than new security architecture.
-Expected output: an exact owner packet, explicit local adapters for the selected non-production session/catalog/high-water/read sources, one owner-attended read-only run, sanitized evidence, cleanup, and a pass/blocked result without production contact.
-Owner action: select the exact non-production data profile and attend the short local session/login window before any credential or protected configuration access. Repository-only preparation can proceed first without that authority.
-Stop before: production database or VPS contact, production data, public hosting, project writes, policy mutation, approval, claim, lease, dispatch, execution, provider-side changes, deployment, DNS, Cloudflare, or any external effect beyond the separately approved local read-only pilot.
+Why: this joins provider identity, budgets, cancellation, filtered reads, exact owner authority, and transactional project writes. It is a security and integration block, not broad interface work.
+Expected output: a default-disabled coordinator, exact provider-session evidence, bounded panel orchestration, protected owner decision endpoint, durable ambiguity handling, and hostile integration tests.
+Owner action: none for repository-only construction. Any native Hermes/provider call or credential access requires a new exact scoped authorization before the first contact.
+Stop before: unfiltered Bot Mode reads, automatic project creation, production database or VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
 ## Update rule
