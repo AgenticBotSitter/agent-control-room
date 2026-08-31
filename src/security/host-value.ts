@@ -2,18 +2,26 @@ import { types as nodeUtilTypes } from "node:util";
 
 const isProxy = nodeUtilTypes.isProxy;
 const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const objectDefineProperty = Object.defineProperty;
+const objectFreeze = Object.freeze;
 const reflectApply = Reflect.apply;
 const reflectOwnKeys = Reflect.ownKeys;
+const arrayIsArray = Array.isArray;
+const arrayPrototype = Array.prototype;
+const objectPrototype = Object.prototype;
+const numberIsSafeInteger = Number.isSafeInteger;
 const arrayBufferPrototype = ArrayBuffer.prototype;
 const uint8ArrayConstructor = Uint8Array;
 const uint8ArrayPrototype = Uint8Array.prototype;
 const typedArrayPrototype = objectGetPrototypeOf(uint8ArrayPrototype);
-const typedArrayBufferGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, "buffer")?.get;
-const typedArrayByteLengthGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")?.get;
-const typedArrayByteOffsetGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteOffset")?.get;
-const typedArrayLengthGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, "length")?.get;
-const arrayBufferByteLengthGetter = Object.getOwnPropertyDescriptor(arrayBufferPrototype, "byteLength")?.get;
-const arrayBufferDetachedGetter = Object.getOwnPropertyDescriptor(arrayBufferPrototype, "detached")?.get;
+const typedArrayBufferGetter = objectGetOwnPropertyDescriptor(typedArrayPrototype, "buffer")?.get;
+const typedArrayByteLengthGetter = objectGetOwnPropertyDescriptor(typedArrayPrototype, "byteLength")?.get;
+const typedArrayByteOffsetGetter = objectGetOwnPropertyDescriptor(typedArrayPrototype, "byteOffset")?.get;
+const typedArrayLengthGetter = objectGetOwnPropertyDescriptor(typedArrayPrototype, "length")?.get;
+const arrayBufferByteLengthGetter = objectGetOwnPropertyDescriptor(arrayBufferPrototype, "byteLength")?.get;
+const arrayBufferDetachedGetter = objectGetOwnPropertyDescriptor(arrayBufferPrototype, "detached")?.get;
 const uint8ArrayAt = uint8ArrayPrototype.at;
 const uint8ArrayFill = uint8ArrayPrototype.fill;
 const uint8ArraySet = uint8ArrayPrototype.set;
@@ -35,7 +43,7 @@ export function isHostProxyV1(value: unknown): boolean {
 /** Read one own data property without invoking accessors or Proxy traps. */
 export function ownDataPropertyValueV1(value: unknown, key: PropertyKey): unknown {
   if (!value || (typeof value !== "object" && typeof value !== "function") || isHostProxyV1(value)) return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  const descriptor = objectGetOwnPropertyDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
@@ -45,9 +53,9 @@ export function dataPropertyValueV1(value: unknown, key: PropertyKey): unknown {
   let current: object | null = value;
   for (let depth = 0; current && depth < 32; depth += 1) {
     if (isHostProxyV1(current)) return undefined;
-    const descriptor = Object.getOwnPropertyDescriptor(current, key);
+    const descriptor = objectGetOwnPropertyDescriptor(current, key);
     if (descriptor) return "value" in descriptor ? descriptor.value : undefined;
-    current = Object.getPrototypeOf(current) as object | null;
+    current = objectGetPrototypeOf(current) as object | null;
   }
   return undefined;
 }
@@ -68,40 +76,74 @@ export function exactHostDataSnapshotV1(
   optionalKeys: readonly string[] = [],
   options: { allowNullPrototype?: boolean } = {},
 ): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || isHostProxyV1(value) || Array.isArray(value)) return undefined;
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && !(options.allowNullPrototype && prototype === null)) return undefined;
-  const allowed = new Set([...requiredKeys, ...optionalKeys]);
-  if (allowed.size !== requiredKeys.length + optionalKeys.length) return undefined;
-  const ownKeys = Reflect.ownKeys(value);
-  if (ownKeys.some((key) => typeof key !== "string" || !allowed.has(key))) return undefined;
-  const present = new Set(ownKeys as string[]);
-  if (requiredKeys.some((key) => !present.has(key))) return undefined;
-  const descriptors = Object.getOwnPropertyDescriptors(value), snapshot: Record<string, unknown> = {};
-  for (const key of ownKeys as string[]) {
+  if (!value || typeof value !== "object" || isHostProxyV1(value) || arrayIsArray(value)) return undefined;
+  const prototype = objectGetPrototypeOf(value);
+  if (prototype !== objectPrototype && !(options.allowNullPrototype && prototype === null)) return undefined;
+  for (let left = 0; left < requiredKeys.length; left += 1) {
+    for (let right = left + 1; right < requiredKeys.length; right += 1) {
+      if (requiredKeys[left] === requiredKeys[right]) return undefined;
+    }
+    for (let right = 0; right < optionalKeys.length; right += 1) {
+      if (requiredKeys[left] === optionalKeys[right]) return undefined;
+    }
+  }
+  for (let left = 0; left < optionalKeys.length; left += 1) {
+    for (let right = left + 1; right < optionalKeys.length; right += 1) {
+      if (optionalKeys[left] === optionalKeys[right]) return undefined;
+    }
+  }
+  const ownKeys = reflectOwnKeys(value);
+  for (let index = 0; index < ownKeys.length; index += 1) {
+    const key = ownKeys[index];
+    if (typeof key !== "string") return undefined;
+    let allowed = false;
+    for (let requiredIndex = 0; requiredIndex < requiredKeys.length; requiredIndex += 1) {
+      if (key === requiredKeys[requiredIndex]) { allowed = true; break; }
+    }
+    if (!allowed) {
+      for (let optionalIndex = 0; optionalIndex < optionalKeys.length; optionalIndex += 1) {
+        if (key === optionalKeys[optionalIndex]) { allowed = true; break; }
+      }
+    }
+    if (!allowed) return undefined;
+  }
+  for (let requiredIndex = 0; requiredIndex < requiredKeys.length; requiredIndex += 1) {
+    let present = false;
+    for (let ownIndex = 0; ownIndex < ownKeys.length; ownIndex += 1) {
+      if (requiredKeys[requiredIndex] === ownKeys[ownIndex]) { present = true; break; }
+    }
+    if (!present) return undefined;
+  }
+  const descriptors = objectGetOwnPropertyDescriptors(value), snapshot: Record<string, unknown> = {};
+  for (let index = 0; index < ownKeys.length; index += 1) {
+    const key = ownKeys[index] as string;
     const descriptor = descriptors[key];
     if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set || !descriptor.enumerable) return undefined;
-    snapshot[key] = descriptor.value;
+    objectDefineProperty(snapshot, key, {
+      value: descriptor.value, enumerable: true, configurable: true, writable: true,
+    });
   }
   return snapshot;
 }
 
 /** Snapshot an exact dense ordinary array without iteration or property reads. */
 export function exactHostDataArrayV1(value: unknown, maximum: number): unknown[] | undefined {
-  if (!value || typeof value !== "object" || isHostProxyV1(value) || !Array.isArray(value)) return undefined;
-  if (Object.getPrototypeOf(value) !== Array.prototype) return undefined;
-  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
-  if (!lengthDescriptor || !("value" in lengthDescriptor) || !Number.isSafeInteger(lengthDescriptor.value)
+  if (!value || typeof value !== "object" || isHostProxyV1(value) || !arrayIsArray(value)) return undefined;
+  if (objectGetPrototypeOf(value) !== arrayPrototype) return undefined;
+  const lengthDescriptor = objectGetOwnPropertyDescriptor(value, "length");
+  if (!lengthDescriptor || !("value" in lengthDescriptor) || !numberIsSafeInteger(lengthDescriptor.value)
     || lengthDescriptor.value < 0 || lengthDescriptor.value > maximum) return undefined;
-  const length = lengthDescriptor.value as number, ownKeys = Reflect.ownKeys(value);
-  if (ownKeys.some((key) => typeof key !== "string")) return undefined;
-  const expected = [...Array.from({ length }, (_, index) => String(index)), "length"].sort();
-  if ((ownKeys as string[]).sort().join("\0") !== expected.join("\0")) return undefined;
-  const descriptors = Object.getOwnPropertyDescriptors(value), result: unknown[] = [];
+  const length = lengthDescriptor.value as number, ownKeys = reflectOwnKeys(value);
+  if (ownKeys.length !== length + 1) return undefined;
+  for (let index = 0; index < length; index += 1) if (ownKeys[index] !== `${index}`) return undefined;
+  if (ownKeys[length] !== "length") return undefined;
+  const result: unknown[] = [];
   for (let index = 0; index < length; index += 1) {
-    const descriptor = descriptors[String(index)];
+    const descriptor = objectGetOwnPropertyDescriptor(value, `${index}`);
     if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set || !descriptor.enumerable) return undefined;
-    result.push(descriptor.value);
+    objectDefineProperty(result, `${index}`, {
+      value: descriptor.value, enumerable: true, configurable: true, writable: true,
+    });
   }
   return result;
 }
@@ -120,7 +162,7 @@ export interface ExactHostUint8ArrayV1 {
  */
 export function exactHostUint8ArrayV1(value: unknown, maximum: number): ExactHostUint8ArrayV1 | undefined {
   if (!value || typeof value !== "object" || isHostProxyV1(value)
-    || !Number.isSafeInteger(maximum) || maximum < 0) return undefined;
+    || !numberIsSafeInteger(maximum) || maximum < 0) return undefined;
   try {
     const buffer = reflectApply(typedArrayBufferGetter!, value, []) as ArrayBuffer;
     const byteLength = reflectApply(typedArrayByteLengthGetter!, value, []) as number;
@@ -132,19 +174,20 @@ export function exactHostUint8ArrayV1(value: unknown, maximum: number): ExactHos
       || objectGetPrototypeOf(buffer) !== arrayBufferPrototype || reflectOwnKeys(buffer).length !== 0
       || byteLength !== length
       || detached
-      || !Number.isSafeInteger(byteLength) || byteLength < 0 || byteLength > maximum
+      || !numberIsSafeInteger(byteLength) || byteLength < 0 || byteLength > maximum
       || byteOffset !== 0 || byteLength !== bufferByteLength) return undefined;
     const keys = reflectOwnKeys(value);
-    if (keys.length !== length || keys.some((key, index) => key !== String(index))) return undefined;
+    if (keys.length !== length) return undefined;
+    for (let index = 0; index < keys.length; index += 1) if (keys[index] !== `${index}`) return undefined;
     const typedValue = value as Uint8Array;
-    return Object.freeze({
+    return objectFreeze({
       byteLength,
       byteAt(index: number) {
-        if (!Number.isSafeInteger(index) || index < 0 || index >= byteLength) return undefined;
+        if (!numberIsSafeInteger(index) || index < 0 || index >= byteLength) return undefined;
         return reflectApply(uint8ArrayAt, typedValue, [index]) as number;
       },
       copy(copyLength: number = byteLength) {
-        if (!Number.isSafeInteger(copyLength) || copyLength < 0 || copyLength > byteLength) throw new Error("binary copy length invalid");
+        if (!numberIsSafeInteger(copyLength) || copyLength < 0 || copyLength > byteLength) throw new Error("binary copy length invalid");
         const source = new uint8ArrayConstructor(buffer, byteOffset, copyLength), copy = new uint8ArrayConstructor(copyLength);
         reflectApply(uint8ArraySet, copy, [source]);
         return copy;
@@ -181,7 +224,7 @@ export function createHostResultCollectorV1(): {
   abort(): unknown;
 } {
   let state: "open" | "submitted" | "invalid" | "closed" = "open", result: unknown;
-  const collector = Object.freeze({ submit(value: unknown) {
+  const collector = objectFreeze({ submit(value: unknown) {
     if (state !== "open") { state = "invalid"; throw new Error("result collector conflict"); }
     if (isHostProxyV1(value)) { state = "invalid"; throw new Error("Proxy result rejected"); }
     result = value; state = "submitted";

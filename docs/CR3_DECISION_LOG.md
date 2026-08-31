@@ -1527,3 +1527,111 @@ on every exported frozen production parser, retried the prior changed-binding en
 restart integrity. All `IR`, `FRR`, and `SRR` findings are closed only for that exact effect-free snapshot. AUTO-060 is
 complete, but every fixture proof remains unqualified and all protected custody, hosted database, policy, consumer,
 activation, deployment, and effect gates remain blocked.
+
+## ADR-113 — AUTO-070 qualifies the qualification machinery, never the production environment
+
+**Decision:** CR11B-AUTO-070 carries the complete authenticated AUTO-050 assessment and accepted AUTO-060 identities into
+an HMAC-bound, one-hour repository-fake qualification plan. Three distinct single-purpose logical service identities and
+eight canonical scenarios model policy high-water, database-boundary time, terminal revocation convergence, serializable
+claim uniqueness, external checkpoint CAS, restore rollback detection, and post-marker ambiguity. The private in-process
+fake accepts no collaborator ports. Its authenticated report is re-derived on every parse, exposes only transcript
+digests, and always retains all nine blockers and zero qualified proofs. The public projection omits authentication,
+identity, evidence, protected material, and controls and makes every production capability false.
+
+**Why:** AUTO-060 can authenticate fixture evidence but cannot safely jump straight to a hosted environment. The next
+boundary must first make the distributed-state and custody claims precise and make their negative paths reproducible.
+Calling this output a fake qualification, and cryptographically binding that mode into every artifact, prevents a green
+repository rehearsal from being mistaken for production proof.
+
+**Alternatives rejected:** Connect to a caller-selected database; accept caller-supplied clock, checkpoint, process, or
+adapter callbacks; treat local PGlite or SQLite as hosted PostgreSQL; let a successful rehearsal remove blockers; expose
+raw transcripts or identity details; trust a report after only digest/HMAC recomputation; perform a disposable live run
+without a separate controlled-effect packet; construct the production consumer in the qualification block.
+
+**Trade-off:** The foundation proves contract completeness and deterministic failure classification, not real process
+isolation, hosted database semantics, availability, custody, backup/restore, or operational readiness. A later live
+qualification remains a separately owner-authorized controlled effect and must retain sanitized evidence and exact
+cleanup. The fake produces no artifact that can be promoted into AUTO-060 production proof.
+
+**Reevaluate:** A fresh independent reviewer must attack the exact committed candidate before acceptance. Any live
+database/provider contact, process or worker start, production key or policy enrollment, protected clock/checkpoint read,
+credential-store access, live evidence collection, consumer, owner approval, activation, deployment, or effect requires a
+new bounded contract and explicit authority.
+
+**First-review amendment:** Independent review rejected exact candidate
+`28c6603478ffbb6036dea348475f402984bfbbae`, tree `44f05681e39de44dfc979451be4bee919dc5fc5e`, in immutable report
+SHA-256 `4a15ae85d35fe6bd71866dc69cc36f8b2cb378d7357db9f90d6d5db697c2f86f`. Post-load replacement of
+`Object.freeze` disabled the claimed deep freeze, and selective `Set.prototype.add` replacement made the explicit
+service-identity-alias fault authenticate as an eight-pass fake report. Production authority stayed false, but the
+qualification truth was rejected. The remediation captures freeze/value/frozen-state operations before module exposure,
+verifies recursive freezes, replaces shared collections and array helpers in scenario decisions with private loops, and
+pins the canonical digest runtime surface with an exact-method and private sentinel check. New tests reproduce both
+finding paths before and after artifact construction, keep all eight faults canonical, and make other shared-helper drift
+fail closed. A different reviewer must accept the exact remediation commit; passing producer tests cannot close the
+finding.
+
+**First-remediation re-review amendment:** A different reviewer rejected exact remediation
+`1dff163808ef2866eb44ec83394ff64789959f57`, tree `4829070eb0b4429dc577404daaaea697f439b2b0`, in immutable report
+SHA-256 `2d212bfa071437b1af10c0ac9c00432df0d4823d2196a3ee235e8feaec17ebab`. An inherited setter at numeric
+`Array.prototype` index `1` could intercept trusted writes into initially empty arrays and make the modeled
+service-identity alias authenticate as an eight-pass report. Negative production authority remained intact, but
+qualification truth was again rejected. The second remediation removes inherited indexed writes from the trusted path:
+three-way identity, role, revocation, and claim decisions use scalars, and service roles, scenario results, report-order
+comparison, and projection status use complete array literals with own indexed data. A hostile regression installs the
+numeric setter, requires all eight faults to fail exactly once with deeply frozen artifacts and all nine blockers,
+restores the prototype, and re-verifies the authentic report. A third different reviewer must accept the exact second
+remediation commit.
+
+**Second-remediation re-review amendment:** A third different reviewer accepted the inherited-index closure but rejected
+exact remediation `2cea5975e2c346cf171dbd49c5ab55592ab18578`, tree
+`a1eca854dc027078a915834b80418583a9d3b0b0`, in immutable report SHA-256
+`7e759fdb942ee07f6647f31ce365c0d9ff5883f178ed310fb30e058dc6cba763`. Substituted
+`Date.prototype.getTime` and `Date.prototype.toISOString` could make an impossible timestamp pass schema validation while
+captured `Date.parse` returned `NaN`, bypassing every chronology denial comparison. Production authority stayed false.
+The third remediation captures the instance methods, verifies their exact descriptors before artifact work, invokes only
+the captured methods for canonical validation, cross-checks the captured static epoch, and denies equal as well as
+reversed run boundaries. A hostile regression changes both Date methods, requires invalid/equal/reversed operations to
+fail closed, restores them, and re-verifies the stable authenticated plan and report. A fourth different reviewer must
+accept the exact third-remediation commit.
+
+**Third-remediation re-review amendment:** A fourth different reviewer closed the prior three findings but rejected exact
+remediation `941b6d624bd06dab2a17ab490f33dcd5ac4c6fc2`, tree
+`748d90175e3d64d7352e362df97fb6fda63e276c`, in immutable report SHA-256
+`4d9517bdb99b93258b23edfac37320ced6c023c13687f815e8e07d4c1840e695`. Current
+`String.prototype.slice` semantics controlled the digest-derived report ID, allowing an authenticated artifact to change
+validity after helper restoration. Negative production authority stayed intact. The fourth remediation captures the
+string prototype and slice intrinsic, verifies their exact descriptor before artifact work, and uses the captured
+intrinsic for both report-ID construction and re-derivation. A hostile regression substitutes slice, requires
+construction and parsing to fail closed, restores it, and proves exact replay and parsing stability. A fifth different
+reviewer must accept the exact fourth-remediation commit.
+
+**Fourth-remediation re-review amendment:** A fifth different reviewer closed the prior four concrete reproductions but
+rejected exact remediation `ccdc13e37179674891793de978ae6c32409d646f`, tree
+`40415e8b47bc779fddf06b7fe9419fe385fa4e47`, in immutable report SHA-256
+`8e65da402e9e4ea045ced9387294e5caa6ba8ecaf84f9ede73471ab6fcc61db0`. Current array-iterator semantics controlled the
+safe projection's blocker copy, allowing one valid blocker to be duplicated while another was omitted and the changed
+projection was authenticated. Production authority stayed false, but exact blocker truth was rejected. The fifth
+remediation captures and checks `Array.prototype[Symbol.iterator]` before artifact work, removes iterable spread from all
+trusted fixed-list construction, and copies the nine authenticated report blockers through explicit indexed array
+literals. A hostile regression substitutes the iterator, requires plan and projection work to fail closed before it can
+touch the blocker list, restores it, and proves exact projection replay. A sixth different reviewer must accept the exact
+fifth-remediation commit.
+
+**Fifth-remediation re-review amendment:** A sixth different reviewer closed the prior five concrete reproductions but
+rejected exact remediation `bf1a66325b9bbb7cf107b9e4857bd5d4b6874a38`, tree
+`83c885c270aa095ebb39534944636658d33e1297`, in immutable report SHA-256
+`69cff1f40382323fdb5edfa4d962b353bbdf7edec258d8e898083c9a3f238dcf`. Current plural-descriptor reflection could erase
+an explicit identity-alias fault from the exact input snapshot, leading to an authenticated eight-pass report. Production
+authority remained false, but qualification truth was rejected. The sixth remediation captures prototype, own-key,
+descriptor, property-definition, array-shape, and bounded-copy operations throughout the shared exact-data path and
+checks the complete reflection surface at every AUTO-070 entry. Hostile regressions substitute descriptors, omit keys,
+and suppress definition, then restore the runtime and prove exact alias-failure and artifact stability. A seventh
+different reviewer must accept the exact sixth-remediation commit.
+
+**Sixth-remediation acceptance amendment:** A seventh different independent reviewer accepted exact implementation
+`20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`, in immutable report
+SHA-256 `07033f542a7e3b7167a95d3fa301b90ff3806ec49232cddc878e8fa84353f681`. The review closed every prior finding, verified
+the complete captured runtime/reflection boundary and exact seven-pass/one-failure restoration truth, reran the 18-case
+focused and 137-case combined CR11B gates, and confirmed that the implementation contains no live effect path. AUTO-070
+is complete only for that exact effect-free implementation. Its fake output retains all nine production blockers and zero
+qualified proofs; any disposable hosted qualification remains a new, exactly owner-authorized controlled effect.
