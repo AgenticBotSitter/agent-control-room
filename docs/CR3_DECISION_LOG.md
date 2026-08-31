@@ -1635,3 +1635,34 @@ the complete captured runtime/reflection boundary and exact seven-pass/one-failu
 focused and 137-case combined CR11B gates, and confirmed that the implementation contains no live effect path. AUTO-070
 is complete only for that exact effect-free implementation. Its fake output retains all nine production blockers and zero
 qualified proofs; any disposable hosted qualification remains a new, exactly owner-authorized controlled effect.
+
+## ADR-114 — AUTO-080 separates a disposable qualification request from live authority
+
+**Decision:** CR11B-AUTO-080 re-verifies the independently accepted AUTO-070 successful no-fault plan/report and produces
+one authenticated request for a later owner-authorized disposable hosted PostgreSQL qualification. The request fixes two
+new non-production databases, three isolated processes, seven ordered operations, ten blocking requirements, a 40-call
+provider ceiling, a 1,800-second live ceiling, a 1,048,576-byte sanitized-evidence ceiling, and mandatory separately
+authorized cleanup with a receipt. It embeds no provider or resource identity, protected reference, credential, raw
+evidence, production data, or public endpoint. Every provider, network, process, database, cleanup, qualification,
+production activation, dispatch, execution, and effect capability is false, and no function can authorize or run it.
+
+**Why:** An accepted fake qualification defines what must be tested but cannot justify contact with real infrastructure.
+Separating the bounded request from the later owner signature makes the intended work reviewable without turning a
+repository HMAC, test result, general chat approval, or fixture into effect authority. Fixing cleanup and evidence ceilings
+before provider selection prevents the live packet from quietly expanding its operational or privacy scope.
+
+**Alternatives rejected:** Build a live runner before review; let a provider adapter choose resources; accept a connection
+string or provider identifier in the repository request; use one database for both original and restore testing; inherit
+general owner authorization; treat the request HMAC as an owner signature; retain raw database/process evidence; make
+cleanup implicit after expiry; allow wildcard SQL, process commands, provider calls, retry, or public endpoints.
+
+**Trade-off:** AUTO-080 preparation cannot qualify any AUTO-050 production proof or show that a provider, clock,
+revocation feed, checkpoint, backup, restore, process boundary, or cleanup works. It creates one more review gate before a
+live attempt. That delay is intentional because the next step crosses a credential, network, process, and resource-effect
+boundary.
+
+**Reevaluate:** A different independent reviewer must accept the exact effect-free candidate. Only then may the owner be
+asked for a new exact authorization naming the disposable provider/resources, protected access path, call and duration
+ceilings, retained evidence, and cleanup. Any change to provider, resources, operations, ceilings, evidence, or cleanup
+requires a new packet and signature. Production resources, consumer activation, and public deployment remain outside
+AUTO-080.
