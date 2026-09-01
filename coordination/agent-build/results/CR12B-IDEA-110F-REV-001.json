@@ -1,0 +1,71 @@
+{
+  "schema": "control-room.agent-build-result/v2",
+  "capsulePath": "coordination/agent-build/capsules/CR12B-IDEA-110F-REV-001.json",
+  "capsuleId": "CR12B-IDEA-110F-REV-001",
+  "waveId": "CR12B-IDEA-110F-REVIEW-1",
+  "baseCommit": "70f5890b3be5162896a585dae458a9a9c02e8036",
+  "implementationCommit": "0e13ad44aa21c741ade6acde5f0955b4815982ac",
+  "producerRoute": "marvin-macos",
+  "changedFiles": [
+    {
+      "path": "docs/reviews/CR12B_IDEA_110F_MACOS_CONNECTOR_REVIEW_REV_001.md",
+      "additions": 255,
+      "deletions": 0
+    }
+  ],
+  "commands": [
+    {
+      "command": "node scripts/qualification/platform-key-store-stage-zero.mjs --platform macos",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run check",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run lint",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:cr12b",
+      "exitCode": 0
+    },
+    {
+      "command": "npm test",
+      "exitCode": 0
+    },
+    {
+      "command": "CI=true npm run test:build",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:verify",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check integration/cr12b-idea-110f-connector-review...HEAD",
+      "exitCode": 0
+    }
+  ],
+  "repairIterations": 0,
+  "failures": [
+    "The first sandboxed npm run db:verify invocation exited 1 before migration execution because tsx could not create its local temporary IPC socket. The identical command passed with permission limited to that local IPC socket; no repair occurred."
+  ],
+  "assumptions": [
+    "The exact architect-prepared isolated checkout was clean and detached at integration head 3ad554cbbc2e582ff7fcd7efa1b34931c2c94cde before claim; product commit 70f5890b3be5162896a585dae458a9a9c02e8036 and both required document hashes matched; stage zero returned ready_for_runtime_check before work began.",
+    "This fresh reviewer differs from every IDEA-110F contributor and all three prior bridge reviewers, and authored, advised, and repaired none of the frozen source.",
+    "The reviewed connector, bridge, operation set, enrollment readiness, and named tests are byte-identical between product commit 70f5890b3be5162896a585dae458a9a9c02e8036 and the review integration head.",
+    "The report disposition is remediation_required with five findings; ready-for-intake means only that this bounded negative report and metadata satisfy structural worker intake and does not approve, merge, configure, enroll, or qualify the connector.",
+    "Signer enrollment, a signed route, effect-free preflight, owner packet refresh, fresh owner authorization, native qualification, provider behavior, live panel, production database, hosting, and deployment remain blocked or unobserved rather than passed.",
+    "The independent probe existed only out of tree, changed no repository path, and made zero native, provider, credential, protected-value, network, production, deployment, or external effects.",
+    "No install, download, dependency change, source repair, architecture change, native process, Hermes or SSH contact, provider call, credential or protected-value access, service, production database, hosting, deployment, approval, or merge occurred."
+  ],
+  "effectCount": 0,
+  "safety": {
+    "secretsAbsent": true,
+    "privateHostDataAbsent": true,
+    "workerDidNotApproveOrMerge": true,
+    "scopeNotExpanded": true
+  },
+  "disposition": "ready-for-intake"
+}
