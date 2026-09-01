@@ -93,9 +93,21 @@
 | CR12B-IDEA-000/010/020 Idea Lab and dynamic project lifecycle | Complete locally for the effect-free contracts, PostgreSQL-compatible registry, and presentation snapshot | Diverse bounded panel, deterministic synthesis, explicit owner promotion, append-only lifecycle, shared project monitoring page, 14 focused tests; see `CR12B_IDEA_000_ACCEPTANCE.md` |
 | CR12B-IDEA-030 protected Bot Mode coordinator and owner decision | Complete locally for the repository-only provider-disabled snapshot | Independently verified live-evidence boundary, bounded sequential panel ledger, terminal ambiguity/no retry, human-owner-only permit, protected default-closed endpoint; see `CR12B_IDEA_030_ACCEPTANCE.md` |
 | CR12B-IDEA-040 protected Idea Lab operator workflow | Complete locally for the authenticated repository-fake, provider-disabled snapshot | Server-derived scope and panel, human-owner-only commands, protected create/start/cancel/synthesis routes, bounded bodies, separate disabled-by-default browser controls, 37-test combined gate; see `CR12B_IDEA_040_ACCEPTANCE.md` |
+| CR12B-IDEA-050 durable session resume and protected project lifecycle | Complete locally for the owner-authenticated, repository-fake, runtime-disabled snapshot | No-write session catalog/detail reads, stable reload projections, exact owner lifecycle replay, concurrency guard, legal state-aware disabled controls, 48-test combined gate; see `CR12B_IDEA_050_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
+
+CR12B-IDEA-050 makes the Idea Lab resumable and promoted projects operable without weakening the owner boundary. Session
+catalog/detail reads require a current human owner, derive tenant/workspace on the server, create no policy writes, and
+rebuild stable projections from verified durable evidence. The browser can reload and select recent sessions with their
+safe idea fields and current state. Project pause, resume, complete, archive, and reopen are separate protected commands
+with route-owned action/project scope, server-derived owner and reason, exact replay, optimistic versions, and transactional
+single-winner concurrency. Settings exposes only legal transitions, while the shipped composition keeps every control
+disabled. The new focused tests pass 11/11 and combined CR12B passes 48/48. Registered pretests pass 769/769; core tests
+report 414/416 with zero failures and two intentional platform skips; posttests pass 127/127. Typecheck, full lint,
+production build, 3/3 rendered routes, all 29 migrations with 104 PostgreSQL tables, macOS stage zero, and whitespace
+validation pass.
 
 CR12B-IDEA-040 turns the accepted Idea Lab contracts into one protected operator workflow without contacting Hermes. A
 verified human owner can create a session, run its bounded panel, cancel before evidence, synthesize the complete safe
@@ -432,13 +444,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-050 — owner-scoped session resume and project lifecycle controls
+Block: CR12B-IDEA-060 — explicit local composition and owner-attended repository-fake pilot
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: this adds authenticated reads and security-sensitive project state changes across durable history, browser reloads, and concurrent commands.
-Expected output: owner-scoped session catalog/detail APIs, reload-safe status/resume, protected pause/resume/complete/archive/reopen services and routes, state-aware controls, and end-to-end restart/concurrency tests.
-Owner action: none for repository-only construction. A native Hermes/provider call still requires a new exact scoped authorization before first contact.
-Stop before: live Hermes/provider contact, credential access, unfiltered Bot Mode reads, automatic project creation, production database or VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
+Why: the protected repository flow is complete enough for one real local owner session, but runtime wiring and protected local key/checkpoint custody must be proven before controls can be enabled.
+Expected output: one explicit non-production owner-session/catalog/high-water/runtime composition, local-only startup and teardown, enabled protected UI against repository-fake panels, restart/reload proof, and a sanitized owner-attended acceptance record.
+Owner action: be at this Mac for the exact pilot window, establish the owner session yourself, approve any macOS protected-key prompt, and confirm the visible create-to-project and lifecycle flow.
+Stop before: live Hermes/provider contact, saved provider credentials, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
 ## Update rule

@@ -94,16 +94,31 @@ export class IdeaLabProtectedOperatorServiceV1 {
     try{await this.#registry.recordSynthesis(this.#synthesis.build(session,contributions,now));return this.current(session,run,now);}
     catch{throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
   }
+  async list(authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1[]>{
+    const now=this.#now();try{await this.#security.authorizeRead({authentication,requiredRoleKey:"owner",request:{tenantId:authentication.tenantId,
+      action:"idea_lab.session_list",resourceType:"idea_lab_session_catalog",resourceId:this.#workspaceId,risk:"low",externalEffect:false,occurredAt:now}});
+    }catch{throw new IdeaLabOperatorServiceErrorV1("owner_forbidden");}
+    try{const sessions=await this.#registry.listSessions(authentication.tenantId,this.#workspaceId);return await Promise.all(sessions.map(session=>this.current(session)));
+    }catch{throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
+  }
+  async get(sessionIdValue:unknown,authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1>{
+    let sessionId:string;try{sessionId=ideaIdSchemaV1.parse(sessionIdValue);}catch{throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request");}
+    const now=this.#now();try{await this.#security.authorizeRead({authentication,requiredRoleKey:"owner",request:{tenantId:authentication.tenantId,
+      action:"idea_lab.session_read",resourceType:"idea_lab_session",resourceId:sessionId,risk:"low",externalEffect:false,occurredAt:now}});
+    }catch{throw new IdeaLabOperatorServiceErrorV1("owner_forbidden");}
+    let session;try{session=await this.#registry.getSession(authentication.tenantId,sessionId);}catch{throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
+    if(!session)throw new IdeaLabOperatorServiceErrorV1("idea_not_found");return this.current(session);
+  }
   async #command(value:unknown,authentication:VerifiedAuthentication,action:string){let input:z.infer<typeof commandInputSchema>;
     try{input=parseExactIdeaLabV1(commandInputSchema,value);}catch{throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request");}
     const now=this.#now();this.#validateTime(input.requestedAt,now);const session=await this.#registry.getSession(authentication.tenantId,input.sessionId);if(!session)throw new IdeaLabOperatorServiceErrorV1("idea_not_found");
     const suffix=sha256Digest({tenantId:authentication.tenantId,commandId:input.commandId,action,sessionDigest:session.sessionDigest}).slice(7,31);
     await this.#authorize(authentication,{decisionId:`policy.idea.command:${suffix}`,action,resourceId:session.sessionId,occurredAt:input.requestedAt});return{input,session,now};}
   runId(session:{sessionDigest:string}){return`idea-run:${session.sessionDigest.slice(7,31)}`;}
-  async current(sessionValue:unknown,run?:IdeaLabBotRunV1,updatedAt=this.#now()){const session=parseIdeaLabSessionV1(sessionValue),actualRun=run??await this.#ledger.get(this.runId(session)),synthesis=await this.#registry.getSynthesis(session.tenantId,session.sessionId),decision=await this.#registry.getDecision(session.tenantId,session.sessionId);return this.project(session,actualRun,synthesis,decision,updatedAt);}
+  async current(sessionValue:unknown,run?:IdeaLabBotRunV1,updatedAt?:string){const session=parseIdeaLabSessionV1(sessionValue),actualRun=run??await this.#ledger.get(this.runId(session)),synthesis=await this.#registry.getSynthesis(session.tenantId,session.sessionId),decision=await this.#registry.getDecision(session.tenantId,session.sessionId);return this.project(session,actualRun,synthesis,decision,updatedAt??decision?.decidedAt??synthesis?.synthesizedAt??actualRun?.updatedAt??session.createdAt);}
   project(session:ReturnType<typeof parseIdeaLabSessionV1>,run:IdeaLabBotRunV1|undefined,synthesis:IdeaLabSynthesisV1|undefined,decision:Awaited<ReturnType<IdeaLabProjectRegistryStoreV1["getDecision"]>>,updatedAt:string):IdeaLabSessionProjectionV1{
     const state=decision?"decided":synthesis?"synthesized":run?.state==="completed"?"panel_complete":run?.state==="prepared"?"ready":run?.state??"ready";
-    const material={contractVersion:IDEA_LAB_SESSION_PROJECTION_V1,tenantId:session.tenantId,workspaceId:session.workspaceId,sessionId:session.sessionId,sessionDigest:session.sessionDigest,title:session.title,state,
+    const material={contractVersion:IDEA_LAB_SESSION_PROJECTION_V1,tenantId:session.tenantId,workspaceId:session.workspaceId,sessionId:session.sessionId,sessionDigest:session.sessionDigest,title:session.title,ideaSummary:session.ideaSummary,targetCustomer:session.targetCustomer,state,
       participantCount:session.participants.length,contributionCount:run?.messagesUsed??0,messagesUsed:run?.messagesUsed??0,costUsd:run?.costUsd??0,
       ...(run?{runId:run.runId,runDigest:run.runDigest}:{}),...(synthesis?{synthesisDigest:synthesis.synthesisDigest}:{}),...(decision?{decisionDigest:decision.decisionDigest,...(decision.project?{projectId:decision.project.projectId}:{})}:{}),
       safeStatusCode:decision?"owner_decided":synthesis?"synthesis_ready":run?.safeCode??"ready_for_panel",retryPermitted:false as const,

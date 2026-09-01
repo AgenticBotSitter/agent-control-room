@@ -787,6 +787,17 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .idea-lab-command-row button { border: 1px solid var(--border); border-radius: 8px; background: var(--blue-soft); color: var(--blue); padding: 7px 10px; font-size: 8px; font-weight: 800; cursor: pointer; }
 .idea-lab-command-row button:disabled { cursor: not-allowed; opacity: .45; }
 .idea-lab-operator form > p { grid-column: span 2; margin: 0; }
+.idea-lab-session-catalog { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 11px; }
+.idea-lab-session-catalog h3 { margin: 0 0 7px; font-size: 9px; }
+.idea-lab-session-catalog ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.idea-lab-session-catalog button { display: flex; justify-content: space-between; gap: 8px; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); padding: 7px 8px; text-align: left; }
+.idea-lab-session-catalog button span { color: var(--muted); font-size: 8px; }
+.idea-project-lifecycle-controls { display: grid; gap: 9px; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+.idea-project-lifecycle-controls h3,.idea-project-lifecycle-controls p { margin: 0; }
+.idea-project-lifecycle-controls > div:nth-child(2) { display: flex; flex-wrap: wrap; gap: 6px; }
+.idea-project-lifecycle-controls button { border: 1px solid var(--border); border-radius: 8px; background: var(--blue-soft); color: var(--blue); padding: 7px 10px; font-size: 8px; font-weight: 800; }
+.idea-project-lifecycle-controls button:disabled { opacity: .45; }
+.idea-project-lifecycle-controls p { color: var(--muted); font-size: 8px; }
 .idea-lab-summary { max-width: 900px; margin: -4px 0 13px; color: var(--muted); font-size: 10px; }
 .idea-lab-context { display: grid; grid-template-columns: 1.4fr .6fr; gap: 8px; margin-bottom: 12px; }
 .idea-lab-context article { border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); padding: 10px 12px; }

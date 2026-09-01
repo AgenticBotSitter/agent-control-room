@@ -37,5 +37,6 @@ test("CR12B-IDEA-020 project origin and settings routes remain scoped and non-mu
   assert.match(origin, /Idea origin/); assert.match(origin, /injected-only evidence/); assert.match(origin, /Skeptic/);
   const settings = renderToStaticMarkup(<IdeaPromotedProjectWorkspace fixture={fixture} sectionId="settings" />);
   assert.match(settings, /Active → paused or completed → archived → reopened/);
-  assert.match(settings, /no live mutation endpoint/);
+  assert.match(settings, /Protected lifecycle runtime not configured\. Controls are safely disabled\./);
+  assert.match(settings, /<button type="button" disabled="">Pause<\/button>/);
 });

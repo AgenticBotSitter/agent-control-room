@@ -509,3 +509,16 @@ only with the zero-network repository fake.
 
 Next: CR12B-IDEA-050 adds owner-scoped session discovery and reload-safe resume plus protected reversible project
 lifecycle controls. Live provider contact remains a separate exact authorization and qualification gate.
+
+## CR12B-IDEA-050 — durable session resume and protected project lifecycle
+
+Status: complete locally for the owner-authenticated, repository-fake, runtime-disabled implementation. See
+`CR12B_IDEA_050_ACCEPTANCE.md` and ADR-128.
+
+The block adds effect-free owner-scoped session catalog/detail reads, stable durable projections, automatic browser
+reload/resume, and human-owner-only pause, resume, complete, archive, and reopen commands. Reads create no policy writes.
+Lifecycle commands are route-scoped, version-checked, replay-safe, and transactional. The visible controls expose only
+legal transitions and remain disabled in the shipped composition.
+
+Next: CR12B-IDEA-060 installs one explicit local non-production composition and runs one owner-attended repository-fake
+pilot. It does not authorize live provider contact.

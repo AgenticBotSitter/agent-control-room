@@ -2017,3 +2017,30 @@ safe before provider evidence; after a marker, terminal ambiguity and no automat
 **Reevaluate:** CR12B-IDEA-050 may add authenticated session catalog/detail reads, reload-safe resume, and owner-protected
 project lifecycle transitions. Live Hermes/provider contact, native credentials, production composition, and deployment
 remain separately authorized work.
+
+## ADR-128 — Session reload is an effect-free owner read; project lifecycle is a separate versioned owner command
+
+**Decision:** Idea Lab session catalog and detail retrieval use the existing low-risk, effect-free human-owner read
+authorization and create no policy-decision write. Each projection is rebuilt from verified durable evidence and uses its
+latest persisted event time, making reload identity stable. Project pause, resume, complete, archive, and reopen are
+separate protected commands. Project and action come from the route; tenant, owner identity, target state, policy ID, and
+safe reason are server-derived. The client supplies an exact command ID, expected version, and current time. Exact replay
+must match the command-derived event identity; optimistic versioning and a transaction admit at most one competing
+transition.
+
+**Why:** A browser reload should recover work without manufacturing a write or changing evidence identity. Project state
+does change authoritative history and therefore needs a distinct owner command, durable policy decision, explicit legal
+transition, and concurrency guard. Keeping these paths separate prevents harmless monitoring from consuming authority
+and prevents two open tabs from silently skipping states.
+
+**Alternatives rejected:** Write a policy row on every reload; derive projection time from the current request; return
+sessions across tenants or workspaces; trust project state cached in the browser; accept tenant, owner, target state, or
+reason from the client; treat any same-version request as replay; allow last-write-wins; delete archived projects; expose
+all lifecycle buttons regardless of state; or enable the UI without a protected runtime.
+
+**Trade-off:** Reload recovery is useful and stable, but the default application still cannot execute it because no real
+owner-session and protected local composition is installed. Lifecycle replay is bounded by the same fresh-command window
+as other protected operations. Archived projects remain retained and may be reopened.
+
+**Reevaluate:** CR12B-IDEA-060 may install one explicit local non-production composition and perform one owner-attended
+repository-fake pilot. Live Hermes/provider contact, production data, deployment, and hosting remain separate gates.

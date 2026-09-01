@@ -113,6 +113,7 @@ export const projectRegistryProjectionSchemaV1 = z.object({
 export const ideaLabSessionProjectionSchemaV1 = z.object({
   contractVersion: z.literal(IDEA_LAB_SESSION_PROJECTION_V1), tenantId: ideaIdSchemaV1, workspaceId: ideaIdSchemaV1,
   sessionId: ideaIdSchemaV1, sessionDigest: ideaDigestSchemaV1, title: ideaLabelSchemaV1,
+  ideaSummary:ideaTextSchemaV1,targetCustomer:z.string().min(1).max(300),
   state: z.enum(ideaLabSessionStatesV1), participantCount: z.number().int().min(3).max(6),
   contributionCount: z.number().int().min(0).max(18), messagesUsed: z.number().int().min(0).max(18),
   costUsd: z.number().min(0).max(25), runId: ideaIdSchemaV1.optional(), runDigest: ideaDigestSchemaV1.optional(),

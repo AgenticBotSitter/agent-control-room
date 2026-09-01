@@ -1,10 +1,11 @@
 import { ProjectWorkspaceShell } from "./project-workspace-shell";
 import type { ReturnTypeIdeaLabUiFixtureV1 } from "@/app/fixtures/idea-lab-ui-types";
+import { IdeaProjectLifecycleControls } from "./idea-project-lifecycle-controls";
 
 function label(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
-export function IdeaPromotedProjectWorkspace({ fixture, sectionId = "overview" }: { fixture: ReturnTypeIdeaLabUiFixtureV1; sectionId?: string }) {
+export function IdeaPromotedProjectWorkspace({ fixture, sectionId = "overview",lifecycleControlsEnabled=false }: { fixture: ReturnTypeIdeaLabUiFixtureV1; sectionId?: string;lifecycleControlsEnabled?:boolean }) {
   const section = fixture.workspace.sections.find((candidate) => candidate.sectionId === sectionId);
   if (!section) throw new Error("idea project workspace section not found");
   const project = fixture.promotedProject;
@@ -18,6 +19,6 @@ export function IdeaPromotedProjectWorkspace({ fixture, sectionId = "overview" }
     <section className="detail-card"><h2>First validation target</h2><p>{fixture.synthesis.nextExperiment}</p><small>No job has been dispatched from this fixture.</small></section>
   </div>;
   if (sectionId === "idea-origin") content = <section className="detail-card"><h2>Idea origin</h2><p>{fixture.session.ideaSummary}</p><div className="capability-list">{fixture.contributions.map((item) => <article key={item.contributionId}><h3>{label(item.perspective)}</h3><p>{item.safeOpinion}</p><small>{item.confidencePercent}% confidence · injected-only evidence</small></article>)}</div></section>;
-  if (sectionId === "settings") content = <div className="detail-grid"><section className="detail-card"><h2>Identity</h2><p>{project.projectId}</p><small>{project.projectKind} · priority {project.priority}</small></section><section className="detail-card"><h2>Lifecycle controls</h2><p>Active → paused or completed → archived → reopened</p><small>The durable store implements these transitions; this development fixture has no live mutation endpoint.</small></section></div>;
+  if (sectionId === "settings") content = <div className="detail-grid"><section className="detail-card"><h2>Identity</h2><p>{project.projectId}</p><small>{project.projectKind} · priority {project.priority}</small></section><section className="detail-card"><h2>Lifecycle controls</h2><p>Active → paused or completed → archived → reopened</p><IdeaProjectLifecycleControls project={project} enabled={lifecycleControlsEnabled}/></section></div>;
   return <ProjectWorkspaceShell snapshot={fixture.workspace} workspaceName={project.workspaceName} health="healthy" currentSectionId={sectionId}>{content}</ProjectWorkspaceShell>;
 }

@@ -13,7 +13,7 @@ import { parseExactIdeaLabV1 } from "./exact";
 import { CONTROL_ROOM_IDEA_ADAPTER_V1, ideaCodeSchemaV1, ideaContributionSchemaV1, ideaDecisionSchemaV1,
   ideaDigestSchemaV1, ideaIdSchemaV1, ideaSynthesisSchemaV1, ideaTimeSchemaV1, projectLifecycleStatesV1 } from "./schemas";
 import type { IdeaLabContributionV1, IdeaLabDecisionV1, IdeaLabSessionV1, IdeaLabSynthesisV1,
-  ProjectRegistryProjectionV1 } from "./types";
+  ProjectLifecycleEventV1, ProjectRegistryProjectionV1 } from "./types";
 
 type Query = DatabaseSession["query"];
 type Transaction = DatabaseClient["transaction"];
@@ -86,6 +86,15 @@ export class IdeaLabProjectRegistryStoreV1 {
     if (!result.rows[0]) return undefined;
     const session = parseIdeaLabSessionV1(result.rows[0].payload);
     this.#verifyTag("session",session.tenantId,session.sessionId,session.sessionDigest,result.rows[0].session_auth_tag); return session;
+  }
+
+  async listSessions(tenantId:string,workspaceId:string,limit=25):Promise<IdeaLabSessionV1[]>{
+    const safeTenant=ideaIdSchemaV1.parse(tenantId),safeWorkspace=ideaIdSchemaV1.parse(workspaceId);
+    if(!Number.isSafeInteger(limit)||limit<1||limit>50)throw new IdeaLabErrorV1("invalid_input");
+    const result=await this.#query<{payload:unknown;session_auth_tag:string}>(`SELECT payload,session_auth_tag FROM control_idea_sessions
+      WHERE tenant_id=$1 AND workspace_id=$2 ORDER BY created_at DESC,session_id LIMIT $3`,[safeTenant,safeWorkspace,limit]);
+    return result.rows.map(row=>{const session=parseIdeaLabSessionV1(row.payload);this.#verifyTag("session",safeTenant,
+      session.sessionId,session.sessionDigest,row.session_auth_tag);return session;});
   }
 
   async recordContribution(value: unknown): Promise<{ contribution: IdeaLabContributionV1; replayed: boolean }> {
@@ -262,6 +271,12 @@ export class IdeaLabProjectRegistryStoreV1 {
     return buildProjectRegistryProjectionV1(snapshot,event);
   }
   async getProject(tenantId:string,projectId:string):Promise<ProjectRegistryProjectionV1|undefined>{return this.#projectWith(this.#query,tenantId,projectId);}
+  async getLatestProjectLifecycleEvent(tenantId:string,projectId:string):Promise<ProjectLifecycleEventV1|undefined>{
+    const result=await this.#query<LifecycleRow>(`SELECT payload,event_auth_tag FROM control_project_lifecycle_events
+      WHERE tenant_id=$1 AND project_id=$2 ORDER BY version DESC LIMIT 1`,[ideaIdSchemaV1.parse(tenantId),ideaIdSchemaV1.parse(projectId)]);
+    if(!result.rows[0])return undefined;const event=parseProjectLifecycleEventV1(result.rows[0].payload);
+    this.#verifyTag("project_lifecycle",event.tenantId,event.eventId,event.eventDigest,result.rows[0].event_auth_tag);return event;
+  }
   async listProjects(tenantId:string,options:{includeArchived?:boolean}={}):Promise<ProjectRegistryProjectionV1[]>{
     const rows=await this.#query<{id:string}>(`SELECT id FROM projects WHERE tenant_id=$1 AND adapter_id=$2 ORDER BY updated_at DESC,id`,[tenantId,CONTROL_ROOM_IDEA_ADAPTER_V1]);
     const projects=(await Promise.all(rows.rows.map((row)=>this.getProject(tenantId,row.id)))).filter((item):item is ProjectRegistryProjectionV1=>!!item);
