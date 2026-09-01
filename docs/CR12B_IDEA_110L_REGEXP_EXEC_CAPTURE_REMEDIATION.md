@@ -1,8 +1,10 @@
 # CR12B-IDEA-110L — regex execution and sparse-array remediation
 
-**Status:** Provider-disabled implementation candidate with producer verification complete. Exact product commit and
-replacement review packet are frozen in the following documentation checkpoint; fresh independent review remains
-mandatory.
+**Status:** Provider-disabled implementation candidate frozen at
+`c31a00b388292fe5af404f71eb2802b6aed52d1f`; fresh independent review is mandatory.
+
+**Replacement review packet:** `docs/reviews/CR12B_IDEA_110L_REGEXP_EXEC_CAPTURE_REVIEW_PACKET.md` at SHA-256
+`bfaef5a2c48930bf194af91f7d4cc844bc1492763632c03dddff9dd79c37cef6`.
 
 ## Why IDEA-110K remained rejected
 

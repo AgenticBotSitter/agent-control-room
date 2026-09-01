@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F through 110K macOS Hermes connector | IDEA-110J independently rejected; IDEA-110K structurally remediated locally and requires fresh independent review | IDEA-110J closed the Set path but left shared secret/projection traversal mutable; IDEA-110K captures or avoids the complete safety-walker operation set; 163 CR12B tests; see `CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REMEDIATION.md` |
+| CR12B-IDEA-110F through 110L macOS Hermes connector | IDEA-110K independently rejected; IDEA-110L structurally remediated locally and requires fresh independent review | IDEA-110K left mutable regex execution and changed sparse arrays; IDEA-110L captures direct regex execution, hardens all Idea Lab schema refinements, and preserves holes; 163 CR12B tests; see `CR12B_IDEA_110L_REGEXP_EXEC_CAPTURE_REMEDIATION.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -248,7 +248,20 @@ rejection and mandatory cleanup with zero hostile behavior. Verification passes 
 416/418 core tests with two intentional platform skips and zero failures, 242/242 posttests, TypeScript, lint, production
 build, 3/3 sequential rendered routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, and whitespace
 validation. Product `2aa4f8e0dce52045100a2a10394d86bb934df93e` and packet
-`sha256:8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296` require a fresh different-agent review. No
+`sha256:8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296` were independently reviewed. The review found
+one High defect because captured regex `test`/replacement methods still dynamically resolved mutable `exec`, allowing
+secret retention, private prompt dispatch, raw sentinel escape, and blocked cleanup. It also found one Low sparse-array
+topology change. The negative report is preserved at SHA-256
+`94c107ae8191e77b325127cf2da44dde1a09d2328fa4c99ad7ce2f16193d61e5`.
+
+IDEA-110L invokes module-captured native regex execution directly, replaces regex key normalization with primitive ASCII
+filtering, converts every Idea Lab regex/time schema to captured refinements, and preserves sparse-array holes with a
+captured descriptor operation. Dishonest and throwing exec replacements now execute zero behavior across direct safety,
+prompt, provider-result, error-classification, and mandatory cleanup paths. Verification passes 163/163 CR12B tests,
+769/769 pretests, 418/420 core tests with two intentional platform skips and zero failures, 242/242 posttests, TypeScript,
+lint, production build, 3/3 sequential rendered routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, and
+whitespace validation. Product `c31a00b388292fe5af404f71eb2802b6aed52d1f` and packet
+`sha256:bfaef5a2c48930bf194af91f7d4cc844bc1492763632c03dddff9dd79c37cef6` require a fresh different-agent review. No
 native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
@@ -656,11 +669,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110K-Q — independently review the shared safety-walker capture remediation
+Block: CR12B-IDEA-110L-Q — independently review the regex-execution capture remediation
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: IDEA-110J closed the ambient Set path but fresh review found a High bypass in the shared secret and safe-projection walkers. IDEA-110K changes safety traversal used by the entire connector path and cannot accept its own repair.
-Expected output: one immutable report by a new reviewer against product commit `2aa4f8e0dce52045100a2a10394d86bb934df93e` and packet `sha256:8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296`. It must reproduce the IDEA-110J Object.entries bypass, attack both walkers and the actual connector/provider/cleanup paths, verify zero hostile behavior and retained rejection/cleanup, and repeat all IDEA-110F through IDEA-110J cases. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Why: IDEA-110K captured the visible regex methods but fresh review proved they still called mutable exec and that sparse arrays changed. IDEA-110L changes shared safety, schema validation, exact parsing, and redaction topology and cannot accept its own repair.
+Expected output: one immutable report by a new reviewer against product commit `c31a00b388292fe5af404f71eb2802b6aed52d1f` and packet `sha256:bfaef5a2c48930bf194af91f7d4cc844bc1492763632c03dddff9dd79c37cef6`. It must reproduce dishonest and throwing exec behavior plus sparse holes against IDEA-110K, prove closure through direct and actual connector/provider/cleanup paths, and repeat all IDEA-110F through IDEA-110K cases. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

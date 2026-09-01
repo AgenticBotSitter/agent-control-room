@@ -764,15 +764,30 @@ secret-bearing value. See `docs/reviews/CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_R
 
 ## CR12B-IDEA-110K — shared safety-walker capture remediation
 
-Status: provider-disabled implementation frozen at `2aa4f8e0dce52045100a2a10394d86bb934df93e`; replacement
-packet `sha256:8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296` and fresh independent review required. See
-`CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REMEDIATION.md` and amended ADR-146.
+Status: rejected by independent review. Exact product `2aa4f8e0dce52045100a2a10394d86bb934df93e` is superseded by
+IDEA-110L. See `CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REMEDIATION.md`, the immutable negative report, and amended ADR-146.
 
 Secret detection/redaction and safe projection now capture or structurally avoid object-entry, array
 identification/traversal/append/join, regex test/replace, string normalization/search, reflection, object definition, and
 Error operations. Direct walker tests and actual connector/provider/cleanup tests replace the former ambient helpers,
 require zero hostile behavior, retain secret rejection, prevent private prompt dispatch, and still complete mandatory
 cleanup. No private port, enrollment, native operation, provider call, credential access, or deployment is introduced.
+
+Independent review found one High and one Low defect: captured regex methods still dynamically resolved mutable
+`RegExp.prototype.exec`, and indexed redaction materialized sparse-array holes. See
+`docs/reviews/CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110L — regex execution and sparse-array remediation
+
+Status: provider-disabled implementation frozen at `c31a00b388292fe5af404f71eb2802b6aed52d1f`; replacement
+packet `sha256:bfaef5a2c48930bf194af91f7d4cc844bc1492763632c03dddff9dd79c37cef6` and fresh independent review required. See
+`CR12B_IDEA_110L_REGEXP_EXEC_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+Pattern checks invoke captured native regex execution directly; key normalization uses primitive ASCII filtering; every
+Idea Lab regex and datetime schema uses captured refinement operations; and sparse redaction preserves exact holes.
+Dishonest and throwing exec regressions cover direct walkers, exact error classification, connector prompt admission,
+provider-result filtering, and mandatory cleanup. No private port, enrollment, native operation, provider call,
+credential access, or deployment is introduced.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 

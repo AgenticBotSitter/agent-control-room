@@ -2531,8 +2531,16 @@ identification/traversal/append/join, regex test/replace, string normalization/s
 Error operations after module initialization. Recursive traversal uses direct indexed logic and captured calls. This
 follows the High `Object.entries` bypass preserved by the IDEA-110J independent report.
 
+**IDEA-110L amendment:** Capturing a public regex wrapper is insufficient when that wrapper dynamically resolves
+`RegExp.prototype.exec`. Repository pattern checks must invoke captured native execution directly; Idea Lab schemas may
+not retain Zod regex/datetime refinements that re-enter mutable regex execution; key normalization uses primitive ASCII
+filtering; and traversal rewrites preserve ordinary sparse-array topology. This follows the High regex-execution and Low
+sparse-array findings preserved by the IDEA-110K independent report.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
 conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
 and requires a fresh report. Any change to shared secret/redaction/projection traversal or exact-parser safety
 classification also invalidates IDEA-110K review evidence.
+Any change to captured regex execution, Idea Lab schema refinements, time validation, key normalization, or sparse-array
+projection also invalidates IDEA-110L review evidence.
