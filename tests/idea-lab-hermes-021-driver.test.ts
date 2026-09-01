@@ -105,6 +105,26 @@ test("CR12B-IDEA-080 translates one exact filtered sequence and discards streami
   assert.deepEqual([traps, cleanupCalls], [0, 1]);
 });
 
+test("CR12B-IDEA-110D preserves the concrete gateway receiver through execute and cleanup", async () => {
+  class ReceiverGateway implements Hermes021IdeaLabGatewayPortV1 {
+    #calls = 0;
+    get calls() { return this.#calls; }
+    async execute(input: Parameters<Hermes021IdeaLabGatewayPortV1["execute"]>[0],
+      collector: Parameters<Hermes021IdeaLabGatewayPortV1["execute"]>[1]) {
+      this.#calls += 1;
+      collector.submit({ frames: completedFrames(input) });
+    }
+    async cleanup(input: Parameters<Hermes021IdeaLabGatewayPortV1["cleanup"]>[0],
+      collector: Parameters<Hermes021IdeaLabGatewayPortV1["cleanup"]>[1]) {
+      this.#calls += 1;
+      collector.submit(cleanupReceipt(input.markerDigest, input.sessionIdentityDigest));
+    }
+  }
+  const target = setup(), gateway = new ReceiverGateway();
+  const result = await new Hermes021IdeaLabFilteredDriverV1(gateway).invoke(target.input) as Record<string, unknown>;
+  assert.deepEqual([result.outcome, gateway.calls], ["completed", 2]);
+});
+
 test("CR12B-IDEA-080 returns only a proven definite provider failure", async () => {
   const target = setup();
   const driver = new Hermes021IdeaLabFilteredDriverV1(port(async (input, collector) => {

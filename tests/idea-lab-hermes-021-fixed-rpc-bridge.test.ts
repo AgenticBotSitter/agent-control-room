@@ -5,6 +5,7 @@ import { sha256Digest } from "../src/security/index.ts";
 import { createHostResultCollectorV1 } from "../src/security/host-value.ts";
 import {
   IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
+  IDEA_LAB_HERMES_021_FIXED_OPERATION_SET_V1,
   IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_DIGEST_V1,
   IDEA_LAB_HERMES_021_REVISION_V1,
   IDEA_LAB_HERMES_021_VERSION_V1,
@@ -121,6 +122,49 @@ test("CR12B-IDEA-110B runs only the fixed Hermes turn, discards deltas, and clos
     ["session.interrupt", "session.status", "session.close"]);
   assert.deepEqual([native.calls.at(-1)?.kind, cleanupResult.outcome,
     cleanupResult.retainedNativeReferenceCount], ["close", "completed", 0]);
+});
+
+test("CR12B-IDEA-110D signs and executes only the exact seven fixed operations", () => {
+  assert.deepEqual(IDEA_LAB_HERMES_021_FIXED_OPERATION_SET_V1, [
+    "session.create", "prompt.submit", "session.events.since", "session.status", "session.usage",
+    "session.interrupt", "session.close",
+  ]);
+  assert.equal(IDEA_LAB_HERMES_021_FIXED_OPERATION_SET_V1.includes("session.steer" as never), false);
+  assert.equal(IDEA_LAB_HERMES_021_FIXED_OPERATION_SET_V1.includes("session.resume" as never), false);
+});
+
+test("CR12B-IDEA-110D cleanup waits for in-flight execution and prevents every later operation", async () => {
+  for (const blockedAt of ["open", "session.create"] as const) {
+    const native = connector(), originalOpen = native.value.openFixedRoute.bind(native.value);
+    const originalRequest = native.value.requestFixedOperation.bind(native.value);
+    let release!: () => void, entered!: () => void, cleanupCompleted = false;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    native.value.openFixedRoute = async (input, collector) => {
+      if (blockedAt === "open") { entered(); await gate; }
+      await originalOpen(input, collector);
+    };
+    native.value.requestFixedOperation = async (input, collector) => {
+      if (blockedAt === "session.create" && input.operation === blockedAt) { entered(); await gate; }
+      await originalRequest(input, collector);
+    };
+    const bridge = new IdeaLabHermes021FixedRpcBridgeV1(native.value), input = executeInput();
+    const execution = bridge.executeFixedSession(input, createHostResultCollectorV1().collector);
+    await reached;
+    const cleanupCollector = createHostResultCollectorV1();
+    const cleanup = bridge.cleanupFixedSession(cleanupInput(input), cleanupCollector.collector)
+      .then(() => { cleanupCompleted = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(cleanupCompleted, false, `${blockedAt} cleanup reported completion before execution settled`);
+    release();
+    await assert.rejects(execution, (error) => error instanceof IdeaLabErrorV1);
+    await cleanup;
+    assert.equal((cleanupCollector.take() as Record<string, unknown>).outcome, "completed");
+    assert.equal(native.calls.at(-1)?.kind, "close");
+    assert.deepEqual(native.calls.filter((item) => item.operation).map((item) => item.operation),
+      blockedAt === "open" ? [] : ["session.create"]);
+  }
 });
 
 test("CR12B-IDEA-110B preserves a proven definite failure without returning native text", async () => {

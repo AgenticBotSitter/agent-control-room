@@ -199,8 +199,10 @@ export class Hermes021IdeaLabFilteredDriverV1 implements IdeaLabBotPanelDriverV1
     const execute = dataMethodV1(port, "execute"), cleanup = dataMethodV1(port, "cleanup");
     if (!execute || !cleanup || !Number.isSafeInteger(timeoutMilliseconds)
       || timeoutMilliseconds < 1 || timeoutMilliseconds > 120_000) throw new IdeaLabErrorV1("invalid_input");
-    this.#execute = execute as Hermes021IdeaLabGatewayPortV1["execute"];
-    this.#cleanup = cleanup as Hermes021IdeaLabGatewayPortV1["cleanup"];
+    this.#execute = ((input, collector) => Reflect.apply(execute, port, [input, collector])) as
+      Hermes021IdeaLabGatewayPortV1["execute"];
+    this.#cleanup = ((input, collector) => Reflect.apply(cleanup, port, [input, collector])) as
+      Hermes021IdeaLabGatewayPortV1["cleanup"];
     this.#timeoutMilliseconds = timeoutMilliseconds;
     Object.freeze(this);
   }

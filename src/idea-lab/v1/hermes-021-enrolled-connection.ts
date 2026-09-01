@@ -3,6 +3,7 @@ import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
+import { ideaLabHermes021FixedOperationSetSchemaV1 } from "./hermes-021-fixed-operation-set";
 import {
   IDEA_LAB_HERMES_021_REVISION_V1,
   IDEA_LAB_HERMES_021_SOURCE_PREFLIGHT_DIGEST_V1,
@@ -100,11 +101,7 @@ const enrollmentBodySchema = z.object({
   profileIdentityDigest: ideaDigestSchemaV1,
   gatewayEndpointVisibility: z.literal("connector_private_loopback"),
   gatewaySessionValueCustody: z.literal("connector_private"),
-  gatewayOperations: z.tuple([
-    z.literal("session.create"), z.literal("prompt.submit"), z.literal("session.steer"),
-    z.literal("session.interrupt"), z.literal("session.resume"), z.literal("session.status"),
-    z.literal("session.usage"), z.literal("session.events.since"), z.literal("session.close"),
-  ]),
+  gatewayOperations: ideaLabHermes021FixedOperationSetSchemaV1,
   arbitraryRemoteCommandAllowed: z.literal(false),
   genericShellExposedToControlRoom: z.literal(false),
   freshProfileNoSkills: z.literal(true),

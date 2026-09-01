@@ -18,6 +18,7 @@ import {
   IDEA_LAB_HERMES_021_REVISION_V1,
   IDEA_LAB_HERMES_021_VERSION_V1,
 } from "./hermes-021-panel-packet";
+import { IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1 } from "./hermes-021-fixed-operation-set";
 import type { Hermes021IdeaLabGatewayPortV1 } from "./hermes-021-filtered-driver";
 import { ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 
@@ -25,16 +26,6 @@ export const IDEA_LAB_HERMES_021_QUALIFICATION_PERMIT_V1 =
   "control-room-hermes-021-qualification-permit/v1" as const;
 export const IDEA_LAB_HERMES_021_ENROLLED_GATEWAY_PORT_V1 =
   "control-room-hermes-021-enrolled-gateway-port/v1" as const;
-
-const gatewayOperations = Object.freeze([
-  "session.create", "prompt.submit", "session.steer", "session.interrupt",
-  "session.resume", "session.status", "session.usage", "session.events.since", "session.close",
-] as const);
-
-export const IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1 = sha256Digest({
-  runtimeRevision: IDEA_LAB_HERMES_021_REVISION_V1,
-  operations: gatewayOperations,
-});
 
 const base64url = z.string().min(40).max(256).regex(/^[A-Za-z0-9_-]+$/);
 
@@ -296,6 +287,8 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
   readonly #now: () => string;
   #executeStarted = false;
   #cleanupStarted = false;
+  #executeSettled?: Promise<void>;
+  #resolveExecuteSettled?: () => void;
 
   constructor(input: {
     enrollment: unknown;
@@ -322,10 +315,14 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
       envelope: input.permitEnvelope,
       context: input.permitContext,
     });
-    this.#claim = claim as IdeaLabHermes021QualificationSpendStoreV1["claim"];
-    this.#settle = settle as IdeaLabHermes021QualificationSpendStoreV1["settle"];
-    this.#executeFixedSession = execute as IdeaLabHermes021NativeBridgeV1["executeFixedSession"];
-    this.#cleanupFixedSession = cleanup as IdeaLabHermes021NativeBridgeV1["cleanupFixedSession"];
+    this.#claim = ((value) => Reflect.apply(claim, input.spendStore, [value])) as
+      IdeaLabHermes021QualificationSpendStoreV1["claim"];
+    this.#settle = ((value) => Reflect.apply(settle, input.spendStore, [value])) as
+      IdeaLabHermes021QualificationSpendStoreV1["settle"];
+    this.#executeFixedSession = ((value, collector) => Reflect.apply(execute, input.nativeBridge,
+      [value, collector])) as IdeaLabHermes021NativeBridgeV1["executeFixedSession"];
+    this.#cleanupFixedSession = ((value, collector) => Reflect.apply(cleanup, input.nativeBridge,
+      [value, collector])) as IdeaLabHermes021NativeBridgeV1["cleanupFixedSession"];
     this.#now = input.now ?? (() => new Date().toISOString());
   }
 
@@ -344,36 +341,49 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
     if (!Number.isFinite(claimed) || claimed < Date.parse(this.#permit.issuedAt)
       || claimed >= Date.parse(this.#permit.expiresAt)) throw new IdeaLabErrorV1("authorization_denied");
     this.#executeStarted = true;
-    const claim = await this.#claim({ permitDigest: this.#permit.permitDigest, attemptId: this.#permit.attemptId,
-      markerDigest: this.#permit.markerDigest, claimedAt });
-    if (claim !== "claimed") throw new IdeaLabErrorV1("authorization_denied");
+    this.#executeSettled = new Promise<void>((resolve) => { this.#resolveExecuteSettled = resolve; });
     try {
-      await this.#executeFixedSession({
-        connectionContractVersion: IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
-        connectionId: this.#enrollment.connectionId,
-        transport: this.#enrollment.transport,
-        connectorRouteDigest: this.#enrollment.connectorRouteDigest,
-        attemptId: this.#permit.attemptId,
-        permitDigest: this.#permit.permitDigest,
-        markerDigest: input.markerDigest,
-        participantId: input.participantId,
-        participantIdentityDigest: input.participantIdentityDigest,
-        round: input.round,
-        safeInstruction: input.safeInstruction,
-        runtimeIdentityDigest: input.runtimeIdentityDigest,
-        profileIdentityDigest: input.profileIdentityDigest,
-        conversationIdentityDigest: input.conversationIdentityDigest,
-        maximumOutputCharacters: 800,
-        toolsEnabled: false,
-        mcpEnabled: false,
-        pluginsEnabled: false,
-        genericShellEnabled: false,
-        signal: input.signal,
-      }, collector);
-      await this.#settleExact("execute_returned");
-    } catch {
-      await this.#settleExact("terminal_ambiguity");
-      throw new IdeaLabErrorV1("integrity_failed");
+      const claim = await this.#claim({ permitDigest: this.#permit.permitDigest, attemptId: this.#permit.attemptId,
+        markerDigest: this.#permit.markerDigest, claimedAt });
+      if (claim !== "claimed") throw new IdeaLabErrorV1("authorization_denied");
+      const dispatchedAt = this.#now(), dispatched = Date.parse(dispatchedAt);
+      if (this.#cleanupStarted || input.signal.aborted || !Number.isFinite(dispatched) || dispatched < claimed
+        || dispatched < Date.parse(this.#permit.issuedAt) || dispatched >= Date.parse(this.#permit.expiresAt)) {
+        await this.#settleExact("terminal_ambiguity",
+          Number.isFinite(dispatched) && dispatched >= claimed ? dispatchedAt : claimedAt);
+        throw new IdeaLabErrorV1("authorization_denied");
+      }
+      try {
+        await this.#executeFixedSession({
+          connectionContractVersion: IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
+          connectionId: this.#enrollment.connectionId,
+          transport: this.#enrollment.transport,
+          connectorRouteDigest: this.#enrollment.connectorRouteDigest,
+          attemptId: this.#permit.attemptId,
+          permitDigest: this.#permit.permitDigest,
+          markerDigest: input.markerDigest,
+          participantId: input.participantId,
+          participantIdentityDigest: input.participantIdentityDigest,
+          round: input.round,
+          safeInstruction: input.safeInstruction,
+          runtimeIdentityDigest: input.runtimeIdentityDigest,
+          profileIdentityDigest: input.profileIdentityDigest,
+          conversationIdentityDigest: input.conversationIdentityDigest,
+          maximumOutputCharacters: 800,
+          toolsEnabled: false,
+          mcpEnabled: false,
+          pluginsEnabled: false,
+          genericShellEnabled: false,
+          signal: input.signal,
+        }, collector);
+        await this.#settleExact("execute_returned");
+      } catch {
+        await this.#settleExact("terminal_ambiguity");
+        throw new IdeaLabErrorV1("integrity_failed");
+      }
+    } finally {
+      this.#resolveExecuteSettled?.();
+      this.#resolveExecuteSettled = undefined;
     }
   }
 
@@ -381,6 +391,8 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
     if (!this.#executeStarted || this.#cleanupStarted || input.markerDigest !== this.#permit.markerDigest
       || !dataMethodV1(collector, "submit")) throw new IdeaLabErrorV1("authorization_denied");
     this.#cleanupStarted = true;
+    const executeSettled = this.#executeSettled;
+    if (!executeSettled) throw new IdeaLabErrorV1("integrity_failed");
     try {
       await this.#cleanupFixedSession({
         connectionId: this.#enrollment.connectionId,
@@ -391,16 +403,19 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
         ...(input.sessionIdentityDigest ? { sessionIdentityDigest: input.sessionIdentityDigest } : {}),
         signal: input.signal,
       }, collector);
+      await executeSettled;
       await this.#settleExact("cleanup_completed");
     } catch {
+      await executeSettled;
       await this.#settleExact("cleanup_uncertain");
       throw new IdeaLabErrorV1("integrity_failed");
     }
   }
 
-  async #settleExact(outcome: "execute_returned" | "terminal_ambiguity" | "cleanup_completed" | "cleanup_uncertain") {
+  async #settleExact(outcome: "execute_returned" | "terminal_ambiguity" | "cleanup_completed" | "cleanup_uncertain",
+    settledAt = this.#now()) {
     await this.#settle({ permitDigest: this.#permit.permitDigest, attemptId: this.#permit.attemptId,
-      markerDigest: this.#permit.markerDigest, outcome, settledAt: this.#now() });
+      markerDigest: this.#permit.markerDigest, outcome, settledAt });
   }
 }
 

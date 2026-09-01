@@ -40,8 +40,8 @@ function enrollment() {
     profileIdentityDigest: digest("empty-profile"),
     gatewayEndpointVisibility: "connector_private_loopback" as const,
     gatewaySessionValueCustody: "connector_private" as const,
-    gatewayOperations: ["session.create", "prompt.submit", "session.steer", "session.interrupt", "session.resume",
-      "session.status", "session.usage", "session.events.since", "session.close"] as const,
+    gatewayOperations: ["session.create", "prompt.submit", "session.events.since", "session.status",
+      "session.usage", "session.interrupt", "session.close"] as const,
     arbitraryRemoteCommandAllowed: false as const, genericShellExposedToControlRoom: false as const,
     freshProfileNoSkills: true as const, protectedValueResolution: "global_root_read_only_per_provider" as const,
     protectedValueMaterialReturned: false as const,
@@ -159,6 +159,81 @@ test("CR12B-IDEA-110A forwards only a fixed, feature-disabled session request an
     [["claim", undefined], ["settle", "execute_returned"]]);
   await assert.rejects(() => port.execute(executeInput(bundle), createHostResultCollectorV1().collector),
     (error) => error instanceof IdeaLabErrorV1);
+});
+
+test("CR12B-IDEA-110D preserves concrete collaborator receivers across the gateway boundary", async () => {
+  class ReceiverSpendStore implements IdeaLabHermes021QualificationSpendStoreV1 {
+    readonly #events: string[] = [];
+    get events() { return [...this.#events]; }
+    async claim() { this.#events.push("claimed"); return "claimed" as const; }
+    async settle(input: Parameters<IdeaLabHermes021QualificationSpendStoreV1["settle"]>[0]) {
+      this.#events.push(input.outcome);
+    }
+  }
+  class ReceiverBridge implements IdeaLabHermes021NativeBridgeV1 {
+    readonly #calls: string[] = [];
+    get calls() { return [...this.#calls]; }
+    async executeFixedSession(_input: Parameters<IdeaLabHermes021NativeBridgeV1["executeFixedSession"]>[0],
+      collector: Parameters<IdeaLabHermes021NativeBridgeV1["executeFixedSession"]>[1]) {
+      this.#calls.push("execute"); collector.submit({ frames: [] });
+    }
+    async cleanupFixedSession(_input: Parameters<IdeaLabHermes021NativeBridgeV1["cleanupFixedSession"]>[0],
+      collector: Parameters<IdeaLabHermes021NativeBridgeV1["cleanupFixedSession"]>[1]) {
+      this.#calls.push("cleanup"); collector.submit({ contractVersion: "control-room-hermes-021-panel-cleanup/v1" });
+    }
+  }
+  const bundle = permit(), spend = new ReceiverSpendStore(), native = new ReceiverBridge();
+  const port = new IdeaLabHermes021EnrolledGatewayPortV1({ enrollment: bundle.connection,
+    permitEnvelope: bundle.envelope, permitContext: bundle.context, spendStore: spend,
+    nativeBridge: native, now: () => "2026-09-01T10:04:00.000Z" });
+  await port.execute(executeInput(bundle), createHostResultCollectorV1().collector);
+  await port.cleanup({ markerDigest: bundle.envelope.body.markerDigest, signal: new AbortController().signal },
+    createHostResultCollectorV1().collector);
+  assert.deepEqual(spend.events, ["claimed", "execute_returned", "cleanup_completed"]);
+  assert.deepEqual(native.calls, ["execute", "cleanup"]);
+});
+
+test("CR12B-IDEA-110D consumes but never dispatches a permit that expires during durable claim", async () => {
+  const bundle = permit(), spend = store(), native = bridge();
+  const times = ["2026-09-01T10:06:59.999Z", bundle.envelope.body.expiresAt];
+  const port = new IdeaLabHermes021EnrolledGatewayPortV1({ enrollment: bundle.connection,
+    permitEnvelope: bundle.envelope, permitContext: bundle.context, spendStore: spend.value,
+    nativeBridge: native.value, now: () => times.shift() ?? bundle.envelope.body.expiresAt });
+  await assert.rejects(() => port.execute(executeInput(bundle), createHostResultCollectorV1().collector),
+    (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "authorization_denied");
+  assert.equal(native.calls.length, 0);
+  assert.deepEqual(spend.events.map((event) => [event.type, event.outcome]),
+    [["claim", undefined], ["settle", "terminal_ambiguity"]]);
+});
+
+test("CR12B-IDEA-110D records execution ambiguity before concurrent cleanup completion", async () => {
+  const bundle = permit(), spend = store(), controller = new AbortController();
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const native: IdeaLabHermes021NativeBridgeV1 = {
+    async executeFixedSession(input) {
+      entered();
+      await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
+      throw new Error("execution stopped without a definite provider result");
+    },
+    async cleanupFixedSession(_input, collector) {
+      collector.submit({ contractVersion: "control-room-hermes-021-panel-cleanup/v1" });
+    },
+  };
+  const port = new IdeaLabHermes021EnrolledGatewayPortV1({ enrollment: bundle.connection,
+    permitEnvelope: bundle.envelope, permitContext: bundle.context, spendStore: spend.value,
+    nativeBridge: native, now: () => "2026-09-01T10:04:00.000Z" });
+  const execution = port.execute({ ...executeInput(bundle), signal: controller.signal },
+    createHostResultCollectorV1().collector);
+  await started;
+  controller.abort();
+  const cleanup = port.cleanup({ markerDigest: bundle.envelope.body.markerDigest,
+    signal: new AbortController().signal }, createHostResultCollectorV1().collector);
+  await assert.rejects(execution, (error) => error instanceof IdeaLabErrorV1);
+  await cleanup;
+  assert.deepEqual(spend.events.map((event) => [event.type, event.outcome]), [
+    ["claim", undefined], ["settle", "terminal_ambiguity"], ["settle", "cleanup_completed"],
+  ]);
 });
 
 test("CR12B-IDEA-110A requires cleanup and terminally records uncertain execution or cleanup", async () => {

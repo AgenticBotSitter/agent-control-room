@@ -4,7 +4,7 @@ import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import {
   IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1,
-} from "./hermes-021-enrolled-gateway-port";
+} from "./hermes-021-fixed-operation-set";
 import { ideaLabHermes021BuiltInConnectionSourceV1 } from "./hermes-021-enrolled-connection";
 import {
   IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_DIGEST_V1,
