@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, timingSafeEqual, verify, type KeyObject } from "node:crypto";
 import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security";
+import { exactHostDataArrayV1, exactHostDataSnapshotV1 } from "../../security/host-value";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import { ideaLabHermes021FixedOperationSetSchemaV1 } from "./hermes-021-fixed-operation-set";
@@ -201,6 +202,7 @@ const rosterSchema = z.object({
   grantsExecutionAuthority: z.literal(false),
   rosterDigest: ideaDigestSchemaV1,
 }).strict();
+const rosterHeaderSchema = z.object({ tenantId: ideaIdSchemaV1, evaluatedAt: ideaTimeSchemaV1 }).strict();
 
 export type IdeaLabHermes021ConnectionEnrollmentEnvelopeV1 = z.infer<typeof enrollmentEnvelopeSchema>;
 export type IdeaLabHermes021ConnectionEnrollmentContextV1 = z.infer<typeof enrollmentContextSchema>;
@@ -309,27 +311,39 @@ export function buildIdeaLabHermes021ConnectionRosterV1(input: {
   evaluatedAt: string;
   connections: readonly unknown[];
 }): IdeaLabHermes021ConnectionRosterV1 {
-  const header = parseExactIdeaLabV1(z.object({ tenantId: ideaIdSchemaV1, evaluatedAt: ideaTimeSchemaV1 }).strict(),
-    { tenantId: input.tenantId, evaluatedAt: input.evaluatedAt });
-  if (!Array.isArray(input.connections) || input.connections.length > 32) throw new IdeaLabErrorV1("invalid_input");
-  const connections = input.connections.map(parseIdeaLabHermes021ConnectionSafeResultV1);
-  const connectionIds = connections.map((item) => item.connectionId);
-  const routes = connections.map((item) => item.connectorRouteDigest);
-  const profiles = connections.map((item) => item.profileIdentityDigest);
+  const captured = exactHostDataSnapshotV1(input, ["tenantId", "evaluatedAt", "connections"]);
+  if (!captured) throw new IdeaLabErrorV1("invalid_input");
+  const header = parseExactIdeaLabV1(rosterHeaderSchema,
+    { tenantId: captured.tenantId, evaluatedAt: captured.evaluatedAt });
+  const rawConnections = exactHostDataArrayV1(captured.connections, 32);
+  if (!rawConnections) throw new IdeaLabErrorV1("invalid_input");
+  const connections: IdeaLabHermes021ConnectionSafeResultV1[] = [];
+  for (let index = 0; index < rawConnections.length; index += 1) {
+    connections[index] = parseIdeaLabHermes021ConnectionSafeResultV1(rawConnections[index]);
+  }
   const evaluated = capturedIdeaTimeMillisecondsV1(header.evaluatedAt)!;
-  let invalidConnection = false;
-  for (const connection of connections) if (connection.tenantId !== header.tenantId
-    || capturedIdeaTimeMillisecondsV1(connection.expiresAt)! <= evaluated) { invalidConnection = true; break; }
-  if (invalidConnection || new Set(connectionIds).size !== connectionIds.length || new Set(routes).size !== routes.length
-    || new Set(profiles).size !== profiles.length) throw new IdeaLabErrorV1("integrity_failed");
+  let sshConnectionCount = 0, localConnectionCount = 0, qualificationReadyCount = 0;
+  for (let left = 0; left < connections.length; left += 1) {
+    const connection = connections[left]!;
+    if (connection.tenantId !== header.tenantId
+      || capturedIdeaTimeMillisecondsV1(connection.expiresAt)! <= evaluated) throw new IdeaLabErrorV1("integrity_failed");
+    if (connection.transport === "ssh_tunnel") sshConnectionCount += 1; else localConnectionCount += 1;
+    if (connection.qualificationProfileEligible) qualificationReadyCount += 1;
+    for (let right = left + 1; right < connections.length; right += 1) {
+      const candidate = connections[right]!;
+      if (connection.connectionId === candidate.connectionId
+        || connection.connectorRouteDigest === candidate.connectorRouteDigest
+        || connection.profileIdentityDigest === candidate.profileIdentityDigest) throw new IdeaLabErrorV1("integrity_failed");
+    }
+  }
   const material = {
     contractVersion: IDEA_LAB_HERMES_021_CONNECTION_ROSTER_V1,
     ...header,
     connections,
     connectionCount: connections.length,
-    sshConnectionCount: connections.filter((item) => item.transport === "ssh_tunnel").length,
-    localConnectionCount: connections.filter((item) => item.transport === "local_loopback").length,
-    qualificationReadyCount: connections.filter((item) => item.qualificationProfileEligible).length,
+    sshConnectionCount,
+    localConnectionCount,
+    qualificationReadyCount,
     nativeQualifiedCount: 0 as const,
     livePanelEligibleCount: 0 as const,
     containsNativeLocators: false as const,

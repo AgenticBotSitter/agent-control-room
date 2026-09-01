@@ -32,16 +32,21 @@ export function capturedIdeaTimeMillisecondsV1(value: string): number | undefine
 export function capturedIdeaTimeFromMillisecondsV1(milliseconds: number): string | undefined {
   if (!nativeNumberIsFiniteV1(milliseconds)) return undefined;
   try {
-    return nativeReflectApplyV1(nativeDateToISOStringV1, new nativeDateV1(milliseconds), []) as string;
+    const formatted = nativeReflectApplyV1(nativeDateToISOStringV1, new nativeDateV1(milliseconds), []) as string;
+    return capturedIdeaTimeMillisecondsV1(formatted) === undefined ? undefined : formatted;
   } catch {
     return undefined;
   }
 }
 
 export function capturedIdeaTimeStringV1(value: string | Date): string | undefined {
-  const formatted = typeof value === "string" ? value
-    : nativeReflectApplyV1(nativeDateToISOStringV1, value, []) as string;
-  return capturedIdeaTimeMillisecondsV1(formatted) === undefined ? undefined : formatted;
+  try {
+    const formatted = typeof value === "string" ? value
+      : nativeReflectApplyV1(nativeDateToISOStringV1, value, []) as string;
+    return capturedIdeaTimeMillisecondsV1(formatted) === undefined ? undefined : formatted;
+  } catch {
+    return undefined;
+  }
 }
 
 export function capturedIdeaTimeNowV1(): string {

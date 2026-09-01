@@ -10,6 +10,7 @@ import {
   buildIdeaLabSynthesisV1,
   capturedIdeaTimeFromMillisecondsV1,
   capturedIdeaTimeMillisecondsV1,
+  capturedIdeaTimeStringV1,
   ideaTimeSchemaV1,
   parseIdeaLabSessionV1,
   parseProjectRegistryProjectionV1,
@@ -27,6 +28,10 @@ test("CR12B-IDEA-110M validates real calendar time through captured operations",
   }
   for (const valid of ["2028-02-29T10:00:00.000Z", "2026-09-01T10:00:00Z",
     "2026-09-01T10:00:00.123456+06:30"]) assert.equal(ideaTimeSchemaV1.safeParse(valid).success, true, valid);
+  for (const outsideContract of [253_402_300_800_000, -8_640_000_000_000_000, 8_640_000_000_000_000]) {
+    assert.equal(capturedIdeaTimeFromMillisecondsV1(outsideContract), undefined);
+  }
+  assert.equal(capturedIdeaTimeStringV1(new Date(Number.NaN)), undefined);
 
   const parse = Date.parse, finite = Number.isFinite, every = Array.prototype.every;
   let hostileCalls = 0;

@@ -165,6 +165,44 @@ test("CR12B-IDEA-109B roster rejects duplicate routes, profiles, stale enrollmen
   (error) => error instanceof IdeaLabErrorV1);
 });
 
+test("CR12B-IDEA-110N roster snapshots input and ignores caller-owned traversal and collection behavior", () => {
+  const firstEnvelope = envelope(), first = sanitizeIdeaLabHermes021ConnectionEnrollmentV1(firstEnvelope, context(firstEnvelope));
+  const secondEnvelope = envelope({ connectionId: "captured-roster-local", local: true });
+  const second = sanitizeIdeaLabHermes021ConnectionEnrollmentV1(secondEnvelope, context(secondEnvelope));
+  const connections = [first, second];
+  const nativeMap = Array.prototype.map, nativeFilter = Array.prototype.filter, nativeSet = Set;
+  let mapCalls = 0, filterCalls = 0, setCalls = 0;
+  try {
+    Object.defineProperty(Array.prototype, "map", { configurable: true, writable: true,
+      value(this: unknown[], ...args: unknown[]) {
+        if (this === connections) { mapCalls += 1; throw new Error("caller roster map reached"); }
+        return Reflect.apply(nativeMap, this, args);
+      } });
+    Object.defineProperty(Array.prototype, "filter", { configurable: true, writable: true,
+      value(this: unknown[], ...args: unknown[]) {
+        if (this === connections) { filterCalls += 1; throw new Error("caller roster filter reached"); }
+        return Reflect.apply(nativeFilter, this, args);
+      } });
+    Object.defineProperty(globalThis, "Set", { configurable: true, writable: true,
+      value: function HostileSet() { setCalls += 1; throw new Error("ambient Set reached"); } });
+    const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId: first.tenantId,
+      evaluatedAt: "2026-09-01T10:06:00.000Z", connections });
+    assert.deepEqual([roster.connectionCount, roster.sshConnectionCount, roster.localConnectionCount,
+      roster.qualificationReadyCount], [2, 1, 1, 2]);
+    assert.deepEqual([mapCalls, filterCalls, setCalls], [0, 0, 0]);
+  } finally {
+    Object.defineProperty(Array.prototype, "map", { configurable: true, writable: true, value: nativeMap });
+    Object.defineProperty(Array.prototype, "filter", { configurable: true, writable: true, value: nativeFilter });
+    Object.defineProperty(globalThis, "Set", { configurable: true, writable: true, value: nativeSet });
+  }
+
+  let ownMapCalls = 0;
+  Object.defineProperty(connections, "map", { configurable: true, value() { ownMapCalls += 1; throw new Error("own map reached"); } });
+  assert.throws(() => buildIdeaLabHermes021ConnectionRosterV1({ tenantId: first.tenantId,
+    evaluatedAt: "2026-09-01T10:06:00.000Z", connections }), (error) => error instanceof IdeaLabErrorV1);
+  assert.equal(ownMapCalls, 0);
+});
+
 test("CR12B-IDEA-109B rejects re-digested authority and hostile objects without executing behavior", () => {
   const candidate = envelope(), result = sanitizeIdeaLabHermes021ConnectionEnrollmentV1(candidate, context(candidate));
   const unsigned = { ...result, nativeQualified: true, livePanelEligible: true, blockerCodes: [],
