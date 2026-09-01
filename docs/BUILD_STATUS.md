@@ -91,9 +91,22 @@
 | CR12A-PILOT-010 protected project reads | Complete and integrated through PR #177 | Protected read composition merged at `cb0ac39`; post-merge CI run `33432880966` passed in 6m39s; see `CR12A_PILOT_010_PROTECTED_PROJECT_READ_ACCEPTANCE.md` |
 | CR12A-PILOT-015 protected catalog and owner session | Complete locally for the strict contract and disabled runtime snapshot | HMAC catalog and independent high-water, terminal revocation, exact owner-session scope derivation, active owner policy, no caller identity headers, hostile boundary tests; see `CR12A_PILOT_015_CATALOG_SESSION_ACCEPTANCE.md` |
 | CR12B-IDEA-000/010/020 Idea Lab and dynamic project lifecycle | Complete locally for the effect-free contracts, PostgreSQL-compatible registry, and presentation snapshot | Diverse bounded panel, deterministic synthesis, explicit owner promotion, append-only lifecycle, shared project monitoring page, 14 focused tests; see `CR12B_IDEA_000_ACCEPTANCE.md` |
+| CR12B-IDEA-030 protected Bot Mode coordinator and owner decision | Complete locally for the repository-only provider-disabled snapshot | Independently verified live-evidence boundary, bounded sequential panel ledger, terminal ambiguity/no retry, human-owner-only permit, protected default-closed endpoint; see `CR12B_IDEA_030_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
+
+CR12B-IDEA-030 adds the protected execution and promotion boundary without contacting Hermes. Exact per-participant
+provider evidence is still only a claim until a separate server-held verifier accepts it; the shipped runtime has no
+verifier and rejects live calls. The injected repository fake exercises serialized panel turns under the exact message,
+round, time, and cost ceilings. Every call receives an append-only pre-call marker, and throws, malformed receipts,
+evidence mismatches, or restart after a marker become terminally ambiguous with no automatic retry. The owner endpoint
+derives tenant and owner identity from verified server authentication, requires an active human owner grant, writes an
+immutable permit before the project effect, and ignores caller identity headers. No owner-session adapter, live browser
+control, provider credential, live Hermes driver, or production composition is configured. The new focused gate passes
+12/12 and the combined CR12B gate passes 26/26. Registered pretests pass 769/769; core tests report 414/416 with zero
+failures and two intentional platform skips; posttests pass 105/105. Typecheck, full lint, production build, 3/3 rendered
+routes, all 29 migrations with 104 PostgreSQL tables, macOS stage zero, and whitespace validation pass.
 
 CR12B-IDEA-000/010/020 adds the first complete Idea Lab foundation. Three to six distinct panel identities examine an
 idea through different lenses, including mandatory dissent, inside fixed message, round, time, and cost limits. Every
@@ -410,13 +423,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-030 — authenticated Bot Mode panel coordinator and protected owner-promotion API
+Block: CR12B-IDEA-040 — protected idea-session creation, synthesis, and operator controls
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: this joins provider identity, budgets, cancellation, filtered reads, exact owner authority, and transactional project writes. It is a security and integration block, not broad interface work.
-Expected output: a default-disabled coordinator, exact provider-session evidence, bounded panel orchestration, protected owner decision endpoint, durable ambiguity handling, and hostile integration tests.
-Owner action: none for repository-only construction. Any native Hermes/provider call or credential access requires a new exact scoped authorization before the first contact.
-Stop before: unfiltered Bot Mode reads, automatic project creation, production database or VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
+Why: this connects owner-authenticated idea intake, deterministic synthesis, durable session state, and the real Idea Lab interface while preserving the new security seams.
+Expected output: protected session and synthesis services/endpoints, replay-safe lifecycle, operator start/cancel/save/promote controls, and end-to-end fake-runtime tests using the shared Project Workspace.
+Owner action: none for repository-only construction. A native Hermes/provider call still requires a new exact scoped authorization before first contact.
+Stop before: live Hermes/provider contact, credential access, unfiltered Bot Mode reads, automatic project creation, production database or VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
 ## Update rule

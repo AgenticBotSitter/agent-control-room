@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
-import { hmacSha256Tag } from "../../security";
+import { hmacSha256Tag, sha256Digest } from "../../security";
 import { dataMethodV1, exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
 import {
   assertProjectLifecycleTransitionV1, buildProjectLifecycleEventV1, buildProjectRegistryProjectionV1,
@@ -28,6 +28,11 @@ const projectPayloadSchema = z.object({ workspaceName: z.string().min(1).max(120
 const transitionInputSchema = z.object({ tenantId: ideaIdSchemaV1, projectId: ideaIdSchemaV1,
   expectedVersion: z.number().int().min(1), toState: z.enum(projectLifecycleStatesV1),
   actorIdentityDigest: ideaDigestSchemaV1, safeReasonCode: ideaCodeSchemaV1, occurredAt: ideaTimeSchemaV1 }).strict();
+const ownerAuthorizationPayloadSchema = z.object({ authorizationId: ideaIdSchemaV1, tenantId: ideaIdSchemaV1,
+  sessionId: ideaIdSchemaV1, ideaDecisionId: ideaIdSchemaV1, ideaDecisionDigest: ideaDigestSchemaV1,
+  policyDecisionId: ideaIdSchemaV1, ownerIdentityId: ideaIdSchemaV1, ownerIdentityDigest: ideaDigestSchemaV1,
+  requestDigest: ideaDigestSchemaV1, authorizedAt: ideaTimeSchemaV1, expiresAt: ideaTimeSchemaV1,
+  grantsApproval: z.literal(false), grantsExecutionAuthority: z.literal(false), authorizationDigest: ideaDigestSchemaV1 }).strict();
 
 function iso(value: string|Date): string { return typeof value === "string" ? new Date(value).toISOString() : value.toISOString(); }
 function safeEqual(left: string, right: string): boolean {
@@ -185,6 +190,42 @@ export class IdeaLabProjectRegistryStoreV1 {
     });
     const project=result.decision.project?await this.getProject(result.decision.tenantId,result.decision.project.projectId):undefined;
     return {...result,...(project?{project}:{})};
+  }
+
+  /**
+   * Converts one persisted, allowed policy decision into an immutable owner-only permit.
+   * The permit is written before the project effect, so a crash can leave unused authority
+   * but can never leave a project without pre-existing owner authorization evidence.
+   */
+  async authorizeOwnerDecision(input:{authorizationId:string;policyDecisionId:string;decision:unknown}):Promise<{authorizationDigest:string;replayed:boolean}>{
+    const raw=parseExactIdeaLabV1(ideaDecisionSchemaV1,input.decision),session=await this.getSession(raw.tenantId,raw.sessionId),synthesis=await this.getSynthesis(raw.tenantId,raw.sessionId);
+    if(!session||!synthesis)throw new IdeaLabErrorV1("not_found");const decision=parseIdeaLabDecisionV1(input.decision,session,synthesis);
+    return this.#transaction(async tx=>{const policy=await tx.query<{identity_id:string;action:string;resource_type:string;resource_id:string;allowed:boolean;request_digest:string;grant_ids:string[];decided_at:string|Date;expires_at:string|Date}>(
+      `SELECT identity_id,action,resource_type,resource_id,allowed,request_digest,grant_ids,decided_at,expires_at FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,[decision.tenantId,input.policyDecisionId]);
+      const row=policy.rows[0];if(!row||!row.allowed||row.action!=="idea_lab.owner_decide"||row.resource_type!=="idea_lab_session"||row.resource_id!==decision.sessionId
+        ||iso(row.decided_at)!==decision.decidedAt||Date.parse(iso(row.expires_at))<=Date.parse(decision.decidedAt))throw new IdeaLabErrorV1("authorization_denied");
+      const grants=await tx.query<{id:string;role_key:string;revoked_at?:string;expires_at?:string}>(`SELECT id,role_key,revoked_at,expires_at FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2`,[decision.tenantId,row.identity_id]);
+      const matched=new Set(row.grant_ids),owner=grants.rows.some(g=>matched.has(g.id)&&g.role_key==="owner"&&!g.revoked_at&&(!g.expires_at||Date.parse(g.expires_at)>Date.parse(decision.decidedAt)));
+      const ownerDigest=sha256Digest({tenantId:decision.tenantId,identityId:row.identity_id,purpose:"idea_lab_owner_v1"});
+      if(!owner||decision.ownerIdentityDigest!==ownerDigest)throw new IdeaLabErrorV1("authorization_denied");
+      const material={authorizationId:input.authorizationId,tenantId:decision.tenantId,sessionId:decision.sessionId,
+        ideaDecisionId:decision.decisionId,ideaDecisionDigest:decision.decisionDigest,policyDecisionId:input.policyDecisionId,
+        ownerIdentityId:row.identity_id,ownerIdentityDigest:ownerDigest,requestDigest:row.request_digest,
+        authorizedAt:decision.decidedAt,expiresAt:iso(row.expires_at),grantsApproval:false as const,grantsExecutionAuthority:false as const};
+      const payload=ownerAuthorizationPayloadSchema.parse({...material,authorizationDigest:sha256Digest(material)}),tag=this.#tag("owner_authorization",decision.tenantId,input.authorizationId,payload.authorizationDigest);
+      const existing=await tx.query<{payload:unknown;authorization_auth_tag:string}>(`SELECT payload,authorization_auth_tag FROM control_idea_owner_authorizations WHERE tenant_id=$1 AND session_id=$2`,[decision.tenantId,decision.sessionId]);
+      if(existing.rows[0]){const stored=parseExactIdeaLabV1(ownerAuthorizationPayloadSchema,existing.rows[0].payload);this.#verifyTag("owner_authorization",stored.tenantId,stored.authorizationId,stored.authorizationDigest,existing.rows[0].authorization_auth_tag);
+        if(stored.authorizationDigest!==payload.authorizationDigest)throw new IdeaLabErrorV1("duplicate_record");return {authorizationDigest:stored.authorizationDigest,replayed:true};}
+      await tx.query(`INSERT INTO control_idea_owner_authorizations(authorization_id,tenant_id,session_id,idea_decision_id,policy_decision_id,owner_identity_id,owner_identity_digest,request_digest,authorization_digest,authorization_auth_tag,payload,authorized_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)`,[payload.authorizationId,payload.tenantId,payload.sessionId,payload.ideaDecisionId,payload.policyDecisionId,payload.ownerIdentityId,payload.ownerIdentityDigest,payload.requestDigest,payload.authorizationDigest,tag,JSON.stringify(payload),payload.authorizedAt]);return {authorizationDigest:payload.authorizationDigest,replayed:false};});
+  }
+
+  async recordAuthorizedDecision(value:unknown,authorizationDigest:string):Promise<{decision:IdeaLabDecisionV1;project?:ProjectRegistryProjectionV1;replayed:boolean}>{
+    const raw=parseExactIdeaLabV1(ideaDecisionSchemaV1,value),authorization=await this.#query<{payload:unknown;authorization_auth_tag:string}>(`SELECT payload,authorization_auth_tag FROM control_idea_owner_authorizations WHERE tenant_id=$1 AND session_id=$2`,[raw.tenantId,raw.sessionId]);
+    if(!authorization.rows[0])throw new IdeaLabErrorV1("authorization_denied");const permit=parseExactIdeaLabV1(ownerAuthorizationPayloadSchema,authorization.rows[0].payload);
+    this.#verifyTag("owner_authorization",permit.tenantId,permit.authorizationId,permit.authorizationDigest,authorization.rows[0].authorization_auth_tag);
+    if(permit.authorizationDigest!==authorizationDigest||permit.ideaDecisionDigest!==raw.decisionDigest||permit.ideaDecisionId!==raw.decisionId
+      ||Date.parse(permit.expiresAt)<=Date.parse(raw.decidedAt))throw new IdeaLabErrorV1("authorization_denied");
+    return this.recordDecision(value);
   }
 
   async #insertLifecycle(tx:DatabaseSession,event:ReturnType<typeof buildProjectLifecycleEventV1>):Promise<void>{

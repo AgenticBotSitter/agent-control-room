@@ -55,7 +55,10 @@ const contributionInputSchema = z.object({ participantId: ideaIdSchemaV1, round:
   suggestedExperiment: z.string().min(1).max(500), confidencePercent: z.number().int().min(0).max(100),
   contributedAt: ideaTimeSchemaV1 }).strict();
 
-export function buildIdeaLabContributionV1(sessionValue: unknown, value: unknown): IdeaLabContributionV1 {
+export function buildIdeaLabContributionV1(sessionValue: unknown, value: unknown,
+  source: { sourceMode: "injected_only"; liveBotContactAuthorized: false; providerContacted: false }
+    | { sourceMode: "provider_filtered"; liveBotContactAuthorized: true; providerContacted: true }
+    = { sourceMode: "injected_only", liveBotContactAuthorized: false, providerContacted: false }): IdeaLabContributionV1 {
   const session = parseIdeaLabSessionV1(sessionValue), input = parseExactIdeaLabV1(contributionInputSchema, value);
   const participant = session.participants.find((item) => item.participantId === input.participantId);
   if (!participant || input.round > session.maxRounds || Date.parse(input.contributedAt) < Date.parse(session.createdAt)) {
@@ -69,8 +72,7 @@ export function buildIdeaLabContributionV1(sessionValue: unknown, value: unknown
     perspective: participant.perspective, round: input.round, safeOpinion: input.safeOpinion,
     opportunityCode: input.opportunityCode, primaryRiskCode: input.primaryRiskCode,
     suggestedExperiment: input.suggestedExperiment, confidencePercent: input.confidencePercent,
-    sourceMode: "injected_only" as const, contributedAt: input.contributedAt, liveBotContactAuthorized: false as const,
-    providerContacted: false as const, grantsApproval: false as const, grantsCommandAuthority: false as const,
+    ...source, contributedAt: input.contributedAt, grantsApproval: false as const, grantsCommandAuthority: false as const,
     grantsLeaseAuthority: false as const, grantsExecutionAuthority: false as const, automaticProjectCreationAllowed: false as const };
   return ideaContributionSchemaV1.parse({ ...material, contributionDigest: sha256Digest(material) });
 }
@@ -84,6 +86,8 @@ export function parseIdeaLabContributionV1(value: unknown, sessionValue: unknown
     || parsed.sessionId !== session.sessionId || parsed.tenantId !== session.tenantId || parsed.workspaceId !== session.workspaceId
     || parsed.sessionDigest !== session.sessionDigest || parsed.participantIdentityDigest !== participant.identityDigest
     || parsed.perspective !== participant.perspective || parsed.round > session.maxRounds
+    || (parsed.sourceMode === "injected_only" && (parsed.liveBotContactAuthorized || parsed.providerContacted))
+    || (parsed.sourceMode === "provider_filtered" && (!parsed.liveBotContactAuthorized || !parsed.providerContacted))
     || Date.parse(parsed.contributedAt) < Date.parse(session.createdAt)) throw new IdeaLabErrorV1("integrity_failed");
   return parsed;
 }
@@ -112,7 +116,9 @@ export function buildIdeaLabSynthesisV1(sessionValue: unknown, contributionValue
     tenantId: session.tenantId, workspaceId: session.workspaceId, sessionDigest: session.sessionDigest,
     contributionDigests: contributions.map((item) => item.contributionDigest), participantCount: session.participants.length,
     contributionCount: contributions.length, ...input, overallScore, recommendation, advisoryOnly: true as const,
-    ownerDecisionRequired: true as const, liveBotContactAuthorized: false as const, providerContacted: false as const,
+    ownerDecisionRequired: true as const,
+    liveBotContactAuthorized: contributions.some((item) => item.liveBotContactAuthorized),
+    providerContacted: contributions.some((item) => item.providerContacted),
     grantsApproval: false as const, grantsCommandAuthority: false as const, grantsLeaseAuthority: false as const,
     grantsExecutionAuthority: false as const, automaticProjectCreationAllowed: false as const };
   return ideaSynthesisSchemaV1.parse({ ...material, synthesisDigest: sha256Digest(material) });

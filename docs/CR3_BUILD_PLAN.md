@@ -485,3 +485,13 @@ CR-11 adds the people-first collaboration layer after the project, schedule, wor
 - One exact authenticated owner decision may atomically materialize only non-runnable canonical proposed work plus its Action Inbox record; rejection and withdrawal create nothing, and no review grants approval or dispatch authority.
 - Hermes Bot Mode calls remain absent until a separately pinned, read-only, conformance-tested adapter is accepted.
 - `agentcontrolroom.xyz` remains an owner-held future deployment destination; no hosted effect occurs in CR11A.
+## CR12B-IDEA-030 — protected Bot Mode coordinator and owner promotion
+
+Status: complete locally for the repository-only, provider-disabled implementation. See
+`CR12B_IDEA_030_ACCEPTANCE.md` and ADR-126.
+
+The block adds exact provider-session evidence, an independently verified live-provider gate, serialized budgeted panel
+orchestration, an append-only PostgreSQL run ledger, terminal post-marker ambiguity, and a protected human-owner-only
+promotion permit and HTTP boundary. The default composition stays disabled and no native provider contact occurred.
+
+Next: CR12B-IDEA-040 protects session creation and synthesis, then connects those safe operations to the Idea Lab UI.

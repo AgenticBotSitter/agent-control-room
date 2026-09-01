@@ -1963,3 +1963,29 @@ keeping the owner, provider, and project-write authorities separate.
 **Reevaluate:** CR12B-IDEA-030 may add provider-backed panels and an owner-promotion API only after exact compatibility,
 identity, filtered-read, budget, cancellation, persistence, and terminal-ambiguity gates pass. This ADR grants no provider
 contact, credential use, project write, deployment, or production effect by itself.
+
+## ADR-126 — Provider evidence cannot authorize itself; owner promotion uses a pre-existing immutable permit
+
+**Decision:** The Idea Lab coordinator accepts exact per-participant provider-session evidence but treats every live
+authorization field inside that evidence as a claim. A separate server-held verifier must authenticate it before the
+coordinator may invoke a live driver. The shipped composition provides no verifier and therefore rejects live execution.
+Each turn is serialized and durably marked before invocation; any unknown post-marker outcome is terminally ambiguous
+and is never automatically retried. Project promotion is a separate path: verified authentication must resolve to an
+active human owner grant, a policy decision and immutable owner permit are persisted first, and only then may the bound
+idea decision create the project. Tenant and owner identity are derived on the server.
+
+**Why:** A signed-looking document, caller-supplied digest, or adapter claim is not authority. Separating evidence,
+verification, advice, owner intent, and the project write prevents a compromised browser, worker, or provider adapter
+from turning panel output into a Control Room effect. Pre-effect persistence also makes a crash safe: it may leave unused
+authorization, but cannot leave an unauthorized project.
+
+**Alternatives rejected:** Trust `liveProviderAuthorized` in a request; retry an uncertain Bot Mode call; retain raw
+provider content; run panel members concurrently without a bounded ledger; let an operator or agent impersonate the
+owner; accept tenant or identity headers; write the project before its authorization evidence; or silently configure a
+live runtime from environment variables.
+
+**Trade-off:** The repository proves the orchestration and owner boundary with an injected fake while the real path stays
+closed. A later composition must supply an authenticated provider-evidence verifier and protected owner-session adapter.
+
+**Reevaluate:** CR12B-IDEA-040 may add protected session creation, deterministic synthesis, and operator controls. Any
+native Hermes contact remains a separate owner-attended authorization and qualification gate.

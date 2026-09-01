@@ -21,7 +21,7 @@ export const ideaLabelSchemaV1 = z.string().min(1).max(120);
 export const ideaTextSchemaV1 = z.string().min(1).max(800);
 
 const nonAuthority = {
-  liveBotContactAuthorized: z.literal(false), providerContacted: z.literal(false), grantsApproval: z.literal(false),
+  grantsApproval: z.literal(false),
   grantsCommandAuthority: z.literal(false), grantsLeaseAuthority: z.literal(false), grantsExecutionAuthority: z.literal(false),
   automaticProjectCreationAllowed: z.literal(false),
 } as const;
@@ -39,7 +39,8 @@ export const ideaSessionSchemaV1 = z.object({
   targetCustomer: z.string().min(1).max(300), participants: z.array(ideaParticipantSchemaV1).min(3).max(6),
   maxRounds: z.number().int().min(1).max(3), maxMessages: z.number().int().min(3).max(18),
   maxDurationSeconds: z.number().int().min(60).max(900), maxCostUsd: z.number().min(0).max(25),
-  createdByIdentityDigest: ideaDigestSchemaV1, createdAt: ideaTimeSchemaV1, ...nonAuthority,
+  createdByIdentityDigest: ideaDigestSchemaV1, createdAt: ideaTimeSchemaV1,
+  liveBotContactAuthorized: z.literal(false), providerContacted: z.literal(false), ...nonAuthority,
   sessionDigest: ideaDigestSchemaV1,
 }).strict();
 
@@ -50,7 +51,8 @@ export const ideaContributionSchemaV1 = z.object({
   perspective: z.enum(ideaLabPerspectivesV1), round: z.number().int().min(1).max(3),
   safeOpinion: ideaTextSchemaV1, opportunityCode: ideaCodeSchemaV1, primaryRiskCode: ideaCodeSchemaV1,
   suggestedExperiment: z.string().min(1).max(500), confidencePercent: z.number().int().min(0).max(100),
-  sourceMode: z.literal("injected_only"), contributedAt: ideaTimeSchemaV1, ...nonAuthority,
+  sourceMode: z.enum(["injected_only", "provider_filtered"]), contributedAt: ideaTimeSchemaV1,
+  liveBotContactAuthorized: z.boolean(), providerContacted: z.boolean(), ...nonAuthority,
   contributionDigest: ideaDigestSchemaV1,
 }).strict();
 
@@ -65,7 +67,7 @@ export const ideaSynthesisSchemaV1 = z.object({
   recommendation: z.enum(["promote", "save", "reject"]), executiveSummary: ideaTextSchemaV1,
   nextExperiment: z.string().min(1).max(500), dissentingPerspectiveCodes: z.array(ideaCodeSchemaV1).max(6),
   advisoryOnly: z.literal(true), ownerDecisionRequired: z.literal(true), synthesizedAt: ideaTimeSchemaV1,
-  ...nonAuthority, synthesisDigest: ideaDigestSchemaV1,
+  liveBotContactAuthorized: z.boolean(), providerContacted: z.boolean(), ...nonAuthority, synthesisDigest: ideaDigestSchemaV1,
 }).strict();
 
 export const projectCreationSpecSchemaV1 = z.object({
@@ -79,7 +81,8 @@ export const ideaDecisionSchemaV1 = z.object({
   synthesisDigest: ideaDigestSchemaV1, decision: z.enum(["create_project", "save", "reject"]),
   safeReasonCode: ideaCodeSchemaV1, ownerIdentityDigest: ideaDigestSchemaV1,
   project: projectCreationSpecSchemaV1.optional(), decidedAt: ideaTimeSchemaV1,
-  automaticDecision: z.literal(false), ownerDecisionRequired: z.literal(false), ...nonAuthority,
+  automaticDecision: z.literal(false), ownerDecisionRequired: z.literal(false),
+  liveBotContactAuthorized: z.literal(false), providerContacted: z.literal(false), ...nonAuthority,
   decisionDigest: ideaDigestSchemaV1,
 }).strict();
 
