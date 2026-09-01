@@ -579,11 +579,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110C — independent bridge review, signed enrollment, and packet refresh
+Block: CR12B-IDEA-110B-Q — independent fixed-bridge review disposition
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the fixed no-fork bridge is implemented, but it must be independently attacked before any real enrollment or packet can trust it.
-Expected output: an immutable independent security/authority report for the exact 110B candidate; remediation and re-review if needed; then one connector-created signed enrollment plus refreshed source, implementation, packet, and preflight digests.
+Why: the fixed no-fork bridge and its default-blocked enrollment gate are implemented, but a different agent must attack the exact bridge before connector or enrollment work can trust it.
+Expected output: jobber #198's immutable security/authority report for implementation commit `0a736ad`; either an accepted disposition or preserved findings followed by remediation and a different re-review. An accepted result opens the connector-enrollment block; it does not authorize an enrollment by itself.
 Owner action: none now. Do not use the IDEA-100 or IDEA-105 authorization and do not run a Hermes qualification command until a reviewed packet explicitly replaces them.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
