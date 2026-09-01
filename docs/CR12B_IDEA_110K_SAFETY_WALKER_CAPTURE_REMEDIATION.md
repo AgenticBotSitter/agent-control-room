@@ -1,8 +1,10 @@
 # CR12B-IDEA-110K — shared safety-walker capture remediation
 
-**Status:** Provider-disabled implementation candidate with producer verification complete. The exact product commit and
-replacement review packet are frozen in the following documentation checkpoint; fresh independent review remains
-mandatory.
+**Status:** Provider-disabled implementation candidate frozen at
+`2aa4f8e0dce52045100a2a10394d86bb934df93e`; fresh independent review is mandatory.
+
+**Replacement review packet:** `docs/reviews/CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REVIEW_PACKET.md` at SHA-256
+`8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296`.
 
 ## Why IDEA-110J remained rejected
 

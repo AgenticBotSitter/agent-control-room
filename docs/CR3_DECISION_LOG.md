@@ -2525,7 +2525,14 @@ reflection, receiver-binding, Promise creation, or array iterator helpers. Requi
 initialization or replaced by direct primitive/indexed logic. This follows the Medium ambient-Set finding preserved by
 the IDEA-110I independent report.
 
+**IDEA-110K amendment:** Safety validation is part of the same frozen host-operation boundary. Secret detection,
+redaction, safe projection, and exact-parser error classification may not dynamically select object-entry, array
+identification/traversal/append/join, regex test/replace, string normalization/search, reflection, object-definition, or
+Error operations after module initialization. Recursive traversal uses direct indexed logic and captured calls. This
+follows the High `Object.entries` bypass preserved by the IDEA-110J independent report.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
 conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
-and requires a fresh report.
+and requires a fresh report. Any change to shared secret/redaction/projection traversal or exact-parser safety
+classification also invalidates IDEA-110K review evidence.

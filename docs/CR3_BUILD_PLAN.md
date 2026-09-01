@@ -749,15 +749,30 @@ Independent review accepted closure of all three inherited defects but rejected 
 
 ## CR12B-IDEA-110J — host-operation capture remediation
 
-Status: provider-disabled implementation frozen at `5707ecb05221e708beefa196fc0fa2e0c9d8515d`; replacement
-packet `sha256:f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd` and fresh independent review required. See
-`CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REMEDIATION.md` and amended ADR-146.
+Status: rejected by independent review. Exact product `5707ecb05221e708beefa196fc0fa2e0c9d8515d` is superseded by
+IDEA-110K. See `CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REMEDIATION.md`, the immutable negative report, and amended ADR-146.
 
 Dynamic collection distinctness is removed. Gateway, exact snapshot, bridge, and connector now capture or structurally
 avoid mutable ambient time, number, Promise, JSON, freeze, reflection, receiver-binding, collection, and array-traversal
 operations used after an exact cancellation signal is accepted. Three hostile post-import regressions require zero
 behavior and bounded results. No private port, enrollment, native operation, provider call, credential access, or
 deployment is introduced.
+
+Independent review confirmed the IDEA-110I ambient-Set defect closed but found one new High bypass: both shared safety
+walkers dynamically selected post-import `Object.entries`, allowing a replacement to traverse no fields and retain a
+secret-bearing value. See `docs/reviews/CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110K — shared safety-walker capture remediation
+
+Status: provider-disabled implementation frozen at `2aa4f8e0dce52045100a2a10394d86bb934df93e`; replacement
+packet `sha256:8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296` and fresh independent review required. See
+`CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+Secret detection/redaction and safe projection now capture or structurally avoid object-entry, array
+identification/traversal/append/join, regex test/replace, string normalization/search, reflection, object definition, and
+Error operations. Direct walker tests and actual connector/provider/cleanup tests replace the former ambient helpers,
+require zero hostile behavior, retain secret rejection, prevent private prompt dispatch, and still complete mandatory
+cleanup. No private port, enrollment, native operation, provider call, credential access, or deployment is introduced.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 

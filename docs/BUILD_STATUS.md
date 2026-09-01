@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F through 110J macOS Hermes connector | IDEA-110I independently rejected; IDEA-110J structurally remediated locally and requires fresh independent review | IDEA-110I closed all prior defects but left one ambient Set path; IDEA-110J removes dynamic collection construction and captures/avoids remaining accepted-path host operations; 161 CR12B tests; see `CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REMEDIATION.md` |
+| CR12B-IDEA-110F through 110K macOS Hermes connector | IDEA-110J independently rejected; IDEA-110K structurally remediated locally and requires fresh independent review | IDEA-110J closed the Set path but left shared secret/projection traversal mutable; IDEA-110K captures or avoids the complete safety-walker operation set; 163 CR12B tests; see `CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REMEDIATION.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -236,8 +236,20 @@ post-import regressions pass with zero behavior; CR12B passes 161/161, the compl
 414/416 core tests with two intentional platform skips, and 240/240 posttests. Production build, 3/3 sequential rendered
 routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, typecheck, lint, and whitespace validation pass. The
 IDEA-110J product is frozen at `5707ecb05221e708beefa196fc0fa2e0c9d8515d`; its replacement packet is frozen at
-`sha256:f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd`. Fresh independent review remains mandatory.
-No native or external effect occurred.
+`sha256:f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd`. Independent review confirmed the inherited
+Set defect closed, then reproduced one High shared-safety bypass: a post-import `Object.entries` replacement executed in
+both no-secret and safe-projection walkers, traversed no fields, and retained secret-bearing input. The unchanged negative
+report is preserved at SHA-256 `c4e0b1a5d09c13d17758703d3028b0ce7e9940208a7c315440128505f80bc8b2`.
+
+IDEA-110K captures or structurally avoids object-entry, array-identification/traversal/append/join, regex test/replace,
+string normalization/search, reflection, object-definition, and Error operations across both shared safety walkers and
+the exact Idea Lab parser. Direct walker regressions and actual connector/provider/cleanup regressions retain exact
+rejection and mandatory cleanup with zero hostile behavior. Verification passes 163/163 CR12B tests, 769/769 pretests,
+416/418 core tests with two intentional platform skips and zero failures, 242/242 posttests, TypeScript, lint, production
+build, 3/3 sequential rendered routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, and whitespace
+validation. Product `2aa4f8e0dce52045100a2a10394d86bb934df93e` and packet
+`sha256:8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296` require a fresh different-agent review. No
+native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -644,11 +656,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110J-Q — independently review the host-operation-capture remediation
+Block: CR12B-IDEA-110K-Q — independently review the shared safety-walker capture remediation
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: IDEA-110I closed all three prior defects but fresh review found a separate mutable ambient Set path after valid cancellation acceptance. IDEA-110J changes host-operation selection across gateway, exact snapshot, bridge, and connector and cannot accept its own repair.
-Expected output: one immutable report by a new reviewer against product commit `5707ecb05221e708beefa196fc0fa2e0c9d8515d` and packet `sha256:f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd`. It must reproduce the IDEA-110I Set finding, replace every relevant post-import global and prototype, verify zero hostile behavior or sentinel leakage, and repeat all IDEA-110F through IDEA-110I cases. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Why: IDEA-110J closed the ambient Set path but fresh review found a High bypass in the shared secret and safe-projection walkers. IDEA-110K changes safety traversal used by the entire connector path and cannot accept its own repair.
+Expected output: one immutable report by a new reviewer against product commit `2aa4f8e0dce52045100a2a10394d86bb934df93e` and packet `sha256:8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296`. It must reproduce the IDEA-110J Object.entries bypass, attack both walkers and the actual connector/provider/cleanup paths, verify zero hostile behavior and retained rejection/cleanup, and repeat all IDEA-110F through IDEA-110J cases. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
