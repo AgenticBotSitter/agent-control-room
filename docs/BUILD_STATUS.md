@@ -767,9 +767,10 @@ The accepted CR13A product is now restacked on connector-integration checkpoint 
 without semantic expansion. The combined minimum-runtime verification passes 16/16 CR13A tests, 172/172 CR12B tests,
 769/769 registered pretests, 418/420 core tests with the two intentional Windows-only skips, 251/251 posttests,
 typecheck, full lint, production build, 3/3 rendered routes, migrations through 0033/112 tables, macOS stage zero, and
-whitespace validation. Main-target connector PR #228 passed GitHub Actions run `33554072751`. Restack PR #229 targets
-that parent branch and remains dependent on its owner-approved merge; it grants no additional live or production
-authority and makes no main-target CI claim until retargeted.
+whitespace validation. Main-target connector PR #228 passed GitHub Actions run `33554072751` and merged as
+`28b0c42262ff769ec9e78d975a0fc31fcd63bd83`. Project Activity PR #229 passed GitHub Actions run `33560440158` and
+merged as `63def86c9472b78af9a9a5492e8aa206037a96b0`. Both accepted parent layers are now on `main` without additional
+live or production authority.
 
 CR13A-LIVE-010 is prepared as a later stacked candidate at exact implementation
 `e4cb8d69b4dbe17f560303a1edad08871fcc575b`. It adds a protected Connection Center page and endpoint, exact reviewed
@@ -783,9 +784,9 @@ lint, production build, and 4/4 rendered routes. A different independent reviewe
 accepted exact remediation `c32bb1908323d9acb2e891722c1fd4657334c741` with no High, Medium, or Low finding. The
 complete repository lifecycle is green with 769 pretests, 418 core passes plus two intentional Windows-only skips, and
 261 posttests. Migrations remain through 0033/112 tables, with Mac stage zero and whitespace validation also green.
-Draft PR #230 targets the CR13A Project Activity branch; ordered parent integration and later main-target CI remain
-required. No live browser viewport claim was made because a persistent local server was not authorized; production route
-rendering passed. The remediation packet
+Draft PR #230 now targets `main` with a clean Connection Center-only diff. Ordinary Node `22.13.0` GitHub CI is the
+remaining integration gate. No live browser viewport claim was made because a persistent local server was not authorized;
+production route rendering passed. The remediation packet
 SHA-256 is `0cbe9d35414ca3ab39d3abe8f1556234049562f6e0e88ce27721687f951de476`.
 
 ## Parallel build lane
@@ -803,12 +804,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B/CR13A-INTEGRATE — land the connector parent, then the accepted Project Activity stack
+Block: CR13A-LIVE-010-INTEGRATE — validate and land the accepted Connection Center
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: exact connector product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` and exact Project Activity product `fcc2f10881aaf7a094db76e01a898b0e04fba083` are independently accepted. Their combined stack is locally green at the exact minimum Node runtime, so the remaining work is serialized GitHub integration without losing negative evidence or widening authority.
-Expected output: owner-approved merge of green main-target connector PR #228, then retarget dependent CR13A PR #229 to main and require ordinary full CI. Preserve the original independent-review pins and the complete historical evidence chain.
-Owner action: approve merging PR #228; GitHub Actions run 33554072751 is green. After that merge, Codex can retarget PR #229 and run its ordinary CI.
+Why: both accepted parents are integrated. The first Connection Center review found a real locator leak, exact remediation `c32bb1908323d9acb2e891722c1fd4657334c741` removed every source identity from the browser contract, and a different reviewer accepted the repair with no findings. The remaining work is minimum-runtime GitHub validation and serialized integration.
+Expected output: green ordinary CI for PR #230, preservation of the rejected and accepted review records, then owner-approved merge and post-merge `main` synchronization.
+Owner action: none while PR #230 CI runs. If it passes, explicitly approve merging PR #230.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

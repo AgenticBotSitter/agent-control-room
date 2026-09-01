@@ -85,6 +85,6 @@ turn's authorized effect boundary; the production renderer verified the new shel
 
 ## Open gate
 
-Draft PR #230 remains stacked behind connector PR #228 and Project Activity PR #229. It is not integration-eligible
-until both parents land in order, the feature is retargeted to `main`, and ordinary GitHub CI passes. The accepted review
-grants no live/native/provider/SSH/deployment or production-database authority.
+Connector PR #228 and Project Activity PR #229 are integrated in order. Draft PR #230 now targets `main` with a clean
+Connection Center-only diff and awaits ordinary Node `22.13.0` GitHub CI. A green run makes it eligible for a separate
+owner-approved merge; the accepted review grants no live/native/provider/SSH/deployment or production-database authority.
