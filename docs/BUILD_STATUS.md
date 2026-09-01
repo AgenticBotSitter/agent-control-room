@@ -103,7 +103,8 @@
 | CR12B-IDEA-108 Hermes native-launch readiness | Historical negative evidence; its authentication conclusion is superseded by IDEA-109B | The clone/no-skills contradiction was real, but the review omitted the installed read-only global protected-value fallback; no command or native attempt occurred; see `CR12B_IDEA_108_NATIVE_LAUNCH_READINESS_ACCEPTANCE.md` |
 | CR12B-IDEA-109/109A optional Hermes-native preparation proposal | Complete locally but removed from the critical path | Proposal-only method and signed-attestation verifier remain non-authorizing optional hardening; current Hermes already supplies the needed fresh-profile protected-value fallback |
 | CR12B-IDEA-109B enrolled local/SSH Hermes connection | Complete locally for the signed, locator-free, connection-disabled snapshot | Exact built-in shared-value/SSH source pins, node-signed enrollment, owner-verified host-key binding, opaque fixed gateway route, safe multi-machine roster, UI truth, and no Hermes fork; see `CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md` |
-| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending one signed node enrollment, repository native port, refreshed packet/review, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
+| CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
+| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending fixed local/SSH bridge, one real signed enrollment, refreshed packet/review, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -139,6 +140,15 @@ enrollments, binds an owner-verified SSH host-key digest and opaque fixed gatewa
 generic shell, builds a duplicate- and expiry-safe fleet roster, and shows the honest disabled state in Idea Lab. Hermes
 modification is no longer required. The focused IDEA-109B/UI tests pass 10/10 and combined CR12B passes 110/110.
 Live/provider/native access remains disabled pending IDEA-110.
+
+CR12B-IDEA-110A implements the repository-owned policy port and the durable one-use boundary before any native bridge is
+allowed. One canonical Ed25519 owner window must match the enrolled tenant, node, connection, route, profile,
+conversation, participant, effect marker, exact Hermes revision, and fixed gateway operation set. The port claims the
+permit before bridge entry and always fixes tools, MCP, plugins, generic shell, and retry to off. Migration 0032 and the
+authenticated PostgreSQL spend store preserve claim, execution outcome, and cleanup outcome as an append-only chain;
+external checkpoints detect deletion or rollback across reconstruction. Ten focused hostile tests pass. The actual
+local/SSH effect bridge is still absent, every default composition remains provider-disabled, and zero native/provider
+calls occurred. The combined CR12B suite passes 120/120; migrations 0001-0032 verify 110 PostgreSQL tables.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,

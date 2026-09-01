@@ -2302,3 +2302,29 @@ must be independently qualified and operated through the existing node/admission
 **Reevaluate:** IDEA-110 may run only after one exact signed enrollment and repository native port are reviewed, every
 affected packet/pin is refreshed, and the owner gives new exact authorization. A future Hermes-native preparation method
 may still be adopted as optional hardening, but it is not a prerequisite.
+
+## ADR-139 — Spend an exact owner window before entering the enrolled Hermes bridge
+
+**Decision:** The repository-owned Hermes gateway policy port requires both an accepted node-signed connection
+enrollment and a separate canonical Ed25519 owner window. The owner window binds one tenant, node, connection,
+enrollment result, opaque route, profile, conversation, participant, marker, runtime revision, and fixed Hermes method
+set for at most one native attempt and one provider call over five minutes. A PostgreSQL append-only authenticated event
+chain must claim the permit before bridge entry and separately record native return or terminal ambiguity and cleanup
+completion or uncertainty. Unique attempt and marker indexes stop alternate-permit replay; a rollback checkpoint outside
+the database detects row loss and older database restoration.
+
+**Why:** SSH transport solves reachability, not authority or ambiguity. A signed enrollment says which machine and route
+may be considered; it does not authorize a call. A separately signed, durably spent owner window gives the native bridge
+one exact purpose while preserving safe restart behavior and the existing no-retry rule.
+
+**Alternatives rejected:** Treat SSH reachability as permission; let the browser supply a route; keep spending only in
+memory; mutate one status row; retry after an uncertain native return; expose arbitrary SSH commands; reuse a
+qualification window for a live panel; store a hostname, key path, credential, protected value, or raw model content in
+the spend ledger; or use PGlite as production authority.
+
+**Trade-off:** A platform-specific local/SSH bridge and durable external checkpoint adapter are still required at
+deployment. This block provides their exact safe interface and PostgreSQL transaction boundary but intentionally does
+not contain the process, SSH, gateway, credential, or provider client.
+
+**Reevaluate:** After the fixed native bridge is implemented and independently reviewed, refresh every affected source,
+implementation, packet, enrollment, and owner-window digest before any attended qualification.

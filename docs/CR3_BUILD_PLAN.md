@@ -660,13 +660,29 @@ identity, retains no host/user/port/key/session/protected-value/profile locator,
 safe multi-machine roster. Enrollment qualifies only the route to enter IDEA-110; it grants no provider, command, lease,
 approval, or execution authority.
 
-Next: implement the repository-owned native port behind one signed enrollment, refresh the exact owner packet, and run
-the separately authorized owner-attended IDEA-110 qualification.
+The repository-owned policy port and durable spend boundary are implemented by IDEA-110A below. The platform bridge,
+packet refresh, and separately authorized owner-attended qualification remain later gates.
+
+## CR12B-IDEA-110A — enrolled qualification gateway and durable one-use spend
+
+Status: complete locally for the repository-owned, provider-disabled policy port. See
+`CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` and ADR-139.
+
+The port accepts only a canonical Ed25519 owner window bound to one signed enrollment, opaque route, profile,
+conversation, participant, effect marker, exact Hermes revision, and fixed method set. It atomically spends that permit
+before an injected bridge can run, exposes no host or generic shell, and fixes tools/MCP/plugins/retry off. Migration
+0032 and the PostgreSQL-compatible authenticated event store make claim, native return or ambiguity, and cleanup result
+append-only, uniquely spent, restart-safe, and rollback-detecting through an external checkpoint. Repository tests use
+PGlite; production remains one private PostgreSQL primary.
+
+Next: implement and independently review the fixed local/SSH native bridge, obtain one real signed enrollment, refresh
+the exact owner packet and pins, then request a new owner-attended IDEA-110 qualification window.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
-Status: blocked pending one signed node enrollment, the repository-owned native port, refreshed pins and review, and
-another exact owner authorization. The IDEA-100 and IDEA-105 authorization text is non-reusable.
+Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,
+and another exact owner authorization. The policy port and durable spend store are complete. The IDEA-100 and IDEA-105
+authorization text is non-reusable.
 
 One no-effect preflight will verify the installed runtime and print the exact attached-Terminal command. The owner must
 run it and handle any Keychain prompt. The attempt emits only a sanitized unaccepted candidate, cleans disposable state,
