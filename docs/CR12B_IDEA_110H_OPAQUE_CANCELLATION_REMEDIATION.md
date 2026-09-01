@@ -41,9 +41,10 @@ driver/gateway/bridge/connector lifecycle.
 
 ## Current evidence and limits
 
-TypeScript, focused lint, 49/49 cancellation/gateway/bridge/connector/readiness tests, and the combined CR12B suite at
-154/154 pass. Full repository lifecycle evidence is recorded only after the implementation and readiness commits are
-frozen and rerun.
+Stage zero, TypeScript, full lint, 49/49 cancellation/gateway/bridge/connector/readiness tests, and the combined CR12B
+suite at 154/154 pass. The complete repository lifecycle passes 769/769 pretests, 414/416 core tests with two intentional
+platform skips, and 233/233 posttests. The production build and 3/3 rendered routes pass. All 32 migrations and 110
+PostgreSQL tables verify, and whitespace validation passes.
 
 No install, download, Hermes process, SSH connection, provider call, credential or protected-value access, Keychain
 operation, private-port configuration, signed enrollment, production database contact, deployment, hosting, DNS, or

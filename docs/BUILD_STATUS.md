@@ -214,8 +214,10 @@ acceptance evidence. IDEA-110H removes native AbortSignal objects from the drive
 connector seams. A frozen zero-key opaque capability now carries cancellation through module-private state; only the
 Mac-private port receives a connector-owned native signal. The exact poisoned-signal regression executes zero traps and
 zero private calls. Focused cancellation/gateway/bridge/connector/readiness tests pass 49/49 and combined CR12B passes
-154/154. Fresh independent review is mandatory. Signer and route enrollment, preflight, packet refresh, authorization,
-and native qualification remain absent; no native or external effect occurred.
+154/154. Stage zero, typecheck, full lint, 769/769 pretests, 414/416 core tests with two intentional platform skips,
+233/233 posttests, the production build with 3/3 rendered routes, all 32 migrations/110 PostgreSQL tables, and whitespace
+validation pass. Fresh independent review is mandatory. Signer and route enrollment, preflight, packet refresh,
+authorization, and native qualification remain absent; no native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
