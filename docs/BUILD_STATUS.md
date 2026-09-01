@@ -94,13 +94,19 @@
 | CR12B-IDEA-030 protected Bot Mode coordinator and owner decision | Complete locally for the repository-only provider-disabled snapshot | Independently verified live-evidence boundary, bounded sequential panel ledger, terminal ambiguity/no retry, human-owner-only permit, protected default-closed endpoint; see `CR12B_IDEA_030_ACCEPTANCE.md` |
 | CR12B-IDEA-040 protected Idea Lab operator workflow | Complete locally for the authenticated repository-fake, provider-disabled snapshot | Server-derived scope and panel, human-owner-only commands, protected create/start/cancel/synthesis routes, bounded bodies, separate disabled-by-default browser controls, 37-test combined gate; see `CR12B_IDEA_040_ACCEPTANCE.md` |
 | CR12B-IDEA-050 durable session resume and protected project lifecycle | Complete locally for the owner-authenticated, repository-fake, runtime-disabled snapshot | No-write session catalog/detail reads, stable reload projections, exact owner lifecycle replay, concurrency guard, legal state-aware disabled controls, 48-test combined gate; see `CR12B_IDEA_050_ACCEPTANCE.md` |
-| CR12B-IDEA-060 explicit local composition and repository-fake pilot | Repository implementation, automated restart test, and disposable HTTP/browser rehearsal pass; owner Keychain-backed run pending | Loopback Node-development launcher, Keychain-held master, one-time owner session, durable PGlite, separate catalog high-water, dynamic project page, 51-test combined gate; see `CR12B_IDEA_060_ACCEPTANCE.md` |
+| CR12B-IDEA-060 explicit local composition and repository-fake pilot | Complete for the exact local, Keychain-backed, repository-fake owner pilot | Owner-attended sign-in, create/panel/synthesis/promotion, protected project read, pause/resume, reload, real process restart, durable PGlite, and 51-test gate; see `CR12B_IDEA_060_ACCEPTANCE.md` |
+| CR12B-IDEA-070 provider-neutral live-panel admission | Next | Exact provider/compatibility evidence, credential custody, bounded calls, terminal ambiguity, sanitized outputs, and a separate owner packet; runtime remains provider-disabled |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR12B-IDEA-060 now has a complete repository implementation, automated restart test, and disposable HTTP/browser
-rehearsal, but it is not owner-accepted yet. The exact development-only switch composes a foreground `127.0.0.1` Node
+CR12B-IDEA-070 is next. It will define the provider-neutral admission seam and exact Hermes packet without making a
+native call. The repository must remain provider-disabled while it binds runtime identity, compatibility evidence,
+credential custody, bounded calls, sanitized contributions, pre-call markers, cancel/steer behavior, and terminal
+ambiguity to a separate owner effect window.
+
+CR12B-IDEA-060 is owner-accepted for the exact local repository-fake composition. The development-only switch composes
+a foreground `127.0.0.1` Node
 server while ordinary previews and production retain Cloudflare, owner-run Keychain retrieval, one-time
 15-minute owner session, durable PGlite outside the repository, separate Idea/catalog/high-water integrity domains, the
 deterministic repository-fake panel, and dynamic protected project pages. Automated evidence completes create, fake panel,
@@ -110,8 +116,10 @@ disposable browser rehearsal additionally passed sign-in, create, panel, synthes
 pause/resume, and process-restart persistence with fabricated credentials and temporary data removed afterward. The
 full lifecycle passes 769 pretests, 414 core tests with two intentional platform skips and zero failures, and 129 posttests;
 typecheck, full lint, production build without client externalization warnings, 3/3 rendered routes, 30 migrations/108
-tables, macOS stage zero, and whitespace validation pass. The owner must still personally run the frozen packet and
-provide sanitized visible-flow and restart confirmation. No Keychain access or persistent server was started by Codex.
+tables, macOS stage zero, and whitespace validation pass. The owner personally completed Keychain retrieval and one-time
+sign-in; Codex observed create, fake panel, synthesis, promotion, protected read, pause/resume to version 3, reload, and
+the same session/project/version after a real foreground restart. No persistent server, provider, production database,
+deployment, or external effect was started.
 
 CR12B-IDEA-050 makes the Idea Lab resumable and promoted projects operable without weakening the owner boundary. Session
 catalog/detail reads require a current human owner, derive tenant/workspace on the server, create no policy writes, and
@@ -459,13 +467,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-060 — explicit local composition and owner-attended repository-fake pilot
+Block: CR12B-IDEA-070 — provider-neutral live-panel admission and Hermes packet
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the protected repository flow is complete enough for one real local owner session, but runtime wiring and protected local key/checkpoint custody must be proven before controls can be enabled.
-Expected output: one explicit non-production owner-session/catalog/high-water/runtime composition, local-only startup and teardown, enabled protected UI against repository-fake panels, restart/reload proof, and a sanitized owner-attended acceptance record.
-Owner action: be at this Mac for the exact pilot window, establish the owner session yourself, approve any macOS protected-key prompt, and confirm the visible create-to-project and lifecycle flow.
-Stop before: live Hermes/provider contact, saved provider credentials, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
+Why: the local repository-fake pilot is accepted; the next security-sensitive step is defining the exact seam that can admit real panel evidence without letting a provider, browser, or worker mint authority.
+Expected output: provider-neutral admission contracts, exact Hermes compatibility and identity evidence, protected credential-custody requirements, bounded call/steer/cancel semantics, terminal ambiguity, sanitized contribution evidence, hostile tests, and one separately gated owner packet.
+Owner action: none during repository implementation. A later exact packet will request a separate live-provider window before any native call.
+Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
 ## Update rule

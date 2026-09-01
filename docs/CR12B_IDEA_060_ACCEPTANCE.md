@@ -1,6 +1,6 @@
 # CR12B-IDEA-060 local repository-fake pilot acceptance
 
-**Status:** Repository implementation and automated restart rehearsal pass; the real owner-attended browser run is pending.
+**Status:** Complete for the exact local, Keychain-backed, repository-fake owner pilot.
 
 **Date:** 2026-08-31
 
@@ -47,13 +47,19 @@ the wiring but is not a substitute for the owner's Keychain-backed run.
 - macOS stage zero: `ready_for_runtime_check`; and
 - whitespace validation: passing.
 
-## Pending owner evidence
+## Owner-attended evidence
 
-The owner must personally run `docs/CR12B_IDEA_060_OWNER_PACKET.md`, approve any Keychain confirmation, enter the
-one-time code, inspect the visible create-to-project and lifecycle flow, reload, restart the foreground server, and
-report only the sanitized result. Until that happens, CR12B-IDEA-060 is not complete and the runtime is not accepted for
-ordinary use.
+On 2026-08-31 the owner personally prepared and started the attached Mac pilot, completed Keychain retrieval, entered
+the one-time code, and restarted the foreground server. The protected browser flow created one Idea Lab session titled
+`Control Room local pilot acceptance`, completed its repository-fake panel and synthesis, promoted
+`project:control-room-local-pilot-acceptance`, and advanced the project through pause and resume to lifecycle version 3.
+After a page reload and a real Control-C/start cycle, the same owner session remained active, the Idea Lab session resumed
+in `decided`, the same protected project resolved from the server-owned catalog, and lifecycle version 3 remained active.
+No provider, VPS, production database, public listener, deployment, or external effect was observed.
+
+This accepts only the exact local repository-fake composition. It grants no live Hermes/provider, production, deployment,
+or public-hosting authority.
 
 No owner code, cookie, Keychain secret, username, local data path, raw host identity, screenshot containing private
-values, live provider result, external network action, production database contact, deployment, or public effect is
-accepted as evidence.
+values, live provider result, external network action, production database contact, deployment, or public effect was
+retained as evidence.

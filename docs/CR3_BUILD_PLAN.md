@@ -525,7 +525,7 @@ pilot. It does not authorize live provider contact.
 
 ## CR12B-IDEA-060 — explicit local composition and owner-attended repository-fake pilot
 
-Status: repository implementation and automated restart rehearsal complete; owner-attended browser evidence pending. See
+Status: complete for the exact local, Keychain-backed, repository-fake owner pilot. See
 `CR12B_IDEA_060_ACCEPTANCE.md`, `CR12B_IDEA_060_OWNER_PACKET.md`, and ADR-129.
 
 The exact development-only composition uses a loopback foreground server, one-time 15-minute owner session, Keychain-held
@@ -535,5 +535,19 @@ pages read protected local truth and expose legal owner lifecycle transitions. P
 remain closed. The exact development switch selects Vinext's Node runtime because PGlite is not a Cloudflare-worker
 database; ordinary previews and every production build keep the Cloudflare plugin.
 
-Next: the owner personally executes the frozen CR12B-IDEA-060 packet. No later block may treat the automated rehearsal as
-owner evidence or as authority for live Hermes/provider contact.
+The owner-attended packet passed create, panel, synthesis, project promotion, protected project read, pause/resume,
+reload, and real foreground restart persistence. No later block may treat this repository-fake acceptance as authority
+for live Hermes/provider contact.
+
+Next: CR12B-IDEA-070 defines the provider-neutral live-panel admission boundary, exact Hermes compatibility inputs, and
+one separately authorized owner packet. Repository work remains provider-disabled and effect-free until that packet is
+accepted.
+
+## CR12B-IDEA-070 — provider-neutral live-panel admission and Hermes packet
+
+Status: next.
+
+This block will bind the accepted Idea Lab coordinator to exact provider identity and compatibility evidence without
+enabling a provider. It will define credential custody, message/cost/time ceilings, participant-to-runtime identity,
+pre-call markers, terminal ambiguity, sanitized contribution evidence, cancel/steer limits, and a separate owner effect
+window. The repository default, browser, and production composition remain provider-disabled.
