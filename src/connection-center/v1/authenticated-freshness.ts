@@ -1,23 +1,30 @@
-import { evaluateFleetSignalFreshness, FleetSignalStore } from "../../node-fleet/v1";
+import { AuthenticatedTelemetryReceiptStoreV1 } from "../../node-fleet/v1";
 import type { DatabaseClient } from "../../persistence/database";
+import { exactHostDataSnapshotV1 } from "../../security/host-value";
 import type { ConnectionCenterFreshnessSourceV1 } from "./service";
 import type { ConnectionCenterNodeFreshnessV1 } from "./types";
 
 /**
- * Reads only telemetry that crossed NodeFleetSignalIngress authentication before
- * persistence. Discovery, capabilities, and benchmarks never imply recency.
+ * Reads only server-keyed receipts emitted after NodeFleetSignalIngress has
+ * authenticated a signed telemetry frame. The mutable fleet-current projection
+ * is intentionally not consulted here.
  */
 export class AuthenticatedFleetTelemetryFreshnessSourceV1 implements ConnectionCenterFreshnessSourceV1 {
-  readonly #store: FleetSignalStore;
-  constructor(db: DatabaseClient) { this.#store = new FleetSignalStore(db); }
+  readonly #receipts: AuthenticatedTelemetryReceiptStoreV1;
+  constructor(db: DatabaseClient, integrityKeyValue: unknown) {
+    this.#receipts = new AuthenticatedTelemetryReceiptStoreV1(db, integrityKeyValue);
+  }
 
   async read(input: { tenantId: string; nodeId: string; now: string }): Promise<ConnectionCenterNodeFreshnessV1> {
-    const telemetry = (await this.#store.current({ tenantId: input.tenantId, nodeId: input.nodeId }))
-      .find((signal) => signal.kind === "telemetry");
+    const captured = exactHostDataSnapshotV1(input, ["tenantId", "nodeId", "now"]);
+    if (!captured || typeof captured.tenantId !== "string" || typeof captured.nodeId !== "string"
+      || typeof captured.now !== "string") throw new Error("invalid freshness scope");
+    const telemetry = await this.#receipts.read({ tenantId: captured.tenantId, nodeId: captured.nodeId });
     if (!telemetry) return Object.freeze({ state: "missing", basis: "none", observedAt: null, expiresAt: null });
-    const freshness = evaluateFleetSignalFreshness(telemetry, input.now);
+    const now = Date.parse(captured.now), observed = Date.parse(telemetry.observedAt), expires = Date.parse(telemetry.expiresAt);
+    const current = Number.isFinite(now) && observed <= now && expires > now && expires - observed <= 5 * 60_000;
     return Object.freeze({
-      state: freshness.eligible ? "current" : "stale",
+      state: current ? "current" : "stale",
       basis: "authenticated_telemetry",
       observedAt: telemetry.observedAt,
       expiresAt: telemetry.expiresAt,

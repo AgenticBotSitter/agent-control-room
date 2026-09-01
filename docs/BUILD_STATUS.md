@@ -110,7 +110,7 @@
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
-| CR13A-LIVE-020 durable connection registry and signal freshness | Implementation candidate complete; independent security/integrity review required | Append-only authenticated enrollment persistence, canonical node binding, restart/replay/tamper protection, independently authenticated current/stale/missing telemetry, locator-free UI, 13 focused and 29 combined CR13A tests; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
+| CR13A-LIVE-020 durable connection registry and signal freshness | First independent review rejected; remediation candidate pending different re-review | Original target falsely trusted direct fleet-current rows and executed behavioral database/roster/projection values. Remediation uses a keyed post-authentication receipt and exact boundary capture; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` and the preserved negative review |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -793,14 +793,18 @@ viewport claim was made; production route rendering passed. The remediation pack
 CR13A-LIVE-020 now supplies the first restart-safe protected connection registry. Migration 0034 stores immutable,
 tenant- and canonical-node-bound enrollment revisions with a per-tenant digest chain, authenticated stream head, keyed authentication, payload digests, exact replay,
 monotonic renewal, duplicate active-route/profile rejection, bounded capacity, and database mutation guards. The local
-pilot reads this registry rather than synthesizing an in-memory roster. Connection Center separately composes the
-existing authenticated five-minute fleet telemetry fact as `current`, `stale`, or `missing`; discovery, capability,
+pilot reads this registry rather than synthesizing an in-memory roster. The first independent review rejected target
+`456f4d1` after proving that a direct fleet-current row could be presented as authenticated and that database-row,
+roster-result, and public-projection objects could execute behavior. The immutable negative report is preserved.
+The remediation now composes a server-keyed receipt emitted only after node-protocol authentication and fleet persistence
+as `current`, `stale`, or `missing`; direct fleet rows, discovery, capability,
 benchmark, enrollment, runtime compatibility, and qualification never imply recency. Raw tenant, connection, enrollment,
-node, route, profile, issuer, and host-key identity remains server-side. TypeScript, 13 focused tests, 29 combined CR13A
-tests, and migrations through 0034/114 tables pass. No SSH, native runtime, provider, credential, production database,
-deployment, or network effect occurred. The complete npm lifecycle also passes with 769 pretests, 418 core passes plus
-two intentional platform skips, and 264 posttests; lint, macOS stage zero, production build, and 4/4 rendered routes are
-green. A different independent security/integrity review is required before acceptance.
+node, route, profile, issuer, and host-key identity remains server-side. Database rows, complete rosters, and complete
+public projections are exact-captured before semantic access. Migrations through 0034 now verify 115 tables. No SSH,
+native runtime, provider, credential, production database, deployment, or network effect occurred. A different independent
+security/integrity re-review is required before acceptance. Remediation verification passes 15/15 focused, 31/31 combined
+CR13A, 769/769 pretests, 418/420 core tests with two intentional platform skips, 266/266 posttests, TypeScript, full lint,
+Mac stage zero, production build, whitespace validation, and 4/4 rendered routes.
 
 ## Parallel build lane
 
@@ -817,12 +821,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-020-REVIEW — freeze and independently review durable connection truth
+Block: CR13A-LIVE-020-REMEDIATION — close the rejected provenance and behavioral-boundary findings
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: persistence, identity correlation, freshness provenance, and browser redaction form a new security boundary. Producer tests pass, but they cannot accept their own boundary.
-Expected output: one frozen implementation commit, complete local lifecycle and ordinary GitHub CI, then a different independent review that attempts tenant crossover, replay/rollback/tamper, fake liveness, freshness confusion, and locator disclosure before any merge.
-Owner action: authorize a different independent agent to review CR13A-LIVE-020 after the candidate and review packet are frozen.
+Why: the first independent review found one High, one Medium, and one Low defect in a persistence and identity boundary.
+Expected output: preserve the rejected report, remediate all findings, freeze a new exact target, complete the local lifecycle and ordinary GitHub CI, then obtain a different independent re-review before any merge.
+Owner action: none; the owner has already authorized independent reviews.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

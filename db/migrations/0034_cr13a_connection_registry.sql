@@ -47,3 +47,24 @@ CREATE TRIGGER control_connection_enrollments_append_only
 CREATE TRIGGER control_connection_enrollments_truncate_guard
   BEFORE TRUNCATE ON control_connection_enrollments
   FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+
+-- This is deliberately separate from control_node_fleet_current. The fleet
+-- projection can be rebuilt or directly repaired, while this receipt may be
+-- written only by the authenticated node-protocol ingress with the server key.
+CREATE TABLE control_connection_authenticated_telemetry_receipts (
+  tenant_id text NOT NULL,
+  node_id text NOT NULL,
+  signal_sequence bigint NOT NULL CHECK (signal_sequence > 0),
+  signal_digest text NOT NULL CHECK (signal_digest ~ '^sha256:[a-f0-9]{64}$'),
+  message_id_digest text NOT NULL CHECK (message_id_digest ~ '^sha256:[a-f0-9]{64}$'),
+  key_id_digest text NOT NULL CHECK (key_id_digest ~ '^sha256:[a-f0-9]{64}$'),
+  connection_id_digest text NOT NULL CHECK (connection_id_digest ~ '^sha256:[a-f0-9]{64}$'),
+  observed_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  authenticated_at timestamptz NOT NULL,
+  receipt_auth_tag text NOT NULL CHECK (receipt_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
+  PRIMARY KEY (tenant_id,node_id),
+  FOREIGN KEY (tenant_id,node_id) REFERENCES control_nodes(tenant_id,id) ON DELETE RESTRICT,
+  CHECK (expires_at > observed_at),
+  CHECK (authenticated_at >= observed_at - interval '5 minutes')
+);

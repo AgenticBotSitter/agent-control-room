@@ -428,6 +428,18 @@ export function buildIdeaLabHermes021ConnectionRosterV1(input: {
   return rosterReflectApplyV1(rosterObjectFreezeV1, Object, [parsed]) as IdeaLabHermes021ConnectionRosterV1;
 }
 
+/** Capture and verify a complete protected roster without executing source behavior. */
+export function parseIdeaLabHermes021ConnectionRosterV1(value: unknown): IdeaLabHermes021ConnectionRosterV1 {
+  const parsed = parseExactIdeaLabV1(rosterSchema, value);
+  const { rosterDigest, ...material } = parsed;
+  if (capturedRosterDigestV1(material) !== rosterDigest) throw new IdeaLabErrorV1("integrity_failed");
+  for (let index = 0; index < parsed.connections.length; index += 1) {
+    freezeConnectionSafeResultV1(parsed.connections[index]!);
+  }
+  rosterReflectApplyV1(rosterObjectFreezeV1, Object, [parsed.connections]);
+  return rosterReflectApplyV1(rosterObjectFreezeV1, Object, [parsed]) as IdeaLabHermes021ConnectionRosterV1;
+}
+
 const reassessmentMaterial = {
   contractVersion: IDEA_LAB_HERMES_021_CONNECTION_REASSESSMENT_V1,
   runtimeRevision: IDEA_LAB_HERMES_021_REVISION_V1,

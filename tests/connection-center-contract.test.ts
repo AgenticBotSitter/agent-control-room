@@ -128,3 +128,29 @@ test("CR13A-LIVE-020 rejects behavioral or mismatched freshness before reading i
     { state: "missing", basis: "none", observedAt: null, expiresAt: null },
   ]));
 });
+
+test("CR13A-LIVE-020 rejects behavioral roster and public projection values without executing them", async () => {
+  const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId, evaluatedAt: now, connections: [safeConnection()] });
+  const projection = buildConnectionCenterProjectionV1(roster);
+  let rosterTraps = 0, projectionTraps = 0;
+  const behavioralRoster = new Proxy(roster, { get(target, key, receiver) {
+    // Promise resolution necessarily probes `then`; count only application data access.
+    if (key === "then") return undefined;
+    rosterTraps += 1; return Reflect.get(target, key, receiver);
+  } });
+  await assert.rejects(() => new ConnectionCenterReadServiceV1({
+    async read() { return behavioralRoster; },
+  }).read({ tenantId, now }), ConnectionCenterReadErrorV1);
+  assert.equal(rosterTraps, 0);
+  const behavioralProjection = new Proxy(projection,
+    { get() { projectionTraps += 1; throw new Error("executed projection"); } });
+  assert.throws(() => parseConnectionCenterProjectionV1(behavioralProjection), ConnectionCenterReadErrorV1);
+  assert.equal(projectionTraps, 0);
+
+  let accessorCalls = 0;
+  const accessorProjection = { ...projection } as Record<string, unknown>;
+  Object.defineProperty(accessorProjection, "summary",
+    { enumerable: true, get() { accessorCalls += 1; return projection.summary; } });
+  assert.throws(() => parseConnectionCenterProjectionV1(accessorProjection), ConnectionCenterReadErrorV1);
+  assert.equal(accessorCalls, 0);
+});

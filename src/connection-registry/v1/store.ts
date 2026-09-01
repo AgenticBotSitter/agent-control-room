@@ -7,14 +7,15 @@ import {
 } from "../../idea-lab/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
-import { dataMethodV1, exactHostDataSnapshotV1, exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
+import { dataMethodV1, exactHostDataArrayV1, exactHostDataSnapshotV1,
+  exactHostUint8ArrayV1, isHostProxyV1, ownDataPropertyValueV1 } from "../../security/host-value";
 
 interface RegistryHeadRowV1 {
   tenant_id: string;
   last_sequence: number | string;
   last_record_digest: string | null;
   head_auth_tag: string;
-  updated_at: string | Date;
+  updated_at: string;
 }
 
 interface EnrollmentRowV1 {
@@ -29,19 +30,27 @@ interface EnrollmentRowV1 {
   previous_record_digest: string | null;
   record_digest: string;
   record_auth_tag: string;
-  issued_at: string | Date;
-  expires_at: string | Date;
-  recorded_at: string | Date;
+  issued_at: string;
+  expires_at: string;
+  recorded_at: string;
   payload: unknown;
 }
 
 const columns = `tenant_id,connection_id,enrollment_id,node_id,revision,sequence,result_digest,payload_digest,
   previous_record_digest,record_digest,record_auth_tag,issued_at,expires_at,recorded_at,payload`;
+const selectedColumns = `tenant_id,connection_id,enrollment_id,node_id,revision,sequence,result_digest,payload_digest,
+  previous_record_digest,record_digest,record_auth_tag,
+  to_char(issued_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS issued_at,
+  to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS expires_at,
+  to_char(recorded_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS recorded_at,payload`;
 const capturedArraySort = Array.prototype.sort;
 const capturedReflectApply = Reflect.apply;
 
-function instant(value: string | Date): string {
-  return typeof value === "string" ? new Date(value).toISOString() : value.toISOString();
+function instant(value: string): string {
+  if (typeof value !== "string") throw new ConnectionRegistryErrorV1("integrity_failed");
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) throw new ConnectionRegistryErrorV1("integrity_failed");
+  return new Date(milliseconds).toISOString();
 }
 
 function same(left: string, right: string): boolean {
@@ -61,6 +70,18 @@ function recordMaterial(row: Omit<EnrollmentRowV1, "record_auth_tag" | "payload"
     payloadDigest: row.payload_digest, previousRecordDigest: row.previous_record_digest,
     issuedAt: instant(row.issued_at), expiresAt: instant(row.expires_at), recordedAt: instant(row.recorded_at),
   };
+}
+
+function capturedRows(value: unknown, maximum: number): unknown[] {
+  const rows = exactHostDataArrayV1(ownDataPropertyValueV1(value, "rows"), maximum);
+  if (!rows) throw new ConnectionRegistryErrorV1("integrity_failed");
+  return rows;
+}
+
+async function safeQuery(tx: DatabaseSession, statement: string, params: unknown[], maximum = 10_000): Promise<unknown[]> {
+  const query = dataMethodV1(tx, "query");
+  if (!query) throw new ConnectionRegistryErrorV1("integrity_failed");
+  return capturedRows(await query.call(tx, statement, params), maximum);
 }
 
 export class ConnectionRegistryErrorV1 extends Error {
@@ -102,17 +123,27 @@ export class ConnectionRegistryStoreV1 {
     return hmacSha256Tag(this.#key, { kind: "connection_enrollment_record", ...recordMaterial(withoutDigest), recordDigest });
   }
 
-  #verifyHead(row: RegistryHeadRowV1, tenantId: string): void {
+  #verifyHead(value: unknown, tenantId: string): RegistryHeadRowV1 {
+    const captured = exactHostDataSnapshotV1(value,
+      ["tenant_id", "last_sequence", "last_record_digest", "head_auth_tag", "updated_at"]);
+    if (!captured) throw new ConnectionRegistryErrorV1("integrity_failed");
+    const row = captured as unknown as RegistryHeadRowV1;
     let valid = false;
     try {
       valid = row.tenant_id === tenantId && Number.isSafeInteger(Number(row.last_sequence))
         && Number(row.last_sequence) >= 0 && same(row.head_auth_tag, this.#headTag(row));
     } catch { valid = false; }
     if (!valid) throw new ConnectionRegistryErrorV1("integrity_failed");
+    return row;
   }
 
-  #verifyRecord(row: EnrollmentRowV1, tenantId: string, expectedSequence: number,
+  #verifyRecord(rowValue: unknown, tenantId: string, expectedSequence: number,
     expectedPreviousDigest: string | null): IdeaLabHermes021ConnectionSafeResultV1 {
+    const captured = exactHostDataSnapshotV1(rowValue, ["tenant_id", "connection_id", "enrollment_id", "node_id",
+      "revision", "sequence", "result_digest", "payload_digest", "previous_record_digest", "record_digest",
+      "record_auth_tag", "issued_at", "expires_at", "recorded_at", "payload"]);
+    if (!captured) throw new ConnectionRegistryErrorV1("integrity_failed");
+    const row = captured as unknown as EnrollmentRowV1;
     let value: IdeaLabHermes021ConnectionSafeResultV1;
     try { value = parseIdeaLabHermes021ConnectionSafeResultV1(row.payload); }
     catch { throw new ConnectionRegistryErrorV1("integrity_failed"); }
@@ -138,19 +169,25 @@ export class ConnectionRegistryStoreV1 {
   async #verifiedStream(tx: DatabaseSession, tenantId: string): Promise<{
     head?: RegistryHeadRowV1; rows: EnrollmentRowV1[]; values: IdeaLabHermes021ConnectionSafeResultV1[];
   }> {
-    const head = (await tx.query<RegistryHeadRowV1>(`SELECT tenant_id,last_sequence,last_record_digest,head_auth_tag,updated_at
-      FROM control_connection_registry_heads WHERE tenant_id=$1 FOR UPDATE`, [tenantId])).rows[0];
-    const rows = (await tx.query<EnrollmentRowV1>(`SELECT ${columns} FROM control_connection_enrollments
-      WHERE tenant_id=$1 ORDER BY sequence`, [tenantId])).rows;
-    if (!head) {
-      if (rows.length) throw new ConnectionRegistryErrorV1("integrity_failed");
-      return { rows, values: [] };
+    const headRows = await safeQuery(tx, `SELECT tenant_id,last_sequence,last_record_digest,head_auth_tag,
+      to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
+      FROM control_connection_registry_heads WHERE tenant_id=$1 FOR UPDATE`, [tenantId], 1);
+    const rawRows = await safeQuery(tx, `SELECT ${selectedColumns} FROM control_connection_enrollments
+      WHERE tenant_id=$1 ORDER BY sequence`, [tenantId]);
+    if (!headRows[0]) {
+      if (rawRows.length) throw new ConnectionRegistryErrorV1("integrity_failed");
+      return { rows: [], values: [] };
     }
-    this.#verifyHead(head, tenantId);
+    const head = this.#verifyHead(headRows[0], tenantId), rows: EnrollmentRowV1[] = [];
     const values: IdeaLabHermes021ConnectionSafeResultV1[] = [];
     let previous: string | null = null;
-    for (let index = 0; index < rows.length; index += 1) {
-      values.push(this.#verifyRecord(rows[index]!, tenantId, index + 1, previous));
+    for (let index = 0; index < rawRows.length; index += 1) {
+      values.push(this.#verifyRecord(rawRows[index], tenantId, index + 1, previous));
+      const captured = exactHostDataSnapshotV1(rawRows[index], ["tenant_id", "connection_id", "enrollment_id", "node_id",
+        "revision", "sequence", "result_digest", "payload_digest", "previous_record_digest", "record_digest",
+        "record_auth_tag", "issued_at", "expires_at", "recorded_at", "payload"]);
+      if (!captured) throw new ConnectionRegistryErrorV1("integrity_failed");
+      rows[index] = captured as unknown as EnrollmentRowV1;
       previous = rows[index]!.record_digest;
     }
     if (Number(head.last_sequence) !== rows.length || head.last_record_digest !== previous) {
@@ -169,7 +206,7 @@ export class ConnectionRegistryStoreV1 {
     if (!capturedBinding || !Number.isFinite(recorded) || new Date(recorded).toISOString() !== recordedAtValue
       || enrollment.tenantId !== capturedBinding.tenantId || enrollment.nodeId !== capturedBinding.nodeId
       || enrollment.connectionId !== capturedBinding.connectionId) throw new ConnectionRegistryErrorV1("scope_mismatch");
-    if (Date.parse(enrollment.issuedAt) > recorded + 5 * 60_000
+    if (enrollment.evaluatedAt !== recordedAtValue || Date.parse(enrollment.issuedAt) > recorded + 5 * 60_000
       || Date.parse(enrollment.expiresAt) <= recorded) throw new ConnectionRegistryErrorV1("invalid_input");
     try { assertNoSecretMaterial(enrollment, "connection enrollment"); }
     catch { throw new ConnectionRegistryErrorV1("invalid_input"); }
@@ -182,12 +219,14 @@ export class ConnectionRegistryStoreV1 {
 
   async #persist(tx: DatabaseSession, value: IdeaLabHermes021ConnectionSafeResultV1,
     recordedAt: string): Promise<{ replayed: boolean; revision: number }> {
-    const tenant = await tx.query(`SELECT id FROM tenants WHERE id=$1 FOR UPDATE`, [value.tenantId]);
-    if (!tenant.rows[0]) throw new ConnectionRegistryErrorV1("scope_mismatch");
+    const tenants = await safeQuery(tx, `SELECT id FROM tenants WHERE id=$1 FOR UPDATE`, [value.tenantId], 1);
+    const tenant = exactHostDataSnapshotV1(tenants[0], ["id"]);
+    if (!tenant || tenant.id !== value.tenantId) throw new ConnectionRegistryErrorV1("scope_mismatch");
     const origin: Omit<RegistryHeadRowV1, "head_auth_tag"> = { tenant_id: value.tenantId, last_sequence: 0,
       last_record_digest: null, updated_at: recordedAt };
-    await tx.query(`INSERT INTO control_connection_registry_heads(tenant_id,last_sequence,last_record_digest,head_auth_tag,updated_at)
-      VALUES($1,0,NULL,$2,$3) ON CONFLICT(tenant_id) DO NOTHING`, [value.tenantId, this.#headTag(origin), recordedAt]);
+    await safeQuery(tx, `INSERT INTO control_connection_registry_heads(tenant_id,last_sequence,last_record_digest,head_auth_tag,updated_at)
+      VALUES($1,0,NULL,$2,$3) ON CONFLICT(tenant_id) DO NOTHING RETURNING tenant_id`,
+    [value.tenantId, this.#headTag(origin), recordedAt], 1);
     const stream = await this.#verifiedStream(tx, value.tenantId);
     let priorIndex = -1;
     for (let index = 0; index < stream.values.length; index += 1) {
@@ -197,6 +236,9 @@ export class ConnectionRegistryStoreV1 {
       const prior = stream.values[priorIndex]!;
       if (prior.resultDigest !== value.resultDigest) throw new ConnectionRegistryErrorV1("replay_conflict");
       return { replayed: true, revision: Number(stream.rows[priorIndex]!.revision) };
+    }
+    if (stream.head && Date.parse(recordedAt) < Date.parse(stream.head.updated_at)) {
+      throw new ConnectionRegistryErrorV1("replay_conflict");
     }
     const latestByConnection: Array<{ row: EnrollmentRowV1; value: IdeaLabHermes021ConnectionSafeResultV1 }> = [];
     for (let index = 0; index < stream.rows.length; index += 1) {
@@ -237,16 +279,18 @@ export class ConnectionRegistryStoreV1 {
     };
     const recordDigest = this.#recordDigest(rowBase);
     const row = { ...rowBase, record_digest: recordDigest };
-    await tx.query(`INSERT INTO control_connection_enrollments(${columns})
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
+    await safeQuery(tx, `INSERT INTO control_connection_enrollments(${columns})
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb) RETURNING tenant_id`,
     [row.tenant_id,row.connection_id,row.enrollment_id,row.node_id,row.revision,row.sequence,row.result_digest,
       row.payload_digest,row.previous_record_digest,row.record_digest,this.#recordTag(row),row.issued_at,row.expires_at,
-      row.recorded_at,JSON.stringify(value)]);
+      row.recorded_at,JSON.stringify(value)], 1);
     const nextHead: Omit<RegistryHeadRowV1, "head_auth_tag"> = { tenant_id: value.tenantId, last_sequence: sequence,
       last_record_digest: recordDigest, updated_at: recordedAt };
-    await tx.query(`UPDATE control_connection_registry_heads SET last_sequence=$1,last_record_digest=$2,
-      head_auth_tag=$3,updated_at=$4 WHERE tenant_id=$5`,
-    [sequence,recordDigest,this.#headTag(nextHead),recordedAt,value.tenantId]);
+    const updated = await safeQuery(tx, `UPDATE control_connection_registry_heads SET last_sequence=$1,last_record_digest=$2,
+      head_auth_tag=$3,updated_at=$4 WHERE tenant_id=$5 RETURNING tenant_id`,
+    [sequence,recordDigest,this.#headTag(nextHead),recordedAt,value.tenantId], 1);
+    const updatedHead = exactHostDataSnapshotV1(updated[0], ["tenant_id"]);
+    if (!updatedHead || updatedHead.tenant_id !== value.tenantId) throw new ConnectionRegistryErrorV1("integrity_failed");
     return { replayed: false, revision };
   }
 

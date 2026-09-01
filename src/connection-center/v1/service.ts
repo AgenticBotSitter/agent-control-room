@@ -2,12 +2,14 @@ import {
   IDEA_LAB_HERMES_021_REVISION_V1,
   buildIdeaLabHermes021ConnectionRosterV1,
   ideaLabHermes021BuiltInConnectionSourceV1,
+  parseIdeaLabHermes021ConnectionRosterV1,
   parseIdeaLabHermes021ConnectionSafeResultV1,
   type IdeaLabHermes021ConnectionRosterV1,
 } from "../../idea-lab/v1";
 import { sha256Digest } from "../../security";
 import { exactHostDataArrayV1, exactHostDataSnapshotV1 } from "../../security/host-value";
 import { connectionCenterProjectionSchemaV1 } from "./schemas";
+import { ConnectionCenterExactValueErrorV1, exactConnectionCenterJsonV1 } from "./exact";
 import {
   CONNECTION_CENTER_CONTRACT_V1,
   type ConnectionCenterItemV1,
@@ -54,7 +56,15 @@ function freezeProjection(value: ConnectionCenterProjectionV1): ConnectionCenter
 }
 
 export function parseConnectionCenterProjectionV1(value: unknown): ConnectionCenterProjectionV1 {
-  const parsed = connectionCenterProjectionSchemaV1.parse(value) as ConnectionCenterProjectionV1;
+  let parsed: ConnectionCenterProjectionV1;
+  try {
+    parsed = connectionCenterProjectionSchemaV1.parse(exactConnectionCenterJsonV1(value)) as ConnectionCenterProjectionV1;
+  } catch (error) {
+    if (error instanceof ConnectionCenterReadErrorV1 || error instanceof ConnectionCenterExactValueErrorV1) {
+      throw new ConnectionCenterReadErrorV1("invalid_roster");
+    }
+    throw new ConnectionCenterReadErrorV1("invalid_roster");
+  }
   if (sha256Digest(unsigned(parsed)) !== parsed.projectionDigest) throw new ConnectionCenterReadErrorV1("invalid_roster");
   return freezeProjection(parsed);
 }
@@ -63,12 +73,16 @@ export function buildConnectionCenterProjectionV1(
   roster: IdeaLabHermes021ConnectionRosterV1,
   nodeFreshness: readonly ConnectionCenterNodeFreshnessV1[] = [],
 ): ConnectionCenterProjectionV1 {
+  let capturedRoster: IdeaLabHermes021ConnectionRosterV1;
+  try { capturedRoster = parseIdeaLabHermes021ConnectionRosterV1(roster); }
+  catch { throw new ConnectionCenterReadErrorV1("invalid_roster"); }
   const capturedFreshness = exactHostDataArrayV1(nodeFreshness, 32);
-  if (!capturedFreshness || (capturedFreshness.length !== 0 && capturedFreshness.length !== roster.connections.length)) {
+  if (!capturedFreshness || (capturedFreshness.length !== 0
+    && capturedFreshness.length !== capturedRoster.connections.length)) {
     throw new ConnectionCenterReadErrorV1("invalid_roster");
   }
   const nodeReferences = new Map<string, string>();
-  const connections: ConnectionCenterItemV1[] = roster.connections.map((candidate, index) => {
+  const connections: ConnectionCenterItemV1[] = capturedRoster.connections.map((candidate, index) => {
     const connection = parseIdeaLabHermes021ConnectionSafeResultV1(candidate);
     const captured = capturedFreshness.length
       ? exactHostDataSnapshotV1(capturedFreshness[index], ["state", "basis", "observedAt", "expiresAt"])
@@ -126,7 +140,7 @@ export function buildConnectionCenterProjectionV1(
   const material = {
     contractVersion: CONNECTION_CENTER_CONTRACT_V1,
     tenantScoped: true as const,
-    generatedAt: roster.evaluatedAt,
+    generatedAt: capturedRoster.evaluatedAt,
     sourceMode: "protected_enrollment_roster" as const,
     inventoryState: connections.length ? "enrolled" as const : "empty" as const,
     safeStatusCode: connections.length
@@ -138,12 +152,12 @@ export function buildConnectionCenterProjectionV1(
       sourceCandidateDigest: ideaLabHermes021BuiltInConnectionSourceV1.sourceCandidateDigest,
     },
     summary: {
-      connectionCount: roster.connectionCount,
-      localConnectionCount: roster.localConnectionCount,
-      sshConnectionCount: roster.sshConnectionCount,
-      qualificationReadyCount: roster.qualificationReadyCount,
-      nativeQualifiedCount: roster.nativeQualifiedCount,
-      livePanelEligibleCount: roster.livePanelEligibleCount,
+      connectionCount: capturedRoster.connectionCount,
+      localConnectionCount: capturedRoster.localConnectionCount,
+      sshConnectionCount: capturedRoster.sshConnectionCount,
+      qualificationReadyCount: capturedRoster.qualificationReadyCount,
+      nativeQualifiedCount: capturedRoster.nativeQualifiedCount,
+      livePanelEligibleCount: capturedRoster.livePanelEligibleCount,
       currentSignalCount,
       staleSignalCount,
       missingSignalCount,
@@ -167,24 +181,28 @@ export class ConnectionCenterReadServiceV1 {
     private readonly freshnessSource?: ConnectionCenterFreshnessSourceV1) {}
 
   async read(input: { tenantId: string; now: string }): Promise<ConnectionCenterProjectionV1> {
-    if (!safeId.test(input.tenantId) || !exactTime.test(input.now) || Number.isNaN(Date.parse(input.now))) {
+    const capturedInput = exactHostDataSnapshotV1(input, ["tenantId", "now"]);
+    const tenantId = capturedInput?.tenantId, now = capturedInput?.now;
+    if (typeof tenantId !== "string" || typeof now !== "string"
+      || !safeId.test(tenantId) || !exactTime.test(now) || Number.isNaN(Date.parse(now))) {
       throw new ConnectionCenterReadErrorV1("invalid_read_scope");
     }
     try {
-      const sourceRoster = await this.source.read(input);
+      const scope = { tenantId, now };
+      const sourceRoster = parseIdeaLabHermes021ConnectionRosterV1(await this.source.read(scope));
       const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId: sourceRoster.tenantId,
         evaluatedAt: sourceRoster.evaluatedAt, connections: sourceRoster.connections });
       if (roster.rosterDigest !== sourceRoster.rosterDigest) throw new ConnectionCenterReadErrorV1("invalid_roster");
-      if (roster.tenantId !== input.tenantId || roster.evaluatedAt !== input.now) {
+      if (roster.tenantId !== tenantId || roster.evaluatedAt !== now) {
         throw new ConnectionCenterReadErrorV1("invalid_roster");
       }
       const freshness = this.freshnessSource
         ? await Promise.all(roster.connections.map((connection) => this.freshnessSource!.read({
-          tenantId: input.tenantId, nodeId: connection.nodeId, now: input.now,
+          tenantId, nodeId: connection.nodeId, now,
         })))
         : [];
       const parsed = buildConnectionCenterProjectionV1(roster, freshness);
-      if (parsed.generatedAt !== input.now) {
+      if (parsed.generatedAt !== now) {
         throw new ConnectionCenterReadErrorV1("invalid_roster");
       }
       return parsed;

@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { ConnectionRegistryErrorV1, ConnectionRegistryStoreV1 } from "../src/connection-registry/v1/index.ts";
-import { AuthenticatedFleetTelemetryFreshnessSourceV1, ConnectionCenterReadServiceV1 } from "../src/connection-center/v1/index.ts";
+import { AuthenticatedFleetTelemetryFreshnessSourceV1, ConnectionCenterReadErrorV1,
+  ConnectionCenterReadServiceV1 } from "../src/connection-center/v1/index.ts";
 import { DOMAIN_CONTRACT_VERSION, type NodeRecord } from "../src/domain/v1/index.ts";
 import {
   IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
@@ -12,8 +13,9 @@ import {
   ideaLabHermes021BuiltInConnectionSourceV1,
   type IdeaLabHermes021ConnectionSafeResultV1,
 } from "../src/idea-lab/v1/index.ts";
-import { FleetSignalStore, fleetSignalEnvelopeSchema } from "../src/node-fleet/v1/index.ts";
-import { adaptPglite } from "../src/persistence/database.ts";
+import { AuthenticatedTelemetryReceiptStoreV1, FleetSignalStore,
+  fleetSignalEnvelopeSchema } from "../src/node-fleet/v1/index.ts";
+import { adaptPglite, type DatabaseClient, type DatabaseSession } from "../src/persistence/database.ts";
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
 import { sha256Digest } from "../src/security/index.ts";
 
@@ -83,6 +85,13 @@ test("CR13A-LIVE-020 persists protected enrollments and composes only authentica
     const binding = { tenantId, nodeId: enrollment.nodeId, connectionId: enrollment.connectionId };
     assert.deepEqual(await store.enrollAuthenticated(enrollment, now, binding), { replayed: false, revision: 1 });
     assert.deepEqual(await store.enrollAuthenticated(enrollment, now, binding), { replayed: true, revision: 1 });
+    await assert.rejects(() => store.enrollAuthenticated(enrollment, "2026-09-01T18:00:01.000Z", binding),
+      (error: unknown) => error instanceof ConnectionRegistryErrorV1 && error.safeCode === "invalid_input");
+    const backwardsTime = safeConnection({ enrollmentId: "enrollment:backwards-time",
+      issuedAt: "2026-09-01T17:56:00.000Z", expiresAt: "2026-09-02T06:00:00.000Z",
+      evaluatedAt: "2026-09-01T17:59:00.000Z" });
+    await assert.rejects(() => store.enrollAuthenticated(backwardsTime, backwardsTime.evaluatedAt, binding),
+      (error: unknown) => error instanceof ConnectionRegistryErrorV1 && error.safeCode === "replay_conflict");
     await assert.rejects(() => store.enrollAuthenticated(safeConnection({ profileIdentityDigest: digest("changed") }), now, binding),
       (error: unknown) => error instanceof ConnectionRegistryErrorV1 && error.safeCode === "replay_conflict");
     await assert.rejects(() => store.enrollAuthenticated(enrollment, now, { ...binding, tenantId: "tenant:other" }),
@@ -108,7 +117,24 @@ test("CR13A-LIVE-020 persists protected enrollments and composes only authentica
         availableMemoryBytes: { quality: "observed", value: 10_000 }, availableStorageBytes: { quality: "observed", value: 20_000 },
         networkClass: "unmetered", powerState: "ac", thermalState: "nominal" } });
     await new FleetSignalStore(db).ingestAuthenticated(telemetry, telemetry.observedAt, { tenantId, nodeId: enrollment.nodeId });
-    const freshness = new AuthenticatedFleetTelemetryFreshnessSourceV1(db);
+    const freshness = new AuthenticatedFleetTelemetryFreshnessSourceV1(db, key);
+    const forgedCurrent = await new ConnectionCenterReadServiceV1(restarted, freshness).read({ tenantId, now });
+    assert.deepEqual([forgedCurrent.summary.currentSignalCount, forgedCurrent.summary.missingSignalCount,
+      forgedCurrent.connections[0]?.signalFreshnessBasis], [0, 1, "none"]);
+    await raw.query(`INSERT INTO control_connection_authenticated_telemetry_receipts
+      (tenant_id,node_id,signal_sequence,signal_digest,message_id_digest,key_id_digest,connection_id_digest,
+       observed_at,expires_at,authenticated_at,receipt_auth_tag) VALUES($1,$2,1,$3,$4,$5,$6,$7,$8,$7,$9)`,
+    [tenantId,enrollment.nodeId,sha256Digest(telemetry),digest("forged-message"),digest("forged-key"),
+      digest("forged-connection"),telemetry.observedAt,telemetry.expiresAt,`hmac-sha256:${"0".repeat(64)}`]);
+    await assert.rejects(() => new ConnectionCenterReadServiceV1(restarted, freshness).read({ tenantId, now }),
+      (error: unknown) => error instanceof ConnectionCenterReadErrorV1 && error.safeCode === "invalid_roster");
+    await raw.query(`DELETE FROM control_connection_authenticated_telemetry_receipts WHERE tenant_id=$1`, [tenantId]);
+    const receipts = new AuthenticatedTelemetryReceiptStoreV1(db, key);
+    await receipts.recordAfterAuthenticatedIngress({ tenantId, nodeId: enrollment.nodeId,
+      signalSequence: telemetry.sequence, signalDigest: sha256Digest(telemetry),
+      messageId: "message:authenticated:telemetry:001", keyId: "key:authenticated:telemetry",
+      connectionId: "connection:authenticated:telemetry", observedAt: telemetry.observedAt,
+      expiresAt: telemetry.expiresAt, authenticatedAt: telemetry.observedAt });
     const current = await new ConnectionCenterReadServiceV1(restarted, freshness).read({ tenantId, now });
     assert.deepEqual([current.summary.currentSignalCount, current.summary.staleSignalCount, current.summary.missingSignalCount], [1, 0, 0]);
     assert.deepEqual([current.connections[0]?.signalFreshness, current.connections[0]?.signalFreshnessBasis,
@@ -137,7 +163,7 @@ test("CR13A-LIVE-020 reports missing without telemetry instead of inventing live
   try {
     await raw.query(`INSERT INTO tenants(id,display_name) VALUES($1,$2)`, [tenantId, "Connection registry"]);
     await createNode(db);
-    const store = new ConnectionRegistryStoreV1(db, new Uint8Array(32).fill(8)), enrollment = safeConnection();
+    const key = new Uint8Array(32).fill(8), store = new ConnectionRegistryStoreV1(db, key), enrollment = safeConnection();
     await store.enrollAuthenticated(enrollment, now, { tenantId, nodeId: enrollment.nodeId, connectionId: enrollment.connectionId });
     const discovery = fleetSignalEnvelopeSchema.parse({ schemaVersion: "1.0.0", tenantId, nodeId: enrollment.nodeId,
       kind: "discovery", source: "static_collector", sequence: 1, observedAt: "2026-09-01T17:50:00.000Z",
@@ -147,7 +173,7 @@ test("CR13A-LIVE-020 reports missing without telemetry instead of inventing live
           scratchEligible: true, encryptionReported: true }], networkClass: "unmetered", inventory: [],
         executorManifestDigest: digest("executor") } });
     await new FleetSignalStore(db).ingestAuthenticated(discovery, discovery.observedAt, { tenantId, nodeId: enrollment.nodeId });
-    const projection = await new ConnectionCenterReadServiceV1(store, new AuthenticatedFleetTelemetryFreshnessSourceV1(db))
+    const projection = await new ConnectionCenterReadServiceV1(store, new AuthenticatedFleetTelemetryFreshnessSourceV1(db, key))
       .read({ tenantId, now });
     assert.deepEqual([projection.summary.currentSignalCount, projection.summary.staleSignalCount,
       projection.summary.missingSignalCount, projection.connections[0]?.signalFreshnessBasis], [0, 0, 1, "none"]);
@@ -155,5 +181,35 @@ test("CR13A-LIVE-020 reports missing without telemetry instead of inventing live
     await raw.query(`DELETE FROM control_connection_enrollments WHERE tenant_id=$1`, [tenantId]);
     await assert.rejects(() => store.read({ tenantId, now }),
       (error: unknown) => error instanceof ConnectionRegistryErrorV1 && error.safeCode === "integrity_failed");
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-020 rejects behavioral database rows without executing them", async () => {
+  const raw = new PGlite(); await migrate(raw); const db = adaptPglite(raw);
+  try {
+    await raw.query(`INSERT INTO tenants(id,display_name) VALUES($1,$2)`, [tenantId, "Connection registry"]);
+    await createNode(db);
+    const key = new Uint8Array(32).fill(22), enrollment = safeConnection();
+    await new ConnectionRegistryStoreV1(db, key).enrollAuthenticated(enrollment, now,
+      { tenantId, nodeId: enrollment.nodeId, connectionId: enrollment.connectionId });
+    let traps = 0;
+    const wrap = (session: DatabaseSession): DatabaseSession => Object.freeze({
+      async query<T = Record<string, unknown>>(statement: string, params: unknown[] = []) {
+        const result = await session.query<T>(statement, params);
+        if (!statement.includes("FROM control_connection_enrollments")) return result;
+        return { rows: result.rows.map((row) => new Proxy(row as object,
+          { get() { traps += 1; throw new Error("database row behavior executed"); } }) as T) };
+      },
+    });
+    const behavioralDb: DatabaseClient = Object.freeze({
+      query: <T = Record<string, unknown>>(statement: string, params: unknown[] = []) => db.query<T>(statement, params),
+      transaction: <T>(callback: (session: DatabaseSession) => Promise<T>) =>
+        db.transaction((session) => callback(wrap(session))),
+      transactionWithPreCommitCheck: <T>(callback: (session: DatabaseSession) => Promise<T>, check: () => void) =>
+        db.transactionWithPreCommitCheck((session) => callback(wrap(session)), check),
+    });
+    await assert.rejects(() => new ConnectionRegistryStoreV1(behavioralDb, key).read({ tenantId, now }),
+      (error: unknown) => error instanceof ConnectionRegistryErrorV1 && error.safeCode === "integrity_failed");
+    assert.equal(traps, 0);
   } finally { await raw.close(); }
 });
