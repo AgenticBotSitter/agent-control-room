@@ -172,8 +172,10 @@ the owner packet is stale, old authorization cannot be reused, and native qualif
 pass with zero connection, SSH, gateway, native, provider, protected-value, or network effects. The combined CR12B
 suite passes 132/132; typecheck, full lint, Mac stage zero, and the complete npm lifecycle pass (main suite: 414 passing
 plus two explicit skips; final posttest: 211/211). The production build with 3/3 rendered route checks and all 32
-migrations with 110 PostgreSQL tables also pass. Jobber #198 is READY for one different eligible reviewer; owner presence
-is not needed.
+migrations with 110 PostgreSQL tables also pass. Jobber #198/PR #200 preserved a preparation-blocked report without
+merge. Replacement #201 stopped before review because its authorized offline frozen install found the pnpm store missing
+`postgres@3.4.7`; it made no network fallback, report, product change, or Hermes/native/provider effect. A fresh review is
+blocked only on separate authority to prepare one isolated disposable checkout with a networked frozen-lockfile install.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -580,12 +582,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110B-Q — independent fixed-bridge review disposition
+Block: CR12B-IDEA-110B-Q — prepare and complete the independent fixed-bridge review
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the fixed no-fork bridge and its default-blocked enrollment gate are implemented, but a different agent must attack the exact bridge before connector or enrollment work can trust it.
-Expected output: jobber #198's immutable security/authority report for implementation commit `0a736ad`; either an accepted disposition or preserved findings followed by remediation and a different re-review. An accepted result opens the connector-enrollment block; it does not authorize an enrollment by itself.
-Owner action: none now. Do not use the IDEA-100 or IDEA-105 authorization and do not run a Hermes qualification command until a reviewed packet explicitly replaces them.
+Why: the fixed no-fork bridge and default-blocked enrollment gate are implemented, but two honest review attempts stopped before source review because a clean checkout could not obtain every dependency without a networked frozen install.
+Expected output: one separately prepared disposable checkout, a new different-agent immutable security/authority report for implementation commit `0a736ad`, and either an accepted disposition or preserved findings followed by remediation and another different re-review. Acceptance opens the connector-enrollment block; it does not authorize enrollment by itself.
+Owner action: authorize exactly one `CI=true pnpm install --frozen-lockfile` in a new isolated disposable review checkout, with repository build-script policy enforced and no fallback or other download. Do not use the IDEA-100 or IDEA-105 authorization and do not run a Hermes qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

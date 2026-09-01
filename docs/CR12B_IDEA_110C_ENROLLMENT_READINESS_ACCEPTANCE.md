@@ -39,7 +39,9 @@ rendered route checks and all 32 migrations with 110 PostgreSQL tables also pass
 
 ## Remaining gates
 
-Jobber #198 is the only current review task and targets immutable implementation commit `0a736ad`. A different eligible
-agent must claim it through the serialized queue and return the report-only pull request. Codex must then preserve any
-negative report, remediate findings if necessary, and require a different re-review. Only an accepted review can begin
-the platform-connector acceptance and real signed-enrollment work. Owner presence is not needed yet.
+Jobber #198/PR #200 preserved a preparation-blocked report and closed without merge; no implementation review began.
+Replacement jobber #201 then stopped before review when its explicitly offline frozen setup found the local pnpm store
+missing the `postgres@3.4.7` artifact. No network fallback, report, product change, or Hermes/native/provider effect
+occurred. A new different-agent review requires a separately authorized one-time networked frozen install in an isolated
+disposable review checkout, followed by a new immutable capsule. Only an accepted review can begin platform-connector
+acceptance and real signed-enrollment work.

@@ -705,9 +705,12 @@ signer, signed enrollment, preflight, packet refresh, fresh owner authorization,
 Those eight gates cannot be re-digested into success, old owner text is non-reusable, no command is emitted, and all
 connection/native/provider/network effect counts remain zero.
 
-Next: complete jobber #198's different-agent report-only review. If accepted, implement and review the platform-specific
-connector binding and trusted node signer enrollment before creating one real signed connection enrollment. If rejected,
-preserve the report, remediate the fixed bridge, and require a different re-review first.
+Review attempts #198 and #201 both stopped before implementation review: the first lacked prepared dependencies and the
+second proved the Mac's pnpm store lacks one frozen offline artifact. Both preserved zero-effect evidence and neither
+produced security acceptance. Next: after separate owner authorization, prepare one disposable checkout with a single
+networked frozen install and issue a new different-agent report-only review. If accepted, implement and review the
+platform-specific connector binding and trusted node signer enrollment before one real signed connection enrollment. If
+rejected, preserve the report, remediate the fixed bridge, and require a different re-review first.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
