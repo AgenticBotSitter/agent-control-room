@@ -101,3 +101,12 @@ test("CR13A-LIVE-000 rejects missing projects, cross-workspace scope, and unsafe
     await assert.rejects(store.append(proxied),hasCode("invalid_input"));
   }finally{await raw.close();}
 });
+
+test("CR13A-LIVE-000 rejects noncanonical source time and canonicalizes the trusted store clock",async()=>{
+  const{raw}=await setup();try{
+    const store=new ProjectEventStoreV1(adaptPglite(raw),key,()=>"2026-09-01T10:00:00.000-06:00");
+    await assert.rejects(store.append(input(1,{occurredAt:"2026-09-01T10:00:00.000-06:00"})),hasCode("invalid_input"));
+    const appended=await store.append(input(1));assert.equal(appended.event.recordedAt,t0);
+    assert.equal((await store.read({...scope,limit:100})).events[0]?.recordedAt,t0);
+  }finally{await raw.close();}
+});

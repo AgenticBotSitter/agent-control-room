@@ -21,9 +21,11 @@ The Project Workspace Activity tab now shows connection state and up to 100 auth
 surface has no event write endpoint. Events and stream pages explicitly carry `presentationOnly=true` and approval,
 command, and execution authority false. Reconnect cannot approve, dispatch, retry, or mutate work.
 
-The local repository-fake pilot emits real activity when an Idea Lab result becomes a monitored project and when the
-owner pauses, resumes, completes, archives, or reopens it. The accepted pilot test proves promotion plus pause/resume
-events survive an actual runtime close and reopen.
+The local repository-fake pilot reconciles the authoritative Idea Lab lifecycle ledger into activity when an Idea Lab
+result becomes a monitored project and when the owner pauses, resumes, completes, archives, or reopens it. Reconciliation
+runs after source changes and again at startup, uses every exact source version rather than a racy latest-row lookup, and
+makes exact replay inert. Tests prove promotion plus pause/resume events survive an actual runtime close and reopen and
+that a simulated crash between source commit and projection is repaired without loss or duplication.
 
 ## Security and architecture boundaries
 
@@ -43,7 +45,7 @@ events survive an actual runtime close and reopen.
 
 At candidate freeze:
 
-- `npm run test:cr13a`: 12/12 passing;
+- `npm run test:cr13a`: 15/15 passing;
 - `npm run check`: passing;
 - `npm run lint -- --quiet`: passing;
 - `npm run db:verify`: migrations `0001` through `0033` applied; 112 PostgreSQL tables verified;
@@ -63,3 +65,17 @@ A different reviewer must inspect event-chain integrity, exact replay, concurren
 drain behavior, authentication ordering, safe errors, tenant/workspace/project isolation, browser reconnect behavior,
 negative authority, migration reversibility constraints, and regression coverage against the exact implementation commit.
 Review acceptance does not authorize a production database, deployment, live Hermes/provider use, or browser mutation.
+
+## First independent review and remediation
+
+A fresh reviewer rejected implementation `4ddeb6c397a4c7b311852e26db5d2bda50d0c87e` with three blocking findings:
+
+1. offset-form ISO timestamps could append successfully and then fail after PostgreSQL normalized them to UTC;
+2. the live widget was mounted on fixture workspaces but not the protected promoted-project Activity page; and
+3. source transitions committed before a separate latest-row projection, leaving crash gaps and an interleaving race.
+
+The remediation requires canonical UTC millisecond timestamps at the public event boundary, canonicalizes the captured
+trusted clock before hashing/storage, mounts the widget in the protected project section, exposes a directly rendered UI
+test, verifies the complete authenticated source lifecycle sequence, and reconciles deterministic source-version events
+after mutation and on startup. A crash-gap plus concurrent-reconciliation test proves recovery. A second different
+reviewer must re-review the exact remediation commit; producer verification cannot accept it.

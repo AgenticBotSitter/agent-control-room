@@ -34,6 +34,9 @@ const authorityFields = {
   grantsCommandAuthority: z.literal(false),
   grantsExecutionAuthority: z.literal(false),
 } as const;
+const canonicalProjectEventTimeSchemaV1=projectWorkspaceTimeSchemaV1.refine(value=>{
+  try{return value.endsWith("Z")&&new Date(value).toISOString()===value;}catch{return false;}
+},"project event times must use canonical UTC milliseconds");
 
 export const projectEventInputSchemaV1 = z.object({
   schemaVersion: z.literal(PROJECT_EVENT_INPUT_V1),
@@ -48,7 +51,7 @@ export const projectEventInputSchemaV1 = z.object({
   safeDetail: projectWorkspaceSummarySchemaV1.optional(),
   tone: z.enum(projectEventTonesV1),
   deepLinkPath: projectWorkspaceRelativePathSchemaV1.optional(),
-  occurredAt: projectWorkspaceTimeSchemaV1,
+  occurredAt: canonicalProjectEventTimeSchemaV1,
   ...authorityFields,
 }).strict();
 
@@ -56,7 +59,7 @@ export const projectEventSchemaV1 = projectEventInputSchemaV1.omit({ schemaVersi
   schemaVersion: z.literal(PROJECT_EVENT_V1),
   sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   previousEventDigest: projectWorkspaceDigestSchemaV1.nullable(),
-  recordedAt: projectWorkspaceTimeSchemaV1,
+  recordedAt: canonicalProjectEventTimeSchemaV1,
   eventDigest: projectWorkspaceDigestSchemaV1,
 }).strict().superRefine((event, context) => {
   if ((event.sequence === 1) !== (event.previousEventDigest === null)) {
@@ -91,4 +94,3 @@ export const projectEventReadRequestSchemaV1 = z.object({
   afterCursor: z.string().min(1).max(500).optional(),
   limit: z.number().int().min(1).max(100),
 }).strict();
-

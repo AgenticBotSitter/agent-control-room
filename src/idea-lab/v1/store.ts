@@ -289,6 +289,19 @@ export class IdeaLabProjectRegistryStoreV1 {
     if(!result.rows[0])return undefined;const event=parseProjectLifecycleEventV1(result.rows[0].payload);
     this.#verifyTag("project_lifecycle",event.tenantId,event.eventId,event.eventDigest,result.rows[0].event_auth_tag);return event;
   }
+  async listProjectLifecycleEvents(tenantIdValue:string,projectIdValue:string):Promise<ProjectLifecycleEventV1[]>{
+    const tenantId=ideaIdSchemaV1.parse(tenantIdValue),projectId=ideaIdSchemaV1.parse(projectIdValue);
+    const result=await this.#query<LifecycleRow>(`SELECT payload,event_auth_tag FROM control_project_lifecycle_events
+      WHERE tenant_id=$1 AND project_id=$2 ORDER BY version ASC`,[tenantId,projectId]);
+    const events=result.rows.map(row=>{const event=parseProjectLifecycleEventV1(row.payload);
+      this.#verifyTag("project_lifecycle",event.tenantId,event.eventId,event.eventDigest,row.event_auth_tag);return event;});
+    for(let index=0;index<events.length;index+=1){const event=events[index]!,prior=events[index-1];
+      if(event.tenantId!==tenantId||event.projectId!==projectId||event.version!==index+1
+        ||(prior?event.workspaceId!==prior.workspaceId||event.sourceIdeaSessionId!==prior.sourceIdeaSessionId
+          ||event.sourceDecisionDigest!==prior.sourceDecisionDigest||event.fromState!==prior.toState:event.fromState!==null))
+        throw new IdeaLabErrorV1("integrity_failed");}
+    return events;
+  }
   async listProjects(tenantId:string,options:{includeArchived?:boolean}={}):Promise<ProjectRegistryProjectionV1[]>{
     const rows=await this.#query<{id:string}>(`SELECT id FROM projects WHERE tenant_id=$1 AND adapter_id=$2 ORDER BY updated_at DESC,id`,[tenantId,CONTROL_ROOM_IDEA_ADAPTER_V1]);
     const projects=(await Promise.all(rows.rows.map((row)=>this.getProject(tenantId,row.id)))).filter((item):item is ProjectRegistryProjectionV1=>!!item);

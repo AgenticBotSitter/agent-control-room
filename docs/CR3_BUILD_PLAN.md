@@ -866,16 +866,17 @@ and never retries after uncertainty. Independent review and architect registry a
 
 ## CR13A-LIVE-000 — authenticated resumable project activity
 
-Status: implementation candidate complete; fresh independent review required. See `CR13A_LIVE_000_ACCEPTANCE.md` and
-ADR-147.
+Status: first candidate rejected; UTC, protected-page, and source-reconciliation remediations implemented locally; fresh
+different-party re-review required. See `CR13A_LIVE_000_ACCEPTANCE.md` and ADR-147.
 
 One PostgreSQL append-only event chain now projects safe project activity without becoming project or work authority.
 Concurrent writers serialize, exact source replay is inert, changed replay fails, and event/head authentication detects
 drift. The existing protected owner-project scope gates one bounded SSE replay endpoint. Browser-native reconnect resumes
 with the last event ID; invalid, stale, foreign, and ahead cursors reset to bounded current truth. The shared Project
 Workspace Activity tab shows the connection and event timeline, and the repository-fake pilot emits durable promotion
-and lifecycle events across restart. No browser write endpoint, provider contact, production database, or deployment is
-introduced.
+and lifecycle events across restart. After the first rejection, the source ledger is reconciled deterministically after
+changes and at startup, canonical UTC time is required, and the real protected project mounts the Activity source. No
+browser write endpoint, provider contact, production database, or deployment is introduced.
 
 Next after review: CR13A-LIVE-010 adds the protected Connection Center inventory and health/version diagnostics. Use
 Terra high for the ordinary UI/integration implementation, returning to Sol high for its security and integration gate.

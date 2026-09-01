@@ -2591,7 +2591,9 @@ IDEA-110P review evidence.
 authenticated stream head. A protected read endpoint authorizes the existing owner/project scope and returns bounded
 Server-Sent Events pages. The response closes after each page; browser-native reconnect and `Last-Event-ID` resume from
 the last authenticated event. Invalid, stale, foreign, or ahead cursors reset to a bounded current snapshot. Event and
-page contracts are presentation-only and explicitly grant no approval, command, or execution authority.
+page contracts are presentation-only and explicitly grant no approval, command, or execution authority. Source systems
+retain authoritative lifecycle truth; projection scans exact authenticated source versions after mutation and at startup,
+so a crash or interleaving cannot silently omit an earlier source event. Event time uses canonical UTC milliseconds.
 
 **Why:** Operators need one understandable live project timeline across Idea Lab, workers, reviews, artifacts,
 automations, and transports. A durable journal makes reload and reconnect behavior deterministic, while bounded replay
