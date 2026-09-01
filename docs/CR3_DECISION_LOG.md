@@ -2075,3 +2075,31 @@ cleanup is a separate destructive action. This composition provides no live agen
 
 **Reevaluate:** After the owner-attended packet produces sanitized acceptance, a later block may plan a separately
 authorized provider adapter. It must not reuse this repository-fake acceptance as live-provider evidence.
+
+## ADR-130 — Live Idea Lab contact requires a separate exact admission, not provider claims
+
+**Decision:** A live Idea Lab driver may run only when one server-held authority accepts the exact provider evidence and
+another atomically consumes a single-use live-panel admission. The admission binds one exact run and session, every
+participant/runtime identity, the
+provider build and native qualification, protected-value custody, exact session ceilings, filtered retained fields, and
+one fresh owner-attended strong-factor effect window. Every call remains serialized and durably marked first. Unknown
+post-marker outcomes are terminal ambiguity and are never resubmitted. Cancellation occurs only between calls; panel
+steering is disabled; resume may reconcile but never resubmit. The admission grants neither project creation nor general
+execution authority.
+
+**Why:** Provider evidence, a runtime manifest, or a caller-computed digest can describe a capability but cannot safely
+grant permission to spend money or contact an external service. Joining exact identity, compatibility, custody, budget,
+owner intent, and persistent call lineage closes the gap between a qualified adapter and one bounded authorized use.
+
+**Alternatives rejected:** Trust `liveProviderAuthorized`; treat source compatibility as native qualification; let the
+browser select a runtime or participant profile; store provider values in Control Room; retain raw conversation; retry a
+timeout; steer a deliberation after it begins; reuse the repository-fake owner session; let panel advice create a project;
+or enable a provider through environment variables.
+
+**Trade-off:** The repository can now prove the complete admission logic with an injected synthetic driver, but a real
+panel stays blocked until a filtered driver, exact native qualification, protected-value custody receipt, pinned
+admission, and fresh owner window all exist. Hermes 0.21 source compatibility remains separate evidence, not live
+eligibility.
+
+**Reevaluate:** IDEA-080 may build the default-disabled filtered driver and disposable qualification harness. A native
+attempt remains separately owner-controlled and may not begin from this ADR alone.

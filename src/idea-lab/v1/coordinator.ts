@@ -7,6 +7,11 @@ import { ideaCodeSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaParticipantSc
 import type { IdeaLabContributionV1, IdeaLabParticipantV1, IdeaLabSessionV1 } from "./types";
 import type { IdeaLabBotRunStoreV1 } from "./coordinator-store";
 import type { IdeaLabProjectRegistryStoreV1 } from "./store";
+import {
+  parseIdeaLabLivePanelAdmissionV1,
+  type IdeaLabLivePanelAdmissionAuthorityV1,
+  type IdeaLabLivePanelAdmissionV1,
+} from "./live-panel-admission";
 
 export const IDEA_LAB_PROVIDER_SESSION_EVIDENCE_V1 = "control-room-idea-lab-provider-session-evidence/v1" as const;
 export const IDEA_LAB_BOT_RUN_V1 = "control-room-idea-lab-bot-run/v1" as const;
@@ -163,10 +168,11 @@ export class DeterministicIdeaLabFakeDriverV1 implements IdeaLabBotPanelDriverV1
 export class IdeaLabBotCoordinatorV1 {
   constructor(private readonly ledger: IdeaLabBotRunStoreV1, private readonly registry: IdeaLabProjectRegistryStoreV1,
     private readonly driver: IdeaLabBotPanelDriverV1, private readonly clock: () => string = () => new Date().toISOString(),
-    private readonly providerEvidenceAuthority?: IdeaLabProviderEvidenceAuthorityV1) {}
+    private readonly providerEvidenceAuthority?: IdeaLabProviderEvidenceAuthorityV1,
+    private readonly livePanelAdmissionAuthority?: IdeaLabLivePanelAdmissionAuthorityV1) {}
 
   async execute(input: { runId: string; session: unknown; evidence: unknown[]; safePrompt: string;
-    cancelRequested?: () => boolean }): Promise<IdeaLabBotRunV1> {
+    liveAdmission?: unknown; cancelRequested?: () => boolean }): Promise<IdeaLabBotRunV1> {
     const session = parseIdeaLabSessionV1(input.session);
     if (input.safePrompt.length < 1 || input.safePrompt.length > 800) throw new IdeaLabErrorV1("invalid_input");
     const evidence = input.evidence.map((item) => parseIdeaLabProviderSessionEvidenceV1(item, session));
@@ -180,10 +186,20 @@ export class IdeaLabBotCoordinatorV1 {
       throw new IdeaLabErrorV1("scope_mismatch");
     }
     if (this.driver.mode === "hermes_bot_mode_filtered") {
-      if (!this.providerEvidenceAuthority) throw new IdeaLabErrorV1("authorization_denied");
+      if (!this.providerEvidenceAuthority || !this.livePanelAdmissionAuthority || input.liveAdmission === undefined) {
+        throw new IdeaLabErrorV1("authorization_denied");
+      }
+      let admission: IdeaLabLivePanelAdmissionV1;
+      try { admission = parseIdeaLabLivePanelAdmissionV1(input.liveAdmission, session, evidence, input.runId, now); }
+      catch { throw new IdeaLabErrorV1("authorization_denied"); }
       for (const item of evidence) if (!await this.providerEvidenceAuthority.verify(item, now)) {
         throw new IdeaLabErrorV1("authorization_denied");
       }
+      if (!await this.livePanelAdmissionAuthority.consume({ admission, session, evidence, now })) {
+        throw new IdeaLabErrorV1("authorization_denied");
+      }
+    } else if (input.liveAdmission !== undefined) {
+      throw new IdeaLabErrorV1("authorization_denied");
     }
     let run = await this.ledger.prepare(buildIdeaLabBotRunV1({ runId: input.runId, tenantId: session.tenantId,
       workspaceId: session.workspaceId, sessionId: session.sessionId, sessionDigest: session.sessionDigest,

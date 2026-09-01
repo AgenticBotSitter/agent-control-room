@@ -545,9 +545,25 @@ accepted.
 
 ## CR12B-IDEA-070 — provider-neutral live-panel admission and Hermes packet
 
+Status: complete for the exact repository-only, provider-disabled snapshot. See `CR12B_IDEA_070_ACCEPTANCE.md`,
+`CR12B_IDEA_070_OWNER_PACKET.md`, and ADR-130.
+
+The accepted admission seam binds the coordinator to exact provider/runtime/compatibility/native-qualification and
+protected-value-custody evidence, every participant/runtime identity, exact session ceilings, one single-use
+strong-factor-backed owner window, serialized durable pre-call markers, terminal ambiguity/no retry, filtered
+contributions, between-call cancellation, disabled steering, and reconciliation-only resume. Separate server-held
+provider and admission authorities must agree. The disabled Hermes 0.21 packet pins exact source evidence but contains no
+native receipt, owner window, accepted admission, or driver. Default, browser, local-pilot, and production composition
+remain provider-disabled.
+
+Next: CR12B-IDEA-080 implements the default-disabled filtered provider driver and disposable native-qualification
+harness. Repository implementation remains effect-free; no native attempt occurs without a later exact owner window.
+
+## CR12B-IDEA-080 — filtered provider driver and native qualification harness
+
 Status: next.
 
-This block will bind the accepted Idea Lab coordinator to exact provider identity and compatibility evidence without
-enabling a provider. It will define credential custody, message/cost/time ceilings, participant-to-runtime identity,
-pre-call markers, terminal ambiguity, sanitized contribution evidence, cancel/steer limits, and a separate owner effect
-window. The repository default, browser, and production composition remain provider-disabled.
+This block will translate exact gateway events into the already accepted filtered contribution result, enforce per-call
+deadlines and reconciliation without resubmission, prove zero tools/MCP and protected-value custody, and prepare one
+disposable native qualification harness with sanitized evidence and cleanup. The driver remains absent from default,
+browser, local-pilot, and production composition. Native contact remains a separate owner-attended gate.

@@ -95,15 +95,28 @@
 | CR12B-IDEA-040 protected Idea Lab operator workflow | Complete locally for the authenticated repository-fake, provider-disabled snapshot | Server-derived scope and panel, human-owner-only commands, protected create/start/cancel/synthesis routes, bounded bodies, separate disabled-by-default browser controls, 37-test combined gate; see `CR12B_IDEA_040_ACCEPTANCE.md` |
 | CR12B-IDEA-050 durable session resume and protected project lifecycle | Complete locally for the owner-authenticated, repository-fake, runtime-disabled snapshot | No-write session catalog/detail reads, stable reload projections, exact owner lifecycle replay, concurrency guard, legal state-aware disabled controls, 48-test combined gate; see `CR12B_IDEA_050_ACCEPTANCE.md` |
 | CR12B-IDEA-060 explicit local composition and repository-fake pilot | Complete for the exact local, Keychain-backed, repository-fake owner pilot | Owner-attended sign-in, create/panel/synthesis/promotion, protected project read, pause/resume, reload, real process restart, durable PGlite, and 51-test gate; see `CR12B_IDEA_060_ACCEPTANCE.md` |
-| CR12B-IDEA-070 provider-neutral live-panel admission | Next | Exact provider/compatibility evidence, credential custody, bounded calls, terminal ambiguity, sanitized outputs, and a separate owner packet; runtime remains provider-disabled |
+| CR12B-IDEA-070 provider-neutral live-panel admission | Complete locally for the repository-only provider-disabled snapshot | Two-authority exact admission, participant/runtime binding, protected-value custody, exact ceilings, pre-call markers, terminal ambiguity/no retry, filtered output, and disabled Hermes 0.21 packet; see `CR12B_IDEA_070_ACCEPTANCE.md` |
+| CR12B-IDEA-080 filtered driver and native qualification harness | Next | Default-disabled gateway translation, deadline/reconciliation enforcement, zero-tool/MCP and custody proof, disposable sanitized harness; no native attempt yet |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR12B-IDEA-070 is next. It will define the provider-neutral admission seam and exact Hermes packet without making a
-native call. The repository must remain provider-disabled while it binds runtime identity, compatibility evidence,
-credential custody, bounded calls, sanitized contributions, pre-call markers, cancel/steer behavior, and terminal
-ambiguity to a separate owner effect window.
+CR12B-IDEA-080 is next. It will implement the default-disabled filtered provider driver and disposable native
+qualification harness without making a native call. The repository must remain provider-disabled while it translates
+exact gateway evidence, enforces per-call deadlines and reconciliation without resubmission, proves zero tools/MCP and
+protected-value custody, and prepares sanitized cleanup evidence for a later exact owner window.
+
+CR12B-IDEA-070 completes the provider-neutral live-panel admission seam without contacting a provider. Separate
+server-held provider and admission authorities must accept the exact session, every participant/runtime identity,
+provider build and native evidence, protected-value custody, exact budgets, and one owner-attended single-use effect
+window. Calls remain serialized and durably marked before contact; unknown outcomes are terminal ambiguity with no
+automatic retry. Only filtered contribution fields may persist, steering is disabled, resume is reconcile-only, and
+project creation remains a separate owner decision. The Hermes 0.21 packet pins exact source evidence but has an empty
+native-receipt list, no owner window, no accepted admission, and no driver, so every composition remains
+provider-disabled. The new hostile suite passes 8/8 and combined CR12B passes 59/59. The complete registered lifecycle,
+typecheck, full lint, production build, 3/3 rendered routes, all 30 migrations/108 PostgreSQL tables, macOS stage zero,
+and whitespace validation pass. No native call, protected-value access, process, network, database/VPS, deployment, or
+external effect occurred.
 
 CR12B-IDEA-060 is owner-accepted for the exact local repository-fake composition. The development-only switch composes
 a foreground `127.0.0.1` Node
@@ -467,12 +480,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-070 — provider-neutral live-panel admission and Hermes packet
+Block: CR12B-IDEA-080 — filtered provider driver and native qualification harness
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the local repository-fake pilot is accepted; the next security-sensitive step is defining the exact seam that can admit real panel evidence without letting a provider, browser, or worker mint authority.
-Expected output: provider-neutral admission contracts, exact Hermes compatibility and identity evidence, protected credential-custody requirements, bounded call/steer/cancel semantics, terminal ambiguity, sanitized contribution evidence, hostile tests, and one separately gated owner packet.
-Owner action: none during repository implementation. A later exact packet will request a separate live-provider window before any native call.
+Why: the exact admission seam is complete; the next security-sensitive step is implementing the translation and native-proof boundary without enabling it.
+Expected output: a default-disabled filtered gateway driver, exact event-to-contribution mapping, per-call deadline and reconciliation semantics, zero-tool/MCP and protected-value-custody qualification evidence, cleanup, hostile tests, and an updated later-owner packet.
+Owner action: none during repository implementation. A later exact packet will request a separate native/live-provider window only after this harness is reviewable.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
