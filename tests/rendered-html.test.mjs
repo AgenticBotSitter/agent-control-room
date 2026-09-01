@@ -120,7 +120,9 @@ test("server-renders Idea Lab and its promoted project workspace", async () => {
   assert.match(ideaHtml, /Red Team/);
   assert.match(ideaHtml, /Advisory score/);
   assert.match(ideaHtml, /No Hermes, Codex, or local-model provider was contacted/);
-  assert.doesNotMatch(ideaHtml, /<form|type="submit"|Dispatch now/i);
+  assert.match(ideaHtml, /Protected runtime not configured\. Controls are safely disabled\./);
+  assert.match(ideaHtml, /<button type="submit" disabled="">Create session<\/button>/);
+  assert.doesNotMatch(ideaHtml, /Dispatch now/i);
 
   const project = await render("/projects/project%3Alocal-trades-ai-desk");
   assert.equal(project.status, 200);

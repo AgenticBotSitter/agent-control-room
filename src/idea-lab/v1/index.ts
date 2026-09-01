@@ -7,3 +7,4 @@ export * from "./fixture";
 export * from "./coordinator";
 export * from "./coordinator-store";
 export * from "./owner-decision-service";
+export * from "./operator-service";

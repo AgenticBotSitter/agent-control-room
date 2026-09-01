@@ -495,3 +495,17 @@ orchestration, an append-only PostgreSQL run ledger, terminal post-marker ambigu
 promotion permit and HTTP boundary. The default composition stays disabled and no native provider contact occurred.
 
 Next: CR12B-IDEA-040 protects session creation and synthesis, then connects those safe operations to the Idea Lab UI.
+
+## CR12B-IDEA-040 — protected Idea Lab operator workflow
+
+Status: complete locally for the authenticated repository-fake, provider-disabled implementation. See
+`CR12B_IDEA_040_ACCEPTANCE.md` and ADR-127.
+
+The block adds a human-owner-authorized operator service and protected create, start, cancel, and synthesis routes. All
+scope, identities, panel membership, provider evidence, and durable identifiers are server-derived. The Idea Lab page
+has separate controls for each recorded step and for the existing save/promote decision, but the shipped composition
+keeps every control disabled because no owner-session or live provider runtime is installed. The full workflow is proven
+only with the zero-network repository fake.
+
+Next: CR12B-IDEA-050 adds owner-scoped session discovery and reload-safe resume plus protected reversible project
+lifecycle controls. Live provider contact remains a separate exact authorization and qualification gate.

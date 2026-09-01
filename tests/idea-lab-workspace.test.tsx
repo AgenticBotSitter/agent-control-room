@@ -14,7 +14,10 @@ test("CR12B-IDEA-020 renders diverse analysis, advisory synthesis, owner promoti
   assert.match(html, /Advisory score/); assert.match(html, /Explicit owner promotion/);
   assert.match(html, /No Hermes, Codex, or local-model provider was contacted/);
   assert.match(html, /href="\/projects\/project%3Alocal-trades-ai-desk"/);
-  assert.doesNotMatch(html, /<form|type="submit"|Create live project|Dispatch now/);
+  assert.match(html, /Protected runtime not configured\. Controls are safely disabled\./);
+  assert.match(html, /<form/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>Create session<\/button>/);
+  assert.doesNotMatch(html, /Create live project|Dispatch now/);
 });
 
 test("CR12B-IDEA-020 gives every promoted project the standard monitoring tabs and a durable lifecycle summary", () => {

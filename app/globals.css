@@ -775,6 +775,18 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .idea-lab-hero dd { margin: 4px 0 0; font-size: 13px; font-weight: 800; }
 .idea-lab-boundary { border-left: 3px solid var(--amber); border-radius: 0 10px 10px 0; margin: 0; background: var(--amber-soft); color: var(--muted); padding: 11px 14px; font-size: 9px; }
 .idea-lab-panel, .idea-lab-synthesis, .idea-lab-promotion { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 19px; box-shadow: var(--shadow); }
+.idea-lab-operator { display: grid; grid-template-columns: minmax(240px,.7fr) minmax(420px,1.3fr); gap: 22px; border: 1px solid color-mix(in srgb,var(--blue) 24%,var(--border)); border-radius: var(--radius); background: var(--surface); padding: 19px; box-shadow: var(--shadow); }
+.idea-lab-operator h2 { margin: 3px 0 7px; font-family: Georgia,serif; font-size: 24px; font-weight: 500; }
+.idea-lab-operator > div > p:last-child,.idea-lab-operator form > p { color: var(--muted); font-size: 9px; line-height: 1.55; }
+.idea-lab-operator form { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.idea-lab-operator label { display: grid; gap: 4px; color: var(--faint); font-size: 8px; font-weight: 750; }
+.idea-lab-operator label:nth-child(2) { grid-column: span 2; }
+.idea-lab-operator input,.idea-lab-operator textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); padding: 8px 9px; font: inherit; }
+.idea-lab-operator textarea { min-height: 64px; resize: vertical; }
+.idea-lab-command-row { display: flex; flex-wrap: wrap; gap: 6px; grid-column: span 2; }
+.idea-lab-command-row button { border: 1px solid var(--border); border-radius: 8px; background: var(--blue-soft); color: var(--blue); padding: 7px 10px; font-size: 8px; font-weight: 800; cursor: pointer; }
+.idea-lab-command-row button:disabled { cursor: not-allowed; opacity: .45; }
+.idea-lab-operator form > p { grid-column: span 2; margin: 0; }
 .idea-lab-summary { max-width: 900px; margin: -4px 0 13px; color: var(--muted); font-size: 10px; }
 .idea-lab-context { display: grid; grid-template-columns: 1.4fr .6fr; gap: 8px; margin-bottom: 12px; }
 .idea-lab-context article { border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); padding: 10px 12px; }
@@ -828,6 +840,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 @media (max-width: 840px) {
   .sidebar { display: none; }
   .main-content { margin-left: 0; padding: 0 18px 92px; }
+  .idea-lab-operator { grid-template-columns: 1fr; }
   .topbar { min-height: 62px; }
   .scope-control label, .freshness { display: none; }
   .scope-control { min-width: 0; flex: 1; }

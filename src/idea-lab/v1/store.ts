@@ -154,6 +154,13 @@ export class IdeaLabProjectRegistryStoreV1 {
     this.#verifyTag("synthesis",tenantId,synthesis.synthesisId,synthesis.synthesisDigest,result.rows[0].synthesis_auth_tag); return synthesis;
   }
 
+  async getDecision(tenantId:string,sessionId:string):Promise<IdeaLabDecisionV1|undefined>{
+    const session=await this.getSession(tenantId,sessionId),synthesis=await this.getSynthesis(tenantId,sessionId);if(!session||!synthesis)return undefined;
+    const result=await this.#query<{payload:unknown;decision_auth_tag:string}>(`SELECT payload,decision_auth_tag FROM control_idea_decisions WHERE tenant_id=$1 AND session_id=$2`,[tenantId,sessionId]);
+    if(!result.rows[0])return undefined;const decision=parseIdeaLabDecisionV1(result.rows[0].payload,session,synthesis);
+    this.#verifyTag("decision",tenantId,decision.decisionId,decision.decisionDigest,result.rows[0].decision_auth_tag);return decision;
+  }
+
   /** Internal persistence seam. A protected service must authenticate and authorize the owner before calling it. */
   async recordDecision(value:unknown):Promise<{decision:IdeaLabDecisionV1;project?:ProjectRegistryProjectionV1;replayed:boolean}>{
     const raw=parseExactIdeaLabV1(ideaDecisionSchemaV1,value);

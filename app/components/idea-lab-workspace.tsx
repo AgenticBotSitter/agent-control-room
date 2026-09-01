@@ -1,10 +1,11 @@
 import type { IdeaLabFixtureV1 } from "@/src/idea-lab/v1";
+import { IdeaLabOperatorControls } from "./idea-lab-operator-controls";
 
 function label(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-export function IdeaLabWorkspace({ fixture }: { fixture: IdeaLabFixtureV1 }) {
+export function IdeaLabWorkspace({ fixture, operatorControlsEnabled = false }: { fixture: IdeaLabFixtureV1; operatorControlsEnabled?: boolean }) {
   const participant = new Map(fixture.session.participants.map((item) => [item.participantId, item]));
   return (
     <main className="detail-main idea-lab-page" id="idea-lab-content">
@@ -30,6 +31,8 @@ export function IdeaLabWorkspace({ fixture }: { fixture: IdeaLabFixtureV1 }) {
       <p className="idea-lab-boundary" role="status">
         Development fixture only: these are injected, safe summaries. No Hermes, Codex, or local-model provider was contacted, and this screen cannot dispatch work or create a live project.
       </p>
+
+      <IdeaLabOperatorControls enabled={operatorControlsEnabled} />
 
       <section className="idea-lab-panel" id="idea-lab-panel" aria-labelledby="idea-lab-title">
         <div className="section-heading"><div><p className="eyebrow">Current session</p><h2 id="idea-lab-title">{fixture.session.title}</h2></div><span className="simulation-only">Owner-controlled</span></div>

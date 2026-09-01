@@ -1989,3 +1989,31 @@ closed. A later composition must supply an authenticated provider-evidence verif
 
 **Reevaluate:** CR12B-IDEA-040 may add protected session creation, deterministic synthesis, and operator controls. Any
 native Hermes contact remains a separate owner-attended authorization and qualification gate.
+
+## ADR-127 — The Idea Lab operator workflow is owner-authenticated, server-scoped, and fake-only by default
+
+**Decision:** Creating an idea session, starting its panel, cancelling before provider evidence, synthesizing completed
+contributions, and making the owner decision are separate protected commands. Every command is authenticated through the
+owner-session boundary and authorized against an active human owner grant. The server derives tenant, workspace, creator,
+session/run identities, panel membership, provider evidence, and policy identifiers. The browser supplies only the exact
+bounded intent for the current step. The shipped operator service accepts only the zero-network repository fake and the
+default runtime remains absent, so the UI renders its controls disabled. A project still requires the separate immutable
+owner permit from ADR-126.
+
+**Why:** A useful Idea Lab needs a real operator flow, but joining browser input, agent advice, and project creation into
+one request would let a compromised client select authority or turn a recommendation into an effect. Separate commands
+make progress and failure explicit, enable exact replay, preserve the provider marker/no-retry boundary, and leave the
+owner in control of project creation.
+
+**Alternatives rejected:** Accept tenant, workspace, identity, panel, provider mode, or authorization evidence from the
+browser; enable a live adapter from environment variables; combine run, synthesis, and promotion into one action; let an
+agent or operator grant satisfy the owner boundary; automatically create a project above a score; trust content-length
+without counting streamed bytes; retry after a provider marker; or present enabled controls when composition is absent.
+
+**Trade-off:** The protected flow can be fully exercised only with the repository fake. The shipped page visibly exposes
+the intended workflow but cannot execute it until an explicit protected local composition is installed. Cancellation is
+safe before provider evidence; after a marker, terminal ambiguity and no automatic retry take precedence.
+
+**Reevaluate:** CR12B-IDEA-050 may add authenticated session catalog/detail reads, reload-safe resume, and owner-protected
+project lifecycle transitions. Live Hermes/provider contact, native credentials, production composition, and deployment
+remain separately authorized work.

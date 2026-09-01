@@ -5,12 +5,15 @@ export const IDEA_LAB_CONTRIBUTION_V1 = "control-room-idea-lab-contribution/v1" 
 export const IDEA_LAB_SYNTHESIS_V1 = "control-room-idea-lab-synthesis/v1" as const;
 export const IDEA_LAB_DECISION_V1 = "control-room-idea-lab-decision/v1" as const;
 export const PROJECT_REGISTRY_LIFECYCLE_V1 = "control-room-project-registry-lifecycle/v1" as const;
+export const IDEA_LAB_SESSION_PROJECTION_V1 = "control-room-idea-lab-session-projection/v1" as const;
 export const CONTROL_ROOM_IDEA_ADAPTER_V1 = "adapter.control-room-native-ideas" as const;
 
 export const ideaLabPerspectivesV1 = Object.freeze([
   "customer", "market", "skeptic", "finance", "operations", "technology", "growth", "risk",
 ] as const);
 export const projectLifecycleStatesV1 = Object.freeze(["active", "paused", "completed", "archived"] as const);
+export const ideaLabSessionStatesV1 = Object.freeze(["ready", "running", "panel_complete", "synthesized", "decided",
+  "cancelled", "failed_definite", "ambiguous"] as const);
 
 export const ideaIdSchemaV1 = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 export const ideaDigestSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -105,4 +108,18 @@ export const projectRegistryProjectionSchemaV1 = z.object({
   sourceDecisionDigest: ideaDigestSchemaV1, latestEventDigest: ideaDigestSchemaV1,
   monitoringPagePath: z.string().regex(/^\/projects\/[a-zA-Z0-9._:%-]+$/), presentationOnly: z.literal(true),
   canDispatch: z.literal(false), grantsExecutionAuthority: z.literal(false), projectionDigest: ideaDigestSchemaV1,
+}).strict();
+
+export const ideaLabSessionProjectionSchemaV1 = z.object({
+  contractVersion: z.literal(IDEA_LAB_SESSION_PROJECTION_V1), tenantId: ideaIdSchemaV1, workspaceId: ideaIdSchemaV1,
+  sessionId: ideaIdSchemaV1, sessionDigest: ideaDigestSchemaV1, title: ideaLabelSchemaV1,
+  state: z.enum(ideaLabSessionStatesV1), participantCount: z.number().int().min(3).max(6),
+  contributionCount: z.number().int().min(0).max(18), messagesUsed: z.number().int().min(0).max(18),
+  costUsd: z.number().min(0).max(25), runId: ideaIdSchemaV1.optional(), runDigest: ideaDigestSchemaV1.optional(),
+  synthesisDigest: ideaDigestSchemaV1.optional(), decisionDigest: ideaDigestSchemaV1.optional(),
+  projectId: ideaIdSchemaV1.optional(), safeStatusCode: ideaCodeSchemaV1, retryPermitted: z.literal(false),
+  liveProviderConfigured: z.literal(false), providerContacted: z.literal(false),
+  grantsApproval: z.literal(false), grantsCommandAuthority: z.literal(false), grantsLeaseAuthority: z.literal(false),
+  grantsExecutionAuthority: z.literal(false), automaticProjectCreationAllowed: z.literal(false),
+  updatedAt: ideaTimeSchemaV1, projectionDigest: ideaDigestSchemaV1,
 }).strict();
