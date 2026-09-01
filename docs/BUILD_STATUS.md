@@ -160,6 +160,9 @@ fixed operation set explicitly includes cleanup. Seven focused hostile tests pas
 network effect occurred. The combined CR12B suite passes 127/127, typecheck and full lint pass, and Mac stage zero is
 ready. The complete npm lifecycle, production build with 3/3 rendered routes, and all 32 migrations with 110 PostgreSQL
 tables also pass. Independent review and one real signed enrollment remain required before packet refresh.
+The zero-repair independent attack packet is ready at
+`docs/reviews/CR12B_IDEA_110B_INDEPENDENT_REVIEW_PACKET.md` against immutable implementation commit
+`0a736ad16e1ea7ffef37e434eba5bd46f483f95d`.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
