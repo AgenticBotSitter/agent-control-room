@@ -289,6 +289,41 @@ test("CR12B-IDEA-110O roster digest ignores ambient traversal of rebuilt connect
   }
 });
 
+test("CR12B-IDEA-110P freezes reparsed and nested roster evidence after digest verification", () => {
+  const firstEnvelope = envelope(), sanitized = sanitizeIdeaLabHermes021ConnectionEnrollmentV1(firstEnvelope, context(firstEnvelope));
+  const reparsed = parseIdeaLabHermes021ConnectionSafeResultV1(sanitized);
+  const resultDigest = reparsed.resultDigest;
+  assert.equal(Object.isFrozen(reparsed), true);
+  assert.equal(Object.isFrozen(reparsed.blockerCodes), true);
+  assert.throws(() => { (reparsed as { grantsExecutionAuthority: boolean }).grantsExecutionAuthority = true; }, TypeError);
+  assert.throws(() => { (reparsed.blockerCodes as unknown[]).length = 0; }, TypeError);
+  assert.equal(reparsed.grantsExecutionAuthority, false);
+  assert.equal(reparsed.blockerCodes.length, 4);
+  assert.equal(reparsed.resultDigest, resultDigest);
+
+  const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId: reparsed.tenantId,
+    evaluatedAt: "2026-09-01T10:06:00.000Z", connections: [reparsed] });
+  const rosterDigest = roster.rosterDigest, connectionDigest = roster.connections[0]!.resultDigest;
+  assert.equal(Object.isFrozen(roster), true);
+  assert.equal(Object.isFrozen(roster.connections), true);
+  assert.equal(Object.isFrozen(roster.connections[0]), true);
+  assert.equal(Object.isFrozen(roster.connections[0]!.blockerCodes), true);
+  assert.throws(() => { (roster.connections[0] as { connectionId: string }).connectionId = "changed"; }, TypeError);
+  assert.throws(() => { (roster.connections[0] as { nativeQualified: boolean }).nativeQualified = true; }, TypeError);
+  assert.throws(() => { (roster.connections[0] as { livePanelEligible: boolean }).livePanelEligible = true; }, TypeError);
+  assert.throws(() => {
+    (roster.connections[0] as { grantsExecutionAuthority: boolean }).grantsExecutionAuthority = true;
+  }, TypeError);
+  assert.throws(() => { (roster.connections[0]!.blockerCodes as unknown[]).length = 0; }, TypeError);
+  assert.equal(roster.connections[0]!.connectionId, reparsed.connectionId);
+  assert.equal(roster.connections[0]!.nativeQualified, false);
+  assert.equal(roster.connections[0]!.livePanelEligible, false);
+  assert.equal(roster.connections[0]!.grantsExecutionAuthority, false);
+  assert.equal(roster.connections[0]!.blockerCodes.length, 4);
+  assert.equal(roster.connections[0]!.resultDigest, connectionDigest);
+  assert.equal(roster.rosterDigest, rosterDigest);
+});
+
 test("CR12B-IDEA-109B rejects re-digested authority and hostile objects without executing behavior", () => {
   const candidate = envelope(), result = sanitizeIdeaLabHermes021ConnectionEnrollmentV1(candidate, context(candidate));
   const unsigned = { ...result, nativeQualified: true, livePanelEligible: true, blockerCodes: [],

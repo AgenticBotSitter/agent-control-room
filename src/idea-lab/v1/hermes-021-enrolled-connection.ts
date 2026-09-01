@@ -16,6 +16,7 @@ const rosterArrayIsArrayV1 = Array.isArray;
 const rosterArraySortV1 = Array.prototype.sort;
 const rosterJsonStringifyV1 = JSON.stringify;
 const rosterNumberIsFiniteV1 = Number.isFinite;
+const rosterObjectFreezeV1 = Object.freeze;
 const rosterObjectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
 const rosterObjectGetPrototypeOfV1 = Object.getPrototypeOf;
 const rosterObjectKeysV1 = Object.keys;
@@ -272,6 +273,13 @@ export type IdeaLabHermes021ConnectionEnrollmentContextV1 = z.infer<typeof enrol
 export type IdeaLabHermes021ConnectionSafeResultV1 = z.infer<typeof safeResultSchema>;
 export type IdeaLabHermes021ConnectionRosterV1 = z.infer<typeof rosterSchema>;
 
+function freezeConnectionSafeResultV1(
+  value: IdeaLabHermes021ConnectionSafeResultV1,
+): IdeaLabHermes021ConnectionSafeResultV1 {
+  rosterReflectApplyV1(rosterObjectFreezeV1, Object, [value.blockerCodes]);
+  return rosterReflectApplyV1(rosterObjectFreezeV1, Object, [value]) as IdeaLabHermes021ConnectionSafeResultV1;
+}
+
 function canonicalEd25519Key(spki: string): { key: KeyObject; digest: string } {
   try {
     const supplied = Buffer.from(spki, "base64url");
@@ -357,8 +365,7 @@ export function sanitizeIdeaLabHermes021ConnectionEnrollmentV1(
     grantsExecutionAuthority: false as const,
   };
   const parsed = safeResultSchema.parse({ ...material, resultDigest: sha256Digest(material) });
-  Object.freeze(parsed.blockerCodes);
-  return Object.freeze(parsed);
+  return freezeConnectionSafeResultV1(parsed);
 }
 
 export function parseIdeaLabHermes021ConnectionSafeResultV1(value: unknown): IdeaLabHermes021ConnectionSafeResultV1 {
@@ -366,7 +373,7 @@ export function parseIdeaLabHermes021ConnectionSafeResultV1(value: unknown): Ide
   if (sha256Digest(withoutDigest(parsed, "resultDigest")) !== parsed.resultDigest) {
     throw new IdeaLabErrorV1("integrity_failed");
   }
-  return parsed;
+  return freezeConnectionSafeResultV1(parsed);
 }
 
 export function buildIdeaLabHermes021ConnectionRosterV1(input: {
@@ -414,8 +421,11 @@ export function buildIdeaLabHermes021ConnectionRosterV1(input: {
     grantsExecutionAuthority: false as const,
   };
   const parsed = rosterSchema.parse({ ...material, rosterDigest: capturedRosterDigestV1(material) });
-  Object.freeze(parsed.connections);
-  return Object.freeze(parsed);
+  for (let index = 0; index < parsed.connections.length; index += 1) {
+    freezeConnectionSafeResultV1(parsed.connections[index]!);
+  }
+  rosterReflectApplyV1(rosterObjectFreezeV1, Object, [parsed.connections]);
+  return rosterReflectApplyV1(rosterObjectFreezeV1, Object, [parsed]) as IdeaLabHermes021ConnectionRosterV1;
 }
 
 const reassessmentMaterial = {
