@@ -6,10 +6,12 @@ import {
   type IdeaLabHermes021ConnectionRosterV1,
 } from "../../idea-lab/v1";
 import { sha256Digest } from "../../security";
+import { exactHostDataArrayV1, exactHostDataSnapshotV1 } from "../../security/host-value";
 import { connectionCenterProjectionSchemaV1 } from "./schemas";
 import {
   CONNECTION_CENTER_CONTRACT_V1,
   type ConnectionCenterItemV1,
+  type ConnectionCenterNodeFreshnessV1,
   type ConnectionCenterProjectionV1,
 } from "./types";
 
@@ -21,6 +23,15 @@ export interface ConnectionCenterRosterSourceV1 {
   /** Returns a server-owned roster. Implementations may not pass browser or remote objects through this port. */
   read(input: { tenantId: string; now: string }): Promise<IdeaLabHermes021ConnectionRosterV1>;
 }
+
+export interface ConnectionCenterFreshnessSourceV1 {
+  /** Raw node identity remains server-side and may only select previously authenticated telemetry. */
+  read(input: { tenantId: string; nodeId: string; now: string }): Promise<ConnectionCenterNodeFreshnessV1>;
+}
+
+const missingFreshness: ConnectionCenterNodeFreshnessV1 = Object.freeze({
+  state: "missing", basis: "none", observedAt: null, expiresAt: null,
+});
 
 const safeId = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/;
 const exactTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -50,10 +61,31 @@ export function parseConnectionCenterProjectionV1(value: unknown): ConnectionCen
 
 export function buildConnectionCenterProjectionV1(
   roster: IdeaLabHermes021ConnectionRosterV1,
+  nodeFreshness: readonly ConnectionCenterNodeFreshnessV1[] = [],
 ): ConnectionCenterProjectionV1 {
+  const capturedFreshness = exactHostDataArrayV1(nodeFreshness, 32);
+  if (!capturedFreshness || (capturedFreshness.length !== 0 && capturedFreshness.length !== roster.connections.length)) {
+    throw new ConnectionCenterReadErrorV1("invalid_roster");
+  }
   const nodeReferences = new Map<string, string>();
   const connections: ConnectionCenterItemV1[] = roster.connections.map((candidate, index) => {
     const connection = parseIdeaLabHermes021ConnectionSafeResultV1(candidate);
+    const captured = capturedFreshness.length
+      ? exactHostDataSnapshotV1(capturedFreshness[index], ["state", "basis", "observedAt", "expiresAt"])
+      : missingFreshness;
+    if (!captured) throw new ConnectionCenterReadErrorV1("invalid_roster");
+    const state = captured.state, basis = captured.basis, observedAt = captured.observedAt, expiresAt = captured.expiresAt;
+    if ((state !== "current" && state !== "stale" && state !== "missing")
+      || (basis !== "authenticated_telemetry" && basis !== "none")
+      || (state === "missing") !== (basis === "none")
+      || (state === "missing") !== (observedAt === null && expiresAt === null)
+      || (state !== "missing" && (typeof observedAt !== "string" || typeof expiresAt !== "string"
+        || !exactTime.test(observedAt) || !exactTime.test(expiresAt)
+        || Number.isNaN(Date.parse(observedAt)) || Number.isNaN(Date.parse(expiresAt))))) {
+      throw new ConnectionCenterReadErrorV1("invalid_roster");
+    }
+    const freshness: ConnectionCenterNodeFreshnessV1 = { state, basis,
+      observedAt: observedAt as string | null, expiresAt: expiresAt as string | null };
     let nodeReference = nodeReferences.get(connection.nodeId);
     if (!nodeReference) {
       nodeReference = `node:inventory:${String(nodeReferences.size + 1).padStart(3, "0")}`;
@@ -70,6 +102,10 @@ export function buildConnectionCenterProjectionV1(
       qualificationState: "required",
       livePanelState: "blocked",
       diagnosticState: "setup_required",
+      signalFreshness: freshness.state,
+      signalFreshnessBasis: freshness.basis,
+      signalObservedAt: freshness.observedAt,
+      signalExpiresAt: freshness.expiresAt,
       blockerCodes: [...connection.blockerCodes],
       enrolledAt: connection.issuedAt,
       enrollmentExpiresAt: connection.expiresAt,
@@ -84,6 +120,9 @@ export function buildConnectionCenterProjectionV1(
       grantsExecutionAuthority: false,
     };
   });
+  const currentSignalCount = connections.filter((item) => item.signalFreshness === "current").length;
+  const staleSignalCount = connections.filter((item) => item.signalFreshness === "stale").length;
+  const missingSignalCount = connections.filter((item) => item.signalFreshness === "missing").length;
   const material = {
     contractVersion: CONNECTION_CENTER_CONTRACT_V1,
     tenantScoped: true as const,
@@ -105,6 +144,9 @@ export function buildConnectionCenterProjectionV1(
       qualificationReadyCount: roster.qualificationReadyCount,
       nativeQualifiedCount: roster.nativeQualifiedCount,
       livePanelEligibleCount: roster.livePanelEligibleCount,
+      currentSignalCount,
+      staleSignalCount,
+      missingSignalCount,
       attentionCount: connections.length,
     },
     connections,
@@ -121,7 +163,8 @@ export function buildConnectionCenterProjectionV1(
 }
 
 export class ConnectionCenterReadServiceV1 {
-  constructor(private readonly source: ConnectionCenterRosterSourceV1) {}
+  constructor(private readonly source: ConnectionCenterRosterSourceV1,
+    private readonly freshnessSource?: ConnectionCenterFreshnessSourceV1) {}
 
   async read(input: { tenantId: string; now: string }): Promise<ConnectionCenterProjectionV1> {
     if (!safeId.test(input.tenantId) || !exactTime.test(input.now) || Number.isNaN(Date.parse(input.now))) {
@@ -135,7 +178,12 @@ export class ConnectionCenterReadServiceV1 {
       if (roster.tenantId !== input.tenantId || roster.evaluatedAt !== input.now) {
         throw new ConnectionCenterReadErrorV1("invalid_roster");
       }
-      const parsed = buildConnectionCenterProjectionV1(roster);
+      const freshness = this.freshnessSource
+        ? await Promise.all(roster.connections.map((connection) => this.freshnessSource!.read({
+          tenantId: input.tenantId, nodeId: connection.nodeId, now: input.now,
+        })))
+        : [];
+      const parsed = buildConnectionCenterProjectionV1(roster, freshness);
       if (parsed.generatedAt !== input.now) {
         throw new ConnectionCenterReadErrorV1("invalid_roster");
       }

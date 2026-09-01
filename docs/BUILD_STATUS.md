@@ -109,7 +109,8 @@
 | CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review; main-target integration in progress | Captured connector boundaries, strict chronology, exact roster identity, recursively immutable returned evidence, and Node 22.13 lazy-global portability; accepted product 171 CR12B tests, integration 172; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
-| CR13A-LIVE-010 protected Connection Center | Accepted implementation candidate at exact remediation `c32bb1908323d9acb2e891722c1fd4657334c741`; ordered parent integration and main-target CI remain | Different reviewer reproduced the rejected locator leak and accepted the remediation with no findings; public contract contains only ordinal connection/node references and no source or tenant identity; 10 focused tests; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
+| CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
+| CR13A-LIVE-020 durable connection registry and signal freshness | Implementation candidate complete; independent security/integrity review required | Append-only authenticated enrollment persistence, canonical node binding, restart/replay/tamper protection, independently authenticated current/stale/missing telemetry, locator-free UI, 13 focused and 29 combined CR13A tests; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -784,10 +785,22 @@ lint, production build, and 4/4 rendered routes. A different independent reviewe
 accepted exact remediation `c32bb1908323d9acb2e891722c1fd4657334c741` with no High, Medium, or Low finding. The
 complete repository lifecycle is green with 769 pretests, 418 core passes plus two intentional Windows-only skips, and
 261 posttests. Migrations remain through 0033/112 tables, with Mac stage zero and whitespace validation also green.
-Ready PR #230 now targets `main` with a clean Connection Center-only diff. Ordinary Node `22.13.0` GitHub CI is the
-remaining integration gate. No live browser viewport claim was made because a persistent local server was not authorized;
-production route rendering passed. The remediation packet
-SHA-256 is `0cbe9d35414ca3ab39d3abe8f1556234049562f6e0e88ce27721687f951de476`.
+PR #230 passed ordinary Node `22.13.0` GitHub CI run `33562917320` and merged to `main` as
+`737d9744c00129882af00094a84eae1f28a5a5a2`. The rejected and accepted review records remain preserved. No live browser
+viewport claim was made; production route rendering passed. The remediation packet SHA-256 is
+`0cbe9d35414ca3ab39d3abe8f1556234049562f6e0e88ce27721687f951de476`.
+
+CR13A-LIVE-020 now supplies the first restart-safe protected connection registry. Migration 0034 stores immutable,
+tenant- and canonical-node-bound enrollment revisions with keyed authentication, payload digests, exact replay,
+monotonic renewal, duplicate active-route/profile rejection, bounded capacity, and database mutation guards. The local
+pilot reads this registry rather than synthesizing an in-memory roster. Connection Center separately composes the
+existing authenticated five-minute fleet telemetry fact as `current`, `stale`, or `missing`; discovery, capability,
+benchmark, enrollment, runtime compatibility, and qualification never imply recency. Raw tenant, connection, enrollment,
+node, route, profile, issuer, and host-key identity remains server-side. TypeScript, 13 focused tests, 29 combined CR13A
+tests, and migrations through 0034/113 tables pass. No SSH, native runtime, provider, credential, production database,
+deployment, or network effect occurred. The complete npm lifecycle also passes with 769 pretests, 418 core passes plus
+two intentional platform skips, and 264 posttests; lint, macOS stage zero, production build, and 4/4 rendered routes are
+green. A different independent security/integrity review is required before acceptance.
 
 ## Parallel build lane
 
@@ -804,12 +817,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-010-INTEGRATE — validate and land the accepted Connection Center
+Block: CR13A-LIVE-020-REVIEW — freeze and independently review durable connection truth
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: both accepted parents are integrated. The first Connection Center review found a real locator leak, exact remediation `c32bb1908323d9acb2e891722c1fd4657334c741` removed every source identity from the browser contract, and a different reviewer accepted the repair with no findings. The remaining work is minimum-runtime GitHub validation and serialized integration.
-Expected output: green ordinary CI for PR #230, preservation of the rejected and accepted review records, then owner-approved merge and post-merge `main` synchronization.
-Owner action: none while PR #230 CI runs. If it passes, explicitly approve merging PR #230.
+Why: persistence, identity correlation, freshness provenance, and browser redaction form a new security boundary. Producer tests pass, but they cannot accept their own boundary.
+Expected output: one frozen implementation commit, complete local lifecycle and ordinary GitHub CI, then a different independent review that attempts tenant crossover, replay/rollback/tamper, fake liveness, freshness confusion, and locator disclosure before any merge.
+Owner action: authorize a different independent agent to review CR13A-LIVE-020 after the candidate and review packet are frozen.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

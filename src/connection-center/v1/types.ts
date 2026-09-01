@@ -17,6 +17,10 @@ export interface ConnectionCenterItemV1 {
   qualificationState: "required";
   livePanelState: "blocked";
   diagnosticState: "setup_required";
+  signalFreshness: "current" | "stale" | "missing";
+  signalFreshnessBasis: "authenticated_telemetry" | "none";
+  signalObservedAt: string | null;
+  signalExpiresAt: string | null;
   blockerCodes: ConnectionCenterBlockerCodeV1[];
   enrolledAt: string;
   enrollmentExpiresAt: string;
@@ -50,6 +54,9 @@ export interface ConnectionCenterProjectionV1 {
     qualificationReadyCount: number;
     nativeQualifiedCount: 0;
     livePanelEligibleCount: 0;
+    currentSignalCount: number;
+    staleSignalCount: number;
+    missingSignalCount: number;
     attentionCount: number;
   };
   connections: ConnectionCenterItemV1[];
@@ -62,6 +69,14 @@ export interface ConnectionCenterProjectionV1 {
   grantsLeaseAuthority: false;
   grantsExecutionAuthority: false;
   projectionDigest: string;
+}
+
+/** Server-only fact returned after authenticated fleet persistence has been read. */
+export interface ConnectionCenterNodeFreshnessV1 {
+  state: "current" | "stale" | "missing";
+  basis: "authenticated_telemetry" | "none";
+  observedAt: string | null;
+  expiresAt: string | null;
 }
 
 export type ConnectionCenterDataStateV1 =

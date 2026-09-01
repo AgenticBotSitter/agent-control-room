@@ -2642,3 +2642,33 @@ is preferable to an attractive but false green connection status.
 **Reevaluate:** Before adding persistent enrollment storage, node heartbeat composition, connection mutation, native
 qualification, credential references, SSH control, or live-panel actions. Any authentication ordering, roster rebuild,
 redaction, digest, version wording, blocker, or negative-authority change requires fresh review.
+
+## ADR-149 — enrollment persistence and signal freshness are independent protected facts
+
+**Decision:** Persist sanitized signed Hermes enrollment results in one append-only, tenant- and canonical-node-bound
+PostgreSQL registry with keyed row authentication and protected reconstruction. Compose recency only from the existing
+authenticated node-fleet telemetry record and its five-minute maximum lifetime. Public Connection Center output labels
+that fact `current`, `stale`, or `missing`; it never labels it online, healthy, available, qualified, or authorized.
+Enrollment, runtime compatibility, telemetry freshness, qualification, live-panel admission, and execution authority are
+separate fields and no field promotes another. Raw registry and node identifiers remain server-side and are replaced by
+ordinal presentation references.
+
+**Why:** A restart-safe roster is necessary before multiple agent machines can be managed, but durable configuration is
+not proof that a process is running. Reusing authenticated fleet telemetry avoids a second heartbeat trust system, while
+the short expiry gives the operator useful recency without creating command or lease authority. Protected correlation
+preserves multi-machine usefulness without exposing SSH locations or stable machine identity to the browser.
+
+**Alternatives rejected:** In-memory enrollment; browser-written heartbeat state; SSH connect probes during reads;
+deriving liveness from enrollment time, discovery, capability, benchmark, installed software, or runtime compatibility;
+showing source IDs or route/profile digests; treating current telemetry as qualification or execution eligibility; using
+PGlite as production authority; or adding a second coordination database.
+
+**Trade-off:** A correctly enrolled node can show `missing` or `stale`, and a node with current telemetry remains blocked
+from live panels and work until separate gates pass. The registry stores protected correlation identifiers inside the
+authoritative database and therefore requires strict database access and retention controls. These costs are preferable
+to a false green status or an unreviewed second trust path.
+
+**Reevaluate:** Before adding enrollment intake or revocation, signal push/fan-out, native qualification, SSH control,
+live-panel admission, production PostgreSQL composition, retention, or deployment. Any registry schema/tag/replay rule,
+telemetry provenance/freshness rule, authentication ordering, correlation, redaction, or negative-authority change
+invalidates CR13A-LIVE-020 review evidence.
