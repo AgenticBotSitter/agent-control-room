@@ -104,9 +104,10 @@
 | CR12B-IDEA-109/109A optional Hermes-native preparation proposal | Complete locally but removed from the critical path | Proposal-only method and signed-attestation verifier remain non-authorizing optional hardening; current Hermes already supplies the needed fresh-profile protected-value fallback |
 | CR12B-IDEA-109B enrolled local/SSH Hermes connection | Complete locally for the signed, locator-free, connection-disabled snapshot | Exact built-in shared-value/SSH source pins, node-signed enrollment, owner-verified host-key binding, opaque fixed gateway route, safe multi-machine roster, UI truth, and no Hermes fork; see `CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md` |
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
-| CR12B-IDEA-110B fixed Hermes local/SSH bridge | Original High findings closed; first remediation rejected on two Medium findings; IDEA-110E second remediation awaits another different review | Exact wrapper capture, terminal post-claim clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority, and two immutable negative reports; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md`, `CR12B_IDEA_110D_BRIDGE_REMEDIATION.md`, and `CR12B_IDEA_110E_GATEWAY_REMEDIATION.md` |
-| CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the second-remediation-blocked zero-effect snapshot | Exact second-remediation/re-review/runtime/source/operation pins, both negative dispositions retained, eight explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted second remediation review, platform connector, one real signed enrollment, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
+| CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
+| CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
+| CR12B-IDEA-110F macOS Hermes connector | Implemented locally as an unconfigured candidate; independent review required | One-attempt Mac-private route guard, exact lifecycle/order/bindings, cleanup serialization, no retry, no native locators or client, nine hostile tests; see `CR12B_IDEA_110F_MACOS_CONNECTOR_CANDIDATE.md` |
+| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -199,7 +200,12 @@ data through host descriptors and rejects accessors, unknown/inherited state, sy
 without behavior. A post-claim clock exception now records terminal ambiguity at the last valid time, dispatches nothing,
 and cannot retry. Verification passes: 10/10 gateway tests, 140/140 CR12B, 769/769 pretests, 414/416 core with two
 intentional skips, 219/219 posttests, typecheck, full lint, stage zero, production build with 3/3 rendered routes, and all
-32 migrations with 110 PostgreSQL tables. The second re-review remains pending; no native or external effect occurred.
+32 migrations with 110 PostgreSQL tables. Jobber #208/PR #209 then closed all six findings with no new finding; accepted
+report SHA-256 is `6ed834e8b5c3418bc0bc932e56ae991a9c33f4699b81860f78be194a34a5b9c8`. IDEA-110F now adds
+the unconfigured macOS connector guard: one attempt, exact ordinary/cleanup ordering, opaque bindings only, receiver-safe
+private-port calls, serialized abort/close, cleanup-bypass denial, and no retry. Its nine focused tests and 149/149 Idea
+Lab tests pass. Connector acceptance, signer and route enrollment, preflight, packet refresh, authorization, and native
+qualification remain absent; no native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,

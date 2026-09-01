@@ -25,6 +25,8 @@ export const IDEA_LAB_HERMES_021_PRIOR_REVIEW_REPORT_SHA256_V1 =
   "sha256:d5695fb5d52bbcf90cfa7440ae3ec46a3a46e8628ee7866ec90a291b4129b87f" as const;
 export const IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1 =
   "sha256:7f9e3f73142a3af120218f3df51f9e47fbc71d5764bb586346da7c87ee75bd62" as const;
+export const IDEA_LAB_HERMES_021_ACCEPTED_REVIEW_REPORT_SHA256_V1 =
+  "sha256:6ed834e8b5c3418bc0bc932e56ae991a9c33f4699b81860f78be194a34a5b9c8" as const;
 
 const readinessSchema = z.object({
   contractVersion: z.literal(IDEA_LAB_HERMES_021_ENROLLMENT_READINESS_V1),
@@ -39,9 +41,10 @@ const readinessSchema = z.object({
   priorIndependentReviewDisposition: z.literal("remediation_required"),
   latestIndependentReviewReportSha256: z.literal(IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1),
   latestIndependentReviewDisposition: z.literal("remediation_required"),
+  acceptedIndependentReviewReportSha256: z.literal(IDEA_LAB_HERMES_021_ACCEPTED_REVIEW_REPORT_SHA256_V1),
   reviewMode: z.literal("independent_review_report_only_zero_repair"),
-  independentReviewDisposition: z.literal("second_remediation_re_review_pending"),
-  independentReviewerVerified: z.literal(false),
+  independentReviewDisposition: z.literal("accepted_provider_disabled_snapshot"),
+  independentReviewerVerified: z.literal(true),
   connectorImplementationAccepted: z.literal(false),
   trustedNodeSignerEnrolled: z.literal(false),
   signedConnectionEnrollmentAccepted: z.literal(false),
@@ -54,7 +57,6 @@ const readinessSchema = z.object({
   oldAuthorizationReusable: z.literal(false),
   status: z.literal("blocked_before_real_enrollment"),
   blockerCodes: z.tuple([
-    z.literal("second_independent_remediation_review_missing"),
     z.literal("connector_implementation_missing"),
     z.literal("trusted_node_signer_not_enrolled"),
     z.literal("signed_connection_enrollment_missing"),
@@ -93,9 +95,10 @@ const material = {
   priorIndependentReviewDisposition: "remediation_required" as const,
   latestIndependentReviewReportSha256: IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1,
   latestIndependentReviewDisposition: "remediation_required" as const,
+  acceptedIndependentReviewReportSha256: IDEA_LAB_HERMES_021_ACCEPTED_REVIEW_REPORT_SHA256_V1,
   reviewMode: "independent_review_report_only_zero_repair" as const,
-  independentReviewDisposition: "second_remediation_re_review_pending" as const,
-  independentReviewerVerified: false as const,
+  independentReviewDisposition: "accepted_provider_disabled_snapshot" as const,
+  independentReviewerVerified: true as const,
   connectorImplementationAccepted: false as const,
   trustedNodeSignerEnrolled: false as const,
   signedConnectionEnrollmentAccepted: false as const,
@@ -108,7 +111,7 @@ const material = {
   oldAuthorizationReusable: false as const,
   status: "blocked_before_real_enrollment" as const,
   blockerCodes: [
-    "second_independent_remediation_review_missing", "connector_implementation_missing", "trusted_node_signer_not_enrolled",
+    "connector_implementation_missing", "trusted_node_signer_not_enrolled",
     "signed_connection_enrollment_missing", "effect_free_preflight_missing", "owner_packet_refresh_missing",
     "fresh_owner_authorization_missing", "native_qualification_missing",
   ] as const,

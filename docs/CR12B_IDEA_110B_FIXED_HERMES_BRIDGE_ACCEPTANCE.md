@@ -1,7 +1,7 @@
 # CR12B-IDEA-110B — fixed Hermes local/SSH bridge acceptance
 
-**Status:** Initial and first-remediation implementations were rejected; IDEA-110E second remediation is implemented and
-awaits another different independent re-review.
+**Status:** Accepted for the exact provider-disabled snapshot after two remediation rounds and a second different
+independent re-review. This does not configure a connector or authorize enrollment.
 
 ## Outcome
 
@@ -55,7 +55,8 @@ operations, and rechecks trusted time immediately before bridge entry. Its diffe
 four original High findings but found two Medium defects: wrapper getters could execute during construction, and a
 post-claim clock exception lacked terminal settlement. IDEA-110E commit
 `2bc80a20c7e4e1753b014395866972622c134fd3` captures the exact wrapper without property access and terminally records
-that exceptional clock path. Another different independent reviewer must close all six recorded findings. After that,
-Control Room must still accept a platform connector, enroll its node signer, create one real
+that exceptional clock path. PR #209's different independent reviewer closed all six findings against that exact commit;
+the accepted report SHA-256 is `6ed834e8b5c3418bc0bc932e56ae991a9c33f4699b81860f78be194a34a5b9c8`.
+Control Room must still independently accept the platform connector, enroll its node signer, create one real
 signed local or SSH enrollment, refresh every implementation/source/packet digest, and prove an effect-free preflight.
 Only a new owner-attended authorization may later permit one native qualification. No previous authorization is reusable.

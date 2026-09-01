@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { sha256Digest } from "../src/security/index.ts";
 import {
+  IDEA_LAB_HERMES_021_ACCEPTED_REVIEW_REPORT_SHA256_V1,
   IDEA_LAB_HERMES_021_FIXED_RPC_IMPLEMENTATION_COMMIT_V1,
   IDEA_LAB_HERMES_021_FIXED_RPC_REVIEW_PACKET_SHA256_V1,
   IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1,
@@ -15,18 +16,21 @@ import {
 test("CR12B-IDEA-110C binds the exact bridge and blocks before any real enrollment", () => {
   const readiness = parseIdeaLabHermes021EnrollmentReadinessV1(ideaLabHermes021EnrollmentReadinessV1);
   assert.deepEqual([readiness.fixedRpcImplementationCommit, readiness.independentReviewPacketSha256,
-    readiness.priorIndependentReviewReportSha256, readiness.latestIndependentReviewReportSha256],
+    readiness.priorIndependentReviewReportSha256, readiness.latestIndependentReviewReportSha256,
+    readiness.acceptedIndependentReviewReportSha256],
     [IDEA_LAB_HERMES_021_FIXED_RPC_IMPLEMENTATION_COMMIT_V1,
       IDEA_LAB_HERMES_021_FIXED_RPC_REVIEW_PACKET_SHA256_V1,
       IDEA_LAB_HERMES_021_PRIOR_REVIEW_REPORT_SHA256_V1,
-      IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1]);
+      IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1,
+      IDEA_LAB_HERMES_021_ACCEPTED_REVIEW_REPORT_SHA256_V1]);
   assert.deepEqual([readiness.status, readiness.independentReviewDisposition, readiness.realEnrollmentEligible,
     readiness.ownerCommandEmitted, readiness.oldAuthorizationReusable],
-  ["blocked_before_real_enrollment", "second_remediation_re_review_pending", false, false, false]);
+  ["blocked_before_real_enrollment", "accepted_provider_disabled_snapshot", false, false, false]);
+  assert.equal(readiness.independentReviewerVerified, true);
   assert.deepEqual([readiness.priorIndependentReviewDisposition, readiness.latestIndependentReviewDisposition],
     ["remediation_required", "remediation_required"]);
   assert.deepEqual(readiness.blockerCodes, [
-    "second_independent_remediation_review_missing", "connector_implementation_missing", "trusted_node_signer_not_enrolled",
+    "connector_implementation_missing", "trusted_node_signer_not_enrolled",
     "signed_connection_enrollment_missing", "effect_free_preflight_missing", "owner_packet_refresh_missing",
     "fresh_owner_authorization_missing", "native_qualification_missing",
   ]);
@@ -45,7 +49,7 @@ test("CR12B-IDEA-110C records zero network, native, credential, gateway, and pro
 
 test("CR12B-IDEA-110C rejects re-digested review, connector, enrollment, command, and authority claims", () => {
   for (const changed of [
-    { independentReviewDisposition: "accepted_provider_disabled_snapshot", independentReviewerVerified: true },
+    { independentReviewDisposition: "second_remediation_re_review_pending", independentReviewerVerified: false },
     { connectorImplementationAccepted: true }, { signedConnectionEnrollmentAccepted: true },
     { realEnrollmentEligible: true, ownerCommandEmitted: true },
     { grantsCommandAuthority: true, grantsExecutionAuthority: true },

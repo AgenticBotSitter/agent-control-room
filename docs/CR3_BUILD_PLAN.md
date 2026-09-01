@@ -680,7 +680,8 @@ the exact owner packet and pins, then request a new owner-attended IDEA-110 qual
 
 ## CR12B-IDEA-110B — fixed Hermes local/SSH bridge
 
-Status: implementation complete locally for the provider-disabled repository snapshot; independent review is pending.
+Status: accepted for the exact provider-disabled repository snapshot after two remediation rounds and a second different
+independent re-review. Connector configuration and enrollment remain absent.
 See `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` and ADR-140.
 
 The repository bridge uses Hermes Desktop's already enrolled local or SSH route. An injected connector owns every
@@ -690,7 +691,7 @@ It rejects gateway-epoch changes, replay gaps or truncation, malformed terminal 
 and uncertain outcomes without retry; cleanup is attempt-bound even when route opening was uncertain. The signed owner
 window now binds participant identity and runtime identity, and the enrollment method set explicitly includes close.
 
-Next: independently review the exact 110B candidate, create one real signed enrollment through the connector, refresh
+Next: independently review the exact 110F macOS connector candidate, create one real signed enrollment through the connector, refresh
 all affected packet and implementation pins, and only then ask the owner for a new attached-Terminal qualification
 window.
 
@@ -700,17 +701,15 @@ Status: complete locally for the zero-effect readiness snapshot. See
 `CR12B_IDEA_110C_ENROLLMENT_READINESS_ACCEPTANCE.md` and ADR-141.
 
 One canonical digest-bound record now pins the exact fixed bridge, review packet, installed Hermes revision, connection
-source, fixed RPC source manifest, and operation set. It records independent review, platform connector, trusted node
-signer, signed enrollment, preflight, packet refresh, fresh owner authorization, and native qualification as absent.
-Those eight gates cannot be re-digested into success, old owner text is non-reusable, no command is emitted, and all
+source, fixed RPC source manifest, operation set, and accepted second re-review. It records platform connector, trusted
+node signer, signed enrollment, preflight, packet refresh, fresh owner authorization, and native qualification as absent.
+Those seven gates cannot be re-digested into success, old owner text is non-reusable, no command is emitted, and all
 connection/native/provider/network effect counts remain zero.
 
-Review attempts #198 and #201 both stopped before implementation review: the first lacked prepared dependencies and the
-second proved the Mac's pnpm store lacks one frozen offline artifact. Both preserved zero-effect evidence and neither
-produced security acceptance. Next: after separate owner authorization, prepare one disposable checkout with a single
-networked frozen install and issue a new different-agent report-only review. If accepted, implement and review the
-platform-specific connector binding and trusted node signer enrollment before one real signed connection enrollment. If
-rejected, preserve the report, remediate the fixed bridge, and require a different re-review first.
+Review attempts #198 and #201 stopped before implementation review. Jobbers #202, #205, and #208 then preserved two
+negative reports, two remediation rounds, and final accepted report PR #209. IDEA-110F now implements the macOS protocol
+guard for an injected Hermes Desktop private port. Next: independently review the connector candidate, then separately
+accept its trusted node signer and one signed connection enrollment before any native attempt.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 

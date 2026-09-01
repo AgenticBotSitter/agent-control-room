@@ -1,6 +1,6 @@
 # CR12B-IDEA-110E — enrolled gateway second remediation
 
-**Status:** Implemented locally; a second different independent re-review remains required.
+**Status:** Accepted for the exact provider-disabled snapshot by the second different independent re-review.
 
 ## Outcome
 
@@ -23,6 +23,9 @@ No Hermes/native/SSH/provider/credential/protected-value/network/deployment effe
 - First remediation re-review report SHA-256:
   `7f9e3f73142a3af120218f3df51f9e47fbc71d5764bb586346da7c87ee75bd62`.
 - Findings remediated: `CR12B-RR001-001` and `CR12B-RR001-002`.
+- Accepted second re-review report SHA-256:
+  `6ed834e8b5c3418bc0bc932e56ae991a9c33f4699b81860f78be194a34a5b9c8`.
+- Accepted report PR: #209; merge commit `710c6cba374d0a2e3e18b4636e376dba8d708441`.
 
 ## Verification
 
@@ -35,6 +38,6 @@ No Hermes/native/SSH/provider/credential/protected-value/network/deployment effe
 - production build and rendered routes: 3/3 pass; and
 - database verification: 32 migrations and 110 PostgreSQL tables pass.
 
-Producer verification cannot accept this security boundary. A reviewer different from REV-003, REV-001, and every
-remediation contributor must repeat all six recorded attacks and the whole fixed-bridge boundary before the platform
-connector block may open.
+Producer verification did not accept this security boundary. The second different reviewer repeated all six recorded
+attacks, found them closed, reported no new finding, and retained every later connector, signer, enrollment, preflight,
+packet, authorization, and native-effect blocker. The connector block is open; enrollment remains forbidden.

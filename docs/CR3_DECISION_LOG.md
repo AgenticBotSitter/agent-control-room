@@ -2432,3 +2432,29 @@ settlement remains honestly uncertain rather than being converted to success.
 **Reevaluate:** After a reviewer different from both earlier reviewers and all remediation contributors closes all six
 recorded findings against exact IDEA-110E commit `2bc80a2`. The later platform connector must preserve this exact
 descriptor, receiver, settlement, cancellation, and no-retry boundary.
+
+## ADR-144 — Put the Mac connector guard in Control Room and native locators behind a private port
+
+**Decision:** The macOS connector is a one-attempt protocol guard inside Control Room, while an injected Mac-resident
+private port remains the sole owner of Hermes Desktop registration, local/SSH locators, keys, protected values, gateway
+endpoints, profiles, and native session identifiers. The guard exact-captures only opaque signed inputs and safe receipts,
+enforces the fixed ordinary and cleanup sequences, preserves the private port receiver, serializes abort and close, and
+converts uncertain open or operation outcomes into close-only or cleanup-only state without retry. It is unconfigured and
+non-authorizing until separately reviewed, signer-enrolled, route-enrolled, and preflighted.
+
+**Why:** Reusing Hermes Desktop routing avoids a Hermes fork and avoids duplicating SSH credential custody in Control
+Room, but an unguarded injected port would leave lifecycle ordering, binding, cancellation, and retry policy to every
+platform adapter. One repository-owned guard makes those invariants testable without learning any native locator.
+
+**Alternatives rejected:** Modify Hermes; let Control Room launch `ssh`; place host/key/gateway/profile values in the web
+app or database; pass arbitrary JSON-RPC; trust adapter call order; retry an uncertain open; close a known created session
+without attempting native cleanup; configure a port because producer tests pass; or treat connector acceptance as signer,
+route, packet, authorization, or qualification acceptance.
+
+**Trade-off:** A small Mac-resident private-port implementation and trusted signer enrollment are still required before
+real enrollment. Connector review adds a gate, but Hermes and SSH can update independently while Control Room retains a
+stable least-authority protocol.
+
+**Reevaluate:** After independent review of the exact IDEA-110F candidate. Any changed connector protocol, Hermes source
+manifest, runtime revision, private-port implementation, signer, or route invalidates later evidence and keeps native use
+blocked.
