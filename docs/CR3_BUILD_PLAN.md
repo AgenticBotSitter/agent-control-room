@@ -821,6 +821,21 @@ construction exact-snapshots its request and bounded dense array, traverses by n
 pairwise, and counts directly without selecting caller or ambient array/collection behavior. No private port,
 enrollment, native operation, provider call, credential access, or deployment is introduced.
 
+Independent review confirmed both intended IDEA-110N repairs but found one Medium defect: rebuilt roster records still
+entered the shared canonical digest routine, which dynamically selected ambient array behavior. See
+`docs/reviews/CR12B_IDEA_110N_FORMATTER_ROSTER_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110O — captured roster-digest remediation
+
+Status: provider-disabled implementation frozen at `343eb645e6c10f9bb4e601ea49ae371fee2493ba`; replacement packet
+`sha256:ab738a78c9ac9d4e7a1172979231a979f55109a07ab9589090a91b8cc7d44728` and fresh independent review required. See
+`CR12B_IDEA_110O_ROSTER_DIGEST_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+Roster canonicalization captures array identification and sorting, object-key enumeration, JSON and finite-number
+handling, reflection, and SHA-256 methods at module initialization. Indexed construction selects no mutable ambient
+traversal and preserves exact clean-runtime digest bytes. No private port, enrollment, native operation, provider call,
+credential access, or deployment is introduced.
+
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
 Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,

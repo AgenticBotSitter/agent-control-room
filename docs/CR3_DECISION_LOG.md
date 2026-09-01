@@ -2551,6 +2551,12 @@ dense array before parsing, then use indexed traversal, pairwise identity compar
 dynamically selecting caller or ambient array/collection behavior. This follows the two Medium findings preserved by
 the IDEA-110M independent report.
 
+**IDEA-110O amendment:** Exact caller-data capture is insufficient if rebuilt records later enter a mutable shared
+canonicalizer. Roster identity must be computed with module-captured array identification and sorting, object-key
+enumeration, JSON and finite-number handling, reflection, and SHA-256 methods; indexed serialization must preserve the
+existing clean-runtime canonical bytes without dynamically selecting ambient traversal. This follows the Medium
+finding preserved by the IDEA-110N independent report.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
 conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
@@ -2562,3 +2568,5 @@ Any change to the captured time helper, strict calendar rules, generated time fo
 consumer also invalidates IDEA-110M review evidence.
 Any change to contract-safe formatting, exact roster capture, roster identity comparison, or count construction also
 invalidates IDEA-110N review evidence.
+Any change to captured roster canonicalization, byte compatibility, or roster SHA-256 construction also invalidates
+IDEA-110O review evidence.

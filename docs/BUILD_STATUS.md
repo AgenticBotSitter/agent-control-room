@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F through 110N macOS Hermes connector | IDEA-110M independently rejected; IDEA-110N frozen and requires fresh independent review | IDEA-110N closes contract-unsafe time formatting and caller/ambient roster traversal; 169 CR12B tests; see `CR12B_IDEA_110N_FORMATTER_ROSTER_CAPTURE_REMEDIATION.md` |
+| CR12B-IDEA-110F through 110O macOS Hermes connector | IDEA-110N independently rejected; IDEA-110O frozen and requires fresh independent review | IDEA-110O captures roster canonicalization and SHA-256 operations after exact caller-data capture; 170 CR12B tests; see `CR12B_IDEA_110O_ROSTER_DIGEST_CAPTURE_REMEDIATION.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -294,6 +294,22 @@ identities pairwise, and computes counts without caller or ambient traversal/col
 macOS stage zero, and whitespace validation. Exact product
 `58fc3304b8b927252c6c0d0e3d8afc9c1b2039b5` and packet
 `sha256:c561cf781d944ec01943f5fd412adf64ad59e8dd61ab6a3205f815aab346804f` require a fresh different-agent review. No
+native or external effect occurred.
+
+Fresh IDEA-110N review confirmed both intended repairs and the inherited connector matrix, then reproduced one Medium
+defect. Roster digest calculation passed the rebuilt parsed-connections array to the shared canonicalizer, whose dynamic
+`map` and `join` selection executed post-import ambient behavior and leaked a raw sentinel. The immutable report is
+preserved at SHA-256 `44988fd4f6fe14d1bd4185b82b7d0b58a46a20b7061503c6784608f005d6bf67`; IDEA-110N remains
+rejected.
+
+IDEA-110O computes the roster digest through module-captured canonical array, object-key, sort, JSON, numeric,
+reflection, and SHA-256 operations while preserving byte-for-byte clean-runtime compatibility. The regression targets
+the rebuilt internal roster and independently traps `map`, `join`, key sorting, object keys, JSON encoding, and hash
+update selection. Verification passes 170/170 CR12B tests, 769/769 pretests, 418/420 core tests with two intentional
+platform skips and zero failures, 249/249 posttests, TypeScript, lint, production build, 3/3 rendered routes, all 32
+migrations/110 PostgreSQL tables, macOS stage zero, and whitespace validation. Exact product
+`343eb645e6c10f9bb4e601ea49ae371fee2493ba` and packet
+`sha256:ab738a78c9ac9d4e7a1172979231a979f55109a07ab9589090a91b8cc7d44728` require a fresh different-agent review. No
 native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
@@ -701,11 +717,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110N-Q — independently review contract-safe formatting and inert roster capture
+Block: CR12B-IDEA-110O-Q — independently review captured roster-digest construction
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: IDEA-110M closed its inherited findings but fresh review proved its formatter could leave the exact time contract and its roster could invoke caller or ambient behavior. IDEA-110N changes two shared security boundaries and cannot accept its own repair.
-Expected output: one immutable report by a new reviewer against product commit `58fc3304b8b927252c6c0d0e3d8afc9c1b2039b5` and packet `sha256:c561cf781d944ec01943f5fd412adf64ad59e8dd61ab6a3205f815aab346804f`. It must reproduce both IDEA-110M findings, prove formatter and actual-roster closure, repeat the complete inherited connector matrix, and verify the strict calendar and roster-topology matrices. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Why: IDEA-110N closed both inherited findings but fresh review proved its rebuilt roster still entered mutable shared canonicalization. IDEA-110O changes the roster identity boundary and cannot accept its own repair.
+Expected output: one immutable report by a new reviewer against product commit `343eb645e6c10f9bb4e601ea49ae371fee2493ba` and packet `sha256:ab738a78c9ac9d4e7a1172979231a979f55109a07ab9589090a91b8cc7d44728`. It must reproduce the IDEA-110N digest finding, prove byte-compatible captured closure across the complete hostile-operation matrix, and repeat every inherited connector case. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
