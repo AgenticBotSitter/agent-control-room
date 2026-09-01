@@ -327,6 +327,36 @@ test("CR12B-IDEA-110I ignores post-import collection and host-operation substitu
   assert.equal((handoff.take() as { nativeLocatorReturned: boolean }).nativeLocatorReturned, false);
 });
 
+test("CR12B-IDEA-110K shared safety walkers reject secret input under post-import traversal substitution", async () => {
+  const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port);
+  await open(connector); await request(connector, "session.create");
+  const input = { ...operationInput("prompt.submit"), parameters: Object.freeze({
+    ...parameters["prompt.submit"], safeInstruction: "api_key=unsafe-value-123",
+  }) }, handoff = createHostResultCollectorV1();
+  const entriesDescriptor = Object.getOwnPropertyDescriptor(Object, "entries"),
+    forEachDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "forEach"),
+    someDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "some");
+  assert.ok(entriesDescriptor); assert.ok(forEachDescriptor); assert.ok(someDescriptor);
+  const sentinel = new Error("hostile safety traversal"), behavior: string[] = [];
+  const hostile = (label: string) => () => { behavior.push(label); throw sentinel; };
+  let rejected: unknown;
+  Object.defineProperty(Object, "entries", { ...entriesDescriptor, value: hostile("Object.entries") });
+  Object.defineProperty(Array.prototype, "forEach", { ...forEachDescriptor, value: hostile("Array.forEach") });
+  Object.defineProperty(Array.prototype, "some", { ...someDescriptor, value: hostile("Array.some") });
+  try { await connector.requestFixedOperation(input, handoff.collector); }
+  catch (error) { rejected = error; }
+  finally {
+    Object.defineProperty(Object, "entries", entriesDescriptor);
+    Object.defineProperty(Array.prototype, "forEach", forEachDescriptor);
+    Object.defineProperty(Array.prototype, "some", someDescriptor);
+  }
+  assert.deepEqual(behavior, []);
+  assert.ok(rejected instanceof IdeaLabErrorV1);
+  assert.equal(rejected.safeCode, "redaction_rejected");
+  assert.notEqual(rejected, sentinel);
+  assert.deepEqual(port.calls, ["open:local_loopback", "session.create"]);
+});
+
 test("CR12B-IDEA-110F retains private-port receivers and rejects behavioral constructor wrappers", async () => {
   const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port);
   await open(connector);

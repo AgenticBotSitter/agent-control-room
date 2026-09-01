@@ -198,6 +198,45 @@ test("CR12B-IDEA-110I bridge uses only module-captured host operations after can
   await bridge.cleanupFixedSession(cleanupInput(input, sessionDigest), createHostResultCollectorV1().collector);
 });
 
+test("CR12B-IDEA-110K provider output and cleanup retain safety checks under traversal substitution", async () => {
+  const unsafeFinalText = JSON.stringify({ safeOpinion: "api_key=unsafe-value-123",
+    opportunityCode: "market_opening", primaryRiskCode: "demand_uncertain",
+    suggestedExperiment: "Interview five likely buyers.", confidencePercent: 73 });
+  const native = connector({ mutate(operation, result) {
+    if (operation !== "session.events.since") return result;
+    return { ...result, events: [{ sequence: 1, type: "message.start" },
+      { sequence: 2, type: "message.complete", finalText: unsafeFinalText }], latestSequence: 2 };
+  } }), bridge = new IdeaLabHermes021FixedRpcBridgeV1(native.value), input = executeInput(),
+    executionHandoff = createHostResultCollectorV1(), cleanupHandoff = createHostResultCollectorV1();
+  const entriesDescriptor = Object.getOwnPropertyDescriptor(Object, "entries"),
+    forEachDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "forEach"),
+    someDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "some");
+  assert.ok(entriesDescriptor); assert.ok(forEachDescriptor); assert.ok(someDescriptor);
+  const sentinel = new Error("hostile provider traversal"), behavior: string[] = [];
+  const hostile = (label: string) => () => { behavior.push(label); throw sentinel; };
+  let executionError: unknown, cleanupError: unknown;
+  Object.defineProperty(Object, "entries", { ...entriesDescriptor, value: hostile("Object.entries") });
+  Object.defineProperty(Array.prototype, "forEach", { ...forEachDescriptor, value: hostile("Array.forEach") });
+  Object.defineProperty(Array.prototype, "some", { ...someDescriptor, value: hostile("Array.some") });
+  try {
+    try { await bridge.executeFixedSession(input, executionHandoff.collector); }
+    catch (error) { executionError = error; }
+    try { await bridge.cleanupFixedSession(cleanupInput(input, sessionDigest), cleanupHandoff.collector); }
+    catch (error) { cleanupError = error; }
+  } finally {
+    Object.defineProperty(Object, "entries", entriesDescriptor);
+    Object.defineProperty(Array.prototype, "forEach", forEachDescriptor);
+    Object.defineProperty(Array.prototype, "some", someDescriptor);
+  }
+  assert.deepEqual(behavior, []);
+  assert.ok(executionError instanceof IdeaLabErrorV1);
+  assert.equal(executionError.safeCode, "redaction_rejected");
+  assert.notEqual(executionError, sentinel);
+  assert.equal(cleanupError, undefined);
+  assert.equal((cleanupHandoff.take() as { outcome: string }).outcome, "completed");
+  assert.equal(native.calls.at(-1)?.kind, "close");
+});
+
 test("CR12B-IDEA-110D cleanup waits for in-flight execution and prevents every later operation", async () => {
   for (const blockedAt of ["open", "session.create"] as const) {
     const native = connector(), originalOpen = native.value.openFixedRoute.bind(native.value);

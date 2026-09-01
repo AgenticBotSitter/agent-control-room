@@ -1,7 +1,7 @@
 # CR12B-IDEA-110J — host-operation capture remediation
 
-**Status:** Provider-disabled implementation candidate frozen at
-`5707ecb05221e708beefa196fc0fa2e0c9d8515d`; fresh independent review is mandatory.
+**Status:** Rejected by independent review. Exact product
+`5707ecb05221e708beefa196fc0fa2e0c9d8515d` is superseded by IDEA-110K and grants no connector or native authority.
 
 **Replacement review packet:** `docs/reviews/CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REVIEW_PACKET.md` at SHA-256
 `f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd`.
@@ -38,7 +38,7 @@ whitespace validation.
 
 ## Authority boundary
 
-This remediation configures no Mac-private port, signer, route, native attempt, SSH connection, provider call,
-credential access, live-panel permission, production database, deployment, hosting, or DNS effect. Fresh independent
-review of the exact product commit and replacement packet remains mandatory. Acceptance can remove only the
-provider-disabled connector implementation-review gate.
+This remediation configured no Mac-private port, signer, route, native attempt, SSH connection, provider call,
+credential access, live-panel permission, production database, deployment, hosting, or DNS effect. Independent report
+`docs/reviews/CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REVIEW_REV_001.md` reproduced a High shared safety-walker bypass;
+passing producer checks did not override that defect. IDEA-110J remains rejected.
