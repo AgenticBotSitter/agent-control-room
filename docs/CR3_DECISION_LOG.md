@@ -2271,3 +2271,34 @@ upstream method. The repository can fully test cryptographic and sanitation beha
 
 **Reevaluate:** After the one-use registry and exact Hermes method exist, independently review their integration and
 refresh every runtime/source/packet/owner binding before an attached-Terminal attempt.
+
+## ADR-138 — Hermes stays unmodified; Control Room uses signed local or SSH gateway enrollment
+
+**Decision:** IDEA-109B supersedes ADR-135's conclusion that a fresh profile cannot use existing Hermes authentication
+and removes ADR-136/137 from the critical path without deleting their proposal evidence. Exact review of installed
+revision `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b` proves that a fresh no-skills profile with no local provider entry
+reads the global-root protected-value pool as a per-provider read-only fallback; writes remain profile-local. The fresh
+path copies no SOUL, memory, skills, plugins, MCP configuration, rules, or sessions. Existing Hermes SSH support is the
+transport. A trusted node signs the exact tenant/node/connection/runtime/profile/route evidence; protected Control Room
+enrollment separately pins the expected opaque route and, for SSH, the owner-verified host-key fingerprint. The gateway
+stays connector-private and loopback-bound, SSH is public-key-only and non-interactive, host-key changes fail closed, and
+only the fixed Hermes lifecycle/event-replay method set may cross the adapter. Control Room retains no host, username,
+port, key path, session value, protected value, native locator, profile path, or generic shell.
+
+**Why:** The prior review correctly rejected cloning private Bot context but stopped at the profile creation code and
+missed the installed authentication fallback. Using the runtime's existing reference behavior preserves Hermes custody
+without an upstream fork. SSH connects machines while an explicit Control Room bridge preserves project, admission,
+budget, audit, and cross-gateway authority.
+
+**Alternatives rejected:** Modify Hermes before using an existing built-in boundary; copy `.env` or `auth.json`; clone
+then erase Bot context; expose a public Hermes gateway; accept an arbitrary browser-supplied SSH host; use password SSH;
+trust first use without an owner-verified host-key pin; expose generic remote shell; treat a Hermes multi-machine roster
+as cross-gateway execution permission; or let signed enrollment self-qualify a native runtime or live panel.
+
+**Trade-off:** Control Room needs a small node-local connector and owner enrollment workflow. SSH reachability does not
+itself create cross-gateway delegation, native qualification, provider authority, or automatic updates. The connector
+must be independently qualified and operated through the existing node/admission/ambiguity boundaries.
+
+**Reevaluate:** IDEA-110 may run only after one exact signed enrollment and repository native port are reviewed, every
+affected packet/pin is refreshed, and the owner gives new exact authorization. A future Hermes-native preparation method
+may still be adopted as optional hardening, but it is not a prerequisite.

@@ -15,6 +15,9 @@ test("CR12B-IDEA-020 renders diverse analysis, advisory synthesis, owner promoti
   assert.match(html, /No Hermes, Codex, or local-model provider was contacted/);
   assert.match(html, /href="\/projects\/project%3Alocal-trades-ai-desk"/);
   assert.match(html, /Protected runtime not configured\. Controls are safely disabled\./);
+  assert.match(html, /Connect agents without changing Hermes/);
+  assert.match(html, /Not required/); assert.match(html, /SSH supported/); assert.match(html, /Waiting for enrollment/);
+  assert.match(html, /No SSH connection, Hermes session, provider call, or native qualification was started/);
   assert.match(html, /<form/);
   assert.match(html, /<button[^>]*disabled=""[^>]*>Create session<\/button>/);
   assert.doesNotMatch(html, /Create live project|Dispatch now/);

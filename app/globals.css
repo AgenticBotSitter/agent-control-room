@@ -775,6 +775,14 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .idea-lab-hero dd { margin: 4px 0 0; font-size: 13px; font-weight: 800; }
 .idea-lab-boundary { border-left: 3px solid var(--amber); border-radius: 0 10px 10px 0; margin: 0; background: var(--amber-soft); color: var(--muted); padding: 11px 14px; font-size: 9px; }
 .idea-lab-panel, .idea-lab-synthesis, .idea-lab-promotion { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 19px; box-shadow: var(--shadow); }
+.idea-connection-panel { border-color: color-mix(in srgb, var(--blue) 30%, var(--border)); }
+.idea-connection-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.idea-connection-grid article { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 13px; }
+.idea-connection-grid small { color: var(--muted); display: block; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+.idea-connection-grid strong { display: block; margin: 6px 0; font-size: 13px; }
+.idea-connection-grid p, .idea-connection-footnote { color: var(--muted); font-size: 9px; line-height: 1.5; margin: 0; }
+.idea-connection-footnote { margin-top: 12px; }
+@media (max-width: 760px) { .idea-connection-grid { grid-template-columns: 1fr; } }
 .idea-lab-operator { display: grid; grid-template-columns: minmax(240px,.7fr) minmax(420px,1.3fr); gap: 22px; border: 1px solid color-mix(in srgb,var(--blue) 24%,var(--border)); border-radius: var(--radius); background: var(--surface); padding: 19px; box-shadow: var(--shadow); }
 .idea-lab-operator h2 { margin: 3px 0 7px; font-family: Georgia,serif; font-size: 24px; font-weight: 500; }
 .idea-lab-operator > div > p:last-child,.idea-lab-operator form > p { color: var(--muted); font-size: 9px; line-height: 1.55; }

@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-08-31
+**Updated:** 2026-09-01
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
 
@@ -100,10 +100,10 @@
 | CR12B-IDEA-090 durable admission consumption and native-receipt registry | Complete locally for the repository-only, provider-disabled snapshot | Architect-keyed receipt acceptance, separately keyed admission sealing, atomic single-use window/run consumption, terminal revocation, external rollback high-water, 12 hostile tests; see `CR12B_IDEA_090_ACCEPTANCE.md` |
 | CR12B-IDEA-100 owner-ready native qualification and live-panel rehearsal packet | Complete locally for the exact repository-only packet | Three non-collapsible stages, exact implementation pins, one-attempt/one-call sanitized candidate, independent receipt review, architect registry acceptance, separate later live-panel window, 8 hostile tests; see `CR12B_IDEA_100_ACCEPTANCE.md` |
 | CR12B-IDEA-105 Hermes 0.21 reviewed-runtime pin refresh | Complete locally for the repository-only evidence binding | Exact installed revision, release ancestry and 60-commit distance, 12-file source manifest, sanitized no-effect preflight, refreshed Idea Lab packet/plan, old authorization non-reusable; see `CR12B_IDEA_105_HERMES_021_PIN_REFRESH_ACCEPTANCE.md` |
-| CR12B-IDEA-108 Hermes native-launch readiness | Complete with a blocked-before-owner-command disposition | Exact profile source proves empty profile and existing authentication cannot be combined without importing private bot context; no command emitted, 4 hostile tests; see `CR12B_IDEA_108_NATIVE_LAUNCH_READINESS_ACCEPTANCE.md` |
-| CR12B-IDEA-109 Hermes-native profile preparation contract | Complete locally for the effect-free proposal-only boundary | Exact upstream method contract transfers protected authentication internally, copies zero private context, returns only signed digests and a native-held one-use permit, accepts no runtime, 5 hostile tests; see `CR12B_IDEA_109_HERMES_PROFILE_PREPARATION_CONTRACT_ACCEPTANCE.md` |
-| CR12B-IDEA-109A signed profile-preparation attestation | Complete locally for injected signed evidence only | Canonical Ed25519 device proof, exact request/runtime/time binding, zero private-context counts, no material/path/gateway/provider, sanitized result remains unaccepted, 5 hostile tests; see `CR12B_IDEA_109A_PROFILE_PREPARATION_ATTESTATION_ACCEPTANCE.md` |
-| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending profile-isolation remediation, integration, review, and a new exact owner authorization | No attached-Terminal command is eligible; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
+| CR12B-IDEA-108 Hermes native-launch readiness | Historical negative evidence; its authentication conclusion is superseded by IDEA-109B | The clone/no-skills contradiction was real, but the review omitted the installed read-only global protected-value fallback; no command or native attempt occurred; see `CR12B_IDEA_108_NATIVE_LAUNCH_READINESS_ACCEPTANCE.md` |
+| CR12B-IDEA-109/109A optional Hermes-native preparation proposal | Complete locally but removed from the critical path | Proposal-only method and signed-attestation verifier remain non-authorizing optional hardening; current Hermes already supplies the needed fresh-profile protected-value fallback |
+| CR12B-IDEA-109B enrolled local/SSH Hermes connection | Complete locally for the signed, locator-free, connection-disabled snapshot | Exact built-in shared-value/SSH source pins, node-signed enrollment, owner-verified host-key binding, opaque fixed gateway route, safe multi-machine roster, UI truth, and no Hermes fork; see `CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md` |
+| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending one signed node enrollment, repository native port, refreshed packet/review, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -130,6 +130,15 @@ CR12B-IDEA-109A verifies canonical Ed25519 signed preparation bodies against a s
 request/runtime bindings, a maximum-60-second chronology, zero counts for every private-context class, and negative
 material/path/gateway/provider truth. The safe result retains only digests and still fixes runtime acceptance and launch
 eligibility to false. Five hostile tests pass and combined CR12B passes 103/103.
+
+CR12B-IDEA-109B corrects the IDEA-108 source conclusion without erasing its historical evidence. The exact installed
+Hermes source already lets a fresh no-skills profile use the global-root protected-value pool as a read-only per-provider
+fallback while keeping writes profile-local and copying no Bot context. Hermes also already implements key-only,
+connect-on-demand SSH connections. Control Room now freezes those source pins, verifies node-signed local/SSH
+enrollments, binds an owner-verified SSH host-key digest and opaque fixed gateway route, retains no locator/value/path or
+generic shell, builds a duplicate- and expiry-safe fleet roster, and shows the honest disabled state in Idea Lab. Hermes
+modification is no longer required. The focused IDEA-109B/UI tests pass 10/10 and combined CR12B passes 110/110.
+Live/provider/native access remains disabled pending IDEA-110.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,

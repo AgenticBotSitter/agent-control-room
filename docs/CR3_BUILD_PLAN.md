@@ -646,13 +646,27 @@ The verifier binds canonical Ed25519 device identity, exact request/runtime/chro
 negative material/path/gateway/provider truth, and cleanup presence. It returns only safe digests and never converts an
 injected fixture into runtime acceptance or launch eligibility.
 
-Next: add the broker-private durable one-use permit and cleanup state machine, then implement/review the upstream method
-before refreshing the owner packet.
+The later IDEA-109B source reassessment removes this optional upstream method from the critical path.
+
+## CR12B-IDEA-109B — enrolled local/SSH Hermes connection
+
+Status: complete locally for the signed, locator-free, connection-disabled snapshot. See
+`CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md` and ADR-138.
+
+Exact installed source proves that fresh no-skills profiles already use a read-only global-root protected-value fallback
+without copying Bot context, and that Hermes already supplies key-only connect-on-demand SSH connections. Control Room
+therefore verifies node-signed enrollments for an opaque fixed local/SSH gateway route, requires owner-verified SSH host
+identity, retains no host/user/port/key/session/protected-value/profile locator, exposes no generic shell, and produces a
+safe multi-machine roster. Enrollment qualifies only the route to enter IDEA-110; it grants no provider, command, lease,
+approval, or execution authority.
+
+Next: implement the repository-owned native port behind one signed enrollment, refresh the exact owner packet, and run
+the separately authorized owner-attended IDEA-110 qualification.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
-Status: blocked pending a reviewed profile-isolation remediation, refreshed pins, integration, and another exact owner
-authorization. The IDEA-100 and IDEA-105 authorization text is non-reusable.
+Status: blocked pending one signed node enrollment, the repository-owned native port, refreshed pins and review, and
+another exact owner authorization. The IDEA-100 and IDEA-105 authorization text is non-reusable.
 
 One no-effect preflight will verify the installed runtime and print the exact attached-Terminal command. The owner must
 run it and handle any Keychain prompt. The attempt emits only a sanitized unaccepted candidate, cleans disposable state,

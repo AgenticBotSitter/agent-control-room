@@ -1,5 +1,6 @@
 import type { IdeaLabFixtureV1 } from "@/src/idea-lab/v1";
 import { IdeaLabOperatorControls } from "./idea-lab-operator-controls";
+import { IdeaLabConnectionReadiness } from "./idea-lab-connection-readiness";
 import { LocalPilotOwnerSession } from "./local-pilot-owner-session";
 
 function label(value: string): string {
@@ -35,6 +36,7 @@ export function IdeaLabWorkspace({ fixture, operatorControlsEnabled = false }: {
 
       {operatorControlsEnabled?<LocalPilotOwnerSession/>:null}
       <IdeaLabOperatorControls enabled={operatorControlsEnabled} />
+      <IdeaLabConnectionReadiness />
 
       <section className="idea-lab-panel" id="idea-lab-panel" aria-labelledby="idea-lab-title">
         <div className="section-heading"><div><p className="eyebrow">Current session</p><h2 id="idea-lab-title">{fixture.session.title}</h2></div><span className="simulation-only">Owner-controlled</span></div>
