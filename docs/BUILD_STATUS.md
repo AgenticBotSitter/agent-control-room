@@ -108,7 +108,7 @@
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
 | CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review; main-target integration in progress | Captured connector boundaries, strict chronology, exact roster identity, recursively immutable returned evidence, and Node 22.13 lazy-global portability; accepted product 171 CR12B tests, integration 172; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
-| CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083` | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
+| CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -762,6 +762,13 @@ Medium issue. One Low test-hardening note remains: the committed regression prov
 ephemeral probe directly proved first-time old ingestion. This accepted candidate grants no production database,
 deployment, provider, native-runtime, approval, dispatch, or execution authority.
 
+The accepted CR13A product is now restacked on connector-integration checkpoint `38bf2c326fe262628d7df90b1876e34d73d034b6`
+without semantic expansion. The combined minimum-runtime verification passes 16/16 CR13A tests, 172/172 CR12B tests,
+769/769 registered pretests, 418/420 core tests with the two intentional Windows-only skips, 251/251 posttests,
+typecheck, full lint, production build, 3/3 rendered routes, migrations through 0033/112 tables, macOS stage zero, and
+whitespace validation. The restack remains dependent on the green, owner-approved merge of main-target connector PR
+#228; it grants no additional live or production authority.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -777,12 +784,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110-INTEGRATE — integrate the independently accepted provider-disabled connector stack
+Block: CR12B/CR13A-INTEGRATE — land the connector parent, then the accepted Project Activity stack
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: exact product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` has now passed fresh independent review. The long accepted/rejected evidence chain must be presented as one main-target integration without losing negative history or widening authority.
-Expected output: one main-target integration pull request containing the complete Idea Lab and provider-disabled connector stack, all immutable negative and accepted reports, exact acceptance pins, clean full verification, and no live configuration. After integration, restack the already accepted CR13A Project Activity product on the integrated base.
-Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
+Why: exact connector product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` and exact Project Activity product `fcc2f10881aaf7a094db76e01a898b0e04fba083` are independently accepted. Their combined stack is locally green at the exact minimum Node runtime, so the remaining work is serialized GitHub integration without losing negative evidence or widening authority.
+Expected output: green main-target connector PR #228, owner-approved parent merge, then a retargeted main pull request containing the accepted CR13A activity stream with ordinary full CI. Preserve the original independent-review pins and the complete historical evidence chain.
+Owner action: approve merging PR #228 only after its GitHub checks are green. No approval is requested for a failed or pending run. After that merge, Codex can retarget the already prepared CR13A stack and run its ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

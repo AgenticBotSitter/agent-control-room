@@ -1,6 +1,6 @@
 # CR13A-LIVE-000 acceptance record
 
-**Status:** implementation candidate complete; independent security/integrity review required  
+**Status:** accepted implementation candidate; integration restack verified; parent integration merge required
 **Date:** 2026-09-01  
 **Scope:** authenticated, resumable, read-only project activity
 
@@ -59,7 +59,7 @@ At candidate freeze:
 - macOS stage zero: `ready_for_runtime_check`; and
 - whitespace validation: passing.
 
-## Open gate
+## Historical review gate (closed)
 
 A different reviewer must inspect event-chain integrity, exact replay, concurrent append ordering, cursor reset and page
 drain behavior, authentication ordering, safe errors, tenant/workspace/project isolation, browser reconnect behavior,
@@ -114,5 +114,32 @@ classified it as test hardening, not a blocker.
 
 **Disposition:** `accepted_candidate`. This acceptance is limited to the exact implementation commit above. It does not
 authorize a production database, deployment, provider or native-runtime use, approval, dispatch, retry, command, or
-execution effect. PR #218 remains stacked on a separately rejected connector base and must not be merged through that
-base until the connector is remediated and independently accepted.
+execution effect. PR #218 was created on the connector base before that base completed remediation and independent
+acceptance, so it is retained only as historical review evidence and must not be used for integration.
+
+## Verified integration restack
+
+The accepted CR13A product was replayed without semantic expansion onto connector-integration checkpoint
+`38bf2c326fe262628d7df90b1876e34d73d034b6`. The restack preserves exact accepted product
+`fcc2f10881aaf7a094db76e01a898b0e04fba083` and its three independent reviews while also inheriting the later accepted
+Idea Lab time-hardening and the Node `22.13.0` lazy-global portability repair. Documentation conflicts were resolved by
+retaining the complete connector evidence chain and ADR-147 Project Activity. No code defect or authority conflict was
+found during the replay.
+
+The combined stack was verified with the repository's exact minimum Node runtime, `22.13.0`:
+
+- `npm run test:cr13a`: 16/16 passing;
+- `npm run test:cr12b`: 172/172 passing;
+- `npm run check` and `npm run lint -- --quiet`: passing;
+- registered pretests: 769/769 passing;
+- core tests: 418/420 passing with the two intentional Windows-only skips and zero failures;
+- registered posttests: 251/251 passing;
+- production build: passing, including `/api/v1/projects/:projectId/events`;
+- rendered-route checks: 3/3 passing;
+- migrations through `0033` applied and 112 PostgreSQL tables verified;
+- macOS stage zero: `ready_for_runtime_check`; and
+- whitespace validation: passing.
+
+This restack performed no native or provider call, credential operation, production database access, network integration,
+deployment, or other external effect. It remains stacked behind the main-target connector integration pull request and
+cannot be retargeted to `main` or merged until that parent is green and owner-approved.
