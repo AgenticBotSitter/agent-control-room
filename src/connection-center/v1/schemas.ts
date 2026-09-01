@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { CONNECTION_CENTER_CONTRACT_V1 } from "./types";
 
-const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+const connectionReference = z.string().regex(/^connection:inventory:[0-9]{3}$/);
+const nodeReference = z.string().regex(/^node:inventory:[0-9]{3}$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const instant = z.string().datetime({ offset: false, precision: 3 });
 const blockers = z.enum([
@@ -12,8 +13,8 @@ const blockers = z.enum([
 ]);
 
 export const connectionCenterItemSchemaV1 = z.object({
-  connectionId: id,
-  nodeId: id,
+  connectionReference,
+  nodeReference,
   transport: z.enum(["local_loopback", "ssh_tunnel"]),
   runtimeRevision: z.string().min(7).max(80),
   runtimeCompatibility: z.literal("reviewed_exact_revision"),
@@ -26,7 +27,6 @@ export const connectionCenterItemSchemaV1 = z.object({
   enrolledAt: instant,
   enrollmentExpiresAt: instant,
   lastEvaluatedAt: instant,
-  sourceResultDigest: digest,
   locationVisible: z.literal(false),
   credentialMaterialVisible: z.literal(false),
   nativeLocatorVisible: z.literal(false),
@@ -39,7 +39,7 @@ export const connectionCenterItemSchemaV1 = z.object({
 
 export const connectionCenterProjectionSchemaV1 = z.object({
   contractVersion: z.literal(CONNECTION_CENTER_CONTRACT_V1),
-  tenantId: id,
+  tenantScoped: z.literal(true),
   generatedAt: instant,
   sourceMode: z.literal("protected_enrollment_roster"),
   inventoryState: z.enum(["empty", "enrolled"]),
@@ -59,7 +59,6 @@ export const connectionCenterProjectionSchemaV1 = z.object({
     attentionCount: z.number().int().min(0).max(32),
   }).strict(),
   connections: z.array(connectionCenterItemSchemaV1).max(32),
-  rosterDigest: digest,
   containsNativeLocators: z.literal(false),
   containsProtectedValueMaterial: z.literal(false),
   presentationOnly: z.literal(true),

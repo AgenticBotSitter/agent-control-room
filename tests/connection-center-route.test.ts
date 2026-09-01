@@ -27,9 +27,9 @@ test("CR13A-LIVE-010 derives tenant scope from authentication and returns a boun
       return buildIdeaLabHermes021ConnectionRosterV1({ tenantId: input.tenantId, evaluatedAt: input.now, connections: [] }); } },
   });
   const response = await handler(request());
-  const body = await response.json() as { projection: { tenantId: string; presentationOnly: boolean; grantsExecutionAuthority: boolean } };
+  const body = await response.json() as { projection: { tenantScoped: true; presentationOnly: boolean; grantsExecutionAuthority: boolean } };
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
-  assert.deepEqual([seenTenant, body.projection.tenantId, body.projection.presentationOnly,
-    body.projection.grantsExecutionAuthority], ["tenant:owner", "tenant:owner", true, false]);
+  assert.deepEqual([seenTenant, body.projection.tenantScoped, body.projection.presentationOnly,
+    body.projection.grantsExecutionAuthority], ["tenant:owner", true, true, false]);
 });

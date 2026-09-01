@@ -7,8 +7,8 @@ export type ConnectionCenterBlockerCodeV1 =
   | "live_driver_not_configured";
 
 export interface ConnectionCenterItemV1 {
-  connectionId: string;
-  nodeId: string;
+  connectionReference: string;
+  nodeReference: string;
   transport: "local_loopback" | "ssh_tunnel";
   runtimeRevision: string;
   runtimeCompatibility: "reviewed_exact_revision";
@@ -21,7 +21,6 @@ export interface ConnectionCenterItemV1 {
   enrolledAt: string;
   enrollmentExpiresAt: string;
   lastEvaluatedAt: string;
-  sourceResultDigest: string;
   locationVisible: false;
   credentialMaterialVisible: false;
   nativeLocatorVisible: false;
@@ -34,7 +33,7 @@ export interface ConnectionCenterItemV1 {
 
 export interface ConnectionCenterProjectionV1 {
   contractVersion: typeof CONNECTION_CENTER_CONTRACT_V1;
-  tenantId: string;
+  tenantScoped: true;
   generatedAt: string;
   sourceMode: "protected_enrollment_roster";
   inventoryState: "empty" | "enrolled";
@@ -54,7 +53,6 @@ export interface ConnectionCenterProjectionV1 {
     attentionCount: number;
   };
   connections: ConnectionCenterItemV1[];
-  rosterDigest: string;
   containsNativeLocators: false;
   containsProtectedValueMaterial: false;
   presentationOnly: true;

@@ -51,11 +51,17 @@ export function parseConnectionCenterProjectionV1(value: unknown): ConnectionCen
 export function buildConnectionCenterProjectionV1(
   roster: IdeaLabHermes021ConnectionRosterV1,
 ): ConnectionCenterProjectionV1 {
-  const connections: ConnectionCenterItemV1[] = roster.connections.map((candidate) => {
+  const nodeReferences = new Map<string, string>();
+  const connections: ConnectionCenterItemV1[] = roster.connections.map((candidate, index) => {
     const connection = parseIdeaLabHermes021ConnectionSafeResultV1(candidate);
+    let nodeReference = nodeReferences.get(connection.nodeId);
+    if (!nodeReference) {
+      nodeReference = `node:inventory:${String(nodeReferences.size + 1).padStart(3, "0")}`;
+      nodeReferences.set(connection.nodeId, nodeReference);
+    }
     return {
-      connectionId: connection.connectionId,
-      nodeId: connection.nodeId,
+      connectionReference: `connection:inventory:${String(index + 1).padStart(3, "0")}`,
+      nodeReference,
       transport: connection.transport,
       runtimeRevision: connection.runtimeRevision,
       runtimeCompatibility: "reviewed_exact_revision",
@@ -68,7 +74,6 @@ export function buildConnectionCenterProjectionV1(
       enrolledAt: connection.issuedAt,
       enrollmentExpiresAt: connection.expiresAt,
       lastEvaluatedAt: connection.evaluatedAt,
-      sourceResultDigest: connection.resultDigest,
       locationVisible: false,
       credentialMaterialVisible: false,
       nativeLocatorVisible: false,
@@ -81,7 +86,7 @@ export function buildConnectionCenterProjectionV1(
   });
   const material = {
     contractVersion: CONNECTION_CENTER_CONTRACT_V1,
-    tenantId: roster.tenantId,
+    tenantScoped: true as const,
     generatedAt: roster.evaluatedAt,
     sourceMode: "protected_enrollment_roster" as const,
     inventoryState: connections.length ? "enrolled" as const : "empty" as const,
@@ -103,7 +108,6 @@ export function buildConnectionCenterProjectionV1(
       attentionCount: connections.length,
     },
     connections,
-    rosterDigest: roster.rosterDigest,
     containsNativeLocators: false as const,
     containsProtectedValueMaterial: false as const,
     presentationOnly: true as const,
@@ -128,8 +132,11 @@ export class ConnectionCenterReadServiceV1 {
       const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId: sourceRoster.tenantId,
         evaluatedAt: sourceRoster.evaluatedAt, connections: sourceRoster.connections });
       if (roster.rosterDigest !== sourceRoster.rosterDigest) throw new ConnectionCenterReadErrorV1("invalid_roster");
+      if (roster.tenantId !== input.tenantId || roster.evaluatedAt !== input.now) {
+        throw new ConnectionCenterReadErrorV1("invalid_roster");
+      }
       const parsed = buildConnectionCenterProjectionV1(roster);
-      if (parsed.tenantId !== input.tenantId || parsed.generatedAt !== input.now) {
+      if (parsed.generatedAt !== input.now) {
         throw new ConnectionCenterReadErrorV1("invalid_roster");
       }
       return parsed;

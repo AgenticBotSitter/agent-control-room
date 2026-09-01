@@ -32,12 +32,12 @@ export function ConnectionCenterPanel({ data }: { data: ConnectionCenterDataStat
     </section>
     <section className="detail-card"><div className="section-heading"><div><p className="eyebrow">Protected inventory</p><h2>Agent connections</h2></div>
       <span className="simulation-only">Read only · no connect action</span></div>
-      {projection.connections.length ? <div className="connection-center-grid">{projection.connections.map((connection) => <article key={connection.connectionId} className="connection-card">
-        <div className="connection-card-heading"><div><small>{transportLabel(connection.transport)}</small><h3>{connection.connectionId}</h3></div><span className="health health-watch">Setup required</span></div>
-        <dl><div><dt>Agent node</dt><dd>{connection.nodeId}</dd></div><div><dt>Hermes version</dt><dd>0.21 exact reviewed revision</dd></div>
+      {projection.connections.length ? <div className="connection-center-grid">{projection.connections.map((connection) => <article key={connection.connectionReference} className="connection-card">
+        <div className="connection-card-heading"><div><small>{transportLabel(connection.transport)}</small><h3>{connection.connectionReference}</h3></div><span className="health health-watch">Setup required</span></div>
+        <dl><div><dt>Agent reference</dt><dd>{connection.nodeReference}</dd></div><div><dt>Hermes version</dt><dd>0.21 exact reviewed revision</dd></div>
           <div><dt>Enrollment</dt><dd>{label(connection.enrollmentState)}</dd></div><div><dt>Qualification</dt><dd>{label(connection.qualificationState)}</dd></div></dl>
         <ul>{connection.blockerCodes.map((blocker) => <li key={blocker}>{label(blocker)}</li>)}</ul>
-        <footer>Checked {connection.lastEvaluatedAt}. Location, SSH details, credentials, and private runtime values are withheld.</footer>
+        <footer>Checked {connection.lastEvaluatedAt}. References are view-only labels; location, SSH details, credentials, and private runtime values are withheld.</footer>
       </article>)}</div> : <div className="connection-center-empty"><span aria-hidden="true">◫</span><h3>No enrolled connections yet</h3>
         <p>The protected local roster is empty. Control Room will not invent a connection from installed software, a hostname, or a prior test.</p>
         <small>Enrollment, qualification, live-panel authority, and execution remain separate gates.</small></div>}

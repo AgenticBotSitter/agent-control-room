@@ -18,7 +18,7 @@ import { sha256Digest } from "../src/security/index.ts";
 const tenantId = "tenant:connection-center";
 const now = "2026-09-01T18:00:00.000Z";
 
-function safeConnection(): IdeaLabHermes021ConnectionSafeResultV1 {
+function safeConnection(overrides: Partial<Pick<IdeaLabHermes021ConnectionSafeResultV1, "connectionId" | "nodeId">> = {}): IdeaLabHermes021ConnectionSafeResultV1 {
   const material = {
     contractVersion: IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
     sourceMode: "injected_signed_node_enrollment_only" as const,
@@ -52,7 +52,8 @@ function safeConnection(): IdeaLabHermes021ConnectionSafeResultV1 {
     grantsLeaseAuthority: false as const,
     grantsExecutionAuthority: false as const,
   };
-  return { ...material, resultDigest: sha256Digest(material) };
+  const changed = { ...material, ...overrides };
+  return { ...changed, resultDigest: sha256Digest(changed) };
 }
 
 test("CR13A-LIVE-010 projects an honest protected empty connection inventory", async () => {
@@ -74,6 +75,8 @@ test("CR13A-LIVE-010 shows only safe version, route, and blocker diagnostics for
   assert.deepEqual([projection.summary.connectionCount, projection.summary.sshConnectionCount,
     projection.summary.attentionCount, projection.reviewedRuntime.releaseLine], [1, 1, 1, "0.21"]);
   const connection = projection.connections[0]!;
+  assert.deepEqual([connection.connectionReference, connection.nodeReference],
+    ["connection:inventory:001", "node:inventory:001"]);
   assert.deepEqual([connection.runtimeCompatibility, connection.enrollmentState, connection.qualificationState,
     connection.livePanelState, connection.locationVisible, connection.credentialMaterialVisible],
   ["reviewed_exact_revision", "accepted", "required", "blocked", false, false]);
@@ -81,6 +84,19 @@ test("CR13A-LIVE-010 shows only safe version, route, and blocker diagnostics for
   for (const forbidden of ["hostname", "privateKey", ".ssh/", "/Users/", "password", "session-token"]) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }
+});
+
+test("CR13A-LIVE-010 replaces locator-shaped signed identifiers with non-locator presentation references", () => {
+  const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId, evaluatedAt: now, connections: [safeConnection({
+    connectionId: "10.0.0.5:22", nodeId: "johnny5.local:22",
+  })] });
+  const projection = buildConnectionCenterProjectionV1(roster);
+  assert.deepEqual([projection.connections[0]?.connectionReference, projection.connections[0]?.nodeReference],
+    ["connection:inventory:001", "node:inventory:001"]);
+  const serialized = JSON.stringify(projection);
+  for (const forbidden of ["10.0.0.5", ":22", "johnny5.local", tenantId]) assert.equal(serialized.includes(forbidden), false, forbidden);
+  assert.deepEqual([projection.containsNativeLocators, projection.connections[0]?.locationVisible,
+    projection.connections[0]?.nativeLocatorVisible], [false, false, false]);
 });
 
 test("CR13A-LIVE-010 rejects digest drift, cross-tenant rosters, and invalid read time", async () => {
