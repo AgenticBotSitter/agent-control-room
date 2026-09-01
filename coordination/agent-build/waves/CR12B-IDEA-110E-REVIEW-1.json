@@ -1,0 +1,12 @@
+{
+  "schema": "control-room.agent-build-wave/v2",
+  "waveId": "CR12B-IDEA-110E-REVIEW-1",
+  "block": "CR12B-IDEA-110E-Q",
+  "status": "ready",
+  "baseCommit": "2bc80a20c7e4e1753b014395866972622c134fd3",
+  "integrationBranch": "integration/cr12b-idea-110e-second-review",
+  "capsules": [
+    "coordination/agent-build/capsules/CR12B-IDEA-110E-REV-001.json"
+  ],
+  "ownerEffectAuthority": "none"
+}

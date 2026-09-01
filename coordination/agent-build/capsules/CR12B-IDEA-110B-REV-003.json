@@ -1,0 +1,106 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR12B-IDEA-110B-REV-003",
+  "waveId": "CR12B-IDEA-110B-REVIEW-3",
+  "block": "CR12B-IDEA-110B",
+  "summary": "Review the fixed Hermes bridge from a prepared checkout",
+  "platform": "macos",
+  "status": "ready",
+  "mode": "independent-review",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "high",
+  "baseCommit": "0a736ad16e1ea7ffef37e434eba5bd46f483f95d",
+  "integrationBranch": "integration/cr12b-idea-110b-review",
+  "eligibleRoutes": ["marvin-macos"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": [
+    "Git",
+    "Node.js >=22.13.0",
+    "pnpm 11.19.0",
+    "Codex-supplied isolated checkout with stage zero already ready",
+    "authenticated GitHub CLI"
+  ],
+  "maxConcurrentClaimsPerRoute": 1,
+  "verification": {
+    "required": false,
+    "independence": "none"
+  },
+  "objective": "Using a reviewer profile different from both preparation-blocked REV-001 and REV-002, independently attack immutable CR12B-IDEA-110B implementation commit 0a736ad16e1ea7ffef37e434eba5bd46f483f95d from the exact already-prepared isolated checkout supplied by Codex. Determine whether the fixed Hermes bridge safely reuses connector-owned local or SSH routing without exposing locators or native identities, widening the signed permit, repeating a provider call, accepting replay or gateway-epoch drift, or converting uncertainty into success. Produce one source-linked report plus the required isolated V2 result manifest. Do not install dependencies, repair code, change architecture, contact Hermes, approve the block, or merge anything.",
+  "contractRefs": [
+    "docs/reviews/CR12B_IDEA_110B_INDEPENDENT_REVIEW_PACKET.md",
+    "docs/CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md",
+    "docs/CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md",
+    "docs/CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md",
+    "docs/SECURITY_AND_AUTHORITY.md",
+    "docs/CR3_DECISION_LOG.md",
+    "docs/WORKER_CHECKOUT_PREPARATION.md",
+    "src/idea-lab/v1/hermes-021-fixed-rpc-bridge.ts",
+    "src/idea-lab/v1/hermes-021-enrolled-gateway-port.ts",
+    "src/idea-lab/v1/hermes-021-enrolled-connection.ts",
+    "src/idea-lab/v1/hermes-021-filtered-driver.ts",
+    "src/idea-lab/v1/hermes-021-qualification-spend-store.ts",
+    "tests/idea-lab-hermes-021-fixed-rpc-bridge.test.ts",
+    "tests/idea-lab-hermes-021-enrolled-gateway-port.test.ts",
+    "tests/idea-lab-hermes-021-enrolled-connection.test.ts",
+    "tests/idea-lab-hermes-021-driver.test.ts",
+    "tests/idea-lab-hermes-021-qualification-spend-store.test.ts"
+  ],
+  "allowedPaths": [
+    "docs/reviews/CR12B_IDEA_110B_INDEPENDENT_REVIEW_REV_003.md"
+  ],
+  "forbiddenPrefixes": [
+    ".github",
+    "app",
+    "coordination/agent-build/capsules",
+    "coordination/agent-build/waves",
+    "db/migrations",
+    "package.json",
+    "pnpm-lock.yaml",
+    "scripts",
+    "skills",
+    "src",
+    "tests"
+  ],
+  "acceptanceCommands": [
+    "node scripts/qualification/platform-key-store-stage-zero.mjs --platform macos",
+    "npm run check",
+    "npm run lint",
+    "npm run test:cr12b",
+    "npm test",
+    "CI=true npm run test:build",
+    "npm run db:verify",
+    "git diff --check integration/cr12b-idea-110b-review...HEAD"
+  ],
+  "semanticAcceptance": [
+    "The report names exact implementation commit 0a736ad16e1ea7ffef37e434eba5bd46f483f95d, names a reviewer profile different from the REV-001 and REV-002 agents, and declares that the reviewer profile authored, repaired, and advised none of its product changes; any overlap produces blocked_incomplete_review.",
+    "Before claim, the reviewer confirms that the Codex-supplied isolated checkout exists at the exact privately handed-off path, is clean at the current integration head, and already returns ready_for_runtime_check from the exact stage-zero command. The reviewer does not create, install, copy, or link dependencies.",
+    "Before drawing a disposition, the reviewer executes every route-custody, fixed-turn, replay, authority, durable-spend, cleanup, sanitation, and upgrade-boundary attack required by docs/reviews/CR12B_IDEA_110B_INDEPENDENT_REVIEW_PACKET.md.",
+    "Every finding has a stable ID, severity, exact source line, reproducible attack, observed result, violated invariant, affected boundary, missing regression, and smallest safe remediation; passing producer tests alone are never a finding disposition.",
+    "The report separates independently observed source and test facts from documented, inferred, blocked, and unsupported claims and retains every real enrollment, owner qualification, receipt review, architect acceptance, live-panel, production database, hosting, and deployment blocker.",
+    "The only final disposition is accepted_provider_disabled_snapshot, remediation_required, or blocked_incomplete_review; it does not approve, merge, enroll, qualify, or contact Hermes.",
+    "The report contains no secret, raw host identity, machine locator, key material or path, gateway value, protected value, profile path, native session identifier, raw provider content, private infrastructure detail, personal path, production artifact, invented observation, source repair, architecture decision, or native/live effect claim.",
+    "The worker commits only the report as the implementation commit, then commits coordination/agent-build/results/CR12B-IDEA-110B-REV-003.json alone as the required metadata commit exactly as skills/agent-build-worker/SKILL.md specifies."
+  ],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 400,
+    "maxRepairIterations": 0
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop and leave the jobber unclaimed if Git, Node.js, pnpm 11.19.0, authenticated GitHub CLI, or the exact Codex-supplied prepared checkout is unavailable, dirty, on the wrong integration head, or not stage-zero ready.",
+    "The checkout preparation was a separate owner-authorized architect action. The reviewer has no authority to install, download, update, copy, link, approve-builds, alter package policy, or repair dependencies, and must stop before any such action.",
+    "Stop and submit a blocked report if the reviewer profile produced REV-001 or REV-002, authored, repaired, or advised the immutable implementation, or cannot establish independence.",
+    "Stop if implementation commit 0a736ad16e1ea7ffef37e434eba5bd46f483f95d is unavailable, differs from the capsule, or the review would require changing any product path or any path other than the report plus the separately required result manifest metadata commit.",
+    "Stop before repairing source, tests, contracts, migrations, workflow files, dependencies, acceptance criteria, or prior evidence; report findings for Codex disposition.",
+    "Stop before any Hermes or native process, SSH connection, provider call, credential or protected-value access, Keychain or vault action, service, listener, database outside disposable tests, external integration, deployment, DNS, hosting, destructive cleanup, or consequential effect.",
+    "GitHub access is limited to claiming this jobber, fetching metadata without changing the prepared tree, creating the exact producer branch in that checkout, opening the one report-only pull request, and submitting that URL through the queue controller."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR12B-IDEA-110B-REV-003.json"
+}
