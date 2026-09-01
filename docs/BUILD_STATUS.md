@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review | Captured connector boundaries, strict chronology, exact roster identity, and recursively immutable returned evidence; 171 CR12B tests; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
+| CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review; main-target integration in progress | Captured connector boundaries, strict chronology, exact roster identity, recursively immutable returned evidence, and Node 22.13 lazy-global portability; accepted product 171 CR12B tests, integration 172; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -335,6 +335,15 @@ report has SHA-256 `7cbd2f982956ff418e35dfacf71ee616a763fe60e20eb0b4d40acf553581
 the provider-disabled connector implementation-review blocker. No signer, route, port, connection, native attempt,
 provider call, credential access, live-panel authority, production database, deployment, hosting, or DNS effect is
 configured or authorized.
+
+Main-target integration PR #228 then exposed one minimum-runtime portability defect: Node `22.13.0` publishes the native
+`AbortController` through a paired lazy global accessor rather than the data property exposed by the newer Mac runtime.
+The integration repair captures either native form exactly once at module initialization, retains the existing Proxy and
+post-import substitution protections, and adds a paired-accessor regression proving one getter call and zero setter calls.
+Verification on the exact CI runtime passes 19/19 focused connector tests, 172/172 CR12B tests, 769/769 pretests, 418/420
+core tests with two intentional platform skips, 251/251 posttests, typecheck, full lint, production build with 3/3 rendered
+routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, and whitespace validation. No live/native/provider,
+credential, network, SSH, signer, route, database, deployment, or hosting effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,

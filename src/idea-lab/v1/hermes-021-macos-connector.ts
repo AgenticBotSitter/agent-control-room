@@ -28,7 +28,13 @@ export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_V1 =
 
 const nativeObjectFreezeV1 = Object.freeze, nativePromiseV1 = Promise;
 const nativeReflectApplyV1 = Reflect.apply, nativeReflectConstructV1 = Reflect.construct;
-const nativeAbortControllerCandidateV1 = ownDataPropertyValueV1(globalThis, "AbortController");
+const nativeAbortControllerDataCandidateV1 = ownDataPropertyValueV1(globalThis, "AbortController");
+const nativeAbortControllerGlobalGetterV1 = ownAccessorPropertyGetterV1(globalThis, "AbortController");
+let nativeAbortControllerCandidateV1 = nativeAbortControllerDataCandidateV1;
+if (!nativeAbortControllerCandidateV1 && nativeAbortControllerGlobalGetterV1) {
+  try { nativeAbortControllerCandidateV1 = nativeReflectApplyV1(nativeAbortControllerGlobalGetterV1, globalThis, []); }
+  catch { /* runtime readiness fails closed below */ }
+}
 const nativeAbortControllerConstructorV1 = typeof nativeAbortControllerCandidateV1 === "function"
   && !isHostProxyV1(nativeAbortControllerCandidateV1) ? nativeAbortControllerCandidateV1 as typeof AbortController : undefined;
 const nativeAbortControllerPrototypeV1 = nativeAbortControllerConstructorV1

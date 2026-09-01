@@ -17,14 +17,30 @@ returned connection evidence.
 - accepted connector product: `e028d6b4cd5ee55c053561a880fbf65d897dc2ad`;
 - frozen review packet SHA-256: `d8e205f0fb7c5a28a5f1d25c72618368f4c3372521c80d296fc6d484c8c3b417`;
 - accepted independent report SHA-256: `7cbd2f982956ff418e35dfacf71ee616a763fe60e20eb0b4d40acf553581af3f`;
-- CR12B verification: 171/171;
-- repository lifecycle: 769/769 pretests, 418 core passes with two intentional platform skips, 250/250 posttests;
+- accepted-product CR12B verification: 171/171;
+- integration verification under the exact CI baseline Node `22.13.0`: 172/172 CR12B tests;
+- repository lifecycle under Node `22.13.0`: 769/769 pretests, 418 core passes with two intentional platform skips,
+  251/251 posttests;
 - TypeScript, full lint, production build, and 3/3 rendered routes: pass;
 - database verification: all 32 migrations and 110 PostgreSQL tables;
 - macOS stage zero and whitespace validation: pass.
 
 All rejected connector snapshots and their immutable negative reports remain in the history. This integration does not
 reinterpret any negative review as a pass and does not drop the evidence that caused each remediation.
+
+## CI baseline portability repair
+
+The first main-target CI run exposed one runtime-shape difference rather than six independent connector failures. Node
+`22.13.0` publishes `globalThis.AbortController` through a paired lazy accessor, while the newer Mac Node runtime publishes
+it as an own data property. The connector previously captured only the data-property form and therefore failed closed
+before dispatch on the CI baseline.
+
+The integration repair captures either form once during trusted module initialization, validates the resulting constructor
+and its prototype operations through the existing Proxy-rejecting host boundary, and continues to ignore every post-import
+global or prototype substitution. A dedicated regression installs a paired lazy accessor, proves exactly one getter call
+and zero setter calls, opens the fixed route, and restores the host descriptor. The focused connector suite passes 19/19
+under both Node `22.13.0` and the Mac runtime. This repair adds no provider, process, network, filesystem, credential,
+locator, signer, route, or live authority.
 
 ## Authority boundary
 

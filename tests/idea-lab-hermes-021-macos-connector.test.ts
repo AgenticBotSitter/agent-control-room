@@ -292,6 +292,29 @@ test("CR12B-IDEA-110I ignores post-import native global and prototype substituti
   }
 });
 
+test("CR12B-IDEA-110P captures Node's lazy global AbortController accessor once", async () => {
+  const nativeConstructor = AbortController,
+    original = Object.getOwnPropertyDescriptor(globalThis, "AbortController");
+  assert.ok(original);
+  let gets = 0, sets = 0;
+  Object.defineProperty(globalThis, "AbortController", {
+    configurable: true,
+    enumerable: false,
+    get() { gets += 1; return nativeConstructor; },
+    set() { sets += 1; },
+  });
+  try {
+    const freshModulePath = "../src/idea-lab/v1/hermes-021-macos-connector.ts?lazy-global-accessor";
+    const fresh = await import(freshModulePath) as
+      typeof import("../src/idea-lab/v1/hermes-021-macos-connector.ts");
+    const connector = new fresh.IdeaLabHermes021MacosConnectorV1(new FixturePrivatePort());
+    await open(connector);
+    assert.deepEqual([gets, sets], [1, 0]);
+  } finally {
+    Object.defineProperty(globalThis, "AbortController", original);
+  }
+});
+
 test("CR12B-IDEA-110I ignores post-import collection and host-operation substitution", async () => {
   const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port),
     input = openInput(), handoff = createHostResultCollectorV1();

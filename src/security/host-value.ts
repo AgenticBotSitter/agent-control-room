@@ -58,7 +58,7 @@ export function ownDataPropertyValueV1(value: unknown, key: PropertyKey): unknow
 export function ownAccessorPropertyGetterV1(value: unknown, key: PropertyKey): ((...args: unknown[]) => unknown) | undefined {
   if (!value || (typeof value !== "object" && typeof value !== "function") || isHostProxyV1(value)) return undefined;
   const descriptor = objectGetOwnPropertyDescriptor(value, key);
-  return descriptor && !("value" in descriptor) && descriptor.set === undefined
+  return descriptor && !("value" in descriptor)
     && typeof descriptor.get === "function" && !isHostProxyV1(descriptor.get)
     ? descriptor.get as (...args: unknown[]) => unknown : undefined;
 }
