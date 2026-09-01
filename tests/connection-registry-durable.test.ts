@@ -151,5 +151,9 @@ test("CR13A-LIVE-020 reports missing without telemetry instead of inventing live
       .read({ tenantId, now });
     assert.deepEqual([projection.summary.currentSignalCount, projection.summary.staleSignalCount,
       projection.summary.missingSignalCount, projection.connections[0]?.signalFreshnessBasis], [0, 0, 1, "none"]);
+    await raw.exec(`DROP TRIGGER control_connection_enrollments_append_only ON control_connection_enrollments`);
+    await raw.query(`DELETE FROM control_connection_enrollments WHERE tenant_id=$1`, [tenantId]);
+    await assert.rejects(() => store.read({ tenantId, now }),
+      (error: unknown) => error instanceof ConnectionRegistryErrorV1 && error.safeCode === "integrity_failed");
   } finally { await raw.close(); }
 });

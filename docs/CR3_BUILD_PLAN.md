@@ -901,7 +901,7 @@ Status: implementation candidate complete; independent security/integrity review
 `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` and ADR-149.
 
 Migration 0034 and `ConnectionRegistryStoreV1` persist the already-sanitized signed Hermes enrollment result as a
-tenant- and canonical-node-bound append-only revision. Keyed row authentication, payload digests, exact-replay handling,
+tenant- and canonical-node-bound append-only revision. A per-tenant digest chain and authenticated stream head, keyed row authentication, payload digests, exact-replay handling,
 monotonic renewal, active-route/profile uniqueness, capacity bounds, protected reconstruction, and database mutation
 guards make restart truth deterministic without exposing protected identifiers. The repository-fake pilot uses this
 registry instead of an in-memory empty source.

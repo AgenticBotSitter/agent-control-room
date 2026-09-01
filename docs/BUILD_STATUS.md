@@ -791,13 +791,13 @@ viewport claim was made; production route rendering passed. The remediation pack
 `0cbe9d35414ca3ab39d3abe8f1556234049562f6e0e88ce27721687f951de476`.
 
 CR13A-LIVE-020 now supplies the first restart-safe protected connection registry. Migration 0034 stores immutable,
-tenant- and canonical-node-bound enrollment revisions with keyed authentication, payload digests, exact replay,
+tenant- and canonical-node-bound enrollment revisions with a per-tenant digest chain, authenticated stream head, keyed authentication, payload digests, exact replay,
 monotonic renewal, duplicate active-route/profile rejection, bounded capacity, and database mutation guards. The local
 pilot reads this registry rather than synthesizing an in-memory roster. Connection Center separately composes the
 existing authenticated five-minute fleet telemetry fact as `current`, `stale`, or `missing`; discovery, capability,
 benchmark, enrollment, runtime compatibility, and qualification never imply recency. Raw tenant, connection, enrollment,
 node, route, profile, issuer, and host-key identity remains server-side. TypeScript, 13 focused tests, 29 combined CR13A
-tests, and migrations through 0034/113 tables pass. No SSH, native runtime, provider, credential, production database,
+tests, and migrations through 0034/114 tables pass. No SSH, native runtime, provider, credential, production database,
 deployment, or network effect occurred. The complete npm lifecycle also passes with 769 pretests, 418 core passes plus
 two intentional platform skips, and 264 posttests; lint, macOS stage zero, production build, and 4/4 rendered routes are
 green. A different independent security/integrity review is required before acceptance.

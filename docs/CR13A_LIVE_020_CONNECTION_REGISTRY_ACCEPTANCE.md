@@ -5,8 +5,14 @@
 
 ## Delivered boundary
 
-- Migration `0034_cr13a_connection_registry.sql` adds an append-only protected enrollment history with tenant/node foreign keys, immutable revisions, expiry indexing, and update/delete/truncate guards.
-- `ConnectionRegistryStoreV1` accepts only a previously sanitized signed-enrollment result with an exact tenant/node/connection binding. Records carry a keyed authentication tag and payload digest. Exact replay is inert; changed replay, backwards renewal, duplicate active route/profile identity, cross-scope input, over-capacity input, and damaged rows fail closed.
+- Migration `0034_cr13a_connection_registry.sql` adds an append-only protected enrollment history with tenant/node foreign
+  keys, immutable revisions, a per-tenant digest chain and authenticated stream head, expiry indexing, and
+  update/delete/truncate guards.
+- `ConnectionRegistryStoreV1` accepts only a previously sanitized signed-enrollment result with an exact
+  tenant/node/connection binding. Records carry a keyed authentication tag, payload digest, sequence, and previous-record
+  digest. The authenticated head and complete-chain reconstruction detect row mutation or partial deletion. Exact replay
+  is inert; changed replay, backwards renewal, duplicate active route/profile identity, cross-scope input, over-capacity
+  input, and damaged rows fail closed.
 - Registry reconstruction verifies every selected current row before building the existing duplicate- and expiry-safe roster. Protected connection, enrollment, node, route, profile, issuer, host-key, and tenant identities remain server-side.
 - `AuthenticatedFleetTelemetryFreshnessSourceV1` composes the existing authenticated fleet-signal store. Only the five-minute telemetry contract can produce a `current` result. Expired or future telemetry is `stale`; missing telemetry is `missing`. Discovery, capability, and benchmark records do not imply recency.
 - The protected Connection Center reports enrollment, exact runtime compatibility, signal freshness, qualification, and live-panel state as separate facts. A current signal still grants no approval, command, lease, execution, or live-panel authority.
@@ -28,8 +34,8 @@
 - Complete npm lifecycle passes: 769/769 pretests, 418/420 core tests with the two intentional platform skips, and
   264/264 posttests.
 - Full lint, macOS stage zero, production build, and 4/4 rendered-route checks pass.
-- Migrations `0001` through `0034` apply and verify 113 PostgreSQL tables.
-- Restart recovery, renewal, exact replay, changed replay, cross-tenant binding, duplicate routes, row tampering,
+- Migrations `0001` through `0034` apply and verify 114 PostgreSQL tables.
+- Restart recovery, renewal, exact replay, changed replay, cross-tenant binding, duplicate routes, row mutation/deletion,
   behavioral freshness rejection, current/stale/missing telemetry, discovery-not-liveness, qualification separation, and
   locator-redaction regressions pass.
 

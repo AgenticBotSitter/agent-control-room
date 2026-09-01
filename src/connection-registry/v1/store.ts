@@ -9,14 +9,25 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
 import { dataMethodV1, exactHostDataSnapshotV1, exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
 
+interface RegistryHeadRowV1 {
+  tenant_id: string;
+  last_sequence: number | string;
+  last_record_digest: string | null;
+  head_auth_tag: string;
+  updated_at: string | Date;
+}
+
 interface EnrollmentRowV1 {
   tenant_id: string;
   connection_id: string;
   enrollment_id: string;
   node_id: string;
   revision: number | string;
+  sequence: number | string;
   result_digest: string;
   payload_digest: string;
+  previous_record_digest: string | null;
+  record_digest: string;
   record_auth_tag: string;
   issued_at: string | Date;
   expires_at: string | Date;
@@ -24,8 +35,10 @@ interface EnrollmentRowV1 {
   payload: unknown;
 }
 
-const columns = `tenant_id,connection_id,enrollment_id,node_id,revision,result_digest,payload_digest,
-  record_auth_tag,issued_at,expires_at,recorded_at,payload`;
+const columns = `tenant_id,connection_id,enrollment_id,node_id,revision,sequence,result_digest,payload_digest,
+  previous_record_digest,record_digest,record_auth_tag,issued_at,expires_at,recorded_at,payload`;
+const capturedArraySort = Array.prototype.sort;
+const capturedReflectApply = Reflect.apply;
 
 function instant(value: string | Date): string {
   return typeof value === "string" ? new Date(value).toISOString() : value.toISOString();
@@ -36,18 +49,17 @@ function same(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function rowMaterial(row: Omit<EnrollmentRowV1, "record_auth_tag" | "payload">) {
+function headMaterial(row: Omit<RegistryHeadRowV1, "head_auth_tag">) {
+  return { tenantId: row.tenant_id, lastSequence: Number(row.last_sequence),
+    lastRecordDigest: row.last_record_digest, updatedAt: instant(row.updated_at) };
+}
+
+function recordMaterial(row: Omit<EnrollmentRowV1, "record_auth_tag" | "payload" | "record_digest">) {
   return {
-    tenantId: row.tenant_id,
-    connectionId: row.connection_id,
-    enrollmentId: row.enrollment_id,
-    nodeId: row.node_id,
-    revision: Number(row.revision),
-    resultDigest: row.result_digest,
-    payloadDigest: row.payload_digest,
-    issuedAt: instant(row.issued_at),
-    expiresAt: instant(row.expires_at),
-    recordedAt: instant(row.recorded_at),
+    tenantId: row.tenant_id, connectionId: row.connection_id, enrollmentId: row.enrollment_id, nodeId: row.node_id,
+    revision: Number(row.revision), sequence: Number(row.sequence), resultDigest: row.result_digest,
+    payloadDigest: row.payload_digest, previousRecordDigest: row.previous_record_digest,
+    issuedAt: instant(row.issued_at), expiresAt: instant(row.expires_at), recordedAt: instant(row.recorded_at),
   };
 }
 
@@ -63,7 +75,6 @@ export class ConnectionRegistryErrorV1 extends Error {
  * values and are never returned by the Connection Center projection.
  */
 export class ConnectionRegistryStoreV1 {
-  readonly #query: DatabaseClient["query"];
   readonly #transaction: DatabaseClient["transaction"];
   readonly #key: Uint8Array;
 
@@ -74,32 +85,78 @@ export class ConnectionRegistryStoreV1 {
     if (!db || typeof db !== "object" || isHostProxyV1(db) || !query || !transaction || !key || key.byteLength !== 32) {
       throw new ConnectionRegistryErrorV1("invalid_input");
     }
-    this.#query = ((statement, params) => query.call(db, statement, params)) as DatabaseClient["query"];
     this.#transaction = ((callback) => transaction.call(db, callback)) as DatabaseClient["transaction"];
     this.#key = key.copy();
   }
 
-  #tag(row: Omit<EnrollmentRowV1, "record_auth_tag" | "payload">): string {
-    return hmacSha256Tag(this.#key, { kind: "connection_enrollment", ...rowMaterial(row) });
+  #headTag(row: Omit<RegistryHeadRowV1, "head_auth_tag">): string {
+    return hmacSha256Tag(this.#key, { kind: "connection_registry_head", ...headMaterial(row) });
   }
 
-  #verify(row: EnrollmentRowV1, tenantId: string): IdeaLabHermes021ConnectionSafeResultV1 {
+  #recordDigest(row: Omit<EnrollmentRowV1, "record_auth_tag" | "payload" | "record_digest">): string {
+    return sha256Digest({ kind: "connection_enrollment_record", ...recordMaterial(row) });
+  }
+
+  #recordTag(row: Omit<EnrollmentRowV1, "record_auth_tag" | "payload">): string {
+    const { record_digest: recordDigest, ...withoutDigest } = row;
+    return hmacSha256Tag(this.#key, { kind: "connection_enrollment_record", ...recordMaterial(withoutDigest), recordDigest });
+  }
+
+  #verifyHead(row: RegistryHeadRowV1, tenantId: string): void {
+    let valid = false;
+    try {
+      valid = row.tenant_id === tenantId && Number.isSafeInteger(Number(row.last_sequence))
+        && Number(row.last_sequence) >= 0 && same(row.head_auth_tag, this.#headTag(row));
+    } catch { valid = false; }
+    if (!valid) throw new ConnectionRegistryErrorV1("integrity_failed");
+  }
+
+  #verifyRecord(row: EnrollmentRowV1, tenantId: string, expectedSequence: number,
+    expectedPreviousDigest: string | null): IdeaLabHermes021ConnectionSafeResultV1 {
     let value: IdeaLabHermes021ConnectionSafeResultV1;
     try { value = parseIdeaLabHermes021ConnectionSafeResultV1(row.payload); }
     catch { throw new ConnectionRegistryErrorV1("integrity_failed"); }
     let valid = false;
     try {
+      const { record_digest: _recordDigest, record_auth_tag: _recordAuthTag, payload: _payload, ...digestInput } = row;
+      void _recordDigest; void _recordAuthTag; void _payload;
       valid = row.tenant_id === tenantId && value.tenantId === tenantId
+        && Number(row.sequence) === expectedSequence && row.previous_record_digest === expectedPreviousDigest
         && row.connection_id === value.connectionId && row.enrollment_id === value.enrollmentId
         && row.node_id === value.nodeId && row.result_digest === value.resultDigest
         && row.payload_digest === sha256Digest(value)
         && instant(row.issued_at) === value.issuedAt && instant(row.expires_at) === value.expiresAt
-        && same(row.record_auth_tag, this.#tag(row));
+        && row.record_digest === this.#recordDigest(digestInput)
+        && same(row.record_auth_tag, this.#recordTag(row));
     } catch { valid = false; }
     if (!valid) throw new ConnectionRegistryErrorV1("integrity_failed");
     try { assertNoSecretMaterial(value, "connection enrollment"); }
     catch { throw new ConnectionRegistryErrorV1("integrity_failed"); }
     return value;
+  }
+
+  async #verifiedStream(tx: DatabaseSession, tenantId: string): Promise<{
+    head?: RegistryHeadRowV1; rows: EnrollmentRowV1[]; values: IdeaLabHermes021ConnectionSafeResultV1[];
+  }> {
+    const head = (await tx.query<RegistryHeadRowV1>(`SELECT tenant_id,last_sequence,last_record_digest,head_auth_tag,updated_at
+      FROM control_connection_registry_heads WHERE tenant_id=$1 FOR UPDATE`, [tenantId])).rows[0];
+    const rows = (await tx.query<EnrollmentRowV1>(`SELECT ${columns} FROM control_connection_enrollments
+      WHERE tenant_id=$1 ORDER BY sequence`, [tenantId])).rows;
+    if (!head) {
+      if (rows.length) throw new ConnectionRegistryErrorV1("integrity_failed");
+      return { rows, values: [] };
+    }
+    this.#verifyHead(head, tenantId);
+    const values: IdeaLabHermes021ConnectionSafeResultV1[] = [];
+    let previous: string | null = null;
+    for (let index = 0; index < rows.length; index += 1) {
+      values.push(this.#verifyRecord(rows[index]!, tenantId, index + 1, previous));
+      previous = rows[index]!.record_digest;
+    }
+    if (Number(head.last_sequence) !== rows.length || head.last_record_digest !== previous) {
+      throw new ConnectionRegistryErrorV1("integrity_failed");
+    }
+    return { head, rows, values };
   }
 
   async enrollAuthenticated(value: unknown, recordedAtValue: string,
@@ -116,9 +173,8 @@ export class ConnectionRegistryStoreV1 {
       || Date.parse(enrollment.expiresAt) <= recorded) throw new ConnectionRegistryErrorV1("invalid_input");
     try { assertNoSecretMaterial(enrollment, "connection enrollment"); }
     catch { throw new ConnectionRegistryErrorV1("invalid_input"); }
-    try {
-      return await this.#transaction((tx) => this.#persist(tx, enrollment, recordedAtValue));
-    } catch (error) {
+    try { return await this.#transaction((tx) => this.#persist(tx, enrollment, recordedAtValue)); }
+    catch (error) {
       if (error instanceof ConnectionRegistryErrorV1) throw error;
       throw new ConnectionRegistryErrorV1("source_unavailable");
     }
@@ -128,47 +184,69 @@ export class ConnectionRegistryStoreV1 {
     recordedAt: string): Promise<{ replayed: boolean; revision: number }> {
     const tenant = await tx.query(`SELECT id FROM tenants WHERE id=$1 FOR UPDATE`, [value.tenantId]);
     if (!tenant.rows[0]) throw new ConnectionRegistryErrorV1("scope_mismatch");
-    const priorEnrollment = await tx.query<EnrollmentRowV1>(`SELECT ${columns} FROM control_connection_enrollments
-      WHERE tenant_id=$1 AND enrollment_id=$2 FOR UPDATE`, [value.tenantId, value.enrollmentId]);
-    if (priorEnrollment.rows[0]) {
-      const verified = this.#verify(priorEnrollment.rows[0], value.tenantId);
-      if (verified.resultDigest !== value.resultDigest) throw new ConnectionRegistryErrorV1("replay_conflict");
-      return { replayed: true, revision: Number(priorEnrollment.rows[0].revision) };
+    const origin: Omit<RegistryHeadRowV1, "head_auth_tag"> = { tenant_id: value.tenantId, last_sequence: 0,
+      last_record_digest: null, updated_at: recordedAt };
+    await tx.query(`INSERT INTO control_connection_registry_heads(tenant_id,last_sequence,last_record_digest,head_auth_tag,updated_at)
+      VALUES($1,0,NULL,$2,$3) ON CONFLICT(tenant_id) DO NOTHING`, [value.tenantId, this.#headTag(origin), recordedAt]);
+    const stream = await this.#verifiedStream(tx, value.tenantId);
+    let priorIndex = -1;
+    for (let index = 0; index < stream.values.length; index += 1) {
+      if (stream.values[index]!.enrollmentId === value.enrollmentId) { priorIndex = index; break; }
     }
-    const latestResult = await tx.query<EnrollmentRowV1>(`SELECT ${columns} FROM control_connection_enrollments
-      WHERE tenant_id=$1 AND connection_id=$2 ORDER BY revision DESC LIMIT 1 FOR UPDATE`,
-    [value.tenantId, value.connectionId]);
-    const latest = latestResult.rows[0];
-    const currentRows = (await tx.query<EnrollmentRowV1>(`SELECT ${columns} FROM (
-      SELECT DISTINCT ON (connection_id) ${columns} FROM control_connection_enrollments
-      WHERE tenant_id=$1 ORDER BY connection_id,revision DESC) current ORDER BY connection_id`, [value.tenantId])).rows;
-    const activeOtherConnections = currentRows.map((row) => this.#verify(row, value.tenantId))
-      .filter((candidate) => candidate.connectionId !== value.connectionId
-        && Date.parse(candidate.expiresAt) > Date.parse(recordedAt));
-    if (activeOtherConnections.some((candidate) => candidate.connectorRouteDigest === value.connectorRouteDigest
-      || candidate.profileIdentityDigest === value.profileIdentityDigest)) {
-      throw new ConnectionRegistryErrorV1("replay_conflict");
+    if (priorIndex >= 0) {
+      const prior = stream.values[priorIndex]!;
+      if (prior.resultDigest !== value.resultDigest) throw new ConnectionRegistryErrorV1("replay_conflict");
+      return { replayed: true, revision: Number(stream.rows[priorIndex]!.revision) };
     }
+    const latestByConnection: Array<{ row: EnrollmentRowV1; value: IdeaLabHermes021ConnectionSafeResultV1 }> = [];
+    for (let index = 0; index < stream.rows.length; index += 1) {
+      const candidate = { row: stream.rows[index]!, value: stream.values[index]! };
+      let replaced = false;
+      for (let current = 0; current < latestByConnection.length; current += 1) {
+        if (latestByConnection[current]!.value.connectionId === candidate.value.connectionId) {
+          latestByConnection[current] = candidate; replaced = true; break;
+        }
+      }
+      if (!replaced) latestByConnection[latestByConnection.length] = candidate;
+    }
+    let latest: { row: EnrollmentRowV1; value: IdeaLabHermes021ConnectionSafeResultV1 } | undefined;
+    const activeOtherConnections: IdeaLabHermes021ConnectionSafeResultV1[] = [];
+    for (const candidate of latestByConnection) {
+      if (candidate.value.connectionId === value.connectionId) latest = candidate;
+      else if (Date.parse(candidate.value.expiresAt) > Date.parse(recordedAt)) {
+        activeOtherConnections[activeOtherConnections.length] = candidate.value;
+      }
+    }
+    for (const candidate of activeOtherConnections) if (candidate.connectorRouteDigest === value.connectorRouteDigest
+      || candidate.profileIdentityDigest === value.profileIdentityDigest) throw new ConnectionRegistryErrorV1("replay_conflict");
     let revision = 1;
     if (latest) {
-      const prior = this.#verify(latest, value.tenantId);
-      if (Date.parse(value.issuedAt) <= Date.parse(prior.issuedAt)
-        || Date.parse(value.expiresAt) <= Date.parse(prior.expiresAt)) {
+      if (Date.parse(value.issuedAt) <= Date.parse(latest.value.issuedAt)
+        || Date.parse(value.expiresAt) <= Date.parse(latest.value.expiresAt)) {
         throw new ConnectionRegistryErrorV1("replay_conflict");
       }
-      revision = Number(latest.revision) + 1;
-    } else {
-      if (activeOtherConnections.length >= 32) throw new ConnectionRegistryErrorV1("capacity_exceeded");
-    }
-    const row: Omit<EnrollmentRowV1, "record_auth_tag" | "payload"> = {
+      revision = Number(latest.row.revision) + 1;
+    } else if (activeOtherConnections.length >= 32) throw new ConnectionRegistryErrorV1("capacity_exceeded");
+
+    const sequence = stream.rows.length + 1;
+    const rowBase: Omit<EnrollmentRowV1, "record_auth_tag" | "payload" | "record_digest"> = {
       tenant_id: value.tenantId, connection_id: value.connectionId, enrollment_id: value.enrollmentId,
-      node_id: value.nodeId, revision, result_digest: value.resultDigest, payload_digest: sha256Digest(value),
+      node_id: value.nodeId, revision, sequence, result_digest: value.resultDigest, payload_digest: sha256Digest(value),
+      previous_record_digest: stream.head?.last_record_digest ?? null,
       issued_at: value.issuedAt, expires_at: value.expiresAt, recorded_at: recordedAt,
     };
+    const recordDigest = this.#recordDigest(rowBase);
+    const row = { ...rowBase, record_digest: recordDigest };
     await tx.query(`INSERT INTO control_connection_enrollments(${columns})
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)`,
-    [row.tenant_id,row.connection_id,row.enrollment_id,row.node_id,row.revision,row.result_digest,row.payload_digest,
-      this.#tag(row),row.issued_at,row.expires_at,row.recorded_at,JSON.stringify(value)]);
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
+    [row.tenant_id,row.connection_id,row.enrollment_id,row.node_id,row.revision,row.sequence,row.result_digest,
+      row.payload_digest,row.previous_record_digest,row.record_digest,this.#recordTag(row),row.issued_at,row.expires_at,
+      row.recorded_at,JSON.stringify(value)]);
+    const nextHead: Omit<RegistryHeadRowV1, "head_auth_tag"> = { tenant_id: value.tenantId, last_sequence: sequence,
+      last_record_digest: recordDigest, updated_at: recordedAt };
+    await tx.query(`UPDATE control_connection_registry_heads SET last_sequence=$1,last_record_digest=$2,
+      head_auth_tag=$3,updated_at=$4 WHERE tenant_id=$5`,
+    [sequence,recordDigest,this.#headTag(nextHead),recordedAt,value.tenantId]);
     return { replayed: false, revision };
   }
 
@@ -179,15 +257,28 @@ export class ConnectionRegistryStoreV1 {
     if (typeof tenantId !== "string" || !Number.isFinite(now) || new Date(now).toISOString() !== nowValue) {
       throw new ConnectionRegistryErrorV1("invalid_input");
     }
-    let rows: EnrollmentRowV1[];
     try {
-      rows = (await this.#query<EnrollmentRowV1>(`SELECT ${columns} FROM (
-        SELECT DISTINCT ON (connection_id) ${columns} FROM control_connection_enrollments
-        WHERE tenant_id=$1 ORDER BY connection_id,revision DESC) current ORDER BY connection_id`, [tenantId])).rows;
-    } catch { throw new ConnectionRegistryErrorV1("source_unavailable"); }
-    const connections = rows.map((row) => this.#verify(row, tenantId))
-      .filter((value) => Date.parse(value.expiresAt) > now);
-    try { return buildIdeaLabHermes021ConnectionRosterV1({ tenantId, evaluatedAt: nowValue, connections }); }
-    catch { throw new ConnectionRegistryErrorV1("integrity_failed"); }
+      return await this.#transaction(async (tx) => {
+        const stream = await this.#verifiedStream(tx, tenantId);
+        const current: IdeaLabHermes021ConnectionSafeResultV1[] = [];
+        for (const value of stream.values) {
+          let replaced = false;
+          for (let index = 0; index < current.length; index += 1) if (current[index]!.connectionId === value.connectionId) {
+            current[index] = value; replaced = true; break;
+          }
+          if (!replaced) current[current.length] = value;
+        }
+        const connections: IdeaLabHermes021ConnectionSafeResultV1[] = [];
+        for (const value of current) if (Date.parse(value.expiresAt) > now) connections[connections.length] = value;
+        capturedReflectApply(capturedArraySort, connections,
+          [(left: IdeaLabHermes021ConnectionSafeResultV1, right: IdeaLabHermes021ConnectionSafeResultV1) => (
+            left.connectionId < right.connectionId ? -1 : left.connectionId > right.connectionId ? 1 : 0)]);
+        try { return buildIdeaLabHermes021ConnectionRosterV1({ tenantId, evaluatedAt: nowValue, connections }); }
+        catch { throw new ConnectionRegistryErrorV1("integrity_failed"); }
+      });
+    } catch (error) {
+      if (error instanceof ConnectionRegistryErrorV1) throw error;
+      throw new ConnectionRegistryErrorV1("source_unavailable");
+    }
   }
 }

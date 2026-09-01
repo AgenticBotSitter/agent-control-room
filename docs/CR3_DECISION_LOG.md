@@ -2646,7 +2646,7 @@ redaction, digest, version wording, blocker, or negative-authority change requir
 ## ADR-149 — enrollment persistence and signal freshness are independent protected facts
 
 **Decision:** Persist sanitized signed Hermes enrollment results in one append-only, tenant- and canonical-node-bound
-PostgreSQL registry with keyed row authentication and protected reconstruction. Compose recency only from the existing
+PostgreSQL registry with a per-tenant digest chain, authenticated stream head, keyed row authentication, and protected reconstruction. Compose recency only from the existing
 authenticated node-fleet telemetry record and its five-minute maximum lifetime. Public Connection Center output labels
 that fact `current`, `stale`, or `missing`; it never labels it online, healthy, available, qualified, or authorized.
 Enrollment, runtime compatibility, telemetry freshness, qualification, live-panel admission, and execution authority are
