@@ -691,9 +691,9 @@ It rejects gateway-epoch changes, replay gaps or truncation, malformed terminal 
 and uncertain outcomes without retry; cleanup is attempt-bound even when route opening was uncertain. The signed owner
 window now binds participant identity and runtime identity, and the enrollment method set explicitly includes close.
 
-Next: independently review the exact 110F macOS connector candidate, create one real signed enrollment through the connector, refresh
-all affected packet and implementation pins, and only then ask the owner for a new attached-Terminal qualification
-window.
+Next: independently re-review the exact 110G connector remediation, then create one real signed enrollment through the
+accepted connector, refresh all affected packet and implementation pins, and only then ask the owner for a new
+attached-Terminal qualification window.
 
 ## CR12B-IDEA-110C — default-blocked enrollment readiness
 
@@ -707,9 +707,12 @@ Those seven gates cannot be re-digested into success, old owner text is non-reus
 connection/native/provider/network effect counts remain zero.
 
 Review attempts #198 and #201 stopped before implementation review. Jobbers #202, #205, and #208 then preserved two
-negative reports, two remediation rounds, and final accepted report PR #209. IDEA-110F now implements the macOS protocol
-guard for an injected Hermes Desktop private port. Next: independently review the connector candidate, then separately
-accept its trusted node signer and one signed connection enrollment before any native attempt.
+negative reports, two remediation rounds, and final accepted report PR #209. IDEA-110F implemented the first macOS
+protocol guard for an injected Hermes Desktop private port. Independent jobber #211/PR #212 rejected it with two High
+and three Medium findings. IDEA-110G closes all five using intrinsic-only cancellation, pre-abort zero dispatch,
+possible-session cleanup, bounded private error replacement, distinct digest domains, and a digest-only connection
+identity at the connector seam. Next: independently re-review the remediation, then separately accept its trusted node
+signer and one signed connection enrollment before any native attempt.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 

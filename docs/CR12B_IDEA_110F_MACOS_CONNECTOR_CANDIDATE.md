@@ -1,7 +1,8 @@
 # CR12B-IDEA-110F — macOS Hermes connector candidate
 
-**Status:** Implemented locally as a provider-disabled candidate; independent security review is required before the
-connector can be marked accepted or configured.
+**Status:** Preserved rejected candidate. Independent jobber #211/PR #212 returned `remediation_required` with two High
+and three Medium findings. The immutable report SHA-256 is
+`d9a1acb60b3a272a71469fc07574db2d504100f7a382fb33a702a50c585b5808`; remediation is in IDEA-110G.
 
 ## Outcome
 
@@ -41,11 +42,13 @@ the complete lifecycle passes 769/769 pretests, 414/416 core tests with two inte
 posttests. The production build, 3/3 rendered routes, all 32 migrations with 110 PostgreSQL tables, macOS stage zero, and
 whitespace validation also pass.
 
-## Remaining gate
+## Independent result
 
-The implementation is frozen at commit `70f5890b3be5162896a585dae458a9a9c02e8036`. A different independent reviewer must
-attack that exact candidate using packet SHA-256
-`59e79825dd1b537f8388ae4a7bf429a523d1c3d9256d403c7aef5b690a7d7b2f`. Producer tests cannot
-set `connectorImplementationAccepted`. Even an accepted report will not
-configure the private port, enroll a signer or route, refresh the owner packet, authorize a command, or permit a native
-attempt.
+The implementation is frozen at commit `70f5890b3be5162896a585dae458a9a9c02e8036` and was attacked against packet
+SHA-256 `59e79825dd1b537f8388ae4a7bf429a523d1c3d9256d403c7aef5b690a7d7b2f`. Producer tests did not set
+`connectorImplementationAccepted`, and the independent result did not configure the private port, enroll a signer or
+route, refresh the owner packet, authorize a command, or permit a native attempt.
+
+That review completed with five findings: late-successful create cleanup bypass, behavioral/pre-aborted signal dispatch,
+raw private error leakage, aliased authority domains, and locator-shaped connection identity. The candidate remains
+rejected. See `CR12B_IDEA_110G_CONNECTOR_REVIEW_REMEDIATION.md` for the replacement and its new review gate.

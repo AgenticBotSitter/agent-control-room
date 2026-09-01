@@ -7,6 +7,8 @@ import {
   IDEA_LAB_HERMES_021_FIXED_RPC_IMPLEMENTATION_COMMIT_V1,
   IDEA_LAB_HERMES_021_FIXED_RPC_REVIEW_PACKET_SHA256_V1,
   IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1,
+  IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1,
+  IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1,
   IDEA_LAB_HERMES_021_PRIOR_REVIEW_REPORT_SHA256_V1,
   IdeaLabErrorV1,
   ideaLabHermes021EnrollmentReadinessV1,
@@ -27,10 +29,17 @@ test("CR12B-IDEA-110C binds the exact bridge and blocks before any real enrollme
     readiness.ownerCommandEmitted, readiness.oldAuthorizationReusable],
   ["blocked_before_real_enrollment", "accepted_provider_disabled_snapshot", false, false, false]);
   assert.equal(readiness.independentReviewerVerified, true);
+  assert.deepEqual([readiness.macosConnectorRemediationCommit,
+    readiness.macosConnectorIndependentReviewReportSha256,
+    readiness.macosConnectorIndependentReviewDisposition,
+    readiness.macosConnectorRemediationReviewPending],
+  [IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1,
+    IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1,
+    "remediation_required", true]);
   assert.deepEqual([readiness.priorIndependentReviewDisposition, readiness.latestIndependentReviewDisposition],
     ["remediation_required", "remediation_required"]);
   assert.deepEqual(readiness.blockerCodes, [
-    "connector_implementation_missing", "trusted_node_signer_not_enrolled",
+    "connector_implementation_unaccepted", "trusted_node_signer_not_enrolled",
     "signed_connection_enrollment_missing", "effect_free_preflight_missing", "owner_packet_refresh_missing",
     "fresh_owner_authorization_missing", "native_qualification_missing",
   ]);
@@ -51,6 +60,8 @@ test("CR12B-IDEA-110C rejects re-digested review, connector, enrollment, command
   for (const changed of [
     { independentReviewDisposition: "second_remediation_re_review_pending", independentReviewerVerified: false },
     { connectorImplementationAccepted: true }, { signedConnectionEnrollmentAccepted: true },
+    { macosConnectorIndependentReviewDisposition: "accepted_provider_disabled_snapshot",
+      macosConnectorRemediationReviewPending: false },
     { realEnrollmentEligible: true, ownerCommandEmitted: true },
     { grantsCommandAuthority: true, grantsExecutionAuthority: true },
     { fixedRpcImplementationCommit: "f".repeat(40) },

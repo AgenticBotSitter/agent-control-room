@@ -2458,3 +2458,33 @@ stable least-authority protocol.
 **Reevaluate:** After independent review of the exact IDEA-110F candidate. Any changed connector protocol, Hermes source
 manifest, runtime revision, private-port implementation, signer, or route invalidates later evidence and keeps native use
 blocked.
+
+## ADR-145 — Cancellation cannot erase possible native state or expose private diagnostics
+
+**Decision:** The connector treats `session.create` as cleanup-requiring before private dispatch and joins any active call
+before deciding whether route close is eligible. A canceled or uncertain create is never retried; cleanup may reconcile
+it through the fixed private operation set. Caller cancellation is observed only through captured host intrinsics over a
+genuine exact AbortSignal, and known pre-abort prevents private dispatch. Private-port exceptions are discarded and
+replaced by bounded connector errors. Connection, route, permit, profile, conversation, lease, session, and epoch
+identities are domain-separated; the connector receives only a derived connection identity digest, never the signed
+human-readable connection ID or a native locator.
+
+**Why:** IDEA-110F's first independent review proved that a successful native create can return after cancellation, that
+genuine AbortSignal objects remain behaviorally mutable through own descriptors, that private errors can carry native
+diagnostics, and that syntactically valid digests do not prove distinct authority domains. Abort is a request to stop,
+not evidence that a native effect did not happen. Locator custody and safe errors must hold at the connector itself, not
+only at an outer gateway.
+
+**Alternatives rejected:** Treat abort as proof of no session; check cleanup eligibility before joining the active call;
+dispatch already-aborted requests and reject only their receipts; dynamically read caller signal properties; rethrow or
+wrap private errors; accept equal values in different authority fields; send a connection label to the Mac-private port;
+or retry an uncertain create or cleanup operation.
+
+**Trade-off:** A possible create can force cleanup even when the private call did not return a session identity, and a
+cleanup or route can remain honestly uncertain instead of closing optimistically. The Mac-private port must index its
+enrolled connection by the domain-separated identity digest and reconcile attempt-bound native state. This is stricter
+but keeps Control Room free of locators and false cleanup claims.
+
+**Reevaluate:** After a different independent reviewer closes all five IDEA-110F findings against the exact IDEA-110G
+remediation commit. Any connector, signal-observer, connection-identity derivation, private-port, operation-set, runtime,
+source-manifest, signer, or route change invalidates that report and requires new evidence before native use.
