@@ -532,7 +532,8 @@ The exact development-only composition uses a loopback foreground server, one-ti
 master key with separate derived integrity domains, persistent local PGlite outside the repository, an authenticated
 project catalog plus independent high-water, and only the deterministic repository-fake panel. Dynamic promoted-project
 pages read protected local truth and expose legal owner lifecycle transitions. Production mode and every unconfigured run
-remain closed.
+remain closed. The exact development switch selects Vinext's Node runtime because PGlite is not a Cloudflare-worker
+database; ordinary previews and every production build keep the Cloudflare plugin.
 
 Next: the owner personally executes the frozen CR12B-IDEA-060 packet. No later block may treat the automated rehearsal as
 owner evidence or as authority for live Hermes/provider contact.

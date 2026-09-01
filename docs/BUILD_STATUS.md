@@ -94,17 +94,20 @@
 | CR12B-IDEA-030 protected Bot Mode coordinator and owner decision | Complete locally for the repository-only provider-disabled snapshot | Independently verified live-evidence boundary, bounded sequential panel ledger, terminal ambiguity/no retry, human-owner-only permit, protected default-closed endpoint; see `CR12B_IDEA_030_ACCEPTANCE.md` |
 | CR12B-IDEA-040 protected Idea Lab operator workflow | Complete locally for the authenticated repository-fake, provider-disabled snapshot | Server-derived scope and panel, human-owner-only commands, protected create/start/cancel/synthesis routes, bounded bodies, separate disabled-by-default browser controls, 37-test combined gate; see `CR12B_IDEA_040_ACCEPTANCE.md` |
 | CR12B-IDEA-050 durable session resume and protected project lifecycle | Complete locally for the owner-authenticated, repository-fake, runtime-disabled snapshot | No-write session catalog/detail reads, stable reload projections, exact owner lifecycle replay, concurrency guard, legal state-aware disabled controls, 48-test combined gate; see `CR12B_IDEA_050_ACCEPTANCE.md` |
-| CR12B-IDEA-060 explicit local composition and repository-fake pilot | Repository implementation and automated restart rehearsal pass; owner browser run pending | Loopback foreground launcher, Keychain-held master, one-time owner session, durable PGlite, separate catalog high-water, dynamic project page, 51-test combined gate; see `CR12B_IDEA_060_ACCEPTANCE.md` |
+| CR12B-IDEA-060 explicit local composition and repository-fake pilot | Repository implementation, automated restart test, and disposable HTTP/browser rehearsal pass; owner Keychain-backed run pending | Loopback Node-development launcher, Keychain-held master, one-time owner session, durable PGlite, separate catalog high-water, dynamic project page, 51-test combined gate; see `CR12B_IDEA_060_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR12B-IDEA-060 now has a complete repository implementation and automated restart rehearsal, but it is not owner-accepted
-yet. The exact development-only switch composes a foreground `127.0.0.1` server, owner-run Keychain retrieval, one-time
+CR12B-IDEA-060 now has a complete repository implementation, automated restart test, and disposable HTTP/browser
+rehearsal, but it is not owner-accepted yet. The exact development-only switch composes a foreground `127.0.0.1` Node
+server while ordinary previews and production retain Cloudflare, owner-run Keychain retrieval, one-time
 15-minute owner session, durable PGlite outside the repository, separate Idea/catalog/high-water integrity domains, the
 deterministic repository-fake panel, and dynamic protected project pages. Automated evidence completes create, fake panel,
 synthesis, promotion, protected read, pause/resume, close, reopen, session resume, and catalog-high-water verification;
 wrong codes, replay, forwarded requests, and repository-local data are rejected. The combined gate passes 51/51; the
+disposable browser rehearsal additionally passed sign-in, create, panel, synthesis, promotion, dynamic project read,
+pause/resume, and process-restart persistence with fabricated credentials and temporary data removed afterward. The
 full lifecycle passes 769 pretests, 414 core tests with two intentional platform skips and zero failures, and 129 posttests;
 typecheck, full lint, production build without client externalization warnings, 3/3 rendered routes, 30 migrations/108
 tables, macOS stage zero, and whitespace validation pass. The owner must still personally run the frozen packet and

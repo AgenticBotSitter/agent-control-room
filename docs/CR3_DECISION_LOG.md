@@ -2053,14 +2053,18 @@ launcher, derives separate session, Idea-record, catalog, and catalog-high-water
 one-time code for a maximum-15-minute owner browser session. Persistent PGlite lives outside the repository and is valid
 only for this local pilot. The panel driver is fixed to the deterministic repository fake. Owner-promoted projects enter
 an authenticated append-only catalog and separately keyed high-water before protected reads resolve them. The default and
-production compositions remain absent.
+production compositions remain absent. The exact switch also selects Vinext's Node development runtime because PGlite
+cannot execute in the Cloudflare worker simulator. Ordinary development previews and all production builds retain the
+Cloudflare plugin; the switch is ignored outside development mode.
 
 **Why:** A visible end-to-end pilot is now more valuable than another disconnected contract, but enabling the browser
 must not silently enable a provider, public listener, production database, or caller-selected identity. A foreground
 loopback process gives the owner a clear start and stop boundary. Separate session and catalog integrity domains make
 restart proof meaningful without turning local PGlite into the production authority.
 
-**Alternatives rejected:** Enable controls whenever any environment variable exists; bind to all interfaces; reuse an
+**Alternatives rejected:** Enable controls whenever any environment variable exists; bind to all interfaces; expose the
+pilot master through Vite client environment variables; copy it into a repository-local `.dev.vars`; run PGlite inside
+the Cloudflare worker simulator; reuse an
 identity header or browser storage token; commit a pilot key; store the raw owner code; keep catalog high-water only in
 memory; place PGlite in the repository; treat PGlite as a production database; select Hermes or another provider from
 browser input; run a background daemon; or claim the automated restart test is owner-attended acceptance.

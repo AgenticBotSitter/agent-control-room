@@ -9,7 +9,9 @@ interface LocalPilotPortsV1{
 }
 let ports:LocalPilotPortsV1|undefined;
 
-function configuration(){if(process.env.NODE_ENV==="production"||process.env.CONTROL_ROOM_LOCAL_PILOT_MODE!=="repository_fake")return undefined;
+function configuration(){const viteEnv=(import.meta as ImportMeta&{env?:{PROD:boolean}}).env;
+  const production=viteEnv?.PROD??process.env.NODE_ENV==="production";
+  if(production||process.env.CONTROL_ROOM_LOCAL_PILOT_MODE!=="repository_fake")return undefined;
   const encoded=process.env.CONTROL_ROOM_LOCAL_PILOT_MASTER_KEY_B64??"",master=Buffer.from(encoded,"base64");
   const dataDir=process.env.CONTROL_ROOM_LOCAL_PILOT_DATA_DIR??"",ownerCodeDigest=process.env.CONTROL_ROOM_LOCAL_PILOT_OWNER_CODE_DIGEST??"";
   if(master.byteLength!==32||master.toString("base64")!==encoded||!dataDir||!/^sha256:[a-f0-9]{64}$/.test(ownerCodeDigest))return undefined;
