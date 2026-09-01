@@ -6,6 +6,7 @@ import { adaptPglite, type DatabaseClient } from "../../persistence/database";
 import { buildOperatorSurfaceSnapshotV1, OPERATOR_SURFACES_CONTRACT_V1 } from "../../operator-surfaces/v1";
 import {
   buildIdeaLabFixtureV1,
+  buildIdeaLabHermes021ConnectionRosterV1,
   CONTROL_ROOM_IDEA_ADAPTER_V1,
   DeterministicIdeaLabFakeDriverV1,
   IdeaLabOwnerDecisionServiceV1,
@@ -14,6 +15,7 @@ import {
   IdeaLabProtectedOperatorServiceV1,
   type IdeaLabOwnerDecisionResultV1,
 } from "../../idea-lab/v1";
+import type { ConnectionCenterRosterSourceV1 } from "../../connection-center/v1";
 import {
   buildProjectWorkspaceVerifiedOwnerSessionV1,
   buildProtectedProjectCatalogHighWaterV1,
@@ -228,6 +230,7 @@ export interface ControlRoomLocalPilotRuntimeV1{
   operatorService:IdeaLabProtectedOperatorServiceV1;ownerDecisionService:Pick<IdeaLabOwnerDecisionServiceV1,"apply">;
   lifecycleService:Pick<IdeaLabProjectLifecycleServiceV1,"get"|"transition">;scopeAuthority:ProjectWorkspaceOwnerReadScopeAuthorityV1;
   readSource:ProjectWorkspaceOperatorReadSourceV1;projectEventSource:ProjectEventReadSourceV1;
+  connectionRosterSource:ConnectionCenterRosterSourceV1;
   syncCatalog(now?:string):Promise<void>;close():Promise<void>;
 }
 
@@ -251,7 +254,11 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
       await projectEventReconciler.reconcileProject(result.tenantId,result.projectId);return result;}};
   const catalogAuthority=new ProjectWorkspaceProtectedCatalogAuthorityV1(catalog,{read:id=>catalog.readHighWater(id)},
     {catalogId:CATALOG_ID,tenantId:LOCAL_PILOT_TENANT_ID_V1,sourceIdentityDigest:catalog.sourceIdentityDigest},catalogKey,highWaterKey);
+  const connectionRosterSource:ConnectionCenterRosterSourceV1={async read(input){if(input.tenantId!==LOCAL_PILOT_TENANT_ID_V1)
+    throw new LocalPilotErrorV1("local_pilot_unavailable");return buildIdeaLabHermes021ConnectionRosterV1({tenantId:input.tenantId,
+      evaluatedAt:input.now,connections:[]});}};
   await catalog.sync(clock());await projectEventReconciler.reconcileAll(LOCAL_PILOT_TENANT_ID_V1);return Object.freeze({mode:LOCAL_PILOT_MODE_V1,ownerSession,operatorService,ownerDecisionService,lifecycleService,
     scopeAuthority:new ProjectWorkspaceOwnerReadScopeAuthorityV1({verify:(credential,now)=>ownerSession.verifyProjectWorkspace(credential,now)},catalogAuthority,new SecurityStore(db)),
-    readSource:new LocalPilotProjectReadSourceV1(registry),projectEventSource,syncCatalog:(now=clock())=>catalog.sync(now),close:()=>raw.close()});}
+    readSource:new LocalPilotProjectReadSourceV1(registry),projectEventSource,connectionRosterSource,
+    syncCatalog:(now=clock())=>catalog.sync(now),close:()=>raw.close()});}
   catch(error){await raw.close().catch(()=>undefined);throw error;}}

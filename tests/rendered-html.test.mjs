@@ -133,3 +133,14 @@ test("server-renders Idea Lab and its promoted project workspace", async () => {
   assert.match(projectHtml, /Idea origin/);
   assert.match(projectHtml, /presentation-only/i);
 });
+
+test("server-renders the protected Connection Center shell without inventing live state", async () => {
+  const response = await render("/connections");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Connection Center/);
+  assert.match(html, /which Hermes version they match/);
+  assert.match(html, /Loading protected connection inventory/);
+  assert.match(html, /Protected read/);
+  assert.doesNotMatch(html, /Connect now|Start Hermes|Run qualification/i);
+});

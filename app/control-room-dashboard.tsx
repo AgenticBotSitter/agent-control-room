@@ -166,6 +166,7 @@ export function ControlRoomDashboard(props: { readyFrontier: ReadyFrontierCycleP
           <a className="active" href="#overview"><span aria-hidden="true">⌂</span> Overview</a>
           <a href="#projects"><span aria-hidden="true">▦</span> Projects</a>
           <Link href="/ideas" prefetch={false}><span aria-hidden="true">✦</span> Idea Lab</Link>
+          <Link href="/connections" prefetch={false}><span aria-hidden="true">⌁</span> Connections</Link>
           <a href="#ready-frontier"><span aria-hidden="true">◇</span> Ready frontier</a>
           <a href="#attention"><span aria-hidden="true">◆</span> Needs Me <b>{scopedActionInbox.length}</b></a>
           <a href="#workers"><span aria-hidden="true">◫</span> Workers</a>
