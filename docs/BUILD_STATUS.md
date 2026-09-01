@@ -109,7 +109,8 @@
 | CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review; main-target integration in progress | Captured connector boundaries, strict chronology, exact roster identity, recursively immutable returned evidence, and Node 22.13 lazy-global portability; accepted product 171 CR12B tests, integration 172; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
-| CR13A-LIVE-010 protected Connection Center | Accepted implementation candidate at exact remediation `c32bb1908323d9acb2e891722c1fd4657334c741`; ordered parent integration and main-target CI remain | Different reviewer reproduced the rejected locator leak and accepted the remediation with no findings; public contract contains only ordinal connection/node references and no source or tenant identity; 10 focused tests; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
+| CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
+| CR13A-LIVE-020 durable connection registry and signal freshness | Accepted implementation candidate at `ed5bb96d2a80c6fa98bf68d2a118ed2501a22384`; integration pending | Different independent reviews closed every security finding and confirmed the final evidence-only repair. Both negative reports and accepted confirmation remain preserved; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -784,10 +785,32 @@ lint, production build, and 4/4 rendered routes. A different independent reviewe
 accepted exact remediation `c32bb1908323d9acb2e891722c1fd4657334c741` with no High, Medium, or Low finding. The
 complete repository lifecycle is green with 769 pretests, 418 core passes plus two intentional Windows-only skips, and
 261 posttests. Migrations remain through 0033/112 tables, with Mac stage zero and whitespace validation also green.
-Ready PR #230 now targets `main` with a clean Connection Center-only diff. Ordinary Node `22.13.0` GitHub CI is the
-remaining integration gate. No live browser viewport claim was made because a persistent local server was not authorized;
-production route rendering passed. The remediation packet
-SHA-256 is `0cbe9d35414ca3ab39d3abe8f1556234049562f6e0e88ce27721687f951de476`.
+PR #230 passed ordinary Node `22.13.0` GitHub CI run `33562917320` and merged to `main` as
+`737d9744c00129882af00094a84eae1f28a5a5a2`. The rejected and accepted review records remain preserved. No live browser
+viewport claim was made; production route rendering passed. The remediation packet SHA-256 is
+`0cbe9d35414ca3ab39d3abe8f1556234049562f6e0e88ce27721687f951de476`.
+
+CR13A-LIVE-020 now supplies the first restart-safe protected connection registry. Migration 0034 stores immutable,
+tenant- and canonical-node-bound enrollment revisions with a per-tenant digest chain, authenticated stream head, keyed authentication, payload digests, exact replay,
+monotonic renewal, duplicate active-route/profile rejection, bounded capacity, and database mutation guards. The local
+pilot reads this registry rather than synthesizing an in-memory roster. The first independent review rejected target
+`456f4d1` after proving that a direct fleet-current row could be presented as authenticated and that database-row,
+roster-result, and public-projection objects could execute behavior. The immutable negative report is preserved.
+The remediation now composes a server-keyed receipt emitted only after node-protocol authentication and fleet persistence
+as `current`, `stale`, or `missing`; direct fleet rows, discovery, capability,
+benchmark, enrollment, runtime compatibility, and qualification never imply recency. Raw tenant, connection, enrollment,
+node, route, profile, issuer, and host-key identity remains server-side. Database rows, complete rosters, and complete
+public projections are exact-captured before semantic access. Migrations through 0034 now verify 115 tables. No SSH,
+native runtime, provider, credential, production database, deployment, or network effect occurred. A different independent
+security/integrity re-review closed every High and Medium finding, but correctly rejected exact target `d858d8e` because
+the cumulative diff check exposed four trailing-space lines in the preserved predecessor review packet. That second
+negative report is retained and those four documentation lines are now repaired. Final independent confirmation accepted
+exact candidate `ed5bb96d2a80c6fa98bf68d2a118ed2501a22384`: the product tree remained identical to the security-reviewed
+remediation, both negative reports remained intact, the exact cumulative whitespace command passed, and the focused suite
+passed 15/15. Accepted confirmation SHA-256 is `764813a39fb57944408a3949e4c89a1c9f1d35913f4c0bd28b670c1a6b446b3e`.
+Remediation verification passes 15/15 focused, 31/31 combined
+CR13A, 769/769 pretests, 418/420 core tests with two intentional platform skips, 266/266 posttests, TypeScript, full lint,
+Mac stage zero, production build, whitespace validation, and 4/4 rendered routes.
 
 ## Parallel build lane
 
@@ -804,12 +827,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-010-INTEGRATE — validate and land the accepted Connection Center
+Block: CR13A-LIVE-020-INTEGRATION — integrate the accepted durable connection registry
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: both accepted parents are integrated. The first Connection Center review found a real locator leak, exact remediation `c32bb1908323d9acb2e891722c1fd4657334c741` removed every source identity from the browser contract, and a different reviewer accepted the repair with no findings. The remaining work is minimum-runtime GitHub validation and serialized integration.
-Expected output: green ordinary CI for PR #230, preservation of the rejected and accepted review records, then owner-approved merge and post-merge `main` synchronization.
-Owner action: none while PR #230 CI runs. If it passes, explicitly approve merging PR #230.
+Why: the security and evidence gates are accepted; ordered integration must preserve the exact reviewed product target and reports.
+Expected output: pass ordinary GitHub CI on the final branch, obtain owner merge approval for PR #231, merge without changing the accepted product tree, verify post-merge main, then begin CR13A-LIVE-030 protected enrollment intake.
+Owner action: approve merging PR #231 after Codex reports the final CI result.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

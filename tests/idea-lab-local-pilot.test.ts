@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createControlRoomLocalPilotRuntimeV1,LocalPilotErrorV1 } from "../src/local-pilot/v1/index.ts";
+import { createControlRoomLocalPilotRuntimeV1,LOCAL_PILOT_TENANT_ID_V1,LocalPilotErrorV1 } from "../src/local-pilot/v1/index.ts";
 import { ProjectWorkspaceReadServiceV1 } from "../src/project-workspace/v1/index.ts";
 import { sha256Digest } from "../src/security/index.ts";
 import { createLocalPilotSessionStatusHandlerV1 } from "../app/api/v1/local-pilot/session/route.ts";
@@ -19,6 +19,7 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
     ownerCodeDigest:sha256Digest({code}),clock:()=>now};
   let runtime=await createControlRoomLocalPilotRuntimeV1(config);
   assert.equal((await stat(dataDir)).mode&0o777,0o700);
+  assert.equal((await runtime.connectionRosterSource.read({tenantId:LOCAL_PILOT_TENANT_ID_V1,now})).connectionCount,0);
   await assert.rejects(runtime.ownerSession.issue(ownerRequest(undefined,undefined,false),code),(error:unknown)=>error instanceof LocalPilotErrorV1&&error.safeCode==="local_request_required");
   await assert.rejects(runtime.ownerSession.issue(ownerRequest(undefined,undefined,true),`${code}-wrong`),(error:unknown)=>error instanceof LocalPilotErrorV1&&error.safeCode==="invalid_owner_code");
   const issued=await runtime.ownerSession.issue(ownerRequest(undefined,undefined,true),code),cookie=issued.cookie.split(";",1)[0]!;
@@ -42,6 +43,7 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   now=advance(now,1);const paused=await runtime.lifecycleService.transition({commandId:"command.idea.pilot.pause",projectId:"project:local-pilot-idea",expectedVersion:1,action:"pause",requestedAt:now},auth);assert.equal(paused.lifecycleState,"paused");
   now=advance(now,1);const resumed=await runtime.lifecycleService.transition({commandId:"command.idea.pilot.resume",projectId:"project:local-pilot-idea",expectedVersion:2,action:"resume",requestedAt:now},auth);assert.equal(resumed.lifecycleState,"active");
   await runtime.close();now=advance(now,2);runtime=await createControlRoomLocalPilotRuntimeV1(config);
+  assert.equal((await runtime.connectionRosterSource.read({tenantId:LOCAL_PILOT_TENANT_ID_V1,now})).connectionCount,0);
   const resumedAuth=await runtime.ownerSession.verify(ownerRequest("/ideas",cookie),now),sessions=await runtime.operatorService.list(resumedAuth),project=await runtime.lifecycleService.get("project:local-pilot-idea",resumedAuth);
   assert.equal(sessions.length,1);assert.equal(sessions[0]?.sessionId,created.sessionId);assert.equal(sessions[0]?.state,"decided");assert.equal(project.version,3);assert.equal(project.lifecycleState,"active");
   const scopeAfterRestart=await runtime.scopeAuthority.authorize({credential:ownerRequest("/api/v1/project-workspace/project:local-pilot-idea",cookie),projectId:project.projectId,now});assert.equal(scopeAfterRestart.catalogRevision,1);

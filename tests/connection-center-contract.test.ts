@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import "./connection-registry-durable.test.ts";
 import {
   IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
   IDEA_LAB_HERMES_021_REVISION_V1,
@@ -110,4 +111,46 @@ test("CR13A-LIVE-010 rejects digest drift, cross-tenant rosters, and invalid rea
     .read({ tenantId: "tenant:other", now }), ConnectionCenterReadErrorV1);
   await assert.rejects(() => new ConnectionCenterReadServiceV1({ async read() { return roster; } })
     .read({ tenantId, now: "not-a-time" }), ConnectionCenterReadErrorV1);
+});
+
+test("CR13A-LIVE-020 rejects behavioral or mismatched freshness before reading it", () => {
+  const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId, evaluatedAt: now, connections: [safeConnection()] });
+  let getterCalls = 0;
+  const behavioral: Record<string, unknown> = { basis: "authenticated_telemetry",
+    observedAt: "2026-09-01T17:59:00.000Z", expiresAt: "2026-09-01T18:04:00.000Z" };
+  Object.defineProperty(behavioral, "state", { enumerable: true, get() { getterCalls += 1; return "current"; } });
+  assert.throws(() => buildConnectionCenterProjectionV1(roster,
+    [behavioral as unknown as { state: "current"; basis: "authenticated_telemetry"; observedAt: string; expiresAt: string }]));
+  assert.equal(getterCalls, 0);
+  assert.throws(() => buildConnectionCenterProjectionV1(roster, [
+    { state: "current", basis: "authenticated_telemetry", observedAt: "2026-09-01T17:59:00.000Z",
+      expiresAt: "2026-09-01T18:04:00.000Z" },
+    { state: "missing", basis: "none", observedAt: null, expiresAt: null },
+  ]));
+});
+
+test("CR13A-LIVE-020 rejects behavioral roster and public projection values without executing them", async () => {
+  const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId, evaluatedAt: now, connections: [safeConnection()] });
+  const projection = buildConnectionCenterProjectionV1(roster);
+  let rosterTraps = 0, projectionTraps = 0;
+  const behavioralRoster = new Proxy(roster, { get(target, key, receiver) {
+    // Promise resolution necessarily probes `then`; count only application data access.
+    if (key === "then") return undefined;
+    rosterTraps += 1; return Reflect.get(target, key, receiver);
+  } });
+  await assert.rejects(() => new ConnectionCenterReadServiceV1({
+    async read() { return behavioralRoster; },
+  }).read({ tenantId, now }), ConnectionCenterReadErrorV1);
+  assert.equal(rosterTraps, 0);
+  const behavioralProjection = new Proxy(projection,
+    { get() { projectionTraps += 1; throw new Error("executed projection"); } });
+  assert.throws(() => parseConnectionCenterProjectionV1(behavioralProjection), ConnectionCenterReadErrorV1);
+  assert.equal(projectionTraps, 0);
+
+  let accessorCalls = 0;
+  const accessorProjection = { ...projection } as Record<string, unknown>;
+  Object.defineProperty(accessorProjection, "summary",
+    { enumerable: true, get() { accessorCalls += 1; return projection.summary; } });
+  assert.throws(() => parseConnectionCenterProjectionV1(accessorProjection), ConnectionCenterReadErrorV1);
+  assert.equal(accessorCalls, 0);
 });

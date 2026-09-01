@@ -17,7 +17,7 @@ export function createConnectionCenterReadHandlerV1(runtime?: ConnectionCenterPr
     try { authentication = await runtime.ownerSession.verify(request, now); }
     catch { return json({ error: "authentication_required" }, 401); }
     try {
-      const projection = await new ConnectionCenterReadServiceV1(runtime.rosterSource)
+      const projection = await new ConnectionCenterReadServiceV1(runtime.rosterSource, runtime.freshnessSource)
         .read({ tenantId: authentication.tenantId, now });
       return Response.json({ projection }, { status: 200, headers: { "cache-control": "no-store",
         "x-control-room-contract": projection.contractVersion,
