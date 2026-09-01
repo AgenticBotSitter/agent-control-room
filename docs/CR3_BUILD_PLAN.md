@@ -842,13 +842,17 @@ roster connection/blocker evidence remained mutable after digest verification. S
 
 ## CR12B-IDEA-110P — immutable connection-evidence remediation
 
-Status: provider-disabled implementation frozen at `e028d6b4cd5ee55c053561a880fbf65d897dc2ad`; replacement packet
-`sha256:d8e205f0fb7c5a28a5f1d25c72618368f4c3372521c80d296fc6d484c8c3b417` and fresh independent review required. See
-`CR12B_IDEA_110P_CONNECTION_EVIDENCE_FREEZE_REMEDIATION.md` and amended ADR-146.
+Status: exact provider-disabled product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` accepted after fresh independent
+review. Accepted report SHA-256: `7cbd2f982956ff418e35dfacf71ee616a763fe60e20eb0b4d40acf553581af3f`. See
+`CR12B_IDEA_110P_CONNECTION_EVIDENCE_FREEZE_REMEDIATION.md`, `CR12B_IDEA_110P_ACCEPTANCE.md`, and amended ADR-146.
 
 A module-captured freeze operation seals direct and reparsed safe results with their blocker arrays. Final roster
 parsing seals every nested connection and blocker array before the connection array and outer projection. No private
 port, enrollment, native operation, provider call, credential access, or deployment is introduced.
+
+The completed different reviewer directly reproduced the predecessor mutation, confirmed recursive immutability for
+direct, reparsed, empty, one-entry, and 32-entry results, repeated the inherited connector matrix, and accepted only the
+provider-disabled implementation snapshot. Live configuration and every external effect remain separately gated.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 

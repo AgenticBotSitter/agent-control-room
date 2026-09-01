@@ -1,7 +1,6 @@
 # CR12B-IDEA-110P — immutable connection-evidence remediation
 
-**Status:** Provider-disabled implementation passed producer verification; fresh independent review of the exact frozen
-product is mandatory.
+**Status:** Exact provider-disabled product accepted after fresh independent review.
 
 **Frozen product:** `e028d6b4cd5ee55c053561a880fbf65d897dc2ad`
 

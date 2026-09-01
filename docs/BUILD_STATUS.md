@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F through 110P macOS Hermes connector | IDEA-110O independently rejected; IDEA-110P frozen and requires fresh independent review | IDEA-110P deeply freezes every returned digest-bound connection and roster element; 171 CR12B tests; see `CR12B_IDEA_110P_CONNECTION_EVIDENCE_FREEZE_REMEDIATION.md` |
+| CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review | Captured connector boundaries, strict chronology, exact roster identity, and recursively immutable returned evidence; 171 CR12B tests; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -327,6 +327,14 @@ with 110 PostgreSQL tables, macOS stage zero, and whitespace validation. Exact p
 `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` and packet
 `sha256:d8e205f0fb7c5a28a5f1d25c72618368f4c3372521c80d296fc6d484c8c3b417` require a fresh different-agent review. No
 native or external effect occurred.
+
+A fresh different reviewer accepted exact IDEA-110P product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` after directly
+reproducing IDEA-110O's nested-mutation finding, closing it across direct, reparsed, empty, one-entry, and 32-entry
+evidence graphs, confirming the prior digest repair, and repeating the complete repository gates. The immutable accepted
+report has SHA-256 `7cbd2f982956ff418e35dfacf71ee616a763fe60e20eb0b4d40acf553581af3f`. Acceptance removes only
+the provider-disabled connector implementation-review blocker. No signer, route, port, connection, native attempt,
+provider call, credential access, live-panel authority, production database, deployment, hosting, or DNS effect is
+configured or authorized.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -733,11 +741,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110P-Q — independently review immutable connection evidence
+Block: CR12B-IDEA-110-INTEGRATE — integrate the independently accepted provider-disabled connector stack
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: IDEA-110O closed its digest finding but fresh review proved verified connection evidence could be mutated after return. IDEA-110P changes the returned evidence boundary and cannot accept its own repair.
-Expected output: one immutable report by a new reviewer against product commit `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` and packet `sha256:d8e205f0fb7c5a28a5f1d25c72618368f4c3372521c80d296fc6d484c8c3b417`. It must reproduce IDEA-110O's nested-mutation finding, prove captured deep-freeze closure for direct, reparsed, empty, and full rosters, and repeat every inherited connector case. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Why: exact product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` has now passed fresh independent review. The long accepted/rejected evidence chain must be presented as one main-target integration without losing negative history or widening authority.
+Expected output: one main-target integration pull request containing the complete Idea Lab and provider-disabled connector stack, all immutable negative and accepted reports, exact acceptance pins, clean full verification, and no live configuration. After integration, restack the already accepted CR13A Project Activity product on the integrated base.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

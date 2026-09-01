@@ -2563,6 +2563,12 @@ parsing seals every connection and blocker array before sealing the connection a
 may never describe caller-mutable identity, chronology, blocker, qualification, live, or authority fields. This follows
 the Medium finding preserved by the IDEA-110O independent report.
 
+**IDEA-110P acceptance:** A fresh different reviewer accepted exact provider-disabled product
+`e028d6b4cd5ee55c053561a880fbf65d897dc2ad`; immutable report SHA-256
+`7cbd2f982956ff418e35dfacf71ee616a763fe60e20eb0b4d40acf553581af3f`. This removes only the connector
+implementation-review blocker. It does not enroll or authorize any signer, route, port, native runtime, provider,
+credential, live panel, production database, deployment, hosting, or DNS effect.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
 conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
