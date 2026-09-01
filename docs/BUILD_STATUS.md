@@ -109,6 +109,7 @@
 | CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review; main-target integration in progress | Captured connector boundaries, strict chronology, exact roster identity, recursively immutable returned evidence, and Node 22.13 lazy-global portability; accepted product 171 CR12B tests, integration 172; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
+| CR13A-LIVE-010 protected Connection Center | Implementation candidate at `e4cb8d69b4dbe17f560303a1edad08871fcc575b`; independent review required | Auth-before-read, rebuilt sanitized roster, exact Hermes 0.21 version diagnostics, honest empty state, strict digest-bound browser projection, no locators/credentials/connect controls, 9 focused tests; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -769,6 +770,19 @@ typecheck, full lint, production build, 3/3 rendered routes, migrations through 
 whitespace validation. Main-target connector PR #228 passed GitHub Actions run `33554072751`. Restack PR #229 targets
 that parent branch and remains dependent on its owner-approved merge; it grants no additional live or production
 authority and makes no main-target CI claim until retargeted.
+
+CR13A-LIVE-010 is prepared as a later stacked candidate at exact implementation
+`e4cb8d69b4dbe17f560303a1edad08871fcc575b`. It adds a protected Connection Center page and endpoint, exact reviewed
+Hermes 0.21 compatibility, bounded local/SSH inventory counts, safe setup blockers, and an authenticated empty local
+pilot roster. The server rebuilds the accepted sanitized roster before projection; the browser verifies a strict digest;
+and no hostname, locator, credential, native action, provider call, or write control exists. Verification passes 9/9
+focused tests, 25/25 combined CR13A tests, 769/769 registered pretests, 418/420 core tests with two intentional
+Windows-only skips, 260/260 posttests, typecheck, lint, production build, 4/4 rendered routes, migrations through
+0033/112 tables, Mac stage zero, and whitespace validation. Independent security/integrity review and ordered parent
+integration remain required. No live browser viewport claim was made because a persistent local server was not
+authorized; production route rendering passed.
+The frozen independent-review packet SHA-256 is
+`db36f1ce2e94736dc4aa8653e192400c56dc0905d746a7643c444ac7f82b30ac`.
 
 ## Parallel build lane
 
