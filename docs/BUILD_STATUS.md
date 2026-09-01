@@ -99,15 +99,23 @@
 | CR12B-IDEA-080 filtered driver and native qualification harness | Complete locally for the injected-fixture, provider-disabled snapshot | Exact admission/runtime preflight, content-discarding event translation, bounded timeout/cleanup, cleanup-bound receipt, frozen native plan, 10 hostile tests; see `CR12B_IDEA_080_ACCEPTANCE.md` |
 | CR12B-IDEA-090 durable admission consumption and native-receipt registry | Complete locally for the repository-only, provider-disabled snapshot | Architect-keyed receipt acceptance, separately keyed admission sealing, atomic single-use window/run consumption, terminal revocation, external rollback high-water, 12 hostile tests; see `CR12B_IDEA_090_ACCEPTANCE.md` |
 | CR12B-IDEA-100 owner-ready native qualification and live-panel rehearsal packet | Complete locally for the exact repository-only packet | Three non-collapsible stages, exact implementation pins, one-attempt/one-call sanitized candidate, independent receipt review, architect registry acceptance, separate later live-panel window, 8 hostile tests; see `CR12B_IDEA_100_ACCEPTANCE.md` |
-| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending exact owner authorization | One attached-Terminal disposable attempt, one call, 300 seconds, zero tools/MCP/plugins, sanitized unaccepted candidate, cleanup, no retry; see `CR12B_IDEA_100_OWNER_AUTHORIZATION.md` |
+| CR12B-IDEA-105 Hermes 0.21 reviewed-runtime pin refresh | Complete locally for the repository-only evidence binding | Exact installed revision, release ancestry and 60-commit distance, 12-file source manifest, sanitized no-effect preflight, refreshed Idea Lab packet/plan, old authorization non-reusable; see `CR12B_IDEA_105_HERMES_021_PIN_REFRESH_ACCEPTANCE.md` |
+| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending integration and a new exact owner authorization | One attached-Terminal disposable attempt, one call, 300 seconds, zero tools/MCP/plugins, sanitized unaccepted candidate, cleanup, no retry; see `CR12B_IDEA_105_OWNER_AUTHORIZATION.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR12B-IDEA-110 is blocked pending the exact fresh owner authorization in
-`CR12B_IDEA_100_OWNER_AUTHORIZATION.md`. After authorization, one no-effect preflight will verify the installed runtime
-and print the exact attached-Terminal command. The owner must run that command and handle any Keychain prompt. The one
-attempt emits only an unaccepted sanitized candidate and stops before receipt acceptance or a live panel.
+CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
+`a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
+ancestry and 60-commit distance, twelve trusted source hashes, clean runtime paths, lifecycle/replay/control compatibility,
+and a valid static zero-tool boundary. It made zero native attempts, provider calls, or protected-value reads. The panel
+packet and qualification plan bind the exact manifest/preflight digests and reject reuse of the earlier authorization.
+The combined CR12B suite passes 89/89 and typecheck passes.
+
+CR12B-IDEA-110 is blocked until PR #180 and IDEA-105 are integrated and the owner supplies the exact fresh authorization
+in `CR12B_IDEA_105_OWNER_AUTHORIZATION.md`. After authorization, one no-effect readiness check may print the exact
+attached-Terminal command. The owner must run that command and handle any Keychain prompt. The one attempt emits only an
+unaccepted sanitized candidate and stops before receipt acceptance or a live panel.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -517,9 +525,9 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 Block: CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the exact staged packet is complete; the next evidence gap is one real native qualification candidate for the already pinned Hermes 0.21 build.
+Why: the reviewed installed-runtime pin and source preflight are complete; after their integration the next evidence gap is one real native qualification candidate.
 Expected output: no-effect preflight, one owner-run attached-Terminal disposable attempt, at most one provider call, sanitized candidate evidence, mandatory cleanup, and a terminal pass/fail/ambiguity disposition with no retry.
-Owner action: required before starting. Use the exact scope in `CR12B_IDEA_100_OWNER_AUTHORIZATION.md`; the owner runs the printed command and handles any Keychain prompt.
+Owner action: required before starting. Use the exact refreshed scope in `CR12B_IDEA_105_OWNER_AUTHORIZATION.md`; the owner runs the printed command and handles any Keychain prompt. The older authorization is non-reusable.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

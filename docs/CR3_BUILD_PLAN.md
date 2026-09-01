@@ -596,12 +596,28 @@ disposable qualification, an unaccepted sanitized candidate, mandatory different
 acceptance, and a later separately authorized live-panel admission. Every authority field remains false. The local pilot
 is repository-fake only.
 
-Next: CR12B-IDEA-110 may perform the owner-attended disposable native qualification after the owner gives the exact fresh
-authorization. It is limited to the packet and stops before receipt acceptance or a live panel.
+Next: CR12B-IDEA-105 refreshes the Idea Lab packet from the upstream release revision to the exact reviewed installed
+Hermes 0.21 runtime and binds the sanitized no-effect source preflight. It performs no native attempt.
+
+## CR12B-IDEA-105 — Hermes 0.21 reviewed-runtime pin refresh
+
+Status: complete locally for the repository-only evidence binding. See
+`CR12B_IDEA_105_HERMES_021_PIN_REFRESH_ACCEPTANCE.md`, `CR12B_IDEA_105_OWNER_AUTHORIZATION.md`, and ADR-134.
+
+The block distinguishes the upstream release commit from the exact installed runtime 60 reviewed commits later, binds
+the accepted compatibility implementation plus twelve-source manifest and sanitized preflight digests, and carries the
+new pin through the Idea Lab packet, qualification plan, live-evidence fixtures, and owner-ready candidate boundary. The
+earlier authorization is non-reusable because the exact packet and plan digests changed. No native/provider contact or
+protected-value access occurred.
+
+Next: CR12B-IDEA-110 may perform the owner-attended disposable native qualification only after both refreshed commits
+are integrated and the owner gives the exact new authorization. It is limited to the packet and stops before receipt
+acceptance or a live panel.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
-Status: blocked pending the exact owner authorization in `CR12B_IDEA_100_OWNER_AUTHORIZATION.md`.
+Status: blocked pending integration of PR #180 and IDEA-105 plus the exact new owner authorization in
+`CR12B_IDEA_105_OWNER_AUTHORIZATION.md`.
 
 One no-effect preflight will verify the installed runtime and print the exact attached-Terminal command. The owner must
 run it and handle any Keychain prompt. The attempt emits only a sanitized unaccepted candidate, cleans disposable state,

@@ -5,7 +5,8 @@ protected value for this packet. It records the later bounds but is not current 
 
 ## Frozen future limits
 
-- Runtime: Hermes Agent `0.21.0`, exact revision `29112bef099274229cadff79cdff7bf7b99c4b77`.
+- Runtime: Hermes Agent `0.21.0`, exact reviewed revision `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`;
+  upstream release revision `29112bef099274229cadff79cdff7bf7b99c4b77` is an ancestor exactly 60 commits behind.
 - Adapter: `adapter.hermes.gateway.v2` `2.0.0`.
 - Native attempts: one.
 - Provider calls: one.
@@ -31,6 +32,6 @@ protected value for this packet. It records the later bounds but is not current 
 
 ## Why it is still blocked
 
-The repository intentionally contains no native gateway port, no accepted native receipt, no owner window, and no
-durable admission-consumption authority. IDEA-090 must close the last item before Codex asks the owner for a fresh exact
-qualification authorization. A passing injected simulation is never native evidence.
+The repository intentionally contains no native gateway port, accepted native receipt, or owner window. IDEA-090 closed
+the durable admission-consumption contract and IDEA-105 refreshed the exact source pin, but their integration and a new
+exact owner authorization remain mandatory. A passing source preflight or injected simulation is never native evidence.

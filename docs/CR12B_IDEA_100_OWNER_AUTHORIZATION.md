@@ -1,4 +1,8 @@
-# CR12B-IDEA-100 owner authorization packet
+# CR12B-IDEA-100 owner authorization packet — superseded
+
+This packet is historical and cannot be reused. IDEA-105 changed the exact reviewed Hermes revision, compatibility
+commit, source-evidence digests, panel packet, and qualification-plan digest. Use
+`CR12B_IDEA_105_OWNER_AUTHORIZATION.md` only after its integration and no-effect prerequisites are satisfied.
 
 The repository packet is ready. Nothing native has run yet.
 

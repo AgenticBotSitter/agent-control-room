@@ -4,7 +4,10 @@ import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import {
   IDEA_LAB_HERMES_021_CONTRACT_COMMIT_V1,
+  IDEA_LAB_HERMES_021_RELEASE_REVISION_V1,
   IDEA_LAB_HERMES_021_REVISION_V1,
+  IDEA_LAB_HERMES_021_SOURCE_MANIFEST_DIGEST_V1,
+  IDEA_LAB_HERMES_021_SOURCE_PREFLIGHT_DIGEST_V1,
   IDEA_LAB_HERMES_021_VERSION_V1,
   ideaLabHermes021PanelPacketV1,
 } from "./hermes-021-panel-packet";
@@ -20,7 +23,12 @@ const planSchema = z.object({
   packetDigest: z.literal(ideaLabHermes021PanelPacketV1.packetDigest),
   compatibilityContractCommit: z.literal(IDEA_LAB_HERMES_021_CONTRACT_COMMIT_V1),
   runtimeVersion: z.literal(IDEA_LAB_HERMES_021_VERSION_V1),
+  releaseRevision: z.literal(IDEA_LAB_HERMES_021_RELEASE_REVISION_V1),
   runtimeRevision: z.literal(IDEA_LAB_HERMES_021_REVISION_V1),
+  sourceManifestDigest: z.literal(IDEA_LAB_HERMES_021_SOURCE_MANIFEST_DIGEST_V1),
+  sourcePreflightDigest: z.literal(IDEA_LAB_HERMES_021_SOURCE_PREFLIGHT_DIGEST_V1),
+  sourcePreflightAccepted: z.literal(true),
+  priorAuthorizationReusable: z.literal(false),
   adapterId: z.literal("adapter.hermes.gateway.v2"),
   stages: z.tuple([
     z.literal("verify_exact_runtime"),
@@ -112,7 +120,12 @@ const planMaterial = {
   packetDigest: ideaLabHermes021PanelPacketV1.packetDigest,
   compatibilityContractCommit: IDEA_LAB_HERMES_021_CONTRACT_COMMIT_V1,
   runtimeVersion: IDEA_LAB_HERMES_021_VERSION_V1,
+  releaseRevision: IDEA_LAB_HERMES_021_RELEASE_REVISION_V1,
   runtimeRevision: IDEA_LAB_HERMES_021_REVISION_V1,
+  sourceManifestDigest: IDEA_LAB_HERMES_021_SOURCE_MANIFEST_DIGEST_V1,
+  sourcePreflightDigest: IDEA_LAB_HERMES_021_SOURCE_PREFLIGHT_DIGEST_V1,
+  sourcePreflightAccepted: true as const,
+  priorAuthorizationReusable: false as const,
   adapterId: "adapter.hermes.gateway.v2" as const,
   stages: [
     "verify_exact_runtime", "create_disposable_profile_workspace", "verify_zero_tools_mcp",

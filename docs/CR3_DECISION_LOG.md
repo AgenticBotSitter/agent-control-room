@@ -2175,3 +2175,29 @@ slower than one click but confines the first provider-capable path to explicit, 
 
 **Reevaluate:** After the owner authorizes IDEA-110, one attached-Terminal qualification may run. This ADR alone grants no
 native, provider, receipt-acceptance, live-panel, project-creation, production, or deployment authority.
+
+## ADR-134 — Idea Lab native qualification pins the reviewed installed runtime, not only its release ancestor
+
+**Decision:** The Hermes `0.21.0` release revision and the exact installed runtime revision are distinct evidence. Idea
+Lab binds the reviewed installed revision, its exact 60-commit ancestry from the release, the accepted compatibility
+implementation commit, twelve trusted source hashes, and one strict sanitized no-effect preflight digest. The preflight
+may establish readiness for a later owner-attended attempt but cannot become native evidence or execution authority.
+Changing any runtime, source, compatibility, packet, plan, or preflight binding invalidates earlier owner authorization.
+
+**Why:** A package version and old release commit do not identify the code that would actually execute. Treating an
+ancestor as the current runtime could qualify unreviewed behavior, while silently carrying the newer pin into an older
+authorization would violate the owner's exact scope. Separate lineage and source evidence make drift visible before any
+provider boundary is crossed.
+
+**Alternatives rejected:** Pretend the installed checkout equals the release commit; update only test fixtures; accept a
+version string without revision evidence; hash only changed files; ignore trusted worktree dirt; expose unrelated local
+paths; treat source compatibility as native qualification; reuse the old authorization; or start the native attempt
+before the compatibility and packet commits are integrated.
+
+**Trade-off:** The owner must provide a new exact authorization and the compatibility PR becomes an explicit dependency
+of Idea Lab. This adds an integration stop but prevents the wrong executable or stale packet from consuming the single
+native attempt.
+
+**Reevaluate:** After both refreshed commits are integrated, one no-effect readiness check may prepare the owner command.
+Only the owner can run the attached-Terminal command and handle Keychain. Receipt acceptance and a live panel remain
+separate later authorities.

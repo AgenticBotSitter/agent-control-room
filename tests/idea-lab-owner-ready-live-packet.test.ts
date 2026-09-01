@@ -18,7 +18,7 @@ const digest = (label: string) => sha256Digest({ label });
 const qualifiedInput = {
   attemptId: "native-attempt:idea-lab-hermes-021",
   runtimeVersion: "0.21.0" as const,
-  runtimeRevision: "29112bef099274229cadff79cdff7bf7b99c4b77" as const,
+  runtimeRevision: "a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b" as const,
   outcome: "qualified_candidate" as const,
   safeCode: "qualification_candidate_complete",
   attemptedAt: "2026-09-01T03:20:00.000Z",
@@ -51,6 +51,7 @@ test("CR12B-IDEA-100 freezes three ordered stages and exact accepted implementat
   ]);
   assert.deepEqual([packet.nativeAttemptsMade, packet.providerCallsMade, packet.acceptedNativeReceiptDigests.length,
     packet.sealedAdmissionDigests.length, packet.livePanelEligible], [0, 0, 0, 0, false]);
+  assert.deepEqual([packet.sourcePreflightAccepted, packet.previousAuthorizationReusable], [true, false]);
 });
 
 test("CR12B-IDEA-100 qualification and live-panel authority are deliberately different owner windows", () => {

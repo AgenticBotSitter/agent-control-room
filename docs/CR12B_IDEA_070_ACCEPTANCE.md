@@ -40,9 +40,11 @@ network connection or installing a provider driver.
 
 ## Exact Hermes 0.21 packet
 
-The disabled packet pins Hermes Agent `0.21.0`, revision
-`29112bef099274229cadff79cdff7bf7b99c4b77`, adapter `adapter.hermes.gateway.v2` `2.0.0`, and the source-compatibility
-contract at commit `629006dbaa958f55403fb926c4686c237d593523` from PR #180. It carries an empty accepted native-qualification
+The disabled packet now pins Hermes Agent `0.21.0`, reviewed runtime revision
+`a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b` (60 commits after release revision
+`29112bef099274229cadff79cdff7bf7b99c4b77`), adapter `adapter.hermes.gateway.v2` `2.0.0`, and the source-compatibility
+contract at commit `c71de92dbce49ec1b8ae2af7977384c535d265fd` from PR #180. IDEA-105 binds the exact source
+manifest and sanitized no-effect preflight digests. It carries an empty accepted native-qualification
 receipt list, no owner effect window, no accepted admission digest, and no live driver. Therefore its exact result is
 `livePanelEligible: false`.
 
@@ -68,6 +70,6 @@ project creation, or external effect occurred.
 
 ## Remaining gate
 
-IDEA-080 may implement the provider-driver and native-qualification harness as another default-disabled repository
+IDEA-080 implemented the provider-driver and native-qualification harness as another default-disabled repository
 slice. A later owner-attended attempt still requires a fresh exact authorization after the driver, native evidence
 requirements, cleanup, and sanitized evidence packet are reviewable. IDEA-070 itself grants no such authority.

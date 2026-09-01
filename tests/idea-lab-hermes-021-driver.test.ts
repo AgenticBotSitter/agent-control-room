@@ -30,7 +30,7 @@ function setup() {
   void _ignored;
   const evidenceMaterial = { ...base, mode: "hermes_bot_mode_filtered" as const,
     harnessPackage: "hermes_agent" as const, harnessVersion: "0.21.0",
-    sourceRevision: "29112bef099274229cadff79cdff7bf7b99c4b77", liveProviderAuthorized: true, providerContacted: true };
+    sourceRevision: "a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b", liveProviderAuthorized: true, providerContacted: true };
   const evidence: IdeaLabProviderSessionEvidenceV1 = { ...evidenceMaterial, evidenceDigest: sha256Digest(evidenceMaterial) };
   const runtimeIdentityDigest = digest("runtime-identity");
   const admission = buildIdeaLabLivePanelAdmissionCandidateV1({ admissionId: "admission.idea:hermes-driver",
@@ -43,7 +43,7 @@ function setup() {
         void _candidateDigest;
         const material = { ...candidateBase, mode: "hermes_bot_mode_filtered" as const,
           harnessPackage: "hermes_agent" as const, harnessVersion: "0.21.0",
-          sourceRevision: "29112bef099274229cadff79cdff7bf7b99c4b77", liveProviderAuthorized: true, providerContacted: true };
+          sourceRevision: "a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b", liveProviderAuthorized: true, providerContacted: true };
         return { ...material, evidenceDigest: sha256Digest(material) };
       })],
     runtime: buildIdeaLabHermes021RuntimeCandidateV1({ compatibilityEvidenceDigest: digest("compatibility"),

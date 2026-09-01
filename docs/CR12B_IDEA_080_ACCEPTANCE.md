@@ -8,8 +8,8 @@ provider call occurred.
 The Hermes 0.21 Idea Lab driver is a protected translator behind an injected node-local gateway port. The repository
 ships no port implementation and no default, browser, local-pilot, or production composition.
 
-Before the port can be called, the driver rechecks the consumed admission, exact Hermes `0.21.0` revision
-`29112bef099274229cadff79cdff7bf7b99c4b77`, adapter ID, provider evidence, participant identity, runtime identity,
+Before the port can be called, the driver rechecks the consumed admission, exact Hermes `0.21.0` reviewed revision
+`a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`, adapter ID, provider evidence, participant identity, runtime identity,
 profile identity, and conversation identity. It receives the admission from the protected coordinator rather than from
 browser input.
 
@@ -32,12 +32,13 @@ The returned provider receipt is derived from both normalized gateway evidence a
 
 ## Qualification harness
 
-The ten-stage frozen plan requires the exact source pin, disposable profile/workspace, zero tools and MCP, harness-native
+The ten-stage frozen plan requires the exact reviewed source pin, source-manifest and no-effect preflight digests,
+disposable profile/workspace, zero tools and MCP, harness-native
 protected-value custody, pre-call marker, one filtered provider turn, usage and sequence replay, interrupt/reconcile,
 cleanup, and a sanitized receipt. Its hard ceilings are one native attempt, one provider call, 300 seconds, and 256 KiB
 of retained sanitized evidence.
 
-The repository plan contains no native port or owner window, accepts no native receipt digest, and records zero native
+The repository plan contains no native port or owner window, accepts no native receipt digest, records zero native
 or provider calls. Its status is `blocked_before_native_attempt`. The injected eight-scenario simulation may pass, but
 its schema fixes `nativeQualified` and `livePanelEligible` to false. A caller cannot re-digest either the plan or
 simulation into native authority.
@@ -64,6 +65,6 @@ external effect occurred.
 
 ## Remaining gate
 
-IDEA-090 must implement the authenticated, durable, atomic admission-consumption and accepted-native-receipt registry.
-The current interface alone is not sufficient for a live owner window. Native qualification remains blocked until that
-store, exact replay semantics, revocation/high-water behavior, and the final owner packet are accepted.
+IDEA-090 implemented the authenticated durable admission-consumption and accepted-native-receipt registry. IDEA-105
+refreshed the exact installed-runtime pin. Native qualification remains blocked until both refreshed commits are
+integrated and the owner supplies a new exact authorization from the refreshed packet.

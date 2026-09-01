@@ -1,14 +1,16 @@
 # CR12B-IDEA-100 owner-ready qualification and live-panel packet acceptance
 
-**Status:** Complete for the exact repository-only packet. Stage 1 is ready for a fresh owner authorization; stages 2
-and 3 remain blocked. No native attempt or provider call occurred.
+**Status:** Superseded by the IDEA-105 reviewed-runtime refresh. The staged design remains accepted, but its earlier
+authorization and digests cannot be reused. No native attempt or provider call occurred.
 
 ## Accepted staged packet
 
 The immutable packet binds:
 
-- Hermes Agent `0.21.0` at revision `29112bef099274229cadff79cdff7bf7b99c4b77`;
-- source-compatibility commit `629006dbaa958f55403fb926c4686c237d593523`;
+- Hermes Agent `0.21.0` at reviewed revision `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`, 60 commits after release
+  revision `29112bef099274229cadff79cdff7bf7b99c4b77`;
+- source-compatibility commit `c71de92dbce49ec1b8ae2af7977384c535d265fd`;
+- exact reviewed source-manifest and sanitized source-preflight evidence from IDEA-105;
 - admission implementation `2aa70fde1657b36a06303a744de736ec30624386`;
 - filtered-driver implementation `0d61d8a2a2986c166885b5d7e97bcc7e2b5e09fc`;
 - durable-authority implementation `db4b2e470213cd96284cbc201cdfde21a16f09c1`; and
@@ -53,6 +55,7 @@ composition remain provider-disabled; the local pilot remains repository-fake on
 
 ## Next gate
 
-IDEA-110 is an owner-attended native qualification, not an automatic build step. It may begin only after the owner gives
-the exact fresh authorization in `CR12B_IDEA_100_OWNER_AUTHORIZATION.md`. A qualified result still cannot start a live
+IDEA-110 is an owner-attended native qualification, not an automatic build step. It may begin only after both refreshed
+commits are integrated and the owner gives the exact fresh authorization in `CR12B_IDEA_105_OWNER_AUTHORIZATION.md`.
+A qualified result still cannot start a live
 panel; independent review, architect registry acceptance, an exact Idea Lab session, and a second owner window come next.

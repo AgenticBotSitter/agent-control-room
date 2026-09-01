@@ -49,7 +49,7 @@ async function setup() {
       mode: "hermes_bot_mode_filtered" as const,
       harnessPackage: "hermes_agent" as const,
       harnessVersion: "0.21.0",
-      sourceRevision: "29112bef099274229cadff79cdff7bf7b99c4b77",
+      sourceRevision: "a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b",
       adapterDigest: digest("adapter.hermes.gateway.v2"),
       liveProviderAuthorized: true,
       providerContacted: true,
@@ -106,10 +106,13 @@ test("CR12B-IDEA-070 pins a disabled Hermes 0.21 owner packet with no live autho
   assert.deepEqual({ version: packet.runtimeVersion, revision: packet.runtimeRevision, eligible: packet.livePanelEligible,
     receipts: packet.acceptedNativeQualificationReceiptDigests.length, windows: packet.ownerEffectWindowPresent,
     calls: packet.nativeCallsMade, protectedValues: packet.protectedValuesAccessed }, {
-    version: "0.21.0", revision: "29112bef099274229cadff79cdff7bf7b99c4b77", eligible: false,
+    version: "0.21.0", revision: "a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b", eligible: false,
     receipts: 0, windows: false, calls: 0, protectedValues: false,
   });
   assert.equal(packet.blockerCodes.length, 5);
+  assert.deepEqual([packet.releaseRevision, packet.reviewedCommitCount, packet.sourcePreflightStatus,
+    packet.sourcePreflightNativeAttemptStarted, packet.sourcePreflightProviderCallsMade],
+  ["29112bef099274229cadff79cdff7bf7b99c4b77", 60, "ready_for_owner_attended_native_attempt", false, 0]);
 });
 
 test("CR12B-IDEA-070 binds exact provider, participants, budgets, custody, output, and owner window", async () => {
