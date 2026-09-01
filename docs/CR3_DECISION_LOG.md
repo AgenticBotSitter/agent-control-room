@@ -2512,6 +2512,13 @@ The final private Mac adapter still receives a native signal because it may need
 inside the connector and carries no caller-owned internal state. This deliberately narrows extension points in exchange
 for deterministic cancellation, timeout, cleanup, and zero-behavior validation.
 
+**IDEA-110I amendment:** Exact opaque validation is required at the first executable boundary of gateway and bridge
+execute and cleanup, before lifecycle mutation, trusted time, durable spend, settlement, or collaborator dispatch. The
+Mac connector captures its native controller constructor, signal getter, abort method, and apply operation at module
+initialization. Connector-owned cancellation state becomes terminal before native abort; a native abort exception is
+discarded and cannot bypass the active-settlement join or mandatory cleanup sequence. This amendment follows the two
+High and one Medium findings preserved by independent PR #219.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
-conversion, or cleanup ordering invalidates IDEA-110H review evidence and requires a fresh report.
+conversion, captured host operations, or cleanup ordering invalidates IDEA-110I review evidence and requires a fresh report.

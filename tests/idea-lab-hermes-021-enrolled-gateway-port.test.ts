@@ -7,6 +7,7 @@ import {
   createHostCancellationControllerV1,
   createHostResultCollectorV1,
   subscribeHostCancellationV1,
+  type HostCancellationSignalV1,
 } from "../src/security/host-value.ts";
 import {
   IDEA_LAB_HERMES_021_CONNECTION_ENROLLMENT_V1,
@@ -196,6 +197,33 @@ test("CR12B-IDEA-110D preserves concrete collaborator receivers across the gatew
     createHostResultCollectorV1().collector);
   assert.deepEqual(spend.events, ["claimed", "execute_returned", "cleanup_completed"]);
   assert.deepEqual(native.calls, ["execute", "cleanup"]);
+});
+
+test("CR12B-IDEA-110I rejects non-opaque gateway cancellation before spend, state, or bridge dispatch", async () => {
+  const bundle = permit(), spend = store(), native = bridge();
+  const port = new IdeaLabHermes021EnrolledGatewayPortV1({ enrollment: bundle.connection,
+    permitEnvelope: bundle.envelope, permitContext: bundle.context, spendStore: spend.value,
+    nativeBridge: native.value, now: () => "2026-09-01T10:04:00.000Z" });
+  let traps = 0;
+  await assert.rejects(() => port.execute(new Proxy(executeInput(bundle), {
+    ownKeys() { traps += 1; return []; },
+  }), createHostResultCollectorV1().collector),
+  (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  const nativeSignal = new AbortController().signal as unknown as HostCancellationSignalV1;
+  await assert.rejects(() => port.execute({ ...executeInput(bundle), signal: nativeSignal },
+    createHostResultCollectorV1().collector),
+  (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  assert.deepEqual([traps, spend.events.length, native.calls.length], [0, 0, 0]);
+
+  await port.execute(executeInput(bundle), createHostResultCollectorV1().collector);
+  const callsBeforeCleanup = native.calls.length;
+  await assert.rejects(() => port.cleanup({ markerDigest: bundle.envelope.body.markerDigest, signal: nativeSignal },
+    createHostResultCollectorV1().collector),
+  (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  assert.equal(native.calls.length, callsBeforeCleanup);
+  await port.cleanup({ markerDigest: bundle.envelope.body.markerDigest,
+    signal: createHostCancellationControllerV1().signal }, createHostResultCollectorV1().collector);
+  assert.deepEqual(native.calls.map((call) => call.type), ["execute", "cleanup"]);
 });
 
 test("CR12B-IDEA-110D consumes but never dispatches a permit that expires during durable claim", async () => {

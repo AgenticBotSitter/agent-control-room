@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F/110G/110H macOS Hermes connector | IDEA-110F negative review accepted; IDEA-110G rejected on a remaining High cancellation defect; IDEA-110H structurally remediated locally and requires fresh independent review | Two High and three Medium findings remain preserved in PR #212; two later review attempts are honestly blocked/incomplete; IDEA-110H replaces all repository-seam native AbortSignals with one frozen opaque cancellation capability and retains uncertain-create cleanup, safe errors, distinct authority domains, and digest-only connection identity; see `CR12B_IDEA_110H_OPAQUE_CANCELLATION_REMEDIATION.md` |
+| CR12B-IDEA-110F/110G/110H/110I macOS Hermes connector | IDEA-110H independently rejected; IDEA-110I remediation implemented locally and requires fresh independent review | PR #219 preserves two High and one Medium finding; exact pre-state cancellation validation, captured native operations, non-throwing abort containment, mandatory cleanup, 158 CR12B tests; see `CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REMEDIATION.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -216,8 +216,13 @@ Mac-private port receives a connector-owned native signal. The exact poisoned-si
 zero private calls. Focused cancellation/gateway/bridge/connector/readiness tests pass 49/49 and combined CR12B passes
 154/154. Stage zero, typecheck, full lint, 769/769 pretests, 414/416 core tests with two intentional platform skips,
 233/233 posttests, the production build with 3/3 rendered routes, all 32 migrations/110 PostgreSQL tables, and whitespace
-validation pass. The fresh review packet is frozen at
-`sha256:4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb`. Fresh independent review is mandatory.
+validation pass. Independent PR #219 then rejected the exact candidate with two High and one Medium finding: invalid
+cancellation could spend before rejection and cross cleanup seams, private mutation could make native abort escape and
+interrupt cleanup, and native conversion selected a mutable ambient constructor. IDEA-110I validates exact opaque
+cancellation before state/spend/dispatch at gateway and bridge execute/cleanup, captures native constructor/getter/abort
+operations at module initialization, and makes abort failure non-throwing while settlement and mandatory cleanup continue.
+Four new hostile regressions pass; combined CR12B is 158/158 and the complete lifecycle remains green. A replacement
+packet and fresh independent review remain mandatory.
 Signer and route enrollment, preflight, packet refresh,
 authorization, and native qualification remain absent; no native or external effect occurred.
 
@@ -626,11 +631,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110H-Q — independently review the opaque-cancellation connector remediation
+Block: CR12B-IDEA-110I-Q — independently review the exact cancellation-boundary remediation
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: IDEA-110G still trusted mutable native AbortSignal internals and was rejected. IDEA-110H changes the cancellation architecture across four component seams and cannot accept its own repair.
-Expected output: one immutable report by a fresh reviewer against implementation commit `d22c76444b80f8dd469380aab52ec457f5d76fad` and packet `sha256:4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb`. It must reproduce the exact poisoned event-map Proxy case with zero behavior, independently repeat every original IDEA-110F/110G case, and inspect opaque-token minting, validation, pre-abort, subscription, unsubscribe, timeout, cleanup, native conversion, Proxy, mutation, lifecycle, locator, error, alias, composition, and upgrade boundaries. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Why: PR #219 rejected IDEA-110H with two High and one Medium cancellation-boundary defects. IDEA-110I changes permit-spend ordering, gateway/bridge cleanup entry, and final native conversion/settlement and cannot accept its own repair.
+Expected output: one immutable report by a fresh reviewer against the exact IDEA-110I product commit and replacement packet. It must reproduce all three PR #219 findings, prove every invalid cancellation rejects before state/spend/collaborator behavior, mutate the connector-owned native signal at every await/close boundary, replace ambient globals and prototypes after import, and repeat the complete IDEA-110F through IDEA-110H matrix. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

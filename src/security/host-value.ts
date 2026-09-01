@@ -54,6 +54,15 @@ export function ownDataPropertyValueV1(value: unknown, key: PropertyKey): unknow
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
+/** Capture one own accessor getter without invoking it or accepting a callable Proxy. */
+export function ownAccessorPropertyGetterV1(value: unknown, key: PropertyKey): ((...args: unknown[]) => unknown) | undefined {
+  if (!value || (typeof value !== "object" && typeof value !== "function") || isHostProxyV1(value)) return undefined;
+  const descriptor = objectGetOwnPropertyDescriptor(value, key);
+  return descriptor && !("value" in descriptor) && descriptor.set === undefined
+    && typeof descriptor.get === "function" && !isHostProxyV1(descriptor.get)
+    ? descriptor.get as (...args: unknown[]) => unknown : undefined;
+}
+
 /** Read a data property without invoking accessors, including class methods. */
 export function dataPropertyValueV1(value: unknown, key: PropertyKey): unknown {
   if (value === null || (typeof value !== "object" && typeof value !== "function")) return undefined;

@@ -4,7 +4,9 @@ import {
   createHostCancellationControllerV1,
   createHostResultCollectorV1,
   dataMethodV1,
+  exactHostCancellationSignalV1,
   exactHostDataArrayV1,
+  exactHostDataSnapshotV1,
   hostCancellationAbortedV1,
   isHostProxyV1,
   subscribeHostCancellationV1,
@@ -14,6 +16,7 @@ import {
 } from "../../security/host-value";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
+import { IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1 } from "./hermes-021-enrolled-connection";
 import type { IdeaLabHermes021NativeBridgeV1 } from "./hermes-021-enrolled-gateway-port";
 import type { IdeaLabHermes021FixedOperationV1 } from "./hermes-021-fixed-operation-set";
 import {
@@ -195,6 +198,21 @@ const panelResultSchema = z.object({
 type ExecuteInput = Parameters<IdeaLabHermes021NativeBridgeV1["executeFixedSession"]>[0];
 type CleanupInput = Parameters<IdeaLabHermes021NativeBridgeV1["cleanupFixedSession"]>[0];
 
+function exactBridgeExecuteInputV1(value: unknown): ExecuteInput | undefined {
+  const snapshot = exactHostDataSnapshotV1(value, ["connectionContractVersion", "connectionId", "transport",
+    "connectorRouteDigest", "attemptId", "permitDigest", "markerDigest", "participantId",
+    "participantIdentityDigest", "round", "safeInstruction", "runtimeIdentityDigest", "profileIdentityDigest",
+    "conversationIdentityDigest", "maximumOutputCharacters", "toolsEnabled", "mcpEnabled", "pluginsEnabled",
+    "genericShellEnabled", "signal"]);
+  return snapshot && exactHostCancellationSignalV1(snapshot.signal) ? snapshot as unknown as ExecuteInput : undefined;
+}
+
+function exactBridgeCleanupInputV1(value: unknown): CleanupInput | undefined {
+  const snapshot = exactHostDataSnapshotV1(value, ["connectionId", "connectorRouteDigest", "attemptId", "permitDigest",
+    "markerDigest", "signal"], ["sessionIdentityDigest"]);
+  return snapshot && exactHostCancellationSignalV1(snapshot.signal) ? snapshot as unknown as CleanupInput : undefined;
+}
+
 function sameOperationBinding(value: { sessionIdentityDigest: string; epochDigest: string },
   sessionIdentityDigest: string, epochDigest: string): void {
   if (value.sessionIdentityDigest !== sessionIdentityDigest || value.epochDigest !== epochDigest) {
@@ -206,7 +224,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
   readonly #open: IdeaLabHermes021ConnectorPrivateRpcV1["openFixedRoute"];
   readonly #request: IdeaLabHermes021ConnectorPrivateRpcV1["requestFixedOperation"];
   readonly #close: IdeaLabHermes021ConnectorPrivateRpcV1["closeFixedRoute"];
-  #binding?: { connectorRouteDigest: string; attemptId: string; permitDigest: string; markerDigest: string;
+  #binding?: { connectionId: string; connectorRouteDigest: string; attemptId: string; permitDigest: string; markerDigest: string;
     routeLeaseDigest?: string; sessionIdentityDigest?: string; epochDigest?: string };
   #executeStarted = false;
   #cleanupStarted = false;
@@ -229,10 +247,21 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     this.#close = close.bind(connector) as IdeaLabHermes021ConnectorPrivateRpcV1["closeFixedRoute"];
   }
 
-  async executeFixedSession(input: ExecuteInput, collector: HostResultCollectorV1): Promise<void> {
+  async executeFixedSession(inputValue: ExecuteInput, collector: HostResultCollectorV1): Promise<void> {
+    const input = exactBridgeExecuteInputV1(inputValue);
+    if (!input) throw new IdeaLabErrorV1("invalid_input");
     const submit = dataMethodV1(collector, "submit");
-    if (this.#executeStarted || this.#cleanupStarted || !submit || input.maximumOutputCharacters !== 800
-      || input.toolsEnabled || input.mcpEnabled || input.pluginsEnabled || input.genericShellEnabled
+    if (this.#executeStarted || this.#cleanupStarted || !submit
+      || input.connectionContractVersion !== IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1
+      || typeof input.connectionId !== "string" || (input.transport !== "local_loopback" && input.transport !== "ssh_tunnel")
+      || typeof input.connectorRouteDigest !== "string" || typeof input.attemptId !== "string"
+      || typeof input.permitDigest !== "string" || typeof input.markerDigest !== "string"
+      || typeof input.participantId !== "string" || typeof input.participantIdentityDigest !== "string"
+      || typeof input.runtimeIdentityDigest !== "string" || typeof input.profileIdentityDigest !== "string"
+      || typeof input.conversationIdentityDigest !== "string" || typeof input.round !== "number"
+      || !Number.isSafeInteger(input.round) || input.round < 1 || input.maximumOutputCharacters !== 800
+      || input.toolsEnabled !== false || input.mcpEnabled !== false || input.pluginsEnabled !== false
+      || input.genericShellEnabled !== false || typeof input.safeInstruction !== "string"
       || input.safeInstruction.length < 1 || input.safeInstruction.length > 800) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
@@ -245,7 +274,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     else this.#unsubscribeExecuteInput = inputSubscription.unsubscribe;
     const executionInput = { ...input, signal: this.#executeController.signal };
     this.#executeSettled = new Promise<void>((resolve) => { this.#resolveExecuteSettled = resolve; });
-    this.#binding = { connectorRouteDigest: input.connectorRouteDigest, attemptId: input.attemptId,
+    this.#binding = { connectionId: input.connectionId, connectorRouteDigest: input.connectorRouteDigest, attemptId: input.attemptId,
       permitDigest: input.permitDigest, markerDigest: input.markerDigest };
 
     try {
@@ -342,12 +371,16 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     }
   }
 
-  async cleanupFixedSession(input: CleanupInput, collector: HostResultCollectorV1): Promise<void> {
+  async cleanupFixedSession(inputValue: CleanupInput, collector: HostResultCollectorV1): Promise<void> {
+    const input = exactBridgeCleanupInputV1(inputValue);
+    if (!input) throw new IdeaLabErrorV1("invalid_input");
     const submit = dataMethodV1(collector, "submit"), binding = this.#binding;
     if (!this.#executeStarted || this.#cleanupStarted || !submit || !binding
-      || input.connectorRouteDigest !== binding.connectorRouteDigest || input.attemptId !== binding.attemptId
+      || input.connectionId !== binding.connectionId || input.connectorRouteDigest !== binding.connectorRouteDigest
+      || input.attemptId !== binding.attemptId
       || input.permitDigest !== binding.permitDigest || input.markerDigest !== binding.markerDigest
-      || (input.sessionIdentityDigest && input.sessionIdentityDigest !== binding.sessionIdentityDigest)) {
+      || (input.sessionIdentityDigest !== undefined && (typeof input.sessionIdentityDigest !== "string"
+        || input.sessionIdentityDigest !== binding.sessionIdentityDigest))) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
     this.#cleanupStarted = true;

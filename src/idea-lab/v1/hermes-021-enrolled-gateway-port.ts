@@ -3,6 +3,7 @@ import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security";
 import {
   dataMethodV1,
+  exactHostCancellationSignalV1,
   exactHostDataSnapshotV1,
   hostCancellationAbortedV1,
   isHostProxyV1,
@@ -280,6 +281,18 @@ export interface IdeaLabHermes021NativeBridgeV1 {
 type ExecuteInput = Parameters<Hermes021IdeaLabGatewayPortV1["execute"]>[0];
 type CleanupInput = Parameters<Hermes021IdeaLabGatewayPortV1["cleanup"]>[0];
 
+function exactGatewayExecuteInputV1(value: unknown): ExecuteInput | undefined {
+  const snapshot = exactHostDataSnapshotV1(value, ["markerDigest", "participantId", "participantIdentityDigest", "round",
+    "safeInstruction", "runtimeIdentityDigest", "profileIdentityDigest", "conversationIdentityDigest",
+    "maximumOutputCharacters", "signal"]);
+  return snapshot && exactHostCancellationSignalV1(snapshot.signal) ? snapshot as unknown as ExecuteInput : undefined;
+}
+
+function exactGatewayCleanupInputV1(value: unknown): CleanupInput | undefined {
+  const snapshot = exactHostDataSnapshotV1(value, ["markerDigest", "signal"], ["sessionIdentityDigest"]);
+  return snapshot && exactHostCancellationSignalV1(snapshot.signal) ? snapshot as unknown as CleanupInput : undefined;
+}
+
 export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGatewayPortV1 {
   readonly #enrollment: IdeaLabHermes021ConnectionSafeResultV1;
   readonly #permit: IdeaLabHermes021VerifiedQualificationPermitV1;
@@ -333,15 +346,19 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
     this.#now = (now as (() => string) | undefined) ?? (() => new Date().toISOString());
   }
 
-  async execute(input: ExecuteInput, collector: HostResultCollectorV1): Promise<void> {
+  async execute(inputValue: ExecuteInput, collector: HostResultCollectorV1): Promise<void> {
+    const input = exactGatewayExecuteInputV1(inputValue);
+    if (!input) throw new IdeaLabErrorV1("invalid_input");
     if (this.#executeStarted || this.#cleanupStarted || input.markerDigest !== this.#permit.markerDigest
       || input.participantId !== this.#permit.participantId
       || input.participantIdentityDigest !== this.#permit.participantIdentityDigest
       || input.runtimeIdentityDigest !== this.#permit.runtimeIdentityDigest
       || input.profileIdentityDigest !== this.#permit.profileIdentityDigest
       || input.conversationIdentityDigest !== this.#permit.conversationIdentityDigest
-      || input.maximumOutputCharacters !== 800 || input.safeInstruction.length < 1 || input.safeInstruction.length > 800
-      || input.round < 1 || !Number.isSafeInteger(input.round) || !dataMethodV1(collector, "submit")) {
+      || input.maximumOutputCharacters !== 800 || typeof input.safeInstruction !== "string"
+      || input.safeInstruction.length < 1 || input.safeInstruction.length > 800
+      || typeof input.round !== "number" || input.round < 1 || !Number.isSafeInteger(input.round)
+      || !dataMethodV1(collector, "submit")) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
     const claimedAt = this.#now(), claimed = Date.parse(claimedAt);
@@ -402,8 +419,11 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
     }
   }
 
-  async cleanup(input: CleanupInput, collector: HostResultCollectorV1): Promise<void> {
+  async cleanup(inputValue: CleanupInput, collector: HostResultCollectorV1): Promise<void> {
+    const input = exactGatewayCleanupInputV1(inputValue);
+    if (!input) throw new IdeaLabErrorV1("invalid_input");
     if (!this.#executeStarted || this.#cleanupStarted || input.markerDigest !== this.#permit.markerDigest
+      || (input.sessionIdentityDigest !== undefined && typeof input.sessionIdentityDigest !== "string")
       || !dataMethodV1(collector, "submit")) throw new IdeaLabErrorV1("authorization_denied");
     this.#cleanupStarted = true;
     const executeSettled = this.#executeSettled;

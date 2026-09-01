@@ -6,6 +6,8 @@ import {
   exactHostDataSnapshotV1,
   hostCancellationAbortedV1,
   isHostProxyV1,
+  ownAccessorPropertyGetterV1,
+  ownDataPropertyValueV1,
   subscribeHostCancellationV1,
   type HostCancellationSignalV1,
   type HostResultCollectorV1,
@@ -23,6 +25,18 @@ import { ideaDigestSchemaV1, ideaIdSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_V1 =
   "control-room-hermes-021-macos-connector/v1" as const;
+
+const nativeReflectApplyV1 = Reflect.apply, nativeReflectConstructV1 = Reflect.construct;
+const nativeAbortControllerCandidateV1 = ownDataPropertyValueV1(globalThis, "AbortController");
+const nativeAbortControllerConstructorV1 = typeof nativeAbortControllerCandidateV1 === "function"
+  && !isHostProxyV1(nativeAbortControllerCandidateV1) ? nativeAbortControllerCandidateV1 as typeof AbortController : undefined;
+const nativeAbortControllerPrototypeV1 = nativeAbortControllerConstructorV1
+  ? ownDataPropertyValueV1(nativeAbortControllerConstructorV1, "prototype") : undefined;
+const nativeAbortControllerSignalGetterV1 = ownAccessorPropertyGetterV1(nativeAbortControllerPrototypeV1, "signal");
+const nativeAbortControllerAbortV1 = dataMethodV1(nativeAbortControllerPrototypeV1, "abort");
+function NativeAbortControllerNewTargetV1() { /* private new-target prevents constructor prototype drift */ }
+Object.freeze(NativeAbortControllerNewTargetV1.prototype);
+Object.freeze(NativeAbortControllerNewTargetV1);
 
 type OpenInput = Parameters<IdeaLabHermes021ConnectorPrivateRpcV1["openFixedRoute"]>[0];
 type OperationInput = Parameters<IdeaLabHermes021ConnectorPrivateRpcV1["requestFixedOperation"]>[0];
@@ -199,7 +213,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
       profileIdentityDigest: data.profileIdentityDigest, conversationIdentityDigest: data.conversationIdentityDigest };
     const handoff = createHostResultCollectorV1();
     try {
-      await this.#callPrivate(() => this.#openPort(Object.freeze({ ...data, signal: controller.signal }), handoff.collector));
+      await this.#callPrivate(() => this.#openPort(Object.freeze({ ...data, signal: controller }), handoff.collector));
       const result = handoff.take();
       if (this.#closing || this.#activeCancelled) throw new IdeaLabErrorV1("integrity_failed");
       const resultSnapshot = exactHostDataSnapshotV1(result, ["contractVersion", "attemptId", "permitDigest",
@@ -261,7 +275,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     const handoff = createHostResultCollectorV1();
     try {
       await this.#callPrivate(() => this.#requestPort(
-        Object.freeze({ ...data, parameters: exact, signal: controller.signal }), handoff.collector));
+        Object.freeze({ ...data, parameters: exact, signal: controller }), handoff.collector));
       const result = captureOperationResult(handoff.take(), data.operation);
       this.#bindOperationResult(result);
       if (this.#closing || this.#activeCancelled) throw new IdeaLabErrorV1("integrity_failed");
@@ -295,12 +309,12 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
       this.#closing = false; this.#cleanupOnly = true;
       throw new IdeaLabErrorV1("authorization_denied");
     }
-    let controller: AbortController;
+    let controller: AbortSignal;
     try { controller = this.#beginActive(captured.signal); }
     catch (error) { this.#closing = false; this.#cleanupOnly = true; throw error; }
     const handoff = createHostResultCollectorV1();
     try {
-      await this.#callPrivate(() => this.#closePort(Object.freeze({ ...data, signal: controller.signal }), handoff.collector));
+      await this.#callPrivate(() => this.#closePort(Object.freeze({ ...data, signal: controller }), handoff.collector));
       const result = exactHostDataSnapshotV1(handoff.take(), ["contractVersion", "attemptId", "permitDigest",
         "connectorRouteDigest", "nativeSessionClosed", "routeLeaseReleased", "disposableProfileRemoved",
         "disposableWorkspaceRemoved", "retainedNativeReferenceCount"]);
@@ -340,18 +354,32 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     this.#sessionBinding ??= { sessionIdentityDigest, epochDigest };
   }
 
-  #beginActive(signal: HostCancellationSignalV1): AbortController {
+  #beginActive(signal: HostCancellationSignalV1): AbortSignal {
     if (this.#activeSettled) throw new IdeaLabErrorV1("authorization_denied");
-    const controller = new AbortController();
+    if (!nativeAbortControllerConstructorV1 || !nativeAbortControllerSignalGetterV1
+      || !nativeAbortControllerAbortV1) throw new IdeaLabErrorV1("integrity_failed");
+    let controller: AbortController, nativeSignal: unknown;
+    try {
+      controller = nativeReflectConstructV1(nativeAbortControllerConstructorV1, [],
+        NativeAbortControllerNewTargetV1) as AbortController;
+      nativeSignal = nativeReflectApplyV1(nativeAbortControllerSignalGetterV1, controller, []);
+    } catch { throw new IdeaLabErrorV1("integrity_failed"); }
+    if (!nativeSignal || typeof nativeSignal !== "object" || isHostProxyV1(nativeSignal)) {
+      throw new IdeaLabErrorV1("integrity_failed");
+    }
     this.#activeCancelled = false;
-    const abort = () => { this.#activeCancelled = true; controller.abort(); };
+    const abort = () => {
+      this.#activeCancelled = true;
+      try { nativeReflectApplyV1(nativeAbortControllerAbortV1, controller, []); }
+      catch { /* connector-owned cancellation remains terminal and cleanup still joins */ }
+    };
     const subscription = subscribeHostCancellationV1(signal, abort);
     if (!subscription) throw new IdeaLabErrorV1("invalid_input");
     if (subscription.status === "aborted") throw new IdeaLabErrorV1("authorization_denied");
     this.#cancelActive = abort;
     this.#activeUnsubscribe = subscription.unsubscribe;
     this.#activeSettled = new Promise<void>((resolve) => { this.#settleActive = resolve; });
-    return controller;
+    return nativeSignal as AbortSignal;
   }
 
   #finishActive(): void {

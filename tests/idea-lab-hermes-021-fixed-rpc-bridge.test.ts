@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { sha256Digest } from "../src/security/index.ts";
-import { createHostCancellationControllerV1, createHostResultCollectorV1 } from "../src/security/host-value.ts";
+import {
+  createHostCancellationControllerV1,
+  createHostResultCollectorV1,
+  type HostCancellationSignalV1,
+} from "../src/security/host-value.ts";
 import {
   IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
   IDEA_LAB_HERMES_021_FIXED_OPERATION_SET_V1,
@@ -138,6 +142,29 @@ test("CR12B-IDEA-110D signs and executes only the exact seven fixed operations",
   ]);
   assert.equal(IDEA_LAB_HERMES_021_FIXED_OPERATION_SET_V1.includes("session.steer" as never), false);
   assert.equal(IDEA_LAB_HERMES_021_FIXED_OPERATION_SET_V1.includes("session.resume" as never), false);
+});
+
+test("CR12B-IDEA-110I rejects non-opaque bridge cancellation before lifecycle change or connector dispatch", async () => {
+  const native = connector(), bridge = new IdeaLabHermes021FixedRpcBridgeV1(native.value), input = executeInput();
+  const nativeSignal = new AbortController().signal as unknown as HostCancellationSignalV1;
+  let traps = 0;
+  await assert.rejects(() => bridge.executeFixedSession(new Proxy(input, {
+    ownKeys() { traps += 1; return []; },
+  }), createHostResultCollectorV1().collector),
+  (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  await assert.rejects(() => bridge.executeFixedSession({ ...input, signal: nativeSignal },
+    createHostResultCollectorV1().collector),
+  (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  assert.deepEqual([traps, native.calls.length], [0, 0]);
+
+  await bridge.executeFixedSession(input, createHostResultCollectorV1().collector);
+  const callsBeforeCleanup = native.calls.length;
+  await assert.rejects(() => bridge.cleanupFixedSession({ ...cleanupInput(input, sessionDigest), signal: nativeSignal },
+    createHostResultCollectorV1().collector),
+  (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  assert.equal(native.calls.length, callsBeforeCleanup);
+  await bridge.cleanupFixedSession(cleanupInput(input, sessionDigest), createHostResultCollectorV1().collector);
+  assert.equal(native.calls.at(-1)?.kind, "close");
 });
 
 test("CR12B-IDEA-110D cleanup waits for in-flight execution and prevents every later operation", async () => {

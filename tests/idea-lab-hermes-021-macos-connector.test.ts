@@ -219,6 +219,79 @@ test("CR12B-IDEA-110G aborts and settles an in-flight call but refuses route clo
   assert.deepEqual(events, ["request.started", "request.aborted", "request.returned", "close.started"]);
 });
 
+test("CR12B-IDEA-110I contains private native-signal poisoning and still completes mandatory cleanup", async () => {
+  let entered!: () => void, release!: () => void, traps = 0;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  class PoisoningPort extends FixturePrivatePort {
+    override async requestEnrolledOperation(
+      input: Parameters<IdeaLabHermes021MacosPrivatePortV1["requestEnrolledOperation"]>[0],
+      collector: HostResultCollectorV1,
+    ): Promise<void> {
+      if (input.operation !== "session.create") return super.requestEnrolledOperation(input, collector);
+      const eventMapKey = Reflect.ownKeys(input.signal).find((key) => String(key) === "Symbol(kEvents)");
+      assert.ok(eventMapKey);
+      Object.defineProperty(input.signal, eventMapKey, { ...Object.getOwnPropertyDescriptor(input.signal, eventMapKey),
+        value: new Proxy(new Map(), { get(target, property, receiver) {
+          traps += 1; return Reflect.get(target, property, receiver);
+        } }) });
+      entered(); await gate;
+      collector.submit({ contractVersion: "control-room-hermes-021-fixed-operation-result/v1",
+        sessionIdentityDigest, epochDigest, operation: input.operation, status: "created",
+        conversationIdentityDigest: binding.conversationIdentityDigest, providerCalls: 0 });
+    }
+  }
+  const port = new PoisoningPort(), connector = new IdeaLabHermes021MacosConnectorV1(port);
+  await open(connector);
+  const pending = request(connector, "session.create"); await started;
+  const closing = close(connector); await Promise.resolve(); release();
+  await assert.rejects(() => pending, (error) => error instanceof IdeaLabErrorV1);
+  await assert.rejects(() => closing, (error) => error instanceof IdeaLabErrorV1);
+  assert.ok(traps >= 1);
+  for (const operation of ["session.interrupt", "session.status", "session.close"] as Operation[]) {
+    await request(connector, operation);
+  }
+  const receipt = await close(connector) as { retainedNativeReferenceCount: number };
+  assert.equal(receipt.retainedNativeReferenceCount, 0);
+  assert.equal(port.calls.at(-1), "route.close");
+});
+
+test("CR12B-IDEA-110I ignores post-import native global and prototype substitution", async () => {
+  const nativePrototype = AbortController.prototype,
+    original = Object.getOwnPropertyDescriptor(globalThis, "AbortController"),
+    abortDescriptor = Object.getOwnPropertyDescriptor(nativePrototype, "abort"),
+    signalDescriptor = Object.getOwnPropertyDescriptor(nativePrototype, "signal");
+  assert.ok(original); assert.ok(abortDescriptor); assert.ok(signalDescriptor);
+  const sentinel = new Error("hostile ambient constructor"); let behavior = 0, entered!: () => void;
+  class HostileAbortController { constructor() { behavior += 1; throw sentinel; } }
+  Object.defineProperty(globalThis, "AbortController", { ...original, value: HostileAbortController });
+  Object.defineProperty(nativePrototype, "abort", { ...abortDescriptor,
+    value() { behavior += 1; throw sentinel; } });
+  Object.defineProperty(nativePrototype, "signal", { ...signalDescriptor,
+    get() { behavior += 1; throw sentinel; } });
+  try {
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    class AwaitAbortPort extends FixturePrivatePort {
+      override async openEnrolledRoute(
+        input: Parameters<IdeaLabHermes021MacosPrivatePortV1["openEnrolledRoute"]>[0],
+        collector: HostResultCollectorV1,
+      ): Promise<void> {
+        entered(); await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
+        return super.openEnrolledRoute(input, collector);
+      }
+    }
+    const port = new AwaitAbortPort(), connector = new IdeaLabHermes021MacosConnectorV1(port),
+      cancellation = createHostCancellationControllerV1(), opening = open(connector, cancellation.signal);
+    await started; cancellation.abort();
+    await assert.rejects(() => opening, (error) => error instanceof IdeaLabErrorV1 && error !== sentinel);
+    assert.deepEqual([behavior, port.calls], [0, ["open:local_loopback"]]);
+  } finally {
+    Object.defineProperty(globalThis, "AbortController", original);
+    Object.defineProperty(nativePrototype, "abort", abortDescriptor);
+    Object.defineProperty(nativePrototype, "signal", signalDescriptor);
+  }
+});
+
 test("CR12B-IDEA-110F retains private-port receivers and rejects behavioral constructor wrappers", async () => {
   const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port);
   await open(connector);

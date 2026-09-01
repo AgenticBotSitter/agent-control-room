@@ -1,7 +1,7 @@
 # CR12B-IDEA-110H — opaque cancellation remediation
 
-**Status:** Implementation frozen at `d22c76444b80f8dd469380aab52ec457f5d76fad`; provider-disabled and awaiting a
-fresh independent review.
+**Status:** Rejected by independent PR #219 with two High and one Medium finding. Superseded by IDEA-110I; see
+`CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REMEDIATION.md`.
 
 **Review packet:** `docs/reviews/CR12B_IDEA_110H_OPAQUE_CANCELLATION_REVIEW_PACKET.md` at SHA-256
 `4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb`.

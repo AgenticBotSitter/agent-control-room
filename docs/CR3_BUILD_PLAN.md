@@ -727,6 +727,21 @@ executed caller behavior. IDEA-110H replaces that seam structurally across the d
 and connector. Opaque cancellation retains timeout, abort, settlement, and cleanup semantics without EventTarget or
 caller-owned internal containers. A new independent report is required before connector acceptance.
 
+Independent PR #219 rejected that exact candidate with two High and one Medium finding. See the retained report at
+`docs/reviews/CR12B_IDEA_110H_OPAQUE_CANCELLATION_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110I — exact cancellation-boundary remediation
+
+Status: complete locally for the provider-disabled implementation candidate; replacement packet and fresh independent
+review required. See `CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REMEDIATION.md` and amended ADR-146.
+
+Every gateway and fixed-bridge execute/cleanup entry now requires an exact repository-owned cancellation capability
+before state, time, spend, settlement, or collaborator behavior. The Mac connector uses module-captured native
+constructor/getter/abort operations; connector-owned cancellation becomes terminal before native abort, abort exceptions
+are discarded, active settlement remains joined, and mandatory cleanup stays reachable. Four hostile regressions close
+the exact PR #219 attacks. No private port, enrollment, native operation, provider call, credential access, or deployment
+is introduced.
+
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
 Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,
