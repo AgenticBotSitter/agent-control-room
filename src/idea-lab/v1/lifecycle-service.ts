@@ -21,6 +21,14 @@ export class IdeaLabProjectLifecycleServiceV1{
   constructor(db:DatabaseClient,integrityKey:Uint8Array,clock:()=>string=()=>new Date().toISOString()){
     this.#security=new SecurityStore(db);this.#registry=new IdeaLabProjectRegistryStoreV1(db,integrityKey);this.#clock=clock;
   }
+  async get(projectIdValue:unknown,authentication:VerifiedAuthentication):Promise<ProjectRegistryProjectionV1>{
+    let projectId:string;try{projectId=ideaIdSchemaV1.parse(projectIdValue);}catch{throw new IdeaLabProjectLifecycleServiceErrorV1("invalid_lifecycle_request");}
+    const now=this.#clock();try{await this.#security.authorizeRead({authentication,requiredRoleKey:"owner",request:{tenantId:authentication.tenantId,
+      action:"idea_lab.project_read",resourceType:"project",resourceId:projectId,projectId,risk:"low",externalEffect:false,occurredAt:now}});
+    }catch{throw new IdeaLabProjectLifecycleServiceErrorV1("owner_forbidden");}
+    let project;try{project=await this.#registry.getProject(authentication.tenantId,projectId);}catch{throw new IdeaLabProjectLifecycleServiceErrorV1("lifecycle_boundary_unavailable");}
+    if(!project)throw new IdeaLabProjectLifecycleServiceErrorV1("project_not_found");return project;
+  }
   async transition(value:unknown,authentication:VerifiedAuthentication):Promise<ProjectRegistryProjectionV1>{
     let input:z.infer<typeof inputSchema>;try{input=parseExactIdeaLabV1(inputSchema,value);}catch{throw new IdeaLabProjectLifecycleServiceErrorV1("invalid_lifecycle_request");}
     const now=this.#clock(),delta=Date.parse(now)-Date.parse(input.requestedAt);if(!Number.isFinite(delta)||delta< -30_000||delta>300_000)throw new IdeaLabProjectLifecycleServiceErrorV1("invalid_lifecycle_request");

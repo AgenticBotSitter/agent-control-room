@@ -2044,3 +2044,30 @@ as other protected operations. Archived projects remain retained and may be reop
 
 **Reevaluate:** CR12B-IDEA-060 may install one explicit local non-production composition and perform one owner-attended
 repository-fake pilot. Live Hermes/provider contact, production data, deployment, and hosting remain separate gates.
+
+## ADR-129 — The first enabled Idea Lab composition is loopback, owner-attended, durable, and repository-fake only
+
+**Decision:** The first enabled Idea Lab runtime is an explicit development-only composition. It binds a foreground
+Vinext process to `127.0.0.1`, rejects forwarding, retrieves one random master key through an owner-run macOS Keychain
+launcher, derives separate session, Idea-record, catalog, and catalog-high-water integrity keys, and accepts one separate
+one-time code for a maximum-15-minute owner browser session. Persistent PGlite lives outside the repository and is valid
+only for this local pilot. The panel driver is fixed to the deterministic repository fake. Owner-promoted projects enter
+an authenticated append-only catalog and separately keyed high-water before protected reads resolve them. The default and
+production compositions remain absent.
+
+**Why:** A visible end-to-end pilot is now more valuable than another disconnected contract, but enabling the browser
+must not silently enable a provider, public listener, production database, or caller-selected identity. A foreground
+loopback process gives the owner a clear start and stop boundary. Separate session and catalog integrity domains make
+restart proof meaningful without turning local PGlite into the production authority.
+
+**Alternatives rejected:** Enable controls whenever any environment variable exists; bind to all interfaces; reuse an
+identity header or browser storage token; commit a pilot key; store the raw owner code; keep catalog high-water only in
+memory; place PGlite in the repository; treat PGlite as a production database; select Hermes or another provider from
+browser input; run a background daemon; or claim the automated restart test is owner-attended acceptance.
+
+**Trade-off:** The owner must prepare and start the pilot personally, may need to approve Keychain access, and has only a
+15-minute session. The local Keychain item and pilot data remain after foreground teardown so restart can be proven;
+cleanup is a separate destructive action. This composition provides no live agent opinions and no production readiness.
+
+**Reevaluate:** After the owner-attended packet produces sanitized acceptance, a later block may plan a separately
+authorized provider adapter. It must not reuse this repository-fake acceptance as live-provider evidence.

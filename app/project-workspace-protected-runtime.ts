@@ -3,6 +3,7 @@ import type {
   ProjectWorkspaceOwnerReadScopeAuthorityV1,
 } from "@/src/project-workspace/v1";
 import { PROJECT_WORKSPACE_PROTECTED_RUNTIME_DISABLED_V1 } from "@/src/project-workspace/v1";
+import { getControlRoomLocalPilotPortsV1 } from "@/app/control-room-local-pilot-runtime";
 
 export interface ProjectWorkspaceProtectedRuntimeV1 {
   scopeAuthority: ProjectWorkspaceOwnerReadScopeAuthorityV1;
@@ -15,7 +16,7 @@ export interface ProjectWorkspaceProtectedRuntimeV1 {
  * server-only composition after its protected configuration is accepted.
  */
 export function getProjectWorkspaceProtectedRuntimeV1(): ProjectWorkspaceProtectedRuntimeV1 | undefined {
-  return undefined;
+  return getControlRoomLocalPilotPortsV1()?.projectWorkspace;
 }
 
 export const projectWorkspaceProtectedRuntimeDispositionV1 = PROJECT_WORKSPACE_PROTECTED_RUNTIME_DISABLED_V1;

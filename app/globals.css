@@ -837,6 +837,13 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .idea-lab-promotion article footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid color-mix(in srgb, var(--green) 22%, var(--border)); padding-top: 9px; }
 .idea-lab-promotion article footer span { border-radius: 999px; background: var(--green); color: var(--surface); padding: 4px 8px; font-size: 7px; font-weight: 800; text-transform: uppercase; }
 .idea-lab-promotion article footer a { color: var(--green); font-size: 9px; font-weight: 850; }
+.local-pilot-session { display: grid; grid-template-columns: minmax(0,1fr) minmax(18rem,.8fr); gap: 1rem; align-items: end; padding: 1rem; border: 1px solid color-mix(in srgb,var(--blue) 38%,var(--border)); border-radius: 1rem; background: color-mix(in srgb,var(--surface) 90%,var(--blue-soft)); }
+.local-pilot-session h2,.local-pilot-session p { margin: .25rem 0; }
+.local-pilot-session form { display: grid; gap: .65rem; }
+.local-pilot-session label { display: grid; gap: .3rem; color: var(--muted); font-size: .82rem; }
+.local-pilot-session input { width: 100%; padding: .7rem; border: 1px solid var(--border); border-radius: .65rem; background: var(--surface); color: var(--text); }
+.local-pilot-session-active { color: var(--green); font-weight: 700; }
+.idea-lab-open-project { display: inline-flex; width: fit-content; color: var(--green); font-weight: 850; }
 
 @media (max-width: 1120px) {
   .metric-grid { grid-template-columns: 1fr 1fr; }
@@ -891,6 +898,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .frontier-project-grid { grid-template-columns: 1fr; }
   .project-workspace-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .idea-lab-hero, .idea-lab-promotion { grid-template-columns: 1fr; }
+  .local-pilot-session { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {

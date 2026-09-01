@@ -75,10 +75,10 @@ export function buildProtectedProjectCatalogV1(input: CatalogUnsignedV1, keyByte
   const key = protectedKey(keyBytes);
   const material = exactProjectWorkspaceJsonV1(input) as CatalogUnsignedV1;
   const catalogDigest = sha256Digest(material);
-  return parseProtectedProjectCatalogV1({ ...material, catalogDigest, catalogAuthTag: authTag({ ...material, catalogDigest }, key) }, key);
+  return parseProtectedProjectCatalogWithKeyV1({ ...material, catalogDigest, catalogAuthTag: authTag({ ...material, catalogDigest }, key) }, key);
 }
 
-function parseProtectedProjectCatalogV1(value: unknown, key: KeyObject): ProtectedProjectCatalogV1 {
+function parseProtectedProjectCatalogWithKeyV1(value: unknown, key: KeyObject): ProtectedProjectCatalogV1 {
   const catalog = parseExactProjectWorkspaceV1(protectedProjectCatalogSchemaV1, value) as ProtectedProjectCatalogV1;
   const material = catalogUnsigned(catalog);
   if (sha256Digest(material) !== catalog.catalogDigest
@@ -86,6 +86,10 @@ function parseProtectedProjectCatalogV1(value: unknown, key: KeyObject): Protect
     throw new ProjectWorkspaceContractErrorV1("integrity_failed");
   }
   return catalog;
+}
+
+export function parseProtectedProjectCatalogV1(value: unknown, keyBytes: Uint8Array): ProtectedProjectCatalogV1 {
+  return parseProtectedProjectCatalogWithKeyV1(value, protectedKey(keyBytes));
 }
 
 function assertCatalogTransition(prior: ProtectedProjectCatalogHighWaterV1 | undefined, catalog: ProtectedProjectCatalogV1): void {
@@ -117,8 +121,8 @@ export function buildProtectedProjectCatalogHighWaterV1(input: {
   const captured = exactHostDataSnapshotV1(input, ["catalog", "checkpointId", "recordedAt"], ["prior"]);
   if (!captured) throw new ProjectWorkspaceContractErrorV1("invalid_input");
   const catalogKey = protectedKey(catalogKeyBytes), highWaterKey = protectedKey(highWaterKeyBytes);
-  const catalog = parseProtectedProjectCatalogV1(captured.catalog, catalogKey);
-  const prior = captured.prior ? parseProtectedProjectCatalogHighWaterV1(captured.prior, highWaterKey) : undefined;
+  const catalog = parseProtectedProjectCatalogWithKeyV1(captured.catalog, catalogKey);
+  const prior = captured.prior ? parseProtectedProjectCatalogHighWaterWithKeyV1(captured.prior, highWaterKey) : undefined;
   assertCatalogTransition(prior, catalog);
   const material: CheckpointUnsignedV1 = {
     contractVersion: PROJECT_WORKSPACE_CATALOG_HIGH_WATER_CONTRACT_V1,
@@ -135,14 +139,14 @@ export function buildProtectedProjectCatalogHighWaterV1(input: {
   };
   if (Date.parse(material.recordedAt) < Date.parse(catalog.recordedAt)) throw new ProjectWorkspaceContractErrorV1("invalid_input");
   const checkpointDigest = sha256Digest(material);
-  return parseProtectedProjectCatalogHighWaterV1({
+  return parseProtectedProjectCatalogHighWaterWithKeyV1({
     ...material,
     checkpointDigest,
     checkpointAuthTag: authTag({ ...material, checkpointDigest }, highWaterKey),
   }, highWaterKey);
 }
 
-function parseProtectedProjectCatalogHighWaterV1(value: unknown, key: KeyObject): ProtectedProjectCatalogHighWaterV1 {
+function parseProtectedProjectCatalogHighWaterWithKeyV1(value: unknown, key: KeyObject): ProtectedProjectCatalogHighWaterV1 {
   const checkpoint = parseExactProjectWorkspaceV1(protectedProjectCatalogHighWaterSchemaV1, value) as ProtectedProjectCatalogHighWaterV1;
   const material = checkpointUnsigned(checkpoint);
   if (sha256Digest(material) !== checkpoint.checkpointDigest
@@ -150,6 +154,10 @@ function parseProtectedProjectCatalogHighWaterV1(value: unknown, key: KeyObject)
     throw new ProjectWorkspaceContractErrorV1("integrity_failed");
   }
   return checkpoint;
+}
+
+export function parseProtectedProjectCatalogHighWaterV1(value: unknown, keyBytes: Uint8Array): ProtectedProjectCatalogHighWaterV1 {
+  return parseProtectedProjectCatalogHighWaterWithKeyV1(value, protectedKey(keyBytes));
 }
 
 function assertCatalogMatchesCheckpoint(catalog: ProtectedProjectCatalogV1, checkpoint: ProtectedProjectCatalogHighWaterV1): void {
@@ -180,7 +188,7 @@ export class InMemoryProjectWorkspaceCatalogHighWaterStoreV1 implements ProjectW
   }
 
   apply(value: unknown): void {
-    const next = parseProtectedProjectCatalogHighWaterV1(value, this.#key), prior = this.#checkpoint;
+    const next = parseProtectedProjectCatalogHighWaterWithKeyV1(value, this.#key), prior = this.#checkpoint;
     if (!prior) {
       if (next.revision !== 1 || next.previousCheckpointDigest !== null) throw new ProjectWorkspaceContractErrorV1("catalog_rollback");
     } else {
@@ -235,7 +243,7 @@ export class ProjectWorkspaceProtectedCatalogAuthorityV1 {
     projectWorkspaceSafeIdSchemaV1.parse(projectId);
     projectWorkspaceTimeSchemaV1.parse(now);
     let catalog: ProtectedProjectCatalogV1;
-    try { catalog = parseProtectedProjectCatalogV1(await this.source.read(), this.#catalogKey); }
+    try { catalog = parseProtectedProjectCatalogWithKeyV1(await this.source.read(), this.#catalogKey); }
     catch (error) {
       if (error instanceof ProjectWorkspaceContractErrorV1 && error.safeCode === "integrity_failed") throw error;
       throw new ProjectWorkspaceContractErrorV1("catalog_unavailable");
@@ -246,7 +254,7 @@ export class ProjectWorkspaceProtectedCatalogAuthorityV1 {
     try { rawCheckpoint = await this.highWater.read(this.expected.catalogId); }
     catch { throw new ProjectWorkspaceContractErrorV1("catalog_unavailable"); }
     if (!rawCheckpoint) throw new ProjectWorkspaceContractErrorV1("catalog_unavailable");
-    const checkpoint = parseProtectedProjectCatalogHighWaterV1(rawCheckpoint, this.#highWaterKey);
+    const checkpoint = parseProtectedProjectCatalogHighWaterWithKeyV1(rawCheckpoint, this.#highWaterKey);
     assertCatalogMatchesCheckpoint(catalog, checkpoint);
     const observedAt = Date.parse(now);
     if (Date.parse(catalog.recordedAt) > observedAt + MAX_CLOCK_SKEW_MS

@@ -1,5 +1,6 @@
 import type { IdeaLabFixtureV1 } from "@/src/idea-lab/v1";
 import { IdeaLabOperatorControls } from "./idea-lab-operator-controls";
+import { LocalPilotOwnerSession } from "./local-pilot-owner-session";
 
 function label(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -28,10 +29,11 @@ export function IdeaLabWorkspace({ fixture, operatorControlsEnabled = false }: {
         </dl>
       </header>
 
-      <p className="idea-lab-boundary" role="status">
-        Development fixture only: these are injected, safe summaries. No Hermes, Codex, or local-model provider was contacted, and this screen cannot dispatch work or create a live project.
-      </p>
+      <p className="idea-lab-boundary" role="status">{operatorControlsEnabled
+        ? "Local pilot: protected writes use durable local PGlite and the repository-fake panel. No Hermes, Codex, local-model provider, production database, or public network is connected. The examples below remain labelled fixtures."
+        : "Development fixture only: these are injected, safe summaries. No Hermes, Codex, or local-model provider was contacted, and this screen cannot dispatch work or create a live project."}</p>
 
+      {operatorControlsEnabled?<LocalPilotOwnerSession/>:null}
       <IdeaLabOperatorControls enabled={operatorControlsEnabled} />
 
       <section className="idea-lab-panel" id="idea-lab-panel" aria-labelledby="idea-lab-title">

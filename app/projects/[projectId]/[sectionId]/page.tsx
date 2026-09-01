@@ -5,6 +5,8 @@ import { IdeaPromotedProjectWorkspace } from "@/app/components/idea-promoted-pro
 import { buildIdeaLabUiFixtureV1 } from "@/app/fixtures/idea-lab-ui";
 import { buildProjectWorkspaceUiFixtureV1 } from "@/app/fixtures/project-workspace-ui";
 import { projects } from "@/src/fixtures/data";
+import { IdeaProtectedProjectWorkspace } from "@/app/components/idea-protected-project-workspace";
+import { isControlRoomLocalPilotConfiguredV1 } from "@/app/control-room-local-pilot-runtime";
 
 function decodedProjectId(value: string): string {
   try { return decodeURIComponent(value); } catch { return value; }
@@ -35,6 +37,7 @@ export default async function ProjectSection({ params }: { params: Promise<{ pro
     if (!ideaLab.workspace.sections.some((section) => section.sectionId === sectionId)) notFound();
     return <IdeaPromotedProjectWorkspace fixture={ideaLab} sectionId={sectionId} />;
   }
-  if (!buildProjectWorkspaceUiFixtureV1(projectId)?.sections.some((section) => section.sectionId === sectionId)) notFound();
-  return <ProjectWorkspacePage projectId={projectId} sectionId={sectionId} />;
+  if (buildProjectWorkspaceUiFixtureV1(projectId)?.sections.some((section) => section.sectionId === sectionId)) return <ProjectWorkspacePage projectId={projectId} sectionId={sectionId} />;
+  if(isControlRoomLocalPilotConfiguredV1())return <IdeaProtectedProjectWorkspace projectId={projectId} sectionId={sectionId}/>;
+  notFound();
 }

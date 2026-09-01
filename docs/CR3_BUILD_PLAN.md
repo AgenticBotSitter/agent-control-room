@@ -522,3 +522,17 @@ legal transitions and remain disabled in the shipped composition.
 
 Next: CR12B-IDEA-060 installs one explicit local non-production composition and runs one owner-attended repository-fake
 pilot. It does not authorize live provider contact.
+
+## CR12B-IDEA-060 — explicit local composition and owner-attended repository-fake pilot
+
+Status: repository implementation and automated restart rehearsal complete; owner-attended browser evidence pending. See
+`CR12B_IDEA_060_ACCEPTANCE.md`, `CR12B_IDEA_060_OWNER_PACKET.md`, and ADR-129.
+
+The exact development-only composition uses a loopback foreground server, one-time 15-minute owner session, Keychain-held
+master key with separate derived integrity domains, persistent local PGlite outside the repository, an authenticated
+project catalog plus independent high-water, and only the deterministic repository-fake panel. Dynamic promoted-project
+pages read protected local truth and expose legal owner lifecycle transitions. Production mode and every unconfigured run
+remain closed.
+
+Next: the owner personally executes the frozen CR12B-IDEA-060 packet. No later block may treat the automated rehearsal as
+owner evidence or as authority for live Hermes/provider contact.
