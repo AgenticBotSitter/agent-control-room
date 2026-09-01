@@ -221,8 +221,9 @@ cancellation could spend before rejection and cross cleanup seams, private mutat
 interrupt cleanup, and native conversion selected a mutable ambient constructor. IDEA-110I validates exact opaque
 cancellation before state/spend/dispatch at gateway and bridge execute/cleanup, captures native constructor/getter/abort
 operations at module initialization, and makes abort failure non-throwing while settlement and mandatory cleanup continue.
-Four new hostile regressions pass; combined CR12B is 158/158 and the complete lifecycle remains green. A replacement
-packet and fresh independent review remain mandatory.
+Four new hostile regressions pass; combined CR12B is 158/158 and the complete lifecycle remains green. The exact
+product candidate is `5c731e42bc54bc3dea88e079385b9616dd2042b4`; the replacement packet is frozen at
+`sha256:1e16228a82d475941507213593c900ec94e0092054c53bdb9fcd18e97536e1ef`. Fresh independent review remains mandatory.
 Signer and route enrollment, preflight, packet refresh,
 authorization, and native qualification remain absent; no native or external effect occurred.
 
@@ -635,7 +636,7 @@ Block: CR12B-IDEA-110I-Q — independently review the exact cancellation-boundar
 Set model: gpt-5.6-sol
 Set reasoning effort: high
 Why: PR #219 rejected IDEA-110H with two High and one Medium cancellation-boundary defects. IDEA-110I changes permit-spend ordering, gateway/bridge cleanup entry, and final native conversion/settlement and cannot accept its own repair.
-Expected output: one immutable report by a fresh reviewer against the exact IDEA-110I product commit and replacement packet. It must reproduce all three PR #219 findings, prove every invalid cancellation rejects before state/spend/collaborator behavior, mutate the connector-owned native signal at every await/close boundary, replace ambient globals and prototypes after import, and repeat the complete IDEA-110F through IDEA-110H matrix. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Expected output: one immutable report by a fresh reviewer against product commit `5c731e42bc54bc3dea88e079385b9616dd2042b4` and packet `sha256:1e16228a82d475941507213593c900ec94e0092054c53bdb9fcd18e97536e1ef`. It must reproduce all three PR #219 findings, prove every invalid cancellation rejects before state/spend/collaborator behavior, mutate the connector-owned native signal at every await/close boundary, replace ambient globals and prototypes after import, and repeat the complete IDEA-110F through IDEA-110H matrix. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

@@ -732,8 +732,9 @@ Independent PR #219 rejected that exact candidate with two High and one Medium f
 
 ## CR12B-IDEA-110I — exact cancellation-boundary remediation
 
-Status: complete locally for the provider-disabled implementation candidate; replacement packet and fresh independent
-review required. See `CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REMEDIATION.md` and amended ADR-146.
+Status: provider-disabled implementation frozen at `5c731e42bc54bc3dea88e079385b9616dd2042b4`; replacement
+packet `sha256:1e16228a82d475941507213593c900ec94e0092054c53bdb9fcd18e97536e1ef` and fresh independent review required. See
+`CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REMEDIATION.md` and amended ADR-146.
 
 Every gateway and fixed-bridge execute/cleanup entry now requires an exact repository-owned cancellation capability
 before state, time, spend, settlement, or collaborator behavior. The Mac connector uses module-captured native

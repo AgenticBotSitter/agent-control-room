@@ -1,7 +1,10 @@
 # CR12B-IDEA-110I — exact cancellation-boundary remediation
 
-**Status:** Provider-disabled implementation candidate complete; exact product commit and replacement review packet are
-frozen in the next documentation checkpoint. Fresh independent review is mandatory.
+**Status:** Provider-disabled implementation candidate frozen at
+`5c731e42bc54bc3dea88e079385b9616dd2042b4`; fresh independent review is mandatory.
+
+**Replacement review packet:** `docs/reviews/CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REVIEW_PACKET.md` at SHA-256
+`1e16228a82d475941507213593c900ec94e0092054c53bdb9fcd18e97536e1ef`.
 
 ## Why IDEA-110H remained rejected
 
