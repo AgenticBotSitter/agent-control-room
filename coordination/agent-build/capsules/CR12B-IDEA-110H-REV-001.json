@@ -1,0 +1,109 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR12B-IDEA-110H-REV-001",
+  "waveId": "CR12B-IDEA-110H-REVIEW-1",
+  "block": "CR12B-IDEA-110H-Q",
+  "summary": "Independently review the opaque-cancellation connector remediation",
+  "platform": "macos",
+  "status": "ready",
+  "mode": "independent-review",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "high",
+  "baseCommit": "d22c76444b80f8dd469380aab52ec457f5d76fad",
+  "integrationBranch": "integration/cr12b-idea-110h-opaque-cancellation-review",
+  "eligibleRoutes": ["marvin-macos"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": [
+    "Git",
+    "Node.js >=22.13.0",
+    "pnpm 11.19.0",
+    "Codex-supplied isolated checkout with stage zero already ready",
+    "authenticated GitHub CLI"
+  ],
+  "maxConcurrentClaimsPerRoute": 1,
+  "verification": {
+    "required": false,
+    "independence": "none"
+  },
+  "objective": "As a fresh reviewer different from every IDEA-110F/110G/110H contributor, every prior bridge or connector reviewer, and both interrupted IDEA-110G reviewers, perform a deterministic source-code correctness review of immutable implementation d22c76444b80f8dd469380aab52ec457f5d76fad against packet SHA-256 4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb. Reproduce the known native-signal event-map regression and prove whether the repository-owned opaque capability closes it, then complete the whole frozen matrix. Produce one source-linked negative or accepted report and the isolated V2 result manifest. Do not repair product code or perform native or external actions.",
+  "contractRefs": [
+    "docs/reviews/CR12B_IDEA_110H_OPAQUE_CANCELLATION_REVIEW_PACKET.md",
+    "docs/CR12B_IDEA_110H_OPAQUE_CANCELLATION_REMEDIATION.md",
+    "docs/reviews/CR12B_IDEA_110G_CONNECTOR_REMEDIATION_REVIEW_PACKET.md",
+    "docs/reviews/CR12B_IDEA_110F_MACOS_CONNECTOR_REVIEW_REV_001.md",
+    "docs/CR12B_IDEA_110F_MACOS_CONNECTOR_CANDIDATE.md",
+    "docs/CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md",
+    "docs/CR12B_IDEA_110C_ENROLLMENT_READINESS_ACCEPTANCE.md",
+    "docs/SECURITY_AND_AUTHORITY.md",
+    "docs/CR3_DECISION_LOG.md",
+    "docs/WORKER_CHECKOUT_PREPARATION.md",
+    "src/security/host-value.ts",
+    "src/idea-lab/v1/hermes-021-filtered-driver.ts",
+    "src/idea-lab/v1/hermes-021-enrolled-gateway-port.ts",
+    "src/idea-lab/v1/hermes-021-fixed-rpc-bridge.ts",
+    "src/idea-lab/v1/hermes-021-macos-connector.ts",
+    "src/idea-lab/v1/hermes-021-enrollment-readiness.ts",
+    "tests/idea-lab-hermes-021-filtered-driver.test.ts",
+    "tests/idea-lab-hermes-021-enrolled-gateway-port.test.ts",
+    "tests/idea-lab-hermes-021-fixed-rpc-bridge.test.ts",
+    "tests/idea-lab-hermes-021-macos-connector.test.ts",
+    "tests/idea-lab-hermes-021-enrollment-readiness.test.ts"
+  ],
+  "allowedPaths": [
+    "docs/reviews/CR12B_IDEA_110H_OPAQUE_CANCELLATION_REVIEW_REV_001.md"
+  ],
+  "forbiddenPrefixes": [
+    ".github",
+    "app",
+    "coordination/agent-build/capsules",
+    "coordination/agent-build/waves",
+    "db/migrations",
+    "package.json",
+    "pnpm-lock.yaml",
+    "scripts",
+    "skills",
+    "src",
+    "tests"
+  ],
+  "acceptanceCommands": [
+    "node scripts/qualification/platform-key-store-stage-zero.mjs --platform macos",
+    "npm run check",
+    "npm run lint",
+    "npm run test:cr12b",
+    "npm test",
+    "CI=true npm run test:build",
+    "npm run db:verify",
+    "git diff --check integration/cr12b-idea-110h-opaque-cancellation-review...HEAD"
+  ],
+  "semanticAcceptance": [
+    "The report names exact implementation d22c76444b80f8dd469380aab52ec457f5d76fad, first negative report SHA-256 d9a1acb60b3a272a71469fc07574db2d504100f7a382fb33a702a50c585b5808, packet SHA-256 4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb, both blocked IDEA-110G review attempts, and establishes reviewer independence.",
+    "Before claim, the reviewer confirms the supplied isolated checkout is clean at the current integration head and already stage-zero ready; no dependency preparation or repair is allowed.",
+    "The reviewer reproduces the known genuine AbortSignal event-map Proxy case against the rejected design, then proves whether every IDEA-110H repository seam rejects native signals with zero caller behavior and zero private dispatch.",
+    "The reviewer inspects opaque capability minting, private registry and prototype membership, zero own keys, freezing, Proxy rejection, abort idempotency, subscription and unsubscription, late subscription, listener isolation, captured intrinsics, pre-cancel behavior, propagation, native conversion, settlement, timeout, cleanup, and every cancellation race in the packet.",
+    "The reviewer independently repeats every original cleanup, private-error, authority-domain, locator, lifecycle, composition, upgrade, alias, mutation, uncertain-outcome, duplicate-call, receipt-sanitation, and disabled-state case in the frozen packet.",
+    "Every finding has a stable ID, severity, exact source line, reproducible input, observed result, violated invariant, affected boundary, missing regression, and smallest safe remediation.",
+    "The only final disposition is accepted_provider_disabled_snapshot, remediation_required, or blocked_incomplete_review; producer tests never override a reproduced defect.",
+    "The report retains every signer, enrollment, preflight, packet, owner authorization, native qualification, live panel, production database, hosting, and deployment blocker and contains no secret, locator, protected value, personal path, raw provider content, or invented observation.",
+    "The worker commits only the report as implementation, then the canonical isolated result manifest alone as metadata, opens one report PR, and submits it through the queue."
+  ],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 800,
+    "maxRepairIterations": 0
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop unclaimed if the exact prepared checkout, current integration head, required tools, authenticated GitHub CLI, or stage-zero readiness is missing, dirty, or uncertain.",
+    "Stop with blocked evidence if reviewer independence, immutable implementation commit, first report hash, or packet hash cannot be established exactly.",
+    "Stop before product repair or any path other than the report plus the separately required result-manifest metadata commit.",
+    "Stop before any Hermes process, SSH connection, provider call, Keychain or credential access, service, listener, database outside tests, deployment, hosting, destructive cleanup, or consequential effect.",
+    "GitHub access is limited to claim, metadata fetch without tree change, exact producer branch, one report-only PR, and queue submission."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR12B-IDEA-110H-REV-001.json"
+}
