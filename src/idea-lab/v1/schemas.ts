@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+const nativeDateParseV1 = Date.parse, nativeNumberIsFiniteV1 = Number.isFinite,
+  nativeReflectApplyV1 = Reflect.apply, nativeRegExpExecV1 = RegExp.prototype.exec;
+const ideaTimePatternV1 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+export function capturedPatternMatchesV1(pattern: RegExp, value: string): boolean {
+  return nativeReflectApplyV1(nativeRegExpExecV1, pattern, [value]) !== null;
+}
+
+function capturedIdeaTimeV1(value: string): boolean {
+  return capturedPatternMatchesV1(ideaTimePatternV1, value) && nativeNumberIsFiniteV1(nativeDateParseV1(value));
+}
+
 export const IDEA_LAB_SESSION_V1 = "control-room-idea-lab-session/v1" as const;
 export const IDEA_LAB_CONTRIBUTION_V1 = "control-room-idea-lab-contribution/v1" as const;
 export const IDEA_LAB_SYNTHESIS_V1 = "control-room-idea-lab-synthesis/v1" as const;
@@ -15,11 +27,15 @@ export const projectLifecycleStatesV1 = Object.freeze(["active", "paused", "comp
 export const ideaLabSessionStatesV1 = Object.freeze(["ready", "running", "panel_complete", "synthesized", "decided",
   "cancelled", "failed_definite", "ambiguous"] as const);
 
-export const ideaIdSchemaV1 = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
-export const ideaDigestSchemaV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-export const ideaAuthTagSchemaV1 = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
-export const ideaTimeSchemaV1 = z.string().datetime({ offset: true });
-export const ideaCodeSchemaV1 = z.string().min(2).max(100).regex(/^[a-z][a-z0-9_]*$/);
+export const ideaIdSchemaV1 = z.string().min(3).max(180)
+  .refine((value) => capturedPatternMatchesV1(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/, value));
+export const ideaDigestSchemaV1 = z.string()
+  .refine((value) => capturedPatternMatchesV1(/^sha256:[a-f0-9]{64}$/, value));
+export const ideaAuthTagSchemaV1 = z.string()
+  .refine((value) => capturedPatternMatchesV1(/^hmac-sha256:[a-f0-9]{64}$/, value));
+export const ideaTimeSchemaV1 = z.string().refine(capturedIdeaTimeV1);
+export const ideaCodeSchemaV1 = z.string().min(2).max(100)
+  .refine((value) => capturedPatternMatchesV1(/^[a-z][a-z0-9_]*$/, value));
 export const ideaLabelSchemaV1 = z.string().min(1).max(120);
 export const ideaTextSchemaV1 = z.string().min(1).max(800);
 
@@ -106,7 +122,9 @@ export const projectRegistryProjectionSchemaV1 = z.object({
   projectKind: ideaCodeSchemaV1, lifecycleState: z.enum(projectLifecycleStatesV1), priority: z.number().int().min(0).max(100),
   version: z.number().int().min(1), createdAt: ideaTimeSchemaV1, updatedAt: ideaTimeSchemaV1,
   sourceDecisionDigest: ideaDigestSchemaV1, latestEventDigest: ideaDigestSchemaV1,
-  monitoringPagePath: z.string().regex(/^\/projects\/[a-zA-Z0-9._:%-]+$/), presentationOnly: z.literal(true),
+  monitoringPagePath: z.string()
+    .refine((value) => capturedPatternMatchesV1(/^\/projects\/[a-zA-Z0-9._:%-]+$/, value)),
+  presentationOnly: z.literal(true),
   canDispatch: z.literal(false), grantsExecutionAuthority: z.literal(false), projectionDigest: ideaDigestSchemaV1,
 }).strict();
 

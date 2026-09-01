@@ -8,7 +8,7 @@ const nativeNumberIsFiniteV1 = Number.isFinite, nativeObjectDefinePropertyV1 = O
   nativeObjectGetOwnPropertyDescriptorsV1 = Object.getOwnPropertyDescriptors,
   nativeObjectGetPrototypeOfV1 = Object.getPrototypeOf, nativeObjectPrototypeV1 = Object.prototype,
   nativeReflectApplyV1 = Reflect.apply, nativeReflectOwnKeysV1 = Reflect.ownKeys,
-  nativeRegExpTestV1 = RegExp.prototype.test;
+  nativeRegExpExecV1 = RegExp.prototype.exec;
 const redactionErrorPatternV1 = /secret|unsafe|forbidden/i;
 
 function snapshot(value: unknown, depth = 0): unknown {
@@ -45,7 +45,7 @@ export function parseExactIdeaLabV1<T>(schema: { parse(value: unknown): T }, val
   } catch (error) {
     if (error instanceof IdeaLabErrorV1) throw error;
     if (error instanceof nativeErrorV1
-      && nativeReflectApplyV1(nativeRegExpTestV1, redactionErrorPatternV1, [error.message]) as boolean) {
+      && nativeReflectApplyV1(nativeRegExpExecV1, redactionErrorPatternV1, [error.message]) !== null) {
       throw new IdeaLabErrorV1("redaction_rejected");
     }
     throw new IdeaLabErrorV1("invalid_input");

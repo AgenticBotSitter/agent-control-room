@@ -327,7 +327,7 @@ test("CR12B-IDEA-110I ignores post-import collection and host-operation substitu
   assert.equal((handoff.take() as { nativeLocatorReturned: boolean }).nativeLocatorReturned, false);
 });
 
-test("CR12B-IDEA-110K shared safety walkers reject secret input under post-import traversal substitution", async () => {
+test("CR12B-IDEA-110L shared safety walkers reject secret input under post-import traversal substitution", async () => {
   const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port);
   await open(connector); await request(connector, "session.create");
   const input = { ...operationInput("prompt.submit"), parameters: Object.freeze({
@@ -335,20 +335,23 @@ test("CR12B-IDEA-110K shared safety walkers reject secret input under post-impor
   }) }, handoff = createHostResultCollectorV1();
   const entriesDescriptor = Object.getOwnPropertyDescriptor(Object, "entries"),
     forEachDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "forEach"),
-    someDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "some");
-  assert.ok(entriesDescriptor); assert.ok(forEachDescriptor); assert.ok(someDescriptor);
+    someDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "some"),
+    execDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec");
+  assert.ok(entriesDescriptor); assert.ok(forEachDescriptor); assert.ok(someDescriptor); assert.ok(execDescriptor);
   const sentinel = new Error("hostile safety traversal"), behavior: string[] = [];
   const hostile = (label: string) => () => { behavior.push(label); throw sentinel; };
   let rejected: unknown;
   Object.defineProperty(Object, "entries", { ...entriesDescriptor, value: hostile("Object.entries") });
   Object.defineProperty(Array.prototype, "forEach", { ...forEachDescriptor, value: hostile("Array.forEach") });
   Object.defineProperty(Array.prototype, "some", { ...someDescriptor, value: hostile("Array.some") });
+  Object.defineProperty(RegExp.prototype, "exec", { ...execDescriptor, value: hostile("RegExp.exec") });
   try { await connector.requestFixedOperation(input, handoff.collector); }
   catch (error) { rejected = error; }
   finally {
     Object.defineProperty(Object, "entries", entriesDescriptor);
     Object.defineProperty(Array.prototype, "forEach", forEachDescriptor);
     Object.defineProperty(Array.prototype, "some", someDescriptor);
+    Object.defineProperty(RegExp.prototype, "exec", execDescriptor);
   }
   assert.deepEqual(behavior, []);
   assert.ok(rejected instanceof IdeaLabErrorV1);

@@ -13,11 +13,12 @@ const secretPatterns = [
 
 const nativeArrayIsArray = Array.isArray, nativeArrayJoin = Array.prototype.join,
   nativeArrayPush = Array.prototype.push, nativeObjectDefineProperty = Object.defineProperty,
-  nativeError = Error, nativeObjectEntries = Object.entries, nativeReflectApply = Reflect.apply,
-  nativeRegExpTest = RegExp.prototype.test;
+  nativeError = Error, nativeObjectEntries = Object.entries,
+  nativeObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor,
+  nativeReflectApply = Reflect.apply, nativeRegExpExec = RegExp.prototype.exec;
 
 function matches(pattern: RegExp, value: string): boolean {
-  return nativeReflectApply(nativeRegExpTest, pattern, [value]) as boolean;
+  return nativeReflectApply(nativeRegExpExec, pattern, [value]) !== null;
 }
 
 function matchesAny(patterns: readonly RegExp[], value: string): boolean {
@@ -82,7 +83,11 @@ export function redactSecrets(value: unknown): RedactionResult {
     }
     if (nativeArrayIsArray(child)) {
       const projected: unknown[] = [];
-      for (let index = 0; index < child.length; index += 1) projected[index] = visit(child[index], `${path}[${index}]`);
+      projected.length = child.length;
+      for (let index = 0; index < child.length; index += 1) {
+        if (!nativeObjectGetOwnPropertyDescriptor(child, `${index}`)) continue;
+        projected[index] = visit(child[index], `${path}[${index}]`);
+      }
       return projected;
     }
     if (child && typeof child === "object") {

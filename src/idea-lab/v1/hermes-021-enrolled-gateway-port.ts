@@ -24,7 +24,7 @@ import {
 } from "./hermes-021-panel-packet";
 import { IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1 } from "./hermes-021-fixed-operation-set";
 import type { Hermes021IdeaLabGatewayPortV1 } from "./hermes-021-filtered-driver";
-import { ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_021_QUALIFICATION_PERMIT_V1 =
   "control-room-hermes-021-qualification-permit/v1" as const;
@@ -36,7 +36,8 @@ const nativeDateV1 = Date, nativeDateParseV1 = Date.parse,
 const nativeNumberIsFiniteV1 = Number.isFinite, nativeNumberIsSafeIntegerV1 = Number.isSafeInteger;
 const nativeObjectFreezeV1 = Object.freeze, nativePromiseV1 = Promise, nativeReflectApplyV1 = Reflect.apply;
 
-const base64url = z.string().min(40).max(256).regex(/^[A-Za-z0-9_-]+$/);
+const base64url = z.string().min(40).max(256)
+  .refine((value) => capturedPatternMatchesV1(/^[A-Za-z0-9_-]+$/, value));
 
 const permitBodySchema = z.object({
   contractVersion: z.literal(IDEA_LAB_HERMES_021_QUALIFICATION_PERMIT_V1),

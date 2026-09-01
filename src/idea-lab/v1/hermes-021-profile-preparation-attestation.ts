@@ -8,14 +8,15 @@ import {
   IDEA_LAB_HERMES_PROFILE_PREPARATION_METHOD_V1,
   parseIdeaLabHermesProfilePreparationRequestV1,
 } from "./hermes-021-profile-preparation-contract";
-import { ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_PROFILE_PREPARATION_ATTESTATION_V1 =
   "control-room-hermes-profile-preparation-attestation/v1" as const;
 export const IDEA_LAB_HERMES_PROFILE_PREPARATION_SAFE_RESULT_V1 =
   "control-room-hermes-profile-preparation-safe-result/v1" as const;
 
-const base64url = z.string().min(40).max(256).regex(/^[A-Za-z0-9_-]+$/);
+const base64url = z.string().min(40).max(256)
+  .refine((value) => capturedPatternMatchesV1(/^[A-Za-z0-9_-]+$/, value));
 const zeroCounts = z.object({ soul: z.literal(0), memory: z.literal(0), skills: z.literal(0),
   plugins: z.literal(0), mcpConfiguration: z.literal(0), rules: z.literal(0), sessions: z.literal(0) }).strict();
 

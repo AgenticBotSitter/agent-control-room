@@ -117,18 +117,22 @@ const forbiddenValuePatterns = [
 ];
 
 const nativeArrayIsArray = Array.isArray, nativeError = Error, nativeObjectEntries = Object.entries,
-  nativeReflectApply = Reflect.apply, nativeRegExpReplace = RegExp.prototype[Symbol.replace],
-  nativeRegExpTest = RegExp.prototype.test, nativeStringIncludes = String.prototype.includes,
-  nativeStringToLowerCase = String.prototype.toLowerCase;
-const projectionKeyStripPattern = /[^a-z0-9_]/g;
+  nativeReflectApply = Reflect.apply, nativeRegExpExec = RegExp.prototype.exec,
+  nativeStringIncludes = String.prototype.includes, nativeStringToLowerCase = String.prototype.toLowerCase;
 
 function patternMatches(pattern: RegExp, value: string): boolean {
-  return nativeReflectApply(nativeRegExpTest, pattern, [value]) as boolean;
+  return nativeReflectApply(nativeRegExpExec, pattern, [value]) !== null;
 }
 
 function normalizedProjectionKey(value: string): string {
   const lowered = nativeReflectApply(nativeStringToLowerCase, value, []) as string;
-  return nativeReflectApply(nativeRegExpReplace, projectionKeyStripPattern, [lowered, ""]) as string;
+  let normalized = "";
+  for (let index = 0; index < lowered.length; index += 1) {
+    const character = lowered[index];
+    if (character && ((character >= "a" && character <= "z") || (character >= "0" && character <= "9")
+      || character === "_")) normalized += character;
+  }
+  return normalized;
 }
 
 export function assertSafeProjection(value: unknown, path = "$"): void {

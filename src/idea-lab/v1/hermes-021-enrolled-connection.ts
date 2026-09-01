@@ -8,7 +8,7 @@ import {
   IDEA_LAB_HERMES_021_REVISION_V1,
   IDEA_LAB_HERMES_021_SOURCE_PREFLIGHT_DIGEST_V1,
 } from "./hermes-021-panel-packet";
-import { ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_021_CONNECTION_SOURCE_V1 =
   "control-room-hermes-021-built-in-connection-source/v1" as const;
@@ -67,7 +67,8 @@ export const ideaLabHermes021BuiltInConnectionSourceV1 = Object.freeze({
   sourceCandidateDigest: sha256Digest(sourceCandidateMaterial),
 });
 
-const base64url = z.string().min(40).max(256).regex(/^[A-Za-z0-9_-]+$/);
+const base64url = z.string().min(40).max(256)
+  .refine((value) => capturedPatternMatchesV1(/^[A-Za-z0-9_-]+$/, value));
 
 const routeSchema = z.discriminatedUnion("transport", [
   z.object({

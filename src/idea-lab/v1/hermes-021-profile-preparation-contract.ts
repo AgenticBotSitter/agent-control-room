@@ -4,7 +4,7 @@ import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import { IDEA_LAB_HERMES_021_REVISION_V1 } from "./hermes-021-panel-packet";
 import { ideaLabOwnerReadyLivePacketV1 } from "./owner-ready-live-packet";
-import { ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_PROFILE_PREPARATION_CONTRACT_V1 =
   "control-room-hermes-profile-preparation/v1" as const;
@@ -14,7 +14,7 @@ export const IDEA_LAB_HERMES_PROFILE_PREPARATION_REQUEST_V1 =
   "control-room-hermes-profile-preparation-request/v1" as const;
 
 const compatibilityEvidenceSchema = z.object({
-  runtimeRevision: z.string().regex(/^[a-f0-9]{40}$/),
+  runtimeRevision: z.string().refine((value) => capturedPatternMatchesV1(/^[a-f0-9]{40}$/, value)),
   nativeMethod: z.string().min(1).max(120),
   signedDeviceAttestation: z.boolean(),
   protectedValueTransferInternal: z.boolean(),

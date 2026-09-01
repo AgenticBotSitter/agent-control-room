@@ -1,7 +1,7 @@
 # CR12B-IDEA-110K — shared safety-walker capture remediation
 
-**Status:** Provider-disabled implementation candidate frozen at
-`2aa4f8e0dce52045100a2a10394d86bb934df93e`; fresh independent review is mandatory.
+**Status:** Rejected by independent review. Exact product
+`2aa4f8e0dce52045100a2a10394d86bb934df93e` is superseded by IDEA-110L and grants no connector or native authority.
 
 **Replacement review packet:** `docs/reviews/CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REVIEW_PACKET.md` at SHA-256
 `8a5d2f18615f796dcedef27dc004e7720aa26c18a337e8592d24d93cc4f72296`.
@@ -37,10 +37,10 @@ remain replaced.
 
 ## Authority boundary
 
-This remediation configures no port, signer, route, native or SSH attempt, provider call, credential access, live-panel
-permission, production database, deployment, hosting, or DNS effect. Fresh independent review of the exact product
-commit and replacement packet is mandatory; acceptance may remove only the provider-disabled connector implementation
-review gate.
+This remediation configured no port, signer, route, native or SSH attempt, provider call, credential access, live-panel
+permission, production database, deployment, hosting, or DNS effect. Independent report
+`docs/reviews/CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REVIEW_REV_001.md` reproduced a High mutable-regex-execution defect
+and a Low sparse-array behavior change. IDEA-110K remains rejected.
 
 ## Producer verification
 

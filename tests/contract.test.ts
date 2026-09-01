@@ -47,6 +47,7 @@ test("safe projection retains forbidden fields under post-import traversal subst
     forEachDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "forEach"),
     someDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "some"),
     testDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "test"),
+    execDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec"),
     symbolReplaceDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.replace),
     lowerDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "toLowerCase"),
     replaceDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "replace"),
@@ -54,7 +55,8 @@ test("safe projection retains forbidden fields under post-import traversal subst
     applyDescriptor = Object.getOwnPropertyDescriptor(Reflect, "apply"),
     errorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Error");
   assert.ok(entriesDescriptor); assert.ok(arrayDescriptor); assert.ok(forEachDescriptor); assert.ok(someDescriptor);
-  assert.ok(testDescriptor); assert.ok(symbolReplaceDescriptor); assert.ok(lowerDescriptor); assert.ok(replaceDescriptor);
+  assert.ok(testDescriptor); assert.ok(execDescriptor); assert.ok(symbolReplaceDescriptor); assert.ok(lowerDescriptor);
+  assert.ok(replaceDescriptor);
   assert.ok(includesDescriptor);
   assert.ok(applyDescriptor); assert.ok(errorDescriptor);
   const sentinel = new Error("hostile projection walker"), hostile = () => { throw sentinel; };
@@ -65,6 +67,7 @@ test("safe projection retains forbidden fields under post-import traversal subst
   Object.defineProperty(Array.prototype, "forEach", { ...forEachDescriptor, value: hostile });
   Object.defineProperty(Array.prototype, "some", { ...someDescriptor, value: hostile });
   Object.defineProperty(RegExp.prototype, "test", { ...testDescriptor, value: hostile });
+  Object.defineProperty(RegExp.prototype, "exec", { ...execDescriptor, value: hostile });
   Object.defineProperty(RegExp.prototype, Symbol.replace, { ...symbolReplaceDescriptor, value: hostile });
   Object.defineProperty(String.prototype, "toLowerCase", { ...lowerDescriptor, value: hostile });
   Object.defineProperty(String.prototype, "replace", { ...replaceDescriptor, value: hostile });
@@ -80,6 +83,7 @@ test("safe projection retains forbidden fields under post-import traversal subst
     Object.defineProperty(Array.prototype, "forEach", forEachDescriptor);
     Object.defineProperty(Array.prototype, "some", someDescriptor);
     Object.defineProperty(RegExp.prototype, "test", testDescriptor);
+    Object.defineProperty(RegExp.prototype, "exec", execDescriptor);
     Object.defineProperty(RegExp.prototype, Symbol.replace, symbolReplaceDescriptor);
     Object.defineProperty(String.prototype, "toLowerCase", lowerDescriptor);
     Object.defineProperty(String.prototype, "replace", replaceDescriptor);

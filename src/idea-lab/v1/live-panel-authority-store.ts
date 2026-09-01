@@ -26,14 +26,14 @@ import {
   type IdeaLabLivePanelAdmissionAuthorityV1,
   type IdeaLabLivePanelAdmissionV1,
 } from "./live-panel-admission";
-import { ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { ideaAuthTagSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 import type { IdeaLabSessionV1 } from "./types";
 
 export const IDEA_LAB_NATIVE_RECEIPT_DECISION_V1 = "control-room-idea-lab-native-receipt-decision/v1" as const;
 export const IDEA_LAB_LIVE_ADMISSION_DECISION_V1 = "control-room-idea-lab-live-admission-decision/v1" as const;
 export const IDEA_LAB_LIVE_AUTHORITY_EVENT_V1 = "control-room-idea-lab-live-authority-event/v1" as const;
 
-const authTagSchema = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
+const authTagSchema = ideaAuthTagSchemaV1;
 const nativeDecisionSchema = z.object({
   contractVersion: z.literal(IDEA_LAB_NATIVE_RECEIPT_DECISION_V1),
   decisionId: ideaIdSchemaV1,

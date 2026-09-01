@@ -12,7 +12,7 @@ import {
   ideaLabHermes021PanelPacketV1,
 } from "./hermes-021-panel-packet";
 import { hermes021IdeaLabNativeQualificationPlanV1 } from "./hermes-021-native-qualification";
-import { ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_OWNER_READY_LIVE_PACKET_V1 = "control-room-idea-lab-owner-ready-live-packet/v1" as const;
 export const IDEA_LAB_NATIVE_QUALIFICATION_CANDIDATE_V1 =
@@ -133,7 +133,7 @@ const candidateSchema = z.object({
   runtimeVersion: z.literal(IDEA_LAB_HERMES_021_VERSION_V1),
   runtimeRevision: z.literal(IDEA_LAB_HERMES_021_REVISION_V1),
   outcome: z.enum(["qualified_candidate", "failed_definite", "terminal_ambiguity"]),
-  safeCode: z.string().regex(/^[a-z][a-z0-9_]{1,80}$/),
+  safeCode: z.string().refine((value) => capturedPatternMatchesV1(/^[a-z][a-z0-9_]{1,80}$/, value)),
   attemptedAt: ideaTimeSchemaV1,
   settledAt: ideaTimeSchemaV1,
   nativeAttemptsMade: z.literal(1),
