@@ -1,6 +1,7 @@
 # CR12B-IDEA-110B — fixed Hermes local/SSH bridge acceptance
 
-**Status:** Implementation complete locally for the provider-disabled repository snapshot; independent review is pending.
+**Status:** Initial implementation rejected by independent review; IDEA-110D remediation is implemented and awaits a
+different independent re-review.
 
 ## Outcome
 
@@ -41,9 +42,16 @@ cleanup bindings. The combined CR12B suite passes 127/127. TypeScript validation
 whitespace validation pass. The complete npm lifecycle, production build, 3/3 rendered route tests, and all 32
 migrations with 110 PostgreSQL tables also pass.
 
-## Remaining gates
+## Independent review and remediation
 
-The exact candidate still requires an independent security/authority review. After acceptance, Control Room must create
-one real signed local or SSH enrollment through the platform connector, refresh every implementation/source/packet
-digest, and prove an effect-free preflight. Only a new owner-attended authorization may then permit the single native
-qualification. No previous authorization is reusable, and qualification still cannot open a live Idea Lab panel.
+Independent review of commit `0a736ad16e1ea7ffef37e434eba5bd46f483f95d` found four High defects: concrete
+collaborator methods lost their receivers, cleanup could report completion while execution was still pending, signed
+enrollment included two unused operations, and expiry was not rechecked after durable claim. The immutable negative
+report remains authoritative evidence.
+
+IDEA-110D remediation commit `bb1faf989486bb3b16226d9a4cbec2223ef4e5f2` binds the original receivers, serializes
+execution and cleanup, cancels and rechecks around every connector await, narrows enrollment to the exact seven used
+operations, and rechecks trusted time immediately before bridge entry. A different independent reviewer must accept all
+four repairs. After that, Control Room must still accept a platform connector, enroll its node signer, create one real
+signed local or SSH enrollment, refresh every implementation/source/packet digest, and prove an effect-free preflight.
+Only a new owner-attended authorization may later permit one native qualification. No previous authorization is reusable.

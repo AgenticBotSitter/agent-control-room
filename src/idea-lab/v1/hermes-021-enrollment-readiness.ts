@@ -18,9 +18,11 @@ import { ideaDigestSchemaV1 } from "./schemas";
 export const IDEA_LAB_HERMES_021_ENROLLMENT_READINESS_V1 =
   "control-room-hermes-021-enrollment-readiness/v1" as const;
 export const IDEA_LAB_HERMES_021_FIXED_RPC_IMPLEMENTATION_COMMIT_V1 =
-  "0a736ad16e1ea7ffef37e434eba5bd46f483f95d" as const;
+  "bb1faf989486bb3b16226d9a4cbec2223ef4e5f2" as const;
 export const IDEA_LAB_HERMES_021_FIXED_RPC_REVIEW_PACKET_SHA256_V1 =
-  "sha256:3af97a655945f978492682ecbab26c9a4aeda1d5c202f22ed3f6c021d1d337a8" as const;
+  "sha256:414899406296a0e7326ea467f6a5cca31a93f5e2ab14974e59dd9508c8a5e827" as const;
+export const IDEA_LAB_HERMES_021_PRIOR_REVIEW_REPORT_SHA256_V1 =
+  "sha256:d5695fb5d52bbcf90cfa7440ae3ec46a3a46e8628ee7866ec90a291b4129b87f" as const;
 
 const readinessSchema = z.object({
   contractVersion: z.literal(IDEA_LAB_HERMES_021_ENROLLMENT_READINESS_V1),
@@ -31,8 +33,10 @@ const readinessSchema = z.object({
   gatewayOperationSetDigest: z.literal(IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1),
   fixedRpcImplementationCommit: z.literal(IDEA_LAB_HERMES_021_FIXED_RPC_IMPLEMENTATION_COMMIT_V1),
   independentReviewPacketSha256: z.literal(IDEA_LAB_HERMES_021_FIXED_RPC_REVIEW_PACKET_SHA256_V1),
+  priorIndependentReviewReportSha256: z.literal(IDEA_LAB_HERMES_021_PRIOR_REVIEW_REPORT_SHA256_V1),
+  priorIndependentReviewDisposition: z.literal("remediation_required"),
   reviewMode: z.literal("independent_review_report_only_zero_repair"),
-  independentReviewDisposition: z.literal("unobserved"),
+  independentReviewDisposition: z.literal("remediation_re_review_pending"),
   independentReviewerVerified: z.literal(false),
   connectorImplementationAccepted: z.literal(false),
   trustedNodeSignerEnrolled: z.literal(false),
@@ -46,7 +50,7 @@ const readinessSchema = z.object({
   oldAuthorizationReusable: z.literal(false),
   status: z.literal("blocked_before_real_enrollment"),
   blockerCodes: z.tuple([
-    z.literal("independent_review_missing"),
+    z.literal("independent_remediation_review_missing"),
     z.literal("connector_implementation_missing"),
     z.literal("trusted_node_signer_not_enrolled"),
     z.literal("signed_connection_enrollment_missing"),
@@ -81,8 +85,10 @@ const material = {
   gatewayOperationSetDigest: IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1,
   fixedRpcImplementationCommit: IDEA_LAB_HERMES_021_FIXED_RPC_IMPLEMENTATION_COMMIT_V1,
   independentReviewPacketSha256: IDEA_LAB_HERMES_021_FIXED_RPC_REVIEW_PACKET_SHA256_V1,
+  priorIndependentReviewReportSha256: IDEA_LAB_HERMES_021_PRIOR_REVIEW_REPORT_SHA256_V1,
+  priorIndependentReviewDisposition: "remediation_required" as const,
   reviewMode: "independent_review_report_only_zero_repair" as const,
-  independentReviewDisposition: "unobserved" as const,
+  independentReviewDisposition: "remediation_re_review_pending" as const,
   independentReviewerVerified: false as const,
   connectorImplementationAccepted: false as const,
   trustedNodeSignerEnrolled: false as const,
@@ -96,7 +102,7 @@ const material = {
   oldAuthorizationReusable: false as const,
   status: "blocked_before_real_enrollment" as const,
   blockerCodes: [
-    "independent_review_missing", "connector_implementation_missing", "trusted_node_signer_not_enrolled",
+    "independent_remediation_review_missing", "connector_implementation_missing", "trusted_node_signer_not_enrolled",
     "signed_connection_enrollment_missing", "effect_free_preflight_missing", "owner_packet_refresh_missing",
     "fresh_owner_authorization_missing", "native_qualification_missing",
   ] as const,

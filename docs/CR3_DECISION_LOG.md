@@ -2381,3 +2381,29 @@ refreshes.
 
 **Reevaluate:** Replace each missing gate only with its exact accepted evidence. Any negative review, connector drift,
 signer change, runtime update, source change, or preflight uncertainty keeps enrollment blocked and requires new evidence.
+
+## ADR-142 — Serialize Hermes execution and cleanup under one least-authority operation set
+
+**Decision:** Every captured driver, spend-store, and native-bridge method is invoked with its validated original receiver.
+The enrolled gateway and fixed bridge each expose a one-use execution-settlement barrier. Cleanup marks cancellation and
+cannot return completed evidence until the in-flight execution path has settled; execution checks cancellation before and
+after every connector await. Enrollment and permit digesting share the fixed bridge's exact seven-operation set and omit
+compatible but unused methods. Trusted time is sampled again after durable claim and immediately before bridge entry;
+expiry, rollback, cancellation, or abort consumes the claim into terminal ambiguity and dispatches nothing.
+
+**Why:** JavaScript method extraction can invalidate concrete classes that use private fields. Separately, cleanup and
+permit expiry are security state transitions, not convenience callbacks: racing either boundary can turn uncertainty or
+expired authority into later provider work. Signing compatible methods that the bridge never uses is unnecessary ambient
+authority.
+
+**Alternatives rejected:** Rely on receiver-independent fakes; require every collaborator to avoid private fields; let
+cleanup run concurrently and trust abort timing; report cleanup complete before execution settles; authorize every Hermes
+method known to be compatible; check expiry only before the database claim; retry after any ambiguous race.
+
+**Trade-off:** Cleanup can wait until an abort-aware connector settles and may remain uncertain if the connector ignores
+abort. That is deliberately safer than false completion. Any operation-set change invalidates earlier enrollment and owner
+window digests and therefore requires fresh signed evidence.
+
+**Reevaluate:** After a different independent reviewer closes all four REV-003 findings against the exact remediation
+commit. Connector implementations must preserve the same cancellation, receiver, operation-set, and post-claim expiry
+invariants.
