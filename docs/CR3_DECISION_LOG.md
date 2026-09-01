@@ -2616,3 +2616,29 @@ connections, or a second coordination database.
 **Reevaluate:** Before adding bidirectional transport, browser event writes, production database composition, retention,
 or multi-node notification fan-out. Any event contract, chain/tag, replay cursor, authentication order, writer,
 migration, or negative-authority change invalidates CR13A-LIVE-000 review evidence.
+
+## ADR-148 — Connection Center projects sanitized enrollment truth without inferring host liveness
+
+**Decision:** Connection Center is a protected read-only projection over the accepted sanitized Hermes connection
+roster. Owner authentication and tenant derivation occur before source access. The server rebuilds the source roster
+through the accepted exact contract, then exposes only opaque connection/node IDs, local-versus-private-SSH transport,
+the exact reviewed runtime revision, enrollment/profile state, qualification blockers, and negative authority. The
+browser verifies one strict digest-bound projection. An empty protected roster remains empty; installed software, an
+ambient hostname, SSH capability, or earlier test evidence cannot create an implied connection.
+
+**Why:** Operators need one place to see which machines are actually enrolled and what blocks them, but connection UI is
+a dangerous place to blur configured, reachable, authenticated, qualified, and execution-authorized states. Reusing the
+accepted sanitized roster avoids a second SSH or credential boundary and keeps private locators outside the web layer.
+
+**Alternatives rejected:** Browser-direct SSH; storing or displaying hostnames and ports; treating an installed Hermes
+binary as enrollment; deriving health from an unqualified connection; presenting reviewed version compatibility as live
+provider success; adding connect or qualification buttons before an exact effect contract; or substituting fixtures when
+the protected source is empty or unavailable.
+
+**Trade-off:** The first Connection Center can show safe setup and version diagnostics but not real liveness, capacity,
+or live-panel readiness. Durable registry persistence and independently authenticated freshness remain later work. This
+is preferable to an attractive but false green connection status.
+
+**Reevaluate:** Before adding persistent enrollment storage, node heartbeat composition, connection mutation, native
+qualification, credential references, SSH control, or live-panel actions. Any authentication ordering, roster rebuild,
+redaction, digest, version wording, blocker, or negative-authority change requires fresh review.

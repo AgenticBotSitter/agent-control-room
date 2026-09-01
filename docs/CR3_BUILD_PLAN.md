@@ -867,8 +867,9 @@ and never retries after uncertainty. Independent review and architect registry a
 ## CR13A-LIVE-000 — authenticated resumable project activity
 
 Status: accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083` after a third different-party
-review closed all four blocking findings. PR #218 remains stacked on a separately rejected connector base and is not
-merge-eligible until that base is remediated and accepted. See `CR13A_LIVE_000_ACCEPTANCE.md` and ADR-147.
+review closed all four blocking findings. Historical PR #218 is closed; verified restack PR #229 targets the accepted
+connector-integration branch and remains dependent on the owner-approved merge of parent PR #228. See
+`CR13A_LIVE_000_ACCEPTANCE.md` and ADR-147.
 
 One PostgreSQL append-only event chain now projects safe project activity without becoming project or work authority.
 Concurrent writers serialize, exact source replay is inert, changed replay fails, and event/head authentication detects
@@ -879,5 +880,17 @@ and lifecycle events across restart. After the first rejection, the source ledge
 changes and at startup, canonical UTC time is required, and the real protected project mounts the Activity source. No
 browser write endpoint, provider contact, production database, or deployment is introduced.
 
-Next after review: CR13A-LIVE-010 adds the protected Connection Center inventory and health/version diagnostics. Use
-Terra high for the ordinary UI/integration implementation, returning to Sol high for its security and integration gate.
+## CR13A-LIVE-010 — protected Connection Center
+
+Status: implementation candidate complete at `e4cb8d69b4dbe17f560303a1edad08871fcc575b`; independent security/integrity
+review required. See `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` and ADR-148.
+
+The dashboard now links to a protected Connection Center with exact Hermes 0.21 compatibility, bounded local/SSH counts,
+safe enrollment and qualification diagnostics, and explicit blockers. Authentication precedes every roster read. The
+server rebuilds the accepted sanitized connection roster before projecting it, and the browser accepts only the strict
+digest-bound response. The local pilot reports an honest protected empty roster until a real signed enrollment exists.
+No hostname, locator, credential, provider call, native process, write control, or execution authority is introduced.
+
+Next after review and ordered parent integration: CR13A-LIVE-020 adds durable protected connection-registry persistence
+and composes independently authenticated node freshness without treating enrollment, liveness, compatibility, or
+qualification as interchangeable. Use Sol high for that persistence/security boundary.
