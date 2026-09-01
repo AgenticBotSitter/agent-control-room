@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { canonicalJson, sha256Digest } from "../src/security/index.ts";
@@ -201,6 +201,92 @@ test("CR12B-IDEA-110N roster snapshots input and ignores caller-owned traversal 
   assert.throws(() => buildIdeaLabHermes021ConnectionRosterV1({ tenantId: first.tenantId,
     evaluatedAt: "2026-09-01T10:06:00.000Z", connections }), (error) => error instanceof IdeaLabErrorV1);
   assert.equal(ownMapCalls, 0);
+});
+
+test("CR12B-IDEA-110O roster digest ignores ambient traversal of rebuilt connections", () => {
+  const firstEnvelope = envelope(), first = sanitizeIdeaLabHermes021ConnectionEnrollmentV1(firstEnvelope, context(firstEnvelope));
+  const secondEnvelope = envelope({ connectionId: "captured-digest-local", local: true });
+  const second = sanitizeIdeaLabHermes021ConnectionEnrollmentV1(secondEnvelope, context(secondEnvelope));
+  const connections = [first, second];
+  const cleanRoster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId: first.tenantId,
+    evaluatedAt: "2026-09-01T10:06:00.000Z", connections });
+  const expectedDigest = cleanRoster.rosterDigest;
+  const nativeMap = Array.prototype.map, nativeJoin = Array.prototype.join, nativeSort = Array.prototype.sort;
+  const nativeObjectKeys = Object.keys, nativeStringify = JSON.stringify, nativeReflectApply = Reflect.apply;
+  const hashPrototype = Object.getPrototypeOf(createHash("sha256"));
+  const nativeHashUpdate = Object.getOwnPropertyDescriptor(hashPrototype, "update")!.value;
+  let rebuiltMapCalls = 0, rebuiltJoinCalls = 0, rosterKeysCalls = 0, rosterSortCalls = 0;
+  let rosterStringifyCalls = 0, rosterHashUpdateCalls = 0;
+  try {
+    Object.defineProperty(Array.prototype, "map", { configurable: true, writable: true,
+      value(this: unknown[], ...args: unknown[]) {
+        if (this !== connections && this.length === 2
+          && (this[0] as { contractVersion?: unknown } | undefined)?.contractVersion
+            === "control-room-hermes-021-connection-safe-result/v1") {
+          rebuiltMapCalls += 1;
+          throw new Error("rebuilt roster map reached");
+        }
+        return nativeReflectApply(nativeMap, this, args);
+      } });
+    Object.defineProperty(Array.prototype, "join", { configurable: true, writable: true,
+      value(this: unknown[], ...args: unknown[]) {
+        if (this.length === 2 && typeof this[0] === "string"
+          && this[0].includes("control-room-hermes-021-connection-safe-result/v1")) {
+          rebuiltJoinCalls += 1;
+          throw new Error("rebuilt roster join reached");
+        }
+        return nativeReflectApply(nativeJoin, this, args);
+      } });
+    Object.defineProperty(Array.prototype, "sort", { configurable: true, writable: true,
+      value(this: unknown[], ...args: unknown[]) {
+        let rosterKeys = false, includesRosterDigest = false;
+        for (let index = 0; index < this.length; index += 1) {
+          if (this[index] === "connections") rosterKeys = true;
+          if (this[index] === "rosterDigest") includesRosterDigest = true;
+        }
+        if (rosterKeys && !includesRosterDigest) { rosterSortCalls += 1; throw new Error("roster key sort reached"); }
+        return nativeReflectApply(nativeSort, this, args);
+      } });
+    Object.defineProperty(Object, "keys", { configurable: true, writable: true,
+      value(value: unknown) {
+        if ((value as { contractVersion?: unknown } | null)?.contractVersion
+          === "control-room-hermes-021-connection-roster/v1"
+          && (value as { rosterDigest?: unknown }).rosterDigest === undefined) {
+          rosterKeysCalls += 1;
+          throw new Error("roster Object.keys reached");
+        }
+        return nativeReflectApply(nativeObjectKeys, Object, [value]);
+      } });
+    Object.defineProperty(JSON, "stringify", { configurable: true, writable: true,
+      value(value: unknown, ...args: unknown[]) {
+        if (value === "control-room-hermes-021-connection-roster/v1") {
+          rosterStringifyCalls += 1;
+          throw new Error("roster JSON.stringify reached");
+        }
+        return nativeReflectApply(nativeStringify, JSON, [value, ...args]);
+      } });
+    Object.defineProperty(hashPrototype, "update", { configurable: true, writable: true,
+      value(this: unknown, ...args: unknown[]) {
+        if (typeof args[0] === "string"
+          && args[0].includes("control-room-hermes-021-connection-roster/v1")) {
+          rosterHashUpdateCalls += 1;
+          throw new Error("roster hash update reached");
+        }
+        return nativeReflectApply(nativeHashUpdate, this, args);
+      } });
+    const roster = buildIdeaLabHermes021ConnectionRosterV1({ tenantId: first.tenantId,
+      evaluatedAt: "2026-09-01T10:06:00.000Z", connections });
+    assert.equal(roster.rosterDigest, expectedDigest);
+    assert.deepEqual([rebuiltMapCalls, rebuiltJoinCalls, rosterKeysCalls, rosterSortCalls,
+      rosterStringifyCalls, rosterHashUpdateCalls], [0, 0, 0, 0, 0, 0]);
+  } finally {
+    Object.defineProperty(Array.prototype, "map", { configurable: true, writable: true, value: nativeMap });
+    Object.defineProperty(Array.prototype, "join", { configurable: true, writable: true, value: nativeJoin });
+    Object.defineProperty(Array.prototype, "sort", { configurable: true, writable: true, value: nativeSort });
+    Object.defineProperty(Object, "keys", { configurable: true, writable: true, value: nativeObjectKeys });
+    Object.defineProperty(JSON, "stringify", { configurable: true, writable: true, value: nativeStringify });
+    Object.defineProperty(hashPrototype, "update", { configurable: true, writable: true, value: nativeHashUpdate });
+  }
 });
 
 test("CR12B-IDEA-109B rejects re-digested authority and hostile objects without executing behavior", () => {

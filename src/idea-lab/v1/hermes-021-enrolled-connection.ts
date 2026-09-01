@@ -12,6 +12,69 @@ import {
 import { capturedIdeaTimeMillisecondsV1, capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1,
   ideaTimeSchemaV1 } from "./schemas";
 
+const rosterArrayIsArrayV1 = Array.isArray;
+const rosterArraySortV1 = Array.prototype.sort;
+const rosterJsonStringifyV1 = JSON.stringify;
+const rosterNumberIsFiniteV1 = Number.isFinite;
+const rosterObjectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
+const rosterObjectGetPrototypeOfV1 = Object.getPrototypeOf;
+const rosterObjectKeysV1 = Object.keys;
+const rosterReflectApplyV1 = Reflect.apply;
+const rosterHashProbeV1 = createHash("sha256");
+const rosterHashPrototypeV1 = rosterObjectGetPrototypeOfV1(rosterHashProbeV1);
+const rosterHashUpdateCandidateV1 = rosterObjectGetOwnPropertyDescriptorV1(rosterHashPrototypeV1, "update")?.value;
+const rosterHashDigestCandidateV1 = rosterObjectGetOwnPropertyDescriptorV1(rosterHashPrototypeV1, "digest")?.value;
+if (typeof rosterHashUpdateCandidateV1 !== "function" || typeof rosterHashDigestCandidateV1 !== "function") {
+  throw new Error("SHA-256 runtime unavailable");
+}
+const rosterHashUpdateV1 = rosterHashUpdateCandidateV1 as (...args: unknown[]) => unknown;
+const rosterHashDigestV1 = rosterHashDigestCandidateV1 as (...args: unknown[]) => unknown;
+
+function capturedRosterCanonicalJsonV1(value: unknown, path = "$", depth = 0): string {
+  if (depth > 64) throw new Error(`Canonical depth exceeded at ${path}`);
+  if (value === null) return "null";
+  if (typeof value === "boolean" || typeof value === "string") {
+    return rosterReflectApplyV1(rosterJsonStringifyV1, JSON, [value]) as string;
+  }
+  if (typeof value === "number") {
+    if (!rosterReflectApplyV1(rosterNumberIsFiniteV1, Number, [value])) {
+      throw new Error(`Non-finite number at ${path}`);
+    }
+    return rosterReflectApplyV1(rosterJsonStringifyV1, JSON, [value]) as string;
+  }
+  if (rosterReflectApplyV1(rosterArrayIsArrayV1, Array, [value])) {
+    const values = value as readonly unknown[];
+    let result = "[";
+    for (let index = 0; index < values.length; index += 1) {
+      if (index > 0) result += ",";
+      result += capturedRosterCanonicalJsonV1(values[index], `${path}[${index}]`, depth + 1);
+    }
+    return `${result}]`;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const keys = rosterReflectApplyV1(rosterObjectKeysV1, Object, [record]) as string[];
+    rosterReflectApplyV1(rosterArraySortV1, keys, []);
+    let result = "{";
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index]!, child = record[key];
+      if (child === undefined || typeof child === "function" || typeof child === "symbol"
+        || typeof child === "bigint") throw new Error(`Non-JSON value at ${path}.${key}`);
+      if (index > 0) result += ",";
+      const encodedKey = rosterReflectApplyV1(rosterJsonStringifyV1, JSON, [key]) as string;
+      result += `${encodedKey}:${capturedRosterCanonicalJsonV1(child, `${path}.${key}`, depth + 1)}`;
+    }
+    return `${result}}`;
+  }
+  throw new Error(`Non-JSON value at ${path}`);
+}
+
+function capturedRosterDigestV1(value: unknown): string {
+  const hash = createHash("sha256");
+  rosterReflectApplyV1(rosterHashUpdateV1, hash, [capturedRosterCanonicalJsonV1(value), "utf8"]);
+  return `sha256:${rosterReflectApplyV1(rosterHashDigestV1, hash, ["hex"]) as string}`;
+}
+
 export const IDEA_LAB_HERMES_021_CONNECTION_SOURCE_V1 =
   "control-room-hermes-021-built-in-connection-source/v1" as const;
 export const IDEA_LAB_HERMES_021_CONNECTION_ENROLLMENT_V1 =
@@ -350,7 +413,7 @@ export function buildIdeaLabHermes021ConnectionRosterV1(input: {
     containsProtectedValueMaterial: false as const,
     grantsExecutionAuthority: false as const,
   };
-  const parsed = rosterSchema.parse({ ...material, rosterDigest: sha256Digest(material) });
+  const parsed = rosterSchema.parse({ ...material, rosterDigest: capturedRosterDigestV1(material) });
   Object.freeze(parsed.connections);
   return Object.freeze(parsed);
 }
