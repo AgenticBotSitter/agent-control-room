@@ -1,0 +1,109 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR12B-IDEA-110D-REV-001",
+  "waveId": "CR12B-IDEA-110D-REVIEW-1",
+  "block": "CR12B-IDEA-110D-Q",
+  "summary": "Independently re-review the four Hermes bridge remediations",
+  "platform": "macos",
+  "status": "ready",
+  "mode": "independent-review",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "high",
+  "baseCommit": "bb1faf989486bb3b16226d9a4cbec2223ef4e5f2",
+  "integrationBranch": "integration/cr12b-idea-110d-remediation-review",
+  "eligibleRoutes": ["marvin-macos"],
+  "routeClaimants": {
+    "marvin-macos": ["MarvinAi5"]
+  },
+  "dependencies": [],
+  "requiredTools": [
+    "Git",
+    "Node.js >=22.13.0",
+    "pnpm 11.19.0",
+    "Codex-supplied isolated checkout with stage zero already ready",
+    "authenticated GitHub CLI"
+  ],
+  "maxConcurrentClaimsPerRoute": 1,
+  "verification": {
+    "required": false,
+    "independence": "none"
+  },
+  "objective": "Using a reviewer profile different from the REV-003 reviewer and from every agent that authored, advised, or repaired the remediation, independently attack immutable product commit bb1faf989486bb3b16226d9a4cbec2223ef4e5f2. Reproduce and disposition CR12B-REV003-001 through CR12B-REV003-004, then repeat the whole fixed-bridge authority, replay, cleanup, sanitation, and upgrade-boundary attacks in the frozen CR12B-IDEA-110D packet. Produce one source-linked report plus the required isolated V2 result manifest. Do not install dependencies, repair code, change architecture, contact Hermes, approve the block, or merge anything.",
+  "contractRefs": [
+    "docs/reviews/CR12B_IDEA_110D_REMEDIATION_REREVIEW_PACKET.md",
+    "docs/reviews/CR12B_IDEA_110B_INDEPENDENT_REVIEW_REV_003.md",
+    "docs/CR12B_IDEA_110D_BRIDGE_REMEDIATION.md",
+    "docs/CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md",
+    "docs/CR12B_IDEA_110C_ENROLLMENT_READINESS_ACCEPTANCE.md",
+    "docs/SECURITY_AND_AUTHORITY.md",
+    "docs/CR3_DECISION_LOG.md",
+    "docs/WORKER_CHECKOUT_PREPARATION.md",
+    "src/idea-lab/v1/hermes-021-fixed-operation-set.ts",
+    "src/idea-lab/v1/hermes-021-fixed-rpc-bridge.ts",
+    "src/idea-lab/v1/hermes-021-enrolled-gateway-port.ts",
+    "src/idea-lab/v1/hermes-021-enrolled-connection.ts",
+    "src/idea-lab/v1/hermes-021-filtered-driver.ts",
+    "src/idea-lab/v1/hermes-021-qualification-spend-store.ts",
+    "tests/idea-lab-hermes-021-fixed-rpc-bridge.test.ts",
+    "tests/idea-lab-hermes-021-enrolled-gateway-port.test.ts",
+    "tests/idea-lab-hermes-021-enrolled-connection.test.ts",
+    "tests/idea-lab-hermes-021-driver.test.ts",
+    "tests/idea-lab-hermes-021-qualification-spend-store.test.ts"
+  ],
+  "allowedPaths": [
+    "docs/reviews/CR12B_IDEA_110D_REMEDIATION_REREVIEW_REV_001.md"
+  ],
+  "forbiddenPrefixes": [
+    ".github",
+    "app",
+    "coordination/agent-build/capsules",
+    "coordination/agent-build/waves",
+    "db/migrations",
+    "package.json",
+    "pnpm-lock.yaml",
+    "scripts",
+    "skills",
+    "src",
+    "tests"
+  ],
+  "acceptanceCommands": [
+    "node scripts/qualification/platform-key-store-stage-zero.mjs --platform macos",
+    "npm run check",
+    "npm run lint",
+    "npm run test:cr12b",
+    "npm test",
+    "CI=true npm run test:build",
+    "npm run db:verify",
+    "git diff --check integration/cr12b-idea-110d-remediation-review...HEAD"
+  ],
+  "semanticAcceptance": [
+    "The report names exact product commit bb1faf989486bb3b16226d9a4cbec2223ef4e5f2, the rejected predecessor, the immutable REV-003 report, and a reviewer profile different from REV-003 and every remediation contributor; any overlap produces blocked_incomplete_review.",
+    "Before claim, the reviewer confirms that the Codex-supplied isolated checkout exists at the exact privately handed-off path, is clean at the current integration head, and already returns ready_for_runtime_check from the exact stage-zero command. The reviewer does not create, install, copy, or link dependencies.",
+    "The reviewer independently reproduces and dispositions CR12B-REV003-001 through CR12B-REV003-004 using the attacks required by docs/reviews/CR12B_IDEA_110D_REMEDIATION_REREVIEW_PACKET.md, including concrete private-field receivers, paused-open and paused-operation cleanup races, re-signed operation-set drift, and expiry, rollback, and cancellation during durable claim.",
+    "The reviewer repeats the packet's whole-boundary locator, protected-value, replay, epoch, output, usage, duplicate, uncertain-open, connector-error, Proxy/accessor, and method-set attacks before drawing a disposition.",
+    "Every finding has a stable ID, severity, exact source line, reproducible attack, observed result, violated invariant, affected boundary, missing regression, and smallest safe remediation; passing producer tests alone are never a finding disposition.",
+    "The report separates independently observed source and test facts from documented, inferred, blocked, and unsupported claims and retains every real enrollment, connector acceptance, owner qualification, receipt review, architect acceptance, live-panel, production database, hosting, and deployment blocker.",
+    "The only final disposition is accepted_provider_disabled_snapshot, remediation_required, or blocked_incomplete_review; it does not approve, merge, enroll, qualify, or contact Hermes.",
+    "The report contains no secret, raw host identity, machine locator, key material or path, gateway value, protected value, profile path, native session identifier, raw provider content, private infrastructure detail, personal path, production artifact, invented observation, source repair, architecture decision, or native/live effect claim.",
+    "The worker commits only the report as the implementation commit, then commits coordination/agent-build/results/CR12B-IDEA-110D-REV-001.json alone as the required metadata commit exactly as skills/agent-build-worker/SKILL.md specifies."
+  ],
+  "limits": {
+    "maxChangedFiles": 1,
+    "maxChangedLines": 500,
+    "maxRepairIterations": 0
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Stop and leave the jobber unclaimed if Git, Node.js, pnpm 11.19.0, authenticated GitHub CLI, or the exact Codex-supplied prepared checkout is unavailable, dirty, on the wrong integration head, or not stage-zero ready.",
+    "The checkout preparation was a separate owner-authorized architect action. The reviewer has no authority to install, download, update, copy, link, approve-builds, alter package policy, or repair dependencies, and must stop before any such action.",
+    "Stop and submit a blocked report if the reviewer profile produced REV-003, authored, repaired, or advised the remediation, or cannot establish independence.",
+    "Stop if product commit bb1faf989486bb3b16226d9a4cbec2223ef4e5f2, immutable negative report integration commit d0875a7f80d887c6bcf7528346b1fe5aafc88c61, or review packet SHA-256 414899406296a0e7326ea467f6a5cca31a93f5e2ab14974e59dd9508c8a5e827 is unavailable or differs from the capsule.",
+    "Stop before changing any product path or any path other than the report plus the separately required result manifest metadata commit; report findings for Codex disposition.",
+    "Stop before any Hermes or native process, SSH connection, provider call, credential or protected-value access, Keychain or vault action, service, listener, database outside disposable tests, external integration, deployment, DNS, hosting, destructive cleanup, or consequential effect.",
+    "GitHub access is limited to claiming this jobber, fetching metadata without changing the prepared tree, creating the exact producer branch in that checkout, opening the one report-only pull request, and submitting that URL through the queue controller."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR12B-IDEA-110D-REV-001.json"
+}
