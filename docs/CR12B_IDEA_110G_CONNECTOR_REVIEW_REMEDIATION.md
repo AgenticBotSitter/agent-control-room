@@ -53,7 +53,8 @@ other external effect occurred.
 ## Remaining gate
 
 A reviewer different from every IDEA-110F/110G contributor and the first connector reviewer must attack the exact frozen
-remediation commit and packet. The re-review must independently reproduce all five original attacks and exercise
+remediation commit using packet SHA-256
+`04a2c7859fce8646f83d9ec571d98cef633e646c0f2f4796f7aa33942f22d30b`. The re-review must independently reproduce all five original attacks and exercise
 late-success, late-throw, malformed receipt, abort-at-await, post-capture mutation, error-sentinel, pairwise digest/lease/
 session alias, locator custody, default-disabled composition, and source/upgrade drift. Only an accepted immutable report
 can remove `connector_implementation_unaccepted`; signer enrollment, signed route enrollment, effect-free preflight,
