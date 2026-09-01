@@ -216,7 +216,9 @@ Mac-private port receives a connector-owned native signal. The exact poisoned-si
 zero private calls. Focused cancellation/gateway/bridge/connector/readiness tests pass 49/49 and combined CR12B passes
 154/154. Stage zero, typecheck, full lint, 769/769 pretests, 414/416 core tests with two intentional platform skips,
 233/233 posttests, the production build with 3/3 rendered routes, all 32 migrations/110 PostgreSQL tables, and whitespace
-validation pass. Fresh independent review is mandatory. Signer and route enrollment, preflight, packet refresh,
+validation pass. The fresh review packet is frozen at
+`sha256:4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb`. Fresh independent review is mandatory.
+Signer and route enrollment, preflight, packet refresh,
 authorization, and native qualification remain absent; no native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
@@ -628,7 +630,7 @@ Block: CR12B-IDEA-110H-Q — independently review the opaque-cancellation connec
 Set model: gpt-5.6-sol
 Set reasoning effort: high
 Why: IDEA-110G still trusted mutable native AbortSignal internals and was rejected. IDEA-110H changes the cancellation architecture across four component seams and cannot accept its own repair.
-Expected output: one immutable report by a fresh reviewer against implementation commit `d22c76444b80f8dd469380aab52ec457f5d76fad` and a newly frozen packet. It must reproduce the exact poisoned event-map Proxy case with zero behavior, independently repeat every original IDEA-110F/110G case, and inspect opaque-token minting, validation, pre-abort, subscription, unsubscribe, timeout, cleanup, native conversion, Proxy, mutation, lifecycle, locator, error, alias, composition, and upgrade boundaries. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Expected output: one immutable report by a fresh reviewer against implementation commit `d22c76444b80f8dd469380aab52ec457f5d76fad` and packet `sha256:4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb`. It must reproduce the exact poisoned event-map Proxy case with zero behavior, independently repeat every original IDEA-110F/110G case, and inspect opaque-token minting, validation, pre-abort, subscription, unsubscribe, timeout, cleanup, native conversion, Proxy, mutation, lifecycle, locator, error, alias, composition, and upgrade boundaries. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

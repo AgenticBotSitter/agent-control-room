@@ -8,6 +8,7 @@ import {
   IDEA_LAB_HERMES_021_FIXED_RPC_REVIEW_PACKET_SHA256_V1,
   IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1,
   IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1,
+  IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_PACKET_SHA256_V1,
   IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1,
   IDEA_LAB_HERMES_021_PRIOR_REVIEW_REPORT_SHA256_V1,
   IdeaLabErrorV1,
@@ -30,6 +31,7 @@ test("CR12B-IDEA-110C binds the exact bridge and blocks before any real enrollme
   ["blocked_before_real_enrollment", "accepted_provider_disabled_snapshot", false, false, false]);
   assert.equal(readiness.independentReviewerVerified, true);
   assert.deepEqual([readiness.macosConnectorRemediationCommit,
+    readiness.macosConnectorIndependentReviewPacketSha256,
     readiness.macosConnectorIndependentReviewReportSha256,
     readiness.macosConnectorIndependentReviewDisposition,
     readiness.macosConnectorLatestReviewDisposition,
@@ -38,6 +40,7 @@ test("CR12B-IDEA-110C binds the exact bridge and blocks before any real enrollme
     readiness.macosConnectorCancellationBoundary,
     readiness.macosConnectorRemediationReviewPending],
   [IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1,
+    IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_PACKET_SHA256_V1,
     IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1,
     "remediation_required", "blocked_incomplete_review", 2, true,
     "opaque_repository_capability", true]);
@@ -69,6 +72,7 @@ test("CR12B-IDEA-110C rejects re-digested review, connector, enrollment, command
       macosConnectorRemediationReviewPending: false },
     { macosConnectorLatestReviewDisposition: "accepted_provider_disabled_snapshot",
       macosConnectorInterruptedReviewAttempts: 0, macosConnectorCancellationDefectReproduced: false },
+    { macosConnectorIndependentReviewPacketSha256: `sha256:${"f".repeat(64)}` },
     { realEnrollmentEligible: true, ownerCommandEmitted: true },
     { grantsCommandAuthority: true, grantsExecutionAuthority: true },
     { fixedRpcImplementationCommit: "f".repeat(40) },

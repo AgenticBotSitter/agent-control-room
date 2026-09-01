@@ -3,6 +3,9 @@
 **Status:** Implementation frozen at `d22c76444b80f8dd469380aab52ec457f5d76fad`; provider-disabled and awaiting a
 fresh independent review.
 
+**Review packet:** `docs/reviews/CR12B_IDEA_110H_OPAQUE_CANCELLATION_REVIEW_PACKET.md` at SHA-256
+`4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb`.
+
 ## Why IDEA-110G remained rejected
 
 The original IDEA-110F report remains the last complete connector review and retains disposition
@@ -52,6 +55,7 @@ other external effect occurred.
 
 The connector remains unaccepted. A fresh reviewer must independently reproduce the poisoned-signal case, repeat the
 entire original IDEA-110F matrix plus the IDEA-110G matrix, and review the opaque capability implementation and all four
-component seams. Only an accepted immutable report can remove `connector_implementation_unaccepted`. Trusted signer
+component seams under the exact packet above. Only an accepted immutable report can remove
+`connector_implementation_unaccepted`. Trusted signer
 enrollment, one signed connection enrollment, effect-free preflight, packet refresh, fresh owner authorization, and the
 owner-attended native qualification remain separate later gates.

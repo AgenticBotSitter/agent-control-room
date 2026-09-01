@@ -29,6 +29,8 @@ export const IDEA_LAB_HERMES_021_ACCEPTED_REVIEW_REPORT_SHA256_V1 =
   "sha256:6ed834e8b5c3418bc0bc932e56ae991a9c33f4699b81860f78be194a34a5b9c8" as const;
 export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1 =
   "d22c76444b80f8dd469380aab52ec457f5d76fad" as const;
+export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_PACKET_SHA256_V1 =
+  "sha256:4800d632123fc1d97a98ed4a3e887e7502520461ba3ce4533c718b1625acb4eb" as const;
 export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1 =
   "sha256:d9a1acb60b3a272a71469fc07574db2d504100f7a382fb33a702a50c585b5808" as const;
 
@@ -50,6 +52,8 @@ const readinessSchema = z.object({
   independentReviewDisposition: z.literal("accepted_provider_disabled_snapshot"),
   independentReviewerVerified: z.literal(true),
   macosConnectorRemediationCommit: z.literal(IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1),
+  macosConnectorIndependentReviewPacketSha256: z.literal(
+    IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_PACKET_SHA256_V1),
   macosConnectorIndependentReviewReportSha256: z.literal(
     IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1),
   macosConnectorIndependentReviewDisposition: z.literal("remediation_required"),
@@ -113,6 +117,7 @@ const material = {
   independentReviewDisposition: "accepted_provider_disabled_snapshot" as const,
   independentReviewerVerified: true as const,
   macosConnectorRemediationCommit: IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1,
+  macosConnectorIndependentReviewPacketSha256: IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_PACKET_SHA256_V1,
   macosConnectorIndependentReviewReportSha256: IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1,
   macosConnectorIndependentReviewDisposition: "remediation_required" as const,
   macosConnectorLatestReviewDisposition: "blocked_incomplete_review" as const,
