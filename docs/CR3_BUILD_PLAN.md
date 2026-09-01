@@ -749,8 +749,9 @@ Independent review accepted closure of all three inherited defects but rejected 
 
 ## CR12B-IDEA-110J — host-operation capture remediation
 
-Status: complete locally for the provider-disabled implementation candidate; exact commit, replacement packet, and
-fresh independent review required. See `CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REMEDIATION.md` and amended ADR-146.
+Status: provider-disabled implementation frozen at `5707ecb05221e708beefa196fc0fa2e0c9d8515d`; replacement
+packet `sha256:f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd` and fresh independent review required. See
+`CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REMEDIATION.md` and amended ADR-146.
 
 Dynamic collection distinctness is removed. Gateway, exact snapshot, bridge, and connector now capture or structurally
 avoid mutable ambient time, number, Promise, JSON, freeze, reflection, receiver-binding, collection, and array-traversal

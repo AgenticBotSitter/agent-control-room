@@ -235,8 +235,9 @@ receiver-binding, and array-traversal operations across gateway, exact snapshot,
 post-import regressions pass with zero behavior; CR12B passes 161/161, the complete lifecycle passes 769 pretests,
 414/416 core tests with two intentional platform skips, and 240/240 posttests. Production build, 3/3 sequential rendered
 routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, typecheck, lint, and whitespace validation pass. The
-IDEA-110J exact commit, replacement packet, and fresh independent review remain mandatory. No native or external effect
-occurred.
+IDEA-110J product is frozen at `5707ecb05221e708beefa196fc0fa2e0c9d8515d`; its replacement packet is frozen at
+`sha256:f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd`. Fresh independent review remains mandatory.
+No native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -647,7 +648,7 @@ Block: CR12B-IDEA-110J-Q — independently review the host-operation-capture rem
 Set model: gpt-5.6-sol
 Set reasoning effort: high
 Why: IDEA-110I closed all three prior defects but fresh review found a separate mutable ambient Set path after valid cancellation acceptance. IDEA-110J changes host-operation selection across gateway, exact snapshot, bridge, and connector and cannot accept its own repair.
-Expected output: one immutable report by a new reviewer against the exact IDEA-110J product commit and replacement packet. It must reproduce the IDEA-110I Set finding, replace every relevant post-import global and prototype, verify zero hostile behavior or sentinel leakage, and repeat all IDEA-110F through IDEA-110I cases. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Expected output: one immutable report by a new reviewer against product commit `5707ecb05221e708beefa196fc0fa2e0c9d8515d` and packet `sha256:f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd`. It must reproduce the IDEA-110I Set finding, replace every relevant post-import global and prototype, verify zero hostile behavior or sentinel leakage, and repeat all IDEA-110F through IDEA-110I cases. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

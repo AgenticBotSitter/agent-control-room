@@ -1,7 +1,10 @@
 # CR12B-IDEA-110J — host-operation capture remediation
 
-**Status:** Provider-disabled implementation candidate in producer verification. Exact product commit and replacement
-review packet will be frozen only after all gates pass.
+**Status:** Provider-disabled implementation candidate frozen at
+`5707ecb05221e708beefa196fc0fa2e0c9d8515d`; fresh independent review is mandatory.
+
+**Replacement review packet:** `docs/reviews/CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REVIEW_PACKET.md` at SHA-256
+`f9f490e36c7f06ee74ae259b873a32cafe8fc8a73081ee48b2ccab46c5579abd`.
 
 ## Why IDEA-110I remained rejected
 
@@ -28,7 +31,10 @@ IDEA-110J removes the reported constructor and closes the broader class rather t
 
 Three new hostile regressions replace the relevant post-import globals after exact inputs are prepared. Gateway, bridge,
 and connector complete with zero hostile behavior, no sentinel leakage, exact receiver preservation, and the normal
-bounded result. The connector regression includes the exact rejected Set input.
+bounded result. The connector regression includes the exact rejected Set input. Verification passes 161/161 CR12B
+tests, 769/769 pretests, 414/416 core tests with two intentional platform skips, 240/240 posttests, TypeScript, lint,
+production build, 3/3 sequential rendered routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, and
+whitespace validation.
 
 ## Authority boundary
 
