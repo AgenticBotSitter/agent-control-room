@@ -226,6 +226,42 @@ test("CR12B-IDEA-110I rejects non-opaque gateway cancellation before spend, stat
   assert.deepEqual(native.calls.map((call) => call.type), ["execute", "cleanup"]);
 });
 
+test("CR12B-IDEA-110I gateway uses only module-captured host operations after cancellation acceptance", async () => {
+  const bundle = permit(), spend = store(), native = bridge();
+  const port = new IdeaLabHermes021EnrolledGatewayPortV1({ enrollment: bundle.connection,
+    permitEnvelope: bundle.envelope, permitContext: bundle.context, spendStore: spend.value,
+    nativeBridge: native.value, now: () => "2026-09-01T10:04:00.000Z" });
+  const input = executeInput(bundle), handoff = createHostResultCollectorV1();
+  const parseDescriptor = Object.getOwnPropertyDescriptor(Date, "parse"),
+    finiteDescriptor = Object.getOwnPropertyDescriptor(Number, "isFinite"),
+    integerDescriptor = Object.getOwnPropertyDescriptor(Number, "isSafeInteger"),
+    promiseDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Promise"),
+    applyDescriptor = Object.getOwnPropertyDescriptor(Reflect, "apply");
+  assert.ok(parseDescriptor); assert.ok(finiteDescriptor); assert.ok(integerDescriptor);
+  assert.ok(promiseDescriptor); assert.ok(applyDescriptor);
+  const sentinel = new Error("hostile gateway host operation"); let behavior = 0, rejected: unknown;
+  class HostilePromise { constructor() { behavior += 1; throw sentinel; } }
+  const hostile = () => { behavior += 1; throw sentinel; };
+  Object.defineProperty(Date, "parse", { ...parseDescriptor, value: hostile });
+  Object.defineProperty(Number, "isFinite", { ...finiteDescriptor, value: hostile });
+  Object.defineProperty(Number, "isSafeInteger", { ...integerDescriptor, value: hostile });
+  Object.defineProperty(globalThis, "Promise", { ...promiseDescriptor, value: HostilePromise });
+  Object.defineProperty(Reflect, "apply", { ...applyDescriptor, value: hostile });
+  try { await port.execute(input, handoff.collector); }
+  catch (error) { rejected = error; }
+  finally {
+    Object.defineProperty(Date, "parse", parseDescriptor);
+    Object.defineProperty(Number, "isFinite", finiteDescriptor);
+    Object.defineProperty(Number, "isSafeInteger", integerDescriptor);
+    Object.defineProperty(globalThis, "Promise", promiseDescriptor);
+    Object.defineProperty(Reflect, "apply", applyDescriptor);
+  }
+  assert.equal(rejected, undefined);
+  assert.equal(behavior, 0);
+  assert.deepEqual(spend.events.map((event) => event.type), ["claim", "settle"]);
+  assert.deepEqual(native.calls.map((call) => call.type), ["execute"]);
+});
+
 test("CR12B-IDEA-110D consumes but never dispatches a permit that expires during durable claim", async () => {
   const bundle = permit(), spend = store(), native = bridge();
   const times = ["2026-09-01T10:06:59.999Z", bundle.envelope.body.expiresAt];

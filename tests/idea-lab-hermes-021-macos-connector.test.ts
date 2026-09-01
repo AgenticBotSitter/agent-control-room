@@ -292,6 +292,41 @@ test("CR12B-IDEA-110I ignores post-import native global and prototype substituti
   }
 });
 
+test("CR12B-IDEA-110I ignores post-import collection and host-operation substitution", async () => {
+  const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port),
+    input = openInput(), handoff = createHostResultCollectorV1();
+  const setDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Set"),
+    promiseDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Promise"),
+    freezeDescriptor = Object.getOwnPropertyDescriptor(Object, "freeze"),
+    applyDescriptor = Object.getOwnPropertyDescriptor(Reflect, "apply"),
+    constructDescriptor = Object.getOwnPropertyDescriptor(Reflect, "construct");
+  assert.ok(setDescriptor); assert.ok(promiseDescriptor); assert.ok(freezeDescriptor);
+  assert.ok(applyDescriptor); assert.ok(constructDescriptor);
+  const sentinel = new Error("hostile ambient host operation"); let behavior = 0, rejected: unknown;
+  class HostileSet { constructor() { behavior += 1; throw sentinel; } }
+  class HostilePromise { constructor() { behavior += 1; throw sentinel; } }
+  const hostile = () => { behavior += 1; throw sentinel; };
+  Object.defineProperty(globalThis, "Set", { ...setDescriptor, value: HostileSet });
+  Object.defineProperty(globalThis, "Promise", { ...promiseDescriptor, value: HostilePromise });
+  Object.defineProperty(Object, "freeze", { ...freezeDescriptor, value: hostile });
+  Object.defineProperty(Reflect, "apply", { ...applyDescriptor, value: hostile });
+  Object.defineProperty(Reflect, "construct", { ...constructDescriptor, value: hostile });
+  try {
+    await connector.openFixedRoute(input, handoff.collector);
+  } catch (error) { rejected = error; }
+  finally {
+    Object.defineProperty(globalThis, "Set", setDescriptor);
+    Object.defineProperty(globalThis, "Promise", promiseDescriptor);
+    Object.defineProperty(Object, "freeze", freezeDescriptor);
+    Object.defineProperty(Reflect, "apply", applyDescriptor);
+    Object.defineProperty(Reflect, "construct", constructDescriptor);
+  }
+  assert.equal(rejected, undefined);
+  assert.equal(behavior, 0);
+  assert.deepEqual(port.calls, ["open:local_loopback"]);
+  assert.equal((handoff.take() as { nativeLocatorReturned: boolean }).nativeLocatorReturned, false);
+});
+
 test("CR12B-IDEA-110F retains private-port receivers and rejects behavioral constructor wrappers", async () => {
   const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port);
   await open(connector);

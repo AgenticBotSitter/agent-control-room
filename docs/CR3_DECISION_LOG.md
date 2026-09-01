@@ -2519,6 +2519,13 @@ initialization. Connector-owned cancellation state becomes terminal before nativ
 discarded and cannot bypass the active-settlement join or mandatory cleanup sequence. This amendment follows the two
 High and one Medium findings preserved by independent PR #219.
 
+**IDEA-110J amendment:** Exact cancellation acceptance also freezes the host-operation selection boundary. Code after
+that point may not dynamically select ambient constructors, collections, time/number/JSON helpers, object-freeze,
+reflection, receiver-binding, Promise creation, or array iterator helpers. Required operations are captured at module
+initialization or replaced by direct primitive/indexed logic. This follows the Medium ambient-Set finding preserved by
+the IDEA-110I independent report.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
-conversion, captured host operations, or cleanup ordering invalidates IDEA-110I review evidence and requires a fresh report.
+conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
+and requires a fresh report.

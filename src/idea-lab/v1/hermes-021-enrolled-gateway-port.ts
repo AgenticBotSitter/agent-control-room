@@ -31,6 +31,11 @@ export const IDEA_LAB_HERMES_021_QUALIFICATION_PERMIT_V1 =
 export const IDEA_LAB_HERMES_021_ENROLLED_GATEWAY_PORT_V1 =
   "control-room-hermes-021-enrolled-gateway-port/v1" as const;
 
+const nativeDateV1 = Date, nativeDateParseV1 = Date.parse,
+  nativeDateToISOStringV1 = Date.prototype.toISOString;
+const nativeNumberIsFiniteV1 = Number.isFinite, nativeNumberIsSafeIntegerV1 = Number.isSafeInteger;
+const nativeObjectFreezeV1 = Object.freeze, nativePromiseV1 = Promise, nativeReflectApplyV1 = Reflect.apply;
+
 const base64url = z.string().min(40).max(256).regex(/^[A-Za-z0-9_-]+$/);
 
 const permitBodySchema = z.object({
@@ -178,7 +183,7 @@ export function verifyIdeaLabHermes021QualificationPermitV1(input: {
   if (!signatureValid || sha256Digest(withoutDigest(body, "bodyDigest")) !== body.bodyDigest) {
     throw new IdeaLabErrorV1("integrity_failed");
   }
-  const scopeMatches = [
+  const scopePairs = [
     [body.attemptId, context.expectedAttemptId], [body.tenantId, context.expectedTenantId],
     [body.nodeId, context.expectedNodeId], [body.connectionId, context.expectedConnectionId],
     [body.markerDigest, context.expectedMarkerDigest], [body.ownerWindowDigest, context.expectedOwnerWindowDigest],
@@ -190,11 +195,17 @@ export function verifyIdeaLabHermes021QualificationPermitV1(input: {
     [body.connectionId, enrollment.connectionId], [body.enrollmentResultDigest, enrollment.resultDigest],
     [body.connectorRouteDigest, enrollment.connectorRouteDigest],
     [body.profileIdentityDigest, enrollment.profileIdentityDigest], [body.transport, enrollment.transport],
-  ].every(([left, right]) => sameText(left, right));
-  const issued = Date.parse(body.issuedAt), expires = Date.parse(body.expiresAt), evaluated = Date.parse(context.evaluatedAt);
-  const enrollmentExpires = Date.parse(enrollment.expiresAt);
-  if (!scopeMatches || ![issued, expires, evaluated].every(Number.isFinite) || issued > evaluated || expires <= evaluated
-    || !Number.isFinite(enrollmentExpires) || enrollmentExpires <= evaluated
+  ] as const;
+  let scopeMatches = true;
+  for (let index = 0; index < scopePairs.length; index += 1) {
+    const pair = scopePairs[index];
+    if (!sameText(pair[0], pair[1])) { scopeMatches = false; break; }
+  }
+  const issued = nativeDateParseV1(body.issuedAt), expires = nativeDateParseV1(body.expiresAt),
+    evaluated = nativeDateParseV1(context.evaluatedAt), enrollmentExpires = nativeDateParseV1(enrollment.expiresAt);
+  if (!scopeMatches || !nativeNumberIsFiniteV1(issued) || !nativeNumberIsFiniteV1(expires)
+    || !nativeNumberIsFiniteV1(evaluated) || issued > evaluated || expires <= evaluated
+    || !nativeNumberIsFiniteV1(enrollmentExpires) || enrollmentExpires <= evaluated
     || expires <= issued || expires - issued > 300_000) {
     throw new IdeaLabErrorV1("authorization_denied");
   }
@@ -225,7 +236,7 @@ export function verifyIdeaLabHermes021QualificationPermitV1(input: {
     grantsProjectCreationAuthority: false as const,
     grantsGenericShell: false as const,
   };
-  return Object.freeze(verifiedPermitSchema.parse({ ...material, permitDigest: sha256Digest(material) }));
+  return nativeObjectFreezeV1(verifiedPermitSchema.parse({ ...material, permitDigest: sha256Digest(material) }));
 }
 
 export interface IdeaLabHermes021QualificationSpendStoreV1 {
@@ -335,15 +346,16 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
       envelope: captured.permitEnvelope,
       context: captured.permitContext,
     });
-    this.#claim = ((value) => Reflect.apply(claim, spendStore, [value])) as
+    this.#claim = ((value) => nativeReflectApplyV1(claim, spendStore, [value])) as
       IdeaLabHermes021QualificationSpendStoreV1["claim"];
-    this.#settle = ((value) => Reflect.apply(settle, spendStore, [value])) as
+    this.#settle = ((value) => nativeReflectApplyV1(settle, spendStore, [value])) as
       IdeaLabHermes021QualificationSpendStoreV1["settle"];
-    this.#executeFixedSession = ((value, collector) => Reflect.apply(execute, nativeBridge,
+    this.#executeFixedSession = ((value, collector) => nativeReflectApplyV1(execute, nativeBridge,
       [value, collector])) as IdeaLabHermes021NativeBridgeV1["executeFixedSession"];
-    this.#cleanupFixedSession = ((value, collector) => Reflect.apply(cleanup, nativeBridge,
+    this.#cleanupFixedSession = ((value, collector) => nativeReflectApplyV1(cleanup, nativeBridge,
       [value, collector])) as IdeaLabHermes021NativeBridgeV1["cleanupFixedSession"];
-    this.#now = (now as (() => string) | undefined) ?? (() => new Date().toISOString());
+    this.#now = (now as (() => string) | undefined)
+      ?? (() => nativeReflectApplyV1(nativeDateToISOStringV1, new nativeDateV1(), []) as string);
   }
 
   async execute(inputValue: ExecuteInput, collector: HostResultCollectorV1): Promise<void> {
@@ -357,15 +369,15 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
       || input.conversationIdentityDigest !== this.#permit.conversationIdentityDigest
       || input.maximumOutputCharacters !== 800 || typeof input.safeInstruction !== "string"
       || input.safeInstruction.length < 1 || input.safeInstruction.length > 800
-      || typeof input.round !== "number" || input.round < 1 || !Number.isSafeInteger(input.round)
+      || typeof input.round !== "number" || input.round < 1 || !nativeNumberIsSafeIntegerV1(input.round)
       || !dataMethodV1(collector, "submit")) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
-    const claimedAt = this.#now(), claimed = Date.parse(claimedAt);
-    if (!Number.isFinite(claimed) || claimed < Date.parse(this.#permit.issuedAt)
-      || claimed >= Date.parse(this.#permit.expiresAt)) throw new IdeaLabErrorV1("authorization_denied");
+    const claimedAt = this.#now(), claimed = nativeDateParseV1(claimedAt);
+    if (!nativeNumberIsFiniteV1(claimed) || claimed < nativeDateParseV1(this.#permit.issuedAt)
+      || claimed >= nativeDateParseV1(this.#permit.expiresAt)) throw new IdeaLabErrorV1("authorization_denied");
     this.#executeStarted = true;
-    this.#executeSettled = new Promise<void>((resolve) => { this.#resolveExecuteSettled = resolve; });
+    this.#executeSettled = new nativePromiseV1<void>((resolve) => { this.#resolveExecuteSettled = resolve; });
     try {
       const claim = await this.#claim({ permitDigest: this.#permit.permitDigest, attemptId: this.#permit.attemptId,
         markerDigest: this.#permit.markerDigest, claimedAt });
@@ -377,12 +389,13 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
         await this.#settleExact("terminal_ambiguity", claimedAt);
         throw new IdeaLabErrorV1("authorization_denied");
       }
-      const dispatched = Date.parse(dispatchedAt);
+      const dispatched = nativeDateParseV1(dispatchedAt);
       if (this.#cleanupStarted || hostCancellationAbortedV1(input.signal) !== false
-        || !Number.isFinite(dispatched) || dispatched < claimed
-        || dispatched < Date.parse(this.#permit.issuedAt) || dispatched >= Date.parse(this.#permit.expiresAt)) {
+        || !nativeNumberIsFiniteV1(dispatched) || dispatched < claimed
+        || dispatched < nativeDateParseV1(this.#permit.issuedAt)
+        || dispatched >= nativeDateParseV1(this.#permit.expiresAt)) {
         await this.#settleExact("terminal_ambiguity",
-          Number.isFinite(dispatched) && dispatched >= claimed ? dispatchedAt : claimedAt);
+          nativeNumberIsFiniteV1(dispatched) && dispatched >= claimed ? dispatchedAt : claimedAt);
         throw new IdeaLabErrorV1("authorization_denied");
       }
       try {
@@ -454,7 +467,7 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
   }
 }
 
-export const IDEA_LAB_HERMES_021_ENROLLED_GATEWAY_DISABLED_V1 = Object.freeze({
+export const IDEA_LAB_HERMES_021_ENROLLED_GATEWAY_DISABLED_V1 = nativeObjectFreezeV1({
   contractVersion: IDEA_LAB_HERMES_021_ENROLLED_GATEWAY_PORT_V1,
   signedEnrollmentConfigured: false as const,
   signedOwnerWindowConfigured: false as const,

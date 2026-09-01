@@ -26,6 +26,7 @@ import { ideaDigestSchemaV1, ideaIdSchemaV1 } from "./schemas";
 export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_V1 =
   "control-room-hermes-021-macos-connector/v1" as const;
 
+const nativeObjectFreezeV1 = Object.freeze, nativePromiseV1 = Promise;
 const nativeReflectApplyV1 = Reflect.apply, nativeReflectConstructV1 = Reflect.construct;
 const nativeAbortControllerCandidateV1 = ownDataPropertyValueV1(globalThis, "AbortController");
 const nativeAbortControllerConstructorV1 = typeof nativeAbortControllerCandidateV1 === "function"
@@ -35,8 +36,8 @@ const nativeAbortControllerPrototypeV1 = nativeAbortControllerConstructorV1
 const nativeAbortControllerSignalGetterV1 = ownAccessorPropertyGetterV1(nativeAbortControllerPrototypeV1, "signal");
 const nativeAbortControllerAbortV1 = dataMethodV1(nativeAbortControllerPrototypeV1, "abort");
 function NativeAbortControllerNewTargetV1() { /* private new-target prevents constructor prototype drift */ }
-Object.freeze(NativeAbortControllerNewTargetV1.prototype);
-Object.freeze(NativeAbortControllerNewTargetV1);
+nativeObjectFreezeV1(NativeAbortControllerNewTargetV1.prototype);
+nativeObjectFreezeV1(NativeAbortControllerNewTargetV1);
 
 type OpenInput = Parameters<IdeaLabHermes021ConnectorPrivateRpcV1["openFixedRoute"]>[0];
 type OperationInput = Parameters<IdeaLabHermes021ConnectorPrivateRpcV1["requestFixedOperation"]>[0];
@@ -114,7 +115,14 @@ function exactInput(value: unknown, keys: readonly string[], optionalKeys: reado
   return { snapshot, signal: snapshot.signal };
 }
 
-function distinct(values: readonly string[]): boolean { return new Set(values).size === values.length; }
+function distinct(values: readonly string[]): boolean {
+  for (let left = 0; left < values.length; left += 1) {
+    for (let right = left + 1; right < values.length; right += 1) {
+      if (values[left] === values[right]) return false;
+    }
+  }
+  return true;
+}
 
 function exactParameters(value: unknown, operation: IdeaLabHermes021FixedOperationV1): Readonly<Record<string, unknown>> {
   const keys = operation === "session.create"
@@ -125,7 +133,7 @@ function exactParameters(value: unknown, operation: IdeaLabHermes021FixedOperati
       : operation === "session.events.since" ? ["lastSeenSequence", "maximumEvents"] : [];
   const snapshot = exactHostDataSnapshotV1(value, keys);
   if (!snapshot) throw new IdeaLabErrorV1("invalid_input");
-  return Object.freeze(parseExactIdeaLabV1(parameterSchemas[operation], snapshot) as Record<string, unknown>);
+  return nativeObjectFreezeV1(parseExactIdeaLabV1(parameterSchemas[operation], snapshot) as Record<string, unknown>);
 }
 
 const operationResultKeys: Record<IdeaLabHermes021FixedOperationV1, readonly string[]> = {
@@ -144,13 +152,13 @@ const operationResultKeys: Record<IdeaLabHermes021FixedOperationV1, readonly str
 function captureOperationResult(value: unknown, operation: IdeaLabHermes021FixedOperationV1): Readonly<Record<string, unknown>> {
   const snapshot = exactHostDataSnapshotV1(value, operationResultKeys[operation]);
   if (!snapshot || snapshot.operation !== operation) throw new IdeaLabErrorV1("integrity_failed");
-  return Object.freeze(snapshot);
+  return nativeObjectFreezeV1(snapshot);
 }
 
 function submitMethod(collector: HostResultCollectorV1): (value: unknown) => void {
   const submit = dataMethodV1(collector, "submit");
   if (!submit) throw new IdeaLabErrorV1("invalid_input");
-  return submit.bind(collector) as (value: unknown) => void;
+  return (value) => { nativeReflectApplyV1(submit, collector, [value]); };
 }
 
 /**
@@ -190,9 +198,12 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     const request = dataMethodV1(privatePort, "requestEnrolledOperation");
     const close = dataMethodV1(privatePort, "closeEnrolledRoute");
     if (!open || !request || !close) throw new IdeaLabErrorV1("invalid_input");
-    this.#openPort = open.bind(privatePort) as IdeaLabHermes021MacosPrivatePortV1["openEnrolledRoute"];
-    this.#requestPort = request.bind(privatePort) as IdeaLabHermes021MacosPrivatePortV1["requestEnrolledOperation"];
-    this.#closePort = close.bind(privatePort) as IdeaLabHermes021MacosPrivatePortV1["closeEnrolledRoute"];
+    this.#openPort = ((input, collector) => nativeReflectApplyV1(open, privatePort, [input, collector])) as
+      IdeaLabHermes021MacosPrivatePortV1["openEnrolledRoute"];
+    this.#requestPort = ((input, collector) => nativeReflectApplyV1(request, privatePort, [input, collector])) as
+      IdeaLabHermes021MacosPrivatePortV1["requestEnrolledOperation"];
+    this.#closePort = ((input, collector) => nativeReflectApplyV1(close, privatePort, [input, collector])) as
+      IdeaLabHermes021MacosPrivatePortV1["closeEnrolledRoute"];
   }
 
   async openFixedRoute(inputValue: OpenInput, collector: HostResultCollectorV1): Promise<void> {
@@ -213,7 +224,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
       profileIdentityDigest: data.profileIdentityDigest, conversationIdentityDigest: data.conversationIdentityDigest };
     const handoff = createHostResultCollectorV1();
     try {
-      await this.#callPrivate(() => this.#openPort(Object.freeze({ ...data, signal: controller }), handoff.collector));
+      await this.#callPrivate(() => this.#openPort(nativeObjectFreezeV1({ ...data, signal: controller }), handoff.collector));
       const result = handoff.take();
       if (this.#closing || this.#activeCancelled) throw new IdeaLabErrorV1("integrity_failed");
       const resultSnapshot = exactHostDataSnapshotV1(result, ["contractVersion", "attemptId", "permitDigest",
@@ -244,7 +255,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
       }
       this.#binding.routeLeaseDigest = routeLeaseDigest;
       this.#openReturned = true;
-      submit(Object.freeze(resultSnapshot));
+      submit(nativeObjectFreezeV1(resultSnapshot));
     } catch (error) {
       handoff.abort(); this.#cleanupOnly = true;
       throw error instanceof IdeaLabErrorV1 ? error : new IdeaLabErrorV1("integrity_failed");
@@ -275,7 +286,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     const handoff = createHostResultCollectorV1();
     try {
       await this.#callPrivate(() => this.#requestPort(
-        Object.freeze({ ...data, parameters: exact, signal: controller }), handoff.collector));
+        nativeObjectFreezeV1({ ...data, parameters: exact, signal: controller }), handoff.collector));
       const result = captureOperationResult(handoff.take(), data.operation);
       this.#bindOperationResult(result);
       if (this.#closing || this.#activeCancelled) throw new IdeaLabErrorV1("integrity_failed");
@@ -314,7 +325,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     catch (error) { this.#closing = false; this.#cleanupOnly = true; throw error; }
     const handoff = createHostResultCollectorV1();
     try {
-      await this.#callPrivate(() => this.#closePort(Object.freeze({ ...data, signal: controller }), handoff.collector));
+      await this.#callPrivate(() => this.#closePort(nativeObjectFreezeV1({ ...data, signal: controller }), handoff.collector));
       const result = exactHostDataSnapshotV1(handoff.take(), ["contractVersion", "attemptId", "permitDigest",
         "connectorRouteDigest", "nativeSessionClosed", "routeLeaseReleased", "disposableProfileRemoved",
         "disposableWorkspaceRemoved", "retainedNativeReferenceCount"]);
@@ -326,7 +337,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
         throw new IdeaLabErrorV1("integrity_failed");
       }
       this.#closed = true;
-      submit(Object.freeze(result));
+      submit(nativeObjectFreezeV1(result));
     } catch (error) {
       handoff.abort();
       throw error instanceof IdeaLabErrorV1 ? error : new IdeaLabErrorV1("integrity_failed");
@@ -378,7 +389,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     if (subscription.status === "aborted") throw new IdeaLabErrorV1("authorization_denied");
     this.#cancelActive = abort;
     this.#activeUnsubscribe = subscription.unsubscribe;
-    this.#activeSettled = new Promise<void>((resolve) => { this.#settleActive = resolve; });
+    this.#activeSettled = new nativePromiseV1<void>((resolve) => { this.#settleActive = resolve; });
     return nativeSignal as AbortSignal;
   }
 
@@ -393,7 +404,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
   }
 }
 
-export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_DISABLED_V1 = Object.freeze({
+export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_DISABLED_V1 = nativeObjectFreezeV1({
   contractVersion: IDEA_LAB_HERMES_021_MACOS_CONNECTOR_V1,
   platform: "macos" as const,
   privatePortConfigured: false as const,

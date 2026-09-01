@@ -30,15 +30,18 @@ export const IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1 =
 export const IDEA_LAB_HERMES_021_CONNECTION_IDENTITY_V1 =
   "control-room-hermes-021-connection-identity/v1" as const;
 
-export const IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_V1 = Object.freeze({
+const nativeJsonParseV1 = JSON.parse, nativeNumberIsSafeIntegerV1 = Number.isSafeInteger;
+const nativeObjectFreezeV1 = Object.freeze, nativePromiseV1 = Promise, nativeReflectApplyV1 = Reflect.apply;
+
+export const IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_V1 = nativeObjectFreezeV1({
   runtimeRevision: IDEA_LAB_HERMES_021_REVISION_V1,
-  files: Object.freeze([
-    Object.freeze({ pathId: "desktop_json_rpc_gateway", sha256: "sha256:a18dbcffedae4772d082c38b3c58c2e59e74f2b4919ca99e45ad3492ebc4421b" }),
-    Object.freeze({ pathId: "desktop_gateway_store", sha256: "sha256:b929060a9542b7271ef4c3a649752a499486cc34b54ddc6c6379e613278c8b89" }),
-    Object.freeze({ pathId: "desktop_ssh_connection", sha256: "sha256:bde4d38d26dd1688b822189a118f69ad07a7ed8b3e058705b2f422ca40a4f304" }),
-    Object.freeze({ pathId: "desktop_connection_registry", sha256: "sha256:1fd7ac3446a0fecb0e31189fe324eb8d8f0da376808c1a3749e757eeaec6f1cc" }),
-    Object.freeze({ pathId: "gateway_session_methods", sha256: "sha256:c4c0b3355be3ecc7f7fdf8ebcbd46fb3f360f9dded5ca9908f96ed0ce7e561d0" }),
-    Object.freeze({ pathId: "gateway_iso_certify", sha256: "sha256:d8919e69de6e02d03baecd819486ac6398d4b5a93c621d026e9589758e4c833b" }),
+  files: nativeObjectFreezeV1([
+    nativeObjectFreezeV1({ pathId: "desktop_json_rpc_gateway", sha256: "sha256:a18dbcffedae4772d082c38b3c58c2e59e74f2b4919ca99e45ad3492ebc4421b" }),
+    nativeObjectFreezeV1({ pathId: "desktop_gateway_store", sha256: "sha256:b929060a9542b7271ef4c3a649752a499486cc34b54ddc6c6379e613278c8b89" }),
+    nativeObjectFreezeV1({ pathId: "desktop_ssh_connection", sha256: "sha256:bde4d38d26dd1688b822189a118f69ad07a7ed8b3e058705b2f422ca40a4f304" }),
+    nativeObjectFreezeV1({ pathId: "desktop_connection_registry", sha256: "sha256:1fd7ac3446a0fecb0e31189fe324eb8d8f0da376808c1a3749e757eeaec6f1cc" }),
+    nativeObjectFreezeV1({ pathId: "gateway_session_methods", sha256: "sha256:c4c0b3355be3ecc7f7fdf8ebcbd46fb3f360f9dded5ca9908f96ed0ce7e561d0" }),
+    nativeObjectFreezeV1({ pathId: "gateway_iso_certify", sha256: "sha256:d8919e69de6e02d03baecd819486ac6398d4b5a93c621d026e9589758e4c833b" }),
   ]),
 });
 
@@ -242,9 +245,12 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     const request = dataMethodV1(connector, "requestFixedOperation");
     const close = dataMethodV1(connector, "closeFixedRoute");
     if (!open || !request || !close) throw new IdeaLabErrorV1("invalid_input");
-    this.#open = open.bind(connector) as IdeaLabHermes021ConnectorPrivateRpcV1["openFixedRoute"];
-    this.#request = request.bind(connector) as IdeaLabHermes021ConnectorPrivateRpcV1["requestFixedOperation"];
-    this.#close = close.bind(connector) as IdeaLabHermes021ConnectorPrivateRpcV1["closeFixedRoute"];
+    this.#open = ((input, collector) => nativeReflectApplyV1(open, connector, [input, collector])) as
+      IdeaLabHermes021ConnectorPrivateRpcV1["openFixedRoute"];
+    this.#request = ((input, collector) => nativeReflectApplyV1(request, connector, [input, collector])) as
+      IdeaLabHermes021ConnectorPrivateRpcV1["requestFixedOperation"];
+    this.#close = ((input, collector) => nativeReflectApplyV1(close, connector, [input, collector])) as
+      IdeaLabHermes021ConnectorPrivateRpcV1["closeFixedRoute"];
   }
 
   async executeFixedSession(inputValue: ExecuteInput, collector: HostResultCollectorV1): Promise<void> {
@@ -259,7 +265,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
       || typeof input.participantId !== "string" || typeof input.participantIdentityDigest !== "string"
       || typeof input.runtimeIdentityDigest !== "string" || typeof input.profileIdentityDigest !== "string"
       || typeof input.conversationIdentityDigest !== "string" || typeof input.round !== "number"
-      || !Number.isSafeInteger(input.round) || input.round < 1 || input.maximumOutputCharacters !== 800
+      || !nativeNumberIsSafeIntegerV1(input.round) || input.round < 1 || input.maximumOutputCharacters !== 800
       || input.toolsEnabled !== false || input.mcpEnabled !== false || input.pluginsEnabled !== false
       || input.genericShellEnabled !== false || typeof input.safeInstruction !== "string"
       || input.safeInstruction.length < 1 || input.safeInstruction.length > 800) {
@@ -273,7 +279,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     if (inputSubscription.status === "aborted") inputAbort();
     else this.#unsubscribeExecuteInput = inputSubscription.unsubscribe;
     const executionInput = { ...input, signal: this.#executeController.signal };
-    this.#executeSettled = new Promise<void>((resolve) => { this.#resolveExecuteSettled = resolve; });
+    this.#executeSettled = new nativePromiseV1<void>((resolve) => { this.#resolveExecuteSettled = resolve; });
     this.#binding = { connectionId: input.connectionId, connectorRouteDigest: input.connectorRouteDigest, attemptId: input.attemptId,
       permitDigest: input.permitDigest, markerDigest: input.markerDigest };
 
@@ -313,11 +319,14 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
       "session.events.since", { lastSeenSequence: 0, maximumEvents: 20 }));
     sameOperationBinding(replayed, created.sessionIdentityDigest, created.epochDigest);
     const events = exactHostDataArrayV1(replayed.events, 20);
-    if (!events || replayed.latestSequence !== replayed.events.at(-1)?.sequence) {
+    const lastEvent = replayed.events[replayed.events.length - 1];
+    if (!events || replayed.latestSequence !== lastEvent?.sequence) {
       throw new IdeaLabErrorV1("integrity_failed");
     }
     let prior = 0, started = false, terminal: z.infer<typeof panelResultSchema> | { safeCode: string } | undefined;
-    for (const event of replayed.events) {
+    for (let eventIndex = 0; eventIndex < replayed.events.length; eventIndex += 1) {
+      const event = replayed.events[eventIndex];
+      if (!event) throw new IdeaLabErrorV1("integrity_failed");
       if (event.sequence !== prior + 1 || terminal) throw new IdeaLabErrorV1("integrity_failed");
       prior = event.sequence;
       if (event.type === "message.start") {
@@ -326,7 +335,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
       } else if (event.type === "message.complete") {
         if (!started) throw new IdeaLabErrorV1("integrity_failed");
         let decoded: unknown;
-        try { decoded = JSON.parse(event.finalText); } catch { throw new IdeaLabErrorV1("integrity_failed"); }
+        try { decoded = nativeJsonParseV1(event.finalText); } catch { throw new IdeaLabErrorV1("integrity_failed"); }
         terminal = parseExactIdeaLabV1(panelResultSchema, decoded);
       } else if (event.type === "error") {
         if (!started) throw new IdeaLabErrorV1("integrity_failed");
@@ -352,7 +361,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
       ? { ...base, sequence: 2, type: "panel.failed_definite", payload: { safeCode: terminal.safeCode } }
       : { ...base, sequence: 2, type: "panel.result", payload: terminal };
     this.#assertExecutionActive();
-    submit.call(collector, { frames: [
+    nativeReflectApplyV1(submit, collector, [{ frames: [
       { ...base, sequence: 1, type: "session.ready", payload: { participantId: input.participantId,
         participantIdentityDigest: input.participantIdentityDigest, runtimeIdentityDigest: input.runtimeIdentityDigest,
         profileIdentityDigest: input.profileIdentityDigest, conversationIdentityDigest: input.conversationIdentityDigest,
@@ -362,7 +371,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
         outputUnits: usage.outputUnits, reasoningUnits: usage.reasoningUnits, totalUnits: usage.totalUnits,
         calls: 1, costUsd: usage.costUsd } },
       { ...base, sequence: 4, type: "session.complete", payload: { status: "settled" } },
-    ] });
+    ] }]);
     } finally {
       this.#unsubscribeExecuteInput?.();
       this.#unsubscribeExecuteInput = undefined;
@@ -415,7 +424,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
       outcome: "completed" as const, processStopped: true as const,
       disposableProfileRemoved: true as const, disposableWorkspaceRemoved: true as const,
       retainedNativeReferenceCount: 0 as const };
-    submit.call(collector, { ...material, cleanupDigest: sha256Digest(material) });
+    nativeReflectApplyV1(submit, collector, [{ ...material, cleanupDigest: sha256Digest(material) }]);
   }
 
   async #callOpen(input: ExecuteInput): Promise<unknown> {
@@ -444,7 +453,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     await this.#request({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
       connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest: binding.routeLeaseDigest,
       attemptId: binding.attemptId, permitDigest: binding.permitDigest, operation,
-      parameters: Object.freeze({ ...parameters }), signal: input.signal }, handoff.collector);
+      parameters: nativeObjectFreezeV1({ ...parameters }), signal: input.signal }, handoff.collector);
     const value = handoff.take();
     this.#assertExecutionActive();
     return value;
@@ -458,7 +467,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     await this.#request({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
       connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest: binding.routeLeaseDigest,
       attemptId: binding.attemptId, permitDigest: binding.permitDigest, operation,
-      parameters: Object.freeze({}), signal: input.signal }, handoff.collector);
+      parameters: nativeObjectFreezeV1({}), signal: input.signal }, handoff.collector);
     return handoff.take();
   }
 
@@ -481,7 +490,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
   }
 }
 
-export const IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_DISABLED_V1 = Object.freeze({
+export const IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_DISABLED_V1 = nativeObjectFreezeV1({
   contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
   connectorConfigured: false as const,
   enrolledRouteConfigured: false as const,

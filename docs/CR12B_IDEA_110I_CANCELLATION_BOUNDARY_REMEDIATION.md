@@ -1,7 +1,7 @@
 # CR12B-IDEA-110I — exact cancellation-boundary remediation
 
-**Status:** Provider-disabled implementation candidate frozen at
-`5c731e42bc54bc3dea88e079385b9616dd2042b4`; fresh independent review is mandatory.
+**Status:** Rejected by independent review with one Medium host-operation-capture finding. Superseded by IDEA-110J; see
+`CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REMEDIATION.md`.
 
 **Replacement review packet:** `docs/reviews/CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REVIEW_PACKET.md` at SHA-256
 `1e16228a82d475941507213593c900ec94e0092054c53bdb9fcd18e97536e1ef`.
@@ -60,11 +60,11 @@ repair followed that ordering-only failure.
 
 ## Remaining gates
 
-The connector remains unaccepted until a fresh reviewer different from every IDEA-110F/110G/110H/110I contributor and
-prior reviewer tests the exact product commit and replacement packet. An accepted report removes only the connector
-implementation review gate. Trusted signer enrollment, one signed connection enrollment, effect-free preflight, packet
-refresh, fresh owner authorization, owner-attended native qualification, live-panel authority, production PostgreSQL,
-hosting, and deployment remain separately blocked.
+Independent review reproduced all three prior findings as closed but found a separate dynamic ambient `Set` constructor
+after cancellation acceptance. The exact candidate remains rejected; see
+`docs/reviews/CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REVIEW_REV_001.md`. Trusted signer enrollment, one signed connection
+enrollment, effect-free preflight, packet refresh, fresh owner authorization, owner-attended native qualification,
+live-panel authority, production PostgreSQL, hosting, and deployment remain separately blocked.
 
 No install, download, Hermes process, SSH connection, provider call, credential or protected-value access, Keychain
 operation, private-port configuration, production database contact, deployment, hosting, DNS, or other external effect

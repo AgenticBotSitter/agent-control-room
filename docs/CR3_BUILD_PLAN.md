@@ -743,6 +743,21 @@ are discarded, active settlement remains joined, and mandatory cleanup stays rea
 the exact PR #219 attacks. No private port, enrollment, native operation, provider call, credential access, or deployment
 is introduced.
 
+Independent review accepted closure of all three inherited defects but rejected IDEA-110I on one new Medium ambient
+`Set` path after cancellation acceptance. See
+`docs/reviews/CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110J — host-operation capture remediation
+
+Status: complete locally for the provider-disabled implementation candidate; exact commit, replacement packet, and
+fresh independent review required. See `CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+Dynamic collection distinctness is removed. Gateway, exact snapshot, bridge, and connector now capture or structurally
+avoid mutable ambient time, number, Promise, JSON, freeze, reflection, receiver-binding, collection, and array-traversal
+operations used after an exact cancellation signal is accepted. Three hostile post-import regressions require zero
+behavior and bounded results. No private port, enrollment, native operation, provider call, credential access, or
+deployment is introduced.
+
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
 Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,

@@ -167,6 +167,37 @@ test("CR12B-IDEA-110I rejects non-opaque bridge cancellation before lifecycle ch
   assert.equal(native.calls.at(-1)?.kind, "close");
 });
 
+test("CR12B-IDEA-110I bridge uses only module-captured host operations after cancellation acceptance", async () => {
+  const native = connector(), bridge = new IdeaLabHermes021FixedRpcBridgeV1(native.value), input = executeInput(),
+    handoff = createHostResultCollectorV1();
+  const parseDescriptor = Object.getOwnPropertyDescriptor(JSON, "parse"),
+    freezeDescriptor = Object.getOwnPropertyDescriptor(Object, "freeze"),
+    promiseDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Promise"),
+    applyDescriptor = Object.getOwnPropertyDescriptor(Reflect, "apply");
+  assert.ok(parseDescriptor); assert.ok(freezeDescriptor);
+  assert.ok(promiseDescriptor); assert.ok(applyDescriptor);
+  const sentinel = new Error("hostile bridge host operation"), behavior: string[] = [];
+  let rejected: unknown;
+  class HostilePromise { constructor() { behavior.push("Promise"); throw sentinel; } }
+  const hostile = (label: string) => () => { behavior.push(label); throw sentinel; };
+  Object.defineProperty(JSON, "parse", { ...parseDescriptor, value: hostile("JSON.parse") });
+  Object.defineProperty(Object, "freeze", { ...freezeDescriptor, value: hostile("Object.freeze") });
+  Object.defineProperty(globalThis, "Promise", { ...promiseDescriptor, value: HostilePromise });
+  Object.defineProperty(Reflect, "apply", { ...applyDescriptor, value: hostile("Reflect.apply") });
+  try { await bridge.executeFixedSession(input, handoff.collector); }
+  catch (error) { rejected = error; }
+  finally {
+    Object.defineProperty(JSON, "parse", parseDescriptor);
+    Object.defineProperty(Object, "freeze", freezeDescriptor);
+    Object.defineProperty(globalThis, "Promise", promiseDescriptor);
+    Object.defineProperty(Reflect, "apply", applyDescriptor);
+  }
+  assert.deepEqual(behavior, []);
+  assert.equal(rejected, undefined);
+  assert.equal((handoff.take() as { frames: unknown[] }).frames.length, 4);
+  await bridge.cleanupFixedSession(cleanupInput(input, sessionDigest), createHostResultCollectorV1().collector);
+});
+
 test("CR12B-IDEA-110D cleanup waits for in-flight execution and prevents every later operation", async () => {
   for (const blockedAt of ["open", "session.create"] as const) {
     const native = connector(), originalOpen = native.value.openFixedRoute.bind(native.value);
