@@ -110,3 +110,15 @@ test("CR13A-LIVE-000 rejects noncanonical source time and canonicalizes the trus
     assert.equal((await store.read({...scope,limit:100})).events[0]?.recordedAt,t0);
   }finally{await raw.close();}
 });
+
+test("CR13A-LIVE-000 accepts authenticated historical backfill and replays it after the prior age window",async()=>{
+  const{raw}=await setup();try{
+    const db=adaptPglite(raw),historical=input(1,{occurredAt:"2025-01-01T00:00:00.000Z"});
+    const first=new ProjectEventStoreV1(db,key,()=>"2025-01-01T00:00:01.000Z");
+    assert.equal((await first.append(historical)).replayed,false);
+    const restarted=new ProjectEventStoreV1(db,key,()=>"2026-01-02T00:00:00.000Z");
+    const replay=await restarted.append(historical);assert.equal(replay.replayed,true);assert.equal(replay.event.occurredAt,historical.occurredAt);
+    await assert.rejects(restarted.append({...historical,safeSummary:"Changed historical replay"}),hasCode("replay_conflict"));
+    await assert.rejects(restarted.append(input(2,{occurredAt:"2026-01-02T00:00:31.000Z"})),hasCode("invalid_input"));
+  }finally{await raw.close();}
+});

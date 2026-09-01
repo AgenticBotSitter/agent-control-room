@@ -45,7 +45,7 @@ that a simulated crash between source commit and projection is repaired without 
 
 At candidate freeze:
 
-- `npm run test:cr13a`: 15/15 passing;
+- `npm run test:cr13a`: 16/16 passing;
 - `npm run check`: passing;
 - `npm run lint -- --quiet`: passing;
 - `npm run db:verify`: migrations `0001` through `0033` applied; 112 PostgreSQL tables verified;
@@ -79,3 +79,17 @@ trusted clock before hashing/storage, mounts the widget in the protected project
 test, verifies the complete authenticated source lifecycle sequence, and reconciles deterministic source-version events
 after mutation and on startup. A crash-gap plus concurrent-reconciliation test proves recovery. A second different
 reviewer must re-review the exact remediation commit; producer verification cannot accept it.
+
+## First remediation re-review and historical backfill fix
+
+A second, different reviewer confirmed all three original blockers closed at
+`9f463396f7e8f69241115794898458601e9bd80d`, but rejected acceptance on one new Medium finding: startup reconciliation
+replays the full authenticated source history, while the event store rejected any source event older than 365 days before
+checking exact replay. An old project could therefore fail restart or first-time projection even though its lifecycle
+ledger remained valid.
+
+The second remediation keeps the 30-second future-time guard but removes the arbitrary lower wall-clock bound. This is an
+explicit historical-projection rule: `occurredAt` preserves when the authenticated source event happened and `recordedAt`
+preserves when Control Room ingested it. Exact old replay remains inert, changed replay remains a conflict, and a new
+regression covers first append, a restart more than one year later, changed replay, and future-time rejection. A third,
+different reviewer must re-review the exact second-remediation commit; producer verification cannot accept it.

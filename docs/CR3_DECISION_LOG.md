@@ -2594,6 +2594,8 @@ the last authenticated event. Invalid, stale, foreign, or ahead cursors reset to
 page contracts are presentation-only and explicitly grant no approval, command, or execution authority. Source systems
 retain authoritative lifecycle truth; projection scans exact authenticated source versions after mutation and at startup,
 so a crash or interleaving cannot silently omit an earlier source event. Event time uses canonical UTC milliseconds.
+Authenticated historical source events remain projectable without an arbitrary lower wall-clock cutoff: `occurredAt`
+retains source chronology and `recordedAt` retains ingestion chronology. Future-dated events remain rejected.
 
 **Why:** Operators need one understandable live project timeline across Idea Lab, workers, reviews, artifacts,
 automations, and transports. A durable journal makes reload and reconnect behavior deterministic, while bounded replay

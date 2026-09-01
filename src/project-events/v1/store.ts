@@ -76,7 +76,7 @@ export class ProjectEventStoreV1 {
 
   async append(inputValue:unknown):Promise<{event:ProjectEventV1;replayed:boolean}>{
     const input=parseProjectEventInputV1(inputValue),clockValue=this.#clock(),recorded=Date.parse(clockValue),occurred=Date.parse(input.occurredAt);
-    if(!Number.isFinite(recorded)||occurred>recorded+30_000||occurred<recorded-365*24*60*60_000)throw new ProjectEventErrorV1("invalid_input");
+    if(!Number.isFinite(recorded)||occurred>recorded+30_000)throw new ProjectEventErrorV1("invalid_input");
     const recordedAt=new Date(recorded).toISOString();
     const sourcePayloadDigest=sha256Digest(input),scope={tenantId:input.tenantId,workspaceId:input.workspaceId,projectId:input.projectId};
     try{return await this.#transaction(async tx=>{
