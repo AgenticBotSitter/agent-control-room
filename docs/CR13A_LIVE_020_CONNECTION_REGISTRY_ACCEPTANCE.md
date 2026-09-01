@@ -1,6 +1,6 @@
 # CR13A-LIVE-020 durable connection registry acceptance
 
-**Status:** first independent review rejected target `456f4d1`; remediation candidate requires a different re-review
+**Status:** security findings closed; second independent review rejected target `d858d8e` only for a cumulative whitespace defect; final documentation-only candidate requires confirmation
 **Effect boundary:** local PostgreSQL-compatible migration and PGlite tests only; no SSH, Hermes, provider, credential, production database, deployment, or network effect
 
 ## Delivered boundary
@@ -42,6 +42,12 @@ The remediation replaces the fleet-current read with the keyed post-authenticati
 complete protected rosters, and complete public projections before semantic access, removes the whitespace failure, binds
 registry write time to the enrollment's server evaluation time, and rejects chronology regression.
 
+The different independent remediation reviewer closed the High and Medium findings after reproducing the attacks and
+running additional receipt, registry, authority, and redaction probes. It rejected immutable target `d858d8e` only because
+the exact cumulative `git diff --check` still found four trailing-space lines in the preserved predecessor packet. That
+negative report is preserved in `reviews/CR13A_LIVE_020_REMEDIATION_REREVIEW.md`; the four documentation lines are repaired
+in the final candidate.
+
 ## Verification recorded for the remediation candidate
 
 - TypeScript check passes.
@@ -57,7 +63,7 @@ registry write time to the enrollment's server evaluation time, and rejects chro
 
 ## Remaining gate
 
-A different independent re-reviewer must inspect the exact frozen remediation candidate and attempt to break persistence integrity,
-tenant/node binding, authentication ordering, telemetry provenance/freshness semantics, and browser redaction. Passing producer
-tests is not acceptance. No live enrollment ingestion endpoint, native qualification, SSH control, provider call, production
-database composition, or deployment is authorized by this block.
+An independent reviewer must confirm that the new exact target changes only the preserved documentation/evidence state,
+the required cumulative whitespace command passes, both negative reports remain intact, and the already-accepted security
+behavior is unchanged. Passing producer tests is not acceptance. No live enrollment ingestion endpoint, native qualification,
+SSH control, provider call, production database composition, or deployment is authorized by this block.

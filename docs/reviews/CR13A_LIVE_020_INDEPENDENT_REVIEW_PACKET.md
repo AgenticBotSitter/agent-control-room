@@ -1,9 +1,9 @@
 # CR13A-LIVE-020 independent security and integrity review packet
 
-**Mode:** independent review, report only  
-**Immutable base:** `737d9744c00129882af00094a84eae1f28a5a5a2`  
-**Immutable target:** `456f4d1f715e583c18f6533075a9d83346a22b95`  
-**Producer:** root Codex architect; reviewer must be different  
+**Mode:** independent review, report only
+**Immutable base:** `737d9744c00129882af00094a84eae1f28a5a5a2`
+**Immutable target:** `456f4d1f715e583c18f6533075a9d83346a22b95`
+**Producer:** root Codex architect; reviewer must be different
 **Repair budget:** zero; do not edit, commit, push, or repair
 
 ## Objective
