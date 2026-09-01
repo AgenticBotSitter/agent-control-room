@@ -15,13 +15,15 @@ attempt, provider call, protected-value read, network contact, or signer operati
 
 ## Bound gate
 
-- Immutable remediated fixed RPC implementation commit:
-  `bb1faf989486bb3b16226d9a4cbec2223ef4e5f2`.
-- Remediation re-review packet SHA-256:
-  `414899406296a0e7326ea467f6a5cca31a93f5e2ab14974e59dd9508c8a5e827`.
+- Immutable second-remediation fixed RPC implementation commit:
+  `2bc80a20c7e4e1753b014395866972622c134fd3`.
+- Second-remediation re-review packet SHA-256:
+  `a5d406b36546524bba452cdae34f670261e243ae758287cb55c217848402f3a8`.
 - The prior independent disposition is `remediation_required`, bound to unchanged report SHA-256
   `d5695fb5d52bbcf90cfa7440ae3ec46a3a46e8628ee7866ec90a291b4129b87f`.
-- The current disposition is `remediation_re_review_pending`; passing producer tests cannot change it.
+- The first remediation re-review also has disposition `remediation_required`, bound to unchanged report SHA-256
+  `7f9e3f73142a3af120218f3df51f9e47fbc71d5764bb586346da7c87ee75bd62`.
+- The current disposition is `second_remediation_re_review_pending`; passing producer tests cannot change it.
 - The platform connector implementation and trusted node signer are unaccepted and unenrolled.
 - No signed local or SSH connection enrollment exists.
 - The effect-free preflight and all post-review implementation/source/packet digests remain unrefreshed.
@@ -35,13 +37,14 @@ enrollment/command/authority claims, accessor and Proxy rejection without behavi
 filesystem, network, SSH, signer, credential, provider, or database clients. The test is registered in both the CR12B
 gate and the complete posttest lifecycle. TypeScript and focused lint pass.
 
-The remediated combined CR12B suite passes 138/138. Mac stage zero, TypeScript, full lint, 769/769 pretests, 414/416 core
-tests with two intentional platform skips, 217/217 posttests, the production build with 3/3 rendered routes, all 32
+The second-remediated combined CR12B suite passes 140/140. Mac stage zero, TypeScript, full lint, 769/769 pretests,
+414/416 core tests with two intentional platform skips, 219/219 posttests, the production build with 3/3 rendered routes, all 32
 migrations with 110 PostgreSQL tables, and working-tree whitespace validation pass. The independent reviewer must repeat
 the required gates; producer verification cannot accept the remediation.
 
 ## Remaining gates
 
-Jobber #202/PR #203 completed the first source review and preserved four confirmed High findings as immutable negative
-evidence. IDEA-110D remediates all four in the pinned product commit, but only a different independent reviewer can close
-them. Until that re-review is accepted, platform-connector acceptance and real signed-enrollment work remain blocked.
+Jobber #202/PR #203 preserved four confirmed High findings. IDEA-110D remediated them, and jobber #205/PR #206 closed all
+four while preserving two new Medium findings. IDEA-110E remediates both new findings in the pinned product commit, but
+only another different independent reviewer can close the complete six-finding chain. Until that second re-review is
+accepted, platform-connector acceptance and real signed-enrollment work remain blocked.

@@ -104,9 +104,9 @@
 | CR12B-IDEA-109/109A optional Hermes-native preparation proposal | Complete locally but removed from the critical path | Proposal-only method and signed-attestation verifier remain non-authorizing optional hardening; current Hermes already supplies the needed fresh-profile protected-value fallback |
 | CR12B-IDEA-109B enrolled local/SSH Hermes connection | Complete locally for the signed, locator-free, connection-disabled snapshot | Exact built-in shared-value/SSH source pins, node-signed enrollment, owner-verified host-key binding, opaque fixed gateway route, safe multi-machine roster, UI truth, and no Hermes fork; see `CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md` |
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
-| CR12B-IDEA-110B fixed Hermes local/SSH bridge | Initial implementation rejected; all four High findings remediated in IDEA-110D; different independent re-review pending | Receiver-safe composition, serialized cancellation/cleanup, exact seven-operation authority, post-claim expiry enforcement, and immutable negative evidence; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` and `CR12B_IDEA_110D_BRIDGE_REMEDIATION.md` |
-| CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the remediation-blocked zero-effect snapshot | Exact remediation/re-review/runtime/source/operation pins, prior negative disposition retained, eight explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted remediation re-review, one real signed enrollment, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
+| CR12B-IDEA-110B fixed Hermes local/SSH bridge | Original High findings closed; first remediation rejected on two Medium findings; IDEA-110E second remediation awaits another different review | Exact wrapper capture, terminal post-claim clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority, and two immutable negative reports; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md`, `CR12B_IDEA_110D_BRIDGE_REMEDIATION.md`, and `CR12B_IDEA_110E_GATEWAY_REMEDIATION.md` |
+| CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the second-remediation-blocked zero-effect snapshot | Exact second-remediation/re-review/runtime/source/operation pins, both negative dispositions retained, eight explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
+| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted second remediation review, platform connector, one real signed enrollment, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -189,6 +189,17 @@ routes, and all 32 migrations/110 PostgreSQL tables pass. No Hermes/native/SSH/p
 now binds the remediation commit, the immutable negative-report digest, and the remediation re-review packet while
 remaining `remediation_re_review_pending`. A different independent reviewer must close all four findings before this
 abstract bridge can be accepted.
+
+Jobber #205/PR #206 independently closed all four REV-003 High findings against IDEA-110D, then rejected the snapshot on
+two new Medium defects. The unchanged report has SHA-256
+`7f9e3f73142a3af120218f3df51f9e47fbc71d5764bb586346da7c87ee75bd62`: a post-claim trusted-clock exception left only a
+claim record, and direct constructor wrapper reads could execute accessors before rejection. IDEA-110E fixes both at
+immutable implementation commit `2bc80a20c7e4e1753b014395866972622c134fd3`. The constructor now captures exact ordinary
+data through host descriptors and rejects accessors, unknown/inherited state, symbols, non-ordinary wrappers, and Proxies
+without behavior. A post-claim clock exception now records terminal ambiguity at the last valid time, dispatches nothing,
+and cannot retry. Verification passes: 10/10 gateway tests, 140/140 CR12B, 769/769 pretests, 414/416 core with two
+intentional skips, 219/219 posttests, typecheck, full lint, stage zero, production build with 3/3 rendered routes, and all
+32 migrations with 110 PostgreSQL tables. The second re-review remains pending; no native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -595,11 +606,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110D-Q — independently re-review all four fixed-bridge remediations
+Block: CR12B-IDEA-110E-Q — independently re-review the complete six-finding bridge remediation chain
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the first real source review found four High defects; Codex reproduced and repaired all four, but producer verification cannot accept a security boundary.
-Expected output: one immutable report by a reviewer different from REV-003 against exact remediation commit `bb1faf9`, explicitly closing or reproducing every prior finding and retaining every real-enrollment/native-effect gate. Acceptance opens the platform-connector block; it does not authorize enrollment.
+Why: the first remediation review closed four High defects but found two Medium evidence-boundary defects; Codex repaired both, but producer verification still cannot accept a security boundary.
+Expected output: one immutable report by a reviewer different from REV-003, REV-001, and every remediation contributor against exact commit `2bc80a2`, explicitly closing or reproducing all six findings and retaining every connector/enrollment/native-effect gate. Acceptance opens the platform-connector block; it does not authorize enrollment.
 Owner action: none for the repository-only re-review. Reuse only the already prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

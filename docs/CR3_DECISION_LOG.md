@@ -2407,3 +2407,28 @@ window digests and therefore requires fresh signed evidence.
 **Reevaluate:** After a different independent reviewer closes all four REV-003 findings against the exact remediation
 commit. Connector implementations must preserve the same cancellation, receiver, operation-set, and post-claim expiry
 invariants.
+
+## ADR-143 — Capture the gateway wrapper before behavior and terminally consume clock failure
+
+**Decision:** The enrolled gateway constructor accepts only one exact ordinary-data wrapper captured through host-level
+property descriptors. It rejects accessors, inherited or unknown state, symbols, non-ordinary prototypes, and Proxies
+before any wrapper property or collaborator can execute. After a successful durable claim, a trusted-clock exception is
+treated as a consumed non-execution: the gateway records `terminal_ambiguity` at the last valid claimed time, dispatches
+nothing, and remains non-retriable.
+
+**Why:** Signed evidence and effect-capable collaborators cross the same composition wrapper. Direct JavaScript property
+reads can execute getters before validation. Separately, a durable claim without a terminal outcome cannot distinguish a
+known local pre-dispatch failure from an interrupted claimed interval. Both gaps weaken audit truth even when native
+dispatch remains zero.
+
+**Alternatives rejected:** Trust ordinary-looking wrappers; check only nested collaborator methods; clone with spread or
+destructuring; treat a thrown trusted clock as an ordinary exception; leave claim-only state for later inference; retry
+because bridge dispatch was zero; or claim terminal durability without an accepted settlement.
+
+**Trade-off:** Callers must supply a plain exact wrapper, and an unavailable trusted clock consumes the one-use permit.
+That is intentionally stricter than executing wrapper behavior or leaving ambiguous claim-only state. A failed durable
+settlement remains honestly uncertain rather than being converted to success.
+
+**Reevaluate:** After a reviewer different from both earlier reviewers and all remediation contributors closes all six
+recorded findings against exact IDEA-110E commit `2bc80a2`. The later platform connector must preserve this exact
+descriptor, receiver, settlement, cancellation, and no-retry boundary.
