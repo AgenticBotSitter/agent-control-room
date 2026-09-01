@@ -142,4 +142,5 @@ The combined stack was verified with the repository's exact minimum Node runtime
 
 This restack performed no native or provider call, credential operation, production database access, network integration,
 deployment, or other external effect. It remains stacked behind the main-target connector integration pull request and
-cannot be retargeted to `main` or merged until that parent is green and owner-approved.
+cannot be retargeted to `main` or merged until that parent is owner-approved. Parent PR #228 passed GitHub Actions run
+`33554072751`; dependent PR #229 targets the parent branch and intentionally has no main-target CI claim yet.

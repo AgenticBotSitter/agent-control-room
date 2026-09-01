@@ -766,8 +766,9 @@ The accepted CR13A product is now restacked on connector-integration checkpoint 
 without semantic expansion. The combined minimum-runtime verification passes 16/16 CR13A tests, 172/172 CR12B tests,
 769/769 registered pretests, 418/420 core tests with the two intentional Windows-only skips, 251/251 posttests,
 typecheck, full lint, production build, 3/3 rendered routes, migrations through 0033/112 tables, macOS stage zero, and
-whitespace validation. The restack remains dependent on the green, owner-approved merge of main-target connector PR
-#228; it grants no additional live or production authority.
+whitespace validation. Main-target connector PR #228 passed GitHub Actions run `33554072751`. Restack PR #229 targets
+that parent branch and remains dependent on its owner-approved merge; it grants no additional live or production
+authority and makes no main-target CI claim until retargeted.
 
 ## Parallel build lane
 
@@ -788,8 +789,8 @@ Block: CR12B/CR13A-INTEGRATE — land the connector parent, then the accepted Pr
 Set model: gpt-5.6-sol
 Set reasoning effort: high
 Why: exact connector product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` and exact Project Activity product `fcc2f10881aaf7a094db76e01a898b0e04fba083` are independently accepted. Their combined stack is locally green at the exact minimum Node runtime, so the remaining work is serialized GitHub integration without losing negative evidence or widening authority.
-Expected output: green main-target connector PR #228, owner-approved parent merge, then a retargeted main pull request containing the accepted CR13A activity stream with ordinary full CI. Preserve the original independent-review pins and the complete historical evidence chain.
-Owner action: approve merging PR #228 only after its GitHub checks are green. No approval is requested for a failed or pending run. After that merge, Codex can retarget the already prepared CR13A stack and run its ordinary CI.
+Expected output: owner-approved merge of green main-target connector PR #228, then retarget dependent CR13A PR #229 to main and require ordinary full CI. Preserve the original independent-review pins and the complete historical evidence chain.
+Owner action: approve merging PR #228; GitHub Actions run 33554072751 is green. After that merge, Codex can retarget PR #229 and run its ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
