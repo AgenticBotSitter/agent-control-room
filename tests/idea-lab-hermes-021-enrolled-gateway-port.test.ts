@@ -41,7 +41,7 @@ function enrollment() {
     gatewayEndpointVisibility: "connector_private_loopback" as const,
     gatewaySessionValueCustody: "connector_private" as const,
     gatewayOperations: ["session.create", "prompt.submit", "session.steer", "session.interrupt", "session.resume",
-      "session.status", "session.usage", "session.events.since"] as const,
+      "session.status", "session.usage", "session.events.since", "session.close"] as const,
     arbitraryRemoteCommandAllowed: false as const, genericShellExposedToControlRoom: false as const,
     freshProfileNoSkills: true as const, protectedValueResolution: "global_root_read_only_per_provider" as const,
     protectedValueMaterialReturned: false as const,
@@ -74,7 +74,8 @@ function permit(connection = enrollment(), changes: Record<string, unknown> = {}
     runtimeVersion: IDEA_LAB_HERMES_021_VERSION_V1, runtimeRevision: IDEA_LAB_HERMES_021_REVISION_V1,
     transport: connection.transport, connectorRouteDigest: connection.connectorRouteDigest,
     profileIdentityDigest: connection.profileIdentityDigest, conversationIdentityDigest: digest("conversation"),
-    participantId: "participant:market-analyst", markerDigest: digest("effect-marker"),
+    participantId: "participant:market-analyst", participantIdentityDigest: digest("participant-market-analyst"),
+    runtimeIdentityDigest: digest("runtime"), markerDigest: digest("effect-marker"),
     ownerWindowDigest: digest("owner-window"), operationSetDigest: IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1,
     purpose: "one_disposable_native_qualification" as const,
     maximumNativeAttempts: 1 as const, maximumProviderCalls: 1 as const, maximumDurationSeconds: 300 as const,
@@ -90,7 +91,10 @@ function permit(connection = enrollment(), changes: Record<string, unknown> = {}
   const context = { evaluatedAt: "2026-09-01T10:03:00.000Z", expectedAttemptId: body.attemptId,
     expectedTenantId: body.tenantId, expectedNodeId: body.nodeId, expectedConnectionId: body.connectionId,
     expectedMarkerDigest: body.markerDigest, expectedOwnerWindowDigest: body.ownerWindowDigest,
-    expectedParticipantId: body.participantId, expectedConversationIdentityDigest: body.conversationIdentityDigest,
+    expectedParticipantId: body.participantId,
+    expectedParticipantIdentityDigest: body.participantIdentityDigest,
+    expectedRuntimeIdentityDigest: body.runtimeIdentityDigest,
+    expectedConversationIdentityDigest: body.conversationIdentityDigest,
     trustedAuthorityKeyId: "authority-key:local-owner", trustedAuthorityPublicKeySpki: authoritySpki,
     inputMode: "injected_signed_owner_window_only" as const };
   return { connection, envelope, context };
@@ -124,6 +128,7 @@ function bridge(options: { failExecute?: boolean; failCleanup?: boolean } = {}) 
 
 function executeInput(bundle = permit()) {
   return { markerDigest: bundle.envelope.body.markerDigest, participantId: bundle.envelope.body.participantId,
+    participantIdentityDigest: digest("participant-market-analyst"),
     round: 1, safeInstruction: "Return only the bounded structured opinion.", runtimeIdentityDigest: digest("runtime"),
     profileIdentityDigest: bundle.envelope.body.profileIdentityDigest,
     conversationIdentityDigest: bundle.envelope.body.conversationIdentityDigest,
@@ -190,6 +195,8 @@ test("CR12B-IDEA-110A blocks replay claims, expired windows, route drift, and si
   for (const [bundle, changedContext] of [
     [expired, expired.context],
     [exact, { ...exact.context, expectedMarkerDigest: digest("other-marker") }],
+    [exact, { ...exact.context, expectedParticipantIdentityDigest: digest("other-participant") }],
+    [exact, { ...exact.context, expectedRuntimeIdentityDigest: digest("other-runtime") }],
     [exact, { ...exact.context, trustedAuthorityPublicKeySpki: wrongKeys.publicKey
       .export({ format: "der", type: "spki" }).toString("base64url") }],
   ] as const) assert.throws(() => verifyIdeaLabHermes021QualificationPermitV1({ enrollment: bundle.connection,

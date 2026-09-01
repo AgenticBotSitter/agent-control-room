@@ -678,6 +678,22 @@ PGlite; production remains one private PostgreSQL primary.
 Next: implement and independently review the fixed local/SSH native bridge, obtain one real signed enrollment, refresh
 the exact owner packet and pins, then request a new owner-attended IDEA-110 qualification window.
 
+## CR12B-IDEA-110B — fixed Hermes local/SSH bridge
+
+Status: implementation complete locally for the provider-disabled repository snapshot; independent review is pending.
+See `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` and ADR-140.
+
+The repository bridge uses Hermes Desktop's already enrolled local or SSH route. An injected connector owns every
+machine locator, key, gateway value, protected value, and native session identifier. Control Room sends only signed
+opaque route/attempt/permit digests and the fixed create, prompt, replay, status, usage, interrupt, and close operations.
+It rejects gateway-epoch changes, replay gaps or truncation, malformed terminal JSON, usage drift, extra native fields,
+and uncertain outcomes without retry; cleanup is attempt-bound even when route opening was uncertain. The signed owner
+window now binds participant identity and runtime identity, and the enrollment method set explicitly includes close.
+
+Next: independently review the exact 110B candidate, create one real signed enrollment through the connector, refresh
+all affected packet and implementation pins, and only then ask the owner for a new attached-Terminal qualification
+window.
+
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
 Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,

@@ -26,6 +26,10 @@ const sourceFiles = Object.freeze([
   Object.freeze({ pathId: "desktop_ssh_connection", sha256: "sha256:bde4d38d26dd1688b822189a118f69ad07a7ed8b3e058705b2f422ca40a4f304" }),
   Object.freeze({ pathId: "desktop_connection_registry", sha256: "sha256:1fd7ac3446a0fecb0e31189fe324eb8d8f0da376808c1a3749e757eeaec6f1cc" }),
   Object.freeze({ pathId: "desktop_bot_roster", sha256: "sha256:b7397b45aa93b3f3c3383f20d7533b712c333582c476049fd76f2645f70ea9b8" }),
+  Object.freeze({ pathId: "desktop_json_rpc_gateway", sha256: "sha256:a18dbcffedae4772d082c38b3c58c2e59e74f2b4919ca99e45ad3492ebc4421b" }),
+  Object.freeze({ pathId: "desktop_gateway_store", sha256: "sha256:b929060a9542b7271ef4c3a649752a499486cc34b54ddc6c6379e613278c8b89" }),
+  Object.freeze({ pathId: "gateway_session_methods", sha256: "sha256:c4c0b3355be3ecc7f7fdf8ebcbd46fb3f360f9dded5ca9908f96ed0ce7e561d0" }),
+  Object.freeze({ pathId: "gateway_iso_certify", sha256: "sha256:d8919e69de6e02d03baecd819486ac6398d4b5a93c621d026e9589758e4c833b" }),
 ] as const);
 
 const sourceCandidateMaterial = {
@@ -99,7 +103,7 @@ const enrollmentBodySchema = z.object({
   gatewayOperations: z.tuple([
     z.literal("session.create"), z.literal("prompt.submit"), z.literal("session.steer"),
     z.literal("session.interrupt"), z.literal("session.resume"), z.literal("session.status"),
-    z.literal("session.usage"), z.literal("session.events.since"),
+    z.literal("session.usage"), z.literal("session.events.since"), z.literal("session.close"),
   ]),
   arbitraryRemoteCommandAllowed: z.literal(false),
   genericShellExposedToControlRoom: z.literal(false),

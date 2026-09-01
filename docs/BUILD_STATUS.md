@@ -104,7 +104,8 @@
 | CR12B-IDEA-109/109A optional Hermes-native preparation proposal | Complete locally but removed from the critical path | Proposal-only method and signed-attestation verifier remain non-authorizing optional hardening; current Hermes already supplies the needed fresh-profile protected-value fallback |
 | CR12B-IDEA-109B enrolled local/SSH Hermes connection | Complete locally for the signed, locator-free, connection-disabled snapshot | Exact built-in shared-value/SSH source pins, node-signed enrollment, owner-verified host-key binding, opaque fixed gateway route, safe multi-machine roster, UI truth, and no Hermes fork; see `CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md` |
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
-| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending fixed local/SSH bridge, one real signed enrollment, refreshed packet/review, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
+| CR12B-IDEA-110B fixed Hermes local/SSH bridge | Implementation complete locally; independent review pending | Reuses connector-owned Hermes Desktop routing, exact fixed lifecycle/replay/usage/cleanup sequence, no native locators or generic shell, participant/runtime signed binding, terminal ambiguity/no retry, 7 hostile tests; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
+| CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending independent bridge review, one real signed enrollment, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -149,6 +150,16 @@ authenticated PostgreSQL spend store preserve claim, execution outcome, and clea
 external checkpoints detect deletion or rollback across reconstruction. Ten focused hostile tests pass. The actual
 local/SSH effect bridge is still absent, every default composition remains provider-disabled, and zero native/provider
 calls occurred. The combined CR12B suite passes 120/120; migrations 0001-0032 verify 110 PostgreSQL tables.
+
+CR12B-IDEA-110B implements the repository half of the fixed Hermes bridge without modifying Hermes or launching SSH.
+Hermes Desktop's connector keeps all machine/key/gateway/profile/native-session locators and accepts only one signed
+opaque route. The bridge fixes create, prompt, replay, status, usage, interrupt, and close; validates sequence and gateway
+epoch; discards deltas; accepts only bounded terminal JSON and exact usage; performs attempt-bound cleanup after both
+known and uncertain opens; and never retries. The signed permit now binds participant and runtime identities, while the
+fixed operation set explicitly includes cleanup. Seven focused hostile tests pass, and no native/provider/credential or
+network effect occurred. The combined CR12B suite passes 127/127, typecheck and full lint pass, and Mac stage zero is
+ready. The complete npm lifecycle, production build with 3/3 rendered routes, and all 32 migrations with 110 PostgreSQL
+tables also pass. Independent review and one real signed enrollment remain required before packet refresh.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -555,12 +566,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
+Block: CR12B-IDEA-110C — independent bridge review, signed enrollment, and packet refresh
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the reviewed installed-runtime pin is complete, but exact Hermes profile semantics currently cannot satisfy both empty isolation and existing authentication.
-Expected output: implement and independently review the frozen `profiles.prepare_control_room_qualification` Hermes-native operation plus a durable broker-private one-use launch/cleanup registry; signed attestation verification is already complete. Then refresh pins and authorization before any native attempt.
-Owner action: none now. Do not use the IDEA-100 or IDEA-105 authorization and do not run a Hermes qualification command until a remediated packet explicitly replaces them.
+Why: the fixed no-fork bridge is implemented, but it must be independently attacked before any real enrollment or packet can trust it.
+Expected output: an immutable independent security/authority report for the exact 110B candidate; remediation and re-review if needed; then one connector-created signed enrollment plus refreshed source, implementation, packet, and preflight digests.
+Owner action: none now. Do not use the IDEA-100 or IDEA-105 authorization and do not run a Hermes qualification command until a reviewed packet explicitly replaces them.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

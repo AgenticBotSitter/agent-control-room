@@ -92,6 +92,7 @@ export interface Hermes021IdeaLabGatewayPortV1 {
   execute(input: Readonly<{
     markerDigest: string;
     participantId: string;
+    participantIdentityDigest: string;
     round: number;
     safeInstruction: string;
     runtimeIdentityDigest: string;
@@ -226,6 +227,7 @@ export class Hermes021IdeaLabFilteredDriverV1 implements IdeaLabBotPanelDriverV1
     const operation = Promise.resolve().then(() => this.#execute({
       markerDigest: input.markerDigest,
       participantId: input.participant.participantId,
+      participantIdentityDigest: input.participant.identityDigest,
       round: input.round,
       safeInstruction: input.safePrompt,
       runtimeIdentityDigest: binding.runtimeIdentityDigest,

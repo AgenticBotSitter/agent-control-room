@@ -28,7 +28,7 @@ export const IDEA_LAB_HERMES_021_ENROLLED_GATEWAY_PORT_V1 =
 
 const gatewayOperations = Object.freeze([
   "session.create", "prompt.submit", "session.steer", "session.interrupt",
-  "session.resume", "session.status", "session.usage", "session.events.since",
+  "session.resume", "session.status", "session.usage", "session.events.since", "session.close",
 ] as const);
 
 export const IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1 = sha256Digest({
@@ -54,6 +54,8 @@ const permitBodySchema = z.object({
   profileIdentityDigest: ideaDigestSchemaV1,
   conversationIdentityDigest: ideaDigestSchemaV1,
   participantId: ideaIdSchemaV1,
+  participantIdentityDigest: ideaDigestSchemaV1,
+  runtimeIdentityDigest: ideaDigestSchemaV1,
   markerDigest: ideaDigestSchemaV1,
   ownerWindowDigest: ideaDigestSchemaV1,
   operationSetDigest: z.literal(IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1),
@@ -92,6 +94,8 @@ const permitContextSchema = z.object({
   expectedMarkerDigest: ideaDigestSchemaV1,
   expectedOwnerWindowDigest: ideaDigestSchemaV1,
   expectedParticipantId: ideaIdSchemaV1,
+  expectedParticipantIdentityDigest: ideaDigestSchemaV1,
+  expectedRuntimeIdentityDigest: ideaDigestSchemaV1,
   expectedConversationIdentityDigest: ideaDigestSchemaV1,
   trustedAuthorityKeyId: ideaIdSchemaV1,
   trustedAuthorityPublicKeySpki: base64url,
@@ -113,6 +117,8 @@ const verifiedPermitSchema = z.object({
   profileIdentityDigest: ideaDigestSchemaV1,
   conversationIdentityDigest: ideaDigestSchemaV1,
   participantId: ideaIdSchemaV1,
+  participantIdentityDigest: ideaDigestSchemaV1,
+  runtimeIdentityDigest: ideaDigestSchemaV1,
   markerDigest: ideaDigestSchemaV1,
   ownerWindowDigest: ideaDigestSchemaV1,
   authorityKeyDigest: ideaDigestSchemaV1,
@@ -182,6 +188,8 @@ export function verifyIdeaLabHermes021QualificationPermitV1(input: {
     [body.nodeId, context.expectedNodeId], [body.connectionId, context.expectedConnectionId],
     [body.markerDigest, context.expectedMarkerDigest], [body.ownerWindowDigest, context.expectedOwnerWindowDigest],
     [body.participantId, context.expectedParticipantId],
+    [body.participantIdentityDigest, context.expectedParticipantIdentityDigest],
+    [body.runtimeIdentityDigest, context.expectedRuntimeIdentityDigest],
     [body.conversationIdentityDigest, context.expectedConversationIdentityDigest],
     [body.tenantId, enrollment.tenantId], [body.nodeId, enrollment.nodeId],
     [body.connectionId, enrollment.connectionId], [body.enrollmentResultDigest, enrollment.resultDigest],
@@ -210,6 +218,8 @@ export function verifyIdeaLabHermes021QualificationPermitV1(input: {
     profileIdentityDigest: body.profileIdentityDigest,
     conversationIdentityDigest: body.conversationIdentityDigest,
     participantId: body.participantId,
+    participantIdentityDigest: body.participantIdentityDigest,
+    runtimeIdentityDigest: body.runtimeIdentityDigest,
     markerDigest: body.markerDigest,
     ownerWindowDigest: body.ownerWindowDigest,
     authorityKeyDigest: authority.digest,
@@ -249,6 +259,7 @@ export interface IdeaLabHermes021NativeBridgeV1 {
     permitDigest: string;
     markerDigest: string;
     participantId: string;
+    participantIdentityDigest: string;
     round: number;
     safeInstruction: string;
     runtimeIdentityDigest: string;
@@ -320,7 +331,9 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
 
   async execute(input: ExecuteInput, collector: HostResultCollectorV1): Promise<void> {
     if (this.#executeStarted || this.#cleanupStarted || input.markerDigest !== this.#permit.markerDigest
-      || input.participantId !== this.#permit.participantId || input.runtimeIdentityDigest.length < 1
+      || input.participantId !== this.#permit.participantId
+      || input.participantIdentityDigest !== this.#permit.participantIdentityDigest
+      || input.runtimeIdentityDigest !== this.#permit.runtimeIdentityDigest
       || input.profileIdentityDigest !== this.#permit.profileIdentityDigest
       || input.conversationIdentityDigest !== this.#permit.conversationIdentityDigest
       || input.maximumOutputCharacters !== 800 || input.safeInstruction.length < 1 || input.safeInstruction.length > 800
@@ -344,6 +357,7 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
         permitDigest: this.#permit.permitDigest,
         markerDigest: input.markerDigest,
         participantId: input.participantId,
+        participantIdentityDigest: input.participantIdentityDigest,
         round: input.round,
         safeInstruction: input.safeInstruction,
         runtimeIdentityDigest: input.runtimeIdentityDigest,

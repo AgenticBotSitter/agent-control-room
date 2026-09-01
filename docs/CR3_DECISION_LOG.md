@@ -2328,3 +2328,31 @@ not contain the process, SSH, gateway, credential, or provider client.
 
 **Reevaluate:** After the fixed native bridge is implemented and independently reviewed, refresh every affected source,
 implementation, packet, enrollment, and owner-window digest before any attended qualification.
+
+## ADR-140 — Reuse Hermes Desktop routing; keep native and SSH locators outside Control Room
+
+**Decision:** The IDEA-110B bridge does not modify Hermes, launch SSH, or connect directly to a Hermes gateway. It sends
+one closed lifecycle sequence through an injected connector for an already enrolled Hermes Desktop local or SSH route.
+The connector alone maps the signed opaque route and attempt digests to connection/profile/native session state. Control
+Room may receive only exact safe receipts and digests; it cannot receive a hostname, username, port, key path, gateway
+value, protected value, profile path, or native session identifier. A gateway epoch change, replay truncation or gap,
+malformed terminal result, usage mismatch, extra field, or uncertain call is terminal and non-retriable. Attempt-bound
+cleanup must reconcile even an uncertain route open and must prove close, lease release, temporary-state removal, and
+zero retained native references. `session.close` is part of the signed operation set, and the owner permit signs both
+participant and runtime identity.
+
+**Why:** Hermes Desktop already owns system-SSH connection establishment, connection pooling, session routing, replay,
+and reconnect. Duplicating that machinery inside Control Room would expand credential and locator custody and would make
+updates harder. A narrow connector boundary lets Hermes update independently while Control Room retains authority,
+budget, ambiguity, sanitation, and audit rules.
+
+**Alternatives rejected:** Fork Hermes; copy credentials; have Control Room invoke `ssh`; expose the Hermes gateway on a
+public interface; return native session IDs; accept arbitrary JSON-RPC methods; infer success from prompt acknowledgement;
+ignore gateway epoch changes; retry after an unknown result; or leave cleanup outside the signed method set.
+
+**Trade-off:** A small platform connector implementation is still required to bind the abstract port to Hermes Desktop's
+registered connection. Until that connector is configured, reviewed, and enrolled, every default remains disabled and
+the bridge makes zero native or provider calls.
+
+**Reevaluate:** Re-pin the six Hermes lifecycle/routing source files on every Hermes upgrade. Any connector protocol or
+native event-shape change requires a new review, enrollment, owner packet, and authorization before native use.

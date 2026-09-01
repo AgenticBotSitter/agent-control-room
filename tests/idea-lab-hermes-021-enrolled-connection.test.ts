@@ -43,7 +43,7 @@ function envelope(input: { connectionId?: string; profileIdentityDigest?: string
     gatewayEndpointVisibility: "connector_private_loopback" as const,
     gatewaySessionValueCustody: "connector_private" as const,
     gatewayOperations: ["session.create", "prompt.submit", "session.steer", "session.interrupt", "session.resume",
-      "session.status", "session.usage", "session.events.since"] as const,
+      "session.status", "session.usage", "session.events.since", "session.close"] as const,
     arbitraryRemoteCommandAllowed: false as const,
     genericShellExposedToControlRoom: false as const,
     freshProfileNoSkills: true as const,

@@ -73,7 +73,7 @@ function completedFrames(input: Parameters<Hermes021IdeaLabGatewayPortV1["execut
   const base = { markerDigest: input.markerDigest, sessionIdentityDigest };
   return [
     { ...base, sequence: 1, type: "session.ready", payload: { participantId: input.participantId,
-      participantIdentityDigest: setup().participant.identityDigest, runtimeIdentityDigest: input.runtimeIdentityDigest,
+      participantIdentityDigest: input.participantIdentityDigest, runtimeIdentityDigest: input.runtimeIdentityDigest,
       profileIdentityDigest: input.profileIdentityDigest, conversationIdentityDigest: input.conversationIdentityDigest,
       toolsDisabled: true, mcpDisabled: true } },
     { ...base, sequence: 2, type: "message.delta", payload: deltaPayload },
@@ -111,7 +111,7 @@ test("CR12B-IDEA-080 returns only a proven definite provider failure", async () 
     const base = { markerDigest: input.markerDigest, sessionIdentityDigest };
     collector.submit({ frames: [
       { ...base, sequence: 1, type: "session.ready", payload: { participantId: input.participantId,
-        participantIdentityDigest: target.participant.identityDigest, runtimeIdentityDigest: input.runtimeIdentityDigest,
+        participantIdentityDigest: input.participantIdentityDigest, runtimeIdentityDigest: input.runtimeIdentityDigest,
         profileIdentityDigest: input.profileIdentityDigest, conversationIdentityDigest: input.conversationIdentityDigest,
         toolsDisabled: true, mcpDisabled: true } },
       { ...base, sequence: 2, type: "panel.failed_definite", payload: { safeCode: "provider_access_blocked" } },

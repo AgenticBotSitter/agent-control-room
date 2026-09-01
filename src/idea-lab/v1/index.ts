@@ -18,6 +18,7 @@ export * from "./hermes-021-profile-preparation-contract";
 export * from "./hermes-021-profile-preparation-attestation";
 export * from "./hermes-021-enrolled-connection";
 export * from "./hermes-021-enrolled-gateway-port";
+export * from "./hermes-021-fixed-rpc-bridge";
 export * from "./hermes-021-qualification-spend-store";
 export * from "./live-panel-authority-store";
 export * from "./owner-ready-live-packet";
