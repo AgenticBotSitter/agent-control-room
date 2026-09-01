@@ -2128,3 +2128,28 @@ can authorize one native attempt.
 
 **Reevaluate:** IDEA-090 may add the durable single-use admission and receipt registry. Native contact remains blocked
 until that store and a fresh exact owner packet are accepted.
+
+## ADR-132 — Live authority is an authenticated append-only history with an external high-water
+
+**Decision:** Native qualification acceptance, live-admission sealing, and admission consumption are separate event
+types in one PostgreSQL-compatible append-only authority history. Native receipt decisions require an architect-held
+key and bind exact runtime, compatibility, custody, independent-review, and strong-factor evidence. Admission decisions
+use a separate key and bind the exact receipt, session, run, owner window, and strong-factor decision. Consumption is
+atomic and unique across admission, window, and run. Exact replay is inert. Receipt and admission revocation are
+terminal. An independently keyed compare-and-swap checkpoint outside the database authenticates the complete high-water.
+
+**Why:** A valid digest is evidence identity, not authority. Database uniqueness alone cannot detect a privileged restore
+to an older internally consistent snapshot. Separate decision keys prevent the database writer or ordinary caller from
+minting architect acceptance or an owner window, while the external high-water makes rollback fail closed.
+
+**Alternatives rejected:** Treat a native receipt digest as accepted; let the driver accept its own receipt; store only a
+mutable current row; reuse one key for every trust role; permit a revoked receipt or admission to reactivate; consume an
+owner window once per participant; accept an exact database snapshot without an external checkpoint; update the
+checkpoint after database commit; or configure the authority store in the local pilot before a native packet exists.
+
+**Trade-off:** A checkpoint advance followed by database commit failure intentionally leaves authority unavailable until
+an architect reconciles it; safety is preferred to silent replay. Production still needs a vetted external checkpoint
+implementation and protected keys. The repository contains neither and accepts no receipt by default.
+
+**Reevaluate:** IDEA-100 may freeze the exact owner-ready native qualification and live-panel rehearsal packet. This ADR
+does not authorize a native attempt, provider call, key installation, production database contact, or live composition.

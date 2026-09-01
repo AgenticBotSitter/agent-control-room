@@ -97,15 +97,27 @@
 | CR12B-IDEA-060 explicit local composition and repository-fake pilot | Complete for the exact local, Keychain-backed, repository-fake owner pilot | Owner-attended sign-in, create/panel/synthesis/promotion, protected project read, pause/resume, reload, real process restart, durable PGlite, and 51-test gate; see `CR12B_IDEA_060_ACCEPTANCE.md` |
 | CR12B-IDEA-070 provider-neutral live-panel admission | Complete locally for the repository-only provider-disabled snapshot | Two-authority exact admission, participant/runtime binding, protected-value custody, exact ceilings, pre-call markers, terminal ambiguity/no retry, filtered output, and disabled Hermes 0.21 packet; see `CR12B_IDEA_070_ACCEPTANCE.md` |
 | CR12B-IDEA-080 filtered driver and native qualification harness | Complete locally for the injected-fixture, provider-disabled snapshot | Exact admission/runtime preflight, content-discarding event translation, bounded timeout/cleanup, cleanup-bound receipt, frozen native plan, 10 hostile tests; see `CR12B_IDEA_080_ACCEPTANCE.md` |
-| CR12B-IDEA-090 durable admission consumption and native-receipt registry | Next | Authenticated atomic single-use admission/window/run binding, exact replay, revocation/high-water, architect-pinned native receipts, rollback/tamper detection; no native attempt |
+| CR12B-IDEA-090 durable admission consumption and native-receipt registry | Complete locally for the repository-only, provider-disabled snapshot | Architect-keyed receipt acceptance, separately keyed admission sealing, atomic single-use window/run consumption, terminal revocation, external rollback high-water, 12 hostile tests; see `CR12B_IDEA_090_ACCEPTANCE.md` |
+| CR12B-IDEA-100 owner-ready native qualification and live-panel rehearsal packet | Next | Exact staged packet binding Hermes 0.21, filtered driver, durable authority, disposable zero-tool/MCP qualification, independent receipt review, and a separate later owner effect window; no attempt during implementation |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR12B-IDEA-090 is next. It will implement authenticated PostgreSQL-compatible single-use admission consumption and the
-accepted-native-receipt registry without making a native call. One exact admission/window/run binding must be atomic,
-exact replay inert, cross-run reuse denied, revocation/high-water terminal, accepted receipts architect-pinned, and
-rollback/tampering detectable. Every shipped composition remains provider-disabled.
+CR12B-IDEA-100 is next. It will freeze the owner-ready native qualification and first-live-panel rehearsal packet without
+executing it. The packet must bind exact Hermes 0.21 compatibility evidence, the filtered driver, durable authority
+ledger, disposable resources, zero tools/MCP, protected-value custody, sanitized receipt bounds, independent review, and
+a separate one-use owner effect window. Native and provider contact remain later exact owner authorizations.
+
+CR12B-IDEA-090 replaces the interface-only admission seam with a PostgreSQL-compatible append-only authority ledger.
+Architect-key-authenticated native-receipt decisions, separately keyed admission decisions, and atomic consumption bind
+one exact receipt/admission/window/run. Exact replay creates no second row or panel call; reuse across a different window,
+admission ID, admission digest, or run is denied. Receipt and admission revocation are terminal. Every row is chained and
+HMAC authenticated, SQL guards reject mutation, and an independently keyed compare-and-swap high-water outside the
+database detects privileged rollback. Twelve hostile tests cover coordinator integration, concurrent consumption,
+forgery, reuse, revocation, restart, mutation, rollback, and Proxy input. No receipt is accepted and no store/key/checkpoint
+is configured by default. The combined CR12B suite passes 81/81; typecheck and full lint pass. No native/provider or
+external effect occurred. The complete registered lifecycle, production build, 3/3 rendered routes, all 31
+migrations/109 PostgreSQL tables, macOS stage zero, and whitespace validation also pass.
 
 CR12B-IDEA-080 completes the filtered driver and qualification-harness repository slice without a native port. The
 driver rechecks the exact consumed admission and runtime/participant bindings before its injected port, discards
@@ -492,12 +504,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-090 — durable admission consumption and native-receipt registry
+Block: CR12B-IDEA-100 — owner-ready native qualification and live-panel rehearsal packet
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the filtered driver and native plan are complete; the remaining pre-owner security gap is durable atomic consumption and receipt trust instead of an interface-only verifier.
-Expected output: authenticated PostgreSQL-compatible admission/window/run consumption, exact-replay and cross-run-reuse rules, terminal revocation/high-water, architect-pinned native receipts, rollback/tamper detection, hostile tests, and an updated exact owner packet.
-Owner action: none during repository implementation. A later exact packet will request one separate native/live-provider window only after this store is accepted.
+Why: the filtered driver and durable single-use authority ledger are complete; the next step is freezing the exact staged owner packet before any native or provider effect.
+Expected output: one immutable packet binding Hermes 0.21 source evidence, driver/store contracts, disposable qualification limits, zero tools/MCP, protected-value custody, sanitized evidence, independent receipt review, terminal ambiguity, and a separately authorized first live panel.
+Owner action: none while the packet is built. After it passes repository review, Codex will state the exact one-time native qualification authorization needed; provider-panel authorization remains separate.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

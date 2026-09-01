@@ -575,9 +575,21 @@ receipt registry. It remains repository-only and performs no native attempt.
 
 ## CR12B-IDEA-090 — durable admission consumption and native-receipt registry
 
+Status: complete for the exact repository-only, provider-disabled snapshot. See `CR12B_IDEA_090_ACCEPTANCE.md`,
+`CR12B_IDEA_090_OWNER_PACKET.md`, and ADR-132.
+
+The PostgreSQL-compatible append-only authority ledger separates architect-authenticated native-receipt decisions,
+server-authenticated admission decisions, and atomic consumption. It binds one admission/window/run, makes exact replay
+inert, rejects cross-binding reuse, preserves terminal revocation, and detects database rollback through an external
+authenticated high-water. It remains unconfigured in every shipped composition and performs no native/provider call.
+
+Next: CR12B-IDEA-100 freezes the owner-ready native qualification and first-live-panel rehearsal packet without executing
+it. The later native attempt and provider panel remain separate exact owner authorizations.
+
+## CR12B-IDEA-100 — owner-ready native qualification and live-panel rehearsal packet
+
 Status: next.
 
-This block will replace the admission interface-only seam with authenticated PostgreSQL-compatible state. It must
-atomically bind one admission/window/run, make exact replay inert, refuse reuse for another run, preserve terminal
-revocation and high-water, pin only architect-accepted native receipt digests, detect rollback/tampering, and remain
-unconfigured in every shipped composition. No native/provider call occurs.
+This block will bind the accepted Hermes 0.21 compatibility evidence, filtered driver, durable authority ledger,
+disposable native resources, zero tools/MCP, protected-value custody, sanitized receipts, independent review, and a
+separate one-use owner effect window into one exact staged packet. Repository implementation remains effect-free.
