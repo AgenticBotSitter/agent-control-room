@@ -588,8 +588,21 @@ it. The later native attempt and provider panel remain separate exact owner auth
 
 ## CR12B-IDEA-100 — owner-ready native qualification and live-panel rehearsal packet
 
-Status: next.
+Status: complete for the exact repository-only, effect-free packet. See `CR12B_IDEA_100_ACCEPTANCE.md`,
+`CR12B_IDEA_100_OWNER_AUTHORIZATION.md`, and ADR-133.
 
-This block will bind the accepted Hermes 0.21 compatibility evidence, filtered driver, durable authority ledger,
-disposable native resources, zero tools/MCP, protected-value custody, sanitized receipts, independent review, and a
-separate one-use owner effect window into one exact staged packet. Repository implementation remains effect-free.
+The immutable three-stage packet binds exact Hermes 0.21 source and implementation commits, a one-attempt/one-call
+disposable qualification, an unaccepted sanitized candidate, mandatory different-party review and architect registry
+acceptance, and a later separately authorized live-panel admission. Every authority field remains false. The local pilot
+is repository-fake only.
+
+Next: CR12B-IDEA-110 may perform the owner-attended disposable native qualification after the owner gives the exact fresh
+authorization. It is limited to the packet and stops before receipt acceptance or a live panel.
+
+## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
+
+Status: blocked pending the exact owner authorization in `CR12B_IDEA_100_OWNER_AUTHORIZATION.md`.
+
+One no-effect preflight will verify the installed runtime and print the exact attached-Terminal command. The owner must
+run it and handle any Keychain prompt. The attempt emits only a sanitized unaccepted candidate, cleans disposable state,
+and never retries after uncertainty. Independent review and architect registry acceptance remain later gates.

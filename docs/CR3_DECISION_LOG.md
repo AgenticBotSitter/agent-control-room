@@ -2153,3 +2153,25 @@ implementation and protected keys. The repository contains neither and accepts n
 
 **Reevaluate:** IDEA-100 may freeze the exact owner-ready native qualification and live-panel rehearsal packet. This ADR
 does not authorize a native attempt, provider call, key installation, production database contact, or live composition.
+
+## ADR-133 — Native qualification, receipt acceptance, and a live panel are three different authorities
+
+**Decision:** The first Hermes 0.21 path is ordered into three non-collapsible stages. A fresh owner authorization covers
+only one disposable native qualification. Its sanitized output is always an unaccepted, non-authorizing candidate. A
+different reviewer and architect-key registry decision may later accept the exact receipt. A live panel then requires a
+different fresh owner window bound to one exact session, participant set, budget, admission, and run. The qualification
+window is never reusable for provider work, and project creation remains a separate owner decision.
+
+**Why:** A successful compatibility or native result proves capability, not consent to spend money or contact a provider
+for a real idea. Separating evidence production, evidence acceptance, and live use prevents the qualification runner,
+reviewer, browser, or driver from promoting its own result into authority.
+
+**Alternatives rejected:** Qualify and immediately run a panel; reuse the qualification authorization; let a candidate
+set `architectAccepted`; allow the same reviewer to produce and accept evidence; bind a panel before its exact session
+exists; retain raw native content or identifiers; retry an ambiguous attempt; or let a successful panel create a project.
+
+**Trade-off:** The owner must perform two distinct approvals and a different reviewer must inspect the candidate. This is
+slower than one click but confines the first provider-capable path to explicit, inspectable boundaries.
+
+**Reevaluate:** After the owner authorizes IDEA-110, one attached-Terminal qualification may run. This ADR alone grants no
+native, provider, receipt-acceptance, live-panel, project-creation, production, or deployment authority.
