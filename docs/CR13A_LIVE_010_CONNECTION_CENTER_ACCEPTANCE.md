@@ -85,6 +85,6 @@ turn's authorized effect boundary; the production renderer verified the new shel
 
 ## Open gate
 
-Connector PR #228 and Project Activity PR #229 are integrated in order. Draft PR #230 now targets `main` with a clean
+Connector PR #228 and Project Activity PR #229 are integrated in order. Ready PR #230 now targets `main` with a clean
 Connection Center-only diff and awaits ordinary Node `22.13.0` GitHub CI. A green run makes it eligible for a separate
 owner-approved merge; the accepted review grants no live/native/provider/SSH/deployment or production-database authority.
