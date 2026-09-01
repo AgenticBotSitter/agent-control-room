@@ -43,7 +43,9 @@ whitespace validation also pass.
 
 ## Remaining gate
 
-The implementation commit and review packet must be frozen, then a different independent reviewer must attack the exact
-connector candidate. Producer tests cannot set `connectorImplementationAccepted`. Even an accepted report will not
+The implementation is frozen at commit `70f5890b3be5162896a585dae458a9a9c02e8036`. A different independent reviewer must
+attack that exact candidate using packet SHA-256
+`59e79825dd1b537f8388ae4a7bf429a523d1c3d9256d403c7aef5b690a7d7b2f`. Producer tests cannot
+set `connectorImplementationAccepted`. Even an accepted report will not
 configure the private port, enroll a signer or route, refresh the owner packet, authorize a command, or permit a native
 attempt.

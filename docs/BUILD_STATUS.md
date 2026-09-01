@@ -612,12 +612,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110E-Q — independently re-review the complete six-finding bridge remediation chain
+Block: CR12B-IDEA-110F-Q — independently review the macOS Hermes connector candidate
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the first remediation review closed four High defects but found two Medium evidence-boundary defects; Codex repaired both, but producer verification still cannot accept a security boundary.
-Expected output: one immutable report by a reviewer different from REV-003, REV-001, and every remediation contributor against exact commit `2bc80a2`, explicitly closing or reproducing all six findings and retaining every connector/enrollment/native-effect gate. Acceptance opens the platform-connector block; it does not authorize enrollment.
-Owner action: none for the repository-only re-review. Reuse only the already prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
+Why: the bridge is independently accepted and the real Mac-side protocol guard is implemented, but producer verification cannot accept the connector that will sit immediately before the native/private port.
+Expected output: one immutable report by a reviewer different from all IDEA-110F contributors and prior bridge reviewers against exact commit `70f5890`, repeating the frozen packet's boundary, binding, lifecycle, concurrency, receipt-sanitation, no-retry, disabled-composition, and upgrade attacks. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
