@@ -1,0 +1,68 @@
+{
+  "schema": "control-room.agent-build-result/v2",
+  "capsulePath": "coordination/agent-build/capsules/CR12B-IDEA-110D-REV-001.json",
+  "capsuleId": "CR12B-IDEA-110D-REV-001",
+  "waveId": "CR12B-IDEA-110D-REVIEW-1",
+  "baseCommit": "bb1faf989486bb3b16226d9a4cbec2223ef4e5f2",
+  "implementationCommit": "49cfada7f60f8e815a06d2b676cd8e2836626863",
+  "producerRoute": "marvin-macos",
+  "changedFiles": [
+    {
+      "path": "docs/reviews/CR12B_IDEA_110D_REMEDIATION_REREVIEW_REV_001.md",
+      "additions": 277,
+      "deletions": 0
+    }
+  ],
+  "commands": [
+    {
+      "command": "node scripts/qualification/platform-key-store-stage-zero.mjs --platform macos",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run check",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run lint",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:cr12b",
+      "exitCode": 0
+    },
+    {
+      "command": "npm test",
+      "exitCode": 0
+    },
+    {
+      "command": "CI=true npm run test:build",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run db:verify",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check integration/cr12b-idea-110d-remediation-review...HEAD",
+      "exitCode": 0
+    }
+  ],
+  "repairIterations": 0,
+  "failures": [],
+  "assumptions": [
+    "The exact architect-prepared isolated checkout was clean at integration head aaea15c8fcfee18d2f7967f88b5fbca1ae5b5515 before claim, both frozen review hashes matched, and stage zero returned ready_for_runtime_check before work began.",
+    "This fresh REV-001 reviewer profile differs from the REV-003 reviewer and every remediation contributor and authored, advised, and repaired none of the immutable product changes.",
+    "The report closes CR12B-REV003-001 through CR12B-REV003-004 but records CR12B-RR001-001 and CR12B-RR001-002, so its semantic disposition is remediation_required; ready-for-intake means only that this bounded negative report and metadata satisfy structural worker intake.",
+    "The exact installed Hermes source bytes, concrete platform connector, real signed enrollment, native qualification, provider behavior, and later production gates remain unobserved rather than passed.",
+    "The first sandboxed npm run db:verify invocation exited 1 because tsx could not create its local temporary IPC socket; the identical command was rerun with approval limited to that IPC socket and passed 32 migrations with 110 PostgreSQL tables. No repair occurred.",
+    "No install, download, dependency change, native process, Hermes or SSH contact, provider call, credential or protected-value access, service, production database, hosting, deployment, approval, or merge occurred."
+  ],
+  "effectCount": 0,
+  "safety": {
+    "secretsAbsent": true,
+    "privateHostDataAbsent": true,
+    "workerDidNotApproveOrMerge": true,
+    "scopeNotExpanded": true
+  },
+  "disposition": "ready-for-intake"
+}
