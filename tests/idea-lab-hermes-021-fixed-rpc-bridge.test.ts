@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { sha256Digest } from "../src/security/index.ts";
-import { createHostResultCollectorV1 } from "../src/security/host-value.ts";
+import { createHostCancellationControllerV1, createHostResultCollectorV1 } from "../src/security/host-value.ts";
 import {
   IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
   IDEA_LAB_HERMES_021_FIXED_OPERATION_SET_V1,
@@ -29,7 +29,7 @@ function executeInput(): Parameters<IdeaLabHermes021NativeBridgeV1["executeFixed
     safeInstruction: "Return only the bounded JSON opinion.", runtimeIdentityDigest: digest("runtime"),
     profileIdentityDigest: digest("profile"), conversationIdentityDigest: digest("conversation"),
     maximumOutputCharacters: 800, toolsEnabled: false, mcpEnabled: false, pluginsEnabled: false,
-    genericShellEnabled: false, signal: new AbortController().signal,
+    genericShellEnabled: false, signal: createHostCancellationControllerV1().signal,
   };
 }
 
@@ -37,7 +37,8 @@ function cleanupInput(input = executeInput(), sessionIdentityDigest?: string):
 Parameters<IdeaLabHermes021NativeBridgeV1["cleanupFixedSession"]>[0] {
   return { connectionId: input.connectionId, connectorRouteDigest: input.connectorRouteDigest,
     attemptId: input.attemptId, permitDigest: input.permitDigest, markerDigest: input.markerDigest,
-    ...(sessionIdentityDigest ? { sessionIdentityDigest } : {}), signal: new AbortController().signal };
+    ...(sessionIdentityDigest ? { sessionIdentityDigest } : {}),
+    signal: createHostCancellationControllerV1().signal };
 }
 
 function operationResult(operation: IdeaLabHermes021FixedOperationV1, changes: Record<string, unknown> = {}) {

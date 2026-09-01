@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createHostResultCollectorV1, type HostResultCollectorV1 } from "../src/security/host-value.ts";
+import {
+  createHostCancellationControllerV1,
+  createHostResultCollectorV1,
+  exactHostCancellationSignalV1,
+  hostCancellationAbortedV1,
+  subscribeHostCancellationV1,
+  type HostCancellationSignalV1,
+  type HostResultCollectorV1,
+} from "../src/security/host-value.ts";
 import { sha256Digest } from "../src/security/index.ts";
 import {
   IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
@@ -32,7 +40,7 @@ function closeReceipt(input: { attemptId: string; permitDigest: string; connecto
     disposableWorkspaceRemoved: true, retainedNativeReferenceCount: 0 };
 }
 
-function openInput(signal = new AbortController().signal) {
+function openInput(signal: HostCancellationSignalV1 = createHostCancellationControllerV1().signal) {
   return Object.freeze({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1, ...binding,
     sourceManifestDigest: IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_DIGEST_V1, signal });
 }
@@ -49,12 +57,13 @@ const parameters = {
 };
 
 type Operation = keyof typeof parameters;
-function operationInput(operation: Operation, signal = new AbortController().signal) {
+function operationInput(operation: Operation,
+  signal: HostCancellationSignalV1 = createHostCancellationControllerV1().signal) {
   return Object.freeze({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
     connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest, attemptId: binding.attemptId,
     permitDigest: binding.permitDigest, operation, parameters: parameters[operation], signal });
 }
-function closeInput(signal = new AbortController().signal) {
+function closeInput(signal: HostCancellationSignalV1 = createHostCancellationControllerV1().signal) {
   return Object.freeze({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
     connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest, attemptId: binding.attemptId,
     permitDigest: binding.permitDigest, signal });
@@ -106,7 +115,7 @@ class FixturePrivatePort implements IdeaLabHermes021MacosPrivatePortV1 {
 }
 
 async function open(connector: IdeaLabHermes021ConnectorPrivateRpcV1,
-  signal = new AbortController().signal): Promise<unknown> {
+  signal: HostCancellationSignalV1 = createHostCancellationControllerV1().signal): Promise<unknown> {
   return collect((collector) => connector.openFixedRoute(openInput(signal), collector));
 }
 async function request(connector: IdeaLabHermes021ConnectorPrivateRpcV1, operation: Operation): Promise<unknown> {
@@ -115,6 +124,23 @@ async function request(connector: IdeaLabHermes021ConnectorPrivateRpcV1, operati
 async function close(connector: IdeaLabHermes021ConnectorPrivateRpcV1): Promise<unknown> {
   return collect((collector) => connector.closeFixedRoute(closeInput(), collector));
 }
+
+test("CR12B-IDEA-110H opaque cancellation is frozen, single-use, and Proxy rejecting", () => {
+  const controller = createHostCancellationControllerV1();
+  assert.equal(Object.isFrozen(controller.signal), true);
+  assert.deepEqual(Reflect.ownKeys(controller.signal), []);
+  assert.equal(exactHostCancellationSignalV1(controller.signal), true);
+  assert.equal(exactHostCancellationSignalV1(new Proxy(controller.signal, {})), false);
+  let calls = 0;
+  const subscription = subscribeHostCancellationV1(controller.signal, () => { calls += 1; });
+  assert.equal(subscription?.status, "subscribed");
+  assert.equal(hostCancellationAbortedV1(controller.signal), false);
+  controller.abort(); controller.abort();
+  assert.deepEqual([calls, hostCancellationAbortedV1(controller.signal)], [1, true]);
+  const late = subscribeHostCancellationV1(controller.signal, () => { calls += 1; });
+  assert.equal(late?.status, "aborted");
+  assert.equal(calls, 1);
+});
 
 test("CR12B-IDEA-110F binds one Mac-owned route to the exact fixed lifecycle", async () => {
   const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port);
@@ -258,19 +284,33 @@ test("CR12B-IDEA-110F rejects locator-shaped and behavioral private receipts bef
   assert.equal(behavior, 0);
 });
 
-test("CR12B-IDEA-110G rejects behavioral and pre-aborted signals before private dispatch", async () => {
+test("CR12B-IDEA-110H rejects native, poisoned, and pre-aborted signals before private dispatch", async () => {
   const behavioralPort = new FixturePrivatePort();
   const controller = new AbortController();
   let behavior = 0;
   Object.defineProperty(controller.signal, "aborted", {
     configurable: true, enumerable: true, get() { behavior += 1; return false; },
   });
-  await assert.rejects(() => open(new IdeaLabHermes021MacosConnectorV1(behavioralPort), controller.signal),
+  await assert.rejects(() => open(new IdeaLabHermes021MacosConnectorV1(behavioralPort),
+    controller.signal as unknown as HostCancellationSignalV1),
     IdeaLabErrorV1);
   assert.equal(behavior, 0);
   assert.deepEqual(behavioralPort.calls, []);
 
-  const preOpenPort = new FixturePrivatePort(), preOpen = new AbortController();
+  const poisonedPort = new FixturePrivatePort(), poisoned = new AbortController().signal;
+  const eventMapKey = Reflect.ownKeys(poisoned).find((key) => String(key) === "Symbol(kEvents)");
+  assert.ok(eventMapKey);
+  let traps = 0;
+  Object.defineProperty(poisoned, eventMapKey, { ...Object.getOwnPropertyDescriptor(poisoned, eventMapKey),
+    value: new Proxy(new Map(), { get(target, property, receiver) {
+      traps += 1; return Reflect.get(target, property, receiver);
+    } }) });
+  await assert.rejects(() => open(new IdeaLabHermes021MacosConnectorV1(poisonedPort),
+    poisoned as unknown as HostCancellationSignalV1), IdeaLabErrorV1);
+  assert.equal(traps, 0);
+  assert.deepEqual(poisonedPort.calls, []);
+
+  const preOpenPort = new FixturePrivatePort(), preOpen = createHostCancellationControllerV1();
   preOpen.abort();
   await assert.rejects(() => open(new IdeaLabHermes021MacosConnectorV1(preOpenPort), preOpen.signal),
     IdeaLabErrorV1);
@@ -278,7 +318,7 @@ test("CR12B-IDEA-110G rejects behavioral and pre-aborted signals before private 
 
   const operationPort = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(operationPort);
   await open(connector);
-  const preOperation = new AbortController(); preOperation.abort();
+  const preOperation = createHostCancellationControllerV1(); preOperation.abort();
   await assert.rejects(() => collect((collector) => connector.requestFixedOperation(
     operationInput("session.create", preOperation.signal), collector)), IdeaLabErrorV1);
   assert.deepEqual(operationPort.calls, ["open:local_loopback"]);

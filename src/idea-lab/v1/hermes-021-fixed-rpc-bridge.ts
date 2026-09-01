@@ -1,10 +1,15 @@
 import { z } from "zod";
 import { sha256Digest } from "../../security";
 import {
+  createHostCancellationControllerV1,
   createHostResultCollectorV1,
   dataMethodV1,
   exactHostDataArrayV1,
+  hostCancellationAbortedV1,
   isHostProxyV1,
+  subscribeHostCancellationV1,
+  type HostCancellationControllerV1,
+  type HostCancellationSignalV1,
   type HostResultCollectorV1,
 } from "../../security/host-value";
 import { IdeaLabErrorV1 } from "./errors";
@@ -53,7 +58,7 @@ export interface IdeaLabHermes021ConnectorPrivateRpcV1 {
     profileIdentityDigest: string;
     conversationIdentityDigest: string;
     sourceManifestDigest: string;
-    signal: AbortSignal;
+    signal: HostCancellationSignalV1;
   }>, collector: HostResultCollectorV1): Promise<void>;
   requestFixedOperation(input: Readonly<{
     contractVersion: typeof IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1;
@@ -63,7 +68,7 @@ export interface IdeaLabHermes021ConnectorPrivateRpcV1 {
     permitDigest: string;
     operation: IdeaLabHermes021FixedOperationV1;
     parameters: Readonly<Record<string, unknown>>;
-    signal: AbortSignal;
+    signal: HostCancellationSignalV1;
   }>, collector: HostResultCollectorV1): Promise<void>;
   closeFixedRoute(input: Readonly<{
     contractVersion: typeof IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1;
@@ -71,7 +76,7 @@ export interface IdeaLabHermes021ConnectorPrivateRpcV1 {
     routeLeaseDigest?: string;
     attemptId: string;
     permitDigest: string;
-    signal: AbortSignal;
+    signal: HostCancellationSignalV1;
   }>, collector: HostResultCollectorV1): Promise<void>;
 }
 
@@ -205,7 +210,8 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     routeLeaseDigest?: string; sessionIdentityDigest?: string; epochDigest?: string };
   #executeStarted = false;
   #cleanupStarted = false;
-  #executeController?: AbortController;
+  #executeController?: HostCancellationControllerV1;
+  #unsubscribeExecuteInput?: () => void;
   #executeSettled?: Promise<void>;
   #resolveExecuteSettled?: () => void;
   #sessionCleanupRequired = false;
@@ -231,10 +237,12 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
       throw new IdeaLabErrorV1("authorization_denied");
     }
     this.#executeStarted = true;
-    this.#executeController = new AbortController();
+    this.#executeController = createHostCancellationControllerV1();
     const inputAbort = () => this.#executeController?.abort();
-    if (input.signal.aborted) inputAbort();
-    else input.signal.addEventListener("abort", inputAbort, { once: true });
+    const inputSubscription = subscribeHostCancellationV1(input.signal, inputAbort);
+    if (!inputSubscription) throw new IdeaLabErrorV1("invalid_input");
+    if (inputSubscription.status === "aborted") inputAbort();
+    else this.#unsubscribeExecuteInput = inputSubscription.unsubscribe;
     const executionInput = { ...input, signal: this.#executeController.signal };
     this.#executeSettled = new Promise<void>((resolve) => { this.#resolveExecuteSettled = resolve; });
     this.#binding = { connectorRouteDigest: input.connectorRouteDigest, attemptId: input.attemptId,
@@ -327,7 +335,8 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
       { ...base, sequence: 4, type: "session.complete", payload: { status: "settled" } },
     ] });
     } finally {
-      input.signal.removeEventListener("abort", inputAbort);
+      this.#unsubscribeExecuteInput?.();
+      this.#unsubscribeExecuteInput = undefined;
       this.#resolveExecuteSettled?.();
       this.#resolveExecuteSettled = undefined;
     }
@@ -433,7 +442,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
   }
 
   #assertExecutionActive(): void {
-    if (this.#cleanupStarted || this.#executeController?.signal.aborted) {
+    if (this.#cleanupStarted || hostCancellationAbortedV1(this.#executeController?.signal) !== false) {
       throw new IdeaLabErrorV1("integrity_failed");
     }
   }

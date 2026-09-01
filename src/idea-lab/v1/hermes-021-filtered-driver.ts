@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { sha256Digest } from "../../security";
 import {
+  createHostCancellationControllerV1,
   createHostResultCollectorV1,
   dataMethodV1,
   exactHostDataArrayV1,
   exactHostDataSnapshotV1,
   isHostProxyV1,
+  type HostCancellationSignalV1,
   type HostResultCollectorV1,
 } from "../../security/host-value";
 import { IdeaLabErrorV1 } from "./errors";
@@ -99,9 +101,9 @@ export interface Hermes021IdeaLabGatewayPortV1 {
     profileIdentityDigest: string;
     conversationIdentityDigest: string;
     maximumOutputCharacters: 800;
-    signal: AbortSignal;
+    signal: HostCancellationSignalV1;
   }>, collector: HostResultCollectorV1): Promise<void>;
-  cleanup(input: Readonly<{ markerDigest: string; sessionIdentityDigest?: string; signal: AbortSignal }>,
+  cleanup(input: Readonly<{ markerDigest: string; sessionIdentityDigest?: string; signal: HostCancellationSignalV1 }>,
     collector: HostResultCollectorV1): Promise<void>;
 }
 
@@ -224,7 +226,7 @@ export class Hermes021IdeaLabFilteredDriverV1 implements IdeaLabBotPanelDriverV1
       || binding.conversationIdentityDigest !== input.evidence.conversationIdDigest) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
-    const controller = new AbortController(), handoff = createHostResultCollectorV1();
+    const controller = createHostCancellationControllerV1(), handoff = createHostResultCollectorV1();
     let timer: ReturnType<typeof setTimeout> | undefined, sessionIdentityDigest: string | undefined;
     const operation = Promise.resolve().then(() => this.#execute({
       markerDigest: input.markerDigest,
@@ -264,7 +266,7 @@ export class Hermes021IdeaLabFilteredDriverV1 implements IdeaLabBotPanelDriverV1
   }
 
   async #cleanupExact(markerDigest: string, sessionIdentityDigest?: string): Promise<string> {
-    const cleanup = createHostResultCollectorV1(), controller = new AbortController();
+    const cleanup = createHostResultCollectorV1(), controller = createHostCancellationControllerV1();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const operation = Promise.resolve(this.#cleanup({ markerDigest,

@@ -3,7 +3,11 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { canonicalJson, sha256Digest } from "../src/security/index.ts";
-import { createHostResultCollectorV1 } from "../src/security/host-value.ts";
+import {
+  createHostCancellationControllerV1,
+  createHostResultCollectorV1,
+  subscribeHostCancellationV1,
+} from "../src/security/host-value.ts";
 import {
   IDEA_LAB_HERMES_021_CONNECTION_ENROLLMENT_V1,
   IDEA_LAB_HERMES_021_GATEWAY_OPERATION_SET_DIGEST_V1,
@@ -132,7 +136,7 @@ function executeInput(bundle = permit()) {
     round: 1, safeInstruction: "Return only the bounded structured opinion.", runtimeIdentityDigest: digest("runtime"),
     profileIdentityDigest: bundle.envelope.body.profileIdentityDigest,
     conversationIdentityDigest: bundle.envelope.body.conversationIdentityDigest,
-    maximumOutputCharacters: 800 as const, signal: new AbortController().signal };
+    maximumOutputCharacters: 800 as const, signal: createHostCancellationControllerV1().signal };
 }
 
 test("CR12B-IDEA-110A verifies an exact signed one-use owner window against one enrolled route", () => {
@@ -187,7 +191,8 @@ test("CR12B-IDEA-110D preserves concrete collaborator receivers across the gatew
     permitEnvelope: bundle.envelope, permitContext: bundle.context, spendStore: spend,
     nativeBridge: native, now: () => "2026-09-01T10:04:00.000Z" });
   await port.execute(executeInput(bundle), createHostResultCollectorV1().collector);
-  await port.cleanup({ markerDigest: bundle.envelope.body.markerDigest, signal: new AbortController().signal },
+  await port.cleanup({ markerDigest: bundle.envelope.body.markerDigest,
+    signal: createHostCancellationControllerV1().signal },
     createHostResultCollectorV1().collector);
   assert.deepEqual(spend.events, ["claimed", "execute_returned", "cleanup_completed"]);
   assert.deepEqual(native.calls, ["execute", "cleanup"]);
@@ -258,13 +263,17 @@ test("CR12B-IDEA-110E rejects gateway wrapper accessors without executing them",
 });
 
 test("CR12B-IDEA-110D records execution ambiguity before concurrent cleanup completion", async () => {
-  const bundle = permit(), spend = store(), controller = new AbortController();
+  const bundle = permit(), spend = store(), controller = createHostCancellationControllerV1();
   let entered!: () => void;
   const started = new Promise<void>((resolve) => { entered = resolve; });
   const native: IdeaLabHermes021NativeBridgeV1 = {
     async executeFixedSession(input) {
       entered();
-      await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
+      await new Promise<void>((resolve, reject) => {
+        const subscription = subscribeHostCancellationV1(input.signal, resolve);
+        if (!subscription) reject(new Error("invalid cancellation"));
+        else if (subscription.status === "aborted") resolve();
+      });
       throw new Error("execution stopped without a definite provider result");
     },
     async cleanupFixedSession(_input, collector) {
@@ -279,7 +288,7 @@ test("CR12B-IDEA-110D records execution ambiguity before concurrent cleanup comp
   await started;
   controller.abort();
   const cleanup = port.cleanup({ markerDigest: bundle.envelope.body.markerDigest,
-    signal: new AbortController().signal }, createHostResultCollectorV1().collector);
+    signal: createHostCancellationControllerV1().signal }, createHostResultCollectorV1().collector);
   await assert.rejects(execution, (error) => error instanceof IdeaLabErrorV1);
   await cleanup;
   assert.deepEqual(spend.events.map((event) => [event.type, event.outcome]), [
@@ -302,7 +311,7 @@ test("CR12B-IDEA-110A requires cleanup and terminally records uncertain executio
     nativeBridge: cleanupBridge.value, now: () => "2026-09-01T10:04:00.000Z" });
   await cleanupPort.execute(executeInput(exact), createHostResultCollectorV1().collector);
   await assert.rejects(() => cleanupPort.cleanup({ markerDigest: exact.envelope.body.markerDigest,
-    signal: new AbortController().signal }, createHostResultCollectorV1().collector),
+    signal: createHostCancellationControllerV1().signal }, createHostResultCollectorV1().collector),
   (error) => error instanceof IdeaLabErrorV1);
   assert.equal(cleanupSpend.events.at(-1)?.outcome, "cleanup_uncertain");
 });

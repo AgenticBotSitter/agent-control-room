@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { sha256Digest } from "../src/security/index.ts";
+import { subscribeHostCancellationV1 } from "../src/security/host-value.ts";
 import {
   Hermes021IdeaLabFilteredDriverV1,
   IdeaLabErrorV1,
@@ -160,9 +161,13 @@ test("CR12B-IDEA-080 rejects runtime and participant drift before gateway contac
 test("CR12B-IDEA-080 timeout aborts the port, requires cleanup, and never returns a contribution", async () => {
   const target = setup(); let executionAborted = false, cleanupCalls = 0;
   const driver = new Hermes021IdeaLabFilteredDriverV1(port(async (input) => {
-    await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => {
-      executionAborted = true; resolve();
-    }, { once: true }));
+    await new Promise<void>((resolve, reject) => {
+      const subscription = subscribeHostCancellationV1(input.signal, () => {
+        executionAborted = true; resolve();
+      });
+      if (!subscription) reject(new Error("invalid cancellation"));
+      else if (subscription.status === "aborted") { executionAborted = true; resolve(); }
+    });
   }, (input) => { cleanupCalls += 1; return cleanupReceipt(input.markerDigest, input.sessionIdentityDigest); }), 5);
   await assert.rejects(driver.invoke(target.input), (error) => error instanceof IdeaLabErrorV1);
   assert.deepEqual([executionAborted, cleanupCalls], [true, 1]);

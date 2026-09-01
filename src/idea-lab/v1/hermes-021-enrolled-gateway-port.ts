@@ -4,7 +4,9 @@ import { canonicalJson, sha256Digest } from "../../security";
 import {
   dataMethodV1,
   exactHostDataSnapshotV1,
+  hostCancellationAbortedV1,
   isHostProxyV1,
+  type HostCancellationSignalV1,
   type HostResultCollectorV1,
 } from "../../security/host-value";
 import { IdeaLabErrorV1 } from "./errors";
@@ -262,7 +264,7 @@ export interface IdeaLabHermes021NativeBridgeV1 {
     mcpEnabled: false;
     pluginsEnabled: false;
     genericShellEnabled: false;
-    signal: AbortSignal;
+    signal: HostCancellationSignalV1;
   }>, collector: HostResultCollectorV1): Promise<void>;
   cleanupFixedSession(input: Readonly<{
     connectionId: string;
@@ -271,7 +273,7 @@ export interface IdeaLabHermes021NativeBridgeV1 {
     permitDigest: string;
     markerDigest: string;
     sessionIdentityDigest?: string;
-    signal: AbortSignal;
+    signal: HostCancellationSignalV1;
   }>, collector: HostResultCollectorV1): Promise<void>;
 }
 
@@ -359,7 +361,8 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
         throw new IdeaLabErrorV1("authorization_denied");
       }
       const dispatched = Date.parse(dispatchedAt);
-      if (this.#cleanupStarted || input.signal.aborted || !Number.isFinite(dispatched) || dispatched < claimed
+      if (this.#cleanupStarted || hostCancellationAbortedV1(input.signal) !== false
+        || !Number.isFinite(dispatched) || dispatched < claimed
         || dispatched < Date.parse(this.#permit.issuedAt) || dispatched >= Date.parse(this.#permit.expiresAt)) {
         await this.#settleExact("terminal_ambiguity",
           Number.isFinite(dispatched) && dispatched >= claimed ? dispatchedAt : claimedAt);
