@@ -4,9 +4,11 @@ import { hmacSha256Tag } from "../../security";
 import { dataMethodV1, exactHostUint8ArrayV1, isHostProxyV1 } from "../../security/host-value";
 import { IdeaLabErrorV1 } from "./errors";
 import { buildIdeaLabBotRunV1, parseIdeaLabBotRunV1, type IdeaLabBotAttemptV1, type IdeaLabBotRunV1 } from "./coordinator";
+import { capturedIdeaTimeMillisecondsV1 } from "./schemas";
 
 interface Row { version: number|string; payload: unknown; run_digest: string; run_auth_tag: string }
 function same(a: string,b: string): boolean { const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y); }
+function time(value:string):number{const milliseconds=capturedIdeaTimeMillisecondsV1(value);if(milliseconds===undefined)throw new IdeaLabErrorV1("integrity_failed");return milliseconds;}
 
 export class IdeaLabBotRunStoreV1 {
   readonly #db: DatabaseClient; readonly #key: Uint8Array;
@@ -19,7 +21,7 @@ export class IdeaLabBotRunStoreV1 {
   async get(runId:string):Promise<IdeaLabBotRunV1|undefined>{
     const rows=await this.#db.query<Row>(`SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version`,[runId]);
     let prior:IdeaLabBotRunV1|undefined;for(let index=0;index<rows.rows.length;index+=1){const run=this.#verify(rows.rows[index]!);
-      if(Number(rows.rows[index]!.version)!==index+1||prior&&(run.sessionDigest!==prior.sessionDigest||run.attempts.length<prior.attempts.length||Date.parse(run.updatedAt)<Date.parse(prior.updatedAt)))throw new IdeaLabErrorV1("integrity_failed");prior=run;}
+      if(Number(rows.rows[index]!.version)!==index+1||prior&&(run.sessionDigest!==prior.sessionDigest||run.attempts.length<prior.attempts.length||time(run.updatedAt)<time(prior.updatedAt)))throw new IdeaLabErrorV1("integrity_failed");prior=run;}
     return prior;
   }
   async prepare(run:IdeaLabBotRunV1):Promise<IdeaLabBotRunV1>{

@@ -12,7 +12,8 @@ import {
   ideaLabHermes021PanelPacketV1,
 } from "./hermes-021-panel-packet";
 import { hermes021IdeaLabNativeQualificationPlanV1 } from "./hermes-021-native-qualification";
-import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1,
+  ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_OWNER_READY_LIVE_PACKET_V1 = "control-room-idea-lab-owner-ready-live-packet/v1" as const;
 export const IDEA_LAB_NATIVE_QUALIFICATION_CANDIDATE_V1 =
@@ -263,8 +264,9 @@ function validateCandidate(parsed: IdeaLabNativeQualificationCandidateV1): void 
   const completeEvidence = parsed.protectedValueCustodyEvidenceDigest !== null
     && parsed.sequenceReplayEvidenceDigest !== null && parsed.usageEvidenceDigest !== null
     && parsed.interruptReconciliationEvidenceDigest !== null && parsed.cleanupEvidenceDigest !== null;
-  if (Date.parse(parsed.settledAt) < Date.parse(parsed.attemptedAt)
-    || Date.parse(parsed.settledAt) - Date.parse(parsed.attemptedAt) > 300_000
+  const attempted = capturedIdeaTimeMillisecondsV1(parsed.attemptedAt)!;
+  const settled = capturedIdeaTimeMillisecondsV1(parsed.settledAt)!;
+  if (settled < attempted || settled - attempted > 300_000
     || (parsed.outcome === "failed_definite" && ((parsed.disposableProfileCreated && !parsed.disposableProfileRemoved)
       || (parsed.disposableWorkspaceCreated && !parsed.disposableWorkspaceRemoved) || !parsed.processStopped))
     || (parsed.outcome === "terminal_ambiguity" && parsed.providerCallsMade !== 1)

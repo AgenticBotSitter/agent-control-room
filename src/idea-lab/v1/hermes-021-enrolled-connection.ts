@@ -8,7 +8,8 @@ import {
   IDEA_LAB_HERMES_021_REVISION_V1,
   IDEA_LAB_HERMES_021_SOURCE_PREFLIGHT_DIGEST_V1,
 } from "./hermes-021-panel-packet";
-import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1,
+  ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_021_CONNECTION_SOURCE_V1 =
   "control-room-hermes-021-built-in-connection-source/v1" as const;
@@ -253,8 +254,9 @@ export function sanitizeIdeaLabHermes021ConnectionEnrollmentV1(
     || body.route.sshHostKeyFingerprintDigest !== context.expectedSshHostKeyFingerprintDigest) {
     throw new IdeaLabErrorV1("scope_mismatch");
   }
-  const issued = Date.parse(body.issuedAt), expires = Date.parse(body.expiresAt), evaluated = Date.parse(context.evaluatedAt);
-  if (![issued, expires, evaluated].every(Number.isFinite) || issued > evaluated || expires <= evaluated
+  const issued = capturedIdeaTimeMillisecondsV1(body.issuedAt), expires = capturedIdeaTimeMillisecondsV1(body.expiresAt);
+  const evaluated = capturedIdeaTimeMillisecondsV1(context.evaluatedAt);
+  if (issued === undefined || expires === undefined || evaluated === undefined || issued > evaluated || expires <= evaluated
     || expires <= issued || expires - issued > 86_400_000) throw new IdeaLabErrorV1("integrity_failed");
   const material = {
     contractVersion: IDEA_LAB_HERMES_021_CONNECTION_SAFE_RESULT_V1,
@@ -314,8 +316,11 @@ export function buildIdeaLabHermes021ConnectionRosterV1(input: {
   const connectionIds = connections.map((item) => item.connectionId);
   const routes = connections.map((item) => item.connectorRouteDigest);
   const profiles = connections.map((item) => item.profileIdentityDigest);
-  if (connections.some((item) => item.tenantId !== header.tenantId || Date.parse(item.expiresAt) <= Date.parse(header.evaluatedAt))
-    || new Set(connectionIds).size !== connectionIds.length || new Set(routes).size !== routes.length
+  const evaluated = capturedIdeaTimeMillisecondsV1(header.evaluatedAt)!;
+  let invalidConnection = false;
+  for (const connection of connections) if (connection.tenantId !== header.tenantId
+    || capturedIdeaTimeMillisecondsV1(connection.expiresAt)! <= evaluated) { invalidConnection = true; break; }
+  if (invalidConnection || new Set(connectionIds).size !== connectionIds.length || new Set(routes).size !== routes.length
     || new Set(profiles).size !== profiles.length) throw new IdeaLabErrorV1("integrity_failed");
   const material = {
     contractVersion: IDEA_LAB_HERMES_021_CONNECTION_ROSTER_V1,

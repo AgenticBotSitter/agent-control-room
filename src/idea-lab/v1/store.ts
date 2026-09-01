@@ -10,8 +10,9 @@ import {
 } from "./contracts";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
-import { CONTROL_ROOM_IDEA_ADAPTER_V1, ideaCodeSchemaV1, ideaContributionSchemaV1, ideaDecisionSchemaV1,
-  ideaDigestSchemaV1, ideaIdSchemaV1, ideaSynthesisSchemaV1, ideaTimeSchemaV1, projectLifecycleStatesV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, capturedIdeaTimeStringV1, CONTROL_ROOM_IDEA_ADAPTER_V1,
+  ideaCodeSchemaV1, ideaContributionSchemaV1, ideaDecisionSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1,
+  ideaSynthesisSchemaV1, ideaTimeSchemaV1, projectLifecycleStatesV1 } from "./schemas";
 import type { IdeaLabContributionV1, IdeaLabDecisionV1, IdeaLabSessionV1, IdeaLabSynthesisV1,
   ProjectLifecycleEventV1, ProjectRegistryProjectionV1 } from "./types";
 
@@ -34,7 +35,16 @@ const ownerAuthorizationPayloadSchema = z.object({ authorizationId: ideaIdSchema
   requestDigest: ideaDigestSchemaV1, authorizedAt: ideaTimeSchemaV1, expiresAt: ideaTimeSchemaV1,
   grantsApproval: z.literal(false), grantsExecutionAuthority: z.literal(false), authorizationDigest: ideaDigestSchemaV1 }).strict();
 
-function iso(value: string|Date): string { return typeof value === "string" ? new Date(value).toISOString() : value.toISOString(); }
+function iso(value: string|Date): string {
+  const formatted = capturedIdeaTimeStringV1(value);
+  if (!formatted) throw new IdeaLabErrorV1("integrity_failed");
+  return formatted;
+}
+function time(value: string): number {
+  const milliseconds = capturedIdeaTimeMillisecondsV1(value);
+  if (milliseconds === undefined) throw new IdeaLabErrorV1("integrity_failed");
+  return milliseconds;
+}
 function safeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left), b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b);
 }
@@ -219,9 +229,11 @@ export class IdeaLabProjectRegistryStoreV1 {
     return this.#transaction(async tx=>{const policy=await tx.query<{identity_id:string;action:string;resource_type:string;resource_id:string;allowed:boolean;request_digest:string;grant_ids:string[];decided_at:string|Date;expires_at:string|Date}>(
       `SELECT identity_id,action,resource_type,resource_id,allowed,request_digest,grant_ids,decided_at,expires_at FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,[decision.tenantId,input.policyDecisionId]);
       const row=policy.rows[0];if(!row||!row.allowed||row.action!=="idea_lab.owner_decide"||row.resource_type!=="idea_lab_session"||row.resource_id!==decision.sessionId
-        ||iso(row.decided_at)!==decision.decidedAt||Date.parse(iso(row.expires_at))<=Date.parse(decision.decidedAt))throw new IdeaLabErrorV1("authorization_denied");
+        ||iso(row.decided_at)!==decision.decidedAt||time(iso(row.expires_at))<=time(decision.decidedAt))throw new IdeaLabErrorV1("authorization_denied");
       const grants=await tx.query<{id:string;role_key:string;revoked_at?:string;expires_at?:string}>(`SELECT id,role_key,revoked_at,expires_at FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2`,[decision.tenantId,row.identity_id]);
-      const matched=new Set(row.grant_ids),owner=grants.rows.some(g=>matched.has(g.id)&&g.role_key==="owner"&&!g.revoked_at&&(!g.expires_at||Date.parse(g.expires_at)>Date.parse(decision.decidedAt)));
+      const matched=new Set(row.grant_ids);let owner=false;
+      for(const grant of grants.rows)if(matched.has(grant.id)&&grant.role_key==="owner"&&!grant.revoked_at
+        &&(!grant.expires_at||time(grant.expires_at)>time(decision.decidedAt))){owner=true;break;}
       const ownerDigest=sha256Digest({tenantId:decision.tenantId,identityId:row.identity_id,purpose:"idea_lab_owner_v1"});
       if(!owner||decision.ownerIdentityDigest!==ownerDigest)throw new IdeaLabErrorV1("authorization_denied");
       const material={authorizationId:input.authorizationId,tenantId:decision.tenantId,sessionId:decision.sessionId,
@@ -240,7 +252,7 @@ export class IdeaLabProjectRegistryStoreV1 {
     if(!authorization.rows[0])throw new IdeaLabErrorV1("authorization_denied");const permit=parseExactIdeaLabV1(ownerAuthorizationPayloadSchema,authorization.rows[0].payload);
     this.#verifyTag("owner_authorization",permit.tenantId,permit.authorizationId,permit.authorizationDigest,authorization.rows[0].authorization_auth_tag);
     if(permit.authorizationDigest!==authorizationDigest||permit.ideaDecisionDigest!==raw.decisionDigest||permit.ideaDecisionId!==raw.decisionId
-      ||Date.parse(permit.expiresAt)<=Date.parse(raw.decidedAt))throw new IdeaLabErrorV1("authorization_denied");
+      ||time(permit.expiresAt)<=time(raw.decidedAt))throw new IdeaLabErrorV1("authorization_denied");
     return this.recordDecision(value);
   }
 
@@ -289,7 +301,7 @@ export class IdeaLabProjectRegistryStoreV1 {
       const current=await this.#projectWith(txQuery,input.tenantId,input.projectId);
       if(!current)throw new IdeaLabErrorV1("not_found"); if(current.version!==input.expectedVersion)throw new IdeaLabErrorV1("state_conflict");
       assertProjectLifecycleTransitionV1(current.lifecycleState,input.toState);
-      if(Date.parse(input.occurredAt)<Date.parse(current.updatedAt))throw new IdeaLabErrorV1("state_conflict");
+      if(time(input.occurredAt)<time(current.updatedAt))throw new IdeaLabErrorV1("state_conflict");
       const snapshot:ProjectSnapshotMaterialV1={tenantId:current.tenantId,workspaceId:current.workspaceId,projectId:current.projectId,
         sourceIdeaSessionId:current.sourceIdeaSessionId,sourceDecisionDigest:current.sourceDecisionDigest,
         workspaceName:current.workspaceName,title:current.title,summary:current.summary,projectKind:current.projectKind,

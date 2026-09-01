@@ -18,7 +18,8 @@ import {
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import type { IdeaLabHermes021QualificationSpendStoreV1 } from "./hermes-021-enrolled-gateway-port";
-import { ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, capturedIdeaTimeStringV1, ideaDigestSchemaV1, ideaIdSchemaV1,
+  ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_021_QUALIFICATION_SPEND_EVENT_V1 =
   "control-room-hermes-021-qualification-spend-event/v1" as const;
@@ -93,7 +94,15 @@ function checkpointMaterial(scope: string, rows: readonly SpendRow[]) {
 }
 
 function rowTime(row: SpendRow): string {
-  return row.occurred_at instanceof Date ? row.occurred_at.toISOString() : new Date(row.occurred_at).toISOString();
+  const formatted = capturedIdeaTimeStringV1(row.occurred_at);
+  if (!formatted) throw new IdeaLabErrorV1("integrity_failed");
+  return formatted;
+}
+
+function time(value: string): number {
+  const milliseconds = capturedIdeaTimeMillisecondsV1(value);
+  if (milliseconds === undefined) throw new IdeaLabErrorV1("integrity_failed");
+  return milliseconds;
 }
 
 export class IdeaLabHermes021QualificationSpendDatabaseStoreV1
@@ -153,7 +162,7 @@ implements IdeaLabHermes021QualificationSpendStoreV1 {
         || !validKind || row.previous_record_digest !== previous || sha256Digest(material) !== row.record_digest
         || !same(hmacSha256Tag(this.#stateKey, { ...material, recordDigest: row.record_digest }), row.record_auth_tag)
         || (index > 0 && (row.attempt_id !== rows[0]!.attempt_id || row.marker_digest !== rows[0]!.marker_digest
-          || Date.parse(occurredAt) < Date.parse(rowTime(rows[index - 1]!))))) {
+          || time(occurredAt) < time(rowTime(rows[index - 1]!))))) {
         throw new IdeaLabErrorV1("integrity_failed");
       }
       previous = row.record_digest;

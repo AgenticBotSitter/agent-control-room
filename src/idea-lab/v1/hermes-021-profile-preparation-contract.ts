@@ -4,7 +4,8 @@ import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import { IDEA_LAB_HERMES_021_REVISION_V1 } from "./hermes-021-panel-packet";
 import { ideaLabOwnerReadyLivePacketV1 } from "./owner-ready-live-packet";
-import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1,
+  ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_PROFILE_PREPARATION_CONTRACT_V1 =
   "control-room-hermes-profile-preparation/v1" as const;
@@ -132,8 +133,9 @@ export function buildIdeaLabHermesProfilePreparationRequestV1(input: {
   const parsedInput = parseExactIdeaLabV1(z.object({ requestId: ideaIdSchemaV1,
     sourceProfileSelectorDigest: ideaDigestSchemaV1, nonceDigest: ideaDigestSchemaV1,
     issuedAt: ideaTimeSchemaV1, expiresAt: ideaTimeSchemaV1 }).strict(), input);
-  const issued = Date.parse(parsedInput.issuedAt), expires = Date.parse(parsedInput.expiresAt);
-  if (!Number.isFinite(issued) || !Number.isFinite(expires) || expires <= issued || expires - issued > 60_000) {
+  const issued = capturedIdeaTimeMillisecondsV1(parsedInput.issuedAt)!;
+  const expires = capturedIdeaTimeMillisecondsV1(parsedInput.expiresAt)!;
+  if (expires <= issued || expires - issued > 60_000) {
     throw new IdeaLabErrorV1("invalid_input");
   }
   const material = {
@@ -168,7 +170,8 @@ export function parseIdeaLabHermesProfilePreparationRequestV1(value: unknown):
   const parsed = parseExactIdeaLabV1(requestSchema, value);
   const unsigned = { ...parsed } as Record<string, unknown>;
   delete unsigned.requestDigest;
-  const issued = Date.parse(parsed.issuedAt), expires = Date.parse(parsed.expiresAt);
+  const issued = capturedIdeaTimeMillisecondsV1(parsed.issuedAt)!;
+  const expires = capturedIdeaTimeMillisecondsV1(parsed.expiresAt)!;
   if (sha256Digest(unsigned) !== parsed.requestDigest || expires <= issued || expires - issued > 60_000) {
     throw new IdeaLabErrorV1("integrity_failed");
   }

@@ -4,7 +4,8 @@ import { SecurityStore, sha256Digest, type VerifiedAuthentication } from "../../
 import { buildIdeaLabDecisionV1 } from "./contracts";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
-import { ideaCodeSchemaV1, ideaIdSchemaV1, projectCreationSpecSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, ideaCodeSchemaV1, ideaIdSchemaV1,
+  projectCreationSpecSchemaV1 } from "./schemas";
 import { IdeaLabProjectRegistryStoreV1 } from "./store";
 import type { IdeaLabDecisionV1, ProjectRegistryProjectionV1 } from "./types";
 
@@ -33,7 +34,8 @@ export class IdeaLabOwnerDecisionServiceV1 {
     let sessionId: string, intent: z.infer<typeof ownerIntentSchema>;
     try { sessionId = ideaIdSchemaV1.parse(input.sessionId); intent = parseExactIdeaLabV1(ownerIntentSchema, input.intent); }
     catch { throw new IdeaLabOwnerDecisionServiceErrorV1("invalid_owner_decision"); }
-    if ((intent.decision === "create_project") !== !!intent.project || !Number.isFinite(Date.parse(input.now))) {
+    if ((intent.decision === "create_project") !== !!intent.project
+      || capturedIdeaTimeMillisecondsV1(input.now) === undefined) {
       throw new IdeaLabOwnerDecisionServiceErrorV1("invalid_owner_decision");
     }
     let session, synthesis, contributions;

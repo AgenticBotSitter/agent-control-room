@@ -3,7 +3,8 @@ import { sha256Digest } from "../../security";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import { buildIdeaLabContributionV1, parseIdeaLabSessionV1 } from "./contracts";
-import { ideaCodeSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaParticipantSchemaV1, ideaTextSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, capturedIdeaTimeNowV1, ideaCodeSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1,
+  ideaParticipantSchemaV1, ideaTextSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 import type { IdeaLabContributionV1, IdeaLabParticipantV1, IdeaLabSessionV1 } from "./types";
 import type { IdeaLabBotRunStoreV1 } from "./coordinator-store";
 import type { IdeaLabProjectRegistryStoreV1 } from "./store";
@@ -68,6 +69,12 @@ function withoutDigest<T extends Record<string, unknown>>(value: T, key: string)
   const result = { ...value }; delete result[key]; return result;
 }
 
+function timeMillisecondsV1(value: string): number {
+  const milliseconds = capturedIdeaTimeMillisecondsV1(value);
+  if (milliseconds === undefined) throw new IdeaLabErrorV1("integrity_failed");
+  return milliseconds;
+}
+
 export function parseIdeaLabProviderSessionEvidenceV1(value: unknown, sessionValue: unknown): IdeaLabProviderSessionEvidenceV1 {
   const session = parseIdeaLabSessionV1(sessionValue);
   const parsed = parseExactIdeaLabV1(ideaLabProviderSessionEvidenceSchemaV1, value);
@@ -76,7 +83,8 @@ export function parseIdeaLabProviderSessionEvidenceV1(value: unknown, sessionVal
   if (sha256Digest(withoutDigest(parsed, "evidenceDigest")) !== parsed.evidenceDigest || !participant
     || parsed.tenantId !== session.tenantId || parsed.workspaceId !== session.workspaceId
     || parsed.sessionId !== session.sessionId || parsed.sessionDigest !== session.sessionDigest
-    || parsed.participantIdentityDigest !== participant.identityDigest || Date.parse(parsed.expiresAt) <= Date.parse(parsed.capturedAt)
+    || parsed.participantIdentityDigest !== participant.identityDigest
+    || timeMillisecondsV1(parsed.expiresAt) <= timeMillisecondsV1(parsed.capturedAt)
     || (fake && (parsed.harnessPackage !== "control_room_fake" || parsed.liveProviderAuthorized || parsed.providerContacted))
     || (!fake && (parsed.harnessPackage !== "hermes_agent" || !parsed.liveProviderAuthorized || !parsed.providerContacted))) {
     throw new IdeaLabErrorV1("integrity_failed");
@@ -109,12 +117,18 @@ export function buildRepositoryFakeProviderEvidenceV1(sessionValue: unknown, par
 
 export function parseIdeaLabBotRunV1(value: unknown): IdeaLabBotRunV1 {
   const parsed = parseExactIdeaLabV1(ideaLabBotRunSchemaV1, value);
+  let invalidAttemptChronology = false;
+  for (let index = 0; index < parsed.attempts.length; index += 1) {
+    const item = parsed.attempts[index]!;
+    if (item.settledAt && timeMillisecondsV1(item.settledAt) < timeMillisecondsV1(item.startedAt)
+      || index > 0 && timeMillisecondsV1(item.startedAt) < timeMillisecondsV1(parsed.attempts[index - 1]!.startedAt)) {
+      invalidAttemptChronology = true; break;
+    }
+  }
   if (sha256Digest(withoutDigest(parsed, "runDigest")) !== parsed.runDigest
     || parsed.messagesUsed !== parsed.attempts.filter((item) => item.state === "completed").length
     || parsed.costUsd !== parsed.attempts.reduce((sum, item) => sum + (item.state === "completed" ? item.costUsd : 0), 0)
-    || new Set(parsed.evidenceDigests).size !== parsed.evidenceDigests.length
-    || parsed.attempts.some((item, index) => item.settledAt && Date.parse(item.settledAt) < Date.parse(item.startedAt)
-      || index > 0 && Date.parse(item.startedAt) < Date.parse(parsed.attempts[index - 1]!.startedAt))) {
+    || new Set(parsed.evidenceDigests).size !== parsed.evidenceDigests.length || invalidAttemptChronology) {
     throw new IdeaLabErrorV1("integrity_failed");
   }
   return parsed;
@@ -168,7 +182,7 @@ export class DeterministicIdeaLabFakeDriverV1 implements IdeaLabBotPanelDriverV1
 
 export class IdeaLabBotCoordinatorV1 {
   constructor(private readonly ledger: IdeaLabBotRunStoreV1, private readonly registry: IdeaLabProjectRegistryStoreV1,
-    private readonly driver: IdeaLabBotPanelDriverV1, private readonly clock: () => string = () => new Date().toISOString(),
+    private readonly driver: IdeaLabBotPanelDriverV1, private readonly clock: () => string = capturedIdeaTimeNowV1,
     private readonly providerEvidenceAuthority?: IdeaLabProviderEvidenceAuthorityV1,
     private readonly livePanelAdmissionAuthority?: IdeaLabLivePanelAdmissionAuthorityV1) {}
 
@@ -182,8 +196,12 @@ export class IdeaLabBotCoordinatorV1 {
       || session.participants.some((p) => !evidence.some((item) => item.participantId === p.participantId))) {
       throw new IdeaLabErrorV1("scope_mismatch");
     }
-    const now = this.clock();
-    if (evidence.some((item) => Date.parse(item.capturedAt) > Date.parse(now) || Date.parse(item.expiresAt) <= Date.parse(now))) {
+    const now = this.clock(), nowMilliseconds = capturedIdeaTimeMillisecondsV1(now);
+    if (nowMilliseconds === undefined) throw new IdeaLabErrorV1("integrity_failed");
+    let evidenceChronologyInvalid = false;
+    for (const item of evidence) if (timeMillisecondsV1(item.capturedAt) > nowMilliseconds
+      || timeMillisecondsV1(item.expiresAt) <= nowMilliseconds) { evidenceChronologyInvalid = true; break; }
+    if (evidenceChronologyInvalid) {
       throw new IdeaLabErrorV1("scope_mismatch");
     }
     let liveAdmission: IdeaLabLivePanelAdmissionV1 | undefined;
@@ -211,7 +229,7 @@ export class IdeaLabBotCoordinatorV1 {
     if (run.state !== "prepared") return run.state === "running" ? this.ledger.recover(run.runId, this.clock()) : run;
     for (let round = 1; round <= session.maxRounds; round += 1) for (const participant of session.participants) {
       if (input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
-      if (Date.parse(this.clock()) - Date.parse(run.startedAt) >= session.maxDurationSeconds * 1000
+      if (timeMillisecondsV1(this.clock()) - timeMillisecondsV1(run.startedAt) >= session.maxDurationSeconds * 1000
         || run.messagesUsed >= session.maxMessages || run.costUsd >= session.maxCostUsd) {
         return this.ledger.failDefinite(run.runId, "budget_exhausted_before_provider", this.clock());
       }
@@ -235,7 +253,7 @@ export class IdeaLabBotCoordinatorV1 {
       if (result.outcome === "failed_definite") {
         return this.ledger.settleDefiniteFailure(run.runId, attemptId, result.safeCode, result.providerReceiptDigest, this.clock());
       }
-      if (Date.parse(this.clock()) - Date.parse(run.startedAt) >= session.maxDurationSeconds * 1000) {
+      if (timeMillisecondsV1(this.clock()) - timeMillisecondsV1(run.startedAt) >= session.maxDurationSeconds * 1000) {
         return this.ledger.settleDefiniteFailure(run.runId, attemptId, "duration_budget_exceeded", result.providerReceiptDigest, this.clock());
       }
       if (run.costUsd + result.costUsd > session.maxCostUsd) {

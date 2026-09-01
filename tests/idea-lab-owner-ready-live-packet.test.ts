@@ -136,6 +136,27 @@ test("CR12B-IDEA-100 malformed success, cleanup drift, and re-digested authority
     (error) => error instanceof IdeaLabErrorV1);
 });
 
+test("CR12B-IDEA-110M owner qualification chronology ignores ambient time substitutions", () => {
+  const parse = Date.parse, finite = Number.isFinite, every = Array.prototype.every;
+  let dateParseCalls = 0, finiteCalls = 0, everyCalls = 0;
+  try {
+    Object.defineProperty(Date, "parse", { configurable: true, writable: true,
+      value() { dateParseCalls += 1; return 0; } });
+    Object.defineProperty(Number, "isFinite", { configurable: true, writable: true,
+      value() { finiteCalls += 1; return true; } });
+    Object.defineProperty(Array.prototype, "every", { configurable: true, writable: true,
+      value() { everyCalls += 1; throw new Error("ambient Array.every reached"); } });
+    assert.equal(buildIdeaLabNativeQualificationCandidateV1(qualifiedInput).outcome, "qualified_candidate");
+    assert.throws(() => buildIdeaLabNativeQualificationCandidateV1({ ...qualifiedInput,
+      settledAt: "2026-09-01T03:19:59.000Z" }), (error) => error instanceof IdeaLabErrorV1);
+    assert.deepEqual([dateParseCalls, everyCalls, finiteCalls > 0], [0, 0, true]);
+  } finally {
+    Object.defineProperty(Date, "parse", { configurable: true, writable: true, value: parse });
+    Object.defineProperty(Number, "isFinite", { configurable: true, writable: true, value: finite });
+    Object.defineProperty(Array.prototype, "every", { configurable: true, writable: true, value: every });
+  }
+});
+
 test("CR12B-IDEA-100 exact builders reject Proxy input without executing traps", () => {
   let traps = 0;
   assert.throws(() => buildIdeaLabNativeQualificationCandidateV1(new Proxy(qualifiedInput, {

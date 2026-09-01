@@ -8,7 +8,9 @@ import { buildIdeaLabBotRunV1, buildRepositoryFakeProviderEvidenceV1, IdeaLabBot
 import { IdeaLabBotRunStoreV1 } from "./coordinator-store";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
-import { IDEA_LAB_SESSION_PROJECTION_V1, ideaIdSchemaV1, ideaLabSessionProjectionSchemaV1,
+import { capturedIdeaTimeFromMillisecondsV1, capturedIdeaTimeMillisecondsV1, capturedIdeaTimeNowV1,
+  IDEA_LAB_SESSION_PROJECTION_V1,
+  ideaIdSchemaV1, ideaLabSessionProjectionSchemaV1,
   ideaLabelSchemaV1, ideaParticipantSchemaV1, ideaTextSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 import { IdeaLabProjectRegistryStoreV1 } from "./store";
 import type { IdeaLabContributionV1, IdeaLabParticipantV1, IdeaLabSessionProjectionV1, IdeaLabSynthesisV1 } from "./types";
@@ -49,14 +51,14 @@ export class IdeaLabProtectedOperatorServiceV1 {
     driver:IdeaLabBotPanelDriverV1;clock?:()=>string}){
     if(!config||typeof config!=="object"||isHostProxyV1(config)||!Array.isArray(config.participants)
       ||!config.driver||typeof config.driver!=="object"||isHostProxyV1(config.driver)||config.driver.mode!=="repository_fake")throw new IdeaLabErrorV1("authorization_denied");
-    this.#workspaceId=ideaIdSchemaV1.parse(config.workspaceId);this.#clock=config.clock??(()=>new Date().toISOString());
+    this.#workspaceId=ideaIdSchemaV1.parse(config.workspaceId);this.#clock=config.clock??capturedIdeaTimeNowV1;
     this.#participants=config.participants.map(value=>parseExactIdeaLabV1(ideaParticipantSchemaV1,value));
     if(this.#participants.length<3||this.#participants.length>6||!this.#participants.some(item=>item.perspective==="skeptic"))throw new IdeaLabErrorV1("invalid_input");
     this.#security=new SecurityStore(db);this.#registry=new IdeaLabProjectRegistryStoreV1(db,integrityKey);
     this.#ledger=new IdeaLabBotRunStoreV1(db,integrityKey);this.#coordinator=new IdeaLabBotCoordinatorV1(this.#ledger,this.#registry,config.driver,config.clock);
   }
   #now(){return this.#clock();}
-  #validateTime(requestedAt:string,now:string){const delta=Date.parse(now)-Date.parse(requestedAt);if(!Number.isFinite(delta)||delta< -30_000||delta>300_000)throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request");}
+  #validateTime(requestedAt:string,now:string){const current=capturedIdeaTimeMillisecondsV1(now),requested=capturedIdeaTimeMillisecondsV1(requestedAt);if(current===undefined||requested===undefined||current-requested< -30_000||current-requested>300_000)throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request");}
   async #authorize(authentication:VerifiedAuthentication,input:{decisionId:string;action:string;resourceId:string;occurredAt:string}){
     try{const decision=await this.#security.authorize({decisionId:input.decisionId,authentication,requiredRoleKey:"owner",requiredActorType:"human",request:{tenantId:authentication.tenantId,action:input.action,resourceType:"idea_lab_session",resourceId:input.resourceId,risk:"low",externalEffect:false,occurredAt:input.occurredAt}});if(!decision.allowed)throw new IdeaLabOperatorServiceErrorV1("owner_forbidden");return decision;}
     catch(error){if(error instanceof IdeaLabOperatorServiceErrorV1)throw error;throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
@@ -75,7 +77,9 @@ export class IdeaLabProtectedOperatorServiceV1 {
   async start(value:unknown,authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1>{
     const {input,session,now}=await this.#command(value,authentication,"idea_lab.panel_start");
     const existingRun=await this.#ledger.get(this.runId(session));if(existingRun&&["completed","cancelled","failed_definite","ambiguous"].includes(existingRun.state))return this.current(session,existingRun,now);
-    const evidence=session.participants.map((participant,index)=>buildRepositoryFakeProviderEvidenceV1(session,participant,{evidenceId:`evidence.idea:${sha256Digest({commandId:input.commandId,index}).slice(7,31)}`,capturedAt:input.requestedAt,expiresAt:new Date(Date.parse(input.requestedAt)+300_000).toISOString()}));
+    const expiry = capturedIdeaTimeFromMillisecondsV1(capturedIdeaTimeMillisecondsV1(input.requestedAt)! + 300_000);
+    if (!expiry) throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request");
+    const evidence=session.participants.map((participant,index)=>buildRepositoryFakeProviderEvidenceV1(session,participant,{evidenceId:`evidence.idea:${sha256Digest({commandId:input.commandId,index}).slice(7,31)}`,capturedAt:input.requestedAt,expiresAt:expiry}));
     try{const run=await this.#coordinator.execute({runId:this.runId(session),session,evidence,safePrompt:`Evaluate the bounded idea titled ${session.title}. Retain only a safe structured contribution.`});return this.current(session,run,now);}
     catch(error){if(error instanceof IdeaLabErrorV1&&["duplicate_record","state_conflict"].includes(error.safeCode))throw new IdeaLabOperatorServiceErrorV1("state_conflict");throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
   }

@@ -3,7 +3,8 @@ import { sha256Digest } from "../../security";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import { parseIdeaLabSessionV1 } from "./contracts";
-import { ideaCodeSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, ideaCodeSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1,
+  ideaTimeSchemaV1 } from "./schemas";
 import type { IdeaLabProviderSessionEvidenceV1 } from "./coordinator";
 import type { IdeaLabSessionV1 } from "./types";
 
@@ -137,9 +138,11 @@ export function parseIdeaLabLivePanelAdmissionV1(
   const sessionParticipants = session.participants.map((item) => item.participantId);
   const evidenceParticipants = evidence.map((item) => item.participantId);
   const evidenceDigests = evidence.map((item) => item.evidenceDigest);
-  const issued = Date.parse(parsed.issuedAt), expires = Date.parse(parsed.expiresAt);
-  const windowOpened = Date.parse(parsed.ownerWindow.openedAt), windowExpires = Date.parse(parsed.ownerWindow.expiresAt);
-  const current = Date.parse(now);
+  const issued = capturedIdeaTimeMillisecondsV1(parsed.issuedAt)!;
+  const expires = capturedIdeaTimeMillisecondsV1(parsed.expiresAt)!;
+  const windowOpened = capturedIdeaTimeMillisecondsV1(parsed.ownerWindow.openedAt)!;
+  const windowExpires = capturedIdeaTimeMillisecondsV1(parsed.ownerWindow.expiresAt)!;
+  const current = capturedIdeaTimeMillisecondsV1(now);
   if (sha256Digest(withoutDigest(parsed)) !== parsed.admissionDigest
     || parsed.runId !== runId || parsed.tenantId !== session.tenantId || parsed.workspaceId !== session.workspaceId
     || parsed.sessionId !== session.sessionId || parsed.sessionDigest !== session.sessionDigest
@@ -162,8 +165,7 @@ export function parseIdeaLabLivePanelAdmissionV1(
     || parsed.ceilings.maxRounds !== session.maxRounds || parsed.ceilings.maxMessages !== session.maxMessages
     || parsed.ceilings.maxProviderCalls !== session.maxMessages
     || parsed.ceilings.maxDurationSeconds !== session.maxDurationSeconds || parsed.ceilings.maxCostUsd !== session.maxCostUsd
-    || !ideaTimeSchemaV1.safeParse(now).success || !Number.isFinite(current) || !Number.isFinite(issued) || !Number.isFinite(expires)
-    || !Number.isFinite(windowOpened) || !Number.isFinite(windowExpires)
+    || current === undefined
     || issued < windowOpened || expires > windowExpires || issued > current || expires <= current
     || windowExpires <= windowOpened) {
     throw new IdeaLabErrorV1("scope_mismatch");

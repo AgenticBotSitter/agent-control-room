@@ -8,6 +8,9 @@ import {
   buildIdeaLabFixtureV1,
   buildIdeaLabSessionV1,
   buildIdeaLabSynthesisV1,
+  capturedIdeaTimeFromMillisecondsV1,
+  capturedIdeaTimeMillisecondsV1,
+  ideaTimeSchemaV1,
   parseIdeaLabSessionV1,
   parseProjectRegistryProjectionV1,
 } from "../src/idea-lab/v1/index.ts";
@@ -16,6 +19,35 @@ import { observedProxy } from "./proxy-test-helper.ts";
 function expectCode(operation: () => unknown, code: IdeaLabErrorV1["safeCode"]): void {
   assert.throws(operation, (error: unknown) => error instanceof IdeaLabErrorV1 && error.safeCode === code);
 }
+
+test("CR12B-IDEA-110M validates real calendar time through captured operations", () => {
+  for (const invalid of ["2026-02-29T10:00:00.000Z", "2026-02-31T10:00:00.000Z",
+    "2026-09-01T24:00:00.000Z", "2026-09-01T10:60:00.000Z"]) {
+    assert.equal(ideaTimeSchemaV1.safeParse(invalid).success, false, invalid);
+  }
+  for (const valid of ["2028-02-29T10:00:00.000Z", "2026-09-01T10:00:00Z",
+    "2026-09-01T10:00:00.123456+06:30"]) assert.equal(ideaTimeSchemaV1.safeParse(valid).success, true, valid);
+
+  const parse = Date.parse, finite = Number.isFinite, every = Array.prototype.every;
+  let hostileCalls = 0;
+  try {
+    Object.defineProperty(Date, "parse", { configurable: true, writable: true,
+      value() { hostileCalls += 1; throw new Error("ambient Date.parse reached"); } });
+    Object.defineProperty(Number, "isFinite", { configurable: true, writable: true,
+      value() { hostileCalls += 1; return true; } });
+    Object.defineProperty(Array.prototype, "every", { configurable: true, writable: true,
+      value() { hostileCalls += 1; throw new Error("ambient Array.every reached"); } });
+    const milliseconds = capturedIdeaTimeMillisecondsV1("2028-02-29T10:00:00.000Z");
+    assert.equal(typeof milliseconds, "number");
+    assert.equal(capturedIdeaTimeFromMillisecondsV1(milliseconds!), "2028-02-29T10:00:00.000Z");
+    assert.equal(ideaTimeSchemaV1.safeParse("2026-02-29T10:00:00.000Z").success, false);
+    assert.equal(hostileCalls, 0);
+  } finally {
+    Object.defineProperty(Date, "parse", { configurable: true, writable: true, value: parse });
+    Object.defineProperty(Number, "isFinite", { configurable: true, writable: true, value: finite });
+    Object.defineProperty(Array.prototype, "every", { configurable: true, writable: true, value: every });
+  }
+});
 
 test("CR12B-IDEA-000 builds a bounded diverse panel, derived synthesis, owner decision, and monitored project", () => {
   const fixture = buildIdeaLabFixtureV1();

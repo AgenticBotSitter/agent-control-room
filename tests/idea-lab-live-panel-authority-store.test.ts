@@ -122,6 +122,33 @@ test("CR12B-IDEA-090 atomically consumes one authenticated receipt, admission, w
   } finally { await target.raw.close(); }
 });
 
+test("CR12B-IDEA-110M authority decision chronology ignores ambient time substitutions", async () => {
+  const target = await setup(), admission = target.admission();
+  const parse = Date.parse, finite = Number.isFinite, every = Array.prototype.every;
+  let dateParseCalls = 0, finiteCalls = 0, everyCalls = 0;
+  try {
+    Object.defineProperty(Date, "parse", { configurable: true, writable: true,
+      value() { dateParseCalls += 1; return 0; } });
+    Object.defineProperty(Number, "isFinite", { configurable: true, writable: true,
+      value() { finiteCalls += 1; return true; } });
+    Object.defineProperty(Array.prototype, "every", { configurable: true, writable: true,
+      value() { everyCalls += 1; throw new Error("ambient Array.every reached"); } });
+    const decision = buildIdeaLabLiveAdmissionDecisionV1({ decisionId: "admission-decision:captured-time",
+      action: "seal", admission, previousDecisionDigest: null, decidedAt: "2026-08-31T22:00:20.000Z" },
+    keys.admissionKey);
+    assert.equal(decision.livePanelContactPermitted, true);
+    assert.throws(() => buildIdeaLabLiveAdmissionDecisionV1({ decisionId: "admission-decision:expired-time",
+      action: "seal", admission, previousDecisionDigest: null, decidedAt: admission.expiresAt }, keys.admissionKey),
+    (error) => error instanceof IdeaLabErrorV1);
+    assert.deepEqual([dateParseCalls, everyCalls, finiteCalls > 0], [0, 0, true]);
+  } finally {
+    Object.defineProperty(Date, "parse", { configurable: true, writable: true, value: parse });
+    Object.defineProperty(Number, "isFinite", { configurable: true, writable: true, value: finite });
+    Object.defineProperty(Array.prototype, "every", { configurable: true, writable: true, value: every });
+    await target.raw.close();
+  }
+});
+
 test("CR12B-IDEA-090 exact replay is inert and never creates a second consumption", async () => {
   const target = await setup();
   try {

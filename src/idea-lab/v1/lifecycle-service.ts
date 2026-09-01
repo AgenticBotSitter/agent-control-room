@@ -3,7 +3,7 @@ import type { DatabaseClient } from "../../persistence/database";
 import { SecurityStore,sha256Digest,type VerifiedAuthentication } from "../../security";
 import { parseExactIdeaLabV1 } from "./exact";
 import { IdeaLabErrorV1 } from "./errors";
-import { ideaIdSchemaV1,ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1,capturedIdeaTimeNowV1,ideaIdSchemaV1,ideaTimeSchemaV1 } from "./schemas";
 import { IdeaLabProjectRegistryStoreV1 } from "./store";
 import type { ProjectRegistryProjectionV1 } from "./types";
 
@@ -18,7 +18,7 @@ export class IdeaLabProjectLifecycleServiceErrorV1 extends Error{
 
 export class IdeaLabProjectLifecycleServiceV1{
   readonly #security:SecurityStore;readonly #registry:IdeaLabProjectRegistryStoreV1;readonly #clock:()=>string;
-  constructor(db:DatabaseClient,integrityKey:Uint8Array,clock:()=>string=()=>new Date().toISOString()){
+  constructor(db:DatabaseClient,integrityKey:Uint8Array,clock:()=>string=capturedIdeaTimeNowV1){
     this.#security=new SecurityStore(db);this.#registry=new IdeaLabProjectRegistryStoreV1(db,integrityKey);this.#clock=clock;
   }
   async get(projectIdValue:unknown,authentication:VerifiedAuthentication):Promise<ProjectRegistryProjectionV1>{
@@ -31,7 +31,8 @@ export class IdeaLabProjectLifecycleServiceV1{
   }
   async transition(value:unknown,authentication:VerifiedAuthentication):Promise<ProjectRegistryProjectionV1>{
     let input:z.infer<typeof inputSchema>;try{input=parseExactIdeaLabV1(inputSchema,value);}catch{throw new IdeaLabProjectLifecycleServiceErrorV1("invalid_lifecycle_request");}
-    const now=this.#clock(),delta=Date.parse(now)-Date.parse(input.requestedAt);if(!Number.isFinite(delta)||delta< -30_000||delta>300_000)throw new IdeaLabProjectLifecycleServiceErrorV1("invalid_lifecycle_request");
+    const now=this.#clock(),nowTime=capturedIdeaTimeMillisecondsV1(now),requested=capturedIdeaTimeMillisecondsV1(input.requestedAt);
+    if(nowTime===undefined||requested===undefined||nowTime-requested< -30_000||nowTime-requested>300_000)throw new IdeaLabProjectLifecycleServiceErrorV1("invalid_lifecycle_request");
     const suffix=sha256Digest({tenantId:authentication.tenantId,commandId:input.commandId,projectId:input.projectId,action:input.action,expectedVersion:input.expectedVersion}).slice(7,31);
     let decision;try{decision=await this.#security.authorize({decisionId:`policy.idea.lifecycle:${suffix}`,authentication,
       requiredRoleKey:"owner",requiredActorType:"human",request:{tenantId:authentication.tenantId,

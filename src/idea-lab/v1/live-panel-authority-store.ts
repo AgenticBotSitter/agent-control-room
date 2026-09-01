@@ -26,7 +26,8 @@ import {
   type IdeaLabLivePanelAdmissionAuthorityV1,
   type IdeaLabLivePanelAdmissionV1,
 } from "./live-panel-admission";
-import { ideaAuthTagSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, capturedIdeaTimeStringV1, ideaAuthTagSchemaV1, ideaDigestSchemaV1,
+  ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 import type { IdeaLabSessionV1 } from "./types";
 
 export const IDEA_LAB_NATIVE_RECEIPT_DECISION_V1 = "control-room-idea-lab-native-receipt-decision/v1" as const;
@@ -241,7 +242,9 @@ function parseAdmissionDecision(value: unknown, admissionKeyBytes?: Uint8Array):
   const parsed = parseExactIdeaLabV1(admissionDecisionSchema, value);
   if ((parsed.action === "seal") !== parsed.livePanelContactPermitted
     || (parsed.action === "seal") !== (parsed.previousDecisionDigest === null)
-    || Date.parse(parsed.decidedAt) >= Date.parse(parsed.expiresAt)) throw new IdeaLabErrorV1("integrity_failed");
+    || capturedIdeaTimeMillisecondsV1(parsed.decidedAt)! >= capturedIdeaTimeMillisecondsV1(parsed.expiresAt)!) {
+    throw new IdeaLabErrorV1("integrity_failed");
+  }
   if (admissionKeyBytes) verifySigned(parsed, admissionKeyBytes, "decisionDigest", "decisionAuthTag");
   return parsed;
 }
@@ -358,7 +361,8 @@ export class IdeaLabLivePanelAuthorityStoreV1 implements IdeaLabLivePanelAdmissi
     let previous: string | null = null;
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index]!, revision = Number(row.revision);
-      const occurredAt = row.occurred_at instanceof Date ? row.occurred_at.toISOString() : new Date(row.occurred_at).toISOString();
+      const occurredAt = capturedIdeaTimeStringV1(row.occurred_at);
+      if (!occurredAt) throw new IdeaLabErrorV1("integrity_failed");
       const material = eventMaterial({ ...row, occurred_at: occurredAt });
       if (row.tenant_id !== tenantId || revision !== index + 1 || row.previous_record_digest !== previous
         || sha256Digest(material) !== row.record_digest
@@ -516,7 +520,7 @@ export class IdeaLabLivePanelAuthorityStoreV1 implements IdeaLabLivePanelAdmissi
       || native.runtimeManifestDigest !== admission.runtime.runtimeManifestDigest
       || native.protectedValueCustodyMode !== admission.runtime.protectedValueCustodyMode
       || native.protectedValueCustodyEvidenceDigest !== admission.runtime.protectedValueCustodyEvidenceDigest
-      || Date.parse(observedAt) >= Date.parse(decision.expiresAt)) return false;
+      || capturedIdeaTimeMillisecondsV1(observedAt)! >= capturedIdeaTimeMillisecondsV1(decision.expiresAt)!) return false;
     if (replay) return replay.runId === admission.runId && replay.windowId === admission.ownerWindow.windowId;
     if (windowUse || runUse) return false;
     const material = {

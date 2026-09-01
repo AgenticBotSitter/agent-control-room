@@ -178,6 +178,28 @@ test("CR12B-IDEA-109B rejects re-digested authority and hostile objects without 
   assert.equal(traps, 0);
 });
 
+test("CR12B-IDEA-110M enrollment chronology ignores post-import ambient substitutions", () => {
+  const valid = envelope(), expired = envelope({ changes: { expiresAt: "2026-09-01T10:04:00.000Z" } });
+  const parse = Date.parse, finite = Number.isFinite, every = Array.prototype.every;
+  let dateParseCalls = 0, finiteCalls = 0, everyCalls = 0;
+  try {
+    Object.defineProperty(Date, "parse", { configurable: true, writable: true,
+      value() { dateParseCalls += 1; return 0; } });
+    Object.defineProperty(Number, "isFinite", { configurable: true, writable: true,
+      value() { finiteCalls += 1; return true; } });
+    Object.defineProperty(Array.prototype, "every", { configurable: true, writable: true,
+      value() { everyCalls += 1; throw new Error("ambient Array.every reached"); } });
+    assert.equal(sanitizeIdeaLabHermes021ConnectionEnrollmentV1(valid, context(valid)).routeEnrollmentAccepted, true);
+    assert.throws(() => sanitizeIdeaLabHermes021ConnectionEnrollmentV1(expired, context(expired)),
+      (error) => error instanceof IdeaLabErrorV1);
+    assert.deepEqual([dateParseCalls, everyCalls, finiteCalls > 0], [0, 0, true]);
+  } finally {
+    Object.defineProperty(Date, "parse", { configurable: true, writable: true, value: parse });
+    Object.defineProperty(Number, "isFinite", { configurable: true, writable: true, value: finite });
+    Object.defineProperty(Array.prototype, "every", { configurable: true, writable: true, value: every });
+  }
+});
+
 test("CR12B-IDEA-109B ships no SSH process, filesystem, network, credential reader, or provider client", async () => {
   const source = await readFile("src/idea-lab/v1/hermes-021-enrolled-connection.ts", "utf8");
   for (const forbidden of ['from "node:child_process"', 'from "node:fs"', 'from "node:net"', "fetch(", "spawn(",

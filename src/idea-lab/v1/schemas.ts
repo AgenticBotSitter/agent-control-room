@@ -1,15 +1,57 @@
 import { z } from "zod";
 
-const nativeDateParseV1 = Date.parse, nativeNumberIsFiniteV1 = Number.isFinite,
+const nativeDateV1 = Date, nativeDateParseV1 = Date.parse, nativeDateToISOStringV1 = Date.prototype.toISOString,
+  nativeNumberV1 = Number, nativeNumberIsFiniteV1 = Number.isFinite,
   nativeReflectApplyV1 = Reflect.apply, nativeRegExpExecV1 = RegExp.prototype.exec;
-const ideaTimePatternV1 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const ideaTimePatternV1 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
 export function capturedPatternMatchesV1(pattern: RegExp, value: string): boolean {
   return nativeReflectApplyV1(nativeRegExpExecV1, pattern, [value]) !== null;
 }
 
+function numericTimePartV1(value: string | undefined): number {
+  return nativeReflectApplyV1(nativeNumberV1, undefined, [value]) as number;
+}
+
+export function capturedIdeaTimeMillisecondsV1(value: string): number | undefined {
+  const match = nativeReflectApplyV1(nativeRegExpExecV1, ideaTimePatternV1, [value]) as RegExpExecArray | null;
+  if (!match) return undefined;
+  const year = numericTimePartV1(match[1]), month = numericTimePartV1(match[2]), day = numericTimePartV1(match[3]);
+  const hour = numericTimePartV1(match[4]), minute = numericTimePartV1(match[5]), second = numericTimePartV1(match[6]);
+  const offsetHour = match[8] ? numericTimePartV1(match[9]) : 0;
+  const offsetMinute = match[8] ? numericTimePartV1(match[10]) : 0;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = month === 2 ? (leapYear ? 29 : 28)
+    : month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth || hour > 23 || minute > 59 || second > 59
+    || offsetHour > 23 || offsetMinute > 59) return undefined;
+  const milliseconds = nativeDateParseV1(value);
+  return nativeNumberIsFiniteV1(milliseconds) ? milliseconds : undefined;
+}
+
+export function capturedIdeaTimeFromMillisecondsV1(milliseconds: number): string | undefined {
+  if (!nativeNumberIsFiniteV1(milliseconds)) return undefined;
+  try {
+    return nativeReflectApplyV1(nativeDateToISOStringV1, new nativeDateV1(milliseconds), []) as string;
+  } catch {
+    return undefined;
+  }
+}
+
+export function capturedIdeaTimeStringV1(value: string | Date): string | undefined {
+  const formatted = typeof value === "string" ? value
+    : nativeReflectApplyV1(nativeDateToISOStringV1, value, []) as string;
+  return capturedIdeaTimeMillisecondsV1(formatted) === undefined ? undefined : formatted;
+}
+
+export function capturedIdeaTimeNowV1(): string {
+  const formatted = capturedIdeaTimeStringV1(new nativeDateV1());
+  if (!formatted) throw new Error("captured Idea Lab clock unavailable");
+  return formatted;
+}
+
 function capturedIdeaTimeV1(value: string): boolean {
-  return capturedPatternMatchesV1(ideaTimePatternV1, value) && nativeNumberIsFiniteV1(nativeDateParseV1(value));
+  return capturedIdeaTimeMillisecondsV1(value) !== undefined;
 }
 
 export const IDEA_LAB_SESSION_V1 = "control-room-idea-lab-session/v1" as const;

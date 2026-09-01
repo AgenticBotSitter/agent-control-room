@@ -8,7 +8,8 @@ import {
   IDEA_LAB_HERMES_PROFILE_PREPARATION_METHOD_V1,
   parseIdeaLabHermesProfilePreparationRequestV1,
 } from "./hermes-021-profile-preparation-contract";
-import { capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTimeSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, capturedPatternMatchesV1, ideaDigestSchemaV1, ideaIdSchemaV1,
+  ideaTimeSchemaV1 } from "./schemas";
 
 export const IDEA_LAB_HERMES_PROFILE_PREPARATION_ATTESTATION_V1 =
   "control-room-hermes-profile-preparation-attestation/v1" as const;
@@ -127,11 +128,14 @@ export function sanitizeIdeaLabHermesProfilePreparationAttestationV1(
   }
   if (envelope.body.requestDigest !== request.requestDigest
     || envelope.body.runtimeRevision !== request.runtimeRevision) throw new IdeaLabErrorV1("scope_mismatch");
-  const prepared = Date.parse(envelope.body.preparedAt), issued = Date.parse(envelope.body.issuedAt);
-  const expires = Date.parse(envelope.body.expiresAt), evaluated = Date.parse(context.evaluatedAt);
-  if (![prepared, issued, expires, evaluated].every(Number.isFinite) || prepared > issued || issued > evaluated
+  const prepared = capturedIdeaTimeMillisecondsV1(envelope.body.preparedAt)!;
+  const issued = capturedIdeaTimeMillisecondsV1(envelope.body.issuedAt)!;
+  const expires = capturedIdeaTimeMillisecondsV1(envelope.body.expiresAt)!;
+  const evaluated = capturedIdeaTimeMillisecondsV1(context.evaluatedAt)!;
+  if (prepared > issued || issued > evaluated
     || expires <= evaluated || expires <= issued || expires - issued > 60_000
-    || issued < Date.parse(request.issuedAt) || expires > Date.parse(request.expiresAt)) {
+    || issued < capturedIdeaTimeMillisecondsV1(request.issuedAt)!
+    || expires > capturedIdeaTimeMillisecondsV1(request.expiresAt)!) {
     throw new IdeaLabErrorV1("integrity_failed");
   }
   const material = {

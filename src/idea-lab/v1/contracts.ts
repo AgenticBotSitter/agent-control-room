@@ -3,7 +3,7 @@ import { sha256Digest } from "../../security";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
 import {
-  IDEA_LAB_CONTRIBUTION_V1, IDEA_LAB_DECISION_V1, IDEA_LAB_SESSION_V1, IDEA_LAB_SYNTHESIS_V1,
+  capturedIdeaTimeMillisecondsV1, IDEA_LAB_CONTRIBUTION_V1, IDEA_LAB_DECISION_V1, IDEA_LAB_SESSION_V1, IDEA_LAB_SYNTHESIS_V1,
   PROJECT_REGISTRY_LIFECYCLE_V1, ideaCodeSchemaV1, ideaContributionSchemaV1, ideaDecisionSchemaV1,
   ideaDigestSchemaV1, ideaIdSchemaV1, ideaLabelSchemaV1, ideaParticipantSchemaV1, ideaSessionSchemaV1,
   ideaSynthesisSchemaV1, ideaTextSchemaV1, ideaTimeSchemaV1, projectCreationSpecSchemaV1,
@@ -61,7 +61,8 @@ export function buildIdeaLabContributionV1(sessionValue: unknown, value: unknown
     = { sourceMode: "injected_only", liveBotContactAuthorized: false, providerContacted: false }): IdeaLabContributionV1 {
   const session = parseIdeaLabSessionV1(sessionValue), input = parseExactIdeaLabV1(contributionInputSchema, value);
   const participant = session.participants.find((item) => item.participantId === input.participantId);
-  if (!participant || input.round > session.maxRounds || Date.parse(input.contributedAt) < Date.parse(session.createdAt)) {
+  if (!participant || input.round > session.maxRounds
+    || capturedIdeaTimeMillisecondsV1(input.contributedAt)! < capturedIdeaTimeMillisecondsV1(session.createdAt)!) {
     throw new IdeaLabErrorV1("scope_mismatch");
   }
   const material = { contractVersion: IDEA_LAB_CONTRIBUTION_V1,
@@ -88,7 +89,8 @@ export function parseIdeaLabContributionV1(value: unknown, sessionValue: unknown
     || parsed.perspective !== participant.perspective || parsed.round > session.maxRounds
     || (parsed.sourceMode === "injected_only" && (parsed.liveBotContactAuthorized || parsed.providerContacted))
     || (parsed.sourceMode === "provider_filtered" && (!parsed.liveBotContactAuthorized || !parsed.providerContacted))
-    || Date.parse(parsed.contributedAt) < Date.parse(session.createdAt)) throw new IdeaLabErrorV1("integrity_failed");
+    || capturedIdeaTimeMillisecondsV1(parsed.contributedAt)!
+      < capturedIdeaTimeMillisecondsV1(session.createdAt)!) throw new IdeaLabErrorV1("integrity_failed");
   return parsed;
 }
 
@@ -102,10 +104,15 @@ export function buildIdeaLabSynthesisV1(sessionValue: unknown, contributionValue
   const session = parseIdeaLabSessionV1(sessionValue), input = parseExactIdeaLabV1(synthesisInputSchema, value);
   const contributions = contributionValues.map((item) => parseIdeaLabContributionV1(item, session))
     .sort((left, right) => left.contributionDigest.localeCompare(right.contributionDigest));
+  let futureContribution = false;
+  const synthesizedAt = capturedIdeaTimeMillisecondsV1(input.synthesizedAt)!;
+  for (const contribution of contributions) if (capturedIdeaTimeMillisecondsV1(contribution.contributedAt)! > synthesizedAt) {
+    futureContribution = true; break;
+  }
   if (contributions.length > session.maxMessages
     || new Set(contributions.map((item) => item.contributionId)).size !== contributions.length
     || session.participants.some((participant) => !contributions.some((item) => item.participantId === participant.participantId))
-    || contributions.some((item) => Date.parse(item.contributedAt) > Date.parse(input.synthesizedAt))) {
+    || futureContribution) {
     throw new IdeaLabErrorV1("panel_incomplete");
   }
   const overallScore = Math.round((input.marketDemand + input.feasibility + input.differentiation + input.durability
@@ -143,7 +150,8 @@ export function buildIdeaLabDecisionV1(sessionValue: unknown, synthesisValue: un
   contributions: unknown[], value: unknown): IdeaLabDecisionV1 {
   const session = parseIdeaLabSessionV1(sessionValue), synthesis = parseIdeaLabSynthesisV1(synthesisValue, session, contributions);
   const input = parseExactIdeaLabV1(decisionInputSchema, value);
-  if ((input.decision === "create_project") !== !!input.project || Date.parse(input.decidedAt) < Date.parse(synthesis.synthesizedAt)) {
+  if ((input.decision === "create_project") !== !!input.project
+    || capturedIdeaTimeMillisecondsV1(input.decidedAt)! < capturedIdeaTimeMillisecondsV1(synthesis.synthesizedAt)!) {
     throw new IdeaLabErrorV1("invalid_input");
   }
   const material = { contractVersion: IDEA_LAB_DECISION_V1,
@@ -162,7 +170,8 @@ export function parseIdeaLabDecisionV1(value: unknown, session: IdeaLabSessionV1
   if (!digestValid(parsed, "decisionDigest") || parsed.sessionId !== session.sessionId || parsed.tenantId !== session.tenantId
     || parsed.workspaceId !== session.workspaceId || parsed.sessionDigest !== session.sessionDigest
     || parsed.synthesisDigest !== synthesis.synthesisDigest || (parsed.decision === "create_project") !== !!parsed.project
-    || Date.parse(parsed.decidedAt) < Date.parse(synthesis.synthesizedAt)) throw new IdeaLabErrorV1("integrity_failed");
+    || capturedIdeaTimeMillisecondsV1(parsed.decidedAt)!
+      < capturedIdeaTimeMillisecondsV1(synthesis.synthesizedAt)!) throw new IdeaLabErrorV1("integrity_failed");
   return parsed;
 }
 
