@@ -19,6 +19,8 @@ import { ideaCodeSchemaV1, ideaDigestSchemaV1, ideaIdSchemaV1, ideaTextSchemaV1 
 
 export const IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1 =
   "control-room-hermes-021-fixed-rpc-bridge/v1" as const;
+export const IDEA_LAB_HERMES_021_CONNECTION_IDENTITY_V1 =
+  "control-room-hermes-021-connection-identity/v1" as const;
 
 export const IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_V1 = Object.freeze({
   runtimeRevision: IDEA_LAB_HERMES_021_REVISION_V1,
@@ -43,7 +45,7 @@ export const IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_DIGEST_V1 =
 export interface IdeaLabHermes021ConnectorPrivateRpcV1 {
   openFixedRoute(input: Readonly<{
     contractVersion: typeof IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1;
-    connectionId: string;
+    connectionIdentityDigest: string;
     transport: "local_loopback" | "ssh_tunnel";
     connectorRouteDigest: string;
     attemptId: string;
@@ -206,6 +208,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
   #executeController?: AbortController;
   #executeSettled?: Promise<void>;
   #resolveExecuteSettled?: () => void;
+  #sessionCleanupRequired = false;
 
   constructor(connector: IdeaLabHermes021ConnectorPrivateRpcV1) {
     if (!connector || typeof connector !== "object" || isHostProxyV1(connector)) {
@@ -343,10 +346,15 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     const executeSettled = this.#executeSettled;
     if (!executeSettled) throw new IdeaLabErrorV1("integrity_failed");
     await executeSettled;
-    if (binding.routeLeaseDigest && binding.sessionIdentityDigest && binding.epochDigest) {
+    if (binding.routeLeaseDigest && this.#sessionCleanupRequired) {
       const interrupt = parseExactIdeaLabV1(interruptResultSchema,
         await this.#callCleanupOperation(input, "session.interrupt"));
-      sameOperationBinding(interrupt, binding.sessionIdentityDigest, binding.epochDigest);
+      if (binding.sessionIdentityDigest && binding.epochDigest) {
+        sameOperationBinding(interrupt, binding.sessionIdentityDigest, binding.epochDigest);
+      } else {
+        binding.sessionIdentityDigest = interrupt.sessionIdentityDigest;
+        binding.epochDigest = interrupt.epochDigest;
+      }
       const status = parseExactIdeaLabV1(statusResultSchema,
         await this.#callCleanupOperation(input, "session.status"));
       sameOperationBinding(status, binding.sessionIdentityDigest, binding.epochDigest);
@@ -372,7 +380,8 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     this.#assertExecutionActive();
     const handoff = createHostResultCollectorV1();
     await this.#open({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
-      connectionId: input.connectionId, transport: input.transport,
+      connectionIdentityDigest: sha256Digest({ contractVersion: IDEA_LAB_HERMES_021_CONNECTION_IDENTITY_V1,
+        connectionId: input.connectionId }), transport: input.transport,
       connectorRouteDigest: input.connectorRouteDigest, attemptId: input.attemptId,
       permitDigest: input.permitDigest, profileIdentityDigest: input.profileIdentityDigest,
       conversationIdentityDigest: input.conversationIdentityDigest,
@@ -389,6 +398,7 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
     this.#assertExecutionActive();
     if (!binding?.routeLeaseDigest) throw new IdeaLabErrorV1("integrity_failed");
     const handoff = createHostResultCollectorV1();
+    if (operation === "session.create") this.#sessionCleanupRequired = true;
     await this.#request({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
       connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest: binding.routeLeaseDigest,
       attemptId: binding.attemptId, permitDigest: binding.permitDigest, operation,

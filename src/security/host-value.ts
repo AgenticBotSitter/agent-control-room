@@ -25,9 +25,17 @@ const arrayBufferByteLengthGetter = objectGetOwnPropertyDescriptor(arrayBufferPr
 const arrayBufferDetachedGetter = objectGetOwnPropertyDescriptor(arrayBufferPrototype, "detached")?.get;
 const uint8ArrayAt = uint8ArrayPrototype.at;
 const uint8ArraySet = uint8ArrayPrototype.set;
+const abortSignalPrototype = AbortSignal.prototype;
+const abortSignalAbortedGetter = objectGetOwnPropertyDescriptor(abortSignalPrototype, "aborted")?.get;
+const abortSignalOwnKeys = reflectOwnKeys(new AbortController().signal);
+const eventTargetPrototype = EventTarget.prototype;
+const eventTargetAddEventListener = objectGetOwnPropertyDescriptor(eventTargetPrototype, "addEventListener")?.value;
+const eventTargetRemoveEventListener = objectGetOwnPropertyDescriptor(eventTargetPrototype, "removeEventListener")?.value;
 
 if (!typedArrayBufferGetter || !typedArrayByteLengthGetter || !typedArrayByteOffsetGetter
-  || !typedArrayLengthGetter || !arrayBufferByteLengthGetter || !arrayBufferDetachedGetter) throw new Error("host binary intrinsics unavailable");
+  || !typedArrayLengthGetter || !arrayBufferByteLengthGetter || !arrayBufferDetachedGetter
+  || !abortSignalAbortedGetter || typeof eventTargetAddEventListener !== "function"
+  || typeof eventTargetRemoveEventListener !== "function") throw new Error("host intrinsics unavailable");
 
 /**
  * Node's host-level Proxy check does not consult the value's traps. Security
@@ -146,6 +154,57 @@ export function exactHostDataArrayV1(value: unknown, maximum: number): unknown[]
     });
   }
   return result;
+}
+
+export interface ExactHostAbortSignalV1 {
+  readAborted(): boolean | undefined;
+  addAbortListener(listener: () => void): boolean;
+  removeAbortListener(listener: () => void): void;
+}
+
+function exactAbortSignalShape(value: unknown): value is AbortSignal {
+  if (!value || typeof value !== "object" || isHostProxyV1(value)
+    || objectGetPrototypeOf(value) !== abortSignalPrototype) return false;
+  const keys = reflectOwnKeys(value);
+  if (keys.length !== abortSignalOwnKeys.length) return false;
+  for (let index = 0; index < keys.length; index += 1) {
+    if (keys[index] !== abortSignalOwnKeys[index]) return false;
+    const descriptor = objectGetOwnPropertyDescriptor(value, keys[index]!);
+    if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set) return false;
+  }
+  return true;
+}
+
+/**
+ * Observe a genuine, unmodified AbortSignal through captured host intrinsics.
+ * Caller-owned getters, setters, subclasses, prototype drift, and Proxies are
+ * rejected without dynamic property access. Shape is rechecked on every use so
+ * mutation after capture cannot introduce behavior at the boundary.
+ */
+export function exactHostAbortSignalV1(value: unknown): ExactHostAbortSignalV1 | undefined {
+  if (!exactAbortSignalShape(value)) return undefined;
+  try {
+    if (typeof reflectApply(abortSignalAbortedGetter!, value, []) !== "boolean") return undefined;
+  } catch { return undefined; }
+  return objectFreeze({
+    readAborted() {
+      if (!exactAbortSignalShape(value)) return undefined;
+      try {
+        const aborted = reflectApply(abortSignalAbortedGetter!, value, []);
+        return typeof aborted === "boolean" ? aborted : undefined;
+      } catch { return undefined; }
+    },
+    addAbortListener(listener: () => void) {
+      if (!exactAbortSignalShape(value) || typeof listener !== "function" || isHostProxyV1(listener)) return false;
+      try {
+        reflectApply(eventTargetAddEventListener, value, ["abort", listener, { once: true }]);
+        return true;
+      } catch { return false; }
+    },
+    removeAbortListener(listener: () => void) {
+      try { reflectApply(eventTargetRemoveEventListener, value, ["abort", listener]); } catch { /* fail closed */ }
+    },
+  });
 }
 
 export interface ExactHostUint8ArrayV1 {

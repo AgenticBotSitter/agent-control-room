@@ -18,7 +18,7 @@ import {
 const id = (value: string) => `${value}-fixture`;
 const digest = (value: string) => sha256Digest({ value });
 const binding = {
-  connectionId: id("connection"), transport: "local_loopback" as const,
+  connectionIdentityDigest: digest("connection-identity"), transport: "local_loopback" as const,
   connectorRouteDigest: digest("route"), attemptId: id("attempt"), permitDigest: digest("permit"),
   profileIdentityDigest: digest("profile"), conversationIdentityDigest: digest("conversation"),
 };
@@ -105,8 +105,9 @@ class FixturePrivatePort implements IdeaLabHermes021MacosPrivatePortV1 {
   }
 }
 
-async function open(connector: IdeaLabHermes021ConnectorPrivateRpcV1): Promise<unknown> {
-  return collect((collector) => connector.openFixedRoute(openInput(), collector));
+async function open(connector: IdeaLabHermes021ConnectorPrivateRpcV1,
+  signal = new AbortController().signal): Promise<unknown> {
+  return collect((collector) => connector.openFixedRoute(openInput(signal), collector));
 }
 async function request(connector: IdeaLabHermes021ConnectorPrivateRpcV1, operation: Operation): Promise<unknown> {
   return collect((collector) => connector.requestFixedOperation(operationInput(operation), collector));
@@ -158,11 +159,12 @@ test("CR12B-IDEA-110F makes an uncertain open close-only and never retries it", 
   assert.deepEqual([opens, closes], [1, 1]);
 });
 
-test("CR12B-IDEA-110F aborts and settles an in-flight call before route close", async () => {
+test("CR12B-IDEA-110G aborts and settles an in-flight call but refuses route close before session cleanup", async () => {
   const events: string[] = [];
   class SlowPort extends FixturePrivatePort {
     override async requestEnrolledOperation(input: Parameters<IdeaLabHermes021MacosPrivatePortV1["requestEnrolledOperation"]>[0],
       collector: HostResultCollectorV1): Promise<void> {
+      if (input.operation !== "session.create") return super.requestEnrolledOperation(input, collector);
       events.push("request.started");
       await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => {
         events.push("request.aborted"); resolve();
@@ -183,7 +185,11 @@ test("CR12B-IDEA-110F aborts and settles an in-flight call before route close", 
   await new Promise<void>((resolve) => setImmediate(resolve));
   const closing = close(connector);
   await assert.rejects(() => pending, IdeaLabErrorV1);
-  await closing;
+  await assert.rejects(() => closing, IdeaLabErrorV1);
+  for (const operation of ["session.interrupt", "session.status", "session.close"] as Operation[]) {
+    await request(connector, operation);
+  }
+  await close(connector);
   assert.deepEqual(events, ["request.started", "request.aborted", "request.returned", "close.started"]);
 });
 
@@ -250,6 +256,114 @@ test("CR12B-IDEA-110F rejects locator-shaped and behavioral private receipts bef
   await open(connector);
   await assert.rejects(() => request(connector, "session.create"), IdeaLabErrorV1);
   assert.equal(behavior, 0);
+});
+
+test("CR12B-IDEA-110G rejects behavioral and pre-aborted signals before private dispatch", async () => {
+  const behavioralPort = new FixturePrivatePort();
+  const controller = new AbortController();
+  let behavior = 0;
+  Object.defineProperty(controller.signal, "aborted", {
+    configurable: true, enumerable: true, get() { behavior += 1; return false; },
+  });
+  await assert.rejects(() => open(new IdeaLabHermes021MacosConnectorV1(behavioralPort), controller.signal),
+    IdeaLabErrorV1);
+  assert.equal(behavior, 0);
+  assert.deepEqual(behavioralPort.calls, []);
+
+  const preOpenPort = new FixturePrivatePort(), preOpen = new AbortController();
+  preOpen.abort();
+  await assert.rejects(() => open(new IdeaLabHermes021MacosConnectorV1(preOpenPort), preOpen.signal),
+    IdeaLabErrorV1);
+  assert.deepEqual(preOpenPort.calls, []);
+
+  const operationPort = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(operationPort);
+  await open(connector);
+  const preOperation = new AbortController(); preOperation.abort();
+  await assert.rejects(() => collect((collector) => connector.requestFixedOperation(
+    operationInput("session.create", preOperation.signal), collector)), IdeaLabErrorV1);
+  assert.deepEqual(operationPort.calls, ["open:local_loopback"]);
+  await request(connector, "session.create");
+});
+
+test("CR12B-IDEA-110G replaces private errors at open, operation, and close boundaries", async () => {
+  const sentinel = new Error("private hostname and credential detail");
+  async function expectSafe(call: () => Promise<unknown>): Promise<void> {
+    await assert.rejects(call, (error: unknown) => error instanceof IdeaLabErrorV1
+      && error !== sentinel && error.message === "integrity_failed");
+  }
+  const openPort: IdeaLabHermes021MacosPrivatePortV1 = {
+    async openEnrolledRoute() { throw sentinel; },
+    async requestEnrolledOperation() { throw new Error("must not run"); },
+    async closeEnrolledRoute() { throw new Error("must not run"); },
+  };
+  await expectSafe(() => open(new IdeaLabHermes021MacosConnectorV1(openPort)));
+
+  class OperationErrorPort extends FixturePrivatePort {
+    override async requestEnrolledOperation(): Promise<void> { throw sentinel; }
+  }
+  const operationConnector = new IdeaLabHermes021MacosConnectorV1(new OperationErrorPort());
+  await open(operationConnector);
+  await expectSafe(() => request(operationConnector, "session.create"));
+
+  class CloseErrorPort extends FixturePrivatePort {
+    override async closeEnrolledRoute(): Promise<void> { throw sentinel; }
+  }
+  const closeConnector = new IdeaLabHermes021MacosConnectorV1(new CloseErrorPort());
+  await open(closeConnector);
+  await expectSafe(() => close(closeConnector));
+});
+
+test("CR12B-IDEA-110G requires opaque and pairwise-distinct authority digests", async () => {
+  const fields = ["connectionIdentityDigest", "connectorRouteDigest", "permitDigest",
+    "profileIdentityDigest", "conversationIdentityDigest"] as const;
+  for (let left = 0; left < fields.length; left += 1) {
+    for (let right = left + 1; right < fields.length; right += 1) {
+      const port = new FixturePrivatePort(), connector = new IdeaLabHermes021MacosConnectorV1(port);
+      const aliased = { ...openInput(), [fields[right]!]: openInput()[fields[left]!] };
+      await assert.rejects(() => collect((collector) => connector.openFixedRoute(aliased, collector)), IdeaLabErrorV1);
+      assert.deepEqual(port.calls, []);
+    }
+  }
+  const locatorPort = new FixturePrivatePort();
+  await assert.rejects(() => collect((collector) => new IdeaLabHermes021MacosConnectorV1(locatorPort)
+    .openFixedRoute({ ...openInput(), connectionIdentityDigest: "host.example:22" }, collector)), IdeaLabErrorV1);
+  assert.deepEqual(locatorPort.calls, []);
+
+  for (const field of fields) {
+    const leaseAliasPort: IdeaLabHermes021MacosPrivatePortV1 = {
+      async openEnrolledRoute(input, collector) {
+        collector.submit({ contractVersion: "control-room-hermes-021-fixed-route-open/v1",
+          attemptId: input.attemptId, permitDigest: input.permitDigest,
+          connectorRouteDigest: input.connectorRouteDigest, routeLeaseDigest: input[field],
+          runtimeVersion: IDEA_LAB_HERMES_021_VERSION_V1, runtimeRevision: IDEA_LAB_HERMES_021_REVISION_V1,
+          sourceManifestDigest: IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_DIGEST_V1,
+          profileIdentityDigest: input.profileIdentityDigest,
+          conversationIdentityDigest: input.conversationIdentityDigest,
+          endpointVisibility: "connector_private_loopback", nativeLocatorReturned: false,
+          toolsDisabled: true, mcpDisabled: true, pluginsDisabled: true });
+      },
+      async requestEnrolledOperation() { throw new Error("must not run"); },
+      async closeEnrolledRoute() { throw new Error("must not run"); },
+    };
+    await assert.rejects(() => open(new IdeaLabHermes021MacosConnectorV1(leaseAliasPort)), IdeaLabErrorV1);
+  }
+});
+
+test("CR12B-IDEA-110G rejects aliased session and epoch receipt identities", async () => {
+  for (const [session, epoch] of [[binding.connectorRouteDigest, epochDigest],
+    [sessionIdentityDigest, sessionIdentityDigest]] as const) {
+    class AliasedOperationPort extends FixturePrivatePort {
+      override async requestEnrolledOperation(input: Parameters<IdeaLabHermes021MacosPrivatePortV1["requestEnrolledOperation"]>[0],
+        collector: HostResultCollectorV1): Promise<void> {
+        collector.submit({ contractVersion: "control-room-hermes-021-fixed-operation-result/v1",
+          sessionIdentityDigest: session, epochDigest: epoch, operation: input.operation, status: "created",
+          conversationIdentityDigest: binding.conversationIdentityDigest, providerCalls: 0 });
+      }
+    }
+    const connector = new IdeaLabHermes021MacosConnectorV1(new AliasedOperationPort());
+    await open(connector);
+    await assert.rejects(() => request(connector, "session.create"), IdeaLabErrorV1);
+  }
 });
 
 test("CR12B-IDEA-110F remains disabled until a reviewed private port, signer, and route are enrolled", () => {

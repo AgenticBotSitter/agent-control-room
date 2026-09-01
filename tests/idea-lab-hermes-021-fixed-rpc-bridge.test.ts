@@ -112,6 +112,12 @@ test("CR12B-IDEA-110B runs only the fixed Hermes turn, discards deltas, and clos
     ["session.create", "prompt.submit", "session.events.since", "session.status", "session.usage"]);
   assert.deepEqual(result.frames.map((frame) => frame.type),
     ["session.ready", "panel.result", "session.usage", "session.complete"]);
+  const opened = native.calls.find((item) => item.kind === "open")?.input;
+  assert.equal(opened?.connectionIdentityDigest, sha256Digest({
+    contractVersion: "control-room-hermes-021-connection-identity/v1",
+    connectionId: input.connectionId,
+  }));
+  assert.equal(Object.hasOwn(opened ?? {}, "connectionId"), false);
   assert.equal(JSON.stringify(result).includes("message.delta"), false);
   assert.equal(JSON.stringify(native.calls).match(/hostname|username|keyPath|nativeSessionId|authToken/g), null);
 
@@ -163,7 +169,7 @@ test("CR12B-IDEA-110D cleanup waits for in-flight execution and prevents every l
     assert.equal((cleanupCollector.take() as Record<string, unknown>).outcome, "completed");
     assert.equal(native.calls.at(-1)?.kind, "close");
     assert.deepEqual(native.calls.filter((item) => item.operation).map((item) => item.operation),
-      blockedAt === "open" ? [] : ["session.create"]);
+      blockedAt === "open" ? [] : ["session.create", "session.interrupt", "session.status", "session.close"]);
   }
 });
 

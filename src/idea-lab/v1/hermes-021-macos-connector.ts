@@ -2,8 +2,10 @@ import { z } from "zod";
 import {
   createHostResultCollectorV1,
   dataMethodV1,
+  exactHostAbortSignalV1,
   exactHostDataSnapshotV1,
   isHostProxyV1,
+  type ExactHostAbortSignalV1,
   type HostResultCollectorV1,
 } from "../../security/host-value";
 import { IdeaLabErrorV1 } from "./errors";
@@ -38,7 +40,7 @@ export interface IdeaLabHermes021MacosPrivatePortV1 {
 
 const openDataSchema = z.object({
   contractVersion: z.literal(IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1),
-  connectionId: ideaIdSchemaV1,
+  connectionIdentityDigest: ideaDigestSchemaV1,
   transport: z.enum(["local_loopback", "ssh_tunnel"]),
   connectorRouteDigest: ideaDigestSchemaV1,
   attemptId: ideaIdSchemaV1,
@@ -84,13 +86,17 @@ const ordinarySequence = ["session.create", "prompt.submit", "session.events.sin
   "session.usage"] as const;
 const cleanupSequence = ["session.interrupt", "session.status", "session.close"] as const;
 
-function exactInput(value: unknown, keys: readonly string[], optionalKeys: readonly string[] = []): Record<string, unknown> {
+function exactInput(value: unknown, keys: readonly string[], optionalKeys: readonly string[] = []): {
+  snapshot: Record<string, unknown>;
+  signal: ExactHostAbortSignalV1;
+} {
   const snapshot = exactHostDataSnapshotV1(value, keys, optionalKeys);
-  if (!snapshot || isHostProxyV1(snapshot.signal) || !(snapshot.signal instanceof AbortSignal)) {
-    throw new IdeaLabErrorV1("invalid_input");
-  }
-  return snapshot;
+  const signal = snapshot && exactHostAbortSignalV1(snapshot.signal);
+  if (!snapshot || !signal) throw new IdeaLabErrorV1("invalid_input");
+  return { snapshot, signal };
 }
+
+function distinct(values: readonly string[]): boolean { return new Set(values).size === values.length; }
 
 function exactParameters(value: unknown, operation: IdeaLabHermes021FixedOperationV1): Readonly<Record<string, unknown>> {
   const keys = operation === "session.create"
@@ -139,9 +145,10 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
   readonly #openPort: IdeaLabHermes021MacosPrivatePortV1["openEnrolledRoute"];
   readonly #requestPort: IdeaLabHermes021MacosPrivatePortV1["requestEnrolledOperation"];
   readonly #closePort: IdeaLabHermes021MacosPrivatePortV1["closeEnrolledRoute"];
-  #binding?: { connectionId: string; transport: "local_loopback" | "ssh_tunnel"; connectorRouteDigest: string;
+  #binding?: { connectionIdentityDigest: string; transport: "local_loopback" | "ssh_tunnel"; connectorRouteDigest: string;
     attemptId: string; permitDigest: string; profileIdentityDigest: string; conversationIdentityDigest: string;
     routeLeaseDigest?: string };
+  #sessionBinding?: { sessionIdentityDigest: string; epochDigest: string };
   #openStarted = false;
   #openReturned = false;
   #closed = false;
@@ -149,11 +156,12 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
   #ordinaryIndex = 0;
   #cleanupIndex = 0;
   #cleanupOnly = false;
+  #sessionCleanupRequired = false;
   #cleanupAttempted = false;
   #activeController?: AbortController;
   #activeSettled?: Promise<void>;
   #settleActive?: () => void;
-  #activeParentSignal?: AbortSignal;
+  #activeParentSignal?: ExactHostAbortSignalV1;
   #activeAbort?: () => void;
 
   constructor(privatePort: IdeaLabHermes021MacosPrivatePortV1) {
@@ -172,18 +180,22 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
   async openFixedRoute(inputValue: OpenInput, collector: HostResultCollectorV1): Promise<void> {
     const submit = submitMethod(collector);
     if (this.#openStarted || this.#closing || this.#closed) throw new IdeaLabErrorV1("authorization_denied");
-    const snapshot = exactInput(inputValue, ["contractVersion", "connectionId", "transport", "connectorRouteDigest",
-      "attemptId", "permitDigest", "profileIdentityDigest", "conversationIdentityDigest", "sourceManifestDigest", "signal"]);
-    const signal = snapshot.signal as AbortSignal, dataRecord = { ...snapshot };
+    const captured = exactInput(inputValue, ["contractVersion", "connectionIdentityDigest", "transport",
+      "connectorRouteDigest", "attemptId", "permitDigest", "profileIdentityDigest", "conversationIdentityDigest",
+      "sourceManifestDigest", "signal"]);
+    const dataRecord = { ...captured.snapshot };
     delete dataRecord.signal;
     const data = parseExactIdeaLabV1(openDataSchema, dataRecord);
+    if (!distinct([data.connectionIdentityDigest, data.connectorRouteDigest, data.permitDigest,
+      data.profileIdentityDigest, data.conversationIdentityDigest])) throw new IdeaLabErrorV1("authorization_denied");
+    const controller = this.#beginActive(captured.signal);
     this.#openStarted = true;
-    this.#binding = { connectionId: data.connectionId, transport: data.transport,
+    this.#binding = { connectionIdentityDigest: data.connectionIdentityDigest, transport: data.transport,
       connectorRouteDigest: data.connectorRouteDigest, attemptId: data.attemptId, permitDigest: data.permitDigest,
       profileIdentityDigest: data.profileIdentityDigest, conversationIdentityDigest: data.conversationIdentityDigest };
-    const handoff = createHostResultCollectorV1(), controller = this.#beginActive(signal);
+    const handoff = createHostResultCollectorV1();
     try {
-      await this.#openPort(Object.freeze({ ...data, signal: controller.signal }), handoff.collector);
+      await this.#callPrivate(() => this.#openPort(Object.freeze({ ...data, signal: controller.signal }), handoff.collector));
       const result = handoff.take();
       if (this.#closing || controller.signal.aborted) throw new IdeaLabErrorV1("integrity_failed");
       const resultSnapshot = exactHostDataSnapshotV1(result, ["contractVersion", "attemptId", "permitDigest",
@@ -193,6 +205,10 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
       if (!resultSnapshot) throw new IdeaLabErrorV1("integrity_failed");
       const routeLeaseDigest = resultSnapshot.routeLeaseDigest;
       if (typeof routeLeaseDigest !== "string" || !digest.safeParse(routeLeaseDigest).success) {
+        throw new IdeaLabErrorV1("integrity_failed");
+      }
+      if (!distinct([data.connectionIdentityDigest, data.connectorRouteDigest, data.permitDigest,
+        data.profileIdentityDigest, data.conversationIdentityDigest, routeLeaseDigest])) {
         throw new IdeaLabErrorV1("integrity_failed");
       }
       if (resultSnapshot.contractVersion !== "control-room-hermes-021-fixed-route-open/v1"
@@ -212,7 +228,8 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
       this.#openReturned = true;
       submit(Object.freeze(resultSnapshot));
     } catch (error) {
-      handoff.abort(); this.#cleanupOnly = true; throw error;
+      handoff.abort(); this.#cleanupOnly = true;
+      throw error instanceof IdeaLabErrorV1 ? error : new IdeaLabErrorV1("integrity_failed");
     } finally { this.#finishActive(); }
   }
 
@@ -221,10 +238,10 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     if (!binding || !this.#openReturned || this.#closing || this.#closed || this.#activeSettled) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
-    const snapshot = exactInput(inputValue, ["contractVersion", "connectorRouteDigest", "routeLeaseDigest", "attemptId",
+    const captured = exactInput(inputValue, ["contractVersion", "connectorRouteDigest", "routeLeaseDigest", "attemptId",
       "permitDigest", "operation", "parameters", "signal"]);
-    const signal = snapshot.signal as AbortSignal, parameters = snapshot.parameters;
-    const dataRecord = { ...snapshot }; delete dataRecord.signal; delete dataRecord.parameters;
+    const parameters = captured.snapshot.parameters;
+    const dataRecord = { ...captured.snapshot }; delete dataRecord.signal; delete dataRecord.parameters;
     const data = parseExactIdeaLabV1(operationDataSchema, dataRecord), exact = exactParameters(parameters, data.operation);
     if (data.connectorRouteDigest !== binding.connectorRouteDigest || data.routeLeaseDigest !== binding.routeLeaseDigest
       || data.attemptId !== binding.attemptId || data.permitDigest !== binding.permitDigest) {
@@ -234,16 +251,21 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     if (data.operation === "session.interrupt" && this.#ordinaryIndex >= 1) this.#cleanupOnly = true;
     const expected = this.#cleanupOnly ? expectedCleanup : expectedOrdinary;
     if (data.operation !== expected) throw new IdeaLabErrorV1("authorization_denied");
+    const controller = this.#beginActive(captured.signal);
+    if (data.operation === "session.create") this.#sessionCleanupRequired = true;
     if (this.#cleanupOnly) this.#cleanupAttempted = true;
-    const handoff = createHostResultCollectorV1(), controller = this.#beginActive(signal);
+    const handoff = createHostResultCollectorV1();
     try {
-      await this.#requestPort(Object.freeze({ ...data, parameters: exact, signal: controller.signal }), handoff.collector);
+      await this.#callPrivate(() => this.#requestPort(
+        Object.freeze({ ...data, parameters: exact, signal: controller.signal }), handoff.collector));
       const result = captureOperationResult(handoff.take(), data.operation);
+      this.#bindOperationResult(result);
       if (this.#closing || controller.signal.aborted) throw new IdeaLabErrorV1("integrity_failed");
       if (this.#cleanupOnly) this.#cleanupIndex += 1; else this.#ordinaryIndex += 1;
       submit(result);
     } catch (error) {
-      handoff.abort(); this.#cleanupOnly = true; throw error;
+      handoff.abort(); this.#cleanupOnly = true;
+      throw error instanceof IdeaLabErrorV1 ? error : new IdeaLabErrorV1("integrity_failed");
     } finally { this.#finishActive(); }
   }
 
@@ -252,24 +274,31 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
     if (!binding || !this.#openStarted || this.#closing || this.#closed) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
-    const snapshot = exactInput(inputValue, ["contractVersion", "connectorRouteDigest", "attemptId", "permitDigest",
+    const captured = exactInput(inputValue, ["contractVersion", "connectorRouteDigest", "attemptId", "permitDigest",
       "signal"], ["routeLeaseDigest"]);
-    const signal = snapshot.signal as AbortSignal, dataRecord = { ...snapshot };
+    const dataRecord = { ...captured.snapshot };
     delete dataRecord.signal;
     const data = parseExactIdeaLabV1(closeDataSchema, dataRecord);
     if (data.connectorRouteDigest !== binding.connectorRouteDigest || data.attemptId !== binding.attemptId
       || data.permitDigest !== binding.permitDigest || data.routeLeaseDigest !== binding.routeLeaseDigest) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
-    if (this.#ordinaryIndex >= 1 && this.#cleanupIndex < cleanupSequence.length && !this.#cleanupAttempted) {
-      throw new IdeaLabErrorV1("authorization_denied");
-    }
+    const initiallyAborted = captured.signal.readAborted();
+    if (initiallyAborted === undefined) throw new IdeaLabErrorV1("invalid_input");
+    if (initiallyAborted) throw new IdeaLabErrorV1("authorization_denied");
     this.#closing = true;
     this.#activeController?.abort();
     if (this.#activeSettled) await this.#activeSettled;
-    const handoff = createHostResultCollectorV1(), controller = this.#beginActive(signal);
+    if (this.#sessionCleanupRequired && !this.#cleanupAttempted) {
+      this.#closing = false; this.#cleanupOnly = true;
+      throw new IdeaLabErrorV1("authorization_denied");
+    }
+    let controller: AbortController;
+    try { controller = this.#beginActive(captured.signal); }
+    catch (error) { this.#closing = false; this.#cleanupOnly = true; throw error; }
+    const handoff = createHostResultCollectorV1();
     try {
-      await this.#closePort(Object.freeze({ ...data, signal: controller.signal }), handoff.collector);
+      await this.#callPrivate(() => this.#closePort(Object.freeze({ ...data, signal: controller.signal }), handoff.collector));
       const result = exactHostDataSnapshotV1(handoff.take(), ["contractVersion", "attemptId", "permitDigest",
         "connectorRouteDigest", "nativeSessionClosed", "routeLeaseReleased", "disposableProfileRemoved",
         "disposableWorkspaceRemoved", "retainedNativeReferenceCount"]);
@@ -282,15 +311,46 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
       }
       this.#closed = true;
       submit(Object.freeze(result));
-    } catch (error) { handoff.abort(); throw error; }
+    } catch (error) {
+      handoff.abort();
+      throw error instanceof IdeaLabErrorV1 ? error : new IdeaLabErrorV1("integrity_failed");
+    }
     finally { this.#finishActive(); }
   }
 
-  #beginActive(signal: AbortSignal): AbortController {
+  async #callPrivate(call: () => Promise<void>): Promise<void> {
+    try { await call(); }
+    catch { throw new IdeaLabErrorV1("integrity_failed"); }
+  }
+
+  #bindOperationResult(result: Readonly<Record<string, unknown>>): void {
+    const binding = this.#binding, sessionIdentityDigest = result.sessionIdentityDigest,
+      epochDigest = result.epochDigest;
+    if (!binding || typeof sessionIdentityDigest !== "string" || typeof epochDigest !== "string"
+      || !digest.safeParse(sessionIdentityDigest).success || !digest.safeParse(epochDigest).success
+      || !distinct([binding.connectionIdentityDigest, binding.connectorRouteDigest, binding.permitDigest,
+        binding.profileIdentityDigest, binding.conversationIdentityDigest,
+        ...(binding.routeLeaseDigest ? [binding.routeLeaseDigest] : []), sessionIdentityDigest, epochDigest])) {
+      throw new IdeaLabErrorV1("integrity_failed");
+    }
+    if (this.#sessionBinding && (this.#sessionBinding.sessionIdentityDigest !== sessionIdentityDigest
+      || this.#sessionBinding.epochDigest !== epochDigest)) throw new IdeaLabErrorV1("integrity_failed");
+    this.#sessionBinding ??= { sessionIdentityDigest, epochDigest };
+  }
+
+  #beginActive(signal: ExactHostAbortSignalV1): AbortController {
     if (this.#activeSettled) throw new IdeaLabErrorV1("authorization_denied");
     const controller = new AbortController();
     const abort = () => controller.abort();
-    if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+    const before = signal.readAborted();
+    if (before === undefined) throw new IdeaLabErrorV1("invalid_input");
+    if (before) throw new IdeaLabErrorV1("authorization_denied");
+    if (!signal.addAbortListener(abort)) throw new IdeaLabErrorV1("invalid_input");
+    const after = signal.readAborted();
+    if (after === undefined || after) {
+      signal.removeAbortListener(abort); controller.abort();
+      throw new IdeaLabErrorV1(after === undefined ? "invalid_input" : "authorization_denied");
+    }
     this.#activeController = controller;
     this.#activeParentSignal = signal;
     this.#activeAbort = abort;
@@ -300,7 +360,7 @@ export class IdeaLabHermes021MacosConnectorV1 implements IdeaLabHermes021Connect
 
   #finishActive(): void {
     if (this.#activeParentSignal && this.#activeAbort) {
-      this.#activeParentSignal.removeEventListener("abort", this.#activeAbort);
+      this.#activeParentSignal.removeAbortListener(this.#activeAbort);
     }
     this.#settleActive?.();
     this.#settleActive = undefined;
