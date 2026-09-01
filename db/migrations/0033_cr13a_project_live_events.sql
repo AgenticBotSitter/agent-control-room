@@ -56,4 +56,3 @@ CREATE TRIGGER control_project_events_append_only
 CREATE TRIGGER control_project_events_truncate_guard
   BEFORE TRUNCATE ON control_project_events
   FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
-

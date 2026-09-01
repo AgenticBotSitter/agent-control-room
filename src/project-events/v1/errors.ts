@@ -4,4 +4,3 @@ export class ProjectEventErrorV1 extends Error {
     super(safeCode); this.name = "ProjectEventErrorV1";
   }
 }
-

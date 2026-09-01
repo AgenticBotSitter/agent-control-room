@@ -18,4 +18,3 @@ export function projectEventSseResponseV1(page:ProjectEventPageV1):Response{
     "x-control-room-contract":page.contractVersion,"x-control-room-data-class":"protected-project-events",
     "x-control-room-stream-mode":"bounded-replay-reconnect"}});
 }
-

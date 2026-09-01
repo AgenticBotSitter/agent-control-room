@@ -11,4 +11,3 @@ export interface ProjectEventStreamRuntimeV1 {
 export function getProjectEventStreamRuntimeV1():ProjectEventStreamRuntimeV1|undefined {
   return getControlRoomLocalPilotPortsV1()?.projectEvents;
 }
-

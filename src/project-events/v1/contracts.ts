@@ -61,4 +61,3 @@ export function parseProjectEventPageV1(value: unknown): ProjectEventPageV1 {
   const page=parse(projectEventPageSchemaV1,value) as ProjectEventPageV1,{pageDigest,...material}=page;
   if(sha256Digest(material)!==pageDigest)throw new ProjectEventErrorV1("integrity_failed");return page;
 }
-

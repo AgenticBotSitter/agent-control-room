@@ -32,4 +32,3 @@ export function createProjectEventStreamHandlerV1(runtime?:ProjectEventStreamRun
 }
 
 export const GET=createProjectEventStreamHandlerV1(getProjectEventStreamRuntimeV1());
-

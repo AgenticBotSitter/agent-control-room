@@ -1,7 +1,7 @@
 # CR13A-LIVE-000 acceptance record
 
 **Status:** accepted implementation candidate; integration restack verified; parent integration merge required
-**Date:** 2026-09-01  
+**Date:** 2026-09-01
 **Scope:** authenticated, resumable, read-only project activity
 
 ## Delivered result

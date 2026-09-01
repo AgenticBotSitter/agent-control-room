@@ -80,4 +80,3 @@ export interface ProjectEventReadRequestV1 {
 export interface ProjectEventReadSourceV1 {
   read(request: ProjectEventReadRequestV1): Promise<ProjectEventPageV1>;
 }
-
