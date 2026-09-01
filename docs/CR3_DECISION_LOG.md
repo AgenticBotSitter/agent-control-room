@@ -2356,3 +2356,28 @@ the bridge makes zero native or provider calls.
 
 **Reevaluate:** Re-pin the six Hermes lifecycle/routing source files on every Hermes upgrade. Any connector protocol or
 native event-shape change requires a new review, enrollment, owner packet, and authorization before native use.
+
+## ADR-141 — A review packet or provider-disabled bridge cannot self-authorize enrollment
+
+**Decision:** Real Hermes connection enrollment is controlled by a separate canonical readiness record. The record binds
+the exact fixed-bridge implementation commit, review packet SHA-256, installed runtime revision, connection-source
+candidate, fixed RPC source manifest, and gateway operation-set digest. It remains blocked until a different independent
+review is accepted, a concrete platform connector implementation is separately accepted, a trusted node signer is
+enrolled, one signed connection enrollment verifies, an effect-free preflight passes, every packet/pin is refreshed, a
+fresh owner window exists, and native qualification is later accepted. Missing gates are explicit and cannot be changed
+by recomputing the outer digest. No readiness snapshot emits a command or treats prior owner text as reusable.
+
+**Why:** A safe abstract port and a READY review jobber are plans, not observations. Treating either as proof would let a
+producer appoint its own reviewer, invent the platform binding that retains locators, or skip the exact signer and packet
+refresh needed after protocol changes.
+
+**Alternatives rejected:** Count an open pull request or passing producer tests as independent acceptance; let the
+connector self-register; trust an arbitrary injected signer; emit a command while review is pending; reuse IDEA-100 or
+IDEA-105 owner text; infer a real route from source compatibility; or let an unsigned readiness flag authorize enrollment.
+
+**Trade-off:** The first real enrollment waits for the independent report and a concrete platform binding. In exchange,
+Control Room has one auditable stop point that remains honest across restarts, reviews, connector changes, and packet
+refreshes.
+
+**Reevaluate:** Replace each missing gate only with its exact accepted evidence. Any negative review, connector drift,
+signer change, runtime update, source change, or preflight uncertainty keeps enrollment blocked and requires new evidence.

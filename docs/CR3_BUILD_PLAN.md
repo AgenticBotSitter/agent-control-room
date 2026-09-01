@@ -694,6 +694,21 @@ Next: independently review the exact 110B candidate, create one real signed enro
 all affected packet and implementation pins, and only then ask the owner for a new attached-Terminal qualification
 window.
 
+## CR12B-IDEA-110C — default-blocked enrollment readiness
+
+Status: complete locally for the zero-effect readiness snapshot. See
+`CR12B_IDEA_110C_ENROLLMENT_READINESS_ACCEPTANCE.md` and ADR-141.
+
+One canonical digest-bound record now pins the exact fixed bridge, review packet, installed Hermes revision, connection
+source, fixed RPC source manifest, and operation set. It records independent review, platform connector, trusted node
+signer, signed enrollment, preflight, packet refresh, fresh owner authorization, and native qualification as absent.
+Those eight gates cannot be re-digested into success, old owner text is non-reusable, no command is emitted, and all
+connection/native/provider/network effect counts remain zero.
+
+Next: complete jobber #198's different-agent report-only review. If accepted, implement and review the platform-specific
+connector binding and trusted node signer enrollment before creating one real signed connection enrollment. If rejected,
+preserve the report, remediate the fixed bridge, and require a different re-review first.
+
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
 Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,

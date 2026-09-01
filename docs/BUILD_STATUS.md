@@ -105,6 +105,7 @@
 | CR12B-IDEA-109B enrolled local/SSH Hermes connection | Complete locally for the signed, locator-free, connection-disabled snapshot | Exact built-in shared-value/SSH source pins, node-signed enrollment, owner-verified host-key binding, opaque fixed gateway route, safe multi-machine roster, UI truth, and no Hermes fork; see `CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md` |
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Implementation complete locally; independent review pending | Reuses connector-owned Hermes Desktop routing, exact fixed lifecycle/replay/usage/cleanup sequence, no native locators or generic shell, participant/runtime signed binding, terminal ambiguity/no retry, 7 hostile tests; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
+| CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the default-blocked zero-effect snapshot | Exact bridge/review/runtime/source/operation pins, eight explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect, 5 hostile tests; see `CR12B_IDEA_110C_ENROLLMENT_READINESS_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending independent bridge review, one real signed enrollment, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -163,6 +164,15 @@ tables also pass. Independent review and one real signed enrollment remain requi
 The zero-repair independent attack packet is ready at
 `docs/reviews/CR12B_IDEA_110B_INDEPENDENT_REVIEW_PACKET.md` against immutable implementation commit
 `0a736ad16e1ea7ffef37e434eba5bd46f483f95d`.
+
+CR12B-IDEA-110C adds the canonical stop point before real enrollment. It binds the exact implementation, review packet,
+runtime, connection source, fixed RPC manifest, and operation set, then records all eight remaining gates as missing.
+Independent review is unobserved, the connector and node signer are unaccepted, no signed enrollment or preflight exists,
+the owner packet is stale, old authorization cannot be reused, and native qualification is absent. Five hostile tests
+pass with zero connection, SSH, gateway, native, provider, protected-value, or network effects. The combined CR12B
+suite passes 132/132; typecheck, full lint, Mac stage zero, the complete npm lifecycle (414 passing plus two explicit
+skips, then 211/211 posttests), the production build with 3/3 rendered route checks, and all 32 migrations with 110
+PostgreSQL tables pass. Jobber #198 is READY for one different eligible reviewer; owner presence is not needed.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
