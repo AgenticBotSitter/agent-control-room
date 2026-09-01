@@ -2488,3 +2488,30 @@ but keeps Control Room free of locators and false cleanup claims.
 **Reevaluate:** After a different independent reviewer closes all five IDEA-110F findings against the exact IDEA-110G
 remediation commit. Any connector, signal-observer, connection-identity derivation, private-port, operation-set, runtime,
 source-manifest, signer, or route change invalidates that report and requires new evidence before native use.
+
+## ADR-146 — Repository seams carry opaque cancellation, not native AbortSignal internals
+
+**Decision:** The filtered driver, enrolled gateway, fixed bridge, and macOS connector exchange only a repository-created
+opaque cancellation capability. Its frozen zero-own-key token is recognized through a module-private registry; abort
+state and subscriptions live in private state and use captured intrinsics. Native `AbortSignal` exists only after the
+macOS connector has accepted the opaque token, and only the Mac-private port receives that connector-owned native
+signal. Connector settlement tracks its own cancellation state and does not re-read mutable native signal internals.
+
+**Why:** IDEA-110G proved that checking a genuine native signal's outer prototype, keys, descriptors, and aborted getter
+does not make its built-in internal event containers immutable. A caller could retain the expected outer shape, replace
+the event map with a Proxy, and make native listener installation execute caller behavior. No finite outer shape check
+can safely convert a shared mutable host object into an authority-bearing component seam.
+
+**Alternatives rejected:** Add one more native internal-value type check; recursively inspect undocumented EventTarget
+state; clone or compose a caller signal through another native signal; tolerate behavior when listener installation
+fails; poll the caller signal; drop cancellation; or treat passing producer tests and incomplete review jobs as
+acceptance.
+
+**Trade-off:** Repository adapters must use the opaque capability and cannot accept arbitrary AbortSignal producers.
+The final private Mac adapter still receives a native signal because it may need the host API, but that signal is created
+inside the connector and carries no caller-owned internal state. This deliberately narrows extension points in exchange
+for deterministic cancellation, timeout, cleanup, and zero-behavior validation.
+
+**Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
+contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
+conversion, or cleanup ordering invalidates IDEA-110H review evidence and requires a fresh report.

@@ -28,7 +28,7 @@ export const IDEA_LAB_HERMES_021_LATEST_REVIEW_REPORT_SHA256_V1 =
 export const IDEA_LAB_HERMES_021_ACCEPTED_REVIEW_REPORT_SHA256_V1 =
   "sha256:6ed834e8b5c3418bc0bc932e56ae991a9c33f4699b81860f78be194a34a5b9c8" as const;
 export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1 =
-  "3e72cce7b7b91fd8f36bd5ebfe559984b30a2f68" as const;
+  "d22c76444b80f8dd469380aab52ec457f5d76fad" as const;
 export const IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1 =
   "sha256:d9a1acb60b3a272a71469fc07574db2d504100f7a382fb33a702a50c585b5808" as const;
 
@@ -53,6 +53,10 @@ const readinessSchema = z.object({
   macosConnectorIndependentReviewReportSha256: z.literal(
     IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1),
   macosConnectorIndependentReviewDisposition: z.literal("remediation_required"),
+  macosConnectorLatestReviewDisposition: z.literal("blocked_incomplete_review"),
+  macosConnectorInterruptedReviewAttempts: z.literal(2),
+  macosConnectorCancellationDefectReproduced: z.literal(true),
+  macosConnectorCancellationBoundary: z.literal("opaque_repository_capability"),
   macosConnectorRemediationReviewPending: z.literal(true),
   connectorImplementationAccepted: z.literal(false),
   trustedNodeSignerEnrolled: z.literal(false),
@@ -111,6 +115,10 @@ const material = {
   macosConnectorRemediationCommit: IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1,
   macosConnectorIndependentReviewReportSha256: IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1,
   macosConnectorIndependentReviewDisposition: "remediation_required" as const,
+  macosConnectorLatestReviewDisposition: "blocked_incomplete_review" as const,
+  macosConnectorInterruptedReviewAttempts: 2 as const,
+  macosConnectorCancellationDefectReproduced: true as const,
+  macosConnectorCancellationBoundary: "opaque_repository_capability" as const,
   macosConnectorRemediationReviewPending: true as const,
   connectorImplementationAccepted: false as const,
   trustedNodeSignerEnrolled: false as const,

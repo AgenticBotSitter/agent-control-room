@@ -32,10 +32,15 @@ test("CR12B-IDEA-110C binds the exact bridge and blocks before any real enrollme
   assert.deepEqual([readiness.macosConnectorRemediationCommit,
     readiness.macosConnectorIndependentReviewReportSha256,
     readiness.macosConnectorIndependentReviewDisposition,
+    readiness.macosConnectorLatestReviewDisposition,
+    readiness.macosConnectorInterruptedReviewAttempts,
+    readiness.macosConnectorCancellationDefectReproduced,
+    readiness.macosConnectorCancellationBoundary,
     readiness.macosConnectorRemediationReviewPending],
   [IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REMEDIATION_COMMIT_V1,
     IDEA_LAB_HERMES_021_MACOS_CONNECTOR_REVIEW_REPORT_SHA256_V1,
-    "remediation_required", true]);
+    "remediation_required", "blocked_incomplete_review", 2, true,
+    "opaque_repository_capability", true]);
   assert.deepEqual([readiness.priorIndependentReviewDisposition, readiness.latestIndependentReviewDisposition],
     ["remediation_required", "remediation_required"]);
   assert.deepEqual(readiness.blockerCodes, [
@@ -62,6 +67,8 @@ test("CR12B-IDEA-110C rejects re-digested review, connector, enrollment, command
     { connectorImplementationAccepted: true }, { signedConnectionEnrollmentAccepted: true },
     { macosConnectorIndependentReviewDisposition: "accepted_provider_disabled_snapshot",
       macosConnectorRemediationReviewPending: false },
+    { macosConnectorLatestReviewDisposition: "accepted_provider_disabled_snapshot",
+      macosConnectorInterruptedReviewAttempts: 0, macosConnectorCancellationDefectReproduced: false },
     { realEnrollmentEligible: true, ownerCommandEmitted: true },
     { grantsCommandAuthority: true, grantsExecutionAuthority: true },
     { fixedRpcImplementationCommit: "f".repeat(40) },

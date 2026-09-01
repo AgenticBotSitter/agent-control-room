@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F/110G macOS Hermes connector | IDEA-110F negative review accepted; all five findings remediated locally in IDEA-110G; different independent re-review required | Two High and three Medium findings preserved in PR #212; remediation adds intrinsic-only cancellation, pre-abort zero dispatch, uncertain-create cleanup, safe error replacement, distinct authority domains, and digest-only connection identity; see `CR12B_IDEA_110F_MACOS_CONNECTOR_CANDIDATE.md` and `CR12B_IDEA_110G_CONNECTOR_REVIEW_REMEDIATION.md` |
+| CR12B-IDEA-110F/110G/110H macOS Hermes connector | IDEA-110F negative review accepted; IDEA-110G rejected on a remaining High cancellation defect; IDEA-110H structurally remediated locally and requires fresh independent review | Two High and three Medium findings remain preserved in PR #212; two later review attempts are honestly blocked/incomplete; IDEA-110H replaces all repository-seam native AbortSignals with one frozen opaque cancellation capability and retains uncertain-create cleanup, safe errors, distinct authority domains, and digest-only connection identity; see `CR12B_IDEA_110H_OPAQUE_CANCELLATION_REMEDIATION.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -206,13 +206,16 @@ the first unconfigured macOS connector guard, but independent jobber #211/PR #21
 and three Medium findings. Report SHA-256 is
 `d9a1acb60b3a272a71469fc07574db2d504100f7a382fb33a702a50c585b5808`: a late successful create could bypass
 session cleanup, behavioral or pre-aborted signals could execute or dispatch, private errors crossed unchanged,
-authority digests could alias, and a locator-shaped connection ID could enter the private boundary. IDEA-110G closes
-all five locally: the fixed bridge sends only a domain-separated connection identity digest, genuine cancellation is
-observed through captured host intrinsics, pre-aborted calls dispatch nothing, possible session creation requires
-cleanup, private failures become new bounded errors, and authority/lease/session/epoch domains must be distinct. Focused
-connector/bridge/readiness tests pass 27/27 and combined CR12B passes 153/153. A different independent re-review remains
-mandatory. Signer and route enrollment, preflight, packet refresh, authorization, and native qualification remain absent;
-no native or external effect occurred.
+authority digests could alias, and a locator-shaped connection ID could enter the private boundary. IDEA-110G closed the
+cleanup, safe-error, authority-domain, and locator defects, but a different reviewer then proved its exact native
+AbortSignal shape check still allowed a poisoned built-in event map to execute one caller Proxy trap. Both formal
+IDEA-110G re-review jobs stopped before complete report publication and remain `blocked_incomplete_review`; they are not
+acceptance evidence. IDEA-110H removes native AbortSignal objects from the driver, enrolled gateway, fixed bridge, and
+connector seams. A frozen zero-key opaque capability now carries cancellation through module-private state; only the
+Mac-private port receives a connector-owned native signal. The exact poisoned-signal regression executes zero traps and
+zero private calls. Focused cancellation/gateway/bridge/connector/readiness tests pass 49/49 and combined CR12B passes
+154/154. Fresh independent review is mandatory. Signer and route enrollment, preflight, packet refresh, authorization,
+and native qualification remain absent; no native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -619,11 +622,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110G-Q — independently re-review the macOS Hermes connector remediation
+Block: CR12B-IDEA-110H-Q — independently review the opaque-cancellation connector remediation
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the first independent review found five real connector defects. All five are remediated locally, but the code immediately precedes the Mac-private/native port and cannot accept its own repair.
-Expected output: one immutable report by a reviewer different from every IDEA-110F/110G contributor and the first connector reviewer, against implementation commit `3e72cce` and remediation packet SHA-256 `04a2c7859fce8646f83d9ec571d98cef633e646c0f2f4796f7aa33942f22d30b`. It must independently repeat every original attack plus cancellation mutation, pre-abort zero-dispatch, late-success/late-throw cleanup, error-sentinel, pairwise digest/lease/session alias, locator-custody, lifecycle, composition, and upgrade checks. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Why: IDEA-110G still trusted mutable native AbortSignal internals and was rejected. IDEA-110H changes the cancellation architecture across four component seams and cannot accept its own repair.
+Expected output: one immutable report by a fresh reviewer against implementation commit `d22c76444b80f8dd469380aab52ec457f5d76fad` and a newly frozen packet. It must reproduce the exact poisoned event-map Proxy case with zero behavior, independently repeat every original IDEA-110F/110G case, and inspect opaque-token minting, validation, pre-abort, subscription, unsubscribe, timeout, cleanup, native conversion, Proxy, mutation, lifecycle, locator, error, alias, composition, and upgrade boundaries. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

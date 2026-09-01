@@ -709,10 +709,23 @@ connection/native/provider/network effect counts remain zero.
 Review attempts #198 and #201 stopped before implementation review. Jobbers #202, #205, and #208 then preserved two
 negative reports, two remediation rounds, and final accepted report PR #209. IDEA-110F implemented the first macOS
 protocol guard for an injected Hermes Desktop private port. Independent jobber #211/PR #212 rejected it with two High
-and three Medium findings. IDEA-110G closes all five using intrinsic-only cancellation, pre-abort zero dispatch,
-possible-session cleanup, bounded private error replacement, distinct digest domains, and a digest-only connection
-identity at the connector seam. Next: independently re-review the remediation, then separately accept its trusted node
-signer and one signed connection enrollment before any native attempt.
+and three Medium findings. IDEA-110G closed four boundaries but its native AbortSignal observer remained vulnerable to a
+poisoned built-in event map. IDEA-110H removes native AbortSignal objects from all repository component seams and
+replaces them with a frozen, zero-key opaque cancellation capability backed by module-private state; only the
+Mac-private port receives a newly created native signal. Next: independently review the exact IDEA-110H remediation,
+then separately accept its trusted node signer and one signed connection enrollment before any native attempt.
+
+## CR12B-IDEA-110H — opaque cancellation remediation
+
+Status: complete locally for the provider-disabled implementation candidate; fresh independent review required. See
+`CR12B_IDEA_110H_OPAQUE_CANCELLATION_REMEDIATION.md` and ADR-146.
+
+Two IDEA-110G re-review processes stopped before publishing complete reports, so their queue records remain blocked and
+cannot accept the candidate. One different reviewer nevertheless exposed a reproducible High defect: a genuine native
+signal with unchanged outer shape could carry a Proxy in its mutable internal event map, and listener installation
+executed caller behavior. IDEA-110H replaces that seam structurally across the driver, enrolled gateway, fixed bridge,
+and connector. Opaque cancellation retains timeout, abort, settlement, and cleanup semantics without EventTarget or
+caller-owned internal containers. A new independent report is required before connector acceptance.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 

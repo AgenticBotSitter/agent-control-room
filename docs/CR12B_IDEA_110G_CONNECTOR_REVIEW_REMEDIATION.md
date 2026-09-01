@@ -1,8 +1,7 @@
 # CR12B-IDEA-110G — macOS connector review remediation
 
-**Status:** Connector remediation frozen at exact implementation commit
-`3e72cce7b7b91fd8f36bd5ebfe559984b30a2f68` with zero effects; a different independent re-review is required before
-acceptance.
+**Status:** Rejected after a different reviewer found that mutable native AbortSignal internals could still execute
+caller behavior. Superseded by IDEA-110H; see `CR12B_IDEA_110H_OPAQUE_CANCELLATION_REMEDIATION.md`.
 
 ## Outcome
 
@@ -16,9 +15,10 @@ paths, native session identifiers, and cleanup implementation.
 - `CR12B-110F-REV001-001`: `session.create` marks cleanup as required before private dispatch. Route close first aborts
   and joins the active request, then refuses to dispatch until a cleanup operation has been attempted. The fixed bridge
   can reconcile a create whose successful receipt was hidden by cancellation without retrying create.
-- `CR12B-110F-REV001-002`: a reusable host-intrinsic AbortSignal observer rejects Proxy, accessor, subclass, prototype,
-  own-key, and descriptor drift without dynamic caller property access. Already-aborted open, operation, and close calls
-  dispatch nothing. Abort listener installation is followed by a second intrinsic state check before dispatch.
+- `CR12B-110F-REV001-002`: IDEA-110G attempted a host-intrinsic AbortSignal observer, but this closure was incomplete.
+  A genuine signal could keep the expected outer descriptors while a built-in event map was replaced with a Proxy;
+  listener installation executed that caller-owned trap. IDEA-110H replaces the native-signal component seam rather
+  than attempting another mutable-internal shape check.
 - `CR12B-110F-REV001-003`: private-port exceptions are discarded and replaced by a new bounded
   `IdeaLabErrorV1("integrity_failed")`. Private error identity, message, stack, cause, or attached values never cross the
   connector boundary.
@@ -52,9 +52,9 @@ other external effect occurred.
 
 ## Remaining gate
 
-A reviewer different from every IDEA-110F/110G contributor and the first connector reviewer must attack the exact frozen
-remediation commit using packet SHA-256
-`04a2c7859fce8646f83d9ec571d98cef633e646c0f2f4796f7aa33942f22d30b`. The re-review must independently reproduce all five original attacks and exercise
+A fresh reviewer must review the exact IDEA-110H implementation and its replacement packet. The earlier IDEA-110G
+packet SHA-256 `04a2c7859fce8646f83d9ec571d98cef633e646c0f2f4796f7aa33942f22d30b` remains historical evidence, not a current
+acceptance packet. The next review must independently reproduce all five original attacks and exercise
 late-success, late-throw, malformed receipt, abort-at-await, post-capture mutation, error-sentinel, pairwise digest/lease/
 session alias, locator custody, default-disabled composition, and source/upgrade drift. Only an accepted immutable report
 can remove `connector_implementation_unaccepted`; signer enrollment, signed route enrollment, effect-free preflight,
