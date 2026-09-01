@@ -2249,3 +2249,25 @@ owner attempt. It avoids weakening the approved isolation boundary or coupling C
 
 **Reevaluate:** After an exact Hermes implementation exists, review its source and tests, extend the compatibility
 manifest, implement signed attestation plus atomic one-use consumption/cleanup verification, and refresh the owner packet.
+
+## ADR-137 — Profile preparation evidence is device-signed, request-bound, short-lived, and still non-authorizing
+
+**Decision:** A future Hermes profile-preparation response is accepted for inspection only when a separately trusted
+canonical Ed25519 device key signs the complete digest-bound body. The body binds one exact request/runtime and a maximum
+60-second chronology, reports zero private-context counts, returns only profile/permit/custody digests, and proves no
+material, path, gateway, or provider activity plus cleanup-method presence. The sanitized Control Room result discards
+key/signature material and remains unaccepted for launch until an exact runtime implementation is reviewed.
+
+**Why:** A caller-computed digest or well-shaped JSON can falsely claim isolation. Device signature proves origin, while
+request and time binding prevent substitution and stale replay. Keeping acceptance false prevents the verifier or a test
+fixture from becoming its own runtime authority.
+
+**Alternatives rejected:** Trust unsigned counts; accept a caller digest; retain raw native handles; let the profile
+method start a gateway; omit request or expiry binding; reuse one attestation across preparations; infer zero context
+from absent fields; or enable launch immediately after signature verification.
+
+**Trade-off:** Production needs device-key enrollment and a durable one-use permit/cleanup registry in addition to the
+upstream method. The repository can fully test cryptographic and sanitation behavior without a native effect.
+
+**Reevaluate:** After the one-use registry and exact Hermes method exist, independently review their integration and
+refresh every runtime/source/packet/owner binding before an attached-Terminal attempt.

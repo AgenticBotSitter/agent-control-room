@@ -15,5 +15,6 @@ export * from "./hermes-021-filtered-driver";
 export * from "./hermes-021-native-qualification";
 export * from "./hermes-021-native-launch-readiness";
 export * from "./hermes-021-profile-preparation-contract";
+export * from "./hermes-021-profile-preparation-attestation";
 export * from "./live-panel-authority-store";
 export * from "./owner-ready-live-packet";

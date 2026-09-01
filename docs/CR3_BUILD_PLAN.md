@@ -635,8 +635,19 @@ material or path, starts no gateway/provider, retains the one-use launch permit 
 plus negative counts. Requests expire within 60 seconds and grant no command authority. The accepted-runtime list is
 empty until an exact implementation is independently reviewed.
 
-Next: implement the method in Hermes, review and pin its exact source, add signed-attestation and one-use cleanup
-verification, then refresh the owner packet before IDEA-110.
+Next: CR12B-IDEA-109A adds canonical signed-attestation verification while keeping the runtime unaccepted.
+
+## CR12B-IDEA-109A — signed profile-preparation attestation
+
+Status: complete locally for injected signed evidence only. See
+`CR12B_IDEA_109A_PROFILE_PREPARATION_ATTESTATION_ACCEPTANCE.md` and ADR-137.
+
+The verifier binds canonical Ed25519 device identity, exact request/runtime/chronology, zero private-context counts,
+negative material/path/gateway/provider truth, and cleanup presence. It returns only safe digests and never converts an
+injected fixture into runtime acceptance or launch eligibility.
+
+Next: add the broker-private durable one-use permit and cleanup state machine, then implement/review the upstream method
+before refreshing the owner packet.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
