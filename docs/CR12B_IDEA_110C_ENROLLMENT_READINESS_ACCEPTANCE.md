@@ -33,9 +33,9 @@ enrollment/command/authority claims, accessor and Proxy rejection without behavi
 filesystem, network, SSH, signer, credential, provider, or database clients. The test is registered in both the CR12B
 gate and the complete posttest lifecycle. TypeScript and focused lint pass.
 
-The combined CR12B suite passes 132/132. Mac stage zero, the complete registered npm lifecycle (414 passing plus two
-explicitly skipped pretests, followed by 211/211 posttests), production build with 3/3 rendered route checks, and all 32
-migrations with 110 PostgreSQL tables pass.
+The combined CR12B suite passes 132/132. Mac stage zero and the complete registered npm lifecycle pass; its main suite
+records 414 passing tests plus two explicit skips, and its final posttest records 211/211. The production build with 3/3
+rendered route checks and all 32 migrations with 110 PostgreSQL tables also pass.
 
 ## Remaining gates
 
