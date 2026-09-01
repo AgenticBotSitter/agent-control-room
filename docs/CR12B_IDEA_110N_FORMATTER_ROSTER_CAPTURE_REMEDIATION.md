@@ -3,6 +3,10 @@
 **Status:** Provider-disabled implementation candidate passed producer verification; fresh independent review of the
 exact frozen product is mandatory.
 
+**Frozen product:** `58fc3304b8b927252c6c0d0e3d8afc9c1b2039b5`
+
+**Review packet SHA-256:** `c561cf781d944ec01943f5fd412adf64ad59e8dd61ab6a3205f815aab346804f`
+
 ## Why IDEA-110M remained rejected
 
 Independent review of exact product `790524a7538f0e1d6c45e5023f5ecc3100e9c113` confirmed its inherited chronology

@@ -805,6 +805,22 @@ select ambient chronology operations after import. Hostile-substitution and cale
 security boundaries. No private port, enrollment, native operation, provider call, credential access, or deployment is
 introduced.
 
+Independent review confirmed the inherited chronology and calendar findings closed but found two Medium defects:
+captured formatting could emit timestamps outside the exact contract or leak an invalid-Date error, and actual roster
+construction invoked caller/ambient array and collection behavior. See
+`docs/reviews/CR12B_IDEA_110M_CHRONOLOGY_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110N — contract-safe formatter and inert roster capture remediation
+
+Status: provider-disabled implementation frozen at `58fc3304b8b927252c6c0d0e3d8afc9c1b2039b5`; replacement packet
+`sha256:c561cf781d944ec01943f5fd412adf64ad59e8dd61ab6a3205f815aab346804f` and fresh independent review required. See
+`CR12B_IDEA_110N_FORMATTER_ROSTER_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+Formatted time round-trips through the captured strict contract and all formatting failures remain controlled. Roster
+construction exact-snapshots its request and bounded dense array, traverses by numeric index, compares identities
+pairwise, and counts directly without selecting caller or ambient array/collection behavior. No private port,
+enrollment, native operation, provider call, credential access, or deployment is introduced.
+
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
 Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,

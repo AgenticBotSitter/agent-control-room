@@ -2544,6 +2544,13 @@ coordinator, lifecycle, spend, and persistence code may not dynamically select a
 date construction/formatting, or array-wide chronology helpers after module initialization. This follows the two Medium
 findings preserved by the IDEA-110L independent report.
 
+**IDEA-110N amendment:** Captured time formatting must return only a string that round-trips through the exact
+four-digit-year Idea Lab contract; invalid Dates, extended years, Date-limit values, and native formatting failures
+close without leaking host errors. Connection-roster construction must exact-snapshot the complete request and bounded
+dense array before parsing, then use indexed traversal, pairwise identity comparison, and direct counts without
+dynamically selecting caller or ambient array/collection behavior. This follows the two Medium findings preserved by
+the IDEA-110M independent report.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
 conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
@@ -2553,3 +2560,5 @@ Any change to captured regex execution, Idea Lab schema refinements, time valida
 projection also invalidates IDEA-110L review evidence.
 Any change to the captured time helper, strict calendar rules, generated time formatting, or any downstream chronology
 consumer also invalidates IDEA-110M review evidence.
+Any change to contract-safe formatting, exact roster capture, roster identity comparison, or count construction also
+invalidates IDEA-110N review evidence.

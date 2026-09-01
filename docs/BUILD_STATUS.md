@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F through 110M macOS Hermes connector | IDEA-110L independently rejected; IDEA-110M frozen and requires fresh independent review | IDEA-110M centralizes captured strict-calendar chronology across enrollment, profile, owner, authority, coordinator, lifecycle, and persistence; 168 CR12B tests; see `CR12B_IDEA_110M_CHRONOLOGY_CAPTURE_REMEDIATION.md` |
+| CR12B-IDEA-110F through 110N macOS Hermes connector | IDEA-110M independently rejected; IDEA-110N frozen and requires fresh independent review | IDEA-110N closes contract-unsafe time formatting and caller/ambient roster traversal; 169 CR12B tests; see `CR12B_IDEA_110N_FORMATTER_ROSTER_CAPTURE_REMEDIATION.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -278,6 +278,22 @@ ambient time or array-wide chronology helpers after import. Verification passes 
 build, 3/3 sequential rendered routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, and whitespace
 validation. Exact product `790524a7538f0e1d6c45e5023f5ecc3100e9c113` and packet
 `sha256:0b779430173a003a1abe90aa527e428d2895fc42a4eb088d157ebc1e0b6e644d` require a fresh different-agent review. No
+native or external effect occurred.
+
+Fresh IDEA-110M review confirmed the inherited chronology and strict-calendar repairs, then reproduced two Medium
+defects. Captured formatting returned extended-year strings outside the Idea Lab contract and leaked an invalid-Date
+error. Connection-roster construction dynamically invoked caller and ambient `map`, `filter`, and `Set` behavior. The
+immutable report is preserved at SHA-256
+`b543d54fcdb74cf58b4193b997b93f87f74e0113d29571c24130bc01ec39d983`; IDEA-110M remains rejected.
+
+IDEA-110N makes formatted timestamps round-trip through the captured strict contract and contains every formatting
+failure. It exact-snapshots the complete roster request and bounded dense array, parses by numeric index, compares
+identities pairwise, and computes counts without caller or ambient traversal/collection selection. Verification passes
+169/169 CR12B tests, 769/769 pretests, 418/420 core tests with two intentional platform skips and zero failures,
+248/248 posttests, TypeScript, lint, production build, 3/3 rendered routes, all 32 migrations/110 PostgreSQL tables,
+macOS stage zero, and whitespace validation. Exact product
+`58fc3304b8b927252c6c0d0e3d8afc9c1b2039b5` and packet
+`sha256:c561cf781d944ec01943f5fd412adf64ad59e8dd61ab6a3205f815aab346804f` require a fresh different-agent review. No
 native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
@@ -685,11 +701,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110M-Q — independently review the strict captured-chronology remediation
+Block: CR12B-IDEA-110N-Q — independently review contract-safe formatting and inert roster capture
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: IDEA-110L closed its inherited findings but fresh review proved its chronology remained mutable and accepted impossible calendar values. IDEA-110M changes the shared clock/schema boundary and every downstream time decision, so it cannot accept its own repair.
-Expected output: one immutable report by a new reviewer against product commit `790524a7538f0e1d6c45e5023f5ecc3100e9c113` and packet `sha256:0b779430173a003a1abe90aa527e428d2895fc42a4eb088d157ebc1e0b6e644d`. It must reproduce both IDEA-110L findings, prove closure through enrollment/profile/owner/authority and persistence paths, repeat the complete inherited connector matrix, and verify the strict calendar matrix. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Why: IDEA-110M closed its inherited findings but fresh review proved its formatter could leave the exact time contract and its roster could invoke caller or ambient behavior. IDEA-110N changes two shared security boundaries and cannot accept its own repair.
+Expected output: one immutable report by a new reviewer against product commit `58fc3304b8b927252c6c0d0e3d8afc9c1b2039b5` and packet `sha256:c561cf781d944ec01943f5fd412adf64ad59e8dd61ab6a3205f815aab346804f`. It must reproduce both IDEA-110M findings, prove formatter and actual-roster closure, repeat the complete inherited connector matrix, and verify the strict calendar and roster-topology matrices. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
