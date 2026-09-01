@@ -1,6 +1,6 @@
 # CR13A-LIVE-010 Connection Center acceptance record
 
-**Status:** original target rejected; identity-redaction remediation complete and fresh independent re-review required
+**Status:** accepted implementation candidate at exact remediation; ordered parent integration and main-target CI remain
 
 **Date:** 2026-09-01
 
@@ -13,6 +13,8 @@
 **Review packet SHA-256:** `db36f1ce2e94736dc4aa8653e192400c56dc0905d746a7643c444ac7f82b30ac`
 
 **Remediation review packet SHA-256:** `0cbe9d35414ca3ab39d3abe8f1556234049562f6e0e88ce27721687f951de476`
+
+**Accepted remediation report SHA-256:** `38eabc16848984442bbb52c3e5e6e22f30a6b5b1d85c397dacc130b3be0a4e27`
 
 ## Delivered result
 
@@ -55,8 +57,9 @@ immutable negative report is `docs/reviews/CR13A_LIVE_010_INDEPENDENT_REVIEW_REJ
 Remediation `c32bb1908323d9acb2e891722c1fd4657334c741` removes source connection identity, source node identity,
 tenant identity, source-result digest, and roster digest from the public contract. It substitutes exact ordinal
 presentation references, keeps tenant and roster comparisons on the server, and adds a regression using the reviewer's
-locator-shaped values. This remediation is not accepted until a different independent reviewer reproduces the old
-defect and accepts the exact repaired target.
+locator-shaped values. A different independent reviewer reproduced the old defect and accepted only exact target
+`c32bb1908323d9acb2e891722c1fd4657334c741` with no High, Medium, or Low finding. The accepted report is
+`docs/reviews/CR13A_LIVE_010_REMEDIATION_INDEPENDENT_REVIEW.md`; the rejected predecessor remains rejected.
 
 ## Verification
 
@@ -66,7 +69,7 @@ On the prepared Mac checkout with Node `22.22.3` and `pnpm 11.19.0`:
 - combined `pnpm test:cr13a`: 26/26 passing;
 - registered pretests: 769/769 passing;
 - core tests: 418/420 passing with two intentional Windows-only skips and zero failures;
-- registered posttests: 260/260 passing;
+- registered posttests: 261/261 passing;
 - `pnpm check`: passing;
 - `pnpm lint`: passing;
 - production build: passing, including `/connections` and `/api/v1/connections`;
@@ -82,13 +85,6 @@ turn's authorized effect boundary; the production renderer verified the new shel
 
 ## Open gate
 
-A different reviewer must reproduce the predecessor leak and inspect authentication ordering, tenant isolation, roster
-reconstruction, identity replacement, digest validation, version semantics, empty-state honesty, exact browser parsing,
-negative authority, and client/server bundle separation at exact remediation
-`c32bb1908323d9acb2e891722c1fd4657334c741`. The review must treat the accepted connector and roster contracts as
-immutable dependencies and must not authorize or run any native process, provider call, SSH connection, credential read,
-production database, deployment, or local persistent service.
-
 Draft PR #230 remains stacked behind connector PR #228 and Project Activity PR #229. It is not integration-eligible
-until the independent re-review accepts the exact remediation, both parents land in order, the feature is retargeted to
-`main`, and ordinary GitHub CI passes.
+until both parents land in order, the feature is retargeted to `main`, and ordinary GitHub CI passes. The accepted review
+grants no live/native/provider/SSH/deployment or production-database authority.
