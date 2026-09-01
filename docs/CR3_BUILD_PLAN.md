@@ -789,6 +789,22 @@ Dishonest and throwing exec regressions cover direct walkers, exact error classi
 provider-result filtering, and mandatory cleanup. No private port, enrollment, native operation, provider call,
 credential access, or deployment is introduced.
 
+Independent review confirmed the IDEA-110K findings closed but found two Medium chronology defects: post-import ambient
+time replacement could accept an expired enrollment, and the replacement datetime refinement accepted impossible civil
+times. See `docs/reviews/CR12B_IDEA_110L_REGEXP_EXEC_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110M — captured chronology and strict calendar remediation
+
+Status: provider-disabled implementation frozen at `790524a7538f0e1d6c45e5023f5ecc3100e9c113`; replacement packet
+`sha256:0b779430173a003a1abe90aa527e428d2895fc42a4eb088d157ebc1e0b6e644d` and fresh independent review required. See
+`CR12B_IDEA_110M_CHRONOLOGY_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+One captured strict-calendar boundary validates, parses, formats, and obtains Idea Lab time. Enrollment, profile,
+owner, admission, authority, coordinator, lifecycle, generated evidence, spend, and persistence comparisons no longer
+select ambient chronology operations after import. Hostile-substitution and calendar regressions cover the actual four
+security boundaries. No private port, enrollment, native operation, provider call, credential access, or deployment is
+introduced.
+
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
 Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,

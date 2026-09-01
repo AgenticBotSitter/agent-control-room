@@ -2537,6 +2537,13 @@ not retain Zod regex/datetime refinements that re-enter mutable regex execution;
 filtering; and traversal rewrites preserve ordinary sparse-array topology. This follows the High regex-execution and Low
 sparse-array findings preserved by the IDEA-110K independent report.
 
+**IDEA-110M amendment:** Chronology is part of the frozen host-operation boundary. Idea Lab timestamps must pass one
+module-captured validator that checks real calendar days, leap years, wall-clock fields, timezone bounds, and finite
+parse output before any comparison. Enrollment, profile preparation, owner qualification, admission, authority,
+coordinator, lifecycle, spend, and persistence code may not dynamically select ambient date parsing, numeric finiteness,
+date construction/formatting, or array-wide chronology helpers after module initialization. This follows the two Medium
+findings preserved by the IDEA-110L independent report.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
 conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
@@ -2544,3 +2551,5 @@ and requires a fresh report. Any change to shared secret/redaction/projection tr
 classification also invalidates IDEA-110K review evidence.
 Any change to captured regex execution, Idea Lab schema refinements, time validation, key normalization, or sparse-array
 projection also invalidates IDEA-110L review evidence.
+Any change to the captured time helper, strict calendar rules, generated time formatting, or any downstream chronology
+consumer also invalidates IDEA-110M review evidence.

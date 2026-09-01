@@ -1,7 +1,10 @@
 # CR12B-IDEA-110M — captured chronology and strict calendar remediation
 
-**Status:** Provider-disabled implementation candidate is under producer verification; fresh independent review of the
-exact frozen product is mandatory.
+**Status:** Provider-disabled implementation frozen at `790524a7538f0e1d6c45e5023f5ecc3100e9c113`; fresh
+independent review of the exact product is mandatory.
+
+**Replacement review packet:** `docs/reviews/CR12B_IDEA_110M_CHRONOLOGY_CAPTURE_REVIEW_PACKET.md` at SHA-256
+`0b779430173a003a1abe90aa527e428d2895fc42a4eb088d157ebc1e0b6e644d`.
 
 ## Why IDEA-110L remained rejected
 
@@ -30,7 +33,11 @@ implementation-review gate.
 
 ## Producer verification
 
-Focused regressions, TypeScript, and full lint pass. The complete CR12B, repository lifecycle, production build,
-rendered-route, database, stage-zero, and whitespace gates must pass before the review target is frozen.
+- CR12B focused suite: 168/168 passed;
+- repository preparation suite: 769/769 passed;
+- core suite: 418 passed, zero failed, and two intentional platform skips out of 420;
+- repository post-test suite: 247/247 passed;
+- TypeScript, full lint, production build, 3/3 sequential rendered routes, all 32 migrations/110 PostgreSQL tables,
+  macOS stage zero, and whitespace validation passed.
 
 These are producer checks, not review acceptance.

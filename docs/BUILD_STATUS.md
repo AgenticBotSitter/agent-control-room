@@ -106,7 +106,7 @@
 | CR12B-IDEA-110A enrolled qualification gateway and durable spend | Complete locally for the provider-disabled policy port | Signed one-use owner window, exact enrollment/route/participant/marker binding, fixed no-shell bridge interface, PostgreSQL append-only spend chain, restart/rollback safety, 10 hostile tests; see `CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` |
 | CR12B-IDEA-110B fixed Hermes local/SSH bridge | Accepted for the exact provider-disabled snapshot after two remediation rounds and second independent re-review | Six findings closed, report SHA `6ed834e...`, exact wrapper capture, terminal clock failure, receiver-safe composition, serialized cleanup, exact seven-operation authority; see `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` |
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
-| CR12B-IDEA-110F through 110L macOS Hermes connector | IDEA-110K independently rejected; IDEA-110L structurally remediated locally and requires fresh independent review | IDEA-110K left mutable regex execution and changed sparse arrays; IDEA-110L captures direct regex execution, hardens all Idea Lab schema refinements, and preserves holes; 163 CR12B tests; see `CR12B_IDEA_110L_REGEXP_EXEC_CAPTURE_REMEDIATION.md` |
+| CR12B-IDEA-110F through 110M macOS Hermes connector | IDEA-110L independently rejected; IDEA-110M frozen and requires fresh independent review | IDEA-110M centralizes captured strict-calendar chronology across enrollment, profile, owner, authority, coordinator, lifecycle, and persistence; 168 CR12B tests; see `CR12B_IDEA_110M_CHRONOLOGY_CAPTURE_REMEDIATION.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -262,6 +262,22 @@ prompt, provider-result, error-classification, and mandatory cleanup paths. Veri
 lint, production build, 3/3 sequential rendered routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, and
 whitespace validation. Product `c31a00b388292fe5af404f71eb2802b6aed52d1f` and packet
 `sha256:bfaef5a2c48930bf194af91f7d4cc844bc1492763632c03dddff9dd79c37cef6` require a fresh different-agent review. No
+native or external effect occurred.
+
+Fresh IDEA-110L review confirmed the inherited regex and sparse-array repairs, then reproduced two Medium defects. Direct
+ambient chronology allowed a throwing `Date.parse` sentinel to escape and a dishonest replacement to accept an expired
+enrollment. The replacement datetime refinement also accepted impossible civil times including non-leap February 29,
+February 31, and hour 24. The immutable report is preserved at SHA-256
+`e2be3003e14b92561c2290402a0161b574f664ab77acb2f909865b15b57cf599`; IDEA-110L remains rejected.
+
+IDEA-110M routes all Idea Lab time parsing, validation, comparison, construction, formatting, and default clock reads
+through one module-captured strict-calendar boundary. Enrollment, profile preparation, owner qualification, live
+authority, coordinator, lifecycle, generated evidence, durable spend, and persistence chronology no longer select
+ambient time or array-wide chronology helpers after import. Verification passes 168/168 CR12B tests, 769/769 pretests,
+418/420 core tests with two intentional platform skips and zero failures, 247/247 posttests, TypeScript, lint, production
+build, 3/3 sequential rendered routes, all 32 migrations/110 PostgreSQL tables, macOS stage zero, and whitespace
+validation. Exact product `790524a7538f0e1d6c45e5023f5ecc3100e9c113` and packet
+`sha256:0b779430173a003a1abe90aa527e428d2895fc42a4eb088d157ebc1e0b6e644d` require a fresh different-agent review. No
 native or external effect occurred.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
@@ -669,11 +685,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110L-Q — independently review the regex-execution capture remediation
+Block: CR12B-IDEA-110M-Q — independently review the strict captured-chronology remediation
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: IDEA-110K captured the visible regex methods but fresh review proved they still called mutable exec and that sparse arrays changed. IDEA-110L changes shared safety, schema validation, exact parsing, and redaction topology and cannot accept its own repair.
-Expected output: one immutable report by a new reviewer against product commit `c31a00b388292fe5af404f71eb2802b6aed52d1f` and packet `sha256:bfaef5a2c48930bf194af91f7d4cc844bc1492763632c03dddff9dd79c37cef6`. It must reproduce dishonest and throwing exec behavior plus sparse holes against IDEA-110K, prove closure through direct and actual connector/provider/cleanup paths, and repeat all IDEA-110F through IDEA-110K cases. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
+Why: IDEA-110L closed its inherited findings but fresh review proved its chronology remained mutable and accepted impossible calendar values. IDEA-110M changes the shared clock/schema boundary and every downstream time decision, so it cannot accept its own repair.
+Expected output: one immutable report by a new reviewer against product commit `790524a7538f0e1d6c45e5023f5ecc3100e9c113` and packet `sha256:0b779430173a003a1abe90aa527e428d2895fc42a4eb088d157ebc1e0b6e644d`. It must reproduce both IDEA-110L findings, prove closure through enrollment/profile/owner/authority and persistence paths, repeat the complete inherited connector matrix, and verify the strict calendar matrix. Acceptance removes only the connector-review gate; it does not configure a port, enroll a signer or route, or authorize native use.
 Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
