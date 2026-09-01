@@ -110,7 +110,7 @@
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
-| CR13A-LIVE-020 durable connection registry and signal freshness | Second independent review closed all security findings but rejected one cumulative whitespace defect; final documentation-only candidate pending confirmation | Keyed post-authentication receipts and exact boundary capture passed the independent attacks. Both negative reports remain preserved; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
+| CR13A-LIVE-020 durable connection registry and signal freshness | Accepted implementation candidate at `ed5bb96d2a80c6fa98bf68d2a118ed2501a22384`; integration pending | Different independent reviews closed every security finding and confirmed the final evidence-only repair. Both negative reports and accepted confirmation remain preserved; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -804,8 +804,11 @@ public projections are exact-captured before semantic access. Migrations through
 native runtime, provider, credential, production database, deployment, or network effect occurred. A different independent
 security/integrity re-review closed every High and Medium finding, but correctly rejected exact target `d858d8e` because
 the cumulative diff check exposed four trailing-space lines in the preserved predecessor review packet. That second
-negative report is retained and those four documentation lines are now repaired. A final independent confirmation of the
-new exact target is required before acceptance. Remediation verification passes 15/15 focused, 31/31 combined
+negative report is retained and those four documentation lines are now repaired. Final independent confirmation accepted
+exact candidate `ed5bb96d2a80c6fa98bf68d2a118ed2501a22384`: the product tree remained identical to the security-reviewed
+remediation, both negative reports remained intact, the exact cumulative whitespace command passed, and the focused suite
+passed 15/15. Accepted confirmation SHA-256 is `764813a39fb57944408a3949e4c89a1c9f1d35913f4c0bd28b670c1a6b446b3e`.
+Remediation verification passes 15/15 focused, 31/31 combined
 CR13A, 769/769 pretests, 418/420 core tests with two intentional platform skips, 266/266 posttests, TypeScript, full lint,
 Mac stage zero, production build, whitespace validation, and 4/4 rendered routes.
 
@@ -824,12 +827,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-020-FINAL-REVIEW — confirm the documentation-only whitespace remediation
+Block: CR13A-LIVE-020-INTEGRATION — integrate the accepted durable connection registry
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the independent remediation review closed the security findings and isolated one Low cumulative whitespace defect.
-Expected output: preserve both rejected reports, freeze the four-line documentation repair, pass the exact cumulative diff command, and obtain independent confirmation before any merge.
-Owner action: none; the owner has already authorized independent reviews.
+Why: the security and evidence gates are accepted; ordered integration must preserve the exact reviewed product target and reports.
+Expected output: pass ordinary GitHub CI on the final branch, obtain owner merge approval for PR #231, merge without changing the accepted product tree, verify post-merge main, then begin CR13A-LIVE-030 protected enrollment intake.
+Owner action: approve merging PR #231 after Codex reports the final CI result.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

@@ -897,8 +897,9 @@ qualification as interchangeable. Use Sol high for that persistence/security bou
 
 ## CR13A-LIVE-020 — durable connection registry and authenticated signal freshness
 
-Status: first independent review rejected the original candidate; remediation is pending a different re-review. See
-`CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` and ADR-149.
+Status: accepted implementation candidate `ed5bb96d2a80c6fa98bf68d2a118ed2501a22384`; integration pending. Two negative
+reviews and the final accepted independent confirmation are preserved. See `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md`
+and ADR-149.
 
 Migration 0034 and `ConnectionRegistryStoreV1` persist the already-sanitized signed Hermes enrollment result as a
 tenant- and canonical-node-bound append-only revision. A per-tenant digest chain and authenticated stream head, keyed row authentication, payload digests, exact-replay handling,
@@ -913,7 +914,10 @@ capability, or benchmark evidence does not imply recency. Enrollment, exact-vers
 qualification, live-panel eligibility, and execution authority remain distinct. Browser output retains only ordinal
 presentation references and safe timestamps. No ingestion endpoint, SSH action, provider call, credential access,
 production database, or deployment is added. The immutable first review remains rejected because it proved that the
-earlier target trusted a directly inserted current row and executed behavioral database/roster/projection values.
+earlier target trusted a directly inserted current row and executed behavioral database/roster/projection values. A
+different remediation reviewer closed those security findings but rejected a remaining cumulative whitespace defect. A
+final independent confirmation accepted the documentation-only repair after proving the product tree remained identical,
+the reports remained intact, the exact whitespace gate passed, and focused behavior remained 15/15.
 
 Next after independent acceptance and integration: CR13A-LIVE-030 should add the protected server-side enrollment intake
 composition that connects the existing signed enrollment verifier to this registry, with exact replay and audit evidence,

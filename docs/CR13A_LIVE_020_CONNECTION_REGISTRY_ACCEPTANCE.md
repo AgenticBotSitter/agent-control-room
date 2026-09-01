@@ -1,6 +1,6 @@
 # CR13A-LIVE-020 durable connection registry acceptance
 
-**Status:** security findings closed; second independent review rejected target `d858d8e` only for a cumulative whitespace defect; final documentation-only candidate requires confirmation
+**Status:** accepted implementation candidate `ed5bb96d2a80c6fa98bf68d2a118ed2501a22384`; integration pending
 **Effect boundary:** local PostgreSQL-compatible migration and PGlite tests only; no SSH, Hermes, provider, credential, production database, deployment, or network effect
 
 ## Delivered boundary
@@ -63,7 +63,10 @@ in the final candidate.
 
 ## Remaining gate
 
-An independent reviewer must confirm that the new exact target changes only the preserved documentation/evidence state,
-the required cumulative whitespace command passes, both negative reports remain intact, and the already-accepted security
-behavior is unchanged. Passing producer tests is not acceptance. No live enrollment ingestion endpoint, native qualification,
+Independent confirmation accepted the exact final candidate. The product tree was identical to the security-reviewed
+remediation, both negative reports remained intact, the exact cumulative whitespace command passed, and the focused suite
+passed 15/15. The accepted report is `reviews/CR13A_LIVE_020_FINAL_CONFIRMATION.md`, SHA-256
+`764813a39fb57944408a3949e4c89a1c9f1d35913f4c0bd28b670c1a6b446b3e`.
+
+Ordinary GitHub CI and owner-approved integration remain. No live enrollment ingestion endpoint, native qualification,
 SSH control, provider call, production database composition, or deployment is authorized by this block.
