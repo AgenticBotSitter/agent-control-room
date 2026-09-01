@@ -866,9 +866,9 @@ and never retries after uncertainty. Independent review and architect registry a
 
 ## CR13A-LIVE-000 — authenticated resumable project activity
 
-Status: original findings remediated; first remediation re-review found a historical-replay restart defect; second
-remediation implemented locally and requires a third different-party review. See `CR13A_LIVE_000_ACCEPTANCE.md` and
-ADR-147.
+Status: accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083` after a third different-party
+review closed all four blocking findings. PR #218 remains stacked on a separately rejected connector base and is not
+merge-eligible until that base is remediated and accepted. See `CR13A_LIVE_000_ACCEPTANCE.md` and ADR-147.
 
 One PostgreSQL append-only event chain now projects safe project activity without becoming project or work authority.
 Concurrent writers serialize, exact source replay is inert, changed replay fails, and event/head authentication detects

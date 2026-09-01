@@ -93,3 +93,26 @@ explicit historical-projection rule: `occurredAt` preserves when the authenticat
 preserves when Control Room ingested it. Exact old replay remains inert, changed replay remains a conflict, and a new
 regression covers first append, a restart more than one year later, changed replay, and future-time rejection. A third,
 different reviewer must re-review the exact second-remediation commit; producer verification cannot accept it.
+
+## Third independent review
+
+A third, different reviewer accepted exact implementation
+`fcc2f10881aaf7a094db76e01a898b0e04fba083` after reproducing the full four-finding history. The review confirmed:
+
+- offset source timestamps reject and trusted offset clocks normalize to canonical UTC;
+- the real protected Idea Lab Activity section mounts the authenticated live widget;
+- complete authenticated source reconciliation repairs crash gaps and concurrent projection without loss or duplication;
+- first-time historical backfill and restart replay work without a lower age cutoff, while future events still reject;
+- tenant/workspace/project isolation, source-ledger and event/head authentication, exact replay, append-only storage,
+  authorization-before-read, bounded cursor behavior, safe presentation fields, and negative authority remain intact.
+
+The independent matrix passed 16/16 focused tests, the complete test lifecycle, typecheck, lint, production build, 3/3
+rendered routes, migrations through 0033/112 tables, macOS stage zero, exact-range whitespace validation, and an
+additional ephemeral 2024-to-2026 first-backfill probe. The only Low note is that the committed historical regression
+directly covers old replay rather than separately naming first-time old ingestion; the reviewer reproduced that path and
+classified it as test hardening, not a blocker.
+
+**Disposition:** `accepted_candidate`. This acceptance is limited to the exact implementation commit above. It does not
+authorize a production database, deployment, provider or native-runtime use, approval, dispatch, retry, command, or
+execution effect. PR #218 remains stacked on a separately rejected connector base and must not be merged through that
+base until the connector is remediated and independently accepted.

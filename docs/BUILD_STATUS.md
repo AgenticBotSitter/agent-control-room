@@ -108,7 +108,7 @@
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
 | CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review; main-target integration in progress | Captured connector boundaries, strict chronology, exact roster identity, recursively immutable returned evidence, and Node 22.13 lazy-global portability; accepted product 171 CR12B tests, integration 172; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
-| CR13A-LIVE-000 authenticated resumable project activity | Original findings closed; first remediation re-review found one Medium historical-replay defect; second remediation local and requires a third different review | Canonical UTC and historical source time, PostgreSQL append-only chain, bounded authenticated SSE reconnect, protected Activity UI, startup/source reconciliation, crash/interleaving recovery, and 16 focused tests; see `CR13A_LIVE_000_ACCEPTANCE.md` |
+| CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083` | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -756,7 +756,11 @@ review remains required before acceptance. The first remediation re-review close
 that full startup reconciliation rejected exact or first-time authenticated source history older than 365 days. The
 second remediation preserves future-time rejection while allowing historical source projection: `occurredAt` remains the
 source time and `recordedAt` remains the ingestion time. Exact old replay is inert and changed replay still fails. A third,
-different security/integrity review remains required before acceptance.
+different security/integrity review accepted exact implementation `fcc2f10881aaf7a094db76e01a898b0e04fba083`.
+It reproduced the historical first-backfill path, confirmed all four blocking defects closed, and found no new High or
+Medium issue. One Low test-hardening note remains: the committed regression proves old replay while the reviewer-owned
+ephemeral probe directly proved first-time old ingestion. This accepted candidate grants no production database,
+deployment, provider, native-runtime, approval, dispatch, or execution authority.
 
 ## Parallel build lane
 
