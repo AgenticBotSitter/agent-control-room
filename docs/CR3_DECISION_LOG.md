@@ -2584,3 +2584,35 @@ Any change to captured roster canonicalization, byte compatibility, or roster SH
 IDEA-110O review evidence.
 Any change to connection-result freezing, nested roster immutability, or the captured freeze operation also invalidates
 IDEA-110P review evidence.
+
+## ADR-147 — Project live activity is a protected append-only projection with bounded SSE replay
+
+**Decision:** Control Room records project activity in a PostgreSQL append-only, per-project digest chain with an
+authenticated stream head. A protected read endpoint authorizes the existing owner/project scope and returns bounded
+Server-Sent Events pages. The response closes after each page; browser-native reconnect and `Last-Event-ID` resume from
+the last authenticated event. Invalid, stale, foreign, or ahead cursors reset to a bounded current snapshot. Event and
+page contracts are presentation-only and explicitly grant no approval, command, or execution authority. Source systems
+retain authoritative lifecycle truth; projection scans exact authenticated source versions after mutation and at startup,
+so a crash or interleaving cannot silently omit an earlier source event. Event time uses canonical UTC milliseconds.
+Authenticated historical source events remain projectable without an arbitrary lower wall-clock cutoff: `occurredAt`
+retains source chronology and `recordedAt` retains ingestion chronology. Future-dated events remain rejected.
+
+**Why:** Operators need one understandable live project timeline across Idea Lab, workers, reviews, artifacts,
+automations, and transports. A durable journal makes reload and reconnect behavior deterministic, while bounded replay
+avoids making an indefinite HTTP connection part of correctness. Reusing the protected project-scope authority prevents
+the stream from becoming a second identity system. Keeping activity non-authoritative prevents a convenient UI channel
+from bypassing the existing job, approval, audit, and effect contracts.
+
+**Alternatives rejected:** Browser polling against unversioned snapshots; in-memory event buses; WebSockets before a
+required bidirectional command contract exists; caller-supplied tenant/workspace headers; EventSource as a write or
+approval channel; treating an invalid cursor as an empty successful replay; keeping an unbounded server response open;
+using PGlite or object storage as production coordination authority; or copying third-party UI/runtime source.
+
+**Trade-off:** The browser reconnects after every bounded page and an idle stream periodically performs a protected
+read. Historical snapshots can be truncated before the retained page, and a privileged full-database rollback is not
+claimed to be detected by this presentation projection. These costs are preferable to hidden authority, unbounded
+connections, or a second coordination database.
+
+**Reevaluate:** Before adding bidirectional transport, browser event writes, production database composition, retention,
+or multi-node notification fan-out. Any event contract, chain/tag, replay cursor, authentication order, writer,
+migration, or negative-authority change invalidates CR13A-LIVE-000 review evidence.

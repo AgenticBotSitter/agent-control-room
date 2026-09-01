@@ -108,6 +108,7 @@
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
 | CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review; main-target integration in progress | Captured connector boundaries, strict chronology, exact roster identity, recursively immutable returned evidence, and Node 22.13 lazy-global portability; accepted product 171 CR12B tests, integration 172; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
+| CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -735,6 +736,40 @@ implementation `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, all three immutable r
 it targets its `codex/**` parent; after the parent stack is integrated, retarget to `main` and require ordinary full CI.
 PR #169 is not merged and authorizes no production proof, consumer, activation, deployment, or effect.
 
+CR13A-LIVE-000 implements the first real live Project Workspace activity path. Migration 0033 adds an append-only,
+HMAC-authenticated project event chain and stream head. Concurrent writers serialize; exact replay is inert; changed
+replay and cross-scope input fail closed. The protected owner-project authority gates one bounded SSE read endpoint.
+Browser-native reconnect drains pages through Last-Event-ID, while invalid, stale, foreign, or ahead cursors reset to a
+bounded current snapshot. The Activity tab exposes connection truth and up to 100 events but has no write, approval,
+dispatch, retry, or execution control. The local repository-fake pilot now records promotion and lifecycle transitions,
+and the three-event promotion/pause/resume history survives runtime restart. Verification passes 16/16 focused,
+769/769 registered pretests, 414/416 core tests with two intentional platform skips and zero failures, 233/233 posttests,
+typecheck, full lint, production build, 3/3 rendered routes, migrations through 0033/112 tables, macOS stage zero, and
+whitespace validation. Desktop and 390-pixel localhost QA show no console error or horizontal page overflow. No
+production database, provider, native runtime, deployment, or external effect was used. A
+first independent review reproduced a valid offset timestamp that poisoned later reads, found the real protected project
+did not mount the widget, and found a crash/interleaving gap between authoritative lifecycle changes and projection.
+The remediation requires canonical UTC millisecond time, mounts the protected Activity section, and replaces latest-row
+projection with complete deterministic lifecycle reconciliation after changes and at startup. A simulated crash and two
+concurrent recovery passes produce the exact three source-version events once. A second different security/integrity
+review remains required before acceptance. The first remediation re-review closed the original three findings but found
+that full startup reconciliation rejected exact or first-time authenticated source history older than 365 days. The
+second remediation preserves future-time rejection while allowing historical source projection: `occurredAt` remains the
+source time and `recordedAt` remains the ingestion time. Exact old replay is inert and changed replay still fails. A third,
+different security/integrity review accepted exact implementation `fcc2f10881aaf7a094db76e01a898b0e04fba083`.
+It reproduced the historical first-backfill path, confirmed all four blocking defects closed, and found no new High or
+Medium issue. One Low test-hardening note remains: the committed regression proves old replay while the reviewer-owned
+ephemeral probe directly proved first-time old ingestion. This accepted candidate grants no production database,
+deployment, provider, native-runtime, approval, dispatch, or execution authority.
+
+The accepted CR13A product is now restacked on connector-integration checkpoint `38bf2c326fe262628d7df90b1876e34d73d034b6`
+without semantic expansion. The combined minimum-runtime verification passes 16/16 CR13A tests, 172/172 CR12B tests,
+769/769 registered pretests, 418/420 core tests with the two intentional Windows-only skips, 251/251 posttests,
+typecheck, full lint, production build, 3/3 rendered routes, migrations through 0033/112 tables, macOS stage zero, and
+whitespace validation. Main-target connector PR #228 passed GitHub Actions run `33554072751` and merged into `main` as
+`28b0c42262ff769ec9e78d975a0fc31fcd63bd83`. Restack PR #229 now targets `main` with a clean Project Activity-only
+diff. Its ordinary Node `22.13.0` GitHub CI is the active gate; it grants no additional live or production authority.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -750,12 +785,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-110-INTEGRATE — integrate the independently accepted provider-disabled connector stack
+Block: CR13A-INTEGRATE — validate and land the accepted Project Activity stack
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: exact product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` has now passed fresh independent review. The long accepted/rejected evidence chain must be presented as one main-target integration without losing negative history or widening authority.
-Expected output: one main-target integration pull request containing the complete Idea Lab and provider-disabled connector stack, all immutable negative and accepted reports, exact acceptance pins, clean full verification, and no live configuration. After integration, restack the already accepted CR13A Project Activity product on the integrated base.
-Owner action: none for the repository-only review. Use only a prepared isolated checkout; do not install, download, contact Hermes, or run a native qualification command.
+Why: the connector parent is integrated and exact Project Activity product `fcc2f10881aaf7a094db76e01a898b0e04fba083` is independently accepted. PR #229 now has a clean main-target diff, so the remaining gate is ordinary minimum-runtime GitHub validation followed by a separately approved merge.
+Expected output: green ordinary CI for PR #229, preservation of every negative and accepted review pin, then owner-approved merge and post-merge `main` synchronization.
+Owner action: none while PR #229 CI runs. If it passes, explicitly approve merging PR #229.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

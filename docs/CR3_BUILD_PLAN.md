@@ -863,3 +863,21 @@ authorization text is non-reusable.
 One no-effect preflight will verify the installed runtime and print the exact attached-Terminal command. The owner must
 run it and handle any Keychain prompt. The attempt emits only a sanitized unaccepted candidate, cleans disposable state,
 and never retries after uncertainty. Independent review and architect registry acceptance remain later gates.
+
+## CR13A-LIVE-000 — authenticated resumable project activity
+
+Status: accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083` after a third different-party
+review closed all four blocking findings. PR #218 remains stacked on a separately rejected connector base and is not
+merge-eligible until that base is remediated and accepted. See `CR13A_LIVE_000_ACCEPTANCE.md` and ADR-147.
+
+One PostgreSQL append-only event chain now projects safe project activity without becoming project or work authority.
+Concurrent writers serialize, exact source replay is inert, changed replay fails, and event/head authentication detects
+drift. The existing protected owner-project scope gates one bounded SSE replay endpoint. Browser-native reconnect resumes
+with the last event ID; invalid, stale, foreign, and ahead cursors reset to bounded current truth. The shared Project
+Workspace Activity tab shows the connection and event timeline, and the repository-fake pilot emits durable promotion
+and lifecycle events across restart. After the first rejection, the source ledger is reconciled deterministically after
+changes and at startup, canonical UTC time is required, and the real protected project mounts the Activity source. No
+browser write endpoint, provider contact, production database, or deployment is introduced.
+
+Next after review: CR13A-LIVE-010 adds the protected Connection Center inventory and health/version diagnostics. Use
+Terra high for the ordinary UI/integration implementation, returning to Sol high for its security and integration gate.

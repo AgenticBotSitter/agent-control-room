@@ -1,10 +1,12 @@
 import type { IdeaLabProtectedRuntimeV1 } from "@/app/idea-lab-protected-runtime";
 import type { ProjectWorkspaceProtectedRuntimeV1 } from "@/app/project-workspace-protected-runtime";
+import type { ProjectEventReadRequestV1, ProjectEventReadSourceV1 } from "@/src/project-events/v1";
 import { createControlRoomLocalPilotRuntimeV1,type ControlRoomLocalPilotRuntimeV1,type LocalPilotOwnerSessionServiceV1 } from "@/src/local-pilot/v1";
 
 interface LocalPilotPortsV1{
   ideaLab:IdeaLabProtectedRuntimeV1;
   projectWorkspace:ProjectWorkspaceProtectedRuntimeV1;
+  projectEvents:{scopeAuthority:ProjectWorkspaceProtectedRuntimeV1["scopeAuthority"];eventSource:ProjectEventReadSourceV1};
   sessionIssuer:Pick<LocalPilotOwnerSessionServiceV1,"issue"|"verify">;
 }
 let ports:LocalPilotPortsV1|undefined;
@@ -31,6 +33,7 @@ export function getControlRoomLocalPilotPortsV1():LocalPilotPortsV1|undefined{if
       get:(projectId,authentication)=>ready.then(runtime=>runtime.lifecycleService.get(projectId,authentication))}};
   const projectWorkspace:ProjectWorkspaceProtectedRuntimeV1={scopeAuthority:{authorize:value=>ready.then(runtime=>runtime.scopeAuthority.authorize(value))}as ProjectWorkspaceProtectedRuntimeV1["scopeAuthority"],
     readSource:{read:value=>ready.then(runtime=>runtime.readSource.read(value))}};
+  const projectEvents={scopeAuthority:projectWorkspace.scopeAuthority,eventSource:{read:(value:ProjectEventReadRequestV1)=>ready.then(runtime=>runtime.projectEventSource.read(value))}};
   const sessionIssuer:Pick<LocalPilotOwnerSessionServiceV1,"issue"|"verify">={issue:(request,code)=>ready.then(runtime=>runtime.ownerSession.issue(request,code)),
     verify:(credential,now)=>ready.then(runtime=>runtime.ownerSession.verify(credential,now))};
-  ports=Object.freeze({ideaLab,projectWorkspace,sessionIssuer});return ports;}
+  ports=Object.freeze({ideaLab,projectWorkspace,projectEvents,sessionIssuer});return ports;}

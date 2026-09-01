@@ -26,6 +26,7 @@ import {
   type ProjectWorkspaceOperatorReadSourceV1,
   type ProjectWorkspaceProtectedCatalogSourceV1,
 } from "../../project-workspace/v1";
+import { IdeaLabProjectEventReconcilerV1,ProjectEventStoreV1,type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { canonicalJson, hmacSha256Tag, SecurityStore, sha256Digest, type VerifiedAuthentication } from "../../security";
 
 export const LOCAL_PILOT_MODE_V1 = "repository_fake" as const;
@@ -225,8 +226,9 @@ async function seed(db:DatabaseClient,subject:string,now:string):Promise<void>{a
 export interface ControlRoomLocalPilotRuntimeV1{
   mode:typeof LOCAL_PILOT_MODE_V1;ownerSession:LocalPilotOwnerSessionServiceV1;
   operatorService:IdeaLabProtectedOperatorServiceV1;ownerDecisionService:Pick<IdeaLabOwnerDecisionServiceV1,"apply">;
-  lifecycleService:IdeaLabProjectLifecycleServiceV1;scopeAuthority:ProjectWorkspaceOwnerReadScopeAuthorityV1;
-  readSource:ProjectWorkspaceOperatorReadSourceV1;syncCatalog(now?:string):Promise<void>;close():Promise<void>;
+  lifecycleService:Pick<IdeaLabProjectLifecycleServiceV1,"get"|"transition">;scopeAuthority:ProjectWorkspaceOwnerReadScopeAuthorityV1;
+  readSource:ProjectWorkspaceOperatorReadSourceV1;projectEventSource:ProjectEventReadSourceV1;
+  syncCatalog(now?:string):Promise<void>;close():Promise<void>;
 }
 
 export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConfigurationV1):Promise<ControlRoomLocalPilotRuntimeV1>{
@@ -235,15 +237,21 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
   await prepareDataDir(config);const packageName=["@electric-sql","pglite"].join("/");const{PGlite}=await import(/* @vite-ignore */packageName)as{PGlite:typeof PGliteType};
   const raw=new PGlite(resolve(config.dataDir,"pglite"));try{await migrate(raw,config.repositoryRoot);const db=adaptPglite(raw),clock=config.clock??(()=>new Date().toISOString());
   const subject=`owner:${sha256Digest({master:Array.from(config.masterKey),purpose:"local-pilot-subject"}).slice(7,31)}`;await seed(db,subject,clock());
-  const integrityKey=derive(config.masterKey,"idea-integrity"),sessionKey=derive(config.masterKey,"owner-session"),catalogKey=derive(config.masterKey,"project-catalog"),highWaterKey=derive(config.masterKey,"catalog-high-water");
+  const integrityKey=derive(config.masterKey,"idea-integrity"),sessionKey=derive(config.masterKey,"owner-session"),catalogKey=derive(config.masterKey,"project-catalog"),highWaterKey=derive(config.masterKey,"catalog-high-water"),projectEventKey=derive(config.masterKey,"project-events");
   const registry=new IdeaLabProjectRegistryStoreV1(db,integrityKey),catalog=new LocalPilotCatalogStoreV1(db,catalogKey,highWaterKey,registry),ownerSession=new LocalPilotOwnerSessionServiceV1(db,sessionKey,config.ownerCodeDigest,config.origin,subject,clock),fixture=buildIdeaLabFixtureV1();
+  const projectEventSource=new ProjectEventStoreV1(db,projectEventKey,clock),projectEventReconciler=new IdeaLabProjectEventReconcilerV1(registry,projectEventSource);
   const operatorService=new IdeaLabProtectedOperatorServiceV1(db,integrityKey,{workspaceId:LOCAL_PILOT_WORKSPACE_ID_V1,
     participants:fixture.session.participants,driver:new DeterministicIdeaLabFakeDriverV1(),clock});
   const rawOwnerDecision=new IdeaLabOwnerDecisionServiceV1(db,integrityKey),ownerDecisionService={
-    async apply(input:Parameters<IdeaLabOwnerDecisionServiceV1["apply"]>[0]):Promise<IdeaLabOwnerDecisionResultV1>{const result=await rawOwnerDecision.apply(input);if(result.project)await catalog.sync(input.now);return result;}};
-  const lifecycleService=new IdeaLabProjectLifecycleServiceV1(db,integrityKey,clock),catalogAuthority=new ProjectWorkspaceProtectedCatalogAuthorityV1(catalog,{read:id=>catalog.readHighWater(id)},
+    async apply(input:Parameters<IdeaLabOwnerDecisionServiceV1["apply"]>[0]):Promise<IdeaLabOwnerDecisionResultV1>{const result=await rawOwnerDecision.apply(input);if(result.project){await catalog.sync(input.now);
+      await projectEventReconciler.reconcileProject(result.project.tenantId,result.project.projectId);}return result;}};
+  const rawLifecycleService=new IdeaLabProjectLifecycleServiceV1(db,integrityKey,clock),lifecycleService={
+    get:(projectId:unknown,authentication:VerifiedAuthentication)=>rawLifecycleService.get(projectId,authentication),
+    async transition(value:unknown,authentication:VerifiedAuthentication){const result=await rawLifecycleService.transition(value,authentication);
+      await projectEventReconciler.reconcileProject(result.tenantId,result.projectId);return result;}};
+  const catalogAuthority=new ProjectWorkspaceProtectedCatalogAuthorityV1(catalog,{read:id=>catalog.readHighWater(id)},
     {catalogId:CATALOG_ID,tenantId:LOCAL_PILOT_TENANT_ID_V1,sourceIdentityDigest:catalog.sourceIdentityDigest},catalogKey,highWaterKey);
-  await catalog.sync(clock());return Object.freeze({mode:LOCAL_PILOT_MODE_V1,ownerSession,operatorService,ownerDecisionService,lifecycleService,
+  await catalog.sync(clock());await projectEventReconciler.reconcileAll(LOCAL_PILOT_TENANT_ID_V1);return Object.freeze({mode:LOCAL_PILOT_MODE_V1,ownerSession,operatorService,ownerDecisionService,lifecycleService,
     scopeAuthority:new ProjectWorkspaceOwnerReadScopeAuthorityV1({verify:(credential,now)=>ownerSession.verifyProjectWorkspace(credential,now)},catalogAuthority,new SecurityStore(db)),
-    readSource:new LocalPilotProjectReadSourceV1(registry),syncCatalog:(now=clock())=>catalog.sync(now),close:()=>raw.close()});}
+    readSource:new LocalPilotProjectReadSourceV1(registry),projectEventSource,syncCatalog:(now=clock())=>catalog.sync(now),close:()=>raw.close()});}
   catch(error){await raw.close().catch(()=>undefined);throw error;}}
