@@ -101,6 +101,7 @@
 | CR12B-IDEA-100 owner-ready native qualification and live-panel rehearsal packet | Complete locally for the exact repository-only packet | Three non-collapsible stages, exact implementation pins, one-attempt/one-call sanitized candidate, independent receipt review, architect registry acceptance, separate later live-panel window, 8 hostile tests; see `CR12B_IDEA_100_ACCEPTANCE.md` |
 | CR12B-IDEA-105 Hermes 0.21 reviewed-runtime pin refresh | Complete locally for the repository-only evidence binding | Exact installed revision, release ancestry and 60-commit distance, 12-file source manifest, sanitized no-effect preflight, refreshed Idea Lab packet/plan, old authorization non-reusable; see `CR12B_IDEA_105_HERMES_021_PIN_REFRESH_ACCEPTANCE.md` |
 | CR12B-IDEA-108 Hermes native-launch readiness | Complete with a blocked-before-owner-command disposition | Exact profile source proves empty profile and existing authentication cannot be combined without importing private bot context; no command emitted, 4 hostile tests; see `CR12B_IDEA_108_NATIVE_LAUNCH_READINESS_ACCEPTANCE.md` |
+| CR12B-IDEA-109 Hermes-native profile preparation contract | Complete locally for the effect-free proposal-only boundary | Exact upstream method contract transfers protected authentication internally, copies zero private context, returns only signed digests and a native-held one-use permit, accepts no runtime, 5 hostile tests; see `CR12B_IDEA_109_HERMES_PROFILE_PREPARATION_CONTRACT_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending profile-isolation remediation, integration, review, and a new exact owner authorization | No attached-Terminal command is eligible; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -118,6 +119,11 @@ while clone imports the protected-value file plus SOUL, skills, and memory, and 
 profile implementation and parser hashes are pinned. A strict readiness result records five blockers, zero attempts,
 zero provider calls, no protected-value access, and no owner command. Four hostile tests pass; combined CR12B passes
 93/93. IDEA-110 now requires a reviewed profile-isolation remediation and another exact packet/authorization refresh.
+
+CR12B-IDEA-109 defines the missing Hermes-native profile preparation method without implementing or calling it. The
+maximum-60-second proposal binds the exact owner packet/runtime, requests internal protected-value transfer and a
+Hermes-held one-use launch permit, and forbids every private-context copy, path/material return, gateway start, and
+provider call. The accepted runtime list remains empty. Five hostile tests pass and combined CR12B passes 98/98.
 
 CR12B-IDEA-100 freezes the three stages that precede the first live panel. Stage 1 is one owner-attended disposable
 native qualification limited to one attempt/call, 300 seconds, 256 KiB sanitized evidence, zero tools/MCP/plugins,
@@ -528,7 +534,7 @@ Block: CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 Set model: gpt-5.6-sol
 Set reasoning effort: high
 Why: the reviewed installed-runtime pin is complete, but exact Hermes profile semantics currently cannot satisfy both empty isolation and existing authentication.
-Expected output: first implement and independently review either a protected-value-only native profile operation or an exact owner-approved clone-and-sanitize boundary; then refresh pins and authorization before any native attempt.
+Expected output: implement and independently review the frozen `profiles.prepare_control_room_qualification` Hermes-native operation, signed attestation, one-use launch permit, and cleanup; then refresh pins and authorization before any native attempt.
 Owner action: none now. Do not use the IDEA-100 or IDEA-105 authorization and do not run a Hermes qualification command until a remediated packet explicitly replaces them.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

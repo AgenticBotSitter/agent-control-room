@@ -622,8 +622,21 @@ Exact source inspection proves a fresh no-skills profile has an empty protected-
 protected-value file plus SOUL, skills, and memory and is mutually exclusive with no-skills. Hermes exposes no
 protected-value-only clone. The digest-bound readiness contract therefore emits no command and grants no authority.
 
-Next: implement and independently review one exact profile-isolation remediation, then refresh runtime/source/packet
-pins and obtain another exact owner authorization before IDEA-110.
+Next: CR12B-IDEA-109 freezes the Hermes-native profile preparation method required for the protected-value-only
+remediation. It remains proposal-only and accepts no runtime.
+
+## CR12B-IDEA-109 — Hermes-native profile preparation contract
+
+Status: complete locally for the effect-free proposal-only boundary. See
+`CR12B_IDEA_109_HERMES_PROFILE_PREPARATION_CONTRACT_ACCEPTANCE.md` and ADR-136.
+
+The method contract transfers existing authentication inside Hermes custody, copies no private bot context, returns no
+material or path, starts no gateway/provider, retains the one-use launch permit natively, and emits only signed digests
+plus negative counts. Requests expire within 60 seconds and grant no command authority. The accepted-runtime list is
+empty until an exact implementation is independently reviewed.
+
+Next: implement the method in Hermes, review and pin its exact source, add signed-attestation and one-use cleanup
+verification, then refresh the owner packet before IDEA-110.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 

@@ -2224,3 +2224,28 @@ negative context proof are reviewed before provider contact.
 
 **Reevaluate:** After one remediation is implemented and independently reviewed, refresh every affected source, runtime,
 packet, plan, and readiness digest. Only then request another exact owner authorization.
+
+## ADR-136 — Disposable qualification authentication stays inside Hermes behind a one-use preparation permit
+
+**Decision:** The preferred isolation remediation is a Hermes-native method named
+`profiles.prepare_control_room_qualification`. It transfers existing authentication internally into one temporary
+qualification profile while copying zero SOUL, memory, skills, plugins, MCP configuration, rules, or sessions. It returns
+no protected material or path and starts neither gateway nor provider. Hermes retains an opaque one-use launch permit;
+Control Room receives only signed digests, negative counts, expiry, and device attestation. Cleanup is a separate exact
+native method. Until an implementation is reviewed, the accepted-runtime list is empty.
+
+**Why:** Authentication bytes and native profile paths do not need to cross the Control Room boundary. A native-held
+permit lets a later qualified launcher refer to prepared state without making that state inspectable or reusable by the
+browser, coordinator, or generic worker. Zero copied context keeps the qualification prompt independent of a bot's
+persona and memory.
+
+**Alternatives rejected:** Control Room copies protected values; return a raw profile path or name; reuse the source
+profile; copy then delete context after gateway start; issue a reusable launch handle; let preparation contact the
+provider; infer success from directory shape; accept unsigned counts; or accept the current runtime before the method
+exists.
+
+**Trade-off:** This requires a small upstream Hermes change and exact device attestation/cleanup integration before the
+owner attempt. It avoids weakening the approved isolation boundary or coupling Control Room to private Hermes storage.
+
+**Reevaluate:** After an exact Hermes implementation exists, review its source and tests, extend the compatibility
+manifest, implement signed attestation plus atomic one-use consumption/cleanup verification, and refresh the owner packet.
