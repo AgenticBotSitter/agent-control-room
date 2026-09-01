@@ -108,6 +108,7 @@
 | CR12B-IDEA-110C Hermes enrollment readiness | Complete locally for the accepted-review, connector-blocked zero-effect snapshot | Accepted report pin plus both negative reports retained, seven explicit missing gates, old authorization non-reusable, no command or connection/native/provider/network effect |
 | CR12B-IDEA-110F through 110P macOS Hermes connector | Accepted for exact provider-disabled product `e028d6b...` after fresh independent review; main-target integration in progress | Captured connector boundaries, strict chronology, exact roster identity, recursively immutable returned evidence, and Node 22.13 lazy-global portability; accepted product 171 CR12B tests, integration 172; see `CR12B_IDEA_110P_ACCEPTANCE.md` |
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
+| CR13A-LIVE-000 authenticated resumable project activity | Implementation candidate complete; independent security/integrity review required | PostgreSQL append-only per-project chain, exact replay, bounded authenticated SSE reconnect, protected Activity UI, durable Idea Lab promotion/lifecycle events, and 12 focused tests; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -734,6 +735,19 @@ implementation `be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, all three immutable r
 `ff433d1456fba45d096872c4371f35636c624a6f`. GitHub reports the PR open and cleanly mergeable. No check is expected while
 it targets its `codex/**` parent; after the parent stack is integrated, retarget to `main` and require ordinary full CI.
 PR #169 is not merged and authorizes no production proof, consumer, activation, deployment, or effect.
+
+CR13A-LIVE-000 implements the first real live Project Workspace activity path. Migration 0033 adds an append-only,
+HMAC-authenticated project event chain and stream head. Concurrent writers serialize; exact replay is inert; changed
+replay and cross-scope input fail closed. The protected owner-project authority gates one bounded SSE read endpoint.
+Browser-native reconnect drains pages through Last-Event-ID, while invalid, stale, foreign, or ahead cursors reset to a
+bounded current snapshot. The Activity tab exposes connection truth and up to 100 events but has no write, approval,
+dispatch, retry, or execution control. The local repository-fake pilot now records promotion and lifecycle transitions,
+and the three-event promotion/pause/resume history survives runtime restart. Verification passes 12/12 focused,
+769/769 registered pretests, 414/416 core tests with two intentional platform skips and zero failures, 233/233 posttests,
+typecheck, full lint, production build, 3/3 rendered routes, migrations through 0033/112 tables, macOS stage zero, and
+whitespace validation. Desktop and 390-pixel localhost QA show no console error or horizontal page overflow. No
+production database, provider, native runtime, deployment, or external effect was used. A
+fresh independent security/integrity review remains required before acceptance.
 
 ## Parallel build lane
 

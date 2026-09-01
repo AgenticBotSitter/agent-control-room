@@ -37,12 +37,16 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   const scope=await runtime.scopeAuthority.authorize({credential:ownerRequest("/api/v1/project-workspace/project:local-pilot-idea",cookie),projectId:"project:local-pilot-idea",now});
   const protectedRead=await new ProjectWorkspaceReadServiceV1(runtime.readSource,[{tenantId:scope.tenantId,workspaceId:scope.workspaceId,projectId:scope.projectId}]).read({scope,now});
   assert.equal(protectedRead.state,"available");if(protectedRead.state==="available")assert.equal(protectedRead.model.portfolio.projectId,"project:local-pilot-idea");
+  const promotedEvents=await runtime.projectEventSource.read({tenantId:scope.tenantId,workspaceId:scope.workspaceId,projectId:scope.projectId,limit:100});
+  assert.deepEqual(promotedEvents.events.map(event=>event.safeSummary),["Idea promoted to a monitored project"]);
   now=advance(now,1);const paused=await runtime.lifecycleService.transition({commandId:"command.idea.pilot.pause",projectId:"project:local-pilot-idea",expectedVersion:1,action:"pause",requestedAt:now},auth);assert.equal(paused.lifecycleState,"paused");
   now=advance(now,1);const resumed=await runtime.lifecycleService.transition({commandId:"command.idea.pilot.resume",projectId:"project:local-pilot-idea",expectedVersion:2,action:"resume",requestedAt:now},auth);assert.equal(resumed.lifecycleState,"active");
   await runtime.close();now=advance(now,2);runtime=await createControlRoomLocalPilotRuntimeV1(config);
   const resumedAuth=await runtime.ownerSession.verify(ownerRequest("/ideas",cookie),now),sessions=await runtime.operatorService.list(resumedAuth),project=await runtime.lifecycleService.get("project:local-pilot-idea",resumedAuth);
   assert.equal(sessions.length,1);assert.equal(sessions[0]?.sessionId,created.sessionId);assert.equal(sessions[0]?.state,"decided");assert.equal(project.version,3);assert.equal(project.lifecycleState,"active");
   const scopeAfterRestart=await runtime.scopeAuthority.authorize({credential:ownerRequest("/api/v1/project-workspace/project:local-pilot-idea",cookie),projectId:project.projectId,now});assert.equal(scopeAfterRestart.catalogRevision,1);
+  const durableEvents=await runtime.projectEventSource.read({tenantId:scopeAfterRestart.tenantId,workspaceId:scopeAfterRestart.workspaceId,projectId:scopeAfterRestart.projectId,limit:100});
+  assert.deepEqual(durableEvents.events.map(event=>event.safeSummary),["Idea promoted to a monitored project","Project lifecycle changed to paused","Project lifecycle changed to active"]);
   await assert.rejects(runtime.ownerSession.verify(new Request(`${origin}/ideas`,{headers:{cookie,"x-forwarded-for":"127.0.0.1"}}),now),(error:unknown)=>error instanceof LocalPilotErrorV1&&error.safeCode==="local_request_required");
   await runtime.close();
 });

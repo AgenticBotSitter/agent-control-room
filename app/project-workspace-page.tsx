@@ -1,6 +1,7 @@
 import { AgentTeamWorkspace } from "@/app/components/agent-team-workspace";
 import { AbsNewsWorkspace } from "@/app/components/abs-news-workspace";
 import { ProjectWorkspaceShell } from "@/app/components/project-workspace-shell";
+import { ProjectLiveActivity } from "@/app/components/project-live-activity";
 import { ProtectedProjectWorkspaceRead } from "@/app/components/protected-project-workspace-read";
 import { ReadyFrontierProjectView } from "@/app/components/ready-frontier-view";
 import { WayfarerWorkspace } from "@/app/components/wayfarer-workspace";
@@ -88,10 +89,10 @@ export function ProjectWorkspacePage({ projectId, sectionId = "overview" }: { pr
       {!reviews.length ? <p className="empty-state">No review records are present in this synthetic project view.</p> : null}
     </div></section>;
   } else if (sectionId === "activity") {
-    content = <section className="detail-card"><h2>Recent project activity</h2><ul className="activity-list">
+    content = <><ProjectLiveActivity projectId={projectId}/><section className="detail-card"><h2>Fixture activity reference</h2><ul className="activity-list">
       {activity.map((item) => <li key={item.id}><i className={item.tone === "good" ? "event-good" : item.tone === "warn" ? "event-warn" : ""} /><time>{item.time}</time><div><b>{item.actor}</b><p>{item.action}</p><small>Synthetic event projection</small></div></li>)}
       {!activity.length ? <li><i /><time>—</time><div><b>No activity</b><p>No synthetic events are present.</p></div></li> : null}
-    </ul></section>;
+    </ul></section></>;
   } else if (sectionId === "settings") {
     content = <div className="detail-grid"><section className="detail-card"><h2>Project identity</h2><div className="capability-list">
       <article><h3>Project</h3><p>{project.id}</p><small>{project.workspaceName}</small></article>
