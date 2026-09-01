@@ -11,24 +11,52 @@ const secretPatterns = [
   /https?:\/\/[^\s/:@]+:[^\s/@]+@/i,
 ];
 
+const nativeArrayIsArray = Array.isArray, nativeArrayJoin = Array.prototype.join,
+  nativeArrayPush = Array.prototype.push, nativeObjectDefineProperty = Object.defineProperty,
+  nativeError = Error, nativeObjectEntries = Object.entries,
+  nativeObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor,
+  nativeReflectApply = Reflect.apply, nativeRegExpExec = RegExp.prototype.exec;
+
+function matches(pattern: RegExp, value: string): boolean {
+  return nativeReflectApply(nativeRegExpExec, pattern, [value]) !== null;
+}
+
+function matchesAny(patterns: readonly RegExp[], value: string): boolean {
+  for (let index = 0; index < patterns.length; index += 1) {
+    const pattern = patterns[index];
+    if (pattern && matches(pattern, value)) return true;
+  }
+  return false;
+}
+
+function append<T>(values: T[], value: T): void {
+  nativeReflectApply(nativeArrayPush, values, [value]);
+}
+
 export interface RedactionResult<T = unknown> {
   value: T;
   redactedPaths: string[];
 }
 
 function keyCarriesSecret(key: string): boolean {
-  return secretKey.test(key) && !referenceKey.test(key);
+  return matches(secretKey, key) && !matches(referenceKey, key);
 }
 
 export function containsSecretMaterial(value: unknown, path = "$", findings: string[] = []): string[] {
   if (typeof value === "string") {
-    if (secretPatterns.some((pattern) => pattern.test(value))) findings.push(path);
-  } else if (Array.isArray(value)) {
-    value.forEach((child, index) => containsSecretMaterial(child, `${path}[${index}]`, findings));
+    if (matchesAny(secretPatterns, value)) append(findings, path);
+  } else if (nativeArrayIsArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      containsSecretMaterial(value[index], `${path}[${index}]`, findings);
+    }
   } else if (value && typeof value === "object") {
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const entries = nativeObjectEntries(value as Record<string, unknown>);
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (!entry) continue;
+      const key = entry[0], child = entry[1];
       const childPath = `${path}.${key}`;
-      if (keyCarriesSecret(key) && child !== null && child !== undefined) findings.push(childPath);
+      if (keyCarriesSecret(key) && child !== null && child !== undefined) append(findings, childPath);
       else containsSecretMaterial(child, childPath, findings);
     }
   }
@@ -37,23 +65,42 @@ export function containsSecretMaterial(value: unknown, path = "$", findings: str
 
 export function assertNoSecretMaterial(value: unknown, label = "value"): void {
   const findings = containsSecretMaterial(value);
-  if (findings.length) throw new Error(`${label} contains secret material at ${findings.join(", ")}`);
+  if (findings.length) {
+    throw new nativeError(`${label} contains secret material at ${nativeReflectApply(nativeArrayJoin, findings, [", "])}`);
+  }
 }
 
 export function redactSecrets(value: unknown): RedactionResult {
   const redactedPaths: string[] = [];
   const visit = (child: unknown, path: string, key?: string): unknown => {
     if (key && keyCarriesSecret(key) && child !== null && child !== undefined) {
-      redactedPaths.push(path);
+      append(redactedPaths, path);
       return "[REDACTED]";
     }
-    if (typeof child === "string" && secretPatterns.some((pattern) => pattern.test(child))) {
-      redactedPaths.push(path);
+    if (typeof child === "string" && matchesAny(secretPatterns, child)) {
+      append(redactedPaths, path);
       return "[REDACTED]";
     }
-    if (Array.isArray(child)) return child.map((item, index) => visit(item, `${path}[${index}]`));
+    if (nativeArrayIsArray(child)) {
+      const projected: unknown[] = [];
+      projected.length = child.length;
+      for (let index = 0; index < child.length; index += 1) {
+        if (!nativeObjectGetOwnPropertyDescriptor(child, `${index}`)) continue;
+        projected[index] = visit(child[index], `${path}[${index}]`);
+      }
+      return projected;
+    }
     if (child && typeof child === "object") {
-      return Object.fromEntries(Object.entries(child as Record<string, unknown>).map(([childKey, item]) => [childKey, visit(item, `${path}.${childKey}`, childKey)]));
+      const projected: Record<string, unknown> = {}, entries = nativeObjectEntries(child as Record<string, unknown>);
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        if (!entry) continue;
+        const childKey = entry[0];
+        nativeObjectDefineProperty(projected, childKey, {
+          value: visit(entry[1], `${path}.${childKey}`, childKey), enumerable: true, configurable: true, writable: true,
+        });
+      }
+      return projected;
     }
     return child;
   };

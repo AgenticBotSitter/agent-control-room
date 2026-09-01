@@ -1,0 +1,5 @@
+import { getIdeaLabProtectedRuntimeV1,type IdeaLabProtectedRuntimeV1 } from "@/app/idea-lab-protected-runtime";
+import { ideaFailureV1,ideaJsonV1 } from "@/app/api/v1/idea-lab/http";
+const safeId=/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/;
+export function createIdeaLabSessionDetailHandlerV1(runtime?:IdeaLabProtectedRuntimeV1){return async function handler(request:Request,context:{params:Promise<{sessionId:string}>}){if(!runtime)return ideaJsonV1({error:"protected_operator_boundary_unavailable"},503);const{sessionId}=await context.params;if(!safeId.test(sessionId))return ideaJsonV1({error:"idea_not_found"},404);const now=new Date().toISOString();let authentication;try{authentication=await runtime.ownerSession.verify(request,now);}catch{return ideaJsonV1({error:"authentication_required"},401);}try{return ideaJsonV1({session:await runtime.operatorService.get(sessionId,authentication)},200);}catch(error){return ideaFailureV1(error);}};}
+export const GET=createIdeaLabSessionDetailHandlerV1(getIdeaLabProtectedRuntimeV1());

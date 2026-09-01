@@ -41,6 +41,61 @@ test("redaction guard rejects private bodies, signed links, and secrets", () => 
   assert.throws(() => assertSafeProjection({ detail: "api_key=not-safe" }), /Unsafe projection value/);
 });
 
+test("safe projection retains forbidden fields under post-import traversal substitution", () => {
+  const entriesDescriptor = Object.getOwnPropertyDescriptor(Object, "entries"),
+    arrayDescriptor = Object.getOwnPropertyDescriptor(Array, "isArray"),
+    forEachDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "forEach"),
+    someDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "some"),
+    testDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "test"),
+    execDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec"),
+    symbolReplaceDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.replace),
+    lowerDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "toLowerCase"),
+    replaceDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "replace"),
+    includesDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "includes"),
+    applyDescriptor = Object.getOwnPropertyDescriptor(Reflect, "apply"),
+    errorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Error");
+  assert.ok(entriesDescriptor); assert.ok(arrayDescriptor); assert.ok(forEachDescriptor); assert.ok(someDescriptor);
+  assert.ok(testDescriptor); assert.ok(execDescriptor); assert.ok(symbolReplaceDescriptor); assert.ok(lowerDescriptor);
+  assert.ok(replaceDescriptor);
+  assert.ok(includesDescriptor);
+  assert.ok(applyDescriptor); assert.ok(errorDescriptor);
+  const sentinel = new Error("hostile projection walker"), hostile = () => { throw sentinel; };
+  class HostileError { constructor() { throw sentinel; } }
+  let rejected: unknown;
+  Object.defineProperty(Object, "entries", { ...entriesDescriptor, value: hostile });
+  Object.defineProperty(Array, "isArray", { ...arrayDescriptor, value: hostile });
+  Object.defineProperty(Array.prototype, "forEach", { ...forEachDescriptor, value: hostile });
+  Object.defineProperty(Array.prototype, "some", { ...someDescriptor, value: hostile });
+  Object.defineProperty(RegExp.prototype, "test", { ...testDescriptor, value: hostile });
+  Object.defineProperty(RegExp.prototype, "exec", { ...execDescriptor, value: hostile });
+  Object.defineProperty(RegExp.prototype, Symbol.replace, { ...symbolReplaceDescriptor, value: hostile });
+  Object.defineProperty(String.prototype, "toLowerCase", { ...lowerDescriptor, value: hostile });
+  Object.defineProperty(String.prototype, "replace", { ...replaceDescriptor, value: hostile });
+  Object.defineProperty(String.prototype, "includes", { ...includesDescriptor, value: hostile });
+  Object.defineProperty(Reflect, "apply", { ...applyDescriptor, value: hostile });
+  Object.defineProperty(globalThis, "Error", { ...errorDescriptor, value: HostileError });
+  try {
+    try { assertSafeProjection({ nested: [{ apiKey: "unsafe-value-123" }] }); }
+    catch (error) { rejected = error; }
+  } finally {
+    Object.defineProperty(Object, "entries", entriesDescriptor);
+    Object.defineProperty(Array, "isArray", arrayDescriptor);
+    Object.defineProperty(Array.prototype, "forEach", forEachDescriptor);
+    Object.defineProperty(Array.prototype, "some", someDescriptor);
+    Object.defineProperty(RegExp.prototype, "test", testDescriptor);
+    Object.defineProperty(RegExp.prototype, "exec", execDescriptor);
+    Object.defineProperty(RegExp.prototype, Symbol.replace, symbolReplaceDescriptor);
+    Object.defineProperty(String.prototype, "toLowerCase", lowerDescriptor);
+    Object.defineProperty(String.prototype, "replace", replaceDescriptor);
+    Object.defineProperty(String.prototype, "includes", includesDescriptor);
+    Object.defineProperty(Reflect, "apply", applyDescriptor);
+    Object.defineProperty(globalThis, "Error", errorDescriptor);
+  }
+  assert.ok(rejected instanceof Error);
+  assert.notEqual(rejected, sentinel);
+  assert.match(rejected.message, /Forbidden projection field/);
+});
+
 test("Content Blooms fixture contains required operational states without content", () => {
   const blooms = fixturePacks.find((pack) => pack.manifest.sourceSystem === "content-blooms")!;
   assert.ok(blooms.workItems.some((item) => item.domainState === "transcription_capacity"));

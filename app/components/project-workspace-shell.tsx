@@ -18,6 +18,7 @@ export function ProjectWorkspaceShell(props: {
   workspaceName: string;
   health: string;
   currentSectionId: string;
+  protectedOnly?: boolean;
   children: ReactNode;
 }) {
   const current = props.snapshot.sections.find((section) => section.sectionId === props.currentSectionId);
@@ -66,15 +67,15 @@ export function ProjectWorkspaceShell(props: {
           This workspace is presentation-only. Navigation grants no approval, network, command, lease, dispatch, or execution authority.
         </p>
 
-        <p className="project-workspace-fixture-boundary">
-          Development fixture mode: the server-rendered project detail below is synthetic. Protected records appear only in the separate protected-read panel and never fall back silently to fixture data.
-        </p>
+        <p className="project-workspace-fixture-boundary">{props.protectedOnly
+          ? "Local protected pilot: project identity and lifecycle come from the authenticated repository-fake registry. No fixture or live-provider result is substituted."
+          : "Development fixture mode: the server-rendered project detail below is synthetic. Protected records appear only in the separate protected-read panel and never fall back silently to fixture data."}</p>
 
         <section id="project-workspace-content" className="project-workspace-content" aria-labelledby="project-workspace-section-title">
           <div className="section-heading project-workspace-section-heading">
             <div><p className="eyebrow">{current?.kind === "project_extension" ? "Project extension" : "Shared project view"}</p>
               <h2 id="project-workspace-section-title">{current?.label ?? "Section unavailable"}</h2></div>
-            <span className="simulation-only">Synthetic projection · no effects</span>
+            <span className="simulation-only">{props.protectedOnly?"Protected local projection · no external effects":"Synthetic projection · no effects"}</span>
           </div>
           {props.children}
         </section>

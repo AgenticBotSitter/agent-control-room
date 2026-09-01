@@ -6,6 +6,7 @@ const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const objectDefineProperty = Object.defineProperty;
+const objectCreate = Object.create;
 const objectFreeze = Object.freeze;
 const reflectApply = Reflect.apply;
 const reflectOwnKeys = Reflect.ownKeys;
@@ -13,6 +14,10 @@ const arrayIsArray = Array.isArray;
 const arrayPrototype = Array.prototype;
 const objectPrototype = Object.prototype;
 const numberIsSafeInteger = Number.isSafeInteger;
+const weakMapPrototypeGet = WeakMap.prototype.get;
+const weakMapPrototypeSet = WeakMap.prototype.set;
+const arrayPrototypePush = Array.prototype.push;
+const arrayPrototypeSplice = Array.prototype.splice;
 const arrayBufferPrototype = ArrayBuffer.prototype;
 const uint8ArrayConstructor = Uint8Array;
 const uint8ArrayPrototype = Uint8Array.prototype;
@@ -27,7 +32,9 @@ const uint8ArrayAt = uint8ArrayPrototype.at;
 const uint8ArraySet = uint8ArrayPrototype.set;
 
 if (!typedArrayBufferGetter || !typedArrayByteLengthGetter || !typedArrayByteOffsetGetter
-  || !typedArrayLengthGetter || !arrayBufferByteLengthGetter || !arrayBufferDetachedGetter) throw new Error("host binary intrinsics unavailable");
+  || !typedArrayLengthGetter || !arrayBufferByteLengthGetter || !arrayBufferDetachedGetter) {
+  throw new Error("host intrinsics unavailable");
+}
 
 /**
  * Node's host-level Proxy check does not consult the value's traps. Security
@@ -45,6 +52,15 @@ export function ownDataPropertyValueV1(value: unknown, key: PropertyKey): unknow
   if (!value || (typeof value !== "object" && typeof value !== "function") || isHostProxyV1(value)) return undefined;
   const descriptor = objectGetOwnPropertyDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+/** Capture one own accessor getter without invoking it or accepting a callable Proxy. */
+export function ownAccessorPropertyGetterV1(value: unknown, key: PropertyKey): ((...args: unknown[]) => unknown) | undefined {
+  if (!value || (typeof value !== "object" && typeof value !== "function") || isHostProxyV1(value)) return undefined;
+  const descriptor = objectGetOwnPropertyDescriptor(value, key);
+  return descriptor && !("value" in descriptor)
+    && typeof descriptor.get === "function" && !isHostProxyV1(descriptor.get)
+    ? descriptor.get as (...args: unknown[]) => unknown : undefined;
 }
 
 /** Read a data property without invoking accessors, including class methods. */
@@ -146,6 +162,94 @@ export function exactHostDataArrayV1(value: unknown, maximum: number): unknown[]
     });
   }
   return result;
+}
+
+declare const hostCancellationSignalBrandV1: unique symbol;
+
+/** Opaque repository-owned cancellation capability with no caller-mutable host internals. */
+export interface HostCancellationSignalV1 {
+  readonly [hostCancellationSignalBrandV1]: true;
+}
+
+export interface HostCancellationControllerV1 {
+  readonly signal: HostCancellationSignalV1;
+  abort(): void;
+}
+
+interface HostCancellationStateV1 {
+  aborted: boolean;
+  listeners: Array<() => void>;
+}
+
+const hostCancellationSignalPrototypeV1 = objectFreeze(objectCreate(null)) as object;
+const hostCancellationStatesV1 = new WeakMap<object, HostCancellationStateV1>();
+
+function hostCancellationStateV1(value: unknown): HostCancellationStateV1 | undefined {
+  if (!value || typeof value !== "object" || isHostProxyV1(value)
+    || objectGetPrototypeOf(value) !== hostCancellationSignalPrototypeV1
+    || reflectOwnKeys(value).length !== 0) return undefined;
+  return reflectApply(weakMapPrototypeGet, hostCancellationStatesV1, [value]) as
+    HostCancellationStateV1 | undefined;
+}
+
+/** Create one cancellation authority. Only the opaque frozen signal crosses component seams. */
+export function createHostCancellationControllerV1(): HostCancellationControllerV1 {
+  const signal = objectFreeze(objectCreate(hostCancellationSignalPrototypeV1)) as HostCancellationSignalV1;
+  const state: HostCancellationStateV1 = { aborted: false, listeners: [] };
+  reflectApply(weakMapPrototypeSet, hostCancellationStatesV1, [signal, state]);
+  return objectFreeze({
+    signal,
+    abort() {
+      const current = hostCancellationStateV1(signal);
+      if (!current || current.aborted) return;
+      current.aborted = true;
+      const listeners = current.listeners;
+      current.listeners = [];
+      for (let index = 0; index < listeners.length; index += 1) {
+        try { listeners[index]!(); } catch { /* cancellation remains terminal */ }
+      }
+    },
+  });
+}
+
+export function exactHostCancellationSignalV1(value: unknown): value is HostCancellationSignalV1 {
+  return hostCancellationStateV1(value) !== undefined;
+}
+
+export function hostCancellationAbortedV1(value: unknown): boolean | undefined {
+  return hostCancellationStateV1(value)?.aborted;
+}
+
+export type HostCancellationSubscriptionV1 = Readonly<{
+  status: "subscribed";
+  unsubscribe: () => void;
+}> | Readonly<{ status: "aborted" }>;
+
+/** Subscribe without touching EventTarget, AbortSignal, accessors, iterators, or caller-owned containers. */
+export function subscribeHostCancellationV1(
+  value: unknown,
+  listener: () => void,
+): HostCancellationSubscriptionV1 | undefined {
+  const state = hostCancellationStateV1(value);
+  if (!state || typeof listener !== "function" || isHostProxyV1(listener)) return undefined;
+  if (state.aborted) return objectFreeze({ status: "aborted" as const });
+  reflectApply(arrayPrototypePush, state.listeners, [listener]);
+  let active = true;
+  return objectFreeze({
+    status: "subscribed" as const,
+    unsubscribe: objectFreeze(() => {
+      if (!active) return;
+      active = false;
+      const current = hostCancellationStateV1(value);
+      if (!current) return;
+      for (let index = 0; index < current.listeners.length; index += 1) {
+        if (current.listeners[index] === listener) {
+          reflectApply(arrayPrototypeSplice, current.listeners, [index, 1]);
+          return;
+        }
+      }
+    }),
+  });
 }
 
 export interface ExactHostUint8ArrayV1 {

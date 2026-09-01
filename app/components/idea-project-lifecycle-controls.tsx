@@ -1,0 +1,9 @@
+"use client";
+import { useState } from "react";
+import type { ProjectRegistryProjectionV1 } from "@/src/idea-lab/v1";
+const actions={active:["pause","complete"],paused:["resume","complete"],completed:["archive"],archived:["reopen"]} as const;
+function label(value:string){return value.replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());}
+export function IdeaProjectLifecycleControls({project:initial,enabled=false}:{project:ProjectRegistryProjectionV1;enabled?:boolean}){const[project,setProject]=useState(initial),[busy,setBusy]=useState(false),[status,setStatus]=useState(enabled?"Ready for an owner lifecycle decision.":"Protected lifecycle runtime not configured. Controls are safely disabled.");
+  async function transition(action:string){setBusy(true);try{const response=await fetch(`/api/v1/idea-lab/projects/${encodeURIComponent(project.projectId)}/lifecycle/${action}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({commandId:`command.idea.lifecycle:${crypto.randomUUID()}`,expectedVersion:project.version,requestedAt:new Date().toISOString()})}),payload=await response.json() as{error?:string;project?:ProjectRegistryProjectionV1};if(!response.ok||!payload.project)throw new Error(payload.error??"lifecycle_request_failed");setProject(payload.project);setStatus(`Project is now ${payload.project.lifecycleState}.`);}catch(error){setStatus(error instanceof Error?error.message:"lifecycle_request_failed");}finally{setBusy(false);}}
+  return <section className="idea-project-lifecycle-controls" aria-label="Protected project lifecycle"><div><h3>{label(project.lifecycleState)}</h3><small>Lifecycle version {project.version}</small></div><div>{actions[project.lifecycleState].map(action=><button key={action} type="button" disabled={!enabled||busy} onClick={()=>void transition(action)}>{label(action)}</button>)}</div><p role="status">{status}</p></section>;
+}

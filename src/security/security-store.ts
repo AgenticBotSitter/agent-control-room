@@ -88,6 +88,9 @@ export class SecurityStore {
     decisionId: string;
     authentication: VerifiedAuthentication;
     request: AuthorizationRequest;
+    /** Optional server-selected narrowing. It can never widen the caller's grants. */
+    requiredRoleKey?: "owner" | "operator" | "policy";
+    requiredActorType?: "human";
   }): Promise<RecordedDecision> {
     const { authentication, request } = input;
     assertNoSecretMaterial(request, "Authorization request");
@@ -105,16 +108,21 @@ export class SecurityStore {
       );
       const actor = identity.rows[0];
       if (!actor || actor.state !== "active") throw new Error("Authentication does not resolve to an active identity");
+      if (input.requiredActorType && actor.actor_type !== input.requiredActorType) {
+        throw new Error("Authentication does not resolve to the required actor type");
+      }
 
       const rows = await tx.query<{
-        id: string; allowed_actions: string[]; project_ids: string[]; risk_ceiling: RoleGrant["riskCeiling"];
+        id: string; role_key: string; allowed_actions: string[]; project_ids: string[]; risk_ceiling: RoleGrant["riskCeiling"];
         allow_external_effects: boolean; require_strong_factor: boolean; expires_at?: string; revoked_at?: string;
       }>(
-        `SELECT id,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,expires_at,revoked_at
+        `SELECT id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,expires_at,revoked_at
          FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2`,
         [authentication.tenantId, actor.id],
       );
-      const grants: RoleGrant[] = rows.rows.map((row) => ({
+      const acceptedRoles = input.requiredRoleKey === "operator" ? new Set(["operator", "owner"])
+        : input.requiredRoleKey ? new Set([input.requiredRoleKey]) : undefined;
+      const grants: RoleGrant[] = rows.rows.filter((row) => !acceptedRoles || acceptedRoles.has(row.role_key)).map((row) => ({
         id: row.id,
         allowedActions: row.allowed_actions,
         projectIds: row.project_ids,
@@ -138,6 +146,24 @@ export class SecurityStore {
       if (decision.strongFactorEvidenceId && authentication.strongFactor) expiryCandidates.push(Date.parse(authentication.strongFactor.expiresAt));
       const expiresAt = new Date(Math.min(...expiryCandidates)).toISOString();
       if (Date.parse(expiresAt) <= Date.parse(request.occurredAt)) throw new Error("Authorization proof has no valid lifetime");
+
+      const existing = await tx.query<{
+        identity_id: string; allowed: boolean; reason_codes: string[]; grant_ids: string[];
+        strong_factor_evidence_id?: string | null; request_digest: string; expires_at: string | Date;
+      }>(`SELECT identity_id,allowed,reason_codes,grant_ids,strong_factor_evidence_id,request_digest,expires_at
+          FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [request.tenantId, input.decisionId]);
+      if (existing.rows[0]) {
+        const prior = existing.rows[0], priorExpiry = typeof prior.expires_at === "string"
+          ? new Date(prior.expires_at).toISOString() : prior.expires_at.toISOString();
+        if (prior.identity_id !== actor.id || prior.allowed !== decision.allowed
+          || JSON.stringify(prior.reason_codes) !== JSON.stringify(decision.reasonCodes)
+          || JSON.stringify(prior.grant_ids) !== JSON.stringify(decision.matchedGrantIds)
+          || (prior.strong_factor_evidence_id ?? undefined) !== decision.strongFactorEvidenceId
+          || prior.request_digest !== decision.requestDigest || priorExpiry !== expiresAt) {
+          throw new Error("Authorization decision replay does not match");
+        }
+        return { ...decision, id: input.decisionId, identityId: actor.id, expiresAt };
+      }
 
       await tx.query(
         `INSERT INTO control_policy_decisions

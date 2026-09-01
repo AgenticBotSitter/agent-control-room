@@ -485,3 +485,381 @@ CR-11 adds the people-first collaboration layer after the project, schedule, wor
 - One exact authenticated owner decision may atomically materialize only non-runnable canonical proposed work plus its Action Inbox record; rejection and withdrawal create nothing, and no review grants approval or dispatch authority.
 - Hermes Bot Mode calls remain absent until a separately pinned, read-only, conformance-tested adapter is accepted.
 - `agentcontrolroom.xyz` remains an owner-held future deployment destination; no hosted effect occurs in CR11A.
+## CR12B-IDEA-030 — protected Bot Mode coordinator and owner promotion
+
+Status: complete locally for the repository-only, provider-disabled implementation. See
+`CR12B_IDEA_030_ACCEPTANCE.md` and ADR-126.
+
+The block adds exact provider-session evidence, an independently verified live-provider gate, serialized budgeted panel
+orchestration, an append-only PostgreSQL run ledger, terminal post-marker ambiguity, and a protected human-owner-only
+promotion permit and HTTP boundary. The default composition stays disabled and no native provider contact occurred.
+
+Next: CR12B-IDEA-040 protects session creation and synthesis, then connects those safe operations to the Idea Lab UI.
+
+## CR12B-IDEA-040 — protected Idea Lab operator workflow
+
+Status: complete locally for the authenticated repository-fake, provider-disabled implementation. See
+`CR12B_IDEA_040_ACCEPTANCE.md` and ADR-127.
+
+The block adds a human-owner-authorized operator service and protected create, start, cancel, and synthesis routes. All
+scope, identities, panel membership, provider evidence, and durable identifiers are server-derived. The Idea Lab page
+has separate controls for each recorded step and for the existing save/promote decision, but the shipped composition
+keeps every control disabled because no owner-session or live provider runtime is installed. The full workflow is proven
+only with the zero-network repository fake.
+
+Next: CR12B-IDEA-050 adds owner-scoped session discovery and reload-safe resume plus protected reversible project
+lifecycle controls. Live provider contact remains a separate exact authorization and qualification gate.
+
+## CR12B-IDEA-050 — durable session resume and protected project lifecycle
+
+Status: complete locally for the owner-authenticated, repository-fake, runtime-disabled implementation. See
+`CR12B_IDEA_050_ACCEPTANCE.md` and ADR-128.
+
+The block adds effect-free owner-scoped session catalog/detail reads, stable durable projections, automatic browser
+reload/resume, and human-owner-only pause, resume, complete, archive, and reopen commands. Reads create no policy writes.
+Lifecycle commands are route-scoped, version-checked, replay-safe, and transactional. The visible controls expose only
+legal transitions and remain disabled in the shipped composition.
+
+Next: CR12B-IDEA-060 installs one explicit local non-production composition and runs one owner-attended repository-fake
+pilot. It does not authorize live provider contact.
+
+## CR12B-IDEA-060 — explicit local composition and owner-attended repository-fake pilot
+
+Status: complete for the exact local, Keychain-backed, repository-fake owner pilot. See
+`CR12B_IDEA_060_ACCEPTANCE.md`, `CR12B_IDEA_060_OWNER_PACKET.md`, and ADR-129.
+
+The exact development-only composition uses a loopback foreground server, one-time 15-minute owner session, Keychain-held
+master key with separate derived integrity domains, persistent local PGlite outside the repository, an authenticated
+project catalog plus independent high-water, and only the deterministic repository-fake panel. Dynamic promoted-project
+pages read protected local truth and expose legal owner lifecycle transitions. Production mode and every unconfigured run
+remain closed. The exact development switch selects Vinext's Node runtime because PGlite is not a Cloudflare-worker
+database; ordinary previews and every production build keep the Cloudflare plugin.
+
+The owner-attended packet passed create, panel, synthesis, project promotion, protected project read, pause/resume,
+reload, and real foreground restart persistence. No later block may treat this repository-fake acceptance as authority
+for live Hermes/provider contact.
+
+Next: CR12B-IDEA-070 defines the provider-neutral live-panel admission boundary, exact Hermes compatibility inputs, and
+one separately authorized owner packet. Repository work remains provider-disabled and effect-free until that packet is
+accepted.
+
+## CR12B-IDEA-070 — provider-neutral live-panel admission and Hermes packet
+
+Status: complete for the exact repository-only, provider-disabled snapshot. See `CR12B_IDEA_070_ACCEPTANCE.md`,
+`CR12B_IDEA_070_OWNER_PACKET.md`, and ADR-130.
+
+The accepted admission seam binds the coordinator to exact provider/runtime/compatibility/native-qualification and
+protected-value-custody evidence, every participant/runtime identity, exact session ceilings, one single-use
+strong-factor-backed owner window, serialized durable pre-call markers, terminal ambiguity/no retry, filtered
+contributions, between-call cancellation, disabled steering, and reconciliation-only resume. Separate server-held
+provider and admission authorities must agree. The disabled Hermes 0.21 packet pins exact source evidence but contains no
+native receipt, owner window, accepted admission, or driver. Default, browser, local-pilot, and production composition
+remain provider-disabled.
+
+Next: CR12B-IDEA-080 implements the default-disabled filtered provider driver and disposable native-qualification
+harness. Repository implementation remains effect-free; no native attempt occurs without a later exact owner window.
+
+## CR12B-IDEA-080 — filtered provider driver and native qualification harness
+
+Status: complete for the exact repository-only, injected-fixture, provider-disabled snapshot. See
+`CR12B_IDEA_080_ACCEPTANCE.md`, `CR12B_IDEA_080_OWNER_PACKET.md`, and ADR-131.
+
+The injected node-local driver rechecks exact admission/runtime/participant bindings, discards streaming content before
+parsing, accepts one strict filtered completion or definite failure sequence, derives a cleanup-bound receipt, and makes
+timeouts, malformed evidence, and cleanup uncertainty terminally ambiguous through the existing coordinator. The frozen
+ten-stage qualification plan remains blocked with no native port, owner window, or accepted receipt. Its injected
+simulation cannot claim native qualification. Every composition remains provider-disabled.
+
+Next: CR12B-IDEA-090 implements authenticated durable single-use admission consumption and an exact accepted-native-
+receipt registry. It remains repository-only and performs no native attempt.
+
+## CR12B-IDEA-090 — durable admission consumption and native-receipt registry
+
+Status: complete for the exact repository-only, provider-disabled snapshot. See `CR12B_IDEA_090_ACCEPTANCE.md`,
+`CR12B_IDEA_090_OWNER_PACKET.md`, and ADR-132.
+
+The PostgreSQL-compatible append-only authority ledger separates architect-authenticated native-receipt decisions,
+server-authenticated admission decisions, and atomic consumption. It binds one admission/window/run, makes exact replay
+inert, rejects cross-binding reuse, preserves terminal revocation, and detects database rollback through an external
+authenticated high-water. It remains unconfigured in every shipped composition and performs no native/provider call.
+
+Next: CR12B-IDEA-100 freezes the owner-ready native qualification and first-live-panel rehearsal packet without executing
+it. The later native attempt and provider panel remain separate exact owner authorizations.
+
+## CR12B-IDEA-100 — owner-ready native qualification and live-panel rehearsal packet
+
+Status: complete for the exact repository-only, effect-free packet. See `CR12B_IDEA_100_ACCEPTANCE.md`,
+`CR12B_IDEA_100_OWNER_AUTHORIZATION.md`, and ADR-133.
+
+The immutable three-stage packet binds exact Hermes 0.21 source and implementation commits, a one-attempt/one-call
+disposable qualification, an unaccepted sanitized candidate, mandatory different-party review and architect registry
+acceptance, and a later separately authorized live-panel admission. Every authority field remains false. The local pilot
+is repository-fake only.
+
+Next: CR12B-IDEA-105 refreshes the Idea Lab packet from the upstream release revision to the exact reviewed installed
+Hermes 0.21 runtime and binds the sanitized no-effect source preflight. It performs no native attempt.
+
+## CR12B-IDEA-105 — Hermes 0.21 reviewed-runtime pin refresh
+
+Status: complete locally for the repository-only evidence binding. See
+`CR12B_IDEA_105_HERMES_021_PIN_REFRESH_ACCEPTANCE.md`, `CR12B_IDEA_105_OWNER_AUTHORIZATION.md`, and ADR-134.
+
+The block distinguishes the upstream release commit from the exact installed runtime 60 reviewed commits later, binds
+the accepted compatibility implementation plus twelve-source manifest and sanitized preflight digests, and carries the
+new pin through the Idea Lab packet, qualification plan, live-evidence fixtures, and owner-ready candidate boundary. The
+earlier authorization is non-reusable because the exact packet and plan digests changed. No native/provider contact or
+protected-value access occurred.
+
+Next: CR12B-IDEA-108 checks whether the reviewed Hermes profile operations can actually satisfy the disposable empty
+profile plus existing-authentication boundary before any owner command is emitted.
+
+## CR12B-IDEA-108 — Hermes native-launch readiness
+
+Status: complete with a blocked-before-owner-command disposition. See
+`CR12B_IDEA_108_NATIVE_LAUNCH_READINESS_ACCEPTANCE.md` and ADR-135.
+
+Exact source inspection proves a fresh no-skills profile has an empty protected-value file, while clone imports the
+protected-value file plus SOUL, skills, and memory and is mutually exclusive with no-skills. Hermes exposes no
+protected-value-only clone. The digest-bound readiness contract therefore emits no command and grants no authority.
+
+Next: CR12B-IDEA-109 freezes the Hermes-native profile preparation method required for the protected-value-only
+remediation. It remains proposal-only and accepts no runtime.
+
+## CR12B-IDEA-109 — Hermes-native profile preparation contract
+
+Status: complete locally for the effect-free proposal-only boundary. See
+`CR12B_IDEA_109_HERMES_PROFILE_PREPARATION_CONTRACT_ACCEPTANCE.md` and ADR-136.
+
+The method contract transfers existing authentication inside Hermes custody, copies no private bot context, returns no
+material or path, starts no gateway/provider, retains the one-use launch permit natively, and emits only signed digests
+plus negative counts. Requests expire within 60 seconds and grant no command authority. The accepted-runtime list is
+empty until an exact implementation is independently reviewed.
+
+Next: CR12B-IDEA-109A adds canonical signed-attestation verification while keeping the runtime unaccepted.
+
+## CR12B-IDEA-109A — signed profile-preparation attestation
+
+Status: complete locally for injected signed evidence only. See
+`CR12B_IDEA_109A_PROFILE_PREPARATION_ATTESTATION_ACCEPTANCE.md` and ADR-137.
+
+The verifier binds canonical Ed25519 device identity, exact request/runtime/chronology, zero private-context counts,
+negative material/path/gateway/provider truth, and cleanup presence. It returns only safe digests and never converts an
+injected fixture into runtime acceptance or launch eligibility.
+
+The later IDEA-109B source reassessment removes this optional upstream method from the critical path.
+
+## CR12B-IDEA-109B — enrolled local/SSH Hermes connection
+
+Status: complete locally for the signed, locator-free, connection-disabled snapshot. See
+`CR12B_IDEA_109B_ENROLLED_HERMES_CONNECTION_ACCEPTANCE.md` and ADR-138.
+
+Exact installed source proves that fresh no-skills profiles already use a read-only global-root protected-value fallback
+without copying Bot context, and that Hermes already supplies key-only connect-on-demand SSH connections. Control Room
+therefore verifies node-signed enrollments for an opaque fixed local/SSH gateway route, requires owner-verified SSH host
+identity, retains no host/user/port/key/session/protected-value/profile locator, exposes no generic shell, and produces a
+safe multi-machine roster. Enrollment qualifies only the route to enter IDEA-110; it grants no provider, command, lease,
+approval, or execution authority.
+
+The repository-owned policy port and durable spend boundary are implemented by IDEA-110A below. The platform bridge,
+packet refresh, and separately authorized owner-attended qualification remain later gates.
+
+## CR12B-IDEA-110A — enrolled qualification gateway and durable one-use spend
+
+Status: complete locally for the repository-owned, provider-disabled policy port. See
+`CR12B_IDEA_110A_ENROLLED_GATEWAY_PORT_ACCEPTANCE.md` and ADR-139.
+
+The port accepts only a canonical Ed25519 owner window bound to one signed enrollment, opaque route, profile,
+conversation, participant, effect marker, exact Hermes revision, and fixed method set. It atomically spends that permit
+before an injected bridge can run, exposes no host or generic shell, and fixes tools/MCP/plugins/retry off. Migration
+0032 and the PostgreSQL-compatible authenticated event store make claim, native return or ambiguity, and cleanup result
+append-only, uniquely spent, restart-safe, and rollback-detecting through an external checkpoint. Repository tests use
+PGlite; production remains one private PostgreSQL primary.
+
+Next: implement and independently review the fixed local/SSH native bridge, obtain one real signed enrollment, refresh
+the exact owner packet and pins, then request a new owner-attended IDEA-110 qualification window.
+
+## CR12B-IDEA-110B — fixed Hermes local/SSH bridge
+
+Status: accepted for the exact provider-disabled repository snapshot after two remediation rounds and a second different
+independent re-review. Connector configuration and enrollment remain absent.
+See `CR12B_IDEA_110B_FIXED_HERMES_BRIDGE_ACCEPTANCE.md` and ADR-140.
+
+The repository bridge uses Hermes Desktop's already enrolled local or SSH route. An injected connector owns every
+machine locator, key, gateway value, protected value, and native session identifier. Control Room sends only signed
+opaque route/attempt/permit digests and the fixed create, prompt, replay, status, usage, interrupt, and close operations.
+It rejects gateway-epoch changes, replay gaps or truncation, malformed terminal JSON, usage drift, extra native fields,
+and uncertain outcomes without retry; cleanup is attempt-bound even when route opening was uncertain. The signed owner
+window now binds participant identity and runtime identity, and the enrollment method set explicitly includes close.
+
+Next: independently re-review the exact 110G connector remediation, then create one real signed enrollment through the
+accepted connector, refresh all affected packet and implementation pins, and only then ask the owner for a new
+attached-Terminal qualification window.
+
+## CR12B-IDEA-110C — default-blocked enrollment readiness
+
+Status: complete locally for the zero-effect readiness snapshot. See
+`CR12B_IDEA_110C_ENROLLMENT_READINESS_ACCEPTANCE.md` and ADR-141.
+
+One canonical digest-bound record now pins the exact fixed bridge, review packet, installed Hermes revision, connection
+source, fixed RPC source manifest, operation set, and accepted second re-review. It records platform connector, trusted
+node signer, signed enrollment, preflight, packet refresh, fresh owner authorization, and native qualification as absent.
+Those seven gates cannot be re-digested into success, old owner text is non-reusable, no command is emitted, and all
+connection/native/provider/network effect counts remain zero.
+
+Review attempts #198 and #201 stopped before implementation review. Jobbers #202, #205, and #208 then preserved two
+negative reports, two remediation rounds, and final accepted report PR #209. IDEA-110F implemented the first macOS
+protocol guard for an injected Hermes Desktop private port. Independent jobber #211/PR #212 rejected it with two High
+and three Medium findings. IDEA-110G closed four boundaries but its native AbortSignal observer remained vulnerable to a
+poisoned built-in event map. IDEA-110H removes native AbortSignal objects from all repository component seams and
+replaces them with a frozen, zero-key opaque cancellation capability backed by module-private state; only the
+Mac-private port receives a newly created native signal. Next: independently review the exact IDEA-110H remediation,
+then separately accept its trusted node signer and one signed connection enrollment before any native attempt.
+
+## CR12B-IDEA-110H — opaque cancellation remediation
+
+Status: complete locally for the provider-disabled implementation candidate; fresh independent review required. See
+`CR12B_IDEA_110H_OPAQUE_CANCELLATION_REMEDIATION.md` and ADR-146.
+
+Two IDEA-110G re-review processes stopped before publishing complete reports, so their queue records remain blocked and
+cannot accept the candidate. One different reviewer nevertheless exposed a reproducible High defect: a genuine native
+signal with unchanged outer shape could carry a Proxy in its mutable internal event map, and listener installation
+executed caller behavior. IDEA-110H replaces that seam structurally across the driver, enrolled gateway, fixed bridge,
+and connector. Opaque cancellation retains timeout, abort, settlement, and cleanup semantics without EventTarget or
+caller-owned internal containers. A new independent report is required before connector acceptance.
+
+Independent PR #219 rejected that exact candidate with two High and one Medium finding. See the retained report at
+`docs/reviews/CR12B_IDEA_110H_OPAQUE_CANCELLATION_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110I — exact cancellation-boundary remediation
+
+Status: provider-disabled implementation frozen at `5c731e42bc54bc3dea88e079385b9616dd2042b4`; replacement
+packet `sha256:1e16228a82d475941507213593c900ec94e0092054c53bdb9fcd18e97536e1ef` and fresh independent review required. See
+`CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REMEDIATION.md` and amended ADR-146.
+
+Every gateway and fixed-bridge execute/cleanup entry now requires an exact repository-owned cancellation capability
+before state, time, spend, settlement, or collaborator behavior. The Mac connector uses module-captured native
+constructor/getter/abort operations; connector-owned cancellation becomes terminal before native abort, abort exceptions
+are discarded, active settlement remains joined, and mandatory cleanup stays reachable. Four hostile regressions close
+the exact PR #219 attacks. No private port, enrollment, native operation, provider call, credential access, or deployment
+is introduced.
+
+Independent review accepted closure of all three inherited defects but rejected IDEA-110I on one new Medium ambient
+`Set` path after cancellation acceptance. See
+`docs/reviews/CR12B_IDEA_110I_CANCELLATION_BOUNDARY_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110J — host-operation capture remediation
+
+Status: rejected by independent review. Exact product `5707ecb05221e708beefa196fc0fa2e0c9d8515d` is superseded by
+IDEA-110K. See `CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REMEDIATION.md`, the immutable negative report, and amended ADR-146.
+
+Dynamic collection distinctness is removed. Gateway, exact snapshot, bridge, and connector now capture or structurally
+avoid mutable ambient time, number, Promise, JSON, freeze, reflection, receiver-binding, collection, and array-traversal
+operations used after an exact cancellation signal is accepted. Three hostile post-import regressions require zero
+behavior and bounded results. No private port, enrollment, native operation, provider call, credential access, or
+deployment is introduced.
+
+Independent review confirmed the IDEA-110I ambient-Set defect closed but found one new High bypass: both shared safety
+walkers dynamically selected post-import `Object.entries`, allowing a replacement to traverse no fields and retain a
+secret-bearing value. See `docs/reviews/CR12B_IDEA_110J_HOST_OPERATION_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110K — shared safety-walker capture remediation
+
+Status: rejected by independent review. Exact product `2aa4f8e0dce52045100a2a10394d86bb934df93e` is superseded by
+IDEA-110L. See `CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REMEDIATION.md`, the immutable negative report, and amended ADR-146.
+
+Secret detection/redaction and safe projection now capture or structurally avoid object-entry, array
+identification/traversal/append/join, regex test/replace, string normalization/search, reflection, object definition, and
+Error operations. Direct walker tests and actual connector/provider/cleanup tests replace the former ambient helpers,
+require zero hostile behavior, retain secret rejection, prevent private prompt dispatch, and still complete mandatory
+cleanup. No private port, enrollment, native operation, provider call, credential access, or deployment is introduced.
+
+Independent review found one High and one Low defect: captured regex methods still dynamically resolved mutable
+`RegExp.prototype.exec`, and indexed redaction materialized sparse-array holes. See
+`docs/reviews/CR12B_IDEA_110K_SAFETY_WALKER_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110L — regex execution and sparse-array remediation
+
+Status: provider-disabled implementation frozen at `c31a00b388292fe5af404f71eb2802b6aed52d1f`; replacement
+packet `sha256:bfaef5a2c48930bf194af91f7d4cc844bc1492763632c03dddff9dd79c37cef6` and fresh independent review required. See
+`CR12B_IDEA_110L_REGEXP_EXEC_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+Pattern checks invoke captured native regex execution directly; key normalization uses primitive ASCII filtering; every
+Idea Lab regex and datetime schema uses captured refinement operations; and sparse redaction preserves exact holes.
+Dishonest and throwing exec regressions cover direct walkers, exact error classification, connector prompt admission,
+provider-result filtering, and mandatory cleanup. No private port, enrollment, native operation, provider call,
+credential access, or deployment is introduced.
+
+Independent review confirmed the IDEA-110K findings closed but found two Medium chronology defects: post-import ambient
+time replacement could accept an expired enrollment, and the replacement datetime refinement accepted impossible civil
+times. See `docs/reviews/CR12B_IDEA_110L_REGEXP_EXEC_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110M — captured chronology and strict calendar remediation
+
+Status: provider-disabled implementation frozen at `790524a7538f0e1d6c45e5023f5ecc3100e9c113`; replacement packet
+`sha256:0b779430173a003a1abe90aa527e428d2895fc42a4eb088d157ebc1e0b6e644d` and fresh independent review required. See
+`CR12B_IDEA_110M_CHRONOLOGY_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+One captured strict-calendar boundary validates, parses, formats, and obtains Idea Lab time. Enrollment, profile,
+owner, admission, authority, coordinator, lifecycle, generated evidence, spend, and persistence comparisons no longer
+select ambient chronology operations after import. Hostile-substitution and calendar regressions cover the actual four
+security boundaries. No private port, enrollment, native operation, provider call, credential access, or deployment is
+introduced.
+
+Independent review confirmed the inherited chronology and calendar findings closed but found two Medium defects:
+captured formatting could emit timestamps outside the exact contract or leak an invalid-Date error, and actual roster
+construction invoked caller/ambient array and collection behavior. See
+`docs/reviews/CR12B_IDEA_110M_CHRONOLOGY_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110N — contract-safe formatter and inert roster capture remediation
+
+Status: provider-disabled implementation frozen at `58fc3304b8b927252c6c0d0e3d8afc9c1b2039b5`; replacement packet
+`sha256:c561cf781d944ec01943f5fd412adf64ad59e8dd61ab6a3205f815aab346804f` and fresh independent review required. See
+`CR12B_IDEA_110N_FORMATTER_ROSTER_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+Formatted time round-trips through the captured strict contract and all formatting failures remain controlled. Roster
+construction exact-snapshots its request and bounded dense array, traverses by numeric index, compares identities
+pairwise, and counts directly without selecting caller or ambient array/collection behavior. No private port,
+enrollment, native operation, provider call, credential access, or deployment is introduced.
+
+Independent review confirmed both intended IDEA-110N repairs but found one Medium defect: rebuilt roster records still
+entered the shared canonical digest routine, which dynamically selected ambient array behavior. See
+`docs/reviews/CR12B_IDEA_110N_FORMATTER_ROSTER_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110O — captured roster-digest remediation
+
+Status: provider-disabled implementation frozen at `343eb645e6c10f9bb4e601ea49ae371fee2493ba`; replacement packet
+`sha256:ab738a78c9ac9d4e7a1172979231a979f55109a07ab9589090a91b8cc7d44728` and fresh independent review required. See
+`CR12B_IDEA_110O_ROSTER_DIGEST_CAPTURE_REMEDIATION.md` and amended ADR-146.
+
+Roster canonicalization captures array identification and sorting, object-key enumeration, JSON and finite-number
+handling, reflection, and SHA-256 methods at module initialization. Indexed construction selects no mutable ambient
+traversal and preserves exact clean-runtime digest bytes. No private port, enrollment, native operation, provider call,
+credential access, or deployment is introduced.
+
+Independent review confirmed the captured digest repair but found one Medium defect: reparsed safe results and nested
+roster connection/blocker evidence remained mutable after digest verification. See
+`docs/reviews/CR12B_IDEA_110O_ROSTER_DIGEST_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110P — immutable connection-evidence remediation
+
+Status: exact provider-disabled product `e028d6b4cd5ee55c053561a880fbf65d897dc2ad` accepted after fresh independent
+review. Accepted report SHA-256: `7cbd2f982956ff418e35dfacf71ee616a763fe60e20eb0b4d40acf553581af3f`. See
+`CR12B_IDEA_110P_CONNECTION_EVIDENCE_FREEZE_REMEDIATION.md`, `CR12B_IDEA_110P_ACCEPTANCE.md`, and amended ADR-146.
+
+A module-captured freeze operation seals direct and reparsed safe results with their blocker arrays. Final roster
+parsing seals every nested connection and blocker array before the connection array and outer projection. No private
+port, enrollment, native operation, provider call, credential access, or deployment is introduced.
+
+The completed different reviewer directly reproduced the predecessor mutation, confirmed recursive immutability for
+direct, reparsed, empty, one-entry, and 32-entry results, repeated the inherited connector matrix, and accepted only the
+provider-disabled implementation snapshot. Live configuration and every external effect remain separately gated.
+
+## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
+
+Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,
+and another exact owner authorization. The policy port and durable spend store are complete. The IDEA-100 and IDEA-105
+authorization text is non-reusable.
+
+One no-effect preflight will verify the installed runtime and print the exact attached-Terminal command. The owner must
+run it and handle any Keychain prompt. The attempt emits only a sanitized unaccepted candidate, cleans disposable state,
+and never retries after uncertainty. Independent review and architect registry acceptance remain later gates.

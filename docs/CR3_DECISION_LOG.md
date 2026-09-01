@@ -1938,3 +1938,649 @@ silently falling back to spoofable identity or fixture truth.
 owner-attended read-only pilot. It must retain server-only catalog key custody, durable independent high-water storage,
 sanitized evidence, and the disabled production boundary. This ADR does not authorize credential access, live login,
 production data or host contact, project writes, approval, dispatch, execution, deployment, DNS, or any external effect.
+
+## ADR-125 — Idea Lab advice is diverse and bounded; project creation remains an explicit owner act
+
+**Decision:** Business-idea deliberation uses three to six distinct identities and perspectives, including a mandatory
+skeptic, under fixed round, message, time, and cost ceilings. Retained contributions are safe injected summaries bound to
+the exact session and participant. Control Room derives the score and recommendation only after every panel member has
+contributed. The synthesis is advisory. Only a separate exact owner decision may atomically create a project and its
+initial append-only lifecycle event. Every promoted project receives the shared Project Workspace and reversible
+active/paused/completed/archived lifecycle.
+
+**Why:** Multiple agents are useful only if they provide genuinely different lenses and cannot manufacture consensus,
+spend without bounds, or turn a recommendation into an effect. Owner promotion separates exploration from commitment.
+One durable project registry prevents each new business idea from becoming a special-case page with lost history.
+
+**Alternatives rejected:** Let one agent impersonate a panel; omit dissent; trust a caller-supplied score; retain raw
+provider transcripts; create projects automatically above a threshold; hard-code every project route; delete completed
+projects; allow arbitrary state jumps; use PGlite as production authority; or claim live Bot Mode from injected fixtures.
+
+**Trade-off:** The first interface is useful for evaluating the flow but remains a clearly labeled fixture. Live Bot Mode
+requires a later authenticated coordinator and a filtered Hermes read path. That adds a deliberate integration gate while
+keeping the owner, provider, and project-write authorities separate.
+
+**Reevaluate:** CR12B-IDEA-030 may add provider-backed panels and an owner-promotion API only after exact compatibility,
+identity, filtered-read, budget, cancellation, persistence, and terminal-ambiguity gates pass. This ADR grants no provider
+contact, credential use, project write, deployment, or production effect by itself.
+
+## ADR-126 — Provider evidence cannot authorize itself; owner promotion uses a pre-existing immutable permit
+
+**Decision:** The Idea Lab coordinator accepts exact per-participant provider-session evidence but treats every live
+authorization field inside that evidence as a claim. A separate server-held verifier must authenticate it before the
+coordinator may invoke a live driver. The shipped composition provides no verifier and therefore rejects live execution.
+Each turn is serialized and durably marked before invocation; any unknown post-marker outcome is terminally ambiguous
+and is never automatically retried. Project promotion is a separate path: verified authentication must resolve to an
+active human owner grant, a policy decision and immutable owner permit are persisted first, and only then may the bound
+idea decision create the project. Tenant and owner identity are derived on the server.
+
+**Why:** A signed-looking document, caller-supplied digest, or adapter claim is not authority. Separating evidence,
+verification, advice, owner intent, and the project write prevents a compromised browser, worker, or provider adapter
+from turning panel output into a Control Room effect. Pre-effect persistence also makes a crash safe: it may leave unused
+authorization, but cannot leave an unauthorized project.
+
+**Alternatives rejected:** Trust `liveProviderAuthorized` in a request; retry an uncertain Bot Mode call; retain raw
+provider content; run panel members concurrently without a bounded ledger; let an operator or agent impersonate the
+owner; accept tenant or identity headers; write the project before its authorization evidence; or silently configure a
+live runtime from environment variables.
+
+**Trade-off:** The repository proves the orchestration and owner boundary with an injected fake while the real path stays
+closed. A later composition must supply an authenticated provider-evidence verifier and protected owner-session adapter.
+
+**Reevaluate:** CR12B-IDEA-040 may add protected session creation, deterministic synthesis, and operator controls. Any
+native Hermes contact remains a separate owner-attended authorization and qualification gate.
+
+## ADR-127 — The Idea Lab operator workflow is owner-authenticated, server-scoped, and fake-only by default
+
+**Decision:** Creating an idea session, starting its panel, cancelling before provider evidence, synthesizing completed
+contributions, and making the owner decision are separate protected commands. Every command is authenticated through the
+owner-session boundary and authorized against an active human owner grant. The server derives tenant, workspace, creator,
+session/run identities, panel membership, provider evidence, and policy identifiers. The browser supplies only the exact
+bounded intent for the current step. The shipped operator service accepts only the zero-network repository fake and the
+default runtime remains absent, so the UI renders its controls disabled. A project still requires the separate immutable
+owner permit from ADR-126.
+
+**Why:** A useful Idea Lab needs a real operator flow, but joining browser input, agent advice, and project creation into
+one request would let a compromised client select authority or turn a recommendation into an effect. Separate commands
+make progress and failure explicit, enable exact replay, preserve the provider marker/no-retry boundary, and leave the
+owner in control of project creation.
+
+**Alternatives rejected:** Accept tenant, workspace, identity, panel, provider mode, or authorization evidence from the
+browser; enable a live adapter from environment variables; combine run, synthesis, and promotion into one action; let an
+agent or operator grant satisfy the owner boundary; automatically create a project above a score; trust content-length
+without counting streamed bytes; retry after a provider marker; or present enabled controls when composition is absent.
+
+**Trade-off:** The protected flow can be fully exercised only with the repository fake. The shipped page visibly exposes
+the intended workflow but cannot execute it until an explicit protected local composition is installed. Cancellation is
+safe before provider evidence; after a marker, terminal ambiguity and no automatic retry take precedence.
+
+**Reevaluate:** CR12B-IDEA-050 may add authenticated session catalog/detail reads, reload-safe resume, and owner-protected
+project lifecycle transitions. Live Hermes/provider contact, native credentials, production composition, and deployment
+remain separately authorized work.
+
+## ADR-128 — Session reload is an effect-free owner read; project lifecycle is a separate versioned owner command
+
+**Decision:** Idea Lab session catalog and detail retrieval use the existing low-risk, effect-free human-owner read
+authorization and create no policy-decision write. Each projection is rebuilt from verified durable evidence and uses its
+latest persisted event time, making reload identity stable. Project pause, resume, complete, archive, and reopen are
+separate protected commands. Project and action come from the route; tenant, owner identity, target state, policy ID, and
+safe reason are server-derived. The client supplies an exact command ID, expected version, and current time. Exact replay
+must match the command-derived event identity; optimistic versioning and a transaction admit at most one competing
+transition.
+
+**Why:** A browser reload should recover work without manufacturing a write or changing evidence identity. Project state
+does change authoritative history and therefore needs a distinct owner command, durable policy decision, explicit legal
+transition, and concurrency guard. Keeping these paths separate prevents harmless monitoring from consuming authority
+and prevents two open tabs from silently skipping states.
+
+**Alternatives rejected:** Write a policy row on every reload; derive projection time from the current request; return
+sessions across tenants or workspaces; trust project state cached in the browser; accept tenant, owner, target state, or
+reason from the client; treat any same-version request as replay; allow last-write-wins; delete archived projects; expose
+all lifecycle buttons regardless of state; or enable the UI without a protected runtime.
+
+**Trade-off:** Reload recovery is useful and stable, but the default application still cannot execute it because no real
+owner-session and protected local composition is installed. Lifecycle replay is bounded by the same fresh-command window
+as other protected operations. Archived projects remain retained and may be reopened.
+
+**Reevaluate:** CR12B-IDEA-060 may install one explicit local non-production composition and perform one owner-attended
+repository-fake pilot. Live Hermes/provider contact, production data, deployment, and hosting remain separate gates.
+
+## ADR-129 — The first enabled Idea Lab composition is loopback, owner-attended, durable, and repository-fake only
+
+**Decision:** The first enabled Idea Lab runtime is an explicit development-only composition. It binds a foreground
+Vinext process to `127.0.0.1`, rejects forwarding, retrieves one random master key through an owner-run macOS Keychain
+launcher, derives separate session, Idea-record, catalog, and catalog-high-water integrity keys, and accepts one separate
+one-time code for a maximum-15-minute owner browser session. Persistent PGlite lives outside the repository and is valid
+only for this local pilot. The panel driver is fixed to the deterministic repository fake. Owner-promoted projects enter
+an authenticated append-only catalog and separately keyed high-water before protected reads resolve them. The default and
+production compositions remain absent. The exact switch also selects Vinext's Node development runtime because PGlite
+cannot execute in the Cloudflare worker simulator. Ordinary development previews and all production builds retain the
+Cloudflare plugin; the switch is ignored outside development mode.
+
+**Why:** A visible end-to-end pilot is now more valuable than another disconnected contract, but enabling the browser
+must not silently enable a provider, public listener, production database, or caller-selected identity. A foreground
+loopback process gives the owner a clear start and stop boundary. Separate session and catalog integrity domains make
+restart proof meaningful without turning local PGlite into the production authority.
+
+**Alternatives rejected:** Enable controls whenever any environment variable exists; bind to all interfaces; expose the
+pilot master through Vite client environment variables; copy it into a repository-local `.dev.vars`; run PGlite inside
+the Cloudflare worker simulator; reuse an
+identity header or browser storage token; commit a pilot key; store the raw owner code; keep catalog high-water only in
+memory; place PGlite in the repository; treat PGlite as a production database; select Hermes or another provider from
+browser input; run a background daemon; or claim the automated restart test is owner-attended acceptance.
+
+**Trade-off:** The owner must prepare and start the pilot personally, may need to approve Keychain access, and has only a
+15-minute session. The local Keychain item and pilot data remain after foreground teardown so restart can be proven;
+cleanup is a separate destructive action. This composition provides no live agent opinions and no production readiness.
+
+**Reevaluate:** After the owner-attended packet produces sanitized acceptance, a later block may plan a separately
+authorized provider adapter. It must not reuse this repository-fake acceptance as live-provider evidence.
+
+## ADR-130 — Live Idea Lab contact requires a separate exact admission, not provider claims
+
+**Decision:** A live Idea Lab driver may run only when one server-held authority accepts the exact provider evidence and
+another atomically consumes a single-use live-panel admission. The admission binds one exact run and session, every
+participant/runtime identity, the
+provider build and native qualification, protected-value custody, exact session ceilings, filtered retained fields, and
+one fresh owner-attended strong-factor effect window. Every call remains serialized and durably marked first. Unknown
+post-marker outcomes are terminal ambiguity and are never resubmitted. Cancellation occurs only between calls; panel
+steering is disabled; resume may reconcile but never resubmit. The admission grants neither project creation nor general
+execution authority.
+
+**Why:** Provider evidence, a runtime manifest, or a caller-computed digest can describe a capability but cannot safely
+grant permission to spend money or contact an external service. Joining exact identity, compatibility, custody, budget,
+owner intent, and persistent call lineage closes the gap between a qualified adapter and one bounded authorized use.
+
+**Alternatives rejected:** Trust `liveProviderAuthorized`; treat source compatibility as native qualification; let the
+browser select a runtime or participant profile; store provider values in Control Room; retain raw conversation; retry a
+timeout; steer a deliberation after it begins; reuse the repository-fake owner session; let panel advice create a project;
+or enable a provider through environment variables.
+
+**Trade-off:** The repository can now prove the complete admission logic with an injected synthetic driver, but a real
+panel stays blocked until a filtered driver, exact native qualification, protected-value custody receipt, pinned
+admission, and fresh owner window all exist. Hermes 0.21 source compatibility remains separate evidence, not live
+eligibility.
+
+**Reevaluate:** IDEA-080 may build the default-disabled filtered driver and disposable qualification harness. A native
+attempt remains separately owner-controlled and may not begin from this ADR alone.
+
+## ADR-131 — The Hermes panel driver translates and cleans; it never owns admission or native authority
+
+**Decision:** The Hermes 0.21 Idea Lab driver receives only a coordinator-verified, atomically consumed admission and an
+injected node-local gateway port. It rechecks exact build and participant/runtime bindings before contact, discards
+streaming content before parsing, requires one contiguous filtered completion sequence, and derives its receipt from
+both gateway and cleanup evidence. A bounded timeout aborts the port. Any unknown call or cleanup outcome becomes
+terminal ambiguity through the existing durable marker and is never retried. The repository ships no native port.
+
+**Why:** Translation, admission, protected-value custody, and process launch are different authorities. Keeping the
+driver behind an absent port lets the repository prove filtering, limits, and failure behavior without providing an
+accidental native execution path. Cleanup must be part of the retained receipt because a completed provider response is
+not proof that disposable native state was removed.
+
+**Alternatives rejected:** Let the driver verify its own admission; parse streaming text into Control Room; retain raw
+native IDs; accept partial/out-of-order events; treat timeout as definite failure; retry after timeout; return a result
+before cleanup; allow a fixture simulation to set native qualification; or include a process/network implementation in
+the default repository composition.
+
+**Trade-off:** The translator and qualification plan are complete, but the remaining live gate is intentionally explicit:
+the atomically consumed admission and accepted native receipt still need durable authenticated storage before an owner
+can authorize one native attempt.
+
+**Reevaluate:** IDEA-090 may add the durable single-use admission and receipt registry. Native contact remains blocked
+until that store and a fresh exact owner packet are accepted.
+
+## ADR-132 — Live authority is an authenticated append-only history with an external high-water
+
+**Decision:** Native qualification acceptance, live-admission sealing, and admission consumption are separate event
+types in one PostgreSQL-compatible append-only authority history. Native receipt decisions require an architect-held
+key and bind exact runtime, compatibility, custody, independent-review, and strong-factor evidence. Admission decisions
+use a separate key and bind the exact receipt, session, run, owner window, and strong-factor decision. Consumption is
+atomic and unique across admission, window, and run. Exact replay is inert. Receipt and admission revocation are
+terminal. An independently keyed compare-and-swap checkpoint outside the database authenticates the complete high-water.
+
+**Why:** A valid digest is evidence identity, not authority. Database uniqueness alone cannot detect a privileged restore
+to an older internally consistent snapshot. Separate decision keys prevent the database writer or ordinary caller from
+minting architect acceptance or an owner window, while the external high-water makes rollback fail closed.
+
+**Alternatives rejected:** Treat a native receipt digest as accepted; let the driver accept its own receipt; store only a
+mutable current row; reuse one key for every trust role; permit a revoked receipt or admission to reactivate; consume an
+owner window once per participant; accept an exact database snapshot without an external checkpoint; update the
+checkpoint after database commit; or configure the authority store in the local pilot before a native packet exists.
+
+**Trade-off:** A checkpoint advance followed by database commit failure intentionally leaves authority unavailable until
+an architect reconciles it; safety is preferred to silent replay. Production still needs a vetted external checkpoint
+implementation and protected keys. The repository contains neither and accepts no receipt by default.
+
+**Reevaluate:** IDEA-100 may freeze the exact owner-ready native qualification and live-panel rehearsal packet. This ADR
+does not authorize a native attempt, provider call, key installation, production database contact, or live composition.
+
+## ADR-133 — Native qualification, receipt acceptance, and a live panel are three different authorities
+
+**Decision:** The first Hermes 0.21 path is ordered into three non-collapsible stages. A fresh owner authorization covers
+only one disposable native qualification. Its sanitized output is always an unaccepted, non-authorizing candidate. A
+different reviewer and architect-key registry decision may later accept the exact receipt. A live panel then requires a
+different fresh owner window bound to one exact session, participant set, budget, admission, and run. The qualification
+window is never reusable for provider work, and project creation remains a separate owner decision.
+
+**Why:** A successful compatibility or native result proves capability, not consent to spend money or contact a provider
+for a real idea. Separating evidence production, evidence acceptance, and live use prevents the qualification runner,
+reviewer, browser, or driver from promoting its own result into authority.
+
+**Alternatives rejected:** Qualify and immediately run a panel; reuse the qualification authorization; let a candidate
+set `architectAccepted`; allow the same reviewer to produce and accept evidence; bind a panel before its exact session
+exists; retain raw native content or identifiers; retry an ambiguous attempt; or let a successful panel create a project.
+
+**Trade-off:** The owner must perform two distinct approvals and a different reviewer must inspect the candidate. This is
+slower than one click but confines the first provider-capable path to explicit, inspectable boundaries.
+
+**Reevaluate:** After the owner authorizes IDEA-110, one attached-Terminal qualification may run. This ADR alone grants no
+native, provider, receipt-acceptance, live-panel, project-creation, production, or deployment authority.
+
+## ADR-134 — Idea Lab native qualification pins the reviewed installed runtime, not only its release ancestor
+
+**Decision:** The Hermes `0.21.0` release revision and the exact installed runtime revision are distinct evidence. Idea
+Lab binds the reviewed installed revision, its exact 60-commit ancestry from the release, the accepted compatibility
+implementation commit, twelve trusted source hashes, and one strict sanitized no-effect preflight digest. The preflight
+may establish readiness for a later owner-attended attempt but cannot become native evidence or execution authority.
+Changing any runtime, source, compatibility, packet, plan, or preflight binding invalidates earlier owner authorization.
+
+**Why:** A package version and old release commit do not identify the code that would actually execute. Treating an
+ancestor as the current runtime could qualify unreviewed behavior, while silently carrying the newer pin into an older
+authorization would violate the owner's exact scope. Separate lineage and source evidence make drift visible before any
+provider boundary is crossed.
+
+**Alternatives rejected:** Pretend the installed checkout equals the release commit; update only test fixtures; accept a
+version string without revision evidence; hash only changed files; ignore trusted worktree dirt; expose unrelated local
+paths; treat source compatibility as native qualification; reuse the old authorization; or start the native attempt
+before the compatibility and packet commits are integrated.
+
+**Trade-off:** The owner must provide a new exact authorization and the compatibility PR becomes an explicit dependency
+of Idea Lab. This adds an integration stop but prevents the wrong executable or stale packet from consuming the single
+native attempt.
+
+**Reevaluate:** After both refreshed commits are integrated, one no-effect readiness check may prepare the owner command.
+Only the owner can run the attached-Terminal command and handle Keychain. Receipt acceptance and a live panel remain
+separate later authorities.
+
+## ADR-135 — No owner command exists while disposable isolation and existing Hermes authentication conflict
+
+**Decision:** Control Room will not translate an owner packet into an executable command unless Hermes can combine the
+packet's disposable empty profile with existing native authentication without importing bot context. The reviewed
+Hermes source shows fresh no-skills profiles have empty protected-value storage, clone also copies SOUL, skills, and
+memory, and no-skills is mutually exclusive with clone. The readiness gate therefore fixes command emission and all
+authority to false.
+
+**Why:** A command that cannot authenticate would waste the single attempt. A command that silently clones private bot
+identity and memory would exceed the owner's scope and could alter provider behavior before Control Room can prove the
+zero-context boundary. Discovering that contradiction before process launch is the purpose of readiness review.
+
+**Alternatives rejected:** Run anyway; use the default profile; call an empty profile and let authentication fail; clone
+the full profile and delete context after gateway start; have Control Room read and copy protected values; weaken
+"empty" without owner consent; or emit a command that depends on an unreviewed manual cleanup sequence.
+
+**Trade-off:** IDEA-110 stays blocked even though lifecycle source compatibility passed. The safe next step is either an
+upstream Hermes protected-value-only profile operation or an exact clone-and-sanitize design whose deletion ordering and
+negative context proof are reviewed before provider contact.
+
+**Reevaluate:** After one remediation is implemented and independently reviewed, refresh every affected source, runtime,
+packet, plan, and readiness digest. Only then request another exact owner authorization.
+
+## ADR-136 — Disposable qualification authentication stays inside Hermes behind a one-use preparation permit
+
+**Decision:** The preferred isolation remediation is a Hermes-native method named
+`profiles.prepare_control_room_qualification`. It transfers existing authentication internally into one temporary
+qualification profile while copying zero SOUL, memory, skills, plugins, MCP configuration, rules, or sessions. It returns
+no protected material or path and starts neither gateway nor provider. Hermes retains an opaque one-use launch permit;
+Control Room receives only signed digests, negative counts, expiry, and device attestation. Cleanup is a separate exact
+native method. Until an implementation is reviewed, the accepted-runtime list is empty.
+
+**Why:** Authentication bytes and native profile paths do not need to cross the Control Room boundary. A native-held
+permit lets a later qualified launcher refer to prepared state without making that state inspectable or reusable by the
+browser, coordinator, or generic worker. Zero copied context keeps the qualification prompt independent of a bot's
+persona and memory.
+
+**Alternatives rejected:** Control Room copies protected values; return a raw profile path or name; reuse the source
+profile; copy then delete context after gateway start; issue a reusable launch handle; let preparation contact the
+provider; infer success from directory shape; accept unsigned counts; or accept the current runtime before the method
+exists.
+
+**Trade-off:** This requires a small upstream Hermes change and exact device attestation/cleanup integration before the
+owner attempt. It avoids weakening the approved isolation boundary or coupling Control Room to private Hermes storage.
+
+**Reevaluate:** After an exact Hermes implementation exists, review its source and tests, extend the compatibility
+manifest, implement signed attestation plus atomic one-use consumption/cleanup verification, and refresh the owner packet.
+
+## ADR-137 — Profile preparation evidence is device-signed, request-bound, short-lived, and still non-authorizing
+
+**Decision:** A future Hermes profile-preparation response is accepted for inspection only when a separately trusted
+canonical Ed25519 device key signs the complete digest-bound body. The body binds one exact request/runtime and a maximum
+60-second chronology, reports zero private-context counts, returns only profile/permit/custody digests, and proves no
+material, path, gateway, or provider activity plus cleanup-method presence. The sanitized Control Room result discards
+key/signature material and remains unaccepted for launch until an exact runtime implementation is reviewed.
+
+**Why:** A caller-computed digest or well-shaped JSON can falsely claim isolation. Device signature proves origin, while
+request and time binding prevent substitution and stale replay. Keeping acceptance false prevents the verifier or a test
+fixture from becoming its own runtime authority.
+
+**Alternatives rejected:** Trust unsigned counts; accept a caller digest; retain raw native handles; let the profile
+method start a gateway; omit request or expiry binding; reuse one attestation across preparations; infer zero context
+from absent fields; or enable launch immediately after signature verification.
+
+**Trade-off:** Production needs device-key enrollment and a durable one-use permit/cleanup registry in addition to the
+upstream method. The repository can fully test cryptographic and sanitation behavior without a native effect.
+
+**Reevaluate:** After the one-use registry and exact Hermes method exist, independently review their integration and
+refresh every runtime/source/packet/owner binding before an attached-Terminal attempt.
+
+## ADR-138 — Hermes stays unmodified; Control Room uses signed local or SSH gateway enrollment
+
+**Decision:** IDEA-109B supersedes ADR-135's conclusion that a fresh profile cannot use existing Hermes authentication
+and removes ADR-136/137 from the critical path without deleting their proposal evidence. Exact review of installed
+revision `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b` proves that a fresh no-skills profile with no local provider entry
+reads the global-root protected-value pool as a per-provider read-only fallback; writes remain profile-local. The fresh
+path copies no SOUL, memory, skills, plugins, MCP configuration, rules, or sessions. Existing Hermes SSH support is the
+transport. A trusted node signs the exact tenant/node/connection/runtime/profile/route evidence; protected Control Room
+enrollment separately pins the expected opaque route and, for SSH, the owner-verified host-key fingerprint. The gateway
+stays connector-private and loopback-bound, SSH is public-key-only and non-interactive, host-key changes fail closed, and
+only the fixed Hermes lifecycle/event-replay method set may cross the adapter. Control Room retains no host, username,
+port, key path, session value, protected value, native locator, profile path, or generic shell.
+
+**Why:** The prior review correctly rejected cloning private Bot context but stopped at the profile creation code and
+missed the installed authentication fallback. Using the runtime's existing reference behavior preserves Hermes custody
+without an upstream fork. SSH connects machines while an explicit Control Room bridge preserves project, admission,
+budget, audit, and cross-gateway authority.
+
+**Alternatives rejected:** Modify Hermes before using an existing built-in boundary; copy `.env` or `auth.json`; clone
+then erase Bot context; expose a public Hermes gateway; accept an arbitrary browser-supplied SSH host; use password SSH;
+trust first use without an owner-verified host-key pin; expose generic remote shell; treat a Hermes multi-machine roster
+as cross-gateway execution permission; or let signed enrollment self-qualify a native runtime or live panel.
+
+**Trade-off:** Control Room needs a small node-local connector and owner enrollment workflow. SSH reachability does not
+itself create cross-gateway delegation, native qualification, provider authority, or automatic updates. The connector
+must be independently qualified and operated through the existing node/admission/ambiguity boundaries.
+
+**Reevaluate:** IDEA-110 may run only after one exact signed enrollment and repository native port are reviewed, every
+affected packet/pin is refreshed, and the owner gives new exact authorization. A future Hermes-native preparation method
+may still be adopted as optional hardening, but it is not a prerequisite.
+
+## ADR-139 — Spend an exact owner window before entering the enrolled Hermes bridge
+
+**Decision:** The repository-owned Hermes gateway policy port requires both an accepted node-signed connection
+enrollment and a separate canonical Ed25519 owner window. The owner window binds one tenant, node, connection,
+enrollment result, opaque route, profile, conversation, participant, marker, runtime revision, and fixed Hermes method
+set for at most one native attempt and one provider call over five minutes. A PostgreSQL append-only authenticated event
+chain must claim the permit before bridge entry and separately record native return or terminal ambiguity and cleanup
+completion or uncertainty. Unique attempt and marker indexes stop alternate-permit replay; a rollback checkpoint outside
+the database detects row loss and older database restoration.
+
+**Why:** SSH transport solves reachability, not authority or ambiguity. A signed enrollment says which machine and route
+may be considered; it does not authorize a call. A separately signed, durably spent owner window gives the native bridge
+one exact purpose while preserving safe restart behavior and the existing no-retry rule.
+
+**Alternatives rejected:** Treat SSH reachability as permission; let the browser supply a route; keep spending only in
+memory; mutate one status row; retry after an uncertain native return; expose arbitrary SSH commands; reuse a
+qualification window for a live panel; store a hostname, key path, credential, protected value, or raw model content in
+the spend ledger; or use PGlite as production authority.
+
+**Trade-off:** A platform-specific local/SSH bridge and durable external checkpoint adapter are still required at
+deployment. This block provides their exact safe interface and PostgreSQL transaction boundary but intentionally does
+not contain the process, SSH, gateway, credential, or provider client.
+
+**Reevaluate:** After the fixed native bridge is implemented and independently reviewed, refresh every affected source,
+implementation, packet, enrollment, and owner-window digest before any attended qualification.
+
+## ADR-140 — Reuse Hermes Desktop routing; keep native and SSH locators outside Control Room
+
+**Decision:** The IDEA-110B bridge does not modify Hermes, launch SSH, or connect directly to a Hermes gateway. It sends
+one closed lifecycle sequence through an injected connector for an already enrolled Hermes Desktop local or SSH route.
+The connector alone maps the signed opaque route and attempt digests to connection/profile/native session state. Control
+Room may receive only exact safe receipts and digests; it cannot receive a hostname, username, port, key path, gateway
+value, protected value, profile path, or native session identifier. A gateway epoch change, replay truncation or gap,
+malformed terminal result, usage mismatch, extra field, or uncertain call is terminal and non-retriable. Attempt-bound
+cleanup must reconcile even an uncertain route open and must prove close, lease release, temporary-state removal, and
+zero retained native references. `session.close` is part of the signed operation set, and the owner permit signs both
+participant and runtime identity.
+
+**Why:** Hermes Desktop already owns system-SSH connection establishment, connection pooling, session routing, replay,
+and reconnect. Duplicating that machinery inside Control Room would expand credential and locator custody and would make
+updates harder. A narrow connector boundary lets Hermes update independently while Control Room retains authority,
+budget, ambiguity, sanitation, and audit rules.
+
+**Alternatives rejected:** Fork Hermes; copy credentials; have Control Room invoke `ssh`; expose the Hermes gateway on a
+public interface; return native session IDs; accept arbitrary JSON-RPC methods; infer success from prompt acknowledgement;
+ignore gateway epoch changes; retry after an unknown result; or leave cleanup outside the signed method set.
+
+**Trade-off:** A small platform connector implementation is still required to bind the abstract port to Hermes Desktop's
+registered connection. Until that connector is configured, reviewed, and enrolled, every default remains disabled and
+the bridge makes zero native or provider calls.
+
+**Reevaluate:** Re-pin the six Hermes lifecycle/routing source files on every Hermes upgrade. Any connector protocol or
+native event-shape change requires a new review, enrollment, owner packet, and authorization before native use.
+
+## ADR-141 — A review packet or provider-disabled bridge cannot self-authorize enrollment
+
+**Decision:** Real Hermes connection enrollment is controlled by a separate canonical readiness record. The record binds
+the exact fixed-bridge implementation commit, review packet SHA-256, installed runtime revision, connection-source
+candidate, fixed RPC source manifest, and gateway operation-set digest. It remains blocked until a different independent
+review is accepted, a concrete platform connector implementation is separately accepted, a trusted node signer is
+enrolled, one signed connection enrollment verifies, an effect-free preflight passes, every packet/pin is refreshed, a
+fresh owner window exists, and native qualification is later accepted. Missing gates are explicit and cannot be changed
+by recomputing the outer digest. No readiness snapshot emits a command or treats prior owner text as reusable.
+
+**Why:** A safe abstract port and a READY review jobber are plans, not observations. Treating either as proof would let a
+producer appoint its own reviewer, invent the platform binding that retains locators, or skip the exact signer and packet
+refresh needed after protocol changes.
+
+**Alternatives rejected:** Count an open pull request or passing producer tests as independent acceptance; let the
+connector self-register; trust an arbitrary injected signer; emit a command while review is pending; reuse IDEA-100 or
+IDEA-105 owner text; infer a real route from source compatibility; or let an unsigned readiness flag authorize enrollment.
+
+**Trade-off:** The first real enrollment waits for the independent report and a concrete platform binding. In exchange,
+Control Room has one auditable stop point that remains honest across restarts, reviews, connector changes, and packet
+refreshes.
+
+**Reevaluate:** Replace each missing gate only with its exact accepted evidence. Any negative review, connector drift,
+signer change, runtime update, source change, or preflight uncertainty keeps enrollment blocked and requires new evidence.
+
+## ADR-142 — Serialize Hermes execution and cleanup under one least-authority operation set
+
+**Decision:** Every captured driver, spend-store, and native-bridge method is invoked with its validated original receiver.
+The enrolled gateway and fixed bridge each expose a one-use execution-settlement barrier. Cleanup marks cancellation and
+cannot return completed evidence until the in-flight execution path has settled; execution checks cancellation before and
+after every connector await. Enrollment and permit digesting share the fixed bridge's exact seven-operation set and omit
+compatible but unused methods. Trusted time is sampled again after durable claim and immediately before bridge entry;
+expiry, rollback, cancellation, or abort consumes the claim into terminal ambiguity and dispatches nothing.
+
+**Why:** JavaScript method extraction can invalidate concrete classes that use private fields. Separately, cleanup and
+permit expiry are security state transitions, not convenience callbacks: racing either boundary can turn uncertainty or
+expired authority into later provider work. Signing compatible methods that the bridge never uses is unnecessary ambient
+authority.
+
+**Alternatives rejected:** Rely on receiver-independent fakes; require every collaborator to avoid private fields; let
+cleanup run concurrently and trust abort timing; report cleanup complete before execution settles; authorize every Hermes
+method known to be compatible; check expiry only before the database claim; retry after any ambiguous race.
+
+**Trade-off:** Cleanup can wait until an abort-aware connector settles and may remain uncertain if the connector ignores
+abort. That is deliberately safer than false completion. Any operation-set change invalidates earlier enrollment and owner
+window digests and therefore requires fresh signed evidence.
+
+**Reevaluate:** After a different independent reviewer closes all four REV-003 findings against the exact remediation
+commit. Connector implementations must preserve the same cancellation, receiver, operation-set, and post-claim expiry
+invariants.
+
+## ADR-143 — Capture the gateway wrapper before behavior and terminally consume clock failure
+
+**Decision:** The enrolled gateway constructor accepts only one exact ordinary-data wrapper captured through host-level
+property descriptors. It rejects accessors, inherited or unknown state, symbols, non-ordinary prototypes, and Proxies
+before any wrapper property or collaborator can execute. After a successful durable claim, a trusted-clock exception is
+treated as a consumed non-execution: the gateway records `terminal_ambiguity` at the last valid claimed time, dispatches
+nothing, and remains non-retriable.
+
+**Why:** Signed evidence and effect-capable collaborators cross the same composition wrapper. Direct JavaScript property
+reads can execute getters before validation. Separately, a durable claim without a terminal outcome cannot distinguish a
+known local pre-dispatch failure from an interrupted claimed interval. Both gaps weaken audit truth even when native
+dispatch remains zero.
+
+**Alternatives rejected:** Trust ordinary-looking wrappers; check only nested collaborator methods; clone with spread or
+destructuring; treat a thrown trusted clock as an ordinary exception; leave claim-only state for later inference; retry
+because bridge dispatch was zero; or claim terminal durability without an accepted settlement.
+
+**Trade-off:** Callers must supply a plain exact wrapper, and an unavailable trusted clock consumes the one-use permit.
+That is intentionally stricter than executing wrapper behavior or leaving ambiguous claim-only state. A failed durable
+settlement remains honestly uncertain rather than being converted to success.
+
+**Reevaluate:** After a reviewer different from both earlier reviewers and all remediation contributors closes all six
+recorded findings against exact IDEA-110E commit `2bc80a2`. The later platform connector must preserve this exact
+descriptor, receiver, settlement, cancellation, and no-retry boundary.
+
+## ADR-144 — Put the Mac connector guard in Control Room and native locators behind a private port
+
+**Decision:** The macOS connector is a one-attempt protocol guard inside Control Room, while an injected Mac-resident
+private port remains the sole owner of Hermes Desktop registration, local/SSH locators, keys, protected values, gateway
+endpoints, profiles, and native session identifiers. The guard exact-captures only opaque signed inputs and safe receipts,
+enforces the fixed ordinary and cleanup sequences, preserves the private port receiver, serializes abort and close, and
+converts uncertain open or operation outcomes into close-only or cleanup-only state without retry. It is unconfigured and
+non-authorizing until separately reviewed, signer-enrolled, route-enrolled, and preflighted.
+
+**Why:** Reusing Hermes Desktop routing avoids a Hermes fork and avoids duplicating SSH credential custody in Control
+Room, but an unguarded injected port would leave lifecycle ordering, binding, cancellation, and retry policy to every
+platform adapter. One repository-owned guard makes those invariants testable without learning any native locator.
+
+**Alternatives rejected:** Modify Hermes; let Control Room launch `ssh`; place host/key/gateway/profile values in the web
+app or database; pass arbitrary JSON-RPC; trust adapter call order; retry an uncertain open; close a known created session
+without attempting native cleanup; configure a port because producer tests pass; or treat connector acceptance as signer,
+route, packet, authorization, or qualification acceptance.
+
+**Trade-off:** A small Mac-resident private-port implementation and trusted signer enrollment are still required before
+real enrollment. Connector review adds a gate, but Hermes and SSH can update independently while Control Room retains a
+stable least-authority protocol.
+
+**Reevaluate:** After independent review of the exact IDEA-110F candidate. Any changed connector protocol, Hermes source
+manifest, runtime revision, private-port implementation, signer, or route invalidates later evidence and keeps native use
+blocked.
+
+## ADR-145 — Cancellation cannot erase possible native state or expose private diagnostics
+
+**Decision:** The connector treats `session.create` as cleanup-requiring before private dispatch and joins any active call
+before deciding whether route close is eligible. A canceled or uncertain create is never retried; cleanup may reconcile
+it through the fixed private operation set. Caller cancellation is observed only through captured host intrinsics over a
+genuine exact AbortSignal, and known pre-abort prevents private dispatch. Private-port exceptions are discarded and
+replaced by bounded connector errors. Connection, route, permit, profile, conversation, lease, session, and epoch
+identities are domain-separated; the connector receives only a derived connection identity digest, never the signed
+human-readable connection ID or a native locator.
+
+**Why:** IDEA-110F's first independent review proved that a successful native create can return after cancellation, that
+genuine AbortSignal objects remain behaviorally mutable through own descriptors, that private errors can carry native
+diagnostics, and that syntactically valid digests do not prove distinct authority domains. Abort is a request to stop,
+not evidence that a native effect did not happen. Locator custody and safe errors must hold at the connector itself, not
+only at an outer gateway.
+
+**Alternatives rejected:** Treat abort as proof of no session; check cleanup eligibility before joining the active call;
+dispatch already-aborted requests and reject only their receipts; dynamically read caller signal properties; rethrow or
+wrap private errors; accept equal values in different authority fields; send a connection label to the Mac-private port;
+or retry an uncertain create or cleanup operation.
+
+**Trade-off:** A possible create can force cleanup even when the private call did not return a session identity, and a
+cleanup or route can remain honestly uncertain instead of closing optimistically. The Mac-private port must index its
+enrolled connection by the domain-separated identity digest and reconcile attempt-bound native state. This is stricter
+but keeps Control Room free of locators and false cleanup claims.
+
+**Reevaluate:** After a different independent reviewer closes all five IDEA-110F findings against the exact IDEA-110G
+remediation commit. Any connector, signal-observer, connection-identity derivation, private-port, operation-set, runtime,
+source-manifest, signer, or route change invalidates that report and requires new evidence before native use.
+
+## ADR-146 — Repository seams carry opaque cancellation, not native AbortSignal internals
+
+**Decision:** The filtered driver, enrolled gateway, fixed bridge, and macOS connector exchange only a repository-created
+opaque cancellation capability. Its frozen zero-own-key token is recognized through a module-private registry; abort
+state and subscriptions live in private state and use captured intrinsics. Native `AbortSignal` exists only after the
+macOS connector has accepted the opaque token, and only the Mac-private port receives that connector-owned native
+signal. Connector settlement tracks its own cancellation state and does not re-read mutable native signal internals.
+
+**Why:** IDEA-110G proved that checking a genuine native signal's outer prototype, keys, descriptors, and aborted getter
+does not make its built-in internal event containers immutable. A caller could retain the expected outer shape, replace
+the event map with a Proxy, and make native listener installation execute caller behavior. No finite outer shape check
+can safely convert a shared mutable host object into an authority-bearing component seam.
+
+**Alternatives rejected:** Add one more native internal-value type check; recursively inspect undocumented EventTarget
+state; clone or compose a caller signal through another native signal; tolerate behavior when listener installation
+fails; poll the caller signal; drop cancellation; or treat passing producer tests and incomplete review jobs as
+acceptance.
+
+**Trade-off:** Repository adapters must use the opaque capability and cannot accept arbitrary AbortSignal producers.
+The final private Mac adapter still receives a native signal because it may need the host API, but that signal is created
+inside the connector and carries no caller-owned internal state. This deliberately narrows extension points in exchange
+for deterministic cancellation, timeout, cleanup, and zero-behavior validation.
+
+**IDEA-110I amendment:** Exact opaque validation is required at the first executable boundary of gateway and bridge
+execute and cleanup, before lifecycle mutation, trusted time, durable spend, settlement, or collaborator dispatch. The
+Mac connector captures its native controller constructor, signal getter, abort method, and apply operation at module
+initialization. Connector-owned cancellation state becomes terminal before native abort; a native abort exception is
+discarded and cannot bypass the active-settlement join or mandatory cleanup sequence. This amendment follows the two
+High and one Medium findings preserved by independent PR #219.
+
+**IDEA-110J amendment:** Exact cancellation acceptance also freezes the host-operation selection boundary. Code after
+that point may not dynamically select ambient constructors, collections, time/number/JSON helpers, object-freeze,
+reflection, receiver-binding, Promise creation, or array iterator helpers. Required operations are captured at module
+initialization or replaced by direct primitive/indexed logic. This follows the Medium ambient-Set finding preserved by
+the IDEA-110I independent report.
+
+**IDEA-110K amendment:** Safety validation is part of the same frozen host-operation boundary. Secret detection,
+redaction, safe projection, and exact-parser error classification may not dynamically select object-entry, array
+identification/traversal/append/join, regex test/replace, string normalization/search, reflection, object-definition, or
+Error operations after module initialization. Recursive traversal uses direct indexed logic and captured calls. This
+follows the High `Object.entries` bypass preserved by the IDEA-110J independent report.
+
+**IDEA-110L amendment:** Capturing a public regex wrapper is insufficient when that wrapper dynamically resolves
+`RegExp.prototype.exec`. Repository pattern checks must invoke captured native execution directly; Idea Lab schemas may
+not retain Zod regex/datetime refinements that re-enter mutable regex execution; key normalization uses primitive ASCII
+filtering; and traversal rewrites preserve ordinary sparse-array topology. This follows the High regex-execution and Low
+sparse-array findings preserved by the IDEA-110K independent report.
+
+**IDEA-110M amendment:** Chronology is part of the frozen host-operation boundary. Idea Lab timestamps must pass one
+module-captured validator that checks real calendar days, leap years, wall-clock fields, timezone bounds, and finite
+parse output before any comparison. Enrollment, profile preparation, owner qualification, admission, authority,
+coordinator, lifecycle, spend, and persistence code may not dynamically select ambient date parsing, numeric finiteness,
+date construction/formatting, or array-wide chronology helpers after module initialization. This follows the two Medium
+findings preserved by the IDEA-110L independent report.
+
+**IDEA-110N amendment:** Captured time formatting must return only a string that round-trips through the exact
+four-digit-year Idea Lab contract; invalid Dates, extended years, Date-limit values, and native formatting failures
+close without leaking host errors. Connection-roster construction must exact-snapshot the complete request and bounded
+dense array before parsing, then use indexed traversal, pairwise identity comparison, and direct counts without
+dynamically selecting caller or ambient array/collection behavior. This follows the two Medium findings preserved by
+the IDEA-110M independent report.
+
+**IDEA-110O amendment:** Exact caller-data capture is insufficient if rebuilt records later enter a mutable shared
+canonicalizer. Roster identity must be computed with module-captured array identification and sorting, object-key
+enumeration, JSON and finite-number handling, reflection, and SHA-256 methods; indexed serialization must preserve the
+existing clean-runtime canonical bytes without dynamically selecting ambient traversal. This follows the Medium
+finding preserved by the IDEA-110N independent report.
+
+**IDEA-110P amendment:** Digest verification must end in an immutable evidence graph. The module captures object freezing
+before shared-state mutation; direct and reparsed connection results seal their nested blocker arrays; final roster
+parsing seals every connection and blocker array before sealing the connection array and outer roster. A retained digest
+may never describe caller-mutable identity, chronology, blocker, qualification, live, or authority fields. This follows
+the Medium finding preserved by the IDEA-110O independent report.
+
+**IDEA-110P acceptance:** A fresh different reviewer accepted exact provider-disabled product
+`e028d6b4cd5ee55c053561a880fbf65d897dc2ad`; immutable report SHA-256
+`7cbd2f982956ff418e35dfacf71ee616a763fe60e20eb0b4d40acf553581af3f`. This removes only the connector
+implementation-review blocker. It does not enroll or authorize any signer, route, port, native runtime, provider,
+credential, live panel, production database, deployment, hosting, or DNS effect.
+
+**Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
+contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
+conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
+and requires a fresh report. Any change to shared secret/redaction/projection traversal or exact-parser safety
+classification also invalidates IDEA-110K review evidence.
+Any change to captured regex execution, Idea Lab schema refinements, time validation, key normalization, or sparse-array
+projection also invalidates IDEA-110L review evidence.
+Any change to the captured time helper, strict calendar rules, generated time formatting, or any downstream chronology
+consumer also invalidates IDEA-110M review evidence.
+Any change to contract-safe formatting, exact roster capture, roster identity comparison, or count construction also
+invalidates IDEA-110N review evidence.
+Any change to captured roster canonicalization, byte compatibility, or roster SHA-256 construction also invalidates
+IDEA-110O review evidence.
+Any change to connection-result freezing, nested roster immutability, or the captured freeze operation also invalidates
+IDEA-110P review evidence.

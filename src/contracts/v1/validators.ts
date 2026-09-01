@@ -116,28 +116,54 @@ const forbiddenValuePatterns = [
   /bearer\s+[a-z0-9._-]{12,}/i,
 ];
 
+const nativeArrayIsArray = Array.isArray, nativeError = Error, nativeObjectEntries = Object.entries,
+  nativeReflectApply = Reflect.apply, nativeRegExpExec = RegExp.prototype.exec,
+  nativeStringIncludes = String.prototype.includes, nativeStringToLowerCase = String.prototype.toLowerCase;
+
+function patternMatches(pattern: RegExp, value: string): boolean {
+  return nativeReflectApply(nativeRegExpExec, pattern, [value]) !== null;
+}
+
+function normalizedProjectionKey(value: string): string {
+  const lowered = nativeReflectApply(nativeStringToLowerCase, value, []) as string;
+  let normalized = "";
+  for (let index = 0; index < lowered.length; index += 1) {
+    const character = lowered[index];
+    if (character && ((character >= "a" && character <= "z") || (character >= "0" && character <= "9")
+      || character === "_")) normalized += character;
+  }
+  return normalized;
+}
+
 export function assertSafeProjection(value: unknown, path = "$"): void {
   if (value === null || value === undefined) return;
 
   if (typeof value === "string") {
-    for (const pattern of forbiddenValuePatterns) {
-      if (pattern.test(value)) {
-        throw new Error(`Unsafe projection value at ${path}`);
+    for (let index = 0; index < forbiddenValuePatterns.length; index += 1) {
+      const pattern = forbiddenValuePatterns[index];
+      if (pattern && patternMatches(pattern, value)) {
+        throw new nativeError(`Unsafe projection value at ${path}`);
       }
     }
     return;
   }
 
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => assertSafeProjection(item, `${path}[${index}]`));
+  if (nativeArrayIsArray(value)) {
+    for (let index = 0; index < value.length; index += 1) assertSafeProjection(value[index], `${path}[${index}]`);
     return;
   }
 
   if (typeof value === "object") {
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      const normalizedKey = key.toLowerCase().replace(/[^a-z0-9_]/g, "");
-      if (forbiddenKeyFragments.some((fragment) => normalizedKey.includes(fragment))) {
-        throw new Error(`Forbidden projection field ${path}.${key}`);
+    const entries = nativeObjectEntries(value as Record<string, unknown>);
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (!entry) continue;
+      const key = entry[0], child = entry[1], normalizedKey = normalizedProjectionKey(key);
+      for (let fragmentIndex = 0; fragmentIndex < forbiddenKeyFragments.length; fragmentIndex += 1) {
+        const fragment = forbiddenKeyFragments[fragmentIndex];
+        if (fragment && nativeReflectApply(nativeStringIncludes, normalizedKey, [fragment]) as boolean) {
+          throw new nativeError(`Forbidden projection field ${path}.${key}`);
+        }
       }
       assertSafeProjection(child, `${path}.${key}`);
     }

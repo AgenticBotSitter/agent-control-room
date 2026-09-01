@@ -128,6 +128,96 @@ test("secret canaries are rejected while logical credential references remain sa
   assert.deepEqual(redacted.redactedPaths, ["$.apiKey"]);
 });
 
+test("secret walkers retain canaries under post-import host traversal substitution", () => {
+  const nativeDefineProperty = Object.defineProperty,
+    entriesDescriptor = Object.getOwnPropertyDescriptor(Object, "entries"),
+    arrayDescriptor = Object.getOwnPropertyDescriptor(Array, "isArray"),
+    forEachDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "forEach"),
+    someDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "some"),
+    pushDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "push"),
+    joinDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "join"),
+    mapDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "map"),
+    fromEntriesDescriptor = Object.getOwnPropertyDescriptor(Object, "fromEntries"),
+    definePropertyDescriptor = Object.getOwnPropertyDescriptor(Object, "defineProperty"),
+    testDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "test"),
+    execDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec"),
+    applyDescriptor = Object.getOwnPropertyDescriptor(Reflect, "apply"),
+    errorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Error");
+  assert.ok(entriesDescriptor); assert.ok(arrayDescriptor); assert.ok(forEachDescriptor); assert.ok(someDescriptor);
+  assert.ok(pushDescriptor); assert.ok(joinDescriptor); assert.ok(mapDescriptor); assert.ok(fromEntriesDescriptor);
+  assert.ok(definePropertyDescriptor); assert.ok(testDescriptor); assert.ok(execDescriptor); assert.ok(applyDescriptor);
+  assert.ok(errorDescriptor);
+  const sentinel = new Error("hostile secret walker"), hostile = () => { throw sentinel; };
+  class HostileError { constructor() { throw sentinel; } }
+  let rejected: unknown, redacted: ReturnType<typeof redactSecrets> | undefined;
+  nativeDefineProperty(Object, "entries", { ...entriesDescriptor, value: hostile });
+  nativeDefineProperty(Array, "isArray", { ...arrayDescriptor, value: hostile });
+  nativeDefineProperty(Array.prototype, "forEach", { ...forEachDescriptor, value: hostile });
+  nativeDefineProperty(Array.prototype, "some", { ...someDescriptor, value: hostile });
+  nativeDefineProperty(Array.prototype, "push", { ...pushDescriptor, value: hostile });
+  nativeDefineProperty(Array.prototype, "join", { ...joinDescriptor, value: hostile });
+  nativeDefineProperty(Array.prototype, "map", { ...mapDescriptor, value: hostile });
+  nativeDefineProperty(Object, "fromEntries", { ...fromEntriesDescriptor, value: hostile });
+  nativeDefineProperty(Object, "defineProperty", { ...definePropertyDescriptor, value: hostile });
+  nativeDefineProperty(RegExp.prototype, "test", { ...testDescriptor, value: hostile });
+  nativeDefineProperty(RegExp.prototype, "exec", { ...execDescriptor, value: hostile });
+  nativeDefineProperty(Reflect, "apply", { ...applyDescriptor, value: hostile });
+  nativeDefineProperty(globalThis, "Error", { ...errorDescriptor, value: HostileError });
+  try {
+    try { assertNoSecretMaterial({ nested: [{ note: "api_key=unsafe-value-123" }] }); }
+    catch (error) { rejected = error; }
+    redacted = redactSecrets({ nested: [{ apiKey: "sk_test_abcdefghijklmnopqrstuvwxyz" }], safe: "visible" });
+  } finally {
+    nativeDefineProperty(Object, "entries", entriesDescriptor);
+    nativeDefineProperty(Array, "isArray", arrayDescriptor);
+    nativeDefineProperty(Array.prototype, "forEach", forEachDescriptor);
+    nativeDefineProperty(Array.prototype, "some", someDescriptor);
+    nativeDefineProperty(Array.prototype, "push", pushDescriptor);
+    nativeDefineProperty(Array.prototype, "join", joinDescriptor);
+    nativeDefineProperty(Array.prototype, "map", mapDescriptor);
+    nativeDefineProperty(Object, "fromEntries", fromEntriesDescriptor);
+    nativeDefineProperty(Object, "defineProperty", definePropertyDescriptor);
+    nativeDefineProperty(RegExp.prototype, "test", testDescriptor);
+    nativeDefineProperty(RegExp.prototype, "exec", execDescriptor);
+    nativeDefineProperty(Reflect, "apply", applyDescriptor);
+    nativeDefineProperty(globalThis, "Error", errorDescriptor);
+  }
+  assert.ok(rejected instanceof Error);
+  assert.notEqual(rejected, sentinel);
+  assert.deepEqual(redacted, { value: { nested: [{ apiKey: "[REDACTED]" }], safe: "visible" },
+    redactedPaths: ["$.nested[0].apiKey"] });
+});
+
+test("redaction preserves sparse array topology", () => {
+  const sparse: unknown[] = [];
+  sparse.length = 2;
+  sparse[1] = "visible";
+  const output = redactSecrets(sparse).value as unknown[];
+  assert.equal(output.length, 2);
+  assert.equal(Object.hasOwn(output, 0), false);
+  assert.equal(Object.hasOwn(output, 1), true);
+  assert.equal(output[1], "visible");
+});
+
+test("secret walkers ignore a dishonest post-import RegExp exec", () => {
+  const execDescriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec");
+  assert.ok(execDescriptor);
+  let behavior = 0, rejected: unknown;
+  Object.defineProperty(RegExp.prototype, "exec", { ...execDescriptor, value: () => { behavior += 1; return null; } });
+  try {
+    try { assertNoSecretMaterial("api_key=unsafe-value-123"); }
+    catch (error) { rejected = error; }
+    assert.deepEqual(redactSecrets("api_key=unsafe-value-123"), {
+      value: "[REDACTED]", redactedPaths: ["$"],
+    });
+  } finally {
+    Object.defineProperty(RegExp.prototype, "exec", execDescriptor);
+  }
+  assert.equal(behavior, 0);
+  assert.ok(rejected instanceof Error);
+  assert.match(rejected.message, /secret material/);
+});
+
 test("deterministic policy fails closed for scope, risk, expiry, and missing strong factor", () => {
   const principal: AuthenticatedPrincipal = { tenantId: "tenant:owner", identityId: "identity:owner", actorType: "human", authenticatedAt: t0, expiresAt: t10 };
   const grant: RoleGrant = { id: "grant:operator", allowedActions: ["effect.authorize"], projectIds: ["project:one"], riskCeiling: "high", allowExternalEffects: true, requireStrongFactor: false };
