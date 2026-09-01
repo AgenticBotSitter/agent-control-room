@@ -3,6 +3,7 @@ import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security";
 import {
   dataMethodV1,
+  exactHostDataSnapshotV1,
   isHostProxyV1,
   type HostResultCollectorV1,
 } from "../../security/host-value";
@@ -298,32 +299,36 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
     nativeBridge: IdeaLabHermes021NativeBridgeV1;
     now?: () => string;
   }) {
-    if (!input || typeof input !== "object" || isHostProxyV1(input)
-      || !input.spendStore || typeof input.spendStore !== "object" || isHostProxyV1(input.spendStore)
-      || !input.nativeBridge || typeof input.nativeBridge !== "object" || isHostProxyV1(input.nativeBridge)) {
+    const captured = exactHostDataSnapshotV1(input,
+      ["enrollment", "permitEnvelope", "permitContext", "spendStore", "nativeBridge"], ["now"]);
+    if (!captured) throw new IdeaLabErrorV1("invalid_input");
+    const spendStore = captured.spendStore, nativeBridge = captured.nativeBridge, now = captured.now;
+    if (!spendStore || typeof spendStore !== "object" || isHostProxyV1(spendStore)
+      || !nativeBridge || typeof nativeBridge !== "object" || isHostProxyV1(nativeBridge)) {
       throw new IdeaLabErrorV1("invalid_input");
     }
-    const claim = dataMethodV1(input.spendStore, "claim"), settle = dataMethodV1(input.spendStore, "settle");
-    const execute = dataMethodV1(input.nativeBridge, "executeFixedSession");
-    const cleanup = dataMethodV1(input.nativeBridge, "cleanupFixedSession");
-    if (!claim || !settle || !execute || !cleanup || (input.now && typeof input.now !== "function")) {
+    const claim = dataMethodV1(spendStore, "claim"), settle = dataMethodV1(spendStore, "settle");
+    const execute = dataMethodV1(nativeBridge, "executeFixedSession");
+    const cleanup = dataMethodV1(nativeBridge, "cleanupFixedSession");
+    if (!claim || !settle || !execute || !cleanup
+      || (now !== undefined && (typeof now !== "function" || isHostProxyV1(now)))) {
       throw new IdeaLabErrorV1("invalid_input");
     }
-    this.#enrollment = parseIdeaLabHermes021ConnectionSafeResultV1(input.enrollment);
+    this.#enrollment = parseIdeaLabHermes021ConnectionSafeResultV1(captured.enrollment);
     this.#permit = verifyIdeaLabHermes021QualificationPermitV1({
       enrollment: this.#enrollment,
-      envelope: input.permitEnvelope,
-      context: input.permitContext,
+      envelope: captured.permitEnvelope,
+      context: captured.permitContext,
     });
-    this.#claim = ((value) => Reflect.apply(claim, input.spendStore, [value])) as
+    this.#claim = ((value) => Reflect.apply(claim, spendStore, [value])) as
       IdeaLabHermes021QualificationSpendStoreV1["claim"];
-    this.#settle = ((value) => Reflect.apply(settle, input.spendStore, [value])) as
+    this.#settle = ((value) => Reflect.apply(settle, spendStore, [value])) as
       IdeaLabHermes021QualificationSpendStoreV1["settle"];
-    this.#executeFixedSession = ((value, collector) => Reflect.apply(execute, input.nativeBridge,
+    this.#executeFixedSession = ((value, collector) => Reflect.apply(execute, nativeBridge,
       [value, collector])) as IdeaLabHermes021NativeBridgeV1["executeFixedSession"];
-    this.#cleanupFixedSession = ((value, collector) => Reflect.apply(cleanup, input.nativeBridge,
+    this.#cleanupFixedSession = ((value, collector) => Reflect.apply(cleanup, nativeBridge,
       [value, collector])) as IdeaLabHermes021NativeBridgeV1["cleanupFixedSession"];
-    this.#now = input.now ?? (() => new Date().toISOString());
+    this.#now = (now as (() => string) | undefined) ?? (() => new Date().toISOString());
   }
 
   async execute(input: ExecuteInput, collector: HostResultCollectorV1): Promise<void> {
@@ -346,7 +351,14 @@ export class IdeaLabHermes021EnrolledGatewayPortV1 implements Hermes021IdeaLabGa
       const claim = await this.#claim({ permitDigest: this.#permit.permitDigest, attemptId: this.#permit.attemptId,
         markerDigest: this.#permit.markerDigest, claimedAt });
       if (claim !== "claimed") throw new IdeaLabErrorV1("authorization_denied");
-      const dispatchedAt = this.#now(), dispatched = Date.parse(dispatchedAt);
+      let dispatchedAt: string;
+      try {
+        dispatchedAt = this.#now();
+      } catch {
+        await this.#settleExact("terminal_ambiguity", claimedAt);
+        throw new IdeaLabErrorV1("authorization_denied");
+      }
+      const dispatched = Date.parse(dispatchedAt);
       if (this.#cleanupStarted || input.signal.aborted || !Number.isFinite(dispatched) || dispatched < claimed
         || dispatched < Date.parse(this.#permit.issuedAt) || dispatched >= Date.parse(this.#permit.expiresAt)) {
         await this.#settleExact("terminal_ambiguity",

@@ -206,6 +206,57 @@ test("CR12B-IDEA-110D consumes but never dispatches a permit that expires during
     [["claim", undefined], ["settle", "terminal_ambiguity"]]);
 });
 
+test("CR12B-IDEA-110E terminally settles a post-claim trusted-clock exception", async () => {
+  const bundle = permit(), spend = store(), native = bridge();
+  let clockCalls = 0;
+  const port = new IdeaLabHermes021EnrolledGatewayPortV1({ enrollment: bundle.connection,
+    permitEnvelope: bundle.envelope, permitContext: bundle.context, spendStore: spend.value,
+    nativeBridge: native.value, now: () => {
+      clockCalls += 1;
+      if (clockCalls === 1) return "2026-09-01T10:04:00.000Z";
+      throw new Error("trusted clock unavailable");
+    } });
+  await assert.rejects(() => port.execute(executeInput(bundle), createHostResultCollectorV1().collector),
+    (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "authorization_denied");
+  assert.equal(native.calls.length, 0);
+  assert.deepEqual(spend.events.map((event) => [event.type, event.outcome, event.settledAt]), [
+    ["claim", undefined, undefined], ["settle", "terminal_ambiguity", "2026-09-01T10:04:00.000Z"],
+  ]);
+  await assert.rejects(() => port.execute(executeInput(bundle), createHostResultCollectorV1().collector),
+    (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "authorization_denied");
+  assert.equal(clockCalls, 2);
+});
+
+test("CR12B-IDEA-110E rejects gateway wrapper accessors without executing them", () => {
+  const bundle = permit(), spend = store(), native = bridge();
+  const exact = { enrollment: bundle.connection, permitEnvelope: bundle.envelope, permitContext: bundle.context,
+    spendStore: spend.value, nativeBridge: native.value, now: () => "2026-09-01T10:04:00.000Z" };
+  for (const key of Object.keys(exact) as Array<keyof typeof exact>) {
+    let getterCalls = 0;
+    const wrapper = { ...exact };
+    const original = Object.getOwnPropertyDescriptor(wrapper, key)?.value;
+    Object.defineProperty(wrapper, key, { enumerable: true, configurable: true, get() {
+      getterCalls += 1; return original;
+    } });
+    assert.throws(() => new IdeaLabHermes021EnrolledGatewayPortV1(wrapper),
+      (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+    assert.equal(getterCalls, 0, key);
+  }
+  assert.throws(() => new IdeaLabHermes021EnrolledGatewayPortV1({ ...exact, unexpected: "widened" } as typeof exact),
+    (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  assert.throws(() => new IdeaLabHermes021EnrolledGatewayPortV1(
+    Object.assign(Object.create({ inherited: "widened" }), exact) as typeof exact),
+  (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  let proxyTraps = 0;
+  const proxy = new Proxy(exact, { get(target, key, receiver) {
+    proxyTraps += 1; return Reflect.get(target, key, receiver);
+  } });
+  assert.throws(() => new IdeaLabHermes021EnrolledGatewayPortV1(proxy),
+    (error) => error instanceof IdeaLabErrorV1 && error.safeCode === "invalid_input");
+  assert.equal(proxyTraps, 0);
+  assert.deepEqual([spend.events.length, native.calls.length], [0, 0]);
+});
+
 test("CR12B-IDEA-110D records execution ambiguity before concurrent cleanup completion", async () => {
   const bundle = permit(), spend = store(), controller = new AbortController();
   let entered!: () => void;
