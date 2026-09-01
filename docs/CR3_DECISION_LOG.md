@@ -2557,6 +2557,12 @@ enumeration, JSON and finite-number handling, reflection, and SHA-256 methods; i
 existing clean-runtime canonical bytes without dynamically selecting ambient traversal. This follows the Medium
 finding preserved by the IDEA-110N independent report.
 
+**IDEA-110P amendment:** Digest verification must end in an immutable evidence graph. The module captures object freezing
+before shared-state mutation; direct and reparsed connection results seal their nested blocker arrays; final roster
+parsing seals every connection and blocker array before sealing the connection array and outer roster. A retained digest
+may never describe caller-mutable identity, chronology, blocker, qualification, live, or authority fields. This follows
+the Medium finding preserved by the IDEA-110O independent report.
+
 **Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
 contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
 conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
@@ -2570,3 +2576,5 @@ Any change to contract-safe formatting, exact roster capture, roster identity co
 invalidates IDEA-110N review evidence.
 Any change to captured roster canonicalization, byte compatibility, or roster SHA-256 construction also invalidates
 IDEA-110O review evidence.
+Any change to connection-result freezing, nested roster immutability, or the captured freeze operation also invalidates
+IDEA-110P review evidence.

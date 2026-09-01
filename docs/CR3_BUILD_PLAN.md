@@ -836,6 +836,20 @@ handling, reflection, and SHA-256 methods at module initialization. Indexed cons
 traversal and preserves exact clean-runtime digest bytes. No private port, enrollment, native operation, provider call,
 credential access, or deployment is introduced.
 
+Independent review confirmed the captured digest repair but found one Medium defect: reparsed safe results and nested
+roster connection/blocker evidence remained mutable after digest verification. See
+`docs/reviews/CR12B_IDEA_110O_ROSTER_DIGEST_CAPTURE_REVIEW_REV_001.md`.
+
+## CR12B-IDEA-110P — immutable connection-evidence remediation
+
+Status: provider-disabled implementation frozen at `e028d6b4cd5ee55c053561a880fbf65d897dc2ad`; replacement packet
+`sha256:d8e205f0fb7c5a28a5f1d25c72618368f4c3372521c80d296fc6d484c8c3b417` and fresh independent review required. See
+`CR12B_IDEA_110P_CONNECTION_EVIDENCE_FREEZE_REMEDIATION.md` and amended ADR-146.
+
+A module-captured freeze operation seals direct and reparsed safe results with their blocker arrays. Final roster
+parsing seals every nested connection and blocker array before the connection array and outer projection. No private
+port, enrollment, native operation, provider call, credential access, or deployment is introduced.
+
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
 Status: blocked pending the fixed local/SSH native bridge, one real signed node enrollment, refreshed pins and review,

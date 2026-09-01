@@ -3,6 +3,10 @@
 **Status:** Provider-disabled implementation passed producer verification; fresh independent review of the exact frozen
 product is mandatory.
 
+**Frozen product:** `e028d6b4cd5ee55c053561a880fbf65d897dc2ad`
+
+**Review packet SHA-256:** `d8e205f0fb7c5a28a5f1d25c72618368f4c3372521c80d296fc6d484c8c3b417`
+
 ## Why IDEA-110O remained rejected
 
 Independent review of exact product `343eb645e6c10f9bb4e601ea49ae371fee2493ba` confirmed its captured digest repair,
