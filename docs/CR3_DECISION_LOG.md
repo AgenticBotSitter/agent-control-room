@@ -2674,3 +2674,38 @@ to a false green status or an unreviewed second trust path.
 live-panel admission, production PostgreSQL composition, retention, or deployment. Any registry schema/tag/replay rule,
 telemetry provenance/freshness rule, authentication ordering, correlation, redaction, or negative-authority change
 invalidates CR13A-LIVE-020 review evidence.
+
+## ADR-150 — Enrollment intake derives trust from the active database key and commits evidence atomically
+
+**Decision:** A server-held delivery source may supply a bounded Hermes connection-enrollment envelope, delivery ID, and
+receipt time, but the source's name or returned metadata is not authentication evidence. Inside one tenant-serialized
+PostgreSQL transaction, Control Room verifies the existing audit stream, resolves the exact current active node key,
+checks key/node state and validity, verifies the signed envelope with the accepted Hermes enrollment verifier, persists
+the connection-registry revision, and appends a separately keyed audit receipt and head. Registry and intake evidence
+commit together. Exact delivery/enrollment replay returns the original verified safe receipt even after later key
+retirement or revocation; revocation still blocks every new intake and semantic drift fails.
+
+The runtime default is a disabled source, and the application exports no enrollment write route. The safe receipt carries
+only opaque digests, revision, time, disposition, and explicit negative authority. Raw correlation identifiers remain in
+the protected database. Enrollment does not imply signal freshness, qualification, approval, network, command, lease,
+execution, live-panel, provider, or deployment authority.
+
+**Why:** The durable registry needs an actual verified write composition, but trusting a connector-produced
+`authenticated` label would create a confused-deputy path. Re-verifying the independently signed enrollment against the
+authoritative active key makes trust local and reviewable. One outer transaction prevents an accepted registry record
+without matching audit evidence or an audit receipt for a rolled-back enrollment.
+
+**Alternatives rejected:** Browser or HTTP enrollment writes; trusting delivery metadata as cryptographic proof; accepting
+the public key embedded in the envelope without database resolution; writing registry and audit in separate
+transactions; audit-only replay detection; unsigned or mutable receipts; treating a node-protocol frame as a substitute
+for the nested enrollment verifier; enabling a local/SSH/native source in the same block; or using PGlite as production
+authority.
+
+**Trade-off:** Each intake verifies the complete per-tenant audit chain and serializes on the tenant, which intentionally
+limits write throughput. Key rotation can reject a delayed envelope once its signing key is no longer active. These costs
+are acceptable for rare enrollment operations and are safer than ambiguous replay or partial evidence.
+
+**Reevaluate:** Before adding a node-protocol delivery adapter, live connector, revocation/rotation intake, retention,
+multi-primary writes, production PostgreSQL composition, or any public mutation surface. Any source-capability,
+active-key resolution, transaction ordering, registry composition, replay rule, audit-chain/tag, receipt-redaction,
+runtime-default, or negative-authority change invalidates CR13A-LIVE-030 review evidence.

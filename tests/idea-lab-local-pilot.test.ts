@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createControlRoomLocalPilotRuntimeV1,LOCAL_PILOT_TENANT_ID_V1,LocalPilotErrorV1 } from "../src/local-pilot/v1/index.ts";
+import { ConnectionEnrollmentIntakeErrorV1 } from "../src/connection-registry/v1/index.ts";
 import { ProjectWorkspaceReadServiceV1 } from "../src/project-workspace/v1/index.ts";
 import { sha256Digest } from "../src/security/index.ts";
 import { createLocalPilotSessionStatusHandlerV1 } from "../app/api/v1/local-pilot/session/route.ts";
@@ -20,6 +21,8 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   let runtime=await createControlRoomLocalPilotRuntimeV1(config);
   assert.equal((await stat(dataDir)).mode&0o777,0o700);
   assert.equal((await runtime.connectionRosterSource.read({tenantId:LOCAL_PILOT_TENANT_ID_V1,now})).connectionCount,0);
+  await assert.rejects(runtime.connectionEnrollmentIntakeService.ingest({deliveryId:"delivery:local-pilot:disabled",receivedAt:now}),
+    (error:unknown)=>error instanceof ConnectionEnrollmentIntakeErrorV1&&error.safeCode==="source_unavailable");
   await assert.rejects(runtime.ownerSession.issue(ownerRequest(undefined,undefined,false),code),(error:unknown)=>error instanceof LocalPilotErrorV1&&error.safeCode==="local_request_required");
   await assert.rejects(runtime.ownerSession.issue(ownerRequest(undefined,undefined,true),`${code}-wrong`),(error:unknown)=>error instanceof LocalPilotErrorV1&&error.safeCode==="invalid_owner_code");
   const issued=await runtime.ownerSession.issue(ownerRequest(undefined,undefined,true),code),cookie=issued.cookie.split(";",1)[0]!;
