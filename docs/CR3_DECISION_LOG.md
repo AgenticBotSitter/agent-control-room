@@ -2103,3 +2103,28 @@ eligibility.
 
 **Reevaluate:** IDEA-080 may build the default-disabled filtered driver and disposable qualification harness. A native
 attempt remains separately owner-controlled and may not begin from this ADR alone.
+
+## ADR-131 — The Hermes panel driver translates and cleans; it never owns admission or native authority
+
+**Decision:** The Hermes 0.21 Idea Lab driver receives only a coordinator-verified, atomically consumed admission and an
+injected node-local gateway port. It rechecks exact build and participant/runtime bindings before contact, discards
+streaming content before parsing, requires one contiguous filtered completion sequence, and derives its receipt from
+both gateway and cleanup evidence. A bounded timeout aborts the port. Any unknown call or cleanup outcome becomes
+terminal ambiguity through the existing durable marker and is never retried. The repository ships no native port.
+
+**Why:** Translation, admission, protected-value custody, and process launch are different authorities. Keeping the
+driver behind an absent port lets the repository prove filtering, limits, and failure behavior without providing an
+accidental native execution path. Cleanup must be part of the retained receipt because a completed provider response is
+not proof that disposable native state was removed.
+
+**Alternatives rejected:** Let the driver verify its own admission; parse streaming text into Control Room; retain raw
+native IDs; accept partial/out-of-order events; treat timeout as definite failure; retry after timeout; return a result
+before cleanup; allow a fixture simulation to set native qualification; or include a process/network implementation in
+the default repository composition.
+
+**Trade-off:** The translator and qualification plan are complete, but the remaining live gate is intentionally explicit:
+the atomically consumed admission and accepted native receipt still need durable authenticated storage before an owner
+can authorize one native attempt.
+
+**Reevaluate:** IDEA-090 may add the durable single-use admission and receipt registry. Native contact remains blocked
+until that store and a fresh exact owner packet are accepted.

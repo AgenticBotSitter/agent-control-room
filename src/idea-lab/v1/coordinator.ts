@@ -142,7 +142,8 @@ export type IdeaLabBotDriverResultV1 = z.infer<typeof safeDriverResultSchema>;
 export interface IdeaLabBotPanelDriverV1 {
   readonly mode: "repository_fake" | "hermes_bot_mode_filtered";
   invoke(input: Readonly<{ session: IdeaLabSessionV1; participant: IdeaLabParticipantV1; round: number;
-    safePrompt: string; evidence: IdeaLabProviderSessionEvidenceV1; markerDigest: string }>): Promise<unknown>;
+    safePrompt: string; evidence: IdeaLabProviderSessionEvidenceV1; markerDigest: string;
+    liveAdmission?: IdeaLabLivePanelAdmissionV1 }>): Promise<unknown>;
 }
 
 /** Server-held verifier for live evidence. Evidence claims never authorize themselves. */
@@ -185,6 +186,7 @@ export class IdeaLabBotCoordinatorV1 {
     if (evidence.some((item) => Date.parse(item.capturedAt) > Date.parse(now) || Date.parse(item.expiresAt) <= Date.parse(now))) {
       throw new IdeaLabErrorV1("scope_mismatch");
     }
+    let liveAdmission: IdeaLabLivePanelAdmissionV1 | undefined;
     if (this.driver.mode === "hermes_bot_mode_filtered") {
       if (!this.providerEvidenceAuthority || !this.livePanelAdmissionAuthority || input.liveAdmission === undefined) {
         throw new IdeaLabErrorV1("authorization_denied");
@@ -198,6 +200,7 @@ export class IdeaLabBotCoordinatorV1 {
       if (!await this.livePanelAdmissionAuthority.consume({ admission, session, evidence, now })) {
         throw new IdeaLabErrorV1("authorization_denied");
       }
+      liveAdmission = admission;
     } else if (input.liveAdmission !== undefined) {
       throw new IdeaLabErrorV1("authorization_denied");
     }
@@ -221,7 +224,7 @@ export class IdeaLabBotCoordinatorV1 {
         costUsd: 0, messagesUsed: 0, startedAt });
       let raw: unknown;
       try { raw = await this.driver.invoke({ session, participant, round, safePrompt: input.safePrompt,
-        evidence: participantEvidence, markerDigest }); }
+        evidence: participantEvidence, markerDigest, ...(liveAdmission ? { liveAdmission } : {}) }); }
       catch { return this.ledger.markAmbiguous(run.runId, attemptId, "provider_outcome_unknown", this.clock()); }
       let result: IdeaLabBotDriverResultV1;
       try { result = parseExactIdeaLabV1(safeDriverResultSchema, raw); }

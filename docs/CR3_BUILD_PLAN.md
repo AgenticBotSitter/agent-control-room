@@ -561,9 +561,23 @@ harness. Repository implementation remains effect-free; no native attempt occurs
 
 ## CR12B-IDEA-080 — filtered provider driver and native qualification harness
 
+Status: complete for the exact repository-only, injected-fixture, provider-disabled snapshot. See
+`CR12B_IDEA_080_ACCEPTANCE.md`, `CR12B_IDEA_080_OWNER_PACKET.md`, and ADR-131.
+
+The injected node-local driver rechecks exact admission/runtime/participant bindings, discards streaming content before
+parsing, accepts one strict filtered completion or definite failure sequence, derives a cleanup-bound receipt, and makes
+timeouts, malformed evidence, and cleanup uncertainty terminally ambiguous through the existing coordinator. The frozen
+ten-stage qualification plan remains blocked with no native port, owner window, or accepted receipt. Its injected
+simulation cannot claim native qualification. Every composition remains provider-disabled.
+
+Next: CR12B-IDEA-090 implements authenticated durable single-use admission consumption and an exact accepted-native-
+receipt registry. It remains repository-only and performs no native attempt.
+
+## CR12B-IDEA-090 — durable admission consumption and native-receipt registry
+
 Status: next.
 
-This block will translate exact gateway events into the already accepted filtered contribution result, enforce per-call
-deadlines and reconciliation without resubmission, prove zero tools/MCP and protected-value custody, and prepare one
-disposable native qualification harness with sanitized evidence and cleanup. The driver remains absent from default,
-browser, local-pilot, and production composition. Native contact remains a separate owner-attended gate.
+This block will replace the admission interface-only seam with authenticated PostgreSQL-compatible state. It must
+atomically bind one admission/window/run, make exact replay inert, refuse reuse for another run, preserve terminal
+revocation and high-water, pin only architect-accepted native receipt digests, detect rollback/tampering, and remain
+unconfigured in every shipped composition. No native/provider call occurs.

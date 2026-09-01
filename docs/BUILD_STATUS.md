@@ -96,15 +96,27 @@
 | CR12B-IDEA-050 durable session resume and protected project lifecycle | Complete locally for the owner-authenticated, repository-fake, runtime-disabled snapshot | No-write session catalog/detail reads, stable reload projections, exact owner lifecycle replay, concurrency guard, legal state-aware disabled controls, 48-test combined gate; see `CR12B_IDEA_050_ACCEPTANCE.md` |
 | CR12B-IDEA-060 explicit local composition and repository-fake pilot | Complete for the exact local, Keychain-backed, repository-fake owner pilot | Owner-attended sign-in, create/panel/synthesis/promotion, protected project read, pause/resume, reload, real process restart, durable PGlite, and 51-test gate; see `CR12B_IDEA_060_ACCEPTANCE.md` |
 | CR12B-IDEA-070 provider-neutral live-panel admission | Complete locally for the repository-only provider-disabled snapshot | Two-authority exact admission, participant/runtime binding, protected-value custody, exact ceilings, pre-call markers, terminal ambiguity/no retry, filtered output, and disabled Hermes 0.21 packet; see `CR12B_IDEA_070_ACCEPTANCE.md` |
-| CR12B-IDEA-080 filtered driver and native qualification harness | Next | Default-disabled gateway translation, deadline/reconciliation enforcement, zero-tool/MCP and custody proof, disposable sanitized harness; no native attempt yet |
+| CR12B-IDEA-080 filtered driver and native qualification harness | Complete locally for the injected-fixture, provider-disabled snapshot | Exact admission/runtime preflight, content-discarding event translation, bounded timeout/cleanup, cleanup-bound receipt, frozen native plan, 10 hostile tests; see `CR12B_IDEA_080_ACCEPTANCE.md` |
+| CR12B-IDEA-090 durable admission consumption and native-receipt registry | Next | Authenticated atomic single-use admission/window/run binding, exact replay, revocation/high-water, architect-pinned native receipts, rollback/tamper detection; no native attempt |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR12B-IDEA-080 is next. It will implement the default-disabled filtered provider driver and disposable native
-qualification harness without making a native call. The repository must remain provider-disabled while it translates
-exact gateway evidence, enforces per-call deadlines and reconciliation without resubmission, proves zero tools/MCP and
-protected-value custody, and prepares sanitized cleanup evidence for a later exact owner window.
+CR12B-IDEA-090 is next. It will implement authenticated PostgreSQL-compatible single-use admission consumption and the
+accepted-native-receipt registry without making a native call. One exact admission/window/run binding must be atomic,
+exact replay inert, cross-run reuse denied, revocation/high-water terminal, accepted receipts architect-pinned, and
+rollback/tampering detectable. Every shipped composition remains provider-disabled.
+
+CR12B-IDEA-080 completes the filtered driver and qualification-harness repository slice without a native port. The
+driver rechecks the exact consumed admission and runtime/participant bindings before its injected port, discards
+streaming payloads without parsing them, requires a contiguous filtered completion sequence, enforces a bounded timeout,
+requires cleanup on every path, and binds the final provider receipt to gateway plus cleanup evidence. Timeout,
+malformed/hostile evidence, identity drift, or cleanup uncertainty throws into terminal ambiguity with no retry. The
+ten-stage native plan allows at most one later attempt/call in 300 seconds and 256 KiB sanitized evidence, but currently
+has no owner window, native port, or accepted receipt. Its injected simulation always remains non-native. The new suite
+passes 10/10 and combined CR12B passes 69/69. The complete registered lifecycle, typecheck, full lint, production build,
+3/3 rendered routes, all 30 migrations/108 PostgreSQL tables, macOS stage zero, and whitespace validation pass. No native call,
+protected-value access, process, filesystem/network effect, deployment, or external effect occurred.
 
 CR12B-IDEA-070 completes the provider-neutral live-panel admission seam without contacting a provider. Separate
 server-held provider and admission authorities must accept the exact session, every participant/runtime identity,
@@ -480,12 +492,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR12B-IDEA-080 — filtered provider driver and native qualification harness
+Block: CR12B-IDEA-090 — durable admission consumption and native-receipt registry
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the exact admission seam is complete; the next security-sensitive step is implementing the translation and native-proof boundary without enabling it.
-Expected output: a default-disabled filtered gateway driver, exact event-to-contribution mapping, per-call deadline and reconciliation semantics, zero-tool/MCP and protected-value-custody qualification evidence, cleanup, hostile tests, and an updated later-owner packet.
-Owner action: none during repository implementation. A later exact packet will request a separate native/live-provider window only after this harness is reviewable.
+Why: the filtered driver and native plan are complete; the remaining pre-owner security gap is durable atomic consumption and receipt trust instead of an interface-only verifier.
+Expected output: authenticated PostgreSQL-compatible admission/window/run consumption, exact-replay and cross-run-reuse rules, terminal revocation/high-water, architect-pinned native receipts, rollback/tamper detection, hostile tests, and an updated exact owner packet.
+Owner action: none during repository implementation. A later exact packet will request one separate native/live-provider window only after this store is accepted.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
