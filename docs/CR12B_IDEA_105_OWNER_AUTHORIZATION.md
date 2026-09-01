@@ -3,11 +3,13 @@
 The old IDEA-100 authorization is superseded because the exact Hermes runtime, source evidence, panel packet, and plan
 digests changed. It cannot be reused. Nothing native has run under this refreshed packet.
 
-Do not authorize or run this packet until PR #180 and the IDEA-105 pin-refresh PR are integrated and a no-effect
-preflight reports the exact reviewed runtime and source-evidence digests in
-`CR12B_IDEA_105_HERMES_021_PIN_REFRESH_ACCEPTANCE.md`.
+Do not authorize or run this packet. IDEA-108 found that the reviewed Hermes runtime cannot combine an empty/no-skills
+profile with its existing authentication: cloning also imports private SOUL, skills, and memory. No owner command may be
+emitted until one remediation in `CR12B_IDEA_108_NATIVE_LAUNCH_READINESS_ACCEPTANCE.md` is implemented, independently
+reviewed, integrated with PR #180 and IDEA-105, and followed by another exact packet refresh.
 
-When those prerequisites are current and you are physically present at this Mac, authorize exactly this scope:
+The text below is retained only as the intended ceiling. It is not currently actionable and will require a new exact
+revision after remediation:
 
 > I authorize one owner-attended disposable read-only Hermes 0.21 Idea Lab qualification on this Mac at reviewed runtime
 > revision a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b and compatibility commit

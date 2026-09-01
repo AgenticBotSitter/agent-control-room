@@ -2201,3 +2201,26 @@ native attempt.
 **Reevaluate:** After both refreshed commits are integrated, one no-effect readiness check may prepare the owner command.
 Only the owner can run the attached-Terminal command and handle Keychain. Receipt acceptance and a live panel remain
 separate later authorities.
+
+## ADR-135 — No owner command exists while disposable isolation and existing Hermes authentication conflict
+
+**Decision:** Control Room will not translate an owner packet into an executable command unless Hermes can combine the
+packet's disposable empty profile with existing native authentication without importing bot context. The reviewed
+Hermes source shows fresh no-skills profiles have empty protected-value storage, clone also copies SOUL, skills, and
+memory, and no-skills is mutually exclusive with clone. The readiness gate therefore fixes command emission and all
+authority to false.
+
+**Why:** A command that cannot authenticate would waste the single attempt. A command that silently clones private bot
+identity and memory would exceed the owner's scope and could alter provider behavior before Control Room can prove the
+zero-context boundary. Discovering that contradiction before process launch is the purpose of readiness review.
+
+**Alternatives rejected:** Run anyway; use the default profile; call an empty profile and let authentication fail; clone
+the full profile and delete context after gateway start; have Control Room read and copy protected values; weaken
+"empty" without owner consent; or emit a command that depends on an unreviewed manual cleanup sequence.
+
+**Trade-off:** IDEA-110 stays blocked even though lifecycle source compatibility passed. The safe next step is either an
+upstream Hermes protected-value-only profile operation or an exact clone-and-sanitize design whose deletion ordering and
+negative context proof are reviewed before provider contact.
+
+**Reevaluate:** After one remediation is implemented and independently reviewed, refresh every affected source, runtime,
+packet, plan, and readiness digest. Only then request another exact owner authorization.

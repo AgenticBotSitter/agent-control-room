@@ -13,5 +13,6 @@ export * from "./live-panel-admission";
 export * from "./hermes-021-panel-packet";
 export * from "./hermes-021-filtered-driver";
 export * from "./hermes-021-native-qualification";
+export * from "./hermes-021-native-launch-readiness";
 export * from "./live-panel-authority-store";
 export * from "./owner-ready-live-packet";

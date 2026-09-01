@@ -610,14 +610,25 @@ new pin through the Idea Lab packet, qualification plan, live-evidence fixtures,
 earlier authorization is non-reusable because the exact packet and plan digests changed. No native/provider contact or
 protected-value access occurred.
 
-Next: CR12B-IDEA-110 may perform the owner-attended disposable native qualification only after both refreshed commits
-are integrated and the owner gives the exact new authorization. It is limited to the packet and stops before receipt
-acceptance or a live panel.
+Next: CR12B-IDEA-108 checks whether the reviewed Hermes profile operations can actually satisfy the disposable empty
+profile plus existing-authentication boundary before any owner command is emitted.
+
+## CR12B-IDEA-108 — Hermes native-launch readiness
+
+Status: complete with a blocked-before-owner-command disposition. See
+`CR12B_IDEA_108_NATIVE_LAUNCH_READINESS_ACCEPTANCE.md` and ADR-135.
+
+Exact source inspection proves a fresh no-skills profile has an empty protected-value file, while clone imports the
+protected-value file plus SOUL, skills, and memory and is mutually exclusive with no-skills. Hermes exposes no
+protected-value-only clone. The digest-bound readiness contract therefore emits no command and grants no authority.
+
+Next: implement and independently review one exact profile-isolation remediation, then refresh runtime/source/packet
+pins and obtain another exact owner authorization before IDEA-110.
 
 ## CR12B-IDEA-110 — owner-attended Hermes 0.21 native qualification
 
-Status: blocked pending integration of PR #180 and IDEA-105 plus the exact new owner authorization in
-`CR12B_IDEA_105_OWNER_AUTHORIZATION.md`.
+Status: blocked pending a reviewed profile-isolation remediation, refreshed pins, integration, and another exact owner
+authorization. The IDEA-100 and IDEA-105 authorization text is non-reusable.
 
 One no-effect preflight will verify the installed runtime and print the exact attached-Terminal command. The owner must
 run it and handle any Keychain prompt. The attempt emits only a sanitized unaccepted candidate, cleans disposable state,
