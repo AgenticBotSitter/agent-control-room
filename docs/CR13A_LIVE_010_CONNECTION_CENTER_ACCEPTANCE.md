@@ -68,6 +68,6 @@ separation at the exact implementation commit. The review must treat the accepte
 immutable dependencies and must not authorize or run any native process, provider call, SSH connection, credential read,
 production database, deployment, or local persistent service.
 
-The candidate remains stacked behind connector PR #228 and Project Activity PR #229. It is not integration-eligible
+Draft PR #230 remains stacked behind connector PR #228 and Project Activity PR #229. It is not integration-eligible
 until the independent review accepts the exact implementation, both parents land in order, the feature is retargeted to
 `main`, and ordinary GitHub CI passes.

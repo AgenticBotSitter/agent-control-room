@@ -778,9 +778,9 @@ pilot roster. The server rebuilds the accepted sanitized roster before projectio
 and no hostname, locator, credential, native action, provider call, or write control exists. Verification passes 9/9
 focused tests, 25/25 combined CR13A tests, 769/769 registered pretests, 418/420 core tests with two intentional
 Windows-only skips, 260/260 posttests, typecheck, lint, production build, 4/4 rendered routes, migrations through
-0033/112 tables, Mac stage zero, and whitespace validation. Independent security/integrity review and ordered parent
-integration remain required. No live browser viewport claim was made because a persistent local server was not
-authorized; production route rendering passed.
+0033/112 tables, Mac stage zero, and whitespace validation. Draft PR #230 targets the CR13A Project Activity branch;
+independent security/integrity review and ordered parent integration remain required. No live browser viewport claim was
+made because a persistent local server was not authorized; production route rendering passed.
 The frozen independent-review packet SHA-256 is
 `db36f1ce2e94736dc4aa8653e192400c56dc0905d746a7643c444ac7f82b30ac`.
 
