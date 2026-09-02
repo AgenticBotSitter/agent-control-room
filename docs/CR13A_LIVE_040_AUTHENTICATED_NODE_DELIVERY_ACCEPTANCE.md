@@ -1,6 +1,6 @@
 # CR13A-LIVE-040 authenticated node-protocol enrollment delivery acceptance
 
-**Status:** implementation candidate; exact product freeze and independent security/integrity review required
+**Status:** immutable product `6493118f2b7272308d3c508b963f3ddd52cc9863`; independent security/integrity review required
 **Effect boundary:** repository code, generated JSON Schema, PostgreSQL-compatible migration, and PGlite tests only; no
 listener, HTTP mutation, live connector, SSH, Hermes/provider call, credential access, production database, or deployment
 
@@ -60,6 +60,12 @@ production PostgreSQL, deploy, host, or authorize native qualification or live I
 The focused implementation gate covers valid delivery-to-intake flow, outer forgery, independent inner-signature
 failure, exact replay, post-authentication ledger recovery, conflicting reuse, ledger mutation, behavioral database rows,
 safe receipts, generated-schema parity, and absence of browser/HTTP mutation.
+
+The exact product is `6493118f2b7272308d3c508b963f3ddd52cc9863`. Stage zero, TypeScript, full lint, 23/23
+focused protocol/intake/delivery tests, 42/42 combined CR13A tests, the complete 769/769 pretest plus 418/420 core with
+two intentional platform skips plus 277/277 posttest lifecycle, production build, 4/4 rendered routes, all 36 migrations
+with 119 PostgreSQL tables, and `git diff --check` pass. The zero-repair independent review packet has SHA-256
+`e62d0edee24c1a0060ccf5511e842f68f62afc0e9862d716799fe58bbb7162b4`.
 
 ## Required review and next boundary
 

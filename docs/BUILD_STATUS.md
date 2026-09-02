@@ -112,7 +112,7 @@
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
-| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Implementation candidate; freeze and different independent review required | Signed outer frame, nested-verification separation, durable exact replay/recovery, authenticated delivery ledger, disabled runtime, and hostile focused tests; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
+| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Immutable product `6493118f...`; different independent review required | Signed outer frame, nested-verification separation, durable exact replay/recovery, authenticated delivery ledger, complete lifecycle, disabled runtime, and hostile focused tests; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -839,6 +839,11 @@ inner signatures, evidence damage, and behavioral database rows fail closed. The
 re-verifies the inner signature and active database key before registry persistence. No listener, browser/HTTP write,
 live connector, SSH, Hermes/provider call, credential access, production database, deployment, or network effect is
 enabled.
+The exact product is frozen at `6493118f2b7272308d3c508b963f3ddd52cc9863`. Stage zero, TypeScript, full lint,
+23/23 focused protocol/intake/delivery tests, 42/42 combined CR13A tests, the complete 769/769 pretest plus 418/420 core
+with two intentional platform skips plus 277/277 posttest lifecycle, production build, 4/4 rendered routes, all 36
+migrations with 119 PostgreSQL tables, and whitespace validation pass. The zero-repair independent review packet has
+SHA-256 `e62d0edee24c1a0060ccf5511e842f68f62afc0e9862d716799fe58bbb7162b4`.
 
 ## Parallel build lane
 
