@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** remediation implementation candidate; exact freeze and different independent re-review required
+**Status:** remediation frozen at `7c79837cb60e497a7f49a203f20382afe133bd91`; different independent re-review required
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -89,6 +89,10 @@ untouched, while the three temporary constructor copies are still wiped with the
 This remediation does not alter the wire contract, proof ordering, persistence, receipt fields, runtime default, route
 surface, or effect boundary. The rejected report remains authoritative for the superseded exact target. The remediation
 must be frozen and reviewed by a different independent reviewer before integration.
+
+The exact remediation is frozen at `7c79837cb60e497a7f49a203f20382afe133bd91`. Its zero-repair closure packet is
+`docs/reviews/CR13A_LIVE_050_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`5ed0af3e0552fbd4722211bf035b6bc705c50624ccca3c45445c0906b11bd1a9`.
 
 ## Next boundary
 
