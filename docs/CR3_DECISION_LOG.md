@@ -2808,3 +2808,34 @@ negative evidence and an exact retry does not create a second delivery.
 delivery retention/pruning, key rotation intake, production database composition, native qualification, live-panel
 admission, or deployment. Any correlation rule, receipt field, failure mapping, HMAC domain, runtime default, outer/inner
 verification ordering, or negative-authority change invalidates CR13A-LIVE-050 review evidence.
+
+## ADR-153 — Ingress receipt integrity is re-established across every asynchronous proof seam
+
+**Decision:** Preserve the rejected CR13A-LIVE-050 product and report. The remediation must capture and verify the exact
+canonicalization and native-hash runtime selected by final ingress receipt construction and parsing. Verification occurs
+at public entry, immediately after delivery, protected-read, and intake awaits, and once more before final construction.
+Any selected-runtime drift closes with a bounded integrity error before the changed operation executes.
+
+The selected boundary includes global object/constructor identity, property inspection, object keys/freezing, array
+classification/mapping/sorting/joining, numeric checks, JSON encoding, chronology, string slicing, regex execution,
+reflection, typed-array cleanup, and native hash update/digest methods. Receipt reference slicing and temporary-key wiping
+use captured operations. Definite response loss after successful intake remains recoverable through exact replay after
+the runtime is restored.
+
+**Why:** A digest cannot prove receipt integrity when an ambient canonicalization operation can be replaced after module
+import and change only the temporary material being hashed. Awaited proof and database seams are the points where another
+same-process component can change selected runtime state. Rechecking immediately after each seam prevents that state from
+reaching result parsing or final hashing.
+
+**Alternatives rejected:** Treating the digest as self-protecting; checking only at module import; checking only at
+receive entry; relying on the accepted delivery adapter's runtime check to protect a later ingress parser; omitting native
+hash methods; accepting one replacement execution before failure; removing the receipt digest; or widening this block to
+a listener, connector, credential, provider, native, production, or deployment effect.
+
+**Trade-off:** Each enrollment performs several exact runtime-selection comparisons and a small private digest sentinel.
+Enrollment is rare, and the deterministic overhead is accepted to keep a same-process integrity boundary across awaited
+composition. The check intentionally fails closed if another component changes a selected intrinsic.
+
+**Reevaluate:** Before changing receipt canonicalization/hash implementation, adding or removing an awaited seam,
+changing any selected host operation, exporting an injectable proof coordinator, or enabling transport admission. Such a
+change invalidates CR13A-LIVE-050 remediation review evidence.

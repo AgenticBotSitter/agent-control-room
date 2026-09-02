@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -29,7 +29,7 @@ import {
   type SignedNodeFrame,
   type UnsignedNodeFrame,
 } from "../src/node-protocol/v1/index.ts";
-import { adaptPglite, type DatabaseClient } from "../src/persistence/database.ts";
+import { adaptPglite, type DatabaseClient, type DatabaseSession } from "../src/persistence/database.ts";
 import { canonicalJson, sha256Digest } from "../src/security/index.ts";
 
 const tenantId = "tenant:node-ingress";
@@ -189,7 +189,7 @@ function deliveryFrame(privateKey: KeyObject, spki: string, options: {
   } as UnsignedNodeFrame<"connection.enrollment.deliver">, privateKey);
 }
 
-async function fixture() {
+async function fixture(options: { wrapDatabase?: (db: DatabaseClient) => DatabaseClient } = {}) {
   const raw = new PGlite();
   await migrate(raw);
   const db = adaptPglite(raw);
@@ -202,7 +202,7 @@ async function fixture() {
   await helloAuthenticator.verify(JSON.stringify(helloFrame(keys.privateKey)), {
     expectedDirection: "node_to_server", receivedAt, transportIdentity: "transport:node-ingress-test",
   });
-  const ingress = new DatabaseConnectionEnrollmentNodeIngressV1(db, {
+  const ingress = new DatabaseConnectionEnrollmentNodeIngressV1(options.wrapDatabase?.(db) ?? db, {
     deliveryIntegrityKey: deliveryKey,
     registryIntegrityKey: registryKey,
     intakeAuditIntegrityKey: intakeKey,
@@ -376,4 +376,87 @@ test("CR13A-LIVE-050 detects receipt drift and adds no route, listener, or app i
     assert.match(localRuntime, /DisabledConnectionEnrollmentNodeIngressV1/);
     assert.doesNotMatch(localRuntime, /DatabaseConnectionEnrollmentNodeIngressV1/);
   } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-050 rejects selected post-import runtime replacement before it executes", async () => {
+  const { raw, keys, spki, ingress } = await fixture();
+  const getDescriptor = Object.getOwnPropertyDescriptor, defineProperty = Object.defineProperty;
+  try {
+    const receipt = await ingress.receive(request(deliveryFrame(keys.privateKey, spki)));
+    const drifted = { ...receipt, registryRevision: 2 };
+    const hashPrototype = Object.getPrototypeOf(createHash("sha256"));
+    const targets: ReadonlyArray<readonly [object, PropertyKey]> = [
+      [Object, "getOwnPropertyDescriptor"], [Object, "getPrototypeOf"], [Object, "freeze"], [Object, "keys"],
+      [Array, "isArray"], [Array.prototype, "map"], [Array.prototype, "join"], [Array.prototype, "sort"],
+      [Number, "isFinite"], [Number, "isSafeInteger"], [JSON, "stringify"], [Date, "parse"],
+      [Date.prototype, "getTime"], [Date.prototype, "toISOString"], [String.prototype, "slice"],
+      [RegExp.prototype, "exec"], [Reflect, "apply"], [Object.getPrototypeOf(Uint8Array.prototype), "fill"],
+      [hashPrototype, "update"], [hashPrototype, "digest"],
+    ];
+    for (const [owner, key] of targets) {
+      const descriptor = getDescriptor(owner, key);
+      assert.ok(descriptor && "value" in descriptor && typeof descriptor.value === "function", String(key));
+      let replacementCalls = 0;
+      const replacement = function (this: unknown, ...args: unknown[]) {
+        replacementCalls += 1;
+        return Reflect.apply(descriptor.value as (...values: unknown[]) => unknown, this, args);
+      };
+      defineProperty(owner, key, { ...descriptor, value: replacement });
+      let failure: unknown;
+      try { parseConnectionEnrollmentNodeIngressReceiptV1(drifted); }
+      catch (error) { failure = error; }
+      finally { defineProperty(owner, key, descriptor); }
+      assert.equal(replacementCalls, 0, String(key));
+      assert.ok(failure instanceof ConnectionEnrollmentNodeIngressErrorV1, String(key));
+      assert.equal(failure.safeCode, "integrity_failed", String(key));
+    }
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-050 rechecks runtime after intake commit before constructing a receipt", async () => {
+  const getDescriptor = Object.getOwnPropertyDescriptor, defineProperty = Object.defineProperty;
+  const keysDescriptor = getDescriptor(Object, "keys");
+  assert.ok(keysDescriptor && "value" in keysDescriptor && typeof keysDescriptor.value === "function");
+  let armed = false, replacementCalls = 0, replacementInstalled = false;
+  const replacement = function (this: unknown, ...args: unknown[]) {
+    replacementCalls += 1;
+    return Reflect.apply(keysDescriptor.value as (...values: unknown[]) => unknown, this, args);
+  };
+  const wrapped = (db: DatabaseClient): DatabaseClient => ({
+    query: <T = Record<string, unknown>>(statement: string, params: unknown[] = []) => db.query<T>(statement, params),
+    async transaction<T>(callback: (session: DatabaseSession) => Promise<T>): Promise<T> {
+      const result = await db.transaction(callback);
+      if (armed && result && typeof result === "object"
+        && getDescriptor(result, "replayed")?.value !== undefined
+        && getDescriptor(result, "receipt")?.value !== undefined) {
+        defineProperty(Object, "keys", { ...keysDescriptor, value: replacement });
+        replacementInstalled = true; armed = false;
+      }
+      return result;
+    },
+    transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>,
+      preCommitCheck: () => void): Promise<T> {
+      return db.transactionWithPreCommitCheck(callback, preCommitCheck);
+    },
+  });
+  const fixtureValue = await fixture({ wrapDatabase: wrapped });
+  try {
+    armed = true;
+    let failure: unknown;
+    try { await fixtureValue.ingress.receive(request(deliveryFrame(fixtureValue.keys.privateKey, fixtureValue.spki))); }
+    catch (error) { failure = error; }
+    finally {
+      if (replacementInstalled) defineProperty(Object, "keys", keysDescriptor);
+    }
+    assert.equal(replacementInstalled, true);
+    assert.equal(replacementCalls, 0);
+    assert.ok(failure instanceof ConnectionEnrollmentNodeIngressErrorV1);
+    assert.equal(failure.safeCode, "integrity_failed");
+    const recovered = await fixtureValue.ingress.receive(request(
+      deliveryFrame(fixtureValue.keys.privateKey, fixtureValue.spki), retryAt));
+    assert.equal(recovered.registryRevision, 1);
+  } finally {
+    if (replacementInstalled) defineProperty(Object, "keys", keysDescriptor);
+    await fixtureValue.raw.close();
+  }
 });

@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** exact product `b86e60e5f8389029030deaaada890267e5f92f53` independently rejected; remediation required
+**Status:** remediation implementation candidate; exact freeze and different independent re-review required
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -51,10 +51,10 @@ authorize a connector, establish signal freshness, qualify a runtime, open a liv
 - Mac stage zero: `ready_for_runtime_check`
 - TypeScript: pass
 - full ESLint: pass
-- `tests/connection-enrollment-node-ingress.test.ts`: 7/7 pass
-- complete connection slice: 35/35 pass
+- `tests/connection-enrollment-node-ingress.test.ts`: 9/9 pass
+- complete connection slice: 37/37 pass
 - complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and 286/286
-  posttests
+  original posttests plus two new remediation cases, 288/288 total
 - migrations `0001` through `0036`: pass, 119 PostgreSQL tables
 - production build: pass, 4/4 rendered routes
 - exact whitespace gate: pass
@@ -62,7 +62,8 @@ authorize a connector, establish signal freshness, qualify a runtime, open a liv
 The focused suite covers end-to-end enrollment, exact response-loss replay, outer/inner signature separation, routing-hint
 binding, invalid hint before replay, intake failure and later recovery, concurrent exact retries, distinct HMAC key
 domains, behavioral input/database rejection, disabled default, receipt drift, protected-value absence, and absence of
-an app route/listener/port.
+an app route/listener/port. Remediation adds a 20-operation post-import replacement matrix and an intake-commit seam
+case; every replacement is detected before it executes, and the definite committed response-loss retry recovers once.
 
 The exact product is frozen at `b86e60e5f8389029030deaaada890267e5f92f53`. The zero-repair independent review
 packet is `docs/reviews/CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_REVIEW_PACKET.md`, SHA-256
@@ -71,6 +72,23 @@ target because post-import mutation of canonicalization operations could execute
 its digest check. The rejected report SHA-256 is
 `ae40c366c16ac9d72cdc0be6db0393fd02904eef77b07b3e04bd8a07b7c6b255`. Remediation and a different independent
 re-review are required before integration.
+
+## M-001 remediation candidate
+
+The ingress module now captures the complete canonicalization/hash selection it depends on: global constructor/object
+identity, property inspection, object keys/freezing, array classification/mapping/sorting/joining, numeric checks, JSON
+encoding, chronology, string slicing, regex execution, reflection, typed-array cleanup, and native hash update/digest.
+It verifies those exact selections plus a canonical digest sentinel before direct receipt parsing and public composition.
+
+The coordinator re-establishes that boundary at receive entry, immediately after each awaited delivery, protected read,
+and intake seam, and again before final receipt construction. Final reference slicing uses its captured operation. A
+change during the successful intake transaction therefore closes with `integrity_failed` before the replacement runs;
+the already committed result remains recoverable through the existing exact replay path. Caller-owned key bytes remain
+untouched, while the three temporary constructor copies are still wiped with the captured typed-array operation.
+
+This remediation does not alter the wire contract, proof ordering, persistence, receipt fields, runtime default, route
+surface, or effect boundary. The rejected report remains authoritative for the superseded exact target. The remediation
+must be frozen and reviewed by a different independent reviewer before integration.
 
 ## Next boundary
 

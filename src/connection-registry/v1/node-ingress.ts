@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isConnectionEnrollmentDeliveryIdV1, type ProtocolRateLimitGuard } from "../../node-protocol/v1";
 import type { DatabaseClient } from "../../persistence/database";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
@@ -28,16 +29,96 @@ const digestPatternV1 = /^sha256:[a-f0-9]{64}$/;
 const ingressReferencePatternV1 = /^ingress:[a-f0-9]{24}$/;
 const deliveryReferencePatternV1 = /^delivery:[a-f0-9]{24}$/;
 const intakeReferencePatternV1 = /^intake:[a-f0-9]{24}$/;
-const reflectApplyV1 = Reflect.apply;
-const regexpExecV1 = RegExp.prototype.exec;
+const objectConstructorV1 = Object;
+const objectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOfV1 = Object.getPrototypeOf;
+const objectFreezeV1 = Object.freeze;
+const objectKeysV1 = Object.keys;
+const arrayConstructorV1 = Array;
+const arrayIsArrayV1 = Array.isArray;
+const arrayMapV1 = Array.prototype.map;
+const arrayJoinV1 = Array.prototype.join;
+const arraySortV1 = Array.prototype.sort;
+const numberConstructorV1 = Number;
+const numberIsFiniteV1 = Number.isFinite;
+const numberIsSafeIntegerV1 = Number.isSafeInteger;
+const jsonObjectV1 = JSON;
+const jsonStringifyV1 = JSON.stringify;
 const dateConstructorV1 = Date;
+const datePrototypeV1 = Date.prototype;
 const dateParseV1 = Date.parse;
 const dateGetTimeV1 = Date.prototype.getTime;
 const dateToISOStringV1 = Date.prototype.toISOString;
-const numberIsFiniteV1 = Number.isFinite;
-const numberIsSafeIntegerV1 = Number.isSafeInteger;
-const objectFreezeV1 = Object.freeze;
+const stringConstructorV1 = String;
+const stringPrototypeV1 = String.prototype;
+const stringSliceV1 = String.prototype.slice;
+const regexpConstructorV1 = RegExp;
+const regexpPrototypeV1 = RegExp.prototype;
+const regexpExecV1 = RegExp.prototype.exec;
+const reflectObjectV1 = Reflect;
+const reflectApplyV1 = Reflect.apply;
+const uint8ArrayConstructorV1 = Uint8Array;
+const uint8ArrayPrototypeV1 = Uint8Array.prototype;
+const typedArrayPrototypeV1 = objectGetPrototypeOfV1(uint8ArrayPrototypeV1);
 const uint8ArrayFillV1 = Uint8Array.prototype.fill;
+const hashProbeV1 = createHash("sha256");
+const hashPrototypeV1 = objectGetPrototypeOfV1(hashProbeV1);
+const hashUpdateCandidateV1 = objectGetOwnPropertyDescriptorV1(hashPrototypeV1, "update")?.value as unknown;
+const hashDigestCandidateV1 = objectGetOwnPropertyDescriptorV1(hashPrototypeV1, "digest")?.value as unknown;
+if (typeof hashUpdateCandidateV1 !== "function" || typeof hashDigestCandidateV1 !== "function") {
+  throw new Error("hash runtime unavailable");
+}
+const hashUpdateV1 = hashUpdateCandidateV1;
+const hashDigestV1 = hashDigestCandidateV1;
+reflectApplyV1(hashUpdateV1, hashProbeV1, ["", "utf8"]);
+reflectApplyV1(hashDigestV1, hashProbeV1, ["hex"]);
+const runtimeSentinelMaterialV1 = { cr13aLive050: ["runtime", 5, true], revision: 1 };
+const runtimeSentinelDigestV1 = sha256Digest(runtimeSentinelMaterialV1);
+
+function exactOwnMethodV1(value: object, key: PropertyKey, expected: unknown): boolean {
+  const descriptor = objectGetOwnPropertyDescriptorV1(value, key);
+  return descriptor !== undefined && "value" in descriptor && descriptor.value === expected;
+}
+
+function exactGlobalValueV1(key: PropertyKey, expected: unknown): boolean {
+  const descriptor = objectGetOwnPropertyDescriptorV1(globalThis, key);
+  return descriptor !== undefined && "value" in descriptor && descriptor.value === expected;
+}
+
+function assertCanonicalRuntimeV1(): void {
+  if (!exactGlobalValueV1("Object", objectConstructorV1)
+    || !exactGlobalValueV1("Array", arrayConstructorV1)
+    || !exactGlobalValueV1("Number", numberConstructorV1)
+    || !exactGlobalValueV1("JSON", jsonObjectV1)
+    || !exactGlobalValueV1("Date", dateConstructorV1)
+    || !exactGlobalValueV1("String", stringConstructorV1)
+    || !exactGlobalValueV1("RegExp", regexpConstructorV1)
+    || !exactGlobalValueV1("Reflect", reflectObjectV1)
+    || !exactGlobalValueV1("Uint8Array", uint8ArrayConstructorV1)
+    || !exactOwnMethodV1(objectConstructorV1, "getOwnPropertyDescriptor", objectGetOwnPropertyDescriptorV1)
+    || !exactOwnMethodV1(objectConstructorV1, "getPrototypeOf", objectGetPrototypeOfV1)
+    || !exactOwnMethodV1(objectConstructorV1, "freeze", objectFreezeV1)
+    || !exactOwnMethodV1(objectConstructorV1, "keys", objectKeysV1)
+    || !exactOwnMethodV1(arrayConstructorV1, "isArray", arrayIsArrayV1)
+    || !exactOwnMethodV1(Array.prototype, "map", arrayMapV1)
+    || !exactOwnMethodV1(Array.prototype, "join", arrayJoinV1)
+    || !exactOwnMethodV1(Array.prototype, "sort", arraySortV1)
+    || !exactOwnMethodV1(numberConstructorV1, "isFinite", numberIsFiniteV1)
+    || !exactOwnMethodV1(numberConstructorV1, "isSafeInteger", numberIsSafeIntegerV1)
+    || !exactOwnMethodV1(jsonObjectV1, "stringify", jsonStringifyV1)
+    || !exactOwnMethodV1(dateConstructorV1, "parse", dateParseV1)
+    || !exactOwnMethodV1(datePrototypeV1, "getTime", dateGetTimeV1)
+    || !exactOwnMethodV1(datePrototypeV1, "toISOString", dateToISOStringV1)
+    || !exactOwnMethodV1(stringPrototypeV1, "slice", stringSliceV1)
+    || !exactOwnMethodV1(regexpPrototypeV1, "exec", regexpExecV1)
+    || !exactOwnMethodV1(reflectObjectV1, "apply", reflectApplyV1)
+    || !exactOwnMethodV1(typedArrayPrototypeV1, "fill", uint8ArrayFillV1)
+    || !exactOwnMethodV1(hashPrototypeV1, "update", hashUpdateV1)
+    || !exactOwnMethodV1(hashPrototypeV1, "digest", hashDigestV1)
+    || sha256Digest(runtimeSentinelMaterialV1) !== runtimeSentinelDigestV1) {
+    throw new ConnectionEnrollmentNodeIngressErrorV1("integrity_failed");
+  }
+}
 
 function patternMatchesV1(pattern: RegExp, value: string): boolean {
   return reflectApplyV1(regexpExecV1, pattern, [value]) !== null;
@@ -105,6 +186,7 @@ Omit<ConnectionEnrollmentNodeIngressReceiptV1, "receiptDigest"> {
 
 export function parseConnectionEnrollmentNodeIngressReceiptV1(value: unknown):
 ConnectionEnrollmentNodeIngressReceiptV1 {
+  assertCanonicalRuntimeV1();
   const captured = exactHostDataSnapshotV1(value, ["contractVersion", "ingressReference", "deliveryReference",
     "intakeReference", "protocolFrameDigest", "deliveryEvidenceDigest", "enrollmentResultDigest",
     "registryRevision", "receivedAt", "protocolDisposition", "ledgerDisposition", "enrollmentDisposition",
@@ -204,6 +286,7 @@ class ConnectionEnrollmentNodeIngressCoordinatorV1 implements ConnectionEnrollme
   }
 
   async receive(inputValue: unknown): Promise<ConnectionEnrollmentNodeIngressReceiptV1> {
+    assertCanonicalRuntimeV1();
     const input = exactHostDataSnapshotV1(inputValue,
       ["rawFrame", "deliveryId", "receivedAt", "transportIdentity"]);
     if (!input || typeof input.rawFrame !== "string" || input.rawFrame.length < 2
@@ -215,17 +298,22 @@ class ConnectionEnrollmentNodeIngressCoordinatorV1 implements ConnectionEnrollme
 
     let deliveryReceipt: ConnectionEnrollmentNodeDeliveryReceiptV1;
     try {
-      deliveryReceipt = parseConnectionEnrollmentNodeDeliveryReceiptV1(await this.#deliver(input.rawFrame, {
+      const deliveryValue = await this.#deliver(input.rawFrame, {
         receivedAt: input.receivedAt,
         transportIdentity: input.transportIdentity,
-      }));
+      });
+      assertCanonicalRuntimeV1();
+      deliveryReceipt = parseConnectionEnrollmentNodeDeliveryReceiptV1(deliveryValue);
     } catch (error) { mapDeliveryFailureV1(error); }
 
     try {
-      const protectedDelivery = parseConnectionEnrollmentProtectedDeliveryV1(await this.#read({
+      const protectedDeliveryValue = await this.#read({
         deliveryId: input.deliveryId,
         receivedAt: deliveryReceipt.receivedAt,
-      }), input.deliveryId, deliveryReceipt.receivedAt);
+      });
+      assertCanonicalRuntimeV1();
+      const protectedDelivery = parseConnectionEnrollmentProtectedDeliveryV1(protectedDeliveryValue,
+        input.deliveryId, deliveryReceipt.receivedAt);
       if (protectedDelivery.deliveryEvidenceDigest !== deliveryReceipt.deliveryEvidenceDigest) {
         throw new ConnectionEnrollmentNodeIngressErrorV1("scope_mismatch");
       }
@@ -236,10 +324,12 @@ class ConnectionEnrollmentNodeIngressCoordinatorV1 implements ConnectionEnrollme
 
     let intakeReceipt: ConnectionEnrollmentIntakeReceiptV1;
     try {
-      const result = exactHostDataSnapshotV1(await this.#ingest({
+      const intakeValue = await this.#ingest({
         deliveryId: input.deliveryId,
         receivedAt: deliveryReceipt.receivedAt,
-      }), ["replayed", "receipt"]);
+      });
+      assertCanonicalRuntimeV1();
+      const result = exactHostDataSnapshotV1(intakeValue, ["replayed", "receipt"]);
       if (!result || typeof result.replayed !== "boolean") {
         throw new ConnectionEnrollmentNodeIngressErrorV1("integrity_failed");
       }
@@ -252,11 +342,13 @@ class ConnectionEnrollmentNodeIngressCoordinatorV1 implements ConnectionEnrollme
       || intakeReceipt.recordedAt !== deliveryReceipt.receivedAt) {
       throw new ConnectionEnrollmentNodeIngressErrorV1("integrity_failed");
     }
+    assertCanonicalRuntimeV1();
 
     const material: Omit<ConnectionEnrollmentNodeIngressReceiptV1, "receiptDigest"> = {
       contractVersion: CONNECTION_ENROLLMENT_NODE_INGRESS_RECEIPT_V1,
-      ingressReference: `ingress:${sha256Digest({ deliveryReference: deliveryReceipt.deliveryReference,
-        intakeReference: intakeReceipt.intakeReference }).slice(7, 31)}`,
+      ingressReference: `ingress:${reflectApplyV1(stringSliceV1,
+        sha256Digest({ deliveryReference: deliveryReceipt.deliveryReference,
+          intakeReference: intakeReceipt.intakeReference }), [7, 31]) as string}`,
       deliveryReference: deliveryReceipt.deliveryReference,
       intakeReference: intakeReceipt.intakeReference,
       protocolFrameDigest: deliveryReceipt.protocolFrameDigest,
@@ -292,6 +384,7 @@ export class DatabaseConnectionEnrollmentNodeIngressV1 implements ConnectionEnro
   readonly #coordinator: ConnectionEnrollmentNodeIngressCoordinatorV1;
 
   constructor(db: DatabaseClient, configurationValue: unknown, rateLimit: ProtocolRateLimitGuard) {
+    assertCanonicalRuntimeV1();
     const configuration = exactHostDataSnapshotV1(configurationValue,
       ["deliveryIntegrityKey", "registryIntegrityKey", "intakeAuditIntegrityKey"]);
     const deliveryKey = exactHostUint8ArrayV1(configuration?.deliveryIntegrityKey, 128);
@@ -303,10 +396,11 @@ export class DatabaseConnectionEnrollmentNodeIngressV1 implements ConnectionEnro
       throw new ConnectionEnrollmentNodeIngressErrorV1("invalid_input");
     }
     const deliveryMaterial = deliveryKey.copy(), registryMaterial = registryKey.copy(), intakeMaterial = intakeKey.copy();
+    let coordinator: ConnectionEnrollmentNodeIngressCoordinatorV1;
     try {
       const delivery = new DatabaseConnectionEnrollmentNodeDeliveryAdapterV1(db, deliveryMaterial, rateLimit);
       const intake = new ConnectionEnrollmentIntakeServiceV1(db, registryMaterial, intakeMaterial, delivery);
-      this.#coordinator = new ConnectionEnrollmentNodeIngressCoordinatorV1(delivery, intake);
+      coordinator = new ConnectionEnrollmentNodeIngressCoordinatorV1(delivery, intake);
     } catch {
       throw new ConnectionEnrollmentNodeIngressErrorV1("invalid_input");
     } finally {
@@ -314,6 +408,8 @@ export class DatabaseConnectionEnrollmentNodeIngressV1 implements ConnectionEnro
       reflectApplyV1(uint8ArrayFillV1, registryMaterial, [0]);
       reflectApplyV1(uint8ArrayFillV1, intakeMaterial, [0]);
     }
+    assertCanonicalRuntimeV1();
+    this.#coordinator = coordinator;
   }
 
   receive(input: unknown): Promise<ConnectionEnrollmentNodeIngressReceiptV1> {

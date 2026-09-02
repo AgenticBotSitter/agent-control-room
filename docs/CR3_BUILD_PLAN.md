@@ -980,7 +980,8 @@ next block changes transport trust or any signed contract; otherwise use Sol hig
 
 ## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
 
-Status: exact product `b86e60e5f8389029030deaaada890267e5f92f53` independently rejected; remediation required. See
+Status: rejected target preserved; remediation implementation candidate verified locally; exact freeze and different
+independent re-review required. See
 `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
 
 The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
@@ -1001,6 +1002,12 @@ after import and make a drifted final receipt pass its original digest. Rejected
 `ae40c366c16ac9d72cdc0be6db0393fd02904eef77b07b3e04bd8a07b7c6b255`. Preserve that negative evidence. Remediation must
 re-establish the selected runtime after awaited seams and before receipt construction/parsing, then receive a different
 independent re-review.
+
+The remediation candidate captures the complete canonicalization/hash runtime selected by the ingress receipt, checks it
+at public entry and after every awaited proof seam, and uses captured slicing/cleanup operations. A 20-operation direct
+replacement matrix and a separate change injected after successful intake commit both fail before the replacement can
+execute. The committed result remains exactly recoverable after the original call closes. The change does not alter the
+wire contract, persistence, proof ordering, receipt schema, disabled runtime, or external-effect boundary.
 
 Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
 refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust
