@@ -1,6 +1,6 @@
 # CR13A-LIVE-030 protected enrollment intake acceptance
 
-**Status:** implementation candidate; exact immutable product target and independent review remain pending
+**Status:** immutable product candidate `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; independent review pending
 **Effect boundary:** repository code, PostgreSQL-compatible migration, and PGlite tests only; the runtime source is disabled
 and no SSH, Hermes, provider, credential, production database, deployment, or network effect occurred
 
@@ -61,8 +61,10 @@ Focused hostile coverage includes:
 
 ## Remaining gate
 
-Freeze an exact product commit, bind a security/integrity review packet to that commit, and obtain a different
-independent review before integration. Review acceptance will authorize only repository integration. It will not enable
+The exact product is frozen at `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`. The report-only independent packet is
+`reviews/CR13A_LIVE_030_ENROLLMENT_INTAKE_REVIEW_PACKET.md`, SHA-256
+`99591d10028b180d5165525907925d84c3b7330ad92db04687c4d8a52ab01e96`. A different independent reviewer must execute
+the packet and accept the exact product before integration. Review acceptance will authorize only repository integration. It will not enable
 a live delivery source, enroll a machine, contact Hermes, open SSH, use credentials, call a provider, attach production
 PostgreSQL, deploy, host, or grant execution authority.
 

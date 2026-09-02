@@ -111,7 +111,7 @@
 | CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
-| CR13A-LIVE-030 protected enrollment intake | Implementation candidate; verification and independent review pending | Active-database-key Ed25519 verification, atomic registry/audit transaction, append-only authenticated intake chain, exact replay, rollback/tamper/concurrency tests, disabled runtime source, and no web write path; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
+| CR13A-LIVE-030 protected enrollment intake | Immutable product candidate `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; independent review pending | Active-database-key Ed25519 verification, atomic registry/audit transaction, append-only authenticated intake chain, exact replay, rollback/tamper/concurrency tests, disabled runtime source, no web write path, and frozen report-only review packet; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -822,6 +822,8 @@ receipt. Exact replay is inert; conflicting replay, key/scope/chronology failure
 partial-write failure close safely. The local runtime source is explicitly disabled and the app exposes no enrollment
 write path. No live connector, SSH, Hermes, provider, credential, production database, deployment, or network effect is
 part of this candidate.
+The exact product is frozen at `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; its independent report-only packet has
+SHA-256 `99591d10028b180d5165525907925d84c3b7330ad92db04687c4d8a52ab01e96`.
 
 ## Parallel build lane
 

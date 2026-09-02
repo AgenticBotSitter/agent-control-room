@@ -925,8 +925,9 @@ while retaining all native/provider effects as separately gated work. Use Sol hi
 
 ## CR13A-LIVE-030 — protected server-side enrollment intake
 
-Status: implementation candidate; complete lifecycle verification, immutable product freeze, and independent
-security/integrity review remain pending. See `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` and ADR-150.
+Status: immutable product candidate `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; complete lifecycle verification is
+recorded and independent security/integrity review remains pending. See
+`CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` and ADR-150.
 
 Migration 0035 and `ConnectionEnrollmentIntakeServiceV1` connect the accepted signed Hermes 0.21 enrollment verifier to
 the durable connection registry. A server-held source supplies a bounded delivery, but its label grants no trust. Inside
