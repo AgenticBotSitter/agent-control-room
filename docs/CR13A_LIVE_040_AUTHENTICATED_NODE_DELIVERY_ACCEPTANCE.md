@@ -1,7 +1,7 @@
 # CR13A-LIVE-040 authenticated node-protocol enrollment delivery acceptance
 
-**Status:** remediation candidate after preserved rejected review; complete verification, new exact freeze, and different
-independent re-review required
+**Status:** verified remediation frozen at `67c16c5c11d06d3752b434fd8e3641c1c1482e8b`; different independent re-review
+required
 **Effect boundary:** repository code, generated JSON Schema, PostgreSQL-compatible migration, and PGlite tests only; no
 listener, HTTP mutation, live connector, SSH, Hermes/provider call, credential access, production database, or deployment
 
@@ -88,14 +88,16 @@ protects the initial disposition so exact duplicates return the original receipt
 across every boundary. Hostile regressions replace ten ambient operations after import and prove that none execute;
 wrong-key evidence still fails. A new exact product and a different independent re-review are required.
 
-The remediation candidate passes stage zero, TypeScript, full lint, 26/26 focused protocol/intake/delivery tests, 28/28
-connection-slice tests, all 36 migrations with 119 PostgreSQL tables, the complete 769/769 pretest plus 419/421 core with
-two intentional platform skips plus 279/279 posttest lifecycle, the production build, 4/4 rendered routes, and
-`git diff --check`. No listener, network, credential, provider, native, production-database, or deployment effect ran.
+The remediation product is frozen at `67c16c5c11d06d3752b434fd8e3641c1c1482e8b`. It passes stage zero, TypeScript,
+full lint, 26/26 focused protocol/intake/delivery tests, 28/28 connection-slice tests, all 36 migrations with 119
+PostgreSQL tables, the complete 769/769 pretest plus 419/421 core with two intentional platform skips plus 279/279
+posttest lifecycle, the production build, 4/4 rendered routes, and `git diff --check`. The zero-repair remediation review
+packet has SHA-256 `f3c9b605b3646d2f518000f144163d09973fa9174dc9488d1ddc29e84aa96733`. No listener, network,
+credential, provider, native, production-database, or deployment effect ran.
 
 ## Required review and next boundary
 
-A different independent reviewer must attack the exact frozen product and publish a report without repairs. Review must
+A different independent reviewer must verify the exact frozen remediation and publish a report without repairs. Review must
 trace schema generation, outer and inner signature independence, database key/node state, replay and recovery ordering,
 tenant serialization, ledger integrity, safe error/output behavior, and the disabled runtime boundary. Passing producer
 tests alone cannot authorize integration or live use.
