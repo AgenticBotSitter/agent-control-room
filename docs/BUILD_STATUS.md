@@ -113,7 +113,7 @@
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
-| CR13A-LIVE-050 provider-disabled enrollment ingress | Rejected target preserved; remediation frozen at `7c79837...`; different re-review required | Complete selected-runtime capture and post-await rechecks address the one Medium receipt-integrity finding; 20-operation and committed-response regressions pass; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
+| CR13A-LIVE-050 provider-disabled enrollment ingress | First finding closed; remediation `7c79837...` independently rejected with one inherited Medium error-classification defect | Preserve both negative reports; replace behavioral rejection classification with bounded behavior-free handling and prove zero persistence before another review; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -894,6 +894,12 @@ checks, and whitespace validation pass. The exact remediation is
 `docs/reviews/CR13A_LIVE_050_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
 `5ed0af3e0552fbd4722211bf035b6bc705c50624ccca3c45445c0906b11bd1a9`. A different independent re-review remains
 required.
+
+That re-review closes M-001 but rejects the exact target with inherited Medium M-002: a self-throwing Proxy rejection can
+execute through delivery and ingress `instanceof` classification and escape raw before persistence. The rejected report
+SHA-256 is `67b8eaeffd6bbcc86eb81d061107beaf464b5dcb0f680317ad3d18cb89c85992`. The second remediation must classify caught
+unknown values through behavior-free host checks, return only bounded errors, and prove zero replay/delivery/intake/
+registry writes.
 
 ## Parallel build lane
 

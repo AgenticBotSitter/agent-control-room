@@ -980,8 +980,8 @@ next block changes transport trust or any signed contract; otherwise use Sol hig
 
 ## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
 
-Status: rejected target preserved; remediation frozen at `7c79837cb60e497a7f49a203f20382afe133bd91`; different
-independent re-review required. See
+Status: first finding closed; remediation `7c79837cb60e497a7f49a203f20382afe133bd91` independently rejected with one
+inherited Medium error-classification defect. See
 `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
 
 The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
@@ -1012,6 +1012,11 @@ wire contract, persistence, proof ordering, receipt schema, disabled runtime, or
 The zero-repair remediation closure packet is
 `docs/reviews/CR13A_LIVE_050_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
 `5ed0af3e0552fbd4722211bf035b6bc705c50624ccca3c45445c0906b11bd1a9`.
+
+That re-review closes M-001 but rejects the exact target with inherited Medium M-002. A self-throwing Proxy rejection can
+execute through node-delivery and ingress `instanceof` classification and escape raw before persistence. Rejected report
+SHA-256: `67b8eaeffd6bbcc86eb81d061107beaf464b5dcb0f680317ad3d18cb89c85992`. The next remediation must classify caught
+unknown values behavior-free, preserve only bounded codes, and prove zero persistent writes.
 
 Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
 refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust

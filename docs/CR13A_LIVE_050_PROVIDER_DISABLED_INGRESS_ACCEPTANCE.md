@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** remediation frozen at `7c79837cb60e497a7f49a203f20382afe133bd91`; different independent re-review required
+**Status:** remediation `7c79837cb60e497a7f49a203f20382afe133bd91` independently rejected; second remediation required
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -93,6 +93,11 @@ must be frozen and reviewed by a different independent reviewer before integrati
 The exact remediation is frozen at `7c79837cb60e497a7f49a203f20382afe133bd91`. Its zero-repair closure packet is
 `docs/reviews/CR13A_LIVE_050_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
 `5ed0af3e0552fbd4722211bf035b6bc705c50624ccca3c45445c0906b11bd1a9`.
+
+The different reviewer closed M-001 but rejected the exact remediation because caught Proxy rejection values reached
+unguarded `instanceof` checks in node-delivery and ingress, executed behavior, and escaped raw. The preserved re-review
+SHA-256 is `67b8eaeffd6bbcc86eb81d061107beaf464b5dcb0f680317ad3d18cb89c85992`; it requires behavior-free error
+classification and zero persistence before another different review.
 
 ## Next boundary
 
