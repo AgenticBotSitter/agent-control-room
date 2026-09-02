@@ -22,6 +22,7 @@ import {
   NODE_PROTOCOL_V1,
   NodeEnrollmentStore,
   NodeProtocolAuthenticator,
+  ProtocolAuthenticationError,
   signEnrollmentProof,
   signNodeFrame,
   type EnrollmentChallenge,
@@ -516,6 +517,38 @@ test("CR13A-LIVE-050 contains a database rejection without consulting its unusua
     assert.ok(failure instanceof ConnectionEnrollmentNodeIngressErrorV1);
     assert.equal(failure.safeCode, "integrity_failed");
     assert.notEqual(failure, rejection);
+    const counts = await fixtureValue.raw.query<{
+      replay: number; deliveries: number; intake: number; connections: number;
+    }>(`SELECT (SELECT count(*)::int FROM node_protocol_replay) AS replay,
+      (SELECT count(*)::int FROM control_connection_enrollment_protocol_deliveries) AS deliveries,
+      (SELECT count(*)::int FROM control_connection_enrollment_intake_receipts) AS intake,
+      (SELECT count(*)::int FROM control_connection_enrollments) AS connections`);
+    assert.deepEqual(counts.rows[0], { replay: 1, deliveries: 0, intake: 0, connections: 0 });
+  } finally { await fixtureValue.raw.close(); }
+});
+
+test("CR13A-LIVE-050 keeps unknown protocol authentication codes as integrity failure", async () => {
+  let behaviorReads = 0;
+  const rejection = Object.create(ProtocolAuthenticationError.prototype) as object;
+  Object.defineProperties(rejection, {
+    code: { value: "not_in_protocol_authentication_allowlist" },
+    message: { get() { behaviorReads += 1; throw new Error("message must remain unread"); } },
+  });
+  const rejectingDatabase = (db: DatabaseClient): DatabaseClient => ({
+    async query(): Promise<never> { throw rejection; },
+    transaction: <T>(callback: (session: DatabaseSession) => Promise<T>) => db.transaction(callback),
+    transactionWithPreCommitCheck: <T>(callback: (session: DatabaseSession) => Promise<T>,
+      preCommitCheck: () => void) => db.transactionWithPreCommitCheck(callback, preCommitCheck),
+  });
+  const fixtureValue = await fixture({ wrapDatabase: rejectingDatabase });
+  try {
+    let failure: unknown;
+    try { await fixtureValue.ingress.receive(request(deliveryFrame(fixtureValue.keys.privateKey, fixtureValue.spki))); }
+    catch (error) { failure = error; }
+    assert.equal(behaviorReads, 0);
+    assert.notEqual(failure, rejection);
+    assert.ok(failure instanceof ConnectionEnrollmentNodeIngressErrorV1);
+    assert.equal(failure.safeCode, "integrity_failed");
     const counts = await fixtureValue.raw.query<{
       replay: number; deliveries: number; intake: number; connections: number;
     }>(`SELECT (SELECT count(*)::int FROM node_protocol_replay) AS replay,

@@ -9,6 +9,7 @@ import {
   isConnectionEnrollmentDeliveryIdV1,
   opaqueTokenDigest,
   ProtocolAuthenticationError,
+  type ProtocolAuthenticationCode,
   type ProtocolRateLimitGuard,
   type ReplayGuard,
   type SignedNodeFrame,
@@ -86,6 +87,13 @@ const bufferToStringV1 = Buffer.prototype.toString;
 const globalBufferGetterV1 = objectGetOwnPropertyDescriptorV1(globalThis, "Buffer")?.get;
 if (typeof globalBufferGetterV1 !== "function") throw new Error("Buffer runtime unavailable");
 const protocolAuthenticationErrorPrototypeV1 = ProtocolAuthenticationError.prototype;
+
+function capturedProtocolAuthenticationCodeV1(value: unknown): ProtocolAuthenticationCode | undefined {
+  const code = exactHostErrorCodeV1(value, protocolAuthenticationErrorPrototypeV1, "code");
+  return code === "malformed_frame" || code === "unsupported_version" || code === "expired"
+    || code === "unauthenticated" || code === "forbidden" || code === "replayed" || code === "rate_limited"
+    ? code : undefined;
+}
 
 const runtimeSentinelKeyV1 = new Uint8Array(32);
 for (let index = 0; index < runtimeSentinelKeyV1.length; index += 1) runtimeSentinelKeyV1[index] = 149;
@@ -584,7 +592,7 @@ implements ConnectionEnrollmentProtectedDeliverySourceV1 {
       });
       assertCanonicalRuntimeV1();
     } catch (error) {
-      if (exactHostErrorCodeV1(error, protocolAuthenticationErrorPrototypeV1, "code") !== undefined) {
+      if (capturedProtocolAuthenticationCodeV1(error) !== undefined) {
         throw new ConnectionEnrollmentNodeDeliveryErrorV1("authentication_failed");
       }
       throw new ConnectionEnrollmentNodeDeliveryErrorV1("integrity_failed");
