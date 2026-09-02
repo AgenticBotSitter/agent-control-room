@@ -113,7 +113,7 @@
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
-| CR13A-LIVE-050 provider-disabled enrollment ingress | Third remediation `ffcdb58...` frozen; another different independent review required | All three negative reports preserved; exact seven-code protocol allowlist and two zero-persistence regressions close the final Low candidate; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
+| CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted for exact product `ffcdb58...`; owner-approved integration pending | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; no listener, live connection, provider, production, or deployment effect; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -924,7 +924,11 @@ preexisting replay state, and zero delivery, intake, or registry persistence. Fo
 intentional skips, and 292/292 posttests. TypeScript, full lint, migrations 0001-0036 with 119 PostgreSQL tables,
 production build, 4/4 rendered checks, and whitespace validation pass. The zero-repair packet is
 `docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
-`34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`. Another different review remains required.
+`34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`. A fourth different reviewer reproduced all
+required gates, confirmed exact equality between the seven declared and recognized protocol codes, and found no High,
+Medium, or Low defect. M-001, M-002, and L-001 are closed. The accepted report SHA-256 is
+`a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. The exact provider-disabled product is ready for
+branch publication and owner-controlled integration; it enables no live ingress or external effect.
 
 ## Parallel build lane
 
@@ -941,12 +945,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-050-ALLOWLIST-REREVIEW — independently verify the final narrow remediation
+Block: CR13A-LIVE-050-INTEGRATION — publish the accepted branch and obtain ordinary CI plus owner approval
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the coordinator joins two authenticated persistence boundaries and the final classification must stay exact and conservative.
-Expected output: a zero-repair review bound to `ffcdb586022ff67494cb2e404df7749b3a093b22` and an independent disposition before integration.
-Owner action: none during local implementation and independent review.
+Why: the exact provider-disabled product has independent acceptance and must now pass the canonical GitHub integration gate.
+Expected output: one main-target pull request, green ordinary CI, and an owner merge decision.
+Owner action: approve merge only after the PR and CI are reported ready.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

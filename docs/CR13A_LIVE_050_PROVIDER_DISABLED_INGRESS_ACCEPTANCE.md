@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** third remediation `ffcdb586022ff67494cb2e404df7749b3a093b22` frozen; another different independent review required
+**Status:** independently accepted for exact provider-disabled product `ffcdb586022ff67494cb2e404df7749b3a093b22`; owner-approved integration pending
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -146,6 +146,12 @@ receipt, runtime-default, route, or effect contract. Another reviewer, different
 completed prior reviewers, must accept that target before integration.
 The zero-repair packet is `docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
 `34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`.
+
+The different reviewer reproduced every required gate, confirmed the recognized code list exactly matches the seven
+declared protocol literals, and found no new High, Medium, or Low defect. M-001, M-002, and L-001 are closed. The accepted
+report is `docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW.md`, SHA-256
+`a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. This permits owner-controlled integration only
+and does not enable an ingress listener or any live effect.
 
 ## Next boundary
 

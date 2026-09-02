@@ -980,8 +980,8 @@ next block changes transport trust or any signed contract; otherwise use Sol hig
 
 ## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
 
-Status: third remediation `ffcdb586022ff67494cb2e404df7749b3a093b22` frozen; another different independent
-review required. See
+Status: independently accepted for exact provider-disabled product `ffcdb586022ff67494cb2e404df7749b3a093b22`;
+owner-approved integration pending. See
 `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
 
 The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
@@ -1036,8 +1036,10 @@ and maps every other string to conservative integrity failure. Adapter and compl
 unknown value runs no behavior, cannot escape raw, and creates no delivery, intake, or registry record. The exact frozen
 target is `ffcdb586022ff67494cb2e404df7749b3a093b22`; its zero-repair packet is
 `docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
-`34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`. Another different independent review remains
-required before integration.
+`34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`. A fourth different reviewer reproduced every
+required gate and found no High, Medium, or Low defect. M-001, M-002, and L-001 are closed. Accepted report SHA-256:
+`a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. This permits owner-controlled integration only;
+no ingress listener or external effect is enabled.
 
 Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
 refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust

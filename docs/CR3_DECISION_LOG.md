@@ -2874,3 +2874,8 @@ The rejected second-remediation report is preserved before this narrow correctio
 literal. Recognition of the error prototype and own data property is followed by semantic allowlist validation; any
 other string becomes a fresh local integrity error. Adapter and composed-ingress cases require zero behavior execution,
 no raw escape, and no new persistent state.
+
+**Independent acceptance amendment:** A fourth different reviewer reproduced the focused and connection suites,
+migration verification, exact allowlist equality, and unchanged prior boundaries against immutable product
+`ffcdb586022ff67494cb2e404df7749b3a093b22`. M-001, M-002, and L-001 are closed with no new High, Medium, or Low finding.
+Accepted report SHA-256 is `a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. This authorizes integration review only.
