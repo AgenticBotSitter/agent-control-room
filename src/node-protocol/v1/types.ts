@@ -88,6 +88,19 @@ export interface ConnectionAcceptedBody {
   serverTime: string;
 }
 
+/**
+ * Carries one separately signed enrollment envelope through the authenticated
+ * node channel. The node protocol binds the opaque envelope bytes and delivery
+ * identity; the owning enrollment adapter remains responsible for parsing and
+ * independently authorizing the inner contract.
+ */
+export interface ConnectionEnrollmentDeliveryBody {
+  deliveryId: string;
+  enrollmentContract: string;
+  envelopeDigest: string;
+  envelope: unknown;
+}
+
 export interface HeartbeatBody {
   observedAt: string;
   health: "healthy" | "degraded" | "draining";
@@ -256,6 +269,7 @@ export interface NodeOperationAcknowledgementBody {
 export interface NodeMessageBodyMap {
   "connection.hello": ConnectionHelloBody;
   "connection.accepted": ConnectionAcceptedBody;
+  "connection.enrollment.deliver": ConnectionEnrollmentDeliveryBody;
   "node.heartbeat": HeartbeatBody;
   "node.fleet.signal": FleetSignalEnvelope;
   "job.offer": JobOfferBody;

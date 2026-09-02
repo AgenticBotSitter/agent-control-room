@@ -111,7 +111,8 @@
 | CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
-| CR13A-LIVE-030 protected enrollment intake | Independently accepted immutable product `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; owner-approved integration pending | Different reviewer found no High, Medium, or Low defects after reproducing focused verification; active-key Ed25519 validation, atomic registry/audit, exact replay, tamper/rollback/concurrency handling, disabled source, no web write path, and GitHub CI run `33573535167`; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
+| CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
+| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Implementation candidate; freeze and different independent review required | Signed outer frame, nested-verification separation, durable exact replay/recovery, authenticated delivery ledger, disabled runtime, and hostile focused tests; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -826,8 +827,18 @@ The exact product is frozen at `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; its i
 SHA-256 `99591d10028b180d5165525907925d84c3b7330ad92db04687c4d8a52ab01e96`.
 A fresh different reviewer accepted that immutable product with no High, Medium, or Low findings. Ordinary GitHub CI run
 `33573535167` passed in 9m41s. Accepted report SHA-256 is
-`ed4cae0f07ab41cf82dd5458901b2a0dc240272a3e910df79ba108731015fa46`. PR #232 remains pending owner-approved
-integration.
+`ed4cae0f07ab41cf82dd5458901b2a0dc240272a3e910df79ba108731015fa46`. Owner-approved PR #232 merged to `main` as
+`10605afd4a5e8d3baeafeab82ec883f6008e845b`; post-merge GitHub CI run `33579561077` passed in 10m53s.
+
+CR13A-LIVE-040 is now the active implementation block. The signed node protocol adds
+`connection.enrollment.deliver`, binding the exact inner envelope and delivery identity to the enrolled tenant, node,
+active key, connection, sequence, nonce, and short lifetime. Migration 0036 and the protected server-only adapter retain
+accepted delivery evidence in a tenant-serialized HMAC-authenticated digest chain. Exact replay is inert and can repair a
+delivery-ledger failure after protocol authentication; conflicting identity/content, forged outer signatures, invalid
+inner signatures, evidence damage, and behavioral database rows fail closed. The CR13A-LIVE-030 intake independently
+re-verifies the inner signature and active database key before registry persistence. No listener, browser/HTTP write,
+live connector, SSH, Hermes/provider call, credential access, production database, deployment, or network effect is
+enabled.
 
 ## Parallel build lane
 
@@ -844,12 +855,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-030-INTEGRATION — integrate independently accepted protected enrollment intake
+Block: CR13A-LIVE-040-REVIEW — freeze and independently review authenticated node-protocol enrollment delivery
 Set model: gpt-5.6-sol
-Set reasoning effort: high
-Why: the exact product and independent review are accepted; integration must preserve those bytes and the immutable report.
-Expected output: pass CI after the report-only evidence commit, obtain owner approval, merge PR #232 without product drift, verify post-merge main, then begin CR13A-LIVE-040.
-Owner action: approve merging PR #232 after Codex reports the final evidence-commit CI result.
+Set reasoning effort: xhigh
+Why: LIVE-040 changes the signed node-protocol schema and the protected ingress trust boundary.
+Expected output: complete deterministic verification, freeze the exact product, publish a zero-repair attack packet, and obtain a different independent security/integrity disposition before any integration request.
+Owner action: none during repository implementation and review.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

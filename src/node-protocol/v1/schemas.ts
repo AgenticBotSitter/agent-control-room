@@ -99,6 +99,16 @@ const connectionAccepted = z.object({
   heartbeatIntervalSeconds: z.number().int().min(5).max(300),
   serverTime: isoDate,
 }).strict();
+const connectionEnrollmentDelivery = z.object({
+  deliveryId: id,
+  enrollmentContract: label,
+  envelopeDigest: digest,
+  envelope: z.unknown(),
+}).strict().superRefine((value, context) => {
+  if (sha256Digest(value.envelope) !== value.envelopeDigest) {
+    context.addIssue({ code: "custom", path: ["envelopeDigest"], message: "enrollment envelope digest mismatch" });
+  }
+});
 const heartbeat = z.object({
   observedAt: isoDate,
   health: z.enum(["healthy", "degraded", "draining"]),
@@ -313,6 +323,7 @@ function frame<TType extends string, TSchema extends z.ZodType>(type: TType, bod
 export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("connection.hello", connectionHello),
   frame("connection.accepted", connectionAccepted),
+  frame("connection.enrollment.deliver", connectionEnrollmentDelivery),
   frame("node.heartbeat", heartbeat),
   frame("node.fleet.signal", fleetSignalEnvelopeSchema),
   frame("job.offer", jobOffer),
@@ -332,7 +343,30 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   if (Date.parse(value.expiresAt) <= Date.parse(value.sentAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "frame must expire after sending" });
   if (value.direction === "node_to_server" && value.senderKind !== "node") context.addIssue({ code: "custom", path: ["senderKind"], message: "node-to-server frames must be node signed" });
   if (value.direction === "server_to_node" && value.senderKind !== "control_room") context.addIssue({ code: "custom", path: ["senderKind"], message: "server-to-node frames must be Control Room signed" });
+  if (value.type === "connection.enrollment.deliver") {
+    const envelope = value.body.envelope;
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+      context.addIssue({ code: "custom", path: ["body", "envelope"], message: "enrollment envelope must be an object" });
+      return;
+    }
+    const body = Object.getOwnPropertyDescriptor(envelope, "body")?.value;
+    const attestation = Object.getOwnPropertyDescriptor(envelope, "attestation")?.value;
+    if (!body || typeof body !== "object" || Array.isArray(body)
+      || !attestation || typeof attestation !== "object" || Array.isArray(attestation)) {
+      context.addIssue({ code: "custom", path: ["body", "envelope"], message: "enrollment envelope shape is invalid" });
+      return;
+    }
+    const contractVersion = Object.getOwnPropertyDescriptor(body, "contractVersion")?.value;
+    const tenantId = Object.getOwnPropertyDescriptor(body, "tenantId")?.value;
+    const nodeId = Object.getOwnPropertyDescriptor(body, "nodeId")?.value;
+    const connectionId = Object.getOwnPropertyDescriptor(body, "connectionId")?.value;
+    const keyId = Object.getOwnPropertyDescriptor(attestation, "keyId")?.value;
+    if (contractVersion !== value.body.enrollmentContract || tenantId !== value.tenantId
+      || nodeId !== value.actorId || connectionId !== value.connectionId || keyId !== value.keyId) {
+      context.addIssue({ code: "custom", path: ["body", "envelope"], message: "enrollment envelope scope does not match frame identity" });
+    }
+  }
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
 export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);

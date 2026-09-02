@@ -925,9 +925,9 @@ while retaining all native/provider effects as separately gated work. Use Sol hi
 
 ## CR13A-LIVE-030 — protected server-side enrollment intake
 
-Status: independently accepted immutable product `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; complete lifecycle verification is
-recorded and owner-approved integration remains pending. The different reviewer reported no High, Medium, or Low
-findings. See
+Status: independently accepted immutable product `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; integrated through PR #232 as
+`10605afd4a5e8d3baeafeab82ec883f6008e845b` with passing post-merge CI. The different reviewer reported no High,
+Medium, or Low findings. See
 `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` and ADR-150.
 
 Migration 0035 and `ConnectionEnrollmentIntakeServiceV1` connect the accepted signed Hermes 0.21 enrollment verifier to
@@ -945,3 +945,23 @@ no native launch, SSH connection, Hermes/provider call, credential access, produ
 Next after independent acceptance and integration: CR13A-LIVE-040 may add the authenticated node-protocol delivery
 adapter behind the protected source and keep it disabled by default. Use Sol high for review/integration; use Sol xhigh
 if LIVE-040 changes signed node-protocol schemas or the live ingress trust boundary.
+
+## CR13A-LIVE-040 — authenticated node-protocol enrollment delivery
+
+Status: implementation candidate; exact freeze, complete verification, and different independent security/integrity
+review required. See `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` and ADR-151.
+
+The `connection.enrollment.deliver` node-to-server message binds one opaque enrollment envelope to the authenticated
+tenant, node, active key, connection, sequence, nonce, lifetime, delivery ID, contract, and envelope digest. Migration
+0036 and `DatabaseConnectionEnrollmentNodeDeliveryAdapterV1` preserve accepted deliveries in a tenant-serialized,
+append-only, authenticated digest chain. Exact duplicate delivery is inert; identity/content conflict fails closed; and
+an exact retry can complete a missing ledger append after protocol replay committed but delivery persistence failed.
+
+The adapter is the protected source consumed by CR13A-LIVE-030, whose independent active-key lookup and inner enrollment
+signature verification remain unchanged. The outer node frame is transport authentication, never enrollment authority.
+Safe receipts contain derived references and digests only. No HTTP/browser mutation, listener, live connector, SSH,
+Hermes/provider call, credential access, production database, or deployment is enabled.
+
+Next after independent acceptance and owner-approved integration: CR13A-LIVE-050 may compose a provider-disabled server
+ingress boundary or prepare one bounded enrolled-connector rehearsal without enabling a live effect. Use Sol xhigh if the
+next block changes transport trust or any signed contract; otherwise use Sol high for review/integration.

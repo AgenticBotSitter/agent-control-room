@@ -2715,3 +2715,40 @@ runtime-default, or negative-authority change invalidates CR13A-LIVE-030 review 
 active-key, replay, transaction, audit, migration, redaction, and disabled-runtime boundaries and reproducing the focused
 deterministic gates. This authorizes only owner-approved repository integration. Any product change requires a new exact
 target and review.
+
+## ADR-151 — Node delivery authentication and enrollment authorization remain independent
+
+**Decision:** Add `connection.enrollment.deliver` as a node-to-server message in the versioned signed node protocol. The
+outer frame binds one opaque enrollment envelope and its digest to the exact tenant, node, active key, connection,
+sequence, nonce, message lifetime, delivery ID, and declared inner contract. Only after protocol schema, freshness, rate,
+active-key, Ed25519, and durable replay checks pass may a server-held adapter exact-parse the Hermes 0.21 envelope and
+append it to the protected delivery ledger. The existing enrollment intake must still independently resolve the active
+database key and verify the inner signature before writing the connection registry.
+
+Migration 0036 persists accepted delivery evidence as a tenant-serialized, append-only, payload-digested,
+HMAC-authenticated digest chain. Exact frame replay may repair a missing delivery append after a post-authentication
+failure; conflicting delivery/message reuse fails. The safe receipt contains derived references, digests, chronology,
+duplicate dispositions, and negative authority only. The adapter has no route or listener and the runtime remains
+disabled by default.
+
+**Why:** A real multi-machine Control Room needs a concrete path from an enrolled node channel to the durable connection
+registry. Treating the transport's `authenticated` result as enrollment authority would collapse two signatures and
+create a confused-deputy path. Preserving the nested verification lets protocol replay/recovery and enrollment
+authorization evolve independently while giving the server restart-safe evidence for the handoff between them.
+
+**Alternatives rejected:** Browser or HTTP enrollment mutation; SSH command ingestion; a connector-supplied authenticated
+boolean; accepting an unsigned envelope inside a signed frame; accepting an inner public key without authoritative
+database resolution; direct registry writes from the protocol router; one in-memory handoff; consuming a new sequence or
+nonce to repair a known exact replay; public delivery identifiers or transport identity in receipts; enabling a listener,
+connector, native runtime, or provider in the same block; PGlite or object storage as production authority.
+
+**Trade-off:** One logical enrollment carries nested Ed25519 verification and two separate durable chains. A valid outer
+frame with a semantically invalid inner contract still consumes its own protocol sequence, although it creates no
+delivery or registry record. Per-tenant full-chain verification and the 10,000-record ceiling deliberately favor
+integrity and bounded failure over write throughput. These costs are acceptable because enrollment is rare.
+
+**Reevaluate:** Before adding an actual ingress listener, connector dispatch, revocation/rotation delivery, retention,
+delivery pruning, multi-primary writes, production PostgreSQL composition, native qualification, live-panel admission,
+or deployment. Any node message schema, identity binding, key validity, replay ordering, ledger chain/tag, source
+capability, nested verification, receipt redaction, runtime default, or negative-authority change invalidates
+CR13A-LIVE-040 review evidence.

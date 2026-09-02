@@ -166,8 +166,16 @@ test("every CR-5A connection, heartbeat, offer, lease, event, cancellation, and 
     maxRisk: "low" as const, maxDurationSeconds: 300, maxConcurrentEffects: 0, expiresAt: t2, digest: hashA,
   };
   authority.digest = computeAuthorityDigest(authority);
+  const enrollmentEnvelope = {
+    body: { contractVersion: "control-room-enrollment/v1", tenantId: "tenant:owner",
+      nodeId: "node:mac-mini", connectionId: "connection:1" },
+    attestation: { keyId: "node-key:mac-mini:1" },
+  };
   const cases: Array<{ type: NodeMessageType; direction: "node_to_server" | "server_to_node"; body: unknown }> = [
     { type: "connection.accepted", direction: "server_to_node", body: { selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: ["reconciliation"], maxFrameBytes: 65_536, heartbeatIntervalSeconds: 30, serverTime: t1 } },
+    { type: "connection.enrollment.deliver", direction: "node_to_server", body: {
+      deliveryId: "delivery:connection:1", enrollmentContract: "control-room-enrollment/v1",
+      envelopeDigest: sha256Digest(enrollmentEnvelope), envelope: enrollmentEnvelope } },
     { type: "node.heartbeat", direction: "node_to_server", body: { observedAt: t1, health: "healthy", policyVersion: "policy:v1", activeAttemptIds: [], resources: { freeMemoryMb: 1, freeScratchMb: 1, cpuUtilizationPercent: 1 } } },
     { type: "job.offer", direction: "server_to_node", body: { offerId: "offer:1", nodeId: "node:mac-mini", jobId: lease.jobId, attemptId: lease.attemptId, proposedLeaseEpoch: 1, offerExpiresAt: t2, jobType: "synthetic:test", specVersion: "1.0.0", inputDigest: hashA, artifactManifestIds: [], authority } },
     { type: "job.offer.decision", direction: "node_to_server", body: { offerId: "offer:1", jobId: lease.jobId, attemptId: lease.attemptId, decision: "accepted" } },
