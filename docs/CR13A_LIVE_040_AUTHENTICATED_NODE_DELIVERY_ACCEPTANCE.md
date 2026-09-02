@@ -1,6 +1,6 @@
 # CR13A-LIVE-040 authenticated node-protocol enrollment delivery acceptance
 
-**Status:** implementation candidate; exact product freeze and independent security/integrity review required  
+**Status:** implementation candidate; exact product freeze and independent security/integrity review required
 **Effect boundary:** repository code, generated JSON Schema, PostgreSQL-compatible migration, and PGlite tests only; no
 listener, HTTP mutation, live connector, SSH, Hermes/provider call, credential access, production database, or deployment
 
@@ -71,4 +71,3 @@ tests alone cannot authorize integration or live use.
 After accepted review and owner-approved integration, CR13A-LIVE-050 may add a provider-disabled server ingress
 composition or a bounded enrolled-connector rehearsal packet. Any actual listener, machine connection, SSH/Hermes/native
 effect, credential use, provider call, production PostgreSQL/VPS contact, or deployment remains separately gated.
-
