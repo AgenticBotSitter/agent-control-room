@@ -7,6 +7,7 @@ import {
   type IdeaLabHermes021ConnectionSafeResultV1,
 } from "../../idea-lab/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { isConnectionEnrollmentDeliveryIdV1 } from "../../node-protocol/v1";
 import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
 import {
   dataMethodV1,
@@ -185,7 +186,7 @@ function deliveryMaterial(delivery: Omit<CapturedDeliveryV1, "envelope" | "deliv
 export function buildConnectionEnrollmentProtectedDeliveryV1(inputValue: unknown):
 ConnectionEnrollmentProtectedDeliveryV1 {
   const input = exactHostDataSnapshotV1(inputValue, ["deliveryId", "authenticatedAt", "envelope"]);
-  if (!input || typeof input.deliveryId !== "string" || !idPattern.test(input.deliveryId)
+  if (!input || !isConnectionEnrollmentDeliveryIdV1(input.deliveryId)
     || !exactInstant(input.authenticatedAt)) throw new ConnectionEnrollmentIntakeErrorV1("invalid_input");
   let envelope: IdeaLabHermes021ConnectionEnrollmentEnvelopeV1;
   try { envelope = parseIdeaLabHermes021ConnectionEnrollmentEnvelopeV1(input.envelope); }
@@ -220,9 +221,10 @@ function captureDelivery(value: unknown, expectedDeliveryId: string, expectedRec
   try { envelope = parseIdeaLabHermes021ConnectionEnrollmentEnvelopeV1(captured.envelope); }
   catch { throw new ConnectionEnrollmentIntakeErrorV1("unauthenticated_delivery"); }
   const delivery = { ...captured, envelope } as unknown as CapturedDeliveryV1;
-  const fields = [delivery.deliveryId, delivery.tenantId, delivery.nodeId, delivery.connectionId, delivery.keyId];
+  const fields = [delivery.tenantId, delivery.nodeId, delivery.connectionId, delivery.keyId];
   if (delivery.contractVersion !== CONNECTION_ENROLLMENT_PROTECTED_DELIVERY_V1
     || delivery.deliveryBasis !== "protected_server_source"
+    || !isConnectionEnrollmentDeliveryIdV1(delivery.deliveryId)
     || fields.some((field) => typeof field !== "string" || !idPattern.test(field))
     || delivery.deliveryId !== expectedDeliveryId || delivery.authenticatedAt !== expectedReceivedAt
     || !exactInstant(delivery.authenticatedAt) || !digestPattern.test(delivery.envelopeDigest)
@@ -362,7 +364,8 @@ export class ConnectionEnrollmentIntakeServiceV1 {
       const { audit_record_digest: _auditRecordDigest, receipt_auth_tag: _receiptAuthTag,
         payload: _payload, ...digestInput } = row;
       void _auditRecordDigest; void _receiptAuthTag; void _payload;
-      valid = row.tenant_id === tenantId && idPattern.test(row.delivery_id) && idPattern.test(row.enrollment_id)
+      valid = row.tenant_id === tenantId && isConnectionEnrollmentDeliveryIdV1(row.delivery_id)
+        && idPattern.test(row.enrollment_id)
         && idPattern.test(row.connection_id) && idPattern.test(row.node_id)
         && digestPattern.test(row.key_id_digest) && Number(row.sequence) === expectedSequence
         && row.previous_audit_record_digest === expectedPreviousDigest
@@ -435,7 +438,7 @@ export class ConnectionEnrollmentIntakeServiceV1 {
 
   async ingest(inputValue: unknown): Promise<{ replayed: boolean; receipt: ConnectionEnrollmentIntakeReceiptV1 }> {
     const input = exactHostDataSnapshotV1(inputValue, ["deliveryId", "receivedAt"]);
-    if (!input || typeof input.deliveryId !== "string" || !idPattern.test(input.deliveryId)
+    if (!input || !isConnectionEnrollmentDeliveryIdV1(input.deliveryId)
       || !exactInstant(input.receivedAt)) throw new ConnectionEnrollmentIntakeErrorV1("invalid_input");
     let deliveryValue: unknown;
     try { deliveryValue = await this.#readDelivery({ deliveryId: input.deliveryId, receivedAt: input.receivedAt }); }

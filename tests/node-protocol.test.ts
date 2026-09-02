@@ -143,6 +143,56 @@ function rateLimiter(maximum = 100) {
   return new FixedWindowProtocolRateLimiter(maximum, 60);
 }
 
+function generatedSchemaAccepts(schemaValue: unknown, value: unknown): boolean {
+  if (!schemaValue || typeof schemaValue !== "object" || Array.isArray(schemaValue)) return schemaValue === true;
+  const schema = schemaValue as Record<string, unknown>;
+  if (Array.isArray(schema.anyOf)) return schema.anyOf.some((candidate) => generatedSchemaAccepts(candidate, value));
+  if (Object.hasOwn(schema, "const") && value !== schema.const) return false;
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => candidate === value)) return false;
+  if (schema.type === "object") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    const properties = schema.properties && typeof schema.properties === "object"
+      ? schema.properties as Record<string, unknown> : {};
+    if (Array.isArray(schema.required)
+      && !schema.required.every((key) => typeof key === "string" && Object.hasOwn(record, key))) return false;
+    for (const [key, child] of Object.entries(record)) {
+      if (Object.hasOwn(properties, key)) {
+        if (!generatedSchemaAccepts(properties[key], child)) return false;
+      } else if (schema.additionalProperties === false) return false;
+      else if (schema.additionalProperties && typeof schema.additionalProperties === "object"
+        && !generatedSchemaAccepts(schema.additionalProperties, child)) return false;
+    }
+  } else if (schema.type === "array") {
+    if (!Array.isArray(value)) return false;
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) return false;
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) return false;
+    if (Array.isArray(schema.prefixItems)) {
+      if (value.length !== schema.prefixItems.length) return false;
+      for (let index = 0; index < value.length; index += 1) {
+        if (!generatedSchemaAccepts(schema.prefixItems[index], value[index])) return false;
+      }
+    } else if (schema.items && typeof schema.items === "object") {
+      for (let index = 0; index < value.length; index += 1) {
+        if (!generatedSchemaAccepts(schema.items, value[index])) return false;
+      }
+    }
+  } else if (schema.type === "string") {
+    if (typeof value !== "string") return false;
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) return false;
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) return false;
+    if (typeof schema.pattern === "string" && !(new RegExp(schema.pattern)).test(value)) return false;
+  } else if (schema.type === "integer") {
+    if (!Number.isSafeInteger(value)) return false;
+    if (typeof schema.minimum === "number" && (value as number) < schema.minimum) return false;
+    if (typeof schema.maximum === "number" && (value as number) > schema.maximum) return false;
+    if (typeof schema.exclusiveMinimum === "number" && (value as number) <= schema.exclusiveMinimum) return false;
+  } else if (schema.type === "number" && typeof value !== "number") return false;
+  else if (schema.type === "boolean" && typeof value !== "boolean") return false;
+  else if (schema.type === "null" && value !== null) return false;
+  return true;
+}
+
 test("version negotiation selects a known mutual version and fails closed", () => {
   assert.equal(negotiateProtocolVersion(["future/v9", NODE_PROTOCOL_V1]), NODE_PROTOCOL_V1);
   assert.throws(() => negotiateProtocolVersion(["future/v9"]), ProtocolNegotiationError);
@@ -166,8 +216,17 @@ test("every CR-5A connection, heartbeat, offer, lease, event, cancellation, and 
     maxRisk: "low" as const, maxDurationSeconds: 300, maxConcurrentEffects: 0, expiresAt: t2, digest: hashA,
   };
   authority.digest = computeAuthorityDigest(authority);
+  const enrollmentEnvelope = {
+    body: { contractVersion: "control-room-enrollment/v1", tenantId: "tenant:owner",
+      nodeId: "node:mac-mini", connectionId: "connection:1" },
+    attestation: { algorithm: "ed25519", keyId: "node-key:mac-mini:1",
+      publicKeySpki: "A".repeat(40), signature: "B".repeat(40) },
+  };
   const cases: Array<{ type: NodeMessageType; direction: "node_to_server" | "server_to_node"; body: unknown }> = [
     { type: "connection.accepted", direction: "server_to_node", body: { selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: ["reconciliation"], maxFrameBytes: 65_536, heartbeatIntervalSeconds: 30, serverTime: t1 } },
+    { type: "connection.enrollment.deliver", direction: "node_to_server", body: {
+      deliveryId: "delivery:connection:1", enrollmentContract: "control-room-enrollment/v1",
+      envelopeDigest: sha256Digest(enrollmentEnvelope), envelope: enrollmentEnvelope } },
     { type: "node.heartbeat", direction: "node_to_server", body: { observedAt: t1, health: "healthy", policyVersion: "policy:v1", activeAttemptIds: [], resources: { freeMemoryMb: 1, freeScratchMb: 1, cpuUtilizationPercent: 1 } } },
     { type: "job.offer", direction: "server_to_node", body: { offerId: "offer:1", nodeId: "node:mac-mini", jobId: lease.jobId, attemptId: lease.attemptId, proposedLeaseEpoch: 1, offerExpiresAt: t2, jobType: "synthetic:test", specVersion: "1.0.0", inputDigest: hashA, artifactManifestIds: [], authority } },
     { type: "job.offer.decision", direction: "node_to_server", body: { offerId: "offer:1", jobId: lease.jobId, attemptId: lease.attemptId, decision: "accepted" } },
@@ -203,6 +262,45 @@ test("committed node protocol JSON Schemas match the runtime validators", async 
     const committed = JSON.parse(await readFile(resolve("contracts", filename), "utf8")) as unknown;
     assert.deepEqual(committed, generated, `${filename} must be regenerated with pnpm protocol:generate`);
   }
+});
+
+test("enrollment delivery generated schema and runtime share the structural rejection corpus", () => {
+  const keys = keyMaterial(), template = helloFrame(keys.privateKey);
+  const envelope = {
+    body: { contractVersion: "control-room-enrollment/v1", tenantId: "tenant:owner",
+      nodeId: "node:mac-mini", connectionId: "connection:1", providerSpecific: false },
+    attestation: { algorithm: "ed25519", keyId: "node-key:mac-mini:1",
+      publicKeySpki: "A".repeat(40), signature: "B".repeat(40) },
+  };
+  const body = { deliveryId: "delivery:connection:1", enrollmentContract: "control-room-enrollment/v1",
+    envelopeDigest: sha256Digest(envelope), envelope };
+  const valid = { ...template, direction: "node_to_server", senderKind: "node",
+    type: "connection.enrollment.deliver", body, bodyDigest: sha256Digest(body) };
+  const generated = buildNodeProtocolJsonSchemas()["control-room-node-v1-frame.schema.json"];
+  assert.equal(generatedSchemaAccepts(generated, valid), true);
+  assert.equal(signedNodeFrameSchema.safeParse(valid).success, true);
+
+  const malformed = [
+    { ...valid, direction: "server_to_node" },
+    { ...valid, senderKind: "control_room" },
+    { ...valid, body: { ...body, deliveryId: "a" } },
+    { ...valid, body: { ...body, envelope: "scalar" } },
+    { ...valid, body: { ...body, envelope: { attestation: envelope.attestation } } },
+    { ...valid, body: { ...body, envelope: { ...envelope,
+      attestation: { ...envelope.attestation, unexpected: true } } } },
+  ];
+  for (const candidate of malformed) {
+    assert.equal(generatedSchemaAccepts(generated, candidate), false);
+    assert.equal(signedNodeFrameSchema.safeParse(candidate).success, false);
+  }
+
+  const crossScopeEnvelope = { ...envelope, body: { ...envelope.body, tenantId: "tenant:other" } };
+  const crossScopeBody = { ...body, envelope: crossScopeEnvelope,
+    envelopeDigest: sha256Digest(crossScopeEnvelope) };
+  const crossScope = { ...valid, body: crossScopeBody, bodyDigest: sha256Digest(crossScopeBody) };
+  assert.equal(generatedSchemaAccepts(generated, crossScope), true,
+    "JSON Schema covers structure; signed runtime validation owns relational identity binding");
+  assert.equal(signedNodeFrameSchema.safeParse(crossScope).success, false);
 });
 
 test("single-use enrollment persists only a token digest and atomically activates node identity", async () => {

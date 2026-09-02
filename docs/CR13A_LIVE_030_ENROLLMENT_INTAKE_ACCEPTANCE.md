@@ -1,6 +1,7 @@
 # CR13A-LIVE-030 protected enrollment intake acceptance
 
-**Status:** independently accepted immutable product `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; integration pending
+**Status:** independently accepted immutable product `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; integrated through PR #232 as
+`10605afd4a5e8d3baeafeab82ec883f6008e845b`
 **Effect boundary:** repository code, PostgreSQL-compatible migration, and PGlite tests only; the runtime source is disabled
 and no SSH, Hermes, provider, credential, production database, deployment, or network effect occurred
 
@@ -69,7 +70,8 @@ migration, build, rendered-route, typecheck, lint, and diff gates. The accepted 
 `reviews/CR13A_LIVE_030_INDEPENDENT_REVIEW.md`, SHA-256
 `ed4cae0f07ab41cf82dd5458901b2a0dc240272a3e910df79ba108731015fa46`.
 
-Ordinary GitHub CI run `33573535167` passed the pushed candidate. Owner-approved integration remains. Review acceptance
+Ordinary GitHub CI run `33573535167` passed the pushed candidate. Owner-approved PR #232 merged it without product drift;
+post-merge main CI run `33579561077` passed in 10m53s. Review acceptance
 authorizes only repository integration. It does not enable
 a live delivery source, enroll a machine, contact Hermes, open SSH, use credentials, call a provider, attach production
 PostgreSQL, deploy, host, or grant execution authority.
