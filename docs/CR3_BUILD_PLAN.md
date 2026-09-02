@@ -980,8 +980,8 @@ next block changes transport trust or any signed contract; otherwise use Sol hig
 
 ## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
 
-Status: second remediation `bbd3bcbd659ab91461bb52117718a95098c7bb80` frozen; another different independent
-review required. See
+Status: M-001 and M-002 closed; second remediation `bbd3bcbd659ab91461bb52117718a95098c7bb80` independently
+rejected with one Low allowlist defect. See
 `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
 
 The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
@@ -1025,8 +1025,11 @@ local error; any other value becomes bounded failure. Direct-Proxy and unusual-p
 caller behavior and create no delivery, intake, or registry records. The exact frozen target is
 `bbd3bcbd659ab91461bb52117718a95098c7bb80`; its zero-repair packet is
 `docs/reviews/CR13A_LIVE_050_ERROR_CONTAINMENT_REVIEW_PACKET.md`, SHA-256
-`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`. It requires another different independent review
-before integration.
+`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`. The review closes M-001 and M-002's reported
+defects but finds Low L-001: the node-delivery authentication catch must compare the captured code with the protocol's
+seven-code allowlist rather than accept every string. The rejected report SHA-256 is
+`61c934aca63942f043b613e5137b1ba2824f5f2139534031ba62ad65e732a86b`. A narrow third remediation and another different
+review are required before integration.
 
 Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
 refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust

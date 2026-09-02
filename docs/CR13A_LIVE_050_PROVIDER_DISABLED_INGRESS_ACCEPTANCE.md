@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** second remediation `bbd3bcbd659ab91461bb52117718a95098c7bb80` frozen; another different independent review required
+**Status:** second remediation `bbd3bcbd659ab91461bb52117718a95098c7bb80` independently rejected with one Low allowlist defect; narrow third remediation required
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -123,6 +123,13 @@ proof ordering, HMAC domains, receipt shape, disabled default, route surface, or
 different from the producer and both completed prior reviewers, must accept this exact target before integration.
 The zero-repair packet is `docs/reviews/CR13A_LIVE_050_ERROR_CONTAINMENT_REVIEW_PACKET.md`, SHA-256
 `f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`.
+
+The different reviewer closed M-001 and M-002's behavior-execution and raw-escape defect, but rejected the exact target
+with Low L-001. The node-delivery authentication catch accepted any own string `ProtocolAuthenticationError.code`
+instead of the declared seven-code allowlist, so an unknown downstream value could be mislabeled as an authentication
+failure rather than conservative integrity failure. The value remained bounded, ran no behavior, escaped no raw data,
+created no persistent record, and granted no authority. The preserved rejected report SHA-256 is
+`61c934aca63942f043b613e5137b1ba2824f5f2139534031ba62ad65e732a86b`.
 
 ## Next boundary
 

@@ -2864,3 +2864,8 @@ and observability can count the bounded outcome without retaining the rejected o
 **Reevaluate:** Before adding a connection-registry dependency boundary, changing local error prototypes or safe-code
 allowlists, introducing cross-realm workers, or exposing richer error diagnostics. Any change to classification or
 reconstruction invalidates the CR13A-LIVE-050 second-remediation review evidence.
+
+**Independent-review amendment:** Exact prototype and own-data checks are necessary but do not themselves validate a
+code's meaning. Every classifier must also compare the captured string with its explicit declared allowlist. Unknown
+strings become the conservative local integrity outcome; they cannot be mapped through a broad non-`undefined` check.
+The rejected second-remediation report is preserved before this narrow correction.

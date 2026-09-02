@@ -113,7 +113,7 @@
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
-| CR13A-LIVE-050 provider-disabled enrollment ingress | Second remediation `bbd3bcb...` frozen; another different independent review required | Both prior negative reports preserved; caught values are classified without running their behavior, only bounded errors cross the ingress boundary, and zero enrollment persistence is proven; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
+| CR13A-LIVE-050 provider-disabled enrollment ingress | M-001 and M-002 closed; second remediation `bbd3bcb...` independently rejected with one Low allowlist defect | Preserve all three negative reports; require the exact seven-code protocol-authentication allowlist and conservative handling of every other string before another different review; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -910,8 +910,11 @@ passes 39/39, the complete lifecycle passes 769/769 pretests, 419/421 core tests
 posttests. TypeScript, full lint, all 36 migrations with 119 PostgreSQL tables, production build, 4/4 rendered checks,
 and whitespace validation pass. Its zero-repair review packet is
 `docs/reviews/CR13A_LIVE_050_ERROR_CONTAINMENT_REVIEW_PACKET.md`, SHA-256
-`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`. Another different independent review remains
-required before integration.
+`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`. The different reviewer closes M-001 and M-002's
+reported behavior-execution/raw-escape defect, but rejects the exact target with Low L-001: the node-delivery
+authentication catch accepts any exact-prototype own string code rather than the protocol's seven-code allowlist. The
+value remains bounded and inert, but an unknown dependency failure can be mislabeled as authentication failure. The
+preserved rejected report SHA-256 is `61c934aca63942f043b613e5137b1ba2824f5f2139534031ba62ad65e732a86b`.
 
 ## Parallel build lane
 
@@ -928,11 +931,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-050-FINAL-REVIEW — independently review the bounded error-handling remediation
+Block: CR13A-LIVE-050-ALLOWLIST-REMEDIATION — close the final Low classification defect
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the coordinator joins two authenticated persistence boundaries and the final review must prove rejected values cannot execute behavior or escape raw.
-Expected output: a zero-repair packet bound to `bbd3bcbd659ab91461bb52117718a95098c7bb80` and a different independent disposition before integration.
+Why: the coordinator joins two authenticated persistence boundaries and every preserved error code must be explicitly recognized.
+Expected output: an exact seven-code protocol allowlist, adapter and composed regressions, a frozen target, and a different independent disposition before integration.
 Owner action: none during local implementation and independent review.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
