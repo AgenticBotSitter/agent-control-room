@@ -347,10 +347,7 @@
         },
         "direction": {
           "type": "string",
-          "enum": [
-            "node_to_server",
-            "server_to_node"
-          ]
+          "const": "node_to_server"
         },
         "messageId": {
           "type": "string",
@@ -384,10 +381,7 @@
         },
         "senderKind": {
           "type": "string",
-          "enum": [
-            "node",
-            "control_room"
-          ]
+          "const": "node"
         },
         "keyId": {
           "type": "string",
@@ -441,7 +435,7 @@
           "properties": {
             "deliveryId": {
               "type": "string",
-              "minLength": 1,
+              "minLength": 3,
               "maxLength": 160,
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
             },
@@ -454,7 +448,85 @@
               "type": "string",
               "pattern": "^sha256:[a-f0-9]{64}$"
             },
-            "envelope": {}
+            "envelope": {
+              "type": "object",
+              "properties": {
+                "body": {
+                  "type": "object",
+                  "properties": {
+                    "contractVersion": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "tenantId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    },
+                    "nodeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    },
+                    "connectionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    }
+                  },
+                  "required": [
+                    "contractVersion",
+                    "tenantId",
+                    "nodeId",
+                    "connectionId"
+                  ],
+                  "additionalProperties": {}
+                },
+                "attestation": {
+                  "type": "object",
+                  "properties": {
+                    "algorithm": {
+                      "type": "string",
+                      "const": "ed25519"
+                    },
+                    "keyId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    },
+                    "publicKeySpki": {
+                      "type": "string",
+                      "minLength": 16,
+                      "maxLength": 16384,
+                      "pattern": "^[A-Za-z0-9_-]+$"
+                    },
+                    "signature": {
+                      "type": "string",
+                      "minLength": 16,
+                      "maxLength": 16384,
+                      "pattern": "^[A-Za-z0-9_-]+$"
+                    }
+                  },
+                  "required": [
+                    "algorithm",
+                    "keyId",
+                    "publicKeySpki",
+                    "signature"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "body",
+                "attestation"
+              ],
+              "additionalProperties": false
+            }
           },
           "required": [
             "deliveryId",

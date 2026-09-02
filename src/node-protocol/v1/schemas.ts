@@ -3,9 +3,12 @@ import { artifactManifestRecordSchema, authorityEnvelopeSchema } from "../../dom
 import { fleetSignalEnvelopeSchema } from "../../node-fleet/v1/schemas";
 import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
 import { computeAuthorityDigest, sha256Digest } from "../../security";
-import { NODE_PROTOCOL_MAX_FRAME_BYTES, NODE_PROTOCOL_V1 } from "./types";
+import { CONNECTION_ENROLLMENT_DELIVERY_ID_MAX_LENGTH, CONNECTION_ENROLLMENT_DELIVERY_ID_MIN_LENGTH,
+  NODE_PROTOCOL_MAX_FRAME_BYTES, NODE_PROTOCOL_V1 } from "./types";
 
 const id = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+const deliveryId = z.string().min(CONNECTION_ENROLLMENT_DELIVERY_ID_MIN_LENGTH)
+  .max(CONNECTION_ENROLLMENT_DELIVERY_ID_MAX_LENGTH).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const label = z.string().min(1).max(200).refine(
   (value) => ![...value].some((character) => {
     const code = character.codePointAt(0) ?? 0;
@@ -99,11 +102,25 @@ const connectionAccepted = z.object({
   heartbeatIntervalSeconds: z.number().int().min(5).max(300),
   serverTime: isoDate,
 }).strict();
+const connectionEnrollmentEnvelope = z.object({
+  body: z.object({
+    contractVersion: label,
+    tenantId: id,
+    nodeId: id,
+    connectionId: id,
+  }).catchall(z.unknown()),
+  attestation: z.object({
+    algorithm: z.literal("ed25519"),
+    keyId: id,
+    publicKeySpki: base64url,
+    signature: base64url,
+  }).strict(),
+}).strict();
 const connectionEnrollmentDelivery = z.object({
-  deliveryId: id,
+  deliveryId,
   enrollmentContract: label,
   envelopeDigest: digest,
-  envelope: z.unknown(),
+  envelope: connectionEnrollmentEnvelope,
 }).strict().superRefine((value, context) => {
   if (sha256Digest(value.envelope) !== value.envelopeDigest) {
     context.addIssue({ code: "custom", path: ["envelopeDigest"], message: "enrollment envelope digest mismatch" });
@@ -316,14 +333,20 @@ const baseFrame = {
   signature: base64url,
 };
 
-function frame<TType extends string, TSchema extends z.ZodType>(type: TType, body: TSchema) {
-  return z.object({ ...baseFrame, type: z.literal(type), body }).strict();
+function frame<TType extends string, TSchema extends z.ZodType>(type: TType, body: TSchema,
+  authority?: { direction: "node_to_server" | "server_to_node"; senderKind: "node" | "control_room" }) {
+  const authorityFields = authority ? {
+    direction: z.literal(authority.direction),
+    senderKind: z.literal(authority.senderKind),
+  } : {};
+  return z.object({ ...baseFrame, ...authorityFields, type: z.literal(type), body }).strict();
 }
 
 export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("connection.hello", connectionHello),
   frame("connection.accepted", connectionAccepted),
-  frame("connection.enrollment.deliver", connectionEnrollmentDelivery),
+  frame("connection.enrollment.deliver", connectionEnrollmentDelivery,
+    { direction: "node_to_server", senderKind: "node" }),
   frame("node.heartbeat", heartbeat),
   frame("node.fleet.signal", fleetSignalEnvelopeSchema),
   frame("job.offer", jobOffer),

@@ -1,7 +1,7 @@
 # CR13A-LIVE-040 authenticated node-protocol enrollment delivery acceptance
 
-**Status:** immutable product `6493118f2b7272308d3c508b963f3ddd52cc9863` rejected; remediation and different independent
-re-review required
+**Status:** remediation candidate after preserved rejected review; complete verification, new exact freeze, and different
+independent re-review required
 **Effect boundary:** repository code, generated JSON Schema, PostgreSQL-compatible migration, and PGlite tests only; no
 listener, HTTP mutation, live connector, SSH, Hermes/provider call, credential access, production database, or deployment
 
@@ -11,7 +11,10 @@ CR13A-LIVE-040 adds one node-to-server message, `connection.enrollment.deliver`,
 `control-room-node/v1`. Its body binds a globally unique delivery ID, the declared enrollment contract, a digest of the
 exact inner envelope, and the envelope. The signed outer frame binds that body to the enrolled tenant, node, active key,
 connection, monotonic sequence, nonce, send/expiry window, and protocol version. The runtime and generated JSON Schema
-reject envelope contract, tenant, node, connection, key, or digest drift before replay state is consumed.
+structurally require the node-to-server/node-signed variant, the shared delivery-ID bounds, envelope body identity fields,
+and a strict Ed25519 attestation. The runtime additionally rejects computed envelope-digest and cross-field
+contract/tenant/node/connection/key drift before replay state is consumed. Those relational checks are explicitly
+runtime-only because standard JSON Schema cannot express equality or recompute a cryptographic digest.
 
 `DatabaseConnectionEnrollmentNodeDeliveryAdapterV1` accepts only a raw string frame plus server-held receive time and
 transport identity. It uses a database-backed active-key resolver, protocol rate limit, Ed25519 verification, and durable
@@ -31,18 +34,23 @@ Outer protocol authentication therefore cannot substitute for inner enrollment a
   through the existing node-protocol authenticator.
 - Contract, envelope digest, tenant, node, connection, and key identity are signed outer-frame bindings.
 - Exact protocol replay is accepted only when message, nonce, connection, sequence, and complete frame digest agree.
+- Every delivery uses the original replay row's durable receive time; a committed duplicate returns the original safe
+  receipt even when the retry is observed later.
 - Delivery-ID or protocol-message reuse with different authenticated content is a terminal replay conflict.
 - If replay persistence succeeds but the delivery-ledger transaction fails, retrying the exact frame reuses the protocol
-  replay proof and completes the missing ledger append. No new nonce or sequence is invented.
+  replay proof and its original chronology to complete the missing ledger append. No new nonce or sequence is invented.
+- Delivery IDs use one 3–160 character ASCII contract in protocol runtime, generated schema, adapter, protected intake,
+  and migration, and invalid bounds fail before replay consumption.
 - The delivery ledger is append-only, tenant-serialized, digest-chained, HMAC-authenticated, payload-digested, bounded to
   10,000 records per tenant, and protected against row/head deletion and truncation.
 - Damaged, deleted, reordered, behavior-bearing, wrong-key, or semantically inconsistent evidence fails closed.
 
 ## Safe output and negative authority
 
-The delivery receipt exposes only derived references, digests, receive time, protocol/ledger duplicate status, and
-explicit false values for approval, network, command, lease, and execution authority. It exposes no tenant, node,
-connection, delivery, enrollment, key, host, route, profile, public-key, signature, credential, or transport identity.
+The delivery receipt exposes only derived references, digests, the canonical receive time, the original successful
+protocol/ledger disposition, and explicit false values for approval, network, command, lease, and execution authority.
+It exposes no tenant, node, connection, delivery, enrollment, key, host, route, profile, public-key, signature,
+credential, or transport identity.
 The complete envelope remains only in the protected database so the intake can independently verify it.
 
 No browser or HTTP mutation was added. The local pilot still uses the disabled delivery source. This implementation does
@@ -60,7 +68,8 @@ production PostgreSQL, deploy, host, or authorize native qualification or live I
 
 The focused implementation gate covers valid delivery-to-intake flow, outer forgery, independent inner-signature
 failure, exact replay, post-authentication ledger recovery, conflicting reuse, ledger mutation, behavioral database rows,
-safe receipts, generated-schema parity, and absence of browser/HTTP mutation.
+safe receipts, generated-schema structural parity, shared validator rejection cases, delivery-ID bounds, later-time
+response-loss/recovery replay, post-import ambient mutation, and absence of browser/HTTP mutation.
 
 The exact product is `6493118f2b7272308d3c508b963f3ddd52cc9863`. Stage zero, TypeScript, full lint, 23/23
 focused protocol/intake/delivery tests, 42/42 combined CR13A tests, the complete 769/769 pretest plus 418/420 core with
@@ -72,6 +81,17 @@ The independent report rejected that target with one High, two Medium, and one L
 could bypass ledger HMAC checks; the generated JSON Schema was weaker than runtime validation; exact replay did not use
 the original durable receive time; and the delivery-ID bounds disagreed across protocol and intake. The negative evidence
 is preserved in `docs/reviews/CR13A_LIVE_040_INDEPENDENT_REVIEW.md` and cannot authorize integration.
+
+The remediation candidate freezes and verifies host-operation selection, structurally strengthens the one-way generated
+schema while documenting runtime-only relational checks, derives delivery chronology from the durable replay row,
+protects the initial disposition so exact duplicates return the original receipt, and shares one delivery-ID contract
+across every boundary. Hostile regressions replace ten ambient operations after import and prove that none execute;
+wrong-key evidence still fails. A new exact product and a different independent re-review are required.
+
+The remediation candidate passes stage zero, TypeScript, full lint, 26/26 focused protocol/intake/delivery tests, 28/28
+connection-slice tests, all 36 migrations with 119 PostgreSQL tables, the complete 769/769 pretest plus 419/421 core with
+two intentional platform skips plus 279/279 posttest lifecycle, the production build, 4/4 rendered routes, and
+`git diff --check`. No listener, network, credential, provider, native, production-database, or deployment effect ran.
 
 ## Required review and next boundary
 

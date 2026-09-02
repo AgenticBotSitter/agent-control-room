@@ -948,8 +948,9 @@ if LIVE-040 changes signed node-protocol schemas or the live ingress trust bound
 
 ## CR13A-LIVE-040 — authenticated node-protocol enrollment delivery
 
-Status: immutable product `6493118f2b7272308d3c508b963f3ddd52cc9863` rejected by independent review; remediation and a
-different independent re-review are required. See `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md`,
+Status: verified remediation candidate after immutable product `6493118f2b7272308d3c508b963f3ddd52cc9863` was rejected;
+a new exact freeze and different independent re-review are required. See
+`CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md`,
 `docs/reviews/CR13A_LIVE_040_INDEPENDENT_REVIEW.md`, and ADR-151.
 
 The `connection.enrollment.deliver` node-to-server message binds one opaque enrollment envelope to the authenticated
@@ -962,6 +963,11 @@ The adapter is the protected source consumed by CR13A-LIVE-030, whose independen
 signature verification remain unchanged. The outer node frame is transport authentication, never enrollment authority.
 Safe receipts contain derived references and digests only. No HTTP/browser mutation, listener, live connector, SSH,
 Hermes/provider call, credential access, production database, or deployment is enabled.
+
+The remediation freezes and verifies host-operation selection, gives the generated schema an honest strict structural
+boundary plus runtime-only relational checks, preserves replay's original receive time and original safe receipt, and
+enforces one delivery-ID contract before replay and through protected intake and storage. The first negative review stays
+durable and cannot authorize integration; a different reviewer must assess the new exact product with zero repairs.
 
 Next after independent acceptance and owner-approved integration: CR13A-LIVE-050 may compose a provider-disabled server
 ingress boundary or prepare one bounded enrolled-connector rehearsal without enabling a live effect. Use Sol xhigh if the

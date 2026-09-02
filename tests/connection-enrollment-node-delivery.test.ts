@@ -43,6 +43,7 @@ const enrolledAt = "2026-09-01T17:52:00.000Z";
 const issuedAt = "2026-09-01T17:56:00.000Z";
 const helloAt = "2026-09-01T17:59:00.000Z";
 const receivedAt = "2026-09-01T18:00:00.000Z";
+const retryReceivedAt = "2026-09-01T18:00:01.000Z";
 const frameExpiresAt = "2026-09-01T18:02:00.000Z";
 const enrollmentExpiresAt = "2026-09-02T05:56:00.000Z";
 const digest = (label: string) => sha256Digest({ label });
@@ -208,8 +209,8 @@ async function fixture() {
   return { raw, db, keys, spki, adapter };
 }
 
-function deliveryOptions() {
-  return { receivedAt, transportIdentity: "transport:node-delivery-test" };
+function deliveryOptions(observedAt = receivedAt) {
+  return { receivedAt: observedAt, transportIdentity: "transport:node-delivery-test" };
 }
 
 test("CR13A-LIVE-040 authenticates, persists, replays, and feeds the independently verified intake", async () => {
@@ -226,10 +227,8 @@ test("CR13A-LIVE-040 authenticates, persists, replays, and feeds the independent
       frame.signature,innerEnvelope.attestation.signature]) {
       assert.equal(serializedReceipt.includes(protectedValue), false, protectedValue);
     }
-    const replay = await adapter.deliver(JSON.stringify(frame), deliveryOptions());
-    assert.deepEqual([replay.protocolDisposition,replay.ledgerDisposition,replay.receiptDigest === first.receiptDigest],
-      ["duplicate", "duplicate", false]);
-    assert.equal(replay.deliveryEvidenceDigest, first.deliveryEvidenceDigest);
+    const replay = await adapter.deliver(JSON.stringify(frame), deliveryOptions(retryReceivedAt));
+    assert.deepEqual(replay, first, "response-loss replay must return the original safe receipt");
 
     const intake = new ConnectionEnrollmentIntakeServiceV1(db, registryKey, intakeKey, adapter);
     const ingested = await intake.ingest({ deliveryId, receivedAt });
@@ -287,11 +286,40 @@ test("CR13A-LIVE-040 recovers a post-authentication ledger failure through exact
     assert.equal((await raw.query(`SELECT delivery_id FROM control_connection_enrollment_protocol_deliveries`))
       .rows.length, 0);
     await raw.exec(`DROP TRIGGER reject_node_delivery_test ON control_connection_enrollment_protocol_deliveries`);
-    const recovered = await adapter.deliver(JSON.stringify(frame), deliveryOptions());
-    assert.deepEqual([recovered.protocolDisposition,recovered.ledgerDisposition], ["duplicate", "accepted"]);
-    const exactReplay = await adapter.deliver(JSON.stringify(frame), deliveryOptions());
-    assert.deepEqual([exactReplay.protocolDisposition,exactReplay.ledgerDisposition], ["duplicate", "duplicate"]);
+    const recovered = await adapter.deliver(JSON.stringify(frame), deliveryOptions(retryReceivedAt));
+    assert.deepEqual([recovered.protocolDisposition,recovered.ledgerDisposition,recovered.receivedAt],
+      ["duplicate", "accepted", receivedAt]);
+    const exactReplay = await adapter.deliver(JSON.stringify(frame),
+      deliveryOptions("2026-09-01T18:00:02.000Z"));
+    assert.deepEqual(exactReplay, recovered, "recovered ledger replay must return its original safe receipt");
   } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-040 rejects invalid delivery IDs before replay and accepts the exact bounds", async () => {
+  const invalid = await fixture();
+  try {
+    const before = (await invalid.raw.query(`SELECT message_id FROM node_protocol_replay`)).rows.length;
+    for (const candidate of ["aa", "d".repeat(161)]) {
+      const otherwiseValid = deliveryFrame(invalid.keys.privateKey, invalid.spki);
+      const malformed = { ...otherwiseValid, body: { ...otherwiseValid.body, deliveryId: candidate } };
+      await assert.rejects(() => invalid.adapter.deliver(
+        JSON.stringify(malformed),
+        deliveryOptions()), (error: unknown) => error instanceof ConnectionEnrollmentNodeDeliveryErrorV1
+          && error.safeCode === "authentication_failed");
+      assert.equal((await invalid.raw.query(`SELECT message_id FROM node_protocol_replay`)).rows.length, before);
+    }
+  } finally { await invalid.raw.close(); }
+
+  for (const candidate of ["abc", "d".repeat(160)]) {
+    const accepted = await fixture();
+    try {
+      const receipt = await accepted.adapter.deliver(JSON.stringify(
+        deliveryFrame(accepted.keys.privateKey, accepted.spki, { deliveryId: candidate })), deliveryOptions());
+      assert.equal(receipt.ledgerDisposition, "accepted");
+      assert.equal((await accepted.raw.query(`SELECT delivery_id FROM control_connection_enrollment_protocol_deliveries
+        WHERE delivery_id=$1`, [candidate])).rows.length, 1);
+    } finally { await accepted.raw.close(); }
+  }
 });
 
 test("CR13A-LIVE-040 rejects conflicting delivery identity and detects durable-ledger damage", async () => {
@@ -316,6 +344,39 @@ test("CR13A-LIVE-040 rejects conflicting delivery identity and detects durable-l
     await assert.rejects(() => adapter.read({ deliveryId, receivedAt }),
       (error: unknown) => error instanceof ConnectionEnrollmentNodeDeliveryErrorV1
         && error.safeCode === "integrity_failed");
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-040 rejects forged tags under post-import ambient mutation without calling replacements", async () => {
+  const { raw, db, keys, spki, adapter } = await fixture();
+  try {
+    await adapter.deliver(JSON.stringify(deliveryFrame(keys.privateKey, spki)), deliveryOptions());
+    const wrongKey = new DatabaseConnectionEnrollmentNodeDeliveryAdapterV1(db,
+      new Uint8Array(32).fill(99), new FixedWindowProtocolRateLimiter(100, 60));
+    await assert.rejects(() => wrongKey.read({ deliveryId, receivedAt }),
+      (error: unknown) => error instanceof ConnectionEnrollmentNodeDeliveryErrorV1
+        && error.safeCode === "integrity_failed");
+
+    const mutationTargets: Array<[object, PropertyKey]> = [
+      [Buffer, "from"], [RegExp.prototype, "exec"], [Date, "parse"], [JSON, "stringify"],
+      [Object, "freeze"], [Object, "getOwnPropertyDescriptor"], [Number, "isSafeInteger"],
+      [Reflect, "apply"], [Array.prototype, "map"], [Set.prototype, "has"],
+    ];
+    for (const [target, key] of mutationTargets) {
+      const descriptor = Object.getOwnPropertyDescriptor(target, key);
+      assert.ok(descriptor && "value" in descriptor);
+      let ambientCalls = 0;
+      let pending: Promise<unknown> | undefined;
+      Object.defineProperty(target, key, { ...descriptor, value: function replacement() {
+        ambientCalls += 1;
+        return undefined;
+      } });
+      try { pending = wrongKey.read({ deliveryId, receivedAt }); }
+      finally { Object.defineProperty(target, key, descriptor); }
+      await assert.rejects(pending, (error: unknown) => error instanceof ConnectionEnrollmentNodeDeliveryErrorV1
+        && error.safeCode === "integrity_failed");
+      assert.equal(ambientCalls, 0, `${String(key)} replacement must never execute`);
+    }
   } finally { await raw.close(); }
 });
 

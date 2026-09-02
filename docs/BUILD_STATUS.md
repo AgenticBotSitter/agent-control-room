@@ -112,7 +112,7 @@
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
-| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Product `6493118f...` rejected; remediation required | Independent review found one High, two Medium, and one Low finding; ambient-mutation integrity, JSON Schema, replay chronology, and delivery-ID contracts must be repaired; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
+| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Verified remediation candidate; new exact freeze and different independent re-review required | The preserved High, two Medium, and Low findings are repaired with frozen host operations, structural schema parity, canonical replay chronology, original receipts, and one delivery-ID contract; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -847,6 +847,14 @@ SHA-256 `e62d0edee24c1a0060ccf5511e842f68f62afc0e9862d716799fe58bbb7162b4`.
 A different independent reviewer rejected that exact product with H-001 ambient-mutation HMAC bypass, M-001 generated
 JSON Schema/runtime drift, M-002 non-canonical duplicate receive chronology, and L-001 inconsistent delivery-ID bounds.
 The negative report is preserved at `docs/reviews/CR13A_LIVE_040_INDEPENDENT_REVIEW.md`; no live effect occurred.
+The remediation candidate captures and verifies every required host operation and rejects post-import mutation before a
+replacement executes; the generated schema now fixes direction, sender, delivery-ID bounds, envelope identity fields,
+and strict attestation while leaving documented digest/equality relations to runtime; the ledger uses the exact replay
+row's original receive time and protected initial disposition so later exact duplicates return the original receipt; and
+one delivery-ID helper spans protocol, adapter, intake, and migration. Focused protocol/intake/delivery tests now pass
+26/26, the connection slice passes 28/28, all 36 migrations still verify 119 PostgreSQL tables, the complete lifecycle
+passes 769/769 pretests plus 419/421 core tests with two intentional platform skips plus 279/279 posttests, and the
+production build renders 4/4 routes. A new immutable product freeze and different independent re-review remain required.
 
 ## Parallel build lane
 

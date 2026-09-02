@@ -2752,3 +2752,20 @@ delivery pruning, multi-primary writes, production PostgreSQL composition, nativ
 or deployment. Any node message schema, identity binding, key validity, replay ordering, ledger chain/tag, source
 capability, nested verification, receipt redaction, runtime default, or negative-authority change invalidates
 CR13A-LIVE-040 review evidence.
+
+**CR13A-LIVE-040 remediation amendment:** The first immutable product was rejected by independent review. The delivery
+adapter now captures every required host operation at module initialization, verifies the complete runtime selection
+boundary and digest/HMAC sentinels at public and post-await seams, and invokes captured regex, chronology, JSON,
+reflection, object-freeze, numeric, buffer, and string operations. Persistent ambient mutation closes with a safe
+integrity error before its replacement executes.
+
+The generated JSON Schema is the structural wire contract: the delivery variant is node-to-server and node-signed, uses
+the shared 3–160 character delivery-ID contract, and requires an object envelope with body identity fields plus a strict
+Ed25519 attestation. Computed digest and cross-field equality remain explicit runtime-only relational checks because
+standard JSON Schema cannot express them. A shared structural rejection corpus must pass both validators.
+
+Every authenticated delivery reads the exact replay row and uses its original durable `received_at`. The ledger protects
+the initial protocol disposition, and every later exact duplicate reconstructs the original safe receipt. A retry after
+protocol commit but before ledger commit therefore uses canonical chronology and creates one recoverable ledger record;
+changed content remains a conflict. The same delivery-ID helper is enforced by protocol runtime, generated schema,
+adapter, protected intake, and migration before replay consumption.

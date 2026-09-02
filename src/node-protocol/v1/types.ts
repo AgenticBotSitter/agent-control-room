@@ -6,6 +6,19 @@ export const NODE_PROTOCOL_SUPPORTED_VERSIONS = [NODE_PROTOCOL_V1] as const;
 export const NODE_PROTOCOL_MAX_FRAME_BYTES = 1_048_576;
 export const NODE_PROTOCOL_MAX_LIFETIME_SECONDS = 300;
 export const NODE_PROTOCOL_MAX_CLOCK_SKEW_SECONDS = 30;
+export const CONNECTION_ENROLLMENT_DELIVERY_ID_MIN_LENGTH = 3;
+export const CONNECTION_ENROLLMENT_DELIVERY_ID_MAX_LENGTH = 160;
+
+const connectionEnrollmentDeliveryIdPatternV1 = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+const connectionEnrollmentDeliveryIdRegExpExecV1 = RegExp.prototype.exec;
+const connectionEnrollmentDeliveryIdReflectApplyV1 = Reflect.apply;
+
+export function isConnectionEnrollmentDeliveryIdV1(value: unknown): value is string {
+  return typeof value === "string" && value.length >= CONNECTION_ENROLLMENT_DELIVERY_ID_MIN_LENGTH
+    && value.length <= CONNECTION_ENROLLMENT_DELIVERY_ID_MAX_LENGTH
+    && connectionEnrollmentDeliveryIdReflectApplyV1(connectionEnrollmentDeliveryIdRegExpExecV1,
+      connectionEnrollmentDeliveryIdPatternV1, [value]) !== null;
+}
 
 export type NodeProtocolVersion = (typeof NODE_PROTOCOL_SUPPORTED_VERSIONS)[number];
 export type ProtocolDirection = "node_to_server" | "server_to_node";

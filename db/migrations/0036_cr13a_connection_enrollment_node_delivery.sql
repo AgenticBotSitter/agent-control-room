@@ -12,13 +12,17 @@ CREATE TABLE control_connection_enrollment_delivery_heads (
 
 CREATE TABLE control_connection_enrollment_protocol_deliveries (
   tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
-  delivery_id text NOT NULL,
+  delivery_id text NOT NULL CHECK (
+    char_length(delivery_id) BETWEEN 3 AND 160
+    AND delivery_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+  ),
   sequence bigint NOT NULL CHECK (sequence BETWEEN 1 AND 10000),
   node_id text NOT NULL,
   connection_id text NOT NULL,
   key_id_digest text NOT NULL CHECK (key_id_digest ~ '^sha256:[a-f0-9]{64}$'),
   protocol_message_digest text NOT NULL CHECK (protocol_message_digest ~ '^sha256:[a-f0-9]{64}$'),
   protocol_frame_digest text NOT NULL CHECK (protocol_frame_digest ~ '^sha256:[a-f0-9]{64}$'),
+  initial_protocol_disposition text NOT NULL CHECK (initial_protocol_disposition IN ('accepted','duplicate')),
   envelope_digest text NOT NULL CHECK (envelope_digest ~ '^sha256:[a-f0-9]{64}$'),
   protected_delivery_digest text NOT NULL CHECK (protected_delivery_digest ~ '^sha256:[a-f0-9]{64}$'),
   payload_digest text NOT NULL CHECK (payload_digest ~ '^sha256:[a-f0-9]{64}$'),
