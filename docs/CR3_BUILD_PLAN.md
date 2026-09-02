@@ -980,8 +980,8 @@ next block changes transport trust or any signed contract; otherwise use Sol hig
 
 ## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
 
-Status: first finding closed; remediation `7c79837cb60e497a7f49a203f20382afe133bd91` independently rejected with one
-inherited Medium error-classification defect. See
+Status: second remediation `bbd3bcbd659ab91461bb52117718a95098c7bb80` frozen; another different independent
+review required. See
 `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
 
 The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
@@ -1017,6 +1017,16 @@ That re-review closes M-001 but rejects the exact target with inherited Medium M
 execute through node-delivery and ingress `instanceof` classification and escape raw before persistence. Rejected report
 SHA-256: `67b8eaeffd6bbcc86eb81d061107beaf464b5dcb0f680317ad3d18cb89c85992`. The next remediation must classify caught
 unknown values behavior-free, preserve only bounded codes, and prove zero persistent writes.
+
+The second remediation removes behavioral rejection classification from the registry, intake, node-delivery, and
+ingress catch boundaries. A shared host-level classifier rejects direct Proxies, requires the exact immediate local
+error prototype, and reads only an own string data descriptor. Every accepted code is reconstructed as a fresh bounded
+local error; any other value becomes bounded failure. Direct-Proxy and unusual-prototype database regressions execute no
+caller behavior and create no delivery, intake, or registry records. The exact frozen target is
+`bbd3bcbd659ab91461bb52117718a95098c7bb80`; its zero-repair packet is
+`docs/reviews/CR13A_LIVE_050_ERROR_CONTAINMENT_REVIEW_PACKET.md`, SHA-256
+`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`. It requires another different independent review
+before integration.
 
 Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
 refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust

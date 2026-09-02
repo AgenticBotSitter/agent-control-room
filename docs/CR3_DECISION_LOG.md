@@ -2839,3 +2839,28 @@ composition. The check intentionally fails closed if another component changes a
 **Reevaluate:** Before changing receipt canonicalization/hash implementation, adding or removing an awaited seam,
 changing any selected host operation, exporting an injectable proof coordinator, or enabling transport admission. Such a
 change invalidates CR13A-LIVE-050 remediation review evidence.
+
+## ADR-154 — Rejected values are data, not executable error identity
+
+**Decision:** Every connection-registry catch boundary treats its caught value as untrusted data. It may preserve a code
+only when Node's host predicate says the value is not a Proxy, its immediate prototype is exactly the captured local
+error prototype, and the code is an own string data property in the boundary's allowlist. The boundary then constructs a
+fresh local error. It never uses `instanceof`, walks an unknown prototype chain, invokes an accessor, logs or serializes
+the caught value, or throws it onward unchanged.
+
+**Why:** JavaScript error identity checks can consult a caller-controlled prototype chain. A rejected promise is not
+guaranteed to contain an `Error`, even when the database object and method are ordinary. Treating the rejection as data
+keeps dependency failure inside the documented safe-code contract and prevents unknown behavior from crossing the
+public ingress boundary.
+
+**Alternatives rejected:** Using `instanceof`; reading `.safeCode` directly; accepting subclasses or inherited codes;
+walking until a known prototype is found; serializing the rejected value for diagnostics; rethrowing an unknown value;
+or widening a dependency's error text into the ingress receipt.
+
+**Trade-off:** Subclassed or cross-realm errors lose their original safe code and become a conservative bounded failure.
+That diagnostic loss is accepted at this trust boundary. Genuine exact local errors retain their established mappings,
+and observability can count the bounded outcome without retaining the rejected object.
+
+**Reevaluate:** Before adding a connection-registry dependency boundary, changing local error prototypes or safe-code
+allowlists, introducing cross-realm workers, or exposing richer error diagnostics. Any change to classification or
+reconstruction invalidates the CR13A-LIVE-050 second-remediation review evidence.

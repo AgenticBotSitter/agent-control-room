@@ -113,7 +113,7 @@
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
-| CR13A-LIVE-050 provider-disabled enrollment ingress | First finding closed; remediation `7c79837...` independently rejected with one inherited Medium error-classification defect | Preserve both negative reports; replace behavioral rejection classification with bounded behavior-free handling and prove zero persistence before another review; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
+| CR13A-LIVE-050 provider-disabled enrollment ingress | Second remediation `bbd3bcb...` frozen; another different independent review required | Both prior negative reports preserved; caught values are classified without running their behavior, only bounded errors cross the ingress boundary, and zero enrollment persistence is proven; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -901,6 +901,18 @@ SHA-256 is `67b8eaeffd6bbcc86eb81d061107beaf464b5dcb0f680317ad3d18cb89c85992`. T
 unknown values through behavior-free host checks, return only bounded errors, and prove zero replay/delivery/intake/
 registry writes.
 
+The second remediation is frozen at `bbd3bcbd659ab91461bb52117718a95098c7bb80`. The registry, intake, node-delivery,
+and ingress catches no longer use `instanceof` or expose an unknown rejected value. A shared host-level classifier rejects
+direct Proxies, requires the exact immediate local error prototype, and reads only an own string data descriptor before
+each boundary reconstructs a bounded local error. Direct-Proxy and unusual-prototype database rejections execute zero
+caller behavior and create no delivery, intake, or registry record. Focused ingress passes 11/11, the connection slice
+passes 39/39, the complete lifecycle passes 769/769 pretests, 419/421 core tests with two intentional skips, and 290/290
+posttests. TypeScript, full lint, all 36 migrations with 119 PostgreSQL tables, production build, 4/4 rendered checks,
+and whitespace validation pass. Its zero-repair review packet is
+`docs/reviews/CR13A_LIVE_050_ERROR_CONTAINMENT_REVIEW_PACKET.md`, SHA-256
+`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`. Another different independent review remains
+required before integration.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -916,11 +928,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-050-REREVIEW — freeze and independently re-review the receipt-integrity remediation
+Block: CR13A-LIVE-050-FINAL-REVIEW — independently review the bounded error-handling remediation
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the coordinator joins two authenticated persistence boundaries and must preserve replay, recovery, key separation, and negative authority.
-Expected output: exact remediation commit, zero-repair closure packet, and a different independent disposition before integration.
+Why: the coordinator joins two authenticated persistence boundaries and the final review must prove rejected values cannot execute behavior or escape raw.
+Expected output: a zero-repair packet bound to `bbd3bcbd659ab91461bb52117718a95098c7bb80` and a different independent disposition before integration.
 Owner action: none during local implementation and independent review.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

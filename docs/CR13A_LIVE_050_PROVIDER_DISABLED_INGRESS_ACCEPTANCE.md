@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** remediation `7c79837cb60e497a7f49a203f20382afe133bd91` independently rejected; second remediation required
+**Status:** second remediation `bbd3bcbd659ab91461bb52117718a95098c7bb80` frozen; another different independent review required
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -51,10 +51,10 @@ authorize a connector, establish signal freshness, qualify a runtime, open a liv
 - Mac stage zero: `ready_for_runtime_check`
 - TypeScript: pass
 - full ESLint: pass
-- `tests/connection-enrollment-node-ingress.test.ts`: 9/9 pass
-- complete connection slice: 37/37 pass
-- complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and 286/286
-  original posttests plus two new remediation cases, 288/288 total
+- `tests/connection-enrollment-node-ingress.test.ts`: 11/11 pass
+- complete connection slice: 39/39 pass
+- complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and 290/290
+  posttests
 - migrations `0001` through `0036`: pass, 119 PostgreSQL tables
 - production build: pass, 4/4 rendered routes
 - exact whitespace gate: pass
@@ -64,6 +64,8 @@ binding, invalid hint before replay, intake failure and later recovery, concurre
 domains, behavioral input/database rejection, disabled default, receipt drift, protected-value absence, and absence of
 an app route/listener/port. Remediation adds a 20-operation post-import replacement matrix and an intake-commit seam
 case; every replacement is detected before it executes, and the definite committed response-loss retry recovers once.
+The second remediation adds direct and unusual-prototype rejected-value cases. Both return a newly constructed bounded
+error without consulting the rejected value's behavior, and both prove zero delivery, intake, or registry persistence.
 
 The exact product is frozen at `b86e60e5f8389029030deaaada890267e5f92f53`. The zero-repair independent review
 packet is `docs/reviews/CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_REVIEW_PACKET.md`, SHA-256
@@ -98,6 +100,29 @@ The different reviewer closed M-001 but rejected the exact remediation because c
 unguarded `instanceof` checks in node-delivery and ingress, executed behavior, and escaped raw. The preserved re-review
 SHA-256 is `67b8eaeffd6bbcc86eb81d061107beaf464b5dcb0f680317ad3d18cb89c85992`; it requires behavior-free error
 classification and zero persistence before another different review.
+
+## M-002 remediation candidate
+
+Caught unknown values are no longer classified with `instanceof` anywhere in the connection-registry store, enrollment
+intake, node-delivery adapter, or ingress coordinator. The shared classifier first rejects a direct Proxy through Node's
+host predicate, requires the exact immediate error prototype, and reads only an own string data descriptor. It does not
+walk a caller-controlled prototype chain or invoke a getter.
+
+Each boundary now constructs a fresh local error from an explicitly allowed code. Any other rejection becomes the
+boundary's bounded integrity or source-unavailable result; the raw rejected value cannot cross the public ingress
+boundary. Genuine local errors retain their documented mapping.
+
+Two database-rejection regressions cover both a direct self-throwing Proxy and an ordinary object whose immediate
+prototype is a behavior-bearing Proxy and whose `safeCode` is an accessor. Each case records zero behavior execution,
+returns a fresh `ConnectionEnrollmentNodeIngressErrorV1("integrity_failed")`, and proves that delivery, intake, and
+registry tables remain empty. The fixture's one preexisting node-enrollment replay row remains unchanged and does not
+grant enrollment authority.
+
+The exact second remediation is frozen at `bbd3bcbd659ab91461bb52117718a95098c7bb80`. It does not alter the wire contract,
+proof ordering, HMAC domains, receipt shape, disabled default, route surface, or effect boundary. Another reviewer,
+different from the producer and both completed prior reviewers, must accept this exact target before integration.
+The zero-repair packet is `docs/reviews/CR13A_LIVE_050_ERROR_CONTAINMENT_REVIEW_PACKET.md`, SHA-256
+`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`.
 
 ## Next boundary
 
