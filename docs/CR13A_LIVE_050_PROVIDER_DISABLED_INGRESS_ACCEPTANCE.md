@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** exact product frozen at `b86e60e5f8389029030deaaada890267e5f92f53`; independent review required
+**Status:** exact product `b86e60e5f8389029030deaaada890267e5f92f53` independently rejected; remediation required
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -66,8 +66,11 @@ an app route/listener/port.
 
 The exact product is frozen at `b86e60e5f8389029030deaaada890267e5f92f53`. The zero-repair independent review
 packet is `docs/reviews/CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_REVIEW_PACKET.md`, SHA-256
-`8836319fe7d396a73d93192db10a0bf97eece09e4d85b463a32470a67063ac8c`. Independent acceptance remains required before
-integration.
+`8836319fe7d396a73d93192db10a0bf97eece09e4d85b463a32470a67063ac8c`. The preserved independent report rejected this
+target because post-import mutation of canonicalization operations could execute and make a drifted final receipt pass
+its digest check. The rejected report SHA-256 is
+`ae40c366c16ac9d72cdc0be6db0393fd02904eef77b07b3e04bd8a07b7c6b255`. Remediation and a different independent
+re-review are required before integration.
 
 ## Next boundary
 

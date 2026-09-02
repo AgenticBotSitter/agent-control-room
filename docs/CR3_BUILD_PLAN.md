@@ -980,7 +980,7 @@ next block changes transport trust or any signed contract; otherwise use Sol hig
 
 ## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
 
-Status: exact product frozen at `b86e60e5f8389029030deaaada890267e5f92f53`; independent review required. See
+Status: exact product `b86e60e5f8389029030deaaada890267e5f92f53` independently rejected; remediation required. See
 `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
 
 The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
@@ -995,6 +995,12 @@ effect is added.
 The zero-repair independent review packet is
 `docs/reviews/CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_REVIEW_PACKET.md`, SHA-256
 `8836319fe7d396a73d93192db10a0bf97eece09e4d85b463a32470a67063ac8c`.
+
+The independent report rejected the exact target with one Medium finding: mutable ambient canonicalization could execute
+after import and make a drifted final receipt pass its original digest. Rejected report SHA-256:
+`ae40c366c16ac9d72cdc0be6db0393fd02904eef77b07b3e04bd8a07b7c6b255`. Preserve that negative evidence. Remediation must
+re-establish the selected runtime after awaited seams and before receipt construction/parsing, then receive a different
+independent re-review.
 
 Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
 refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust
