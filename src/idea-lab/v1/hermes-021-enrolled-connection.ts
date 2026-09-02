@@ -273,6 +273,13 @@ export type IdeaLabHermes021ConnectionEnrollmentContextV1 = z.infer<typeof enrol
 export type IdeaLabHermes021ConnectionSafeResultV1 = z.infer<typeof safeResultSchema>;
 export type IdeaLabHermes021ConnectionRosterV1 = z.infer<typeof rosterSchema>;
 
+/** Exact server-side capture for a protected intake before any routing field is read. */
+export function parseIdeaLabHermes021ConnectionEnrollmentEnvelopeV1(
+  value: unknown,
+): IdeaLabHermes021ConnectionEnrollmentEnvelopeV1 {
+  return parseExactIdeaLabV1(enrollmentEnvelopeSchema, value);
+}
+
 function freezeConnectionSafeResultV1(
   value: IdeaLabHermes021ConnectionSafeResultV1,
 ): IdeaLabHermes021ConnectionSafeResultV1 {

@@ -110,7 +110,8 @@
 | CR12B-IDEA-110 owner-attended Hermes 0.21 native qualification | Blocked pending accepted platform connector, trusted signer, one real signed enrollment, preflight, refreshed packet, and new exact owner authorization | No attached-Terminal command is eligible yet; one future attempt remains bounded to one call, 300 seconds, zero tools/MCP/plugins, sanitized candidate, cleanup, and no retry |
 | CR13A-LIVE-000 authenticated resumable project activity | Accepted implementation candidate at `fcc2f10881aaf7a094db76e01a898b0e04fba083`; verified restack on connector integration | Third different independent review closed all four blocking defects; canonical UTC and historical source time, append-only chain, bounded authenticated SSE, protected Activity UI, startup reconciliation, crash/interleaving recovery, and 16 focused tests; combined restack passes the complete Node 22.13 lifecycle; no deployment or production authority; see `CR13A_LIVE_000_ACCEPTANCE.md` |
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
-| CR13A-LIVE-020 durable connection registry and signal freshness | Accepted implementation candidate at `ed5bb96d2a80c6fa98bf68d2a118ed2501a22384`; integration pending | Different independent reviews closed every security finding and confirmed the final evidence-only repair. Both negative reports and accepted confirmation remain preserved; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
+| CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
+| CR13A-LIVE-030 protected enrollment intake | Independently accepted immutable product `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; owner-approved integration pending | Different reviewer found no High, Medium, or Low defects after reproducing focused verification; active-key Ed25519 validation, atomic registry/audit, exact replay, tamper/rollback/concurrency handling, disabled source, no web write path, and GitHub CI run `33573535167`; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -812,6 +813,22 @@ Remediation verification passes 15/15 focused, 31/31 combined
 CR13A, 769/769 pretests, 418/420 core tests with two intentional platform skips, 266/266 posttests, TypeScript, full lint,
 Mac stage zero, production build, whitespace validation, and 4/4 rendered routes.
 
+PR #231 passed ordinary Node `22.13.0` GitHub CI run `33570606104` and merged the exact accepted CR13A-LIVE-020 product
+to `main` as `ad0e3aee3f28516430bf256204b808496d37b6bc`. CR13A-LIVE-030 is now the active build block. Migration 0035 and
+the protected server-only intake compose the existing signed Hermes enrollment verifier with the durable registry in one
+transaction. The service locks the tenant, verifies the complete audit chain, resolves the current active database node
+key, independently verifies the envelope signature, and then atomically commits the registry revision plus safe audit
+receipt. Exact replay is inert; conflicting replay, key/scope/chronology failure, behavioral input, damaged evidence, and
+partial-write failure close safely. The local runtime source is explicitly disabled and the app exposes no enrollment
+write path. No live connector, SSH, Hermes, provider, credential, production database, deployment, or network effect is
+part of this candidate.
+The exact product is frozen at `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; its independent report-only packet has
+SHA-256 `99591d10028b180d5165525907925d84c3b7330ad92db04687c4d8a52ab01e96`.
+A fresh different reviewer accepted that immutable product with no High, Medium, or Low findings. Ordinary GitHub CI run
+`33573535167` passed in 9m41s. Accepted report SHA-256 is
+`ed4cae0f07ab41cf82dd5458901b2a0dc240272a3e910df79ba108731015fa46`. PR #232 remains pending owner-approved
+integration.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -827,12 +844,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-020-INTEGRATION — integrate the accepted durable connection registry
+Block: CR13A-LIVE-030-INTEGRATION — integrate independently accepted protected enrollment intake
 Set model: gpt-5.6-sol
 Set reasoning effort: high
-Why: the security and evidence gates are accepted; ordered integration must preserve the exact reviewed product target and reports.
-Expected output: pass ordinary GitHub CI on the final branch, obtain owner merge approval for PR #231, merge without changing the accepted product tree, verify post-merge main, then begin CR13A-LIVE-030 protected enrollment intake.
-Owner action: approve merging PR #231 after Codex reports the final CI result.
+Why: the exact product and independent review are accepted; integration must preserve those bytes and the immutable report.
+Expected output: pass CI after the report-only evidence commit, obtain owner approval, merge PR #232 without product drift, verify post-merge main, then begin CR13A-LIVE-040.
+Owner action: approve merging PR #232 after Codex reports the final evidence-commit CI result.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

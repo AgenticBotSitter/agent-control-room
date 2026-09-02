@@ -922,3 +922,26 @@ the reports remained intact, the exact whitespace gate passed, and focused behav
 Next after independent acceptance and integration: CR13A-LIVE-030 should add the protected server-side enrollment intake
 composition that connects the existing signed enrollment verifier to this registry, with exact replay and audit evidence,
 while retaining all native/provider effects as separately gated work. Use Sol high for that security/integration boundary.
+
+## CR13A-LIVE-030 — protected server-side enrollment intake
+
+Status: independently accepted immutable product `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; complete lifecycle verification is
+recorded and owner-approved integration remains pending. The different reviewer reported no High, Medium, or Low
+findings. See
+`CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` and ADR-150.
+
+Migration 0035 and `ConnectionEnrollmentIntakeServiceV1` connect the accepted signed Hermes 0.21 enrollment verifier to
+the durable connection registry. A server-held source supplies a bounded delivery, but its label grants no trust. Inside
+one tenant-locked transaction, Control Room verifies the complete intake audit stream, resolves the current active node
+key from PostgreSQL, verifies the exact enrollment signature and scope, writes the registry revision, and appends the
+authenticated audit receipt. Registry and audit either commit together or both roll back. Exact replay returns the
+original verified receipt; delivery/enrollment drift fails closed.
+
+The safe receipt exposes only opaque digests, a derived intake reference, registry revision, chronology, and negative
+authority. Raw tenant, node, connection, enrollment, key, route, profile, host-key, public-key, and signature data remains
+server-side. The local pilot uses a disabled source and no HTTP or browser enrollment mutation exists. This block performs
+no native launch, SSH connection, Hermes/provider call, credential access, production database contact, or deployment.
+
+Next after independent acceptance and integration: CR13A-LIVE-040 may add the authenticated node-protocol delivery
+adapter behind the protected source and keep it disabled by default. Use Sol high for review/integration; use Sol xhigh
+if LIVE-040 changes signed node-protocol schemas or the live ingress trust boundary.

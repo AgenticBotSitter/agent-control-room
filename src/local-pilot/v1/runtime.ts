@@ -16,7 +16,8 @@ import {
 } from "../../idea-lab/v1";
 import { AuthenticatedFleetTelemetryFreshnessSourceV1,
   type ConnectionCenterFreshnessSourceV1, type ConnectionCenterRosterSourceV1 } from "../../connection-center/v1";
-import { ConnectionRegistryStoreV1 } from "../../connection-registry/v1";
+import { ConnectionEnrollmentIntakeServiceV1, ConnectionRegistryStoreV1,
+  DisabledConnectionEnrollmentDeliverySourceV1 } from "../../connection-registry/v1";
 import {
   buildProjectWorkspaceVerifiedOwnerSessionV1,
   buildProtectedProjectCatalogHighWaterV1,
@@ -233,6 +234,7 @@ export interface ControlRoomLocalPilotRuntimeV1{
   readSource:ProjectWorkspaceOperatorReadSourceV1;projectEventSource:ProjectEventReadSourceV1;
   connectionRosterSource:ConnectionCenterRosterSourceV1;
   connectionFreshnessSource:ConnectionCenterFreshnessSourceV1;
+  connectionEnrollmentIntakeService:Pick<ConnectionEnrollmentIntakeServiceV1,"ingest">;
   syncCatalog(now?:string):Promise<void>;close():Promise<void>;
 }
 
@@ -242,7 +244,7 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
   await prepareDataDir(config);const packageName=["@electric-sql","pglite"].join("/");const{PGlite}=await import(/* @vite-ignore */packageName)as{PGlite:typeof PGliteType};
   const raw=new PGlite(resolve(config.dataDir,"pglite"));try{await migrate(raw,config.repositoryRoot);const db=adaptPglite(raw),clock=config.clock??(()=>new Date().toISOString());
   const subject=`owner:${sha256Digest({master:Array.from(config.masterKey),purpose:"local-pilot-subject"}).slice(7,31)}`;await seed(db,subject,clock());
-  const integrityKey=derive(config.masterKey,"idea-integrity"),sessionKey=derive(config.masterKey,"owner-session"),catalogKey=derive(config.masterKey,"project-catalog"),highWaterKey=derive(config.masterKey,"catalog-high-water"),projectEventKey=derive(config.masterKey,"project-events"),connectionRegistryKey=derive(config.masterKey,"connection-registry"),connectionFreshnessKey=derive(config.masterKey,"connection-freshness");
+  const integrityKey=derive(config.masterKey,"idea-integrity"),sessionKey=derive(config.masterKey,"owner-session"),catalogKey=derive(config.masterKey,"project-catalog"),highWaterKey=derive(config.masterKey,"catalog-high-water"),projectEventKey=derive(config.masterKey,"project-events"),connectionRegistryKey=derive(config.masterKey,"connection-registry"),connectionFreshnessKey=derive(config.masterKey,"connection-freshness"),connectionEnrollmentAuditKey=derive(config.masterKey,"connection-enrollment-audit");
   const registry=new IdeaLabProjectRegistryStoreV1(db,integrityKey),catalog=new LocalPilotCatalogStoreV1(db,catalogKey,highWaterKey,registry),ownerSession=new LocalPilotOwnerSessionServiceV1(db,sessionKey,config.ownerCodeDigest,config.origin,subject,clock),fixture=buildIdeaLabFixtureV1();
   const projectEventSource=new ProjectEventStoreV1(db,projectEventKey,clock),projectEventReconciler=new IdeaLabProjectEventReconcilerV1(registry,projectEventSource);
   const operatorService=new IdeaLabProtectedOperatorServiceV1(db,integrityKey,{workspaceId:LOCAL_PILOT_WORKSPACE_ID_V1,
@@ -258,8 +260,11 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
     {catalogId:CATALOG_ID,tenantId:LOCAL_PILOT_TENANT_ID_V1,sourceIdentityDigest:catalog.sourceIdentityDigest},catalogKey,highWaterKey);
   const connectionRosterSource:ConnectionCenterRosterSourceV1=new ConnectionRegistryStoreV1(db,connectionRegistryKey);
   const connectionFreshnessSource:ConnectionCenterFreshnessSourceV1=new AuthenticatedFleetTelemetryFreshnessSourceV1(db,connectionFreshnessKey);
+  const connectionEnrollmentIntakeService=new ConnectionEnrollmentIntakeServiceV1(db,connectionRegistryKey,
+    connectionEnrollmentAuditKey,new DisabledConnectionEnrollmentDeliverySourceV1());
   await catalog.sync(clock());await projectEventReconciler.reconcileAll(LOCAL_PILOT_TENANT_ID_V1);return Object.freeze({mode:LOCAL_PILOT_MODE_V1,ownerSession,operatorService,ownerDecisionService,lifecycleService,
     scopeAuthority:new ProjectWorkspaceOwnerReadScopeAuthorityV1({verify:(credential,now)=>ownerSession.verifyProjectWorkspace(credential,now)},catalogAuthority,new SecurityStore(db)),
     readSource:new LocalPilotProjectReadSourceV1(registry),projectEventSource,connectionRosterSource,connectionFreshnessSource,
+    connectionEnrollmentIntakeService,
     syncCatalog:(now=clock())=>catalog.sync(now),close:()=>raw.close()});}
   catch(error){await raw.close().catch(()=>undefined);throw error;}}
