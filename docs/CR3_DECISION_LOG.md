@@ -2776,3 +2776,35 @@ concurrent replay/recovery, wrong-key/tag, and 28-operation post-import mutation
 Low finding. Accepted report SHA-256 is `217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`.
 This permits owner-controlled integration review only and does not enable any listener, connector, credential,
 native/provider, production-database, deployment, or network effect.
+
+## ADR-152 — Enrollment ingress composes two independent proofs and trusts no routing label
+
+**Decision:** A server-only coordinator may receive one raw signed node frame plus a transport-derived delivery-ID routing
+hint, receive time, and transport identity. It must first persist/authenticate the exact frame through the accepted
+LIVE-040 adapter, then re-read the protected delivery at the canonical replay time and prove its evidence digest equals
+the authenticated receipt before invoking the accepted LIVE-030 intake. Intake still resolves the active database key
+and verifies the nested enrollment signature independently.
+
+The database composition uses separate 32-byte HMAC keys for delivery evidence, connection-registry evidence, and intake
+audit evidence. Exact later and concurrent retries return one stable combined digest-only receipt. The local runtime
+contains only a disabled ingress port, and no application route or listener is exported.
+
+**Why:** Calling delivery and intake separately would leave the caller responsible for joining a raw frame to a protected
+delivery ID. A buggy or hostile transport could point intake at a different pending delivery. Re-reading and digest-binding
+the protected record before intake keeps correlation inside the server trust boundary without collapsing outer and inner
+signatures or exposing protected identifiers in the result.
+
+**Alternatives rejected:** Trusting the routing hint; parsing an unauthenticated body to choose intake; returning the raw
+delivery ID; letting a transport call intake directly; reusing one HMAC key for multiple ledgers; treating node-protocol
+authentication as enrollment approval; adding an HTTP/browser write route; opening a listener; composing a live
+connector; or attaching production PostgreSQL in this block.
+
+**Trade-off:** The coordinator re-reads the authenticated delivery before intake, and intake reads it again inside its
+own verification flow. Enrollment is rare, so the extra protected database work is accepted in exchange for explicit
+evidence binding and independent verification. A delivery can persist when inner enrollment is rejected; this is honest
+negative evidence and an exact retry does not create a second delivery.
+
+**Reevaluate:** Before adding a transport listener, acknowledgement, connector dispatch, public mutation surface,
+delivery retention/pruning, key rotation intake, production database composition, native qualification, live-panel
+admission, or deployment. Any correlation rule, receipt field, failure mapping, HMAC domain, runtime default, outer/inner
+verification ordering, or negative-authority change invalidates CR13A-LIVE-050 review evidence.

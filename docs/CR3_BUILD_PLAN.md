@@ -949,7 +949,8 @@ if LIVE-040 changes signed node-protocol schemas or the live ingress trust bound
 ## CR13A-LIVE-040 — authenticated node-protocol enrollment delivery
 
 Status: independently accepted remediation `67c16c5c11d06d3752b434fd8e3641c1c1482e8b` after immutable product
-`6493118f2b7272308d3c508b963f3ddd52cc9863` was rejected; owner-approved integration remains. See
+`6493118f2b7272308d3c508b963f3ddd52cc9863` was rejected; integrated through owner-approved PR #233 as
+`34379984d3c4793f2c2d464ffb3545ab98717ba5`. See
 `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md`,
 `docs/reviews/CR13A_LIVE_040_INDEPENDENT_REVIEW.md`, and ADR-151.
 
@@ -976,3 +977,21 @@ not a live effect.
 Next after independent acceptance and owner-approved integration: CR13A-LIVE-050 may compose a provider-disabled server
 ingress boundary or prepare one bounded enrolled-connector rehearsal without enabling a live effect. Use Sol xhigh if the
 next block changes transport trust or any signed contract; otherwise use Sol high for review/integration.
+
+## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
+
+Status: verified implementation candidate; exact freeze and independent review required. See
+`CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
+
+The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
+binding, and independent enrollment intake into one byte-stable safe receipt. The database composition requires separate
+delivery, registry, and intake-audit HMAC keys. Outer transport authentication still cannot replace inner enrollment
+authorization, and no transport-provided label can select a different pending delivery.
+
+The repository-fake local runtime holds only a disabled ingress port. No application route, listener, connector,
+SSH/Hermes/native action, credential access, provider call, production PostgreSQL/VPS contact, deployment, or network
+effect is added.
+
+Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
+refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust
+boundary; use Sol high for a packet-only refresh under frozen contracts.

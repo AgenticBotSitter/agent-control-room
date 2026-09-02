@@ -112,7 +112,8 @@
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
-| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted remediation `67c16c5...`; ready for owner-approved integration | A fresh different reviewer closed the preserved High, two Medium, and Low findings with no new findings; report SHA `217dd95...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
+| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
+| CR13A-LIVE-050 provider-disabled enrollment ingress | Verified implementation candidate; exact freeze and independent review required | Server-only delivery-to-intake composition, protected routing-hint binding, three separate HMAC domains, stable safe receipt, disabled runtime default, complete lifecycle pass; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -860,7 +861,20 @@ producer and the first CR13A-LIVE-040 reviewer, reproduced every required gate a
 PGlite ledger, concurrent replay/recovery, wrong-key/tag, and 28-operation post-import mutation probes. All four findings
 are closed with no new High, Medium, or Low finding. The accepted report SHA-256 is
 `217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`. The branch is ready for publication and
-owner-approved integration; no live effect is authorized.
+owner-approved integration; no live effect is authorized. PR #233 CI run `33590140698` passed in 8m36s and the owner
+approved merge `34379984d3c4793f2c2d464ffb3545ab98717ba5` into `main`.
+
+CR13A-LIVE-050 is now the active implementation block. The server-only coordinator authenticates and durably stores one
+node enrollment-delivery frame, re-reads the exact protected evidence at canonical replay time, proves the untrusted
+routing hint selects that evidence, and only then invokes the independently authenticated enrollment intake. Three
+distinct HMAC key domains protect delivery, registry, and intake audit evidence. Exact later and concurrent retries
+return one stable digest-only receipt; definite intake failure can recover without duplicating delivery or registry
+state. Forged outer signatures, invalid inner signatures, mismatched routing, duplicate keys, behavioral input, and
+receipt drift fail closed. The local runtime holds only a disabled ingress port, and the app exposes no listener, route,
+or mutation. Stage zero, TypeScript, full lint, 7/7 focused tests, 35/35 connection tests, the complete 769/769 pretest
+plus 419/421 core with two intentional platform skips plus 286/286 posttest lifecycle, all 36 migrations with 119
+PostgreSQL tables, the production build, 4/4 rendered routes, and whitespace validation pass. Exact freeze and
+independent review remain required.
 
 ## Parallel build lane
 
@@ -877,12 +891,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-040-INTEGRATION — publish and integrate the accepted authenticated node-protocol delivery
+Block: CR13A-LIVE-050-VERIFY — verify and independently review the provider-disabled enrollment ingress
 Set model: gpt-5.6-sol
-Set reasoning effort: high
-Why: the security-sensitive product is already frozen and independently accepted; this step is controlled publication, CI, and integration review.
-Expected output: push the reviewed branch, open the pull request, verify ordinary GitHub CI, and merge only after owner approval.
-Owner action: approve the pull-request merge after the branch and CI evidence are presented.
+Set reasoning effort: xhigh
+Why: the coordinator joins two authenticated persistence boundaries and must preserve replay, recovery, key separation, and negative authority.
+Expected output: complete repository verification, freeze the exact product, publish a zero-repair packet, and obtain a different independent disposition before integration.
+Owner action: none during local implementation and independent review.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

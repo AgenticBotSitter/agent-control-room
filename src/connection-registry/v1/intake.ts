@@ -211,7 +211,9 @@ ConnectionEnrollmentProtectedDeliveryV1 {
     deliveryEvidenceDigest: sha256Digest(deliveryMaterial(material)) });
 }
 
-function captureDelivery(value: unknown, expectedDeliveryId: string, expectedReceivedAt: string): CapturedDeliveryV1 {
+/** Strictly validates one protected server-held delivery without trusting its source object. */
+export function parseConnectionEnrollmentProtectedDeliveryV1(value: unknown, expectedDeliveryId: string,
+  expectedReceivedAt: string): ConnectionEnrollmentProtectedDeliveryV1 {
   const captured = exactHostDataSnapshotV1(value, ["contractVersion", "deliveryId", "deliveryBasis", "tenantId",
     "nodeId", "connectionId", "keyId", "authenticatedAt", "envelopeDigest", "envelope", "grantsApproval",
     "grantsNetworkAuthority", "grantsCommandAuthority", "grantsLeaseAuthority", "grantsExecutionAuthority",
@@ -443,7 +445,7 @@ export class ConnectionEnrollmentIntakeServiceV1 {
     let deliveryValue: unknown;
     try { deliveryValue = await this.#readDelivery({ deliveryId: input.deliveryId, receivedAt: input.receivedAt }); }
     catch { throw new ConnectionEnrollmentIntakeErrorV1("source_unavailable"); }
-    const delivery = captureDelivery(deliveryValue, input.deliveryId, input.receivedAt);
+    const delivery = parseConnectionEnrollmentProtectedDeliveryV1(deliveryValue, input.deliveryId, input.receivedAt);
     try {
       return await this.#transaction(async (tx) => {
         const tenantRows = await safeQuery(tx, `SELECT id AS tenant_id FROM tenants WHERE id=$1 FOR UPDATE`,

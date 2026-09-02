@@ -1,7 +1,7 @@
 # CR13A-LIVE-040 authenticated node-protocol enrollment delivery acceptance
 
-**Status:** independently accepted remediation `67c16c5c11d06d3752b434fd8e3641c1c1482e8b`; ready for owner-approved
-integration
+**Status:** independently accepted remediation `67c16c5c11d06d3752b434fd8e3641c1c1482e8b`; integrated through owner-approved
+PR #233 as `34379984d3c4793f2c2d464ffb3545ab98717ba5`
 **Effect boundary:** repository code, generated JSON Schema, PostgreSQL-compatible migration, and PGlite tests only; no
 listener, HTTP mutation, live connector, SSH, Hermes/provider call, credential access, production database, or deployment
 
@@ -103,8 +103,11 @@ remains. The accepted report is `docs/reviews/CR13A_LIVE_040_REMEDIATION_REVIEW.
 
 ## Required review and next boundary
 
-The accepted product may be published for owner-approved integration. Passing review does not by itself authorize a
-listener, enrollment, connector, native/provider action, production database, deployment, or live use.
+The accepted product was published and integrated after owner approval. Passing review and integration do not authorize
+a listener, enrollment attempt, connector, native/provider action, production database, deployment, or live use.
+
+PR #233 CI run `33590140698` passed in 8m36s before the owner-approved merge. Integration changed no product semantics
+and grants no live-effect authority.
 
 After accepted review and owner-approved integration, CR13A-LIVE-050 may add a provider-disabled server ingress
 composition or a bounded enrolled-connector rehearsal packet. Any actual listener, machine connection, SSH/Hermes/native
