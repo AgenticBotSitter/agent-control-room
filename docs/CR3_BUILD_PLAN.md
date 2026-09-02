@@ -948,9 +948,9 @@ if LIVE-040 changes signed node-protocol schemas or the live ingress trust bound
 
 ## CR13A-LIVE-040 — authenticated node-protocol enrollment delivery
 
-Status: immutable product `6493118f2b7272308d3c508b963f3ddd52cc9863`; complete verification passes and different
-independent security/integrity review is required. See `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` and
-ADR-151.
+Status: immutable product `6493118f2b7272308d3c508b963f3ddd52cc9863` rejected by independent review; remediation and a
+different independent re-review are required. See `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md`,
+`docs/reviews/CR13A_LIVE_040_INDEPENDENT_REVIEW.md`, and ADR-151.
 
 The `connection.enrollment.deliver` node-to-server message binds one opaque enrollment envelope to the authenticated
 tenant, node, active key, connection, sequence, nonce, lifetime, delivery ID, contract, and envelope digest. Migration

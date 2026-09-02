@@ -1,6 +1,7 @@
 # CR13A-LIVE-040 authenticated node-protocol enrollment delivery acceptance
 
-**Status:** immutable product `6493118f2b7272308d3c508b963f3ddd52cc9863`; independent security/integrity review required
+**Status:** immutable product `6493118f2b7272308d3c508b963f3ddd52cc9863` rejected; remediation and different independent
+re-review required
 **Effect boundary:** repository code, generated JSON Schema, PostgreSQL-compatible migration, and PGlite tests only; no
 listener, HTTP mutation, live connector, SSH, Hermes/provider call, credential access, production database, or deployment
 
@@ -66,6 +67,11 @@ focused protocol/intake/delivery tests, 42/42 combined CR13A tests, the complete
 two intentional platform skips plus 277/277 posttest lifecycle, production build, 4/4 rendered routes, all 36 migrations
 with 119 PostgreSQL tables, and `git diff --check` pass. The zero-repair independent review packet has SHA-256
 `e62d0edee24c1a0060ccf5511e842f68f62afc0e9862d716799fe58bbb7162b4`.
+
+The independent report rejected that target with one High, two Medium, and one Low finding: post-import ambient mutation
+could bypass ledger HMAC checks; the generated JSON Schema was weaker than runtime validation; exact replay did not use
+the original durable receive time; and the delivery-ID bounds disagreed across protocol and intake. The negative evidence
+is preserved in `docs/reviews/CR13A_LIVE_040_INDEPENDENT_REVIEW.md` and cannot authorize integration.
 
 ## Required review and next boundary
 
