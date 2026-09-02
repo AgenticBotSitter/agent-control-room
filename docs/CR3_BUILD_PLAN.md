@@ -980,7 +980,7 @@ next block changes transport trust or any signed contract; otherwise use Sol hig
 
 ## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
 
-Status: verified implementation candidate; exact freeze and independent review required. See
+Status: exact product frozen at `b86e60e5f8389029030deaaada890267e5f92f53`; independent review required. See
 `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
 
 The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
@@ -991,6 +991,10 @@ authorization, and no transport-provided label can select a different pending de
 The repository-fake local runtime holds only a disabled ingress port. No application route, listener, connector,
 SSH/Hermes/native action, credential access, provider call, production PostgreSQL/VPS contact, deployment, or network
 effect is added.
+
+The zero-repair independent review packet is
+`docs/reviews/CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_REVIEW_PACKET.md`, SHA-256
+`8836319fe7d396a73d93192db10a0bf97eece09e4d85b463a32470a67063ac8c`.
 
 Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
 refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust

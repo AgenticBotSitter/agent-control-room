@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** verified implementation candidate; exact freeze and independent review required
+**Status:** exact product frozen at `b86e60e5f8389029030deaaada890267e5f92f53`; independent review required
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -64,7 +64,10 @@ binding, invalid hint before replay, intake failure and later recovery, concurre
 domains, behavioral input/database rejection, disabled default, receipt drift, protected-value absence, and absence of
 an app route/listener/port.
 
-An exact product freeze and independent zero-repair review remain required before integration.
+The exact product is frozen at `b86e60e5f8389029030deaaada890267e5f92f53`. The zero-repair independent review
+packet is `docs/reviews/CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_REVIEW_PACKET.md`, SHA-256
+`8836319fe7d396a73d93192db10a0bf97eece09e4d85b463a32470a67063ac8c`. Independent acceptance remains required before
+integration.
 
 ## Next boundary
 
