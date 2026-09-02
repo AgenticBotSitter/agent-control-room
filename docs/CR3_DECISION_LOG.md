@@ -2769,3 +2769,10 @@ the initial protocol disposition, and every later exact duplicate reconstructs t
 protocol commit but before ledger commit therefore uses canonical chronology and creates one recoverable ledger record;
 changed content remains a conflict. The same delivery-ID helper is enforced by protocol runtime, generated schema,
 adapter, protected intake, and migration before replay consumption.
+
+A fresh independent reviewer reproduced the deterministic gate and added separate signed-frame, PGlite ledger,
+concurrent replay/recovery, wrong-key/tag, and 28-operation post-import mutation probes against immutable remediation
+`67c16c5c11d06d3752b434fd8e3641c1c1482e8b`. H-001, M-001, M-002, and L-001 are closed with no new High, Medium, or
+Low finding. Accepted report SHA-256 is `217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`.
+This permits owner-controlled integration review only and does not enable any listener, connector, credential,
+native/provider, production-database, deployment, or network effect.

@@ -1,7 +1,7 @@
 # CR13A-LIVE-040 authenticated node-protocol enrollment delivery acceptance
 
-**Status:** verified remediation frozen at `67c16c5c11d06d3752b434fd8e3641c1c1482e8b`; different independent re-review
-required
+**Status:** independently accepted remediation `67c16c5c11d06d3752b434fd8e3641c1c1482e8b`; ready for owner-approved
+integration
 **Effect boundary:** repository code, generated JSON Schema, PostgreSQL-compatible migration, and PGlite tests only; no
 listener, HTTP mutation, live connector, SSH, Hermes/provider call, credential access, production database, or deployment
 
@@ -95,12 +95,16 @@ posttest lifecycle, the production build, 4/4 rendered routes, and `git diff --c
 packet has SHA-256 `f3c9b605b3646d2f518000f144163d09973fa9174dc9488d1ddc29e84aa96733`. No listener, network,
 credential, provider, native, production-database, or deployment effect ran.
 
+A fresh reviewer, different from both the producer and the reviewer who rejected the first target, reproduced every
+required gate and ran independent signed-frame, PGlite ledger, concurrency, recovery, wrong-key, changed-tag, and
+28-operation post-import mutation probes. All four original findings are closed and no new High, Medium, or Low finding
+remains. The accepted report is `docs/reviews/CR13A_LIVE_040_REMEDIATION_REVIEW.md` with SHA-256
+`217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`.
+
 ## Required review and next boundary
 
-A different independent reviewer must verify the exact frozen remediation and publish a report without repairs. Review must
-trace schema generation, outer and inner signature independence, database key/node state, replay and recovery ordering,
-tenant serialization, ledger integrity, safe error/output behavior, and the disabled runtime boundary. Passing producer
-tests alone cannot authorize integration or live use.
+The accepted product may be published for owner-approved integration. Passing review does not by itself authorize a
+listener, enrollment, connector, native/provider action, production database, deployment, or live use.
 
 After accepted review and owner-approved integration, CR13A-LIVE-050 may add a provider-disabled server ingress
 composition or a bounded enrolled-connector rehearsal packet. Any actual listener, machine connection, SSH/Hermes/native

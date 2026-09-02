@@ -112,7 +112,7 @@
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
-| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Verified remediation frozen at `67c16c5...`; different independent re-review required | The preserved High, two Medium, and Low findings are repaired with frozen host operations, structural schema parity, canonical replay chronology, original receipts, and one delivery-ID contract; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
+| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted remediation `67c16c5...`; ready for owner-approved integration | A fresh different reviewer closed the preserved High, two Medium, and Low findings with no new findings; report SHA `217dd95...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -855,8 +855,12 @@ one delivery-ID helper spans protocol, adapter, intake, and migration. Focused p
 26/26, the connection slice passes 28/28, all 36 migrations still verify 119 PostgreSQL tables, the complete lifecycle
 passes 769/769 pretests plus 419/421 core tests with two intentional platform skips plus 279/279 posttests, and the
 production build renders 4/4 routes. The zero-repair remediation packet SHA-256 is
-`f3c9b605b3646d2f518000f144163d09973fa9174dc9488d1ddc29e84aa96733`; a different independent re-review remains
-required.
+`f3c9b605b3646d2f518000f144163d09973fa9174dc9488d1ddc29e84aa96733`. A fresh reviewer, different from both the
+producer and the first CR13A-LIVE-040 reviewer, reproduced every required gate and added independent signed-frame,
+PGlite ledger, concurrent replay/recovery, wrong-key/tag, and 28-operation post-import mutation probes. All four findings
+are closed with no new High, Medium, or Low finding. The accepted report SHA-256 is
+`217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`. The branch is ready for publication and
+owner-approved integration; no live effect is authorized.
 
 ## Parallel build lane
 
@@ -873,12 +877,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-040-REVIEW — independently re-review the frozen authenticated node-protocol enrollment remediation
+Block: CR13A-LIVE-040-INTEGRATION — publish and integrate the accepted authenticated node-protocol delivery
 Set model: gpt-5.6-sol
-Set reasoning effort: xhigh
-Why: LIVE-040 changes the signed node-protocol schema and the protected ingress trust boundary.
-Expected output: obtain a different independent security/integrity disposition against exact product `67c16c5...`, preserve its report, and request integration only if accepted.
-Owner action: none during repository implementation and review.
+Set reasoning effort: high
+Why: the security-sensitive product is already frozen and independently accepted; this step is controlled publication, CI, and integration review.
+Expected output: push the reviewed branch, open the pull request, verify ordinary GitHub CI, and merge only after owner approval.
+Owner action: approve the pull-request merge after the branch and CI evidence are presented.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

@@ -948,8 +948,8 @@ if LIVE-040 changes signed node-protocol schemas or the live ingress trust bound
 
 ## CR13A-LIVE-040 — authenticated node-protocol enrollment delivery
 
-Status: verified remediation frozen at `67c16c5c11d06d3752b434fd8e3641c1c1482e8b` after immutable product
-`6493118f2b7272308d3c508b963f3ddd52cc9863` was rejected; a different independent re-review is required. See
+Status: independently accepted remediation `67c16c5c11d06d3752b434fd8e3641c1c1482e8b` after immutable product
+`6493118f2b7272308d3c508b963f3ddd52cc9863` was rejected; owner-approved integration remains. See
 `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md`,
 `docs/reviews/CR13A_LIVE_040_INDEPENDENT_REVIEW.md`, and ADR-151.
 
@@ -968,8 +968,10 @@ The frozen remediation verifies host-operation selection, gives the generated sc
 boundary plus runtime-only relational checks, preserves replay's original receive time and original safe receipt, and
 enforces one delivery-ID contract before replay and through protected intake and storage. The first negative review stays
 durable and cannot authorize integration. The zero-repair remediation packet has SHA-256
-`f3c9b605b3646d2f518000f144163d09973fa9174dc9488d1ddc29e84aa96733`; a different reviewer must assess the new exact
-product with zero repairs.
+`f3c9b605b3646d2f518000f144163d09973fa9174dc9488d1ddc29e84aa96733`. A fresh different reviewer independently
+closed all four findings with no new High, Medium, or Low finding; accepted report SHA-256 is
+`217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`. The report authorizes integration review only,
+not a live effect.
 
 Next after independent acceptance and owner-approved integration: CR13A-LIVE-050 may compose a provider-disabled server
 ingress boundary or prepare one bounded enrolled-connector rehearsal without enabling a live effect. Use Sol xhigh if the
