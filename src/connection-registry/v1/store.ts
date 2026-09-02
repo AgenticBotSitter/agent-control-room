@@ -7,7 +7,7 @@ import {
 } from "../../idea-lab/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
-import { dataMethodV1, exactHostDataArrayV1, exactHostDataSnapshotV1,
+import { dataMethodV1, exactHostDataArrayV1, exactHostDataSnapshotV1, exactHostErrorCodeV1,
   exactHostUint8ArrayV1, isHostProxyV1, ownDataPropertyValueV1 } from "../../security/host-value";
 
 interface RegistryHeadRowV1 {
@@ -89,6 +89,14 @@ export class ConnectionRegistryErrorV1 extends Error {
     "capacity_exceeded" | "integrity_failed" | "source_unavailable") {
     super(safeCode); this.name = "ConnectionRegistryErrorV1";
   }
+}
+const connectionRegistryErrorPrototypeV1 = ConnectionRegistryErrorV1.prototype;
+
+function capturedRegistryErrorCodeV1(value: unknown): ConnectionRegistryErrorV1["safeCode"] | undefined {
+  const code = exactHostErrorCodeV1(value, connectionRegistryErrorPrototypeV1, "safeCode");
+  return code === "invalid_input" || code === "scope_mismatch" || code === "replay_conflict"
+    || code === "capacity_exceeded" || code === "integrity_failed" || code === "source_unavailable"
+    ? code : undefined;
 }
 
 /**
@@ -212,7 +220,8 @@ export class ConnectionRegistryStoreV1 {
     catch { throw new ConnectionRegistryErrorV1("invalid_input"); }
     try { return await this.#transaction((tx) => this.#persist(tx, enrollment, recordedAtValue)); }
     catch (error) {
-      if (error instanceof ConnectionRegistryErrorV1) throw error;
+      const code = capturedRegistryErrorCodeV1(error);
+      if (code) throw new ConnectionRegistryErrorV1(code);
       throw new ConnectionRegistryErrorV1("source_unavailable");
     }
   }
@@ -321,7 +330,8 @@ export class ConnectionRegistryStoreV1 {
         catch { throw new ConnectionRegistryErrorV1("integrity_failed"); }
       });
     } catch (error) {
-      if (error instanceof ConnectionRegistryErrorV1) throw error;
+      const code = capturedRegistryErrorCodeV1(error);
+      if (code) throw new ConnectionRegistryErrorV1(code);
       throw new ConnectionRegistryErrorV1("source_unavailable");
     }
   }

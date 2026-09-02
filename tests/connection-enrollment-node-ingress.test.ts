@@ -460,3 +460,68 @@ test("CR13A-LIVE-050 rechecks runtime after intake commit before constructing a 
     await fixtureValue.raw.close();
   }
 });
+
+test("CR13A-LIVE-050 contains behavioral database rejection without executing or persisting it", async () => {
+  let traps = 0;
+  const rejection: object = new Proxy(Object.create(null) as object, {
+    getPrototypeOf() { traps += 1; throw rejection; },
+  });
+  const rejectingDatabase = (db: DatabaseClient): DatabaseClient => ({
+    async query(): Promise<never> { throw rejection; },
+    transaction: <T>(callback: (session: DatabaseSession) => Promise<T>) => db.transaction(callback),
+    transactionWithPreCommitCheck: <T>(callback: (session: DatabaseSession) => Promise<T>,
+      preCommitCheck: () => void) => db.transactionWithPreCommitCheck(callback, preCommitCheck),
+  });
+  const fixtureValue = await fixture({ wrapDatabase: rejectingDatabase });
+  try {
+    let failure: unknown;
+    try { await fixtureValue.ingress.receive(request(deliveryFrame(fixtureValue.keys.privateKey, fixtureValue.spki))); }
+    catch (error) { failure = error; }
+    assert.equal(traps, 0);
+    assert.ok(failure instanceof ConnectionEnrollmentNodeIngressErrorV1);
+    assert.equal(failure.safeCode, "integrity_failed");
+    assert.notEqual(failure, rejection);
+    const counts = await fixtureValue.raw.query<{
+      replay: number; deliveries: number; intake: number; connections: number;
+    }>(`SELECT (SELECT count(*)::int FROM node_protocol_replay) AS replay,
+      (SELECT count(*)::int FROM control_connection_enrollment_protocol_deliveries) AS deliveries,
+      (SELECT count(*)::int FROM control_connection_enrollment_intake_receipts) AS intake,
+      (SELECT count(*)::int FROM control_connection_enrollments) AS connections`);
+    assert.deepEqual(counts.rows[0], { replay: 1, deliveries: 0, intake: 0, connections: 0 });
+  } finally { await fixtureValue.raw.close(); }
+});
+
+test("CR13A-LIVE-050 contains a database rejection without consulting its unusual prototype", async () => {
+  let prototypeReads = 0;
+  const unusualPrototype: object = new Proxy(Object.create(null) as object, {
+    getPrototypeOf() { prototypeReads += 1; throw new Error("prototype must remain unread"); },
+    getOwnPropertyDescriptor() { prototypeReads += 1; throw new Error("prototype must remain unread"); },
+  });
+  const rejection = Object.create(unusualPrototype) as object;
+  Object.defineProperty(rejection, "safeCode", {
+    get() { prototypeReads += 1; throw new Error("code must remain unread"); },
+  });
+  const rejectingDatabase = (db: DatabaseClient): DatabaseClient => ({
+    async query(): Promise<never> { throw rejection; },
+    transaction: <T>(callback: (session: DatabaseSession) => Promise<T>) => db.transaction(callback),
+    transactionWithPreCommitCheck: <T>(callback: (session: DatabaseSession) => Promise<T>,
+      preCommitCheck: () => void) => db.transactionWithPreCommitCheck(callback, preCommitCheck),
+  });
+  const fixtureValue = await fixture({ wrapDatabase: rejectingDatabase });
+  try {
+    let failure: unknown;
+    try { await fixtureValue.ingress.receive(request(deliveryFrame(fixtureValue.keys.privateKey, fixtureValue.spki))); }
+    catch (error) { failure = error; }
+    assert.equal(prototypeReads, 0);
+    assert.ok(failure instanceof ConnectionEnrollmentNodeIngressErrorV1);
+    assert.equal(failure.safeCode, "integrity_failed");
+    assert.notEqual(failure, rejection);
+    const counts = await fixtureValue.raw.query<{
+      replay: number; deliveries: number; intake: number; connections: number;
+    }>(`SELECT (SELECT count(*)::int FROM node_protocol_replay) AS replay,
+      (SELECT count(*)::int FROM control_connection_enrollment_protocol_deliveries) AS deliveries,
+      (SELECT count(*)::int FROM control_connection_enrollment_intake_receipts) AS intake,
+      (SELECT count(*)::int FROM control_connection_enrollments) AS connections`);
+    assert.deepEqual(counts.rows[0], { replay: 1, deliveries: 0, intake: 0, connections: 0 });
+  } finally { await fixtureValue.raw.close(); }
+});

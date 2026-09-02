@@ -4,6 +4,7 @@ import type { DatabaseClient } from "../../persistence/database";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import {
   dataMethodV1,
+  exactHostErrorCodeV1,
   exactHostDataSnapshotV1,
   exactHostUint8ArrayV1,
   isHostProxyV1,
@@ -74,6 +75,8 @@ reflectApplyV1(hashUpdateV1, hashProbeV1, ["", "utf8"]);
 reflectApplyV1(hashDigestV1, hashProbeV1, ["hex"]);
 const runtimeSentinelMaterialV1 = { cr13aLive050: ["runtime", 5, true], revision: 1 };
 const runtimeSentinelDigestV1 = sha256Digest(runtimeSentinelMaterialV1);
+const deliveryErrorPrototypeV1 = ConnectionEnrollmentNodeDeliveryErrorV1.prototype;
+const intakeErrorPrototypeV1 = ConnectionEnrollmentIntakeErrorV1.prototype;
 
 function exactOwnMethodV1(value: object, key: PropertyKey, expected: unknown): boolean {
   const descriptor = objectGetOwnPropertyDescriptorV1(value, key);
@@ -231,24 +234,31 @@ export class ConnectionEnrollmentNodeIngressErrorV1 extends Error {
     this.name = "ConnectionEnrollmentNodeIngressErrorV1";
   }
 }
+const ingressErrorPrototypeV1 = ConnectionEnrollmentNodeIngressErrorV1.prototype;
+
+function capturedIngressErrorCodeV1(value: unknown): ConnectionEnrollmentNodeIngressErrorV1["safeCode"] | undefined {
+  const code = exactHostErrorCodeV1(value, ingressErrorPrototypeV1, "safeCode");
+  return code === "invalid_input" || code === "disabled" || code === "authentication_failed"
+    || code === "wrong_message_type" || code === "scope_mismatch" || code === "enrollment_rejected"
+    || code === "replay_conflict" || code === "integrity_failed" ? code : undefined;
+}
 
 function mapDeliveryFailureV1(error: unknown): never {
-  if (error instanceof ConnectionEnrollmentNodeDeliveryErrorV1) {
-    if (error.safeCode === "invalid_input" || error.safeCode === "authentication_failed"
-      || error.safeCode === "wrong_message_type" || error.safeCode === "scope_mismatch"
-      || error.safeCode === "replay_conflict") {
-      throw new ConnectionEnrollmentNodeIngressErrorV1(error.safeCode);
+  const code = exactHostErrorCodeV1(error, deliveryErrorPrototypeV1, "safeCode");
+  if (code === "invalid_input" || code === "authentication_failed" || code === "wrong_message_type"
+    || code === "scope_mismatch" || code === "replay_conflict") {
+      throw new ConnectionEnrollmentNodeIngressErrorV1(code);
     }
-  }
   throw new ConnectionEnrollmentNodeIngressErrorV1("integrity_failed");
 }
 
 function mapIntakeFailureV1(error: unknown): never {
-  if (error instanceof ConnectionEnrollmentIntakeErrorV1) {
-    if (error.safeCode === "unauthenticated_delivery") {
+  const code = exactHostErrorCodeV1(error, intakeErrorPrototypeV1, "safeCode");
+  if (code !== undefined) {
+    if (code === "unauthenticated_delivery") {
       throw new ConnectionEnrollmentNodeIngressErrorV1("enrollment_rejected");
     }
-    if (error.safeCode === "replay_conflict") {
+    if (code === "replay_conflict") {
       throw new ConnectionEnrollmentNodeIngressErrorV1("replay_conflict");
     }
   }
@@ -318,7 +328,8 @@ class ConnectionEnrollmentNodeIngressCoordinatorV1 implements ConnectionEnrollme
         throw new ConnectionEnrollmentNodeIngressErrorV1("scope_mismatch");
       }
     } catch (error) {
-      if (error instanceof ConnectionEnrollmentNodeIngressErrorV1) throw error;
+      const code = capturedIngressErrorCodeV1(error);
+      if (code) throw new ConnectionEnrollmentNodeIngressErrorV1(code);
       mapDeliveryFailureV1(error);
     }
 
@@ -335,7 +346,8 @@ class ConnectionEnrollmentNodeIngressCoordinatorV1 implements ConnectionEnrollme
       }
       intakeReceipt = parseConnectionEnrollmentIntakeReceiptV1(result.receipt);
     } catch (error) {
-      if (error instanceof ConnectionEnrollmentNodeIngressErrorV1) throw error;
+      const code = capturedIngressErrorCodeV1(error);
+      if (code) throw new ConnectionEnrollmentNodeIngressErrorV1(code);
       mapIntakeFailureV1(error);
     }
     if (intakeReceipt.deliveryEvidenceDigest !== deliveryReceipt.deliveryEvidenceDigest

@@ -13,11 +13,14 @@ import {
   dataMethodV1,
   exactHostDataArrayV1,
   exactHostDataSnapshotV1,
+  exactHostErrorCodeV1,
   exactHostUint8ArrayV1,
   isHostProxyV1,
   ownDataPropertyValueV1,
 } from "../../security/host-value";
 import { ConnectionRegistryErrorV1, ConnectionRegistryStoreV1 } from "./store";
+
+const connectionRegistryErrorPrototypeV1 = ConnectionRegistryErrorV1.prototype;
 
 export const CONNECTION_ENROLLMENT_PROTECTED_DELIVERY_V1 =
   "control-room-connection-enrollment-protected-delivery/v1" as const;
@@ -283,6 +286,13 @@ export class ConnectionEnrollmentIntakeErrorV1 extends Error {
     super(safeCode); this.name = "ConnectionEnrollmentIntakeErrorV1";
   }
 }
+const connectionEnrollmentIntakeErrorPrototypeV1 = ConnectionEnrollmentIntakeErrorV1.prototype;
+
+function capturedIntakeErrorCodeV1(value: unknown): ConnectionEnrollmentIntakeErrorV1["safeCode"] | undefined {
+  const code = exactHostErrorCodeV1(value, connectionEnrollmentIntakeErrorPrototypeV1, "safeCode");
+  return code === "invalid_input" || code === "source_unavailable" || code === "unauthenticated_delivery"
+    || code === "replay_conflict" || code === "integrity_failed" ? code : undefined;
+}
 
 export class DisabledConnectionEnrollmentDeliverySourceV1
 implements ConnectionEnrollmentProtectedDeliverySourceV1 {
@@ -502,11 +512,11 @@ export class ConnectionEnrollmentIntakeServiceV1 {
           registryResult = await registry.enrollAuthenticated(enrollment, input.receivedAt as string,
             { tenantId: delivery.tenantId, nodeId: delivery.nodeId, connectionId: delivery.connectionId });
         } catch (error) {
-          if (error instanceof ConnectionRegistryErrorV1 && error.safeCode === "replay_conflict") {
+          const code = exactHostErrorCodeV1(error, connectionRegistryErrorPrototypeV1, "safeCode");
+          if (code === "replay_conflict") {
             throw new ConnectionEnrollmentIntakeErrorV1("replay_conflict");
           }
-          if (error instanceof ConnectionRegistryErrorV1
-            && (error.safeCode === "invalid_input" || error.safeCode === "scope_mismatch")) {
+          if (code === "invalid_input" || code === "scope_mismatch") {
             throw new ConnectionEnrollmentIntakeErrorV1("unauthenticated_delivery");
           }
           throw new ConnectionEnrollmentIntakeErrorV1("integrity_failed");
@@ -566,7 +576,8 @@ export class ConnectionEnrollmentIntakeServiceV1 {
         return Object.freeze({ replayed: false, receipt });
       });
     } catch (error) {
-      if (error instanceof ConnectionEnrollmentIntakeErrorV1) throw error;
+      const code = capturedIntakeErrorCodeV1(error);
+      if (code) throw new ConnectionEnrollmentIntakeErrorV1(code);
       throw new ConnectionEnrollmentIntakeErrorV1("integrity_failed");
     }
   }
