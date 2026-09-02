@@ -113,7 +113,7 @@
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
-| CR13A-LIVE-050 provider-disabled enrollment ingress | M-001 and M-002 closed; second remediation `bbd3bcb...` independently rejected with one Low allowlist defect | Preserve all three negative reports; require the exact seven-code protocol-authentication allowlist and conservative handling of every other string before another different review; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
+| CR13A-LIVE-050 provider-disabled enrollment ingress | Third remediation `ffcdb58...` frozen; another different independent review required | All three negative reports preserved; exact seven-code protocol allowlist and two zero-persistence regressions close the final Low candidate; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -916,6 +916,16 @@ authentication catch accepts any exact-prototype own string code rather than the
 value remains bounded and inert, but an unknown dependency failure can be mislabeled as authentication failure. The
 preserved rejected report SHA-256 is `61c934aca63942f043b613e5137b1ba2824f5f2139534031ba62ad65e732a86b`.
 
+The narrow third remediation is frozen at `ffcdb586022ff67494cb2e404df7749b3a093b22`. Node delivery compares the captured
+protocol code with all seven declared `ProtocolAuthenticationCode` literals and maps every other string to conservative
+integrity failure. Adapter and complete-ingress regressions prove zero accessor execution, no raw escape, unchanged
+preexisting replay state, and zero delivery, intake, or registry persistence. Focused intake/delivery/ingress passes
+26/26, the connection slice passes 41/41, and the complete lifecycle passes 769/769 pretests, 419/421 core tests with two
+intentional skips, and 292/292 posttests. TypeScript, full lint, migrations 0001-0036 with 119 PostgreSQL tables,
+production build, 4/4 rendered checks, and whitespace validation pass. The zero-repair packet is
+`docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`. Another different review remains required.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -931,11 +941,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-050-ALLOWLIST-REMEDIATION — close the final Low classification defect
+Block: CR13A-LIVE-050-ALLOWLIST-REREVIEW — independently verify the final narrow remediation
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the coordinator joins two authenticated persistence boundaries and every preserved error code must be explicitly recognized.
-Expected output: an exact seven-code protocol allowlist, adapter and composed regressions, a frozen target, and a different independent disposition before integration.
+Why: the coordinator joins two authenticated persistence boundaries and the final classification must stay exact and conservative.
+Expected output: a zero-repair review bound to `ffcdb586022ff67494cb2e404df7749b3a093b22` and an independent disposition before integration.
 Owner action: none during local implementation and independent review.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

@@ -1,6 +1,6 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** second remediation `bbd3bcbd659ab91461bb52117718a95098c7bb80` independently rejected with one Low allowlist defect; narrow third remediation required
+**Status:** third remediation `ffcdb586022ff67494cb2e404df7749b3a093b22` frozen; another different independent review required
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -51,9 +51,9 @@ authorize a connector, establish signal freshness, qualify a runtime, open a liv
 - Mac stage zero: `ready_for_runtime_check`
 - TypeScript: pass
 - full ESLint: pass
-- `tests/connection-enrollment-node-ingress.test.ts`: 11/11 pass
-- complete connection slice: 39/39 pass
-- complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and 290/290
+- `tests/connection-enrollment-node-ingress.test.ts`: 12/12 pass
+- complete connection slice: 41/41 pass
+- complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and 292/292
   posttests
 - migrations `0001` through `0036`: pass, 119 PostgreSQL tables
 - production build: pass, 4/4 rendered routes
@@ -130,6 +130,22 @@ instead of the declared seven-code allowlist, so an unknown downstream value cou
 failure rather than conservative integrity failure. The value remained bounded, ran no behavior, escaped no raw data,
 created no persistent record, and granted no authority. The preserved rejected report SHA-256 is
 `61c934aca63942f043b613e5137b1ba2824f5f2139534031ba62ad65e732a86b`.
+
+## L-001 remediation candidate
+
+Node delivery now captures a `ProtocolAuthenticationError.code` through the same exact-prototype, own-data operation,
+then compares it with all seven declared `ProtocolAuthenticationCode` literals. Only a recognized protocol code maps to
+`authentication_failed`; every other string becomes a fresh bounded `integrity_failed` result.
+
+One adapter regression and one complete ingress regression use an exact-prototype ordinary object with an unknown own
+string code and an unreadable `message` accessor. Both prove zero accessor execution, no raw-value escape, conservative
+integrity classification, the unchanged preexisting replay baseline, and zero delivery, intake, or registry persistence.
+
+The exact third remediation is frozen at `ffcdb586022ff67494cb2e404df7749b3a093b22`. It changes no proof, persistence,
+receipt, runtime-default, route, or effect contract. Another reviewer, different from the producer and all three
+completed prior reviewers, must accept that target before integration.
+The zero-repair packet is `docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`.
 
 ## Next boundary
 

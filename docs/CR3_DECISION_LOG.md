@@ -2869,3 +2869,8 @@ reconstruction invalidates the CR13A-LIVE-050 second-remediation review evidence
 code's meaning. Every classifier must also compare the captured string with its explicit declared allowlist. Unknown
 strings become the conservative local integrity outcome; they cannot be mapped through a broad non-`undefined` check.
 The rejected second-remediation report is preserved before this narrow correction.
+
+**L-001 remediation amendment:** The node-delivery classifier enumerates every declared `ProtocolAuthenticationCode`
+literal. Recognition of the error prototype and own data property is followed by semantic allowlist validation; any
+other string becomes a fresh local integrity error. Adapter and composed-ingress cases require zero behavior execution,
+no raw escape, and no new persistent state.
