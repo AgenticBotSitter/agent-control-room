@@ -2709,3 +2709,9 @@ are acceptable for rare enrollment operations and are safer than ambiguous repla
 multi-primary writes, production PostgreSQL composition, or any public mutation surface. Any source-capability,
 active-key resolution, transaction ordering, registry composition, replay rule, audit-chain/tag, receipt-redaction,
 runtime-default, or negative-authority change invalidates CR13A-LIVE-030 review evidence.
+
+**CR13A-LIVE-030 acceptance:** A fresh different reviewer accepted exact product
+`0bbe4e52602f8859b78ca6516377bdbe3ee3378a` with no High, Medium, or Low findings after independently tracing the
+active-key, replay, transaction, audit, migration, redaction, and disabled-runtime boundaries and reproducing the focused
+deterministic gates. This authorizes only owner-approved repository integration. Any product change requires a new exact
+target and review.

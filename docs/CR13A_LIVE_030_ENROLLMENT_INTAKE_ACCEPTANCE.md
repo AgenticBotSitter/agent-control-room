@@ -1,6 +1,6 @@
 # CR13A-LIVE-030 protected enrollment intake acceptance
 
-**Status:** immutable product candidate `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; independent review pending
+**Status:** independently accepted immutable product `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`; integration pending
 **Effect boundary:** repository code, PostgreSQL-compatible migration, and PGlite tests only; the runtime source is disabled
 and no SSH, Hermes, provider, credential, production database, deployment, or network effect occurred
 
@@ -59,12 +59,18 @@ Focused hostile coverage includes:
 - wrong audit key, behavioral database rows, record mutation, and record deletion;
 - absence of browser or HTTP enrollment mutation paths and a disabled local runtime source.
 
-## Remaining gate
+## Independent review and remaining gate
 
 The exact product is frozen at `0bbe4e52602f8859b78ca6516377bdbe3ee3378a`. The report-only independent packet is
 `reviews/CR13A_LIVE_030_ENROLLMENT_INTAKE_REVIEW_PACKET.md`, SHA-256
-`99591d10028b180d5165525907925d84c3b7330ad92db04687c4d8a52ab01e96`. A different independent reviewer must execute
-the packet and accept the exact product before integration. Review acceptance will authorize only repository integration. It will not enable
+`99591d10028b180d5165525907925d84c3b7330ad92db04687c4d8a52ab01e96`. A different independent reviewer accepted the
+exact product with no High, Medium, or Low findings after reproducing the focused intake, Connection Center, CR13A,
+migration, build, rendered-route, typecheck, lint, and diff gates. The accepted report is
+`reviews/CR13A_LIVE_030_INDEPENDENT_REVIEW.md`, SHA-256
+`ed4cae0f07ab41cf82dd5458901b2a0dc240272a3e910df79ba108731015fa46`.
+
+Ordinary GitHub CI run `33573535167` passed the pushed candidate. Owner-approved integration remains. Review acceptance
+authorizes only repository integration. It does not enable
 a live delivery source, enroll a machine, contact Hermes, open SSH, use credentials, call a provider, attach production
 PostgreSQL, deploy, host, or grant execution authority.
 
