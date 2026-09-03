@@ -1,8 +1,7 @@
 # CR13A-LIVE-060 bounded transport admission acceptance
 
-**Status:** first effect-free product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` rejected; exact remediation
-`45b4a67477fb39811d02ba1b1a67e8c78cf98ee9` frozen and awaiting a different independent re-review before publication or
-integration
+**Status:** exact remediation `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9` independently accepted after the
+first product was rejected; ready for ordinary GitHub CI and owner-controlled integration
 **Integration base:** `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`
 **Effect boundary:** repository code and PGlite tests only; no listener, socket, SSH session, Hermes/provider call,
 credential access, native process, production PostgreSQL/VPS contact, deployment, DNS, or network effect
@@ -127,6 +126,15 @@ The zero-repair closure packet is `docs/reviews/CR13A_LIVE_060_REMEDIATION_REREV
 `07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`. A reviewer different from the producer and
 first LIVE-060 reviewer must close M-001 and L-001 with no new High, Medium, or Low finding before publication or
 integration.
+
+The different reviewer independently reproduced stage zero, TypeScript, full lint, 24/24 focused tests, 53/53
+connection tests, all 36 migrations with 119 PostgreSQL tables, and exact whitespace validation. Private read-only
+probes confirmed strict crash-mode containment, no process-event/raw escape, inert accessors, no foreign thenable/Proxy
+behavior, exact Promise custody, harmless observer settlement, and unchanged replay/receipt behavior. M-001 and L-001
+are closed with no new High, Medium, or Low finding. The accepted report is
+`docs/reviews/CR13A_LIVE_060_REMEDIATION_REREVIEW.md`, SHA-256
+`a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`. This permits integration review only and enables
+no listener, connection, credential, provider, native, production, or deployment effect.
 
 After independent acceptance and owner-approved integration, the next block may define a disabled private-loopback
 listener adapter or a refreshed owner-attended connector rehearsal packet. It must not bind a socket, open SSH, retrieve

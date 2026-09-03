@@ -114,7 +114,7 @@
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
-| CR13A-LIVE-060 bounded transport admission | First product rejected; remediation `45b4a67...` frozen for different re-review | M-001 safely observes decorated intrinsic rejections through captured native Promise operations; L-001 corrects 24 focused, 53 connection, and 304 posttest totals; strict crash-mode probe passes; negative report preserved; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
+| CR13A-LIVE-060 bounded transport admission | Remediation `45b4a67...` independently accepted; GitHub integration pending | Different reviewer closed M-001 and L-001 with no new finding; strict crash mode, 24 focused, 53 connection, 304 posttests, 119-table verification; negative report preserved; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -980,6 +980,13 @@ persistence, proof, receipt, disabled-runtime, route, listener, or effect contra
 close both findings before publication or integration. Closure-packet SHA-256:
 `07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`.
 
+The different reviewer reproduced every required gate and private Promise-cleanup probe against exact remediation
+`45b4a67477fb39811d02ba1b1a67e8c78cf98ee9`. Strict crash mode, process-event containment, accessor inertness, foreign
+thenable/Proxy rejection, Promise constructor/then/species custody, and stable accepted replay all pass. M-001 and L-001
+are closed with no new High, Medium, or Low finding. The accepted report permits integration review only; it grants no
+listener, connection, credential, provider, native, production, or deployment authority. Accepted report SHA-256:
+`a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -995,13 +1002,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-060-REMEDIATION-REREVIEW — attack the frozen Promise-containment repair
+Block: CR13A-LIVE-060-INTEGRATION — publish the independently accepted branch and obtain ordinary CI plus owner approval
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the remediation changes a security-sensitive asynchronous boundary and must be verified by someone other than the
-     producer and first reviewer.
-Expected output: one immutable report closing M-001 and L-001 with no new High, Medium, or Low finding.
-Owner action: none while re-review runs; approve a later merge only after acceptance and green ordinary CI.
+Why: the exact remediation has independent acceptance and now needs the canonical GitHub integration gate.
+Expected output: one main-target pull request, green ordinary CI, and an owner merge decision.
+Owner action: approve merge only after the PR and CI are reported ready.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

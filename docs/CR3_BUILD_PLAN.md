@@ -1086,6 +1086,12 @@ pretest/core lifecycle, TypeScript, lint, build/render, migration, and whitespac
 M-001 and L-001 with no new finding before publication or integration. Closure-packet SHA-256:
 `07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`.
 
+The different zero-repair reviewer reproduced the complete required gate and private Promise-cleanup probes against the
+exact remediation. M-001 and L-001 are closed with no new High, Medium, or Low finding. The accepted report is
+`docs/reviews/CR13A_LIVE_060_REMEDIATION_REREVIEW.md`, SHA-256
+`a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`. This authorizes ordinary GitHub integration review
+only and does not enable a listener or another external effect.
+
 Next after independent acceptance and owner-approved integration: define a disabled private-loopback listener adapter or
 refresh the owner-attended connector rehearsal. Continue with Sol xhigh if code touches listener, transport, identity,
 chronology, authentication, credentials, or signed evidence; use Sol high only for a packet-only refresh under frozen

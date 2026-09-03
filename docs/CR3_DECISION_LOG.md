@@ -2938,3 +2938,12 @@ replacement execute no behavior. The corrected evidence totals are 24/24 focused
 posttests. Exact remediation `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9` requires a different independent
 zero-repair re-review before integration. Closure-packet SHA-256 is
 `07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`.
+
+**Independent acceptance amendment:** A different reviewer reproduced stage zero, type/lint gates, 24/24 focused tests,
+53/53 connection tests, all 36 migrations with 119 PostgreSQL tables, whitespace validation, and private Promise
+cleanup cases against immutable remediation `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9`. Strict crash mode, process-event
+containment, accessor inertness, foreign thenable/Proxy rejection, exact constructor/then/species custody, inert observer
+settlement, and accepted replay remain correct. M-001 and L-001 are closed with no new High, Medium, or Low finding. This
+permits owner-controlled integration review only and grants no listener, connection, credential, provider, native,
+production, or deployment authority. Accepted report SHA-256 is
+`a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`.
