@@ -3275,6 +3275,16 @@ driver class and each captured prototype method function are frozen. Hostile reg
 equal-identity substitutions and method-function changes with zero replacement executions. A different zero-repair
 re-review remains mandatory, and the change grants no native or external-effect authority.
 
+**Remediation acceptance amendment:** A different zero-repair reviewer accepted immutable target
+`8643513a5ff807c9fdfa74874053b9098ac447a9` with 0 High, 0 Medium, and 0 Low findings. M-001 and M-002 are
+closed. All deterministic gates, original reproductions, exact-object crossings, callable-surface attacks, truth and
+array mutations, bounds, ambient changes, concurrency, whitespace behavior, sanitation, and runtime non-wiring
+passed with zero replacement executions and zero effects. Preserve the accepted report at
+`docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. Ordinary owner-controlled integration is
+permitted; physical driver, listener, SSH, credential, native qualification, production, and deployment authority
+remain absent.
+
 **Reevaluate:** Before admitting any physical-driver object, signed native evidence, owner activation, actual port,
 socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
 contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a

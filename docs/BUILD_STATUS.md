@@ -119,7 +119,7 @@
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
-| CR13A-LIVE-110 native-driver and activation-evidence contract | Exact remediation `565bc25...`; different independent zero-repair re-review required | M-001 exact-object provenance and M-002 exported method-function freezing remediated; 66/66 focused tests; no native implementation, listener, or network effect |
+| CR13A-LIVE-110 native-driver and activation-evidence contract | Exact remediation independently accepted; ordinary owner-controlled integration ready | Different reviewer closed M-001/M-002 with 0 findings; accepted target `8643513...`; no native implementation, listener, or network effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1229,6 +1229,14 @@ established platform skips, 359/359 posttests, production build, 4/4 rendered ro
 the listener-free verifier, and whitespace. A different zero-repair re-review is required; no external-effect
 authority has been added.
 
+The different zero-repair reviewer accepted exact target `8643513a5ff807c9fdfa74874053b9098ac447a9` with 0 High,
+0 Medium, and 0 Low findings. M-001 and M-002 are closed. The reviewer reproduced every gate, rejected 36
+copy/behavior cases, 113 individual truth replacements, 15 array mutations, 11 bounds violations, and 20 ambient
+attacks, and kept 64 concurrent calls stable with zero replacement executions or effects. The accepted report is
+`docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. Ordinary owner-controlled integration is
+ready; no native or external-effect authority is granted.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1244,11 +1252,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-110-REMEDIATION-REREVIEW — independently attack the exact remediation
+Block: CR13A-LIVE-110-INTEGRATION — run ordinary GitHub CI and request exact owner merge approval
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the remediated exact-object and callable-surface boundaries must be attacked by a different reviewer before integration.
-Expected output: immutable remediation target and a different zero-repair reviewer reproducing both original findings, the full hostile matrix, and complete deterministic gates with no remaining High, Medium, or Low finding.
+Why: the exact remediation is independently accepted and now needs only ordinary repository integration controls.
+Expected output: one scoped pull request from the reviewed branch, passing GitHub CI, exact owner approval, merge, and passing post-merge main CI.
 Owner action: none; independent reviews are already authorized. Approve only the exact pull request after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

@@ -1,7 +1,7 @@
 # CR13A-LIVE-110 native-driver and activation-evidence contract acceptance
 
-**Status:** exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d`; different independent zero-repair
-re-review required before integration
+**Status:** exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d` independently accepted; ordinary
+owner-controlled integration ready
 **Integration base:** owner-approved LIVE-100 merge `d1d2b8723797cd2d09efc70384fa98403223a8ec`
 **Effect boundary:** repository code and deterministic tests only; injected repository fake only; no native driver,
 socket, listener, port, SSH, credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS,
@@ -116,6 +116,14 @@ posttests, production build, 4/4 rendered routes, migrations `0001` through `003
 the listener-free verifier, and whitespace. The ordinary database wrapper preserved the known sandbox-only `tsx`
 temporary IPC `listen EPERM` before migration work. No native, listener, network, SSH, credential, provider,
 production, deployment, DNS, or hosting effect occurred.
+
+A different zero-repair reviewer accepted immutable target `8643513a5ff807c9fdfa74874053b9098ac447a9`
+with 0 High, 0 Medium, and 0 Low findings. The reviewer independently closed M-001 and M-002, reproduced every
+deterministic gate, rejected 36 copy/behavior cases, 113 individual truth replacements, 15 array mutations, 11
+numeric-bound violations, and 20 ambient-intrinsic attacks, and kept 64 concurrent calls stable. Hostile replacement
+executions, listener attempts, network observations, and external effects remained zero. The accepted report is
+`docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`.
 
 Acceptance would permit ordinary owner-controlled integration only. It would not authorize adding a physical native
 driver, accepting live activation evidence, opening or closing a listener, selecting or exposing a port, starting SSH,
