@@ -1,6 +1,7 @@
 # CR13A-LIVE-090 private-loopback listener session acceptance
 
-**Status:** independently accepted after three remediation rounds; M-001, M-002, and M-003 closed with no new High, Medium, or Low finding; ordinary owner-controlled integration permitted
+**Status:** independently accepted after three remediation rounds and integrated on `main` through owner-approved PR
+#238; post-merge CI passed
 **Integration base:** owner-approved LIVE-080 merge `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`
 **Effect boundary:** repository code, fake admission, and local deterministic tests only; no socket, listener, SSH,
 credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS, or external network effect
@@ -169,3 +170,6 @@ and found no new High, Medium, or Low defect. The immutable
 third-remediation review target is `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`; packet SHA-256:
 `82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`.
 Accepted report SHA-256: `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`.
+
+The owner approved PR #238. Accepted branch head `ecb5ea373ccb0cdbee1ef036b80ee29730a3ec0b` merged as
+`65ea851c123993d7760d6492966845f74ca1d665`; PR CI run `33784095714` and post-merge CI run `33785601437` passed.

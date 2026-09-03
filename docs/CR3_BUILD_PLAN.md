@@ -1189,7 +1189,7 @@ integration only and grants no listener, SSH, credential, native, provider, prod
 
 ## CR13A-LIVE-090 — one-frame listener-session and authenticated admission composition
 
-Status: independently accepted after three remediation rounds; exact third remediation
+Status: independently accepted after three remediation rounds and integrated through owner-approved PR #238; exact third remediation
 `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` reviewed over owner-approved LIVE-080 merge
 `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; ordinary owner-controlled integration permitted. See
 `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` and ADR-158.
@@ -1268,3 +1268,59 @@ reconfirmed M-001/M-002, and found no new High, Medium, or Low defect. The uncha
 `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. The disposable review clone was removed and
 the shared checkout remained clean. This permits ordinary owner-controlled integration only and grants no listener,
 SSH, credential, native, provider, production, deployment, DNS, hosting, or network authority.
+
+Owner-approved PR #238 merged accepted branch head `ecb5ea373ccb0cdbee1ef036b80ee29730a3ec0b` to `main` as
+`65ea851c123993d7760d6492966845f74ca1d665`. PR CI run `33784095714` and post-merge run `33785601437` passed.
+
+## CR13A-LIVE-100 — default-disabled native-listener adapter contract
+
+Status: independently accepted after two remediation rounds; immutable target
+`2efc17abf0f04325e0f462420f0bccc319c07d43`; ordinary owner-controlled integration permitted. See
+`CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` and ADR-159.
+
+This block freezes the exact non-authorizing contract immediately before any future physical listener. One readiness
+record binds a derived non-locator listener reference and accepted plan digest to literal IPv4-loopback,
+private-unpublished-port, one-active, zero-queued, one-frame, and no-restart policy. It then records twelve required
+native/owner/platform/deadline/backpressure/cleanup/recovery gates as absent, fixes activation and all effects false,
+and reports zero attempts.
+
+The default-disabled adapter owns no native driver and accepts no activation evidence. Its `start()` always returns a
+bounded disabled error and its repeatable `close()` performs no operation. The remediated class rejects subclasses,
+freezes exact-branded instances and its prototype, bounds receiver misuse, and supplies a frozen binder over captured
+base operations for future composition. The module is exported but remains absent from local-pilot, browser, HTTP,
+Hermes, worker, and service composition. It imports no networking/process module and contains no listener, connection,
+SSH, provider, credential, or deployment operation.
+
+The first independent review rejected the original target for an alterable adapter surface (M-001), public re-digested
+readiness identity substitution (L-001), and locator-shaped listener-ID retention (L-002). Its unchanged negative report
+is `docs/reviews/CR13A_LIVE_100_INDEPENDENT_REVIEW.md`; SHA-256:
+`8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
+
+First remediation accepts only module-minted frozen readiness records, omits the raw listener ID in favor of a derived
+non-locator reference, and closes adapter subclass, prototype-method, instance-field, and receiver substitution. The
+focused suite passes 55/55, the complete connection slice passes 97/97, and the full repository lifecycle passes
+769/769 pretests, 419/421 core tests with two intentional platform skips, and 348/348 posttests. Type, full lint,
+production build with 4/4 rendered routes, all 36 migrations/119 tables through the listener-free verifier, stage zero,
+and whitespace validation pass.
+
+The different remediation reviewer closed L-001 and L-002 but rejected target
+`ea81bf82ef4726aa230841420beaca6e96f162cc` with remaining M-001 and new L-003. The enclosing binder was frozen, but
+its three function values were not individually frozen; immutable diff checks also classified preserved Markdown hard
+breaks as trailing whitespace. The second negative report is
+`docs/reviews/CR13A_LIVE_100_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`bcf4a8aa173c4c898205adc7b6cb4c1431f6105a8cae7719e43e5d5202db708e`.
+
+Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` freezes and makes non-extensible each bound function
+before freezing the binder, with own-`call`, function-property, and prototype-chain mutation regressions. A narrowly
+scoped `.gitattributes` rule preserves the exact three immutable evidence files while disabling only their
+trailing-space classification. The base-to-target, original-to-target, and working-tree diff checks now pass.
+
+The third different zero-repair reviewer reproduced every deterministic gate, all three immutable diff checks, exact
+evidence hashes, narrow whitespace behavior, and a 15/15 hostile matrix. It closed M-001 and L-003, reconfirmed L-001
+and L-002, and found no new High, Medium, or Low defect. The accepted report is
+`docs/reviews/CR13A_LIVE_100_SECOND_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`8a9ac5c6191303e75d8957fa776844639e6ecb4f4a56aab9b0c687d4f2fdc465`.
+
+Independent acceptance permits ordinary owner-controlled integration only. It grants no right to add a native
+driver, open a listener, select/expose a port, start SSH, read credentials, contact Hermes/provider, run a native
+qualification, touch production, deploy, change DNS, or use external network. Use Sol xhigh.

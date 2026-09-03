@@ -117,7 +117,8 @@
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
-| CR13A-LIVE-090 listener-session admission composition | Independently accepted after three remediation rounds; owner-controlled integration is ready | Fourth different reviewer closed M-001/M-002/M-003 with no new High, Medium, or Low finding; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
+| CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
+| CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted after two remediation rounds; owner-controlled integration ready | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002 with no new finding; accepted target `2efc17a...`; no listener/network effect; see `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1149,6 +1150,51 @@ report SHA-256 is `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c
 integration is ready. No listener, SSH, credential, native, provider, production database, deployment, DNS, hosting,
 network, or other external effect is authorized.
 
+The owner approved PR #238. Its exact accepted LIVE-090 branch head `ecb5ea373ccb0cdbee1ef036b80ee29730a3ec0b`
+merged to `main` as `65ea851c123993d7760d6492966845f74ca1d665` after PR CI run `33784095714` passed in
+12m7s. Post-merge run `33785601437` then passed on that exact authoritative main commit.
+
+CR13A-LIVE-100 is now the active remediation re-review block. It freezes the exact boundary immediately before a
+future physical listener without adding one. The plan-bound readiness record retains no endpoint, address, port,
+tunnel, host-key, credential, or provider value. It lists twelve missing gates covering the native driver, fresh owner
+activation, platform qualification, exclusive port ownership, SSH peer and host-key proof, three deadlines,
+backpressure, shutdown cleanup, and process recovery. Every activation, native, effect, retry, and authority claim is
+fixed false, with zero listener attempts and zero network-I/O observations.
+
+`DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1` owns no driver, accepts no activation
+input, always rejects start as disabled, and makes repeat close harmless. It is exact-branded, rejects subclasses,
+freezes its instance and prototype, validates exact receivers, and exposes captured base operations through a frozen
+binder for future consumers. It is exported but not wired into the local pilot, browser, HTTP, Hermes, worker, or
+service runtime. No networking or process module was added.
+
+The first independent review rejected immutable target `5582d57247f38498efe3c587762257bababa7658` for a mutable
+adapter surface (M-001), readiness identity substitution (L-001), and locator-shaped listener-ID retention (L-002).
+The negative report is preserved with SHA-256
+`8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
+
+First remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` exact-branded and froze the adapter, required
+module-private readiness provenance, and exposed only a derived non-locator reference. The different remediation
+reviewer closed L-001 and L-002 but rejected immutable target `ea81bf82ef4726aa230841420beaca6e96f162cc` because the
+three functions inside the frozen binder were not themselves frozen (remaining M-001) and immutable diff checks found
+Markdown hard-break spaces in preserved evidence (new L-003). The second negative report is preserved with SHA-256
+`bcf4a8aa173c4c898205adc7b6cb4c1431f6105a8cae7719e43e5d5202db708e`.
+
+Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` individually freezes every bound operation and adds
+function-object mutation regressions. A narrowly scoped three-file `.gitattributes` rule preserves the exact evidence
+bytes while disabling only their trailing-space classification; all three required diff checks now pass. The complete
+candidate passes macOS stage zero, TypeScript, full lint, 55/55 focused tests, 97/97 connection tests, 769/769 pretests,
+419/421 core tests with two intentional platform skips, 348/348 posttests, production build, 4/4 rendered routes, all
+36 migrations with 119 tables through the listener-free verifier, and whitespace. The ordinary database wrapper
+preserved its known sandbox-only `tsx` IPC denial before migration work.
+
+The third different zero-repair reviewer reproduced all deterministic gates, the three exact-range diff checks, a
+narrow-whitespace proof, and a 15/15 hostile matrix. M-001 and L-003 are closed; L-001 and L-002 remain closed; no High,
+Medium, or Low finding remains. The accepted immutable target is
+`2efc17abf0f04325e0f462420f0bccc319c07d43`; accepted report SHA-256:
+`8a9ac5c6191303e75d8957fa776844639e6ecb4f4a56aab9b0c687d4f2fdc465`. Ordinary owner-controlled integration is
+ready. No listener, SSH, credential, native, provider, production, deployment, DNS, hosting, or network authority is
+granted.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1164,12 +1210,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-090-INTEGRATION — publish the accepted listener-session composition for owner-controlled integration
+Block: CR13A-LIVE-100-INTEGRATION — integrate the independently accepted default-disabled native-listener boundary
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact security-sensitive composition is independently accepted; only branch publication, ordinary GitHub CI, and owner-controlled merge remain before the next native boundary.
-Expected output: immutable accepted report and acceptance records, one main-target pull request, and passing ordinary GitHub CI.
-Owner action: approve only the exact pull request after CI passes. After merge, CR13A-LIVE-100 may define a default-disabled native-listener adapter contract without activating it.
+Why: the security contract, two rejected reports, both remediation rounds, and a clean third-party acceptance now form one complete reviewable branch.
+Expected output: one pull request with passing ordinary GitHub CI and exact owner approval before merge; after integration, begin CR13A-LIVE-110 as an effect-free native-driver and activation-evidence contract using injected fakes only.
+Owner action: approve only the exact LIVE-100 pull request after its CI passes.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

@@ -3141,3 +3141,74 @@ unchanged accepted report at `docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDE
 `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. Ordinary owner-controlled integration is now
 permitted. No listener, SSH, credential, native, provider, production database, deployment, DNS, hosting, network, or
 other external-effect authority is granted.
+
+**Integration amendment:** The owner approved PR #238. Accepted branch head
+`ecb5ea373ccb0cdbee1ef036b80ee29730a3ec0b` merged to `main` as
+`65ea851c123993d7760d6492966845f74ca1d665`; PR CI run `33784095714` and post-merge run `33785601437` passed.
+No listener or external-effect authority was added by integration.
+
+## ADR-159 — Native-listener activation starts from an unconditionally disabled contract
+
+**Decision:** Before introducing `node:net` or any physical bind, freeze a plan-bound native-listener readiness record
+and adapter that cannot activate. The readiness record carries only safe plan identity plus literal loopback,
+private-unpublished-port, single-connection, zero-queue, one-frame, and no-restart policy. It fixes twelve independent
+driver, owner, platform, port, tunnel, host-key, deadline, backpressure, cleanup, and recovery gates as missing. Every
+native, effect, retry, approval, network, command, lease, and execution claim remains false.
+
+The default adapter owns no driver, accepts no activation input, always rejects `start()` as disabled, and treats
+repeated close as a no-op. It is exported for later composition but is not wired into the local pilot or an application
+route. Its readiness digest is public consistency evidence only. Even a correctly recomputed digest cannot convert any
+false gate to true because this version of the parser accepts only the exact disabled shape and ordered blockers.
+
+**Why:** The future listener will cross an operating-system and network boundary. Defining its complete gate vocabulary
+first prevents configuration presence, a fake lifecycle receipt, a caller-controlled boolean, or a public digest from
+becoming accidental authority. It also gives later code and operator surfaces one exact list of what remains unproven.
+
+**Alternatives rejected:** Add a `node:net` driver and activation token in the same block; let local configuration enable
+the listener; accept caller-reported gate booleans; treat loopback text as physical bind evidence; publish an address or
+port in readiness; reuse LIVE-080 repository-fake evidence as native proof; wire the local pilot before review; or make
+the disabled adapter attempt-and-close a socket merely to demonstrate failure.
+
+**Trade-off:** This block does not connect a Hermes node and does not exercise operating-system socket behavior. It adds
+one deliberate review stage, but makes the subsequent native driver smaller and reviewable against an exact checklist.
+
+**Independent-review amendment:** The first zero-repair review rejected immutable target
+`5582d57247f38498efe3c587762257bababa7658`. M-001 showed that callers could alter the adapter instance, prototype,
+or subclass behavior. L-001 showed that an ordinary re-digested readiness lookalike could substitute the listener/plan
+pair. L-002 showed that a locator-shaped listener ID could be retained in a record described as public-safe. The exact
+negative report is preserved at `docs/reviews/CR13A_LIVE_100_INDEPENDENT_REVIEW.md`; SHA-256:
+`8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
+
+Remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` exact-brands and freezes the adapter, rejects subclasses
+and wrong receivers, freezes its prototype, and gives future composition a frozen binder over captured base methods.
+Readiness parsing now requires module-private provenance, and the public record replaces the raw listener ID with a
+derived non-locator reference. This closes the three known findings in producer tests but does not constitute
+acceptance; a different independent zero-repair re-review remains mandatory.
+
+**First remediation re-review amendment:** The different reviewer closed L-001 and L-002 but rejected immutable target
+`ea81bf82ef4726aa230841420beaca6e96f162cc`. M-001 remained because the binder record was frozen while its three
+function values were still extensible. New L-003 recorded that both exact-range `git diff --check` commands rejected
+the intentionally preserved Markdown hard-break spaces in the original negative report. The second negative report is
+preserved at `docs/reviews/CR13A_LIVE_100_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`bcf4a8aa173c4c898205adc7b6cb4c1431f6105a8cae7719e43e5d5202db708e`.
+
+Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` freezes each captured bound function before inserting
+it into the frozen binder and adds direct own-`call`, property, and prototype-chain mutation tests. A three-path
+`.gitattributes` rule preserves the exact bytes and hashes of the two negative reports and first remediation packet
+while disabling only trailing-space classification for those exact evidence paths. All three required diff checks now
+pass. This remains producer evidence; a third independent zero-repair reviewer must close M-001 and L-003, reconfirm
+L-001/L-002, and find no new High, Medium, or Low defect.
+
+**Second remediation acceptance amendment:** The third different zero-repair reviewer reproduced the full repository
+gates, exact evidence hashes, all three immutable diff checks, narrow whitespace behavior, and a 15/15 hostile matrix.
+M-001 and L-003 are closed; L-001 and L-002 remain closed; no new High, Medium, or Low defect remains. Preserve the
+accepted report at `docs/reviews/CR13A_LIVE_100_SECOND_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`8a9ac5c6191303e75d8957fa776844639e6ecb4f4a56aab9b0c687d4f2fdc465`. Immutable target
+`2efc17abf0f04325e0f462420f0bccc319c07d43` is ready for ordinary owner-controlled integration. This grants no
+listener, connection, SSH, credential, native, provider, production database, deployment, DNS, hosting, publication,
+or network authority.
+
+**Reevaluate:** Before importing `node:net`, accepting any driver or activation evidence, wiring a runtime, opening or
+closing a physical listener, selecting a port, starting SSH, reading a credential, accepting native evidence, running a
+platform qualification, or making the record activation-eligible. Each requires a new contract, immutable review, and
+separate owner authority; a real bind additionally requires an exact owner-attended effect packet.
