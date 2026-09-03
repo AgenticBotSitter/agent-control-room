@@ -3259,6 +3259,14 @@ implementation `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab`, under the zero-repair
 `6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`. A passing report permits ordinary
 integration review only and grants no listener or external-effect authority.
 
+**Independent-review rejection:** The different zero-repair reviewer rejected the immutable target with 0 High,
+2 Medium, and 0 Low findings. M-001 showed that matching public digests did not prove exact-object provenance across
+the plan/readiness, contract, and rehearsal boundaries. M-002 showed that freezing the driver prototype did not freeze
+the three method function objects stored on it. Preserve the negative report at
+`docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW.md`; SHA-256:
+`4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation and a different independent
+zero-repair re-review are mandatory before integration.
+
 **Reevaluate:** Before admitting any physical-driver object, signed native evidence, owner activation, actual port,
 socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
 contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a

@@ -1,7 +1,6 @@
 # CR13A-LIVE-110 native-driver and activation-evidence contract acceptance
 
-**Status:** implementation candidate `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab`; independent zero-repair review
-required before integration
+**Status:** rejected by independent zero-repair review; remediation required before a new immutable review
 **Integration base:** owner-approved LIVE-100 merge `d1d2b8723797cd2d09efc70384fa98403223a8ec`
 **Effect boundary:** repository code and deterministic tests only; injected repository fake only; no native driver,
 socket, listener, port, SSH, credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS,
@@ -87,6 +86,18 @@ any High, Medium, or Low finding rejects the target and must be preserved before
 Review immutable target `3c756154744a1b933093771a878ab6b64f243f2e` under
 `docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW_PACKET.md`; packet SHA-256:
 `6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`.
+
+The different reviewer rejected that target with 0 High, 2 Medium, and 0 Low findings. M-001 proved that separately
+minted but publicly equal plans, readiness records, contracts, and rehearsals could be substituted because composition
+checked public digests rather than exact module-private relationships. M-002 proved that the three exported prototype
+method function objects remained extensible even though the driver, prototype, and bound closures were frozen. The
+negative report is preserved at `docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW.md`; SHA-256:
+`4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`.
+
+Remediation must retain exact readiness-to-plan, contract-to-plan/readiness, and rehearsal-to-contract/driver
+provenance in module-private state and verify those relationships at every composition boundary. It must also freeze
+the captured `status`, `rehearse`, and `close` function objects themselves and add hostile regressions for every
+reported substitution. The negative review grants no integration or external-effect authority.
 
 Acceptance would permit ordinary owner-controlled integration only. It would not authorize adding a physical native
 driver, accepting live activation evidence, opening or closing a listener, selecting or exposing a port, starting SSH,

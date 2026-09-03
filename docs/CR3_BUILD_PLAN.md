@@ -1360,3 +1360,11 @@ authority. Use Sol xhigh.
 
 The immutable review target is `3c756154744a1b933093771a878ab6b64f243f2e`; review packet SHA-256:
 `6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`.
+
+The independent reviewer rejected the target with 0 High, 2 Medium, and 0 Low findings. M-001 reproduced
+cross-provenance substitution among separately minted but publicly equal plan/readiness and contract/rehearsal
+records. M-002 reproduced mutation of the exported driver prototype method function objects. The negative report is
+preserved at `docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW.md`; SHA-256:
+`4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation must add module-private
+exact-object relationship checks, freeze the three method function objects, add hostile regressions, and receive a
+different zero-repair re-review before integration.

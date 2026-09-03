@@ -119,7 +119,7 @@
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
-| CR13A-LIVE-110 native-driver and activation-evidence contract | Local effect-free implementation candidate `8d0e7ae...`; independent zero-repair review required | Plan/readiness-bound contract, sealed repository fake, blocked activation evidence, 65/65 focused tests; no native implementation, listener, or network effect |
+| CR13A-LIVE-110 native-driver and activation-evidence contract | Independent review rejected immutable target; remediation in progress | 0 High/2 Medium/0 Low: exact-object provenance and exported method-function freezing; no native implementation, listener, or network effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1199,16 +1199,25 @@ granted.
 Owner-approved PR #239 merged exact branch head `7a11d6b132b7016a63a4e160ce049b29dcff21db` to `main` as
 `d1d2b8723797cd2d09efc70384fa98403223a8ec`. PR CI run `33793948835` and post-merge run `33796044403` passed.
 
-CR13A-LIVE-110 now defines the exact future physical-driver contract without adding a physical driver. The contract is
+CR13A-LIVE-110 now defines the future physical-driver contract without adding a physical driver. The contract is
 bound to the LIVE-100 readiness and listener plan, freezes five operations plus capacity/deadline requirements, and
 fixes native implementation, activation input, effects, and authority false. An exact-branded repository fake accepts
 no callbacks or behavioral input and produces one fixed six-event rehearsal with zero listener attempts and zero
 network observations. A separate activation-evidence assessment binds the exact records but retains all twelve
 LIVE-100 blockers and remains `blocked_repository_evidence_only`. The module is not wired into any runtime. TypeScript,
 lint, 65/65 focused tests, 107/107 connection tests, 123/123 CR13A tests, the complete repository lifecycle, production
-build/render, migrations, stage zero, and whitespace pass. Independent zero-repair review remains required.
+build/render, migrations, stage zero, and whitespace pass. Independent zero-repair review rejected the target with
+two Medium integrity findings.
 The immutable review target is `3c756154744a1b933093771a878ab6b64f243f2e`; packet SHA-256:
 `6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`.
+
+M-001 proved that digest equality allowed separately minted but publicly equal plan/readiness and
+contract/rehearsal combinations to cross exact-object boundaries. M-002 proved that the exported `status`, `rehearse`,
+and `close` prototype method function objects remained extensible. The fake remained blocked and effect-free, but both
+defects contradict the acceptance contract. The negative report is preserved at
+`docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW.md`; SHA-256:
+`4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation and a different independent
+re-review are required before integration.
 
 ## Parallel build lane
 
@@ -1225,11 +1234,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-110-INDEPENDENT-REVIEW — attack the fake-only native-driver and activation-evidence boundary
+Block: CR13A-LIVE-110-REMEDIATION — close the two independent-review integrity findings
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: a fake driver and passing rehearsal must not become an activation seam; independent attack is required before integration.
-Expected output: immutable implementation target and a different zero-repair reviewer reproducing provenance, plan/readiness binding, all twelve blockers, fake/native separation, frozen driver dispatch, locator redaction, runtime non-wiring, and the complete deterministic gates with no High, Medium, or Low finding.
+Why: exact provenance and immutable callable surfaces are security boundaries, even while the fake remains blocked.
+Expected output: module-private exact-object relationship checks, frozen exported driver methods, hostile regressions for M-001/M-002, complete deterministic gates, and a different zero-repair reviewer reporting no remaining finding.
 Owner action: none; independent reviews are already authorized. Approve only the exact pull request after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
