@@ -1393,8 +1393,9 @@ network connection, SSH operation, credential read, native qualification, produc
 
 ## CR13A-LIVE-120 — physical native-driver design and qualification boundary
 
-Status: design complete; first unwired implementation rejected; nine findings remediated at
-`5a579342b7a03bb013de21663c69a3a6118e11c6`; different re-review and physical qualification remain blocked.
+Status: design complete; first unwired implementation rejected; exact remediation
+`5a579342b7a03bb013de21663c69a3a6118e11c6` independently accepted; owner-controlled integration ready and physical
+qualification remains blocked.
 See `CR13A_LIVE_120_PHYSICAL_NATIVE_DRIVER_DESIGN.md`. Use Sol xhigh.
 
 Before any `node:net` import, physical driver implementation, runtime wiring, port selection, listener operation, or
@@ -1451,5 +1452,15 @@ absent, physical cleanup always remains `cleanup_failed`; local truth can never 
 Remediation gates pass at 34/34 dedicated tests, 123/123 connection tests, 139/139 CR13A tests, 769/769 pretests,
 372/372 core tests, 374/374 posttests, TypeScript, full lint, macOS stage zero, production build with 4/4 rendered
 routes, migrations through `0036` with 119 tables via the no-IPC verifier, and whitespace. Re-review packet SHA-256 is
-`28e91c4cbbd948c2636e1e1aeae19b1c27b5a113909c50fdaa50708f8c3e8dca`. A different zero-repair reviewer must
-close all nine findings before integration. No physical attempt or runtime activation is authorized.
+`28e91c4cbbd948c2636e1e1aeae19b1c27b5a113909c50fdaa50708f8c3e8dca`. Acceptance required a different zero-repair
+reviewer to close all nine findings before integration. No physical attempt or runtime activation is authorized.
+
+That different zero-repair reviewer accepted the exact remediation with 0 High, 0 Medium, and 0 Low findings. All
+four original High and five Medium findings are closed. Current-run evidence passed 34/34 focused, 123/123 connection,
+139/139 CR13A, 769/769 pretests, 419/421 core tests with two established Windows-only skips, 374/374 posttests,
+production build with 4/4 rendered routes, migrations through `0036` with 119 tables, and an independent 3/3 hostile
+probe. Hostile replacement executions, protected-byte exposures, native constructions, bind capabilities, admissions,
+physical listener/socket/port attempts, network observations, and external effects were all zero. Preserve the
+accepted report at `docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. Ordinary owner-controlled integration is
+ready. Physical qualification and runtime activation remain separate, blocked stages.

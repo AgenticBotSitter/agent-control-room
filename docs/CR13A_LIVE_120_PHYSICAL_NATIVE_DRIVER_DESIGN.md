@@ -1,7 +1,8 @@
 # CR13A-LIVE-120 physical native-driver design and qualification boundary
 
-**Status:** architecture contract complete; separately authorized unwired implementation frozen at
-`959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`; independent review and physical qualification remain blocked
+**Status:** architecture contract complete; rejected implementation preserved at
+`959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`; exact remediation
+`5a579342b7a03bb013de21663c69a3a6118e11c6` independently accepted; physical qualification remains blocked
 **Integration base:** owner-approved LIVE-110 merge `1ee5409c0b66afbd802582459af864ec0d198f5c`
 **Required model:** `gpt-5.6-sol`
 **Required reasoning effort:** `xhigh`

@@ -3378,7 +3378,16 @@ four High and five Medium findings; report SHA-256
 769/769 pretests, 372/372 core tests, 374/374 posttests, build/render, and migration verification. No native,
 listener, socket, port, network, SSH, credential, provider, production, or deployment action occurred.
 
-**Reevaluate:** Only after a different report-only reviewer closes every finding, and again before adding any private
-proof issuer, signer, durable attempt ledger, high-water checkpoint, resource observer, locator broker, runtime
-consumer, physical attempt, SSH/credential operation, production contact, or deployment. Until those boundaries are
-separately implemented and accepted, native cleanup cannot become `closed_verified`.
+**Remediation acceptance:** A different independent zero-repair reviewer reproduced all nine original defects,
+closed every one against exact remediation `5a579342b7a03bb013de21663c69a3a6118e11c6`, and found no new High, Medium,
+or Low defect. The current runner passed 34/34 focused, 123/123 connection, 139/139 CR13A, 769/769 pretests, 419/421
+core tests with two established Windows-only skips, 374/374 posttests, build/render, migrations, and the independent
+hostile probe. Preserve the accepted report at
+`docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. This permits ordinary owner-controlled
+integration only and grants no physical or external-effect authority.
+
+**Reevaluate:** Before adding any private proof issuer, signer, durable attempt ledger, high-water checkpoint, resource
+observer, locator broker, runtime consumer, physical attempt, SSH/credential operation, production contact, or
+deployment. Until those boundaries are separately implemented and accepted, native cleanup cannot become
+`closed_verified`.
