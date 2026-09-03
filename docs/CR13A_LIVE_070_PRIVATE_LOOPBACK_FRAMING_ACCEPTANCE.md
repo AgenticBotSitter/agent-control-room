@@ -1,6 +1,7 @@
 # CR13A-LIVE-070 private-loopback framing acceptance
 
-**Status:** deterministic implementation candidate; independent review required before integration  
+**Status:** exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` frozen; independent review required
+before integration
 **Integration base:** `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`  
 **Effect boundary:** repository code and local tests only; no socket bind, listener, SSH session, credential access,
 Hermes/provider call, native process, production PostgreSQL/VPS contact, deployment, DNS, or other network effect
@@ -67,7 +68,7 @@ Current local evidence before product freeze:
 - migrations `0001` through `0036`: pass, 119 PostgreSQL tables;
 - TypeScript, full ESLint, and whitespace validation: pass.
 
-Exact product freeze and independent review remain required.
+The exact product is frozen at `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587`. Independent review remains required.
 
 ## Review and next boundary
 
@@ -75,6 +76,9 @@ Because this code accepts future transport bytes and carries a protected raw fra
 the immutable base-to-product diff, reproduce the deterministic gates, and attempt bounded malformed-prefix, chunk,
 UTF-8, JSON, state, Proxy/accessor, runtime-drift, digest-drift, and disabled-default cases. A rejection or uncertainty
 cannot be converted into acceptance; remediation requires a new immutable product and a different re-review.
+
+The zero-repair packet is `docs/reviews/CR13A_LIVE_070_INDEPENDENT_REVIEW_PACKET.md`, SHA-256
+`052f4b621e8606f807425a677e10e5211214563d2e05b1235dc803dac42fd2e6`.
 
 Even after acceptance, a real listener remains a separate owner-controlled block. It must prove the actual bind address,
 exclusive port ownership, tunnel peer and host-key custody, connection lifetime, backpressure, close/recovery behavior,

@@ -115,7 +115,7 @@
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
-| CR13A-LIVE-070 private-loopback framing | Deterministic implementation complete; product freeze and independent review pending | One bounded big-endian/fatal-UTF-8 frame, exact private-loopback configuration, protected authority-free handoff, disabled local listener, 21 focused and 63 connection tests; complete lifecycle green; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
+| CR13A-LIVE-070 private-loopback framing | Exact product `ff00d3f...` frozen; independent review pending | One bounded big-endian/fatal-UTF-8 frame, exact private-loopback configuration, protected authority-free handoff, disabled local listener, 21 focused and 63 connection tests; complete lifecycle green; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1004,7 +1004,8 @@ inner enrollment verification. The local pilot adds only a disabled listener por
 native, production database, route, deployment, DNS, or network effect exists. Current evidence is 21/21 focused tests,
 63/63 connection tests, 769/769 pretests, 419/421 core tests with two intentional platform skips, 314/314 posttests,
 TypeScript, full lint, production build with 4/4 rendered checks, all 36 migrations/119 PostgreSQL tables, and whitespace
-validation. Product freeze and independent review remain pending.
+validation. Exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` is frozen; independent review remains
+pending. Zero-repair packet SHA-256: `052f4b621e8606f807425a677e10e5211214563d2e05b1235dc803dac42fd2e6`.
 
 ## Parallel build lane
 

@@ -1100,8 +1100,8 @@ authorized by this block.
 
 ## CR13A-LIVE-070 — private-loopback single-frame decoder and disabled listener port
 
-Status: implementation candidate over owner-approved LIVE-060 integration
-`a6c08e1553cbb6d3e3db0e262a5e115c8356c664`. See
+Status: exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` frozen over owner-approved LIVE-060
+integration `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`; independent review pending. See
 `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` and ADR-156.
 
 The effect-free decoder accepts fresh exact `Uint8Array` chunks for one unsigned-big-endian-length-prefixed fatal UTF-8
