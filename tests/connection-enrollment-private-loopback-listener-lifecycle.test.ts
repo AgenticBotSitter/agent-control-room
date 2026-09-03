@@ -108,7 +108,12 @@ function observations(plan: ReturnType<typeof createConnectionEnrollmentPrivateL
 }
 
 function runRehearsal(overrides: Partial<ReturnType<typeof observations>> = {}) {
-  const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration());
+  return runRehearsalForConfiguration({}, overrides);
+}
+
+function runRehearsalForConfiguration(configurationOverrides: Record<string, unknown> = {},
+  overrides: Partial<ReturnType<typeof observations>> = {}) {
+  const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration(configurationOverrides));
   const input = { ...observations(plan), ...overrides };
   const rehearsal = new ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1(plan);
   rehearsal.observeBind(input.bind);
@@ -300,6 +305,18 @@ test("CR13A-LIVE-080 makes invalid sequence, observation, and incomplete finish 
   })), "invalid_observation");
   assert.equal(observationTraps, 0);
   expectCode(() => behavioral.observeBind(input.bind), "state_conflict");
+
+  const premature = new ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1(plan);
+  premature.observeBind(input.bind); premature.observeConnectionOpen(input.open);
+  premature.observeFrameComplete(input.frame);
+  expectCode(() => premature.finish(), "incomplete_lifecycle");
+  expectCode(() => premature.observeConnectionClose(input.connectionClose), "state_conflict");
+
+  const wrongAfterFrame = new ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1(plan);
+  wrongAfterFrame.observeBind(input.bind); wrongAfterFrame.observeConnectionOpen(input.open);
+  wrongAfterFrame.observeFrameComplete(input.frame);
+  expectCode(() => wrongAfterFrame.observeDrainStart(input.drain), "state_conflict");
+  expectCode(() => wrongAfterFrame.observeConnectionClose(input.connectionClose), "state_conflict");
 });
 
 test("CR13A-LIVE-080 fails shutdown on active work, deadline, restart, or missing cleanup", () => {
@@ -334,6 +351,9 @@ test("CR13A-LIVE-080 rehearsal receipts reject drift, added behavior, and recomp
   const { receiptDigest: _receiptDigest, ...unsignedReceipt } = receipt;
   void _receiptDigest;
   const forgedNativeClaim = { ...unsignedReceipt, actualBindObserved: true };
+  const reboundReference = { ...unsignedReceipt, rehearsalReference: `listener-rehearsal:${"f".repeat(24)}` };
+  const overlongListener = { ...unsignedReceipt,
+    listenerId: `private-loopback-listener:${"a".repeat(135)}` };
   for (const invalid of [
     { ...receipt, actualBindObserved: true },
     { ...receipt, exclusivePortOwnershipProven: true },
@@ -345,6 +365,8 @@ test("CR13A-LIVE-080 rehearsal receipts reject drift, added behavior, and recomp
     { ...receipt, grantsNetworkAuthority: true },
     { ...receipt, extra: true },
     { ...forgedNativeClaim, receiptDigest: sha256Digest(forgedNativeClaim) },
+    { ...reboundReference, receiptDigest: sha256Digest(reboundReference) },
+    { ...overlongListener, receiptDigest: sha256Digest(overlongListener) },
   ]) expectCode(() => parseConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1(invalid),
     "integrity_failed");
 
@@ -353,6 +375,15 @@ test("CR13A-LIVE-080 rehearsal receipts reject drift, added behavior, and recomp
     get() { traps += 1; throw new Error("must remain inert"); },
   })), "integrity_failed");
   assert.equal(traps, 0);
+
+  const minimum = runRehearsalForConfiguration({ listenerId: "private-loopback-listener:a" }).receipt;
+  const maximum = runRehearsalForConfiguration({
+    listenerId: `private-loopback-listener:${"a".repeat(134)}`,
+  }).receipt;
+  assert.equal(minimum.listenerId.length, 27);
+  assert.equal(maximum.listenerId.length, 160);
+  assert.deepEqual(parseConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1(minimum), minimum);
+  assert.deepEqual(parseConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1(maximum), maximum);
 });
 
 test("CR13A-LIVE-080 adds no listener, network, process, route, or runtime enablement", async () => {
@@ -362,6 +393,8 @@ test("CR13A-LIVE-080 adds no listener, network, process, route, or runtime enabl
   assert.doesNotMatch(source, /from ["']node:(?:net|tls|http|https|child_process|dgram)["']/);
   assert.doesNotMatch(source, /\.listen\s*\(|\.connect\s*\(|spawn\s*\(|exec\s*\(/);
   assert.doesNotMatch(source, /ssh2|fetch\s*\(|WebSocket/i);
+  assert.doesNotMatch(source, /#frame\s*:\s*ConnectionEnrollmentPrivateLoopbackProtectedFrameV1/);
+  assert.match(source, /#frameDigest: string \| undefined/);
   assert.match(runtime, /new DisabledConnectionEnrollmentPrivateLoopbackListenerV1\(\)/);
 });
 

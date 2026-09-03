@@ -30,6 +30,10 @@ function isDigestV1(value: unknown): value is string {
   return typeof value === "string" && patternMatchesV1(digestPatternV1, value);
 }
 
+function rehearsalReferenceForPlanDigestV1(planDigest: string): string {
+  return `listener-rehearsal:${reflectApplyV1(stringSliceV1, planDigest, [7, 31])}`;
+}
+
 export type ConnectionEnrollmentPrivateLoopbackListenerPlanConfigurationV1 = Readonly<{
   listenerId: string;
   endpointIdentityDigest: string;
@@ -277,10 +281,12 @@ ConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1 {
   if (!captured) throw new ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1("integrity_failed");
   const receipt = captured as unknown as ConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1;
   if (receipt.contractVersion !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_LISTENER_REHEARSAL_V1
+    || typeof receipt.listenerId !== "string" || receipt.listenerId.length < 27 || receipt.listenerId.length > 160
+    || !patternMatchesV1(listenerIdPatternV1, receipt.listenerId) || !isDigestV1(receipt.planDigest)
     || typeof receipt.rehearsalReference !== "string"
     || !patternMatchesV1(rehearsalReferencePatternV1, receipt.rehearsalReference)
-    || typeof receipt.listenerId !== "string" || !patternMatchesV1(listenerIdPatternV1, receipt.listenerId)
-    || !isDigestV1(receipt.planDigest) || receipt.evidenceMode !== "repository_fake"
+    || receipt.rehearsalReference !== rehearsalReferenceForPlanDigestV1(receipt.planDigest)
+    || receipt.evidenceMode !== "repository_fake"
     || receipt.disposition !== "passed" || receipt.eventCount !== 6 || !isDigestV1(receipt.frameDigest)
     || !numberIsSafeIntegerV1(receipt.frameBytes) || receipt.frameBytes < 2
     || receipt.frameBytes > NODE_PROTOCOL_MAX_FRAME_BYTES
@@ -327,7 +333,8 @@ type ConnectionEnrollmentPrivateLoopbackListenerRehearsalStateV1 =
 export class ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1 {
   readonly #plan: ConnectionEnrollmentPrivateLoopbackListenerPlanV1;
   #state: ConnectionEnrollmentPrivateLoopbackListenerRehearsalStateV1 = "planned";
-  #frame: ConnectionEnrollmentPrivateLoopbackProtectedFrameV1 | undefined;
+  #frameDigest: string | undefined;
+  #frameBytes: number | undefined;
   #frameChunks: number | undefined;
   #lastConnectionAgeMs: number | undefined;
   #drainElapsedMs: number | undefined;
@@ -391,7 +398,8 @@ export class ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1 {
       if (frame.listenerId !== this.#plan.listenerId || frame.frameBytes > this.#plan.maximumFrameBytes) {
         this.#fail("frame_rejected");
       }
-      this.#frame = frame;
+      this.#frameDigest = frame.frameDigest;
+      this.#frameBytes = frame.frameBytes;
       this.#frameChunks = observation.frameChunks as number;
       this.#lastConnectionAgeMs = observation.connectionAgeMs as number;
       this.#state = "framed";
@@ -457,25 +465,25 @@ export class ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1 {
     if (this.#state === "complete") {
       throw new ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1("state_conflict");
     }
-    if (this.#state !== "closed" || !this.#frame || this.#frameChunks === undefined) {
-      if (this.#state !== "failed") this.#state = "failed";
-      throw new ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1("incomplete_lifecycle");
+    if (this.#state !== "closed" || !this.#frameDigest || this.#frameBytes === undefined
+      || this.#frameChunks === undefined) {
+      this.#fail("incomplete_lifecycle");
     }
-    const frame = this.#frame;
+    const frameDigest = this.#frameDigest;
+    const frameBytes = this.#frameBytes;
     const frameChunks = this.#frameChunks;
-    this.#frame = undefined;
-    this.#frameChunks = undefined;
+    this.#clearEvidence();
     this.#state = "complete";
     const material = {
       contractVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_LISTENER_REHEARSAL_V1,
-      rehearsalReference: `listener-rehearsal:${reflectApplyV1(stringSliceV1, this.#plan.planDigest, [7, 31])}`,
+      rehearsalReference: rehearsalReferenceForPlanDigestV1(this.#plan.planDigest),
       listenerId: this.#plan.listenerId,
       planDigest: this.#plan.planDigest,
       evidenceMode: "repository_fake" as const,
       disposition: "passed" as const,
       eventCount: 6 as const,
-      frameDigest: frame.frameDigest,
-      frameBytes: frame.frameBytes,
+      frameDigest,
+      frameBytes,
       frameChunks,
       maximumObservedConcurrentConnections: 1 as const,
       maximumObservedQueuedConnections: 0 as const,
@@ -505,23 +513,26 @@ export class ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1 {
   }
 
   abort(): void {
-    this.#frame = undefined;
-    this.#frameChunks = undefined;
+    this.#clearEvidence();
     this.#state = "failed";
   }
 
   #requireState(expected: ConnectionEnrollmentPrivateLoopbackListenerRehearsalStateV1): void {
-    if (this.#state !== expected) {
-      this.#state = "failed";
-      throw new ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1("state_conflict");
-    }
+    if (this.#state !== expected) this.#fail("state_conflict");
   }
 
   #fail(code: ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1["safeCode"]): never {
-    this.#frame = undefined;
-    this.#frameChunks = undefined;
+    this.#clearEvidence();
     this.#state = "failed";
     throw new ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1(code);
+  }
+
+  #clearEvidence(): void {
+    this.#frameDigest = undefined;
+    this.#frameBytes = undefined;
+    this.#frameChunks = undefined;
+    this.#lastConnectionAgeMs = undefined;
+    this.#drainElapsedMs = undefined;
   }
 
   #mapFailure(error: unknown): never {
