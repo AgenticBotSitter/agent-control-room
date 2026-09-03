@@ -1,7 +1,7 @@
 # CR13A-LIVE-080 private-loopback listener lifecycle acceptance
 
-**Status:** rejected target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e` remediated at exact commit
-`884ff423914ab4e442500bd194970b0713da72ca`; different zero-repair re-review required
+**Status:** exact remediation `884ff423914ab4e442500bd194970b0713da72ca` independently accepted after
+closing one Medium and two Low findings; ordinary owner-controlled integration remains
 **Integration base:** `b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`
 **Effect boundary:** repository code and local tests only; no socket bind, listener, SSH session, credential access,
 Hermes/provider call, native process, production PostgreSQL/VPS contact, deployment, DNS, or other network effect
@@ -116,7 +116,12 @@ The immutable zero-repair re-review packet is
 `docs/reviews/CR13A_LIVE_080_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
 `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`.
 
-Independent acceptance would permit ordinary owner-controlled integration only. It would not authorize the next native
+The different reviewer independently reproduced every deterministic gate and hostile-probe family, closed M-001,
+L-001, and L-002, and found no new High, Medium, or Low defect. The unchanged accepted report is
+`docs/reviews/CR13A_LIVE_080_REMEDIATION_REREVIEW.md`, SHA-256
+`3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`.
+
+Independent acceptance permits ordinary owner-controlled integration only. It does not authorize the next native
 block. A future physical listener requires separate exact owner authority and must prove real exclusive loopback bind,
 SSH-tunnel peer authentication, host-key custody, native backpressure/timeouts, one-frame delivery into LIVE-060,
 shutdown, cleanup, ambiguity handling, and safe rolling-update behavior.

@@ -116,7 +116,7 @@
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
-| CR13A-LIVE-080 private-loopback listener lifecycle | Rejected target remediated at exact commit `884ff423...`; different re-review required | Reduced evidence and terminal clearing close M-001; exact listener bound and plan-derived reference close L-001/L-002; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
+| CR13A-LIVE-080 private-loopback listener lifecycle | Exact remediation `884ff423...` independently accepted; integration in progress | Different reviewer closed M-001/L-001/L-002 with no new finding; report SHA `3e5ea006...`; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1058,7 +1058,10 @@ Regressions cover the reported terminal paths, exact listener bounds, and recomp
 negative report SHA-256 is `0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`. All producer
 gates pass. The immutable re-review packet SHA-256 is
 `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`; a different independent zero-repair re-review
-remains mandatory.
+was mandatory. That reviewer reproduced all required gates and hostile probes, closed M-001, L-001, and L-002, and
+found no new High, Medium, or Low defect. The unchanged accepted report SHA-256 is
+`3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. Ordinary owner-controlled integration is
+now permitted; listener, SSH, credential, native, provider, production, deployment, and network authority remain absent.
 
 ## Parallel build lane
 
@@ -1075,13 +1078,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-080-REMEDIATION-REREVIEW — independently verify M-001, L-001, and L-002 closure
+Block: CR13A-LIVE-080-INTEGRATION — integrate the independently accepted listener-lifecycle contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact remediation is frozen and all producer gates pass, but only a different reviewer may accept closure.
-Expected output: immutable zero-repair packet, independently reproduced gates and hostile probes, preserved report,
-and either explicit acceptance with no open High/Medium/Low findings or another honest remediation cycle.
-Owner action: none until an accepted PR is ready; approve merge only after re-review and ordinary CI are green.
+Why: exact remediation and immutable independent acceptance are complete; GitHub transfer and ordinary CI remain.
+Expected output: accepted report preserved, clean branch pushed, main-target PR opened, and ordinary GitHub CI green.
+Owner action: approve the exact PR merge after ordinary CI is green.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

@@ -3059,3 +3059,8 @@ digest alone cannot establish either semantic relationship. Exact remediation
 remain unaccepted until a different zero-repair reviewer independently confirms closure. Negative report SHA-256:
 `0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`.
 Remediation re-review packet SHA-256: `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`.
+
+**Remediation acceptance:** A different zero-repair reviewer independently reproduced the complete deterministic gates
+and private hostile probes, closed M-001, L-001, and L-002, and found no new High, Medium, or Low defect. Accepted report
+SHA-256: `3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. This permits ordinary
+owner-controlled integration only; every physical listener and external-effect boundary remains separate.

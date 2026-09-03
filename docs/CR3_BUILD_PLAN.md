@@ -1139,9 +1139,9 @@ found no new High, Medium, or Low defect and grants integration review only.
 
 ## CR13A-LIVE-080 — private-loopback listener lifecycle contract and fake rehearsal
 
-Status: rejected target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e` remediated at exact commit
-`884ff423914ab4e442500bd194970b0713da72ca` over owner-approved LIVE-070 integration
-`b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`; different re-review required. See
+Status: exact remediation `884ff423914ab4e442500bd194970b0713da72ca` independently accepted over
+owner-approved LIVE-070 integration `b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`; ordinary owner-controlled
+integration remains. See
 `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` and ADR-157.
 
 This block defines the exact lifecycle around the accepted LIVE-070 decoder without opening a listener. One strict,
@@ -1182,3 +1182,7 @@ reference from `planDigest`, and adds regressions for the reported paths and exa
 and report. A different zero-repair reviewer must independently reproduce closure. Negative report SHA-256:
 `0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`.
 Remediation re-review packet SHA-256: `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`.
+The different reviewer reproduced every deterministic gate and hostile-probe family, closed M-001, L-001, and L-002,
+and found no new High, Medium, or Low defect. Accepted report SHA-256:
+`3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. This permits ordinary owner-controlled
+integration only and grants no listener, SSH, credential, native, provider, production, deployment, or network authority.
