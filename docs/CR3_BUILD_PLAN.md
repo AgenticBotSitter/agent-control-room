@@ -1274,28 +1274,38 @@ Owner-approved PR #238 merged accepted branch head `ecb5ea373ccb0cdbee1ef036b80e
 
 ## CR13A-LIVE-100 — default-disabled native-listener adapter contract
 
-Status: repository implementation candidate frozen at `8ba1057450414015c05f6e6ddfb94cd5abd7b99c` over
-owner-approved LIVE-090 merge `65ea851c123993d7760d6492966845f74ca1d665`; fresh independent zero-repair review
-required. See `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` and ADR-159.
+Status: first independent review rejected immutable target `5582d57247f38498efe3c587762257bababa7658`;
+M-001, L-001, and L-002 remediated in `915a5ed20bafe76367e0ae8ab06252dd05e54dac`; fresh different
+zero-repair re-review required. See `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` and
+ADR-159.
 
 This block freezes the exact non-authorizing contract immediately before any future physical listener. One readiness
-record binds the accepted listener ID and plan digest to literal IPv4-loopback, private-unpublished-port, one-active,
-zero-queued, one-frame, and no-restart policy. It then records twelve required native/owner/platform/deadline/
-backpressure/cleanup/recovery gates as absent, fixes activation and all effects false, and reports zero attempts.
+record binds a derived non-locator listener reference and accepted plan digest to literal IPv4-loopback,
+private-unpublished-port, one-active, zero-queued, one-frame, and no-restart policy. It then records twelve required
+native/owner/platform/deadline/backpressure/cleanup/recovery gates as absent, fixes activation and all effects false,
+and reports zero attempts.
 
 The default-disabled adapter owns no native driver and accepts no activation evidence. Its `start()` always returns a
-bounded disabled error and its repeatable `close()` performs no operation. The module is exported but remains absent
-from local-pilot, browser, HTTP, Hermes, worker, and service composition. It imports no networking/process module and
-contains no listener, connection, SSH, provider, credential, or deployment operation.
+bounded disabled error and its repeatable `close()` performs no operation. The remediated class rejects subclasses,
+freezes exact-branded instances and its prototype, bounds receiver misuse, and supplies a frozen binder over captured
+base operations for future composition. The module is exported but remains absent from local-pilot, browser, HTTP,
+Hermes, worker, and service composition. It imports no networking/process module and contains no listener, connection,
+SSH, provider, credential, or deployment operation.
 
-Parser tests prove that callers cannot enable the record by adding fields, removing or reordering blockers, changing
-bounded identity, supplying Proxy/accessor behavior, or recomputing the public digest around true activation claims.
-The focused suite passes 53/53, the complete connection slice passes 95/95, and the full repository lifecycle passes
-769/769 pretests, 419/421 core tests with two intentional platform skips, and 346/346 posttests. Type, full lint,
+The first independent review rejected the original target for an alterable adapter surface (M-001), public re-digested
+readiness identity substitution (L-001), and locator-shaped listener-ID retention (L-002). Its unchanged negative report
+is `docs/reviews/CR13A_LIVE_100_INDEPENDENT_REVIEW.md`; SHA-256:
+`8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
+
+Remediation accepts only module-minted frozen readiness records, omits the raw listener ID in favor of a derived
+non-locator reference, and closes subclass, prototype, own-method, instance-field, and receiver substitution. The
+focused suite passes 55/55, the complete connection slice passes 97/97, and the full repository lifecycle passes
+769/769 pretests, 419/421 core tests with two intentional platform skips, and 348/348 posttests. Type, full lint,
 production build with 4/4 rendered routes, all 36 migrations/119 tables through the listener-free verifier, stage zero,
 and whitespace validation pass.
 
-Completion requires an immutable zero-repair packet and a fresh different reviewer with no open High, Medium, or Low
-finding. Independent acceptance permits ordinary owner-controlled integration only. It grants no right to add a native
+Completion requires an immutable remediation zero-repair packet and a fresh different reviewer with no open High,
+Medium, or Low finding across every original and remediation-specific case. Independent acceptance permits ordinary
+owner-controlled integration only. It grants no right to add a native
 driver, open a listener, select/expose a port, start SSH, read credentials, contact Hermes/provider, run a native
 qualification, touch production, deploy, change DNS, or use external network. Use Sol xhigh.

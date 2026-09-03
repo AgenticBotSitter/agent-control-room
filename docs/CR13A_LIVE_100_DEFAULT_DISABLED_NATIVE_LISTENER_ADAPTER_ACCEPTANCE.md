@@ -1,7 +1,8 @@
 # CR13A-LIVE-100 default-disabled native-listener adapter acceptance
 
-**Status:** repository implementation candidate frozen at `8ba1057450414015c05f6e6ddfb94cd5abd7b99c`;
-fresh independent zero-repair review required before integration
+**Status:** first independent review rejected immutable target `5582d57247f38498efe3c587762257bababa7658`;
+M-001, L-001, and L-002 remediated in `915a5ed20bafe76367e0ae8ab06252dd05e54dac`; fresh different
+zero-repair re-review required before integration
 **Integration base:** owner-approved LIVE-090 merge `65ea851c123993d7760d6492966845f74ca1d665`
 **Effect boundary:** repository code and deterministic tests only; no native driver, socket, listener, port, SSH,
 credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS, hosting, or network effect
@@ -9,14 +10,17 @@ credential, Hermes/provider, native process, production PostgreSQL/VPS, deployme
 ## Delivered boundary
 
 `ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1` is the exact bridge between the accepted listener plan
-and a future physical adapter. It carries only the listener ID, accepted plan digest, fixed transport/capacity policy,
-and twelve explicit missing gates. The record is public-safe and digest-bound, but its digest proves consistency only.
-It grants no authenticity, approval, activation, or effect authority.
+and a future physical adapter. It carries only a derived non-locator listener reference, the accepted plan digest,
+fixed transport/capacity policy, and twelve explicit missing gates. The record is public-safe and digest-bound, but
+its digest proves consistency only. Module-private provenance binds the returned object to the exact plan used to mint
+it; copied or re-digested lookalikes are rejected. The record grants no approval, activation, or effect authority.
 
 `DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1` implements the established listener port,
 owns no driver, accepts no activation material, reports the plan-bound blocked readiness, and always returns the bounded
-`disabled` result from `start()`. Repeated `close()` calls are harmless. The adapter records zero listener attempts and
-zero network-I/O observations because it has no code path capable of attempting either.
+`disabled` result from `start()`. It rejects subclass construction; its exact-branded instance and prototype are frozen;
+receiver misuse returns a bounded integrity error; and its binder exposes only frozen closures over captured base
+operations. Repeated `close()` calls are harmless. The adapter records zero listener attempts and zero network-I/O
+observations because it has no code path capable of attempting either.
 
 The new module is exported for later composition but is not wired into the local pilot, browser, HTTP routes, worker
 runtimes, Hermes, or any platform service. The local pilot continues to construct the older unconditional disabled
@@ -49,23 +53,25 @@ behavioral input, or setting an activation field true fails even if the caller r
 
 The plan permits one active connection, zero queued connections, one frame per connection, literal IPv4 loopback only,
 a private unpublished port, and no automatic restart. Those are future adapter requirements, not evidence that a bind
-or connection happened. The readiness record deliberately omits endpoint, owner, tunnel-peer, host-key, channel,
-address, and port values. It retains only the accepted listener-plan digest and a bounded listener ID.
+or connection happened. The readiness record deliberately omits the raw listener ID plus endpoint, owner, tunnel-peer,
+host-key, channel, address, and port values. It retains only the accepted listener-plan digest and a derived bounded
+non-locator reference.
 
-Proxy, accessor, added-field, nested-array, and nonordinary input is rejected before supplied behavior executes. The
-adapter reuses the accepted node-ingress runtime-custody boundary. It does not make fake/native evidence equivalent and
-does not introduce a way for an application caller to mint an enabled adapter.
+Proxy, accessor, added-field, nested-array, and nonordinary input is rejected before supplied behavior executes.
+Readiness parsing accepts only the frozen object minted inside this module, so public digest recomputation cannot change
+the listener/plan pairing. The adapter reuses the accepted node-ingress runtime-custody boundary. It does not make
+fake/native evidence equivalent and does not introduce a way for an application caller to mint an enabled adapter.
 
 ## Deterministic evidence
 
-Producer evidence for implementation `8ba1057450414015c05f6e6ddfb94cd5abd7b99c`:
+Producer evidence for remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac`:
 
 - macOS stage zero: `ready_for_runtime_check`, with no native attempt;
 - TypeScript and full ESLint: pass;
-- focused LIVE-060/070/080/090/100 listener suite: 53/53 pass;
-- complete connection slice: 95/95 pass;
+- focused LIVE-060/070/080/090/100 listener suite: 55/55 pass;
+- complete connection slice: 97/97 pass;
 - complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and
-  346/346 posttests;
+  348/348 posttests;
 - production build and 4/4 rendered-route checks: pass;
 - the ordinary `pnpm db:verify` wrapper was blocked before migration work by the known sandbox denial of its `tsx` IPC
   listener; the listener-free verifier passed migrations `0001` through `0036` and 119 PostgreSQL tables; and
@@ -76,11 +82,17 @@ separately and does not substitute for LIVE-100 review.
 
 ## Review and next boundary
 
-Because this contract defines the facts that will eventually stand immediately before a network listener, a different
-independent reviewer must inspect the immutable base-to-product diff, reproduce the deterministic gates, and attack
-forged/recomputed activation, incomplete/reordered blockers, listener identity bounds, behavioral and nested input,
-runtime drift, disabled-start stability, repeat cleanup, local-pilot non-wiring, and the absence of any native/effect
-path. The reviewer performs zero repair. Any High, Medium, or Low finding blocks integration and must be preserved.
+The first independent zero-repair review rejected target `5582d57247f38498efe3c587762257bababa7658` with M-001,
+L-001, and L-002. The negative report is preserved at
+`docs/reviews/CR13A_LIVE_100_INDEPENDENT_REVIEW.md`; SHA-256:
+`8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
+
+Remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` closes M-001 with exact instance provenance,
+subclass rejection, frozen instance/prototype surfaces, exact-receiver enforcement, and a captured-operation binder;
+closes L-001 by accepting only module-minted frozen readiness records; and closes L-002 by replacing the raw listener
+ID with a derived non-locator reference. A fresh different reviewer must now reproduce every original case plus the
+three remediation-specific attacks. The reviewer performs zero repair. Any High, Medium, or Low finding still blocks
+integration and must be preserved.
 
 Acceptance would permit ordinary owner-controlled integration only. It would not authorize adding `node:net`, opening
 a listener, selecting or exposing a port, starting SSH, reading a credential, contacting Hermes, running a native

@@ -3172,6 +3172,19 @@ the disabled adapter attempt-and-close a socket merely to demonstrate failure.
 **Trade-off:** This block does not connect a Hermes node and does not exercise operating-system socket behavior. It adds
 one deliberate review stage, but makes the subsequent native driver smaller and reviewable against an exact checklist.
 
+**Independent-review amendment:** The first zero-repair review rejected immutable target
+`5582d57247f38498efe3c587762257bababa7658`. M-001 showed that callers could alter the adapter instance, prototype,
+or subclass behavior. L-001 showed that an ordinary re-digested readiness lookalike could substitute the listener/plan
+pair. L-002 showed that a locator-shaped listener ID could be retained in a record described as public-safe. The exact
+negative report is preserved at `docs/reviews/CR13A_LIVE_100_INDEPENDENT_REVIEW.md`; SHA-256:
+`8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
+
+Remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` exact-brands and freezes the adapter, rejects subclasses
+and wrong receivers, freezes its prototype, and gives future composition a frozen binder over captured base methods.
+Readiness parsing now requires module-private provenance, and the public record replaces the raw listener ID with a
+derived non-locator reference. This closes the three known findings in producer tests but does not constitute
+acceptance; a different independent zero-repair re-review remains mandatory.
+
 **Reevaluate:** Before importing `node:net`, accepting any driver or activation evidence, wiring a runtime, opening or
 closing a physical listener, selecting a port, starting SSH, reading a credential, accepting native evidence, running a
 platform qualification, or making the record activation-eligible. Each requires a new contract, immutable review, and

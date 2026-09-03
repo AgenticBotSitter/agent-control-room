@@ -118,7 +118,7 @@
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
-| CR13A-LIVE-100 default-disabled native-listener adapter contract | Implementation candidate frozen at `8ba1057...`; independent zero-repair review required | Plan-bound twelve-gate readiness plus a driverless adapter that cannot start; 53/53 focused and 95/95 connection tests; no listener/network effect; see `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` |
+| CR13A-LIVE-100 default-disabled native-listener adapter contract | First independent review rejected; M-001/L-001/L-002 remediated at `915a5ed...`; different zero-repair re-review required | Frozen exact adapter, module-minted readiness provenance, and non-locator public identity; 55/55 focused and 97/97 connection tests; no listener/network effect; see `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1154,7 +1154,7 @@ The owner approved PR #238. Its exact accepted LIVE-090 branch head `ecb5ea373cc
 merged to `main` as `65ea851c123993d7760d6492966845f74ca1d665` after PR CI run `33784095714` passed in
 12m7s. Post-merge run `33785601437` then passed on that exact authoritative main commit.
 
-CR13A-LIVE-100 is now the active implementation and review block. It freezes the exact boundary immediately before a
+CR13A-LIVE-100 is now the active remediation re-review block. It freezes the exact boundary immediately before a
 future physical listener without adding one. The plan-bound readiness record retains no endpoint, address, port,
 tunnel, host-key, credential, or provider value. It lists twelve missing gates covering the native driver, fresh owner
 activation, platform qualification, exclusive port ownership, SSH peer and host-key proof, three deadlines,
@@ -1162,15 +1162,22 @@ backpressure, shutdown cleanup, and process recovery. Every activation, native, 
 fixed false, with zero listener attempts and zero network-I/O observations.
 
 `DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1` owns no driver, accepts no activation
-input, always rejects start as disabled, and makes repeat close harmless. It is exported but not wired into the local
-pilot, browser, HTTP, Hermes, worker, or service runtime. No networking or process module was added. Callers cannot
-forge eligibility by adding fields, changing blocker order, using behavioral values, or recomputing the public digest.
+input, always rejects start as disabled, and makes repeat close harmless. It is exact-branded, rejects subclasses,
+freezes its instance and prototype, validates exact receivers, and exposes captured base operations through a frozen
+binder for future consumers. It is exported but not wired into the local pilot, browser, HTTP, Hermes, worker, or
+service runtime. No networking or process module was added.
 
-Implementation `8ba1057450414015c05f6e6ddfb94cd5abd7b99c` passes macOS stage zero, TypeScript, full lint,
-53/53 focused tests, 95/95 connection tests, 769/769 pretests, 419/421 core tests with two intentional platform skips,
-346/346 posttests, production build, 4/4 rendered routes, all 36 migrations with 119 tables through the listener-free
-verifier, and whitespace. The ordinary database wrapper preserved its known sandbox-only `tsx` IPC denial before
-migration work. A fresh different zero-repair review remains mandatory before integration.
+The first independent review rejected immutable target `5582d57247f38498efe3c587762257bababa7658` for a mutable
+adapter surface (M-001), readiness identity substitution (L-001), and locator-shaped listener-ID retention (L-002).
+The negative report is preserved with SHA-256
+`8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
+
+Remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` closes all three findings by exact-branding and freezing
+the adapter, requiring module-private readiness provenance, and exposing only a derived non-locator reference. It
+passes macOS stage zero, TypeScript, full lint, 55/55 focused tests, 97/97 connection tests, 769/769 pretests, 419/421
+core tests with two intentional platform skips, 348/348 posttests, production build, 4/4 rendered routes, all 36
+migrations with 119 tables through the listener-free verifier, and whitespace. The ordinary database wrapper preserved
+its known sandbox-only `tsx` IPC denial before migration work. A fresh different zero-repair re-review remains mandatory.
 
 ## Parallel build lane
 
@@ -1187,11 +1194,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-100-INDEPENDENT-REVIEW — attack the default-disabled native-listener adapter contract
+Block: CR13A-LIVE-100-REMEDIATION-RE-REVIEW — independently attack closure of M-001, L-001, and L-002
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: this record will control whether later code may approach a physical network listener, so false gate or forged activation paths must be attacked before integration.
-Expected output: immutable zero-repair packet and a different reviewer reproducing the full gates plus hostile forged-readiness, behavioral-input, disabled-start, cleanup, and no-wiring probes with no High, Medium, or Low finding.
+Why: the first review found real in-process mutation, identity-pairing, and public-output defects; their exact remediations must be attacked before integration.
+Expected output: immutable zero-repair remediation packet and a different reviewer reproducing every original case plus subclass/prototype/own-method attacks, re-digested readiness substitution, locator-shaped identity, receiver misuse, captured-operation dispatch, and the full repository gates with no High, Medium, or Low finding.
 Owner action: none; independent reviews are already authorized. Approve only the exact pull request after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
