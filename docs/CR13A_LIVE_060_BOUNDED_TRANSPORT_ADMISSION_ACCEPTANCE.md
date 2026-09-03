@@ -1,7 +1,7 @@
 # CR13A-LIVE-060 bounded transport admission acceptance
 
 **Status:** exact remediation `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9` independently accepted after the
-first product was rejected; ready for ordinary GitHub CI and owner-controlled integration
+first product was rejected and integrated through owner-approved PR #235
 **Integration base:** `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`
 **Effect boundary:** repository code and PGlite tests only; no listener, socket, SSH session, Hermes/provider call,
 credential access, native process, production PostgreSQL/VPS contact, deployment, DNS, or network effect
@@ -140,3 +140,7 @@ After independent acceptance and owner-approved integration, the next block may 
 listener adapter or a refreshed owner-attended connector rehearsal packet. It must not bind a socket, open SSH, retrieve
 credentials, contact Hermes/provider/production PostgreSQL, deploy, or perform another external effect without a new
 exact contract, readiness gate, and scoped owner authorization.
+
+PR #235 passed ordinary GitHub CI run `33712118883` and merged to `main` as
+`a6c08e1553cbb6d3e3db0e262a5e115c8356c664`. Post-merge GitHub CI run `33749415744` passed every stage. The integration
+changes no listener, connection, credential, provider, native, production, deployment, DNS, or network boundary.

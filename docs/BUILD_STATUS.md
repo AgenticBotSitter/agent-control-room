@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-09-02
+**Updated:** 2026-09-03
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
 
@@ -114,7 +114,8 @@
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
-| CR13A-LIVE-060 bounded transport admission | Remediation `45b4a67...` independently accepted; GitHub integration pending | Different reviewer closed M-001 and L-001 with no new finding; strict crash mode, 24 focused, 53 connection, 304 posttests, 119-table verification; negative report preserved; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
+| CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
+| CR13A-LIVE-070 private-loopback framing | Independently accepted at exact `8e4c20d...`; ordinary integration pending | Different reviewer closed all four findings with eight hostile probe groups and no new defect; accepted report SHA `7ac1a5f...`; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -987,6 +988,44 @@ are closed with no new High, Medium, or Low finding. The accepted report permits
 listener, connection, credential, provider, native, production, or deployment authority. Accepted report SHA-256:
 `a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`.
 
+The owner approved PR #235. GitHub PR CI run `33712118883` passed, the accepted LIVE-060 product merged to `main` as
+`a6c08e1553cbb6d3e3db0e262a5e115c8356c664`, and post-merge CI run `33749415744` passed every stage.
+
+CR13A-LIVE-070 is now the active implementation block. The effect-free decoder accepts exactly one four-byte
+unsigned-big-endian-length-prefixed fatal UTF-8 enrollment-delivery JSON frame from bounded exact host `Uint8Array`
+chunks. Configuration fixes the future posture to an SSH tunnel, IPv4 literal `127.0.0.1`, private-loopback visibility,
+the v1 framing literal, and bounded frame/chunk ceilings. It rejects aliases, partial views, behavioral values, malformed
+prefixes, incomplete/trailing input, invalid UTF-8/JSON/routing shape, and any reuse after a terminal outcome; internal
+buffers are wiped.
+
+The protected handoff binds raw frame, byte count, untrusted delivery-ID hint, and framing/listener policy while denying
+all effect authority. LIVE-060, LIVE-050, and LIVE-030 retain transport admission, outer authentication, and independent
+inner enrollment verification. The local pilot adds only a disabled listener port; no socket, SSH, credential, provider,
+native, production database, route, deployment, DNS, or network effect exists. The rejected exact product
+`ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` and its zero-repair packet SHA-256
+`052f4b621e8606f807425a677e10e5211214563d2e05b1235dc803dac42fd2e6` remain immutable history.
+
+The independent review reproduced all claimed functional counts but rejected the immutable product. Medium M-001 proves
+a caller can manufacture a protected handoff by recomputing its unkeyed digest, including a routing hint that does not
+match the raw frame. Medium M-002 proves duplicate JSON members collapse to last-member routing before exact object
+validation. Low L-001 corrects the impossible absolute alias-rejection claim to full-backing-store input synchronously
+copied and never retained. Low L-002 records two trailing-whitespace lines in the exact product. The negative report is
+preserved with SHA-256 `91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`; no integration
+is permitted.
+
+All four findings are now remediated locally. Decoder-created frames receive module-private provenance before release;
+clones and caller-recomputed digests fail closed. Protected parsing re-extracts the delivery ID from the exact raw frame.
+An iterative bounded pass rejects duplicate JSON members, including escape-equivalent names, before routing extraction.
+The binary contract now accurately accepts only exact full ordinary backing-store views, copies synchronously, retains no
+caller buffer, and proves later alias mutation cannot affect the result. Current evidence is 23/23 focused tests, 65/65
+connection tests, 769/769 pretests, 419/421 core tests with two intentional platform skips, 316/316 posttests, TypeScript,
+full lint, production build with 4/4 rendered checks, all 36 migrations/119 PostgreSQL tables, and clean whitespace.
+Immutable remediation `8e4c20da7166d48cb22c06fd38dfe87ee0016a02` is frozen. Its different zero-repair
+re-review packet SHA-256 is `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
+The different reviewer reproduced every deterministic gate plus eight independent hostile-probe groups, closed M-001,
+M-002, L-001, and L-002, and found no new High, Medium, or Low defect. Accepted report SHA-256:
+`7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`. Ordinary integration remains owner-controlled.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1002,12 +1041,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-060-INTEGRATION — publish the independently accepted branch and obtain ordinary CI plus owner approval
+Block: CR13A-LIVE-070-INTEGRATION — publish the accepted private-loopback framing branch for ordinary CI and owner merge
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact remediation has independent acceptance and now needs the canonical GitHub integration gate.
-Expected output: one main-target pull request, green ordinary CI, and an owner merge decision.
-Owner action: approve merge only after the PR and CI are reported ready.
+Why: the accepted transport-boundary diff and its preserved negative/positive evidence require exact integration review.
+Expected output: private branch push, main-target PR, ordinary GitHub CI, exact reviewed-product confirmation, and no
+listener or external effect.
+Owner action: approve merge only after the PR and ordinary CI are green.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

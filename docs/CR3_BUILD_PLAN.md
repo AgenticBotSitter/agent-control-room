@@ -1097,3 +1097,42 @@ refresh the owner-attended connector rehearsal. Continue with Sol xhigh if code 
 chronology, authentication, credentials, or signed evidence; use Sol high only for a packet-only refresh under frozen
 contracts. No socket, SSH, Hermes/provider, credential, native, production-database, deployment, or DNS effect is
 authorized by this block.
+
+## CR13A-LIVE-070 — private-loopback single-frame decoder and disabled listener port
+
+Status: exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` rejected over owner-approved LIVE-060
+integration `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`; M-001, M-002, L-001, and L-002 are closed in independently accepted
+immutable product `8e4c20da7166d48cb22c06fd38dfe87ee0016a02`; ordinary integration remains owner-controlled. See
+`CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` and ADR-156.
+
+The effect-free decoder accepts exact full-backing-store `Uint8Array` chunks for one unsigned-big-endian-length-prefixed fatal UTF-8
+JSON frame. Exact fixed configuration permits only a future IPv4 `127.0.0.1` SSH-tunnel listener, bounds frame bytes and
+chunk count, rejects incomplete/multiple/trailing frames, wipes internal buffers, and makes every completion or failure
+terminal. It extracts only the untrusted enrollment delivery-ID routing hint. LIVE-060 admission, LIVE-050 outer-frame
+authentication, and LIVE-030 inner enrollment verification retain their separate authority.
+
+The protected internal handoff binds raw frame, byte count, routing hint, and framing/listener policy. It denies every
+effect authority and reduces to the exact two-field LIVE-060 request. The local pilot wires only a disabled listener
+port. No networking/process module, socket, SSH connection, browser route, credential, provider, or production service is
+added.
+
+Completion requires the complete deterministic lifecycle, an immutable product, and independent review with no open
+High, Medium, or Low finding. After acceptance and integration, the next block may implement a separately authorized
+private-loopback listener or refresh an owner-attended connector rehearsal packet. Use Sol xhigh for a listener or
+transport security boundary. No physical bind or external effect is authorized here.
+
+The independent review reproduced every functional gate but rejected integration. M-001 proves the public SHA digest
+cannot establish decoder provenance or prevent a caller from manufacturing a changed handoff. M-002 proves native JSON
+parsing accepts duplicate lexical members with last-member routing. L-001 corrects the unprovable alias-rejection claim
+to exact full-backing-store input, synchronous internal copy, and no retention. L-002 records the immutable product's two
+trailing-whitespace lines. Preserve the negative report and remediate all four findings before a different zero-repair
+re-review. Report SHA-256: `91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`.
+
+The remediation gives decoder-created frames module-private provenance, re-extracts delivery identity from the exact raw
+frame before reduction, and rejects duplicate JSON members at every nesting level, including escape-equivalent names.
+The corrected binary assurance is exact full ordinary backing-store coverage, synchronous private copy, and no
+caller-buffer retention; post-push alias mutation is proven irrelevant. The remediation passes 23/23 focused tests,
+65/65 connection tests, the complete repository lifecycle, build/render, migration, type, lint, and whitespace gates.
+Different-reviewer packet SHA-256: `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
+The accepted report SHA-256 is `7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`; it
+found no new High, Medium, or Low defect and grants integration review only.
