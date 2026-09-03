@@ -1207,6 +1207,8 @@ network observations. A separate activation-evidence assessment binds the exact 
 LIVE-100 blockers and remains `blocked_repository_evidence_only`. The module is not wired into any runtime. TypeScript,
 lint, 65/65 focused tests, 107/107 connection tests, 123/123 CR13A tests, the complete repository lifecycle, production
 build/render, migrations, stage zero, and whitespace pass. Independent zero-repair review remains required.
+The immutable review target is `3c756154744a1b933093771a878ab6b64f243f2e`; packet SHA-256:
+`6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`.
 
 ## Parallel build lane
 

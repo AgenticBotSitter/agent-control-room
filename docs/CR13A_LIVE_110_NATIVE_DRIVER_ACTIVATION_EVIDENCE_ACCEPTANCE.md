@@ -84,6 +84,10 @@ cross-driver substitution, behavioral inputs, fake/native confusion, all twelve 
 receiver and subclass misuse, raw-locator leakage, runtime drift, and alternate effect paths. The review is zero-repair:
 any High, Medium, or Low finding rejects the target and must be preserved before remediation.
 
+Review immutable target `3c756154744a1b933093771a878ab6b64f243f2e` under
+`docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW_PACKET.md`; packet SHA-256:
+`6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`.
+
 Acceptance would permit ordinary owner-controlled integration only. It would not authorize adding a physical native
 driver, accepting live activation evidence, opening or closing a listener, selecting or exposing a port, starting SSH,
 reading a credential, contacting Hermes, running a native qualification, touching production, or deploying. Each

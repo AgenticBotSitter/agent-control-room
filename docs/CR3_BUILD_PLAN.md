@@ -1357,3 +1357,6 @@ with 4/4 rendered routes, macOS stage zero, all 36 migrations/119 tables through
 whitespace. Completion requires a different independent zero-repair review with no High, Medium, or Low finding.
 Acceptance permits ordinary owner-controlled integration only and grants no real listener or external-effect
 authority. Use Sol xhigh.
+
+The immutable review target is `3c756154744a1b933093771a878ab6b64f243f2e`; review packet SHA-256:
+`6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`.

@@ -3254,6 +3254,11 @@ TypeScript, full lint, 65/65 focused tests,
 verifier, and whitespace. The ordinary database wrapper preserved its known sandbox-only `tsx` IPC denial before
 migration work. No native, listener, network, SSH, credential, provider, production, or deployment effect occurred.
 
+**Independent-review freeze:** Review exact target `3c756154744a1b933093771a878ab6b64f243f2e`, containing
+implementation `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab`, under the zero-repair packet with SHA-256
+`6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`. A passing report permits ordinary
+integration review only and grants no listener or external-effect authority.
+
 **Reevaluate:** Before admitting any physical-driver object, signed native evidence, owner activation, actual port,
 socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
 contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a
