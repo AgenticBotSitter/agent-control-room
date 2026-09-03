@@ -115,7 +115,7 @@
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
-| CR13A-LIVE-070 private-loopback framing | Four rejected-product findings remediated at exact `8e4c20d...`; different re-review pending | Private provenance, raw-frame identity recheck, duplicate-key rejection, accurate full-buffer-copy assurance, and clean whitespace pass 23 focused/65 connection tests; negative report retained; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
+| CR13A-LIVE-070 private-loopback framing | Independently accepted at exact `8e4c20d...`; ordinary integration pending | Different reviewer closed all four findings with eight hostile probe groups and no new defect; accepted report SHA `7ac1a5f...`; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1020,9 +1020,11 @@ The binary contract now accurately accepts only exact full ordinary backing-stor
 caller buffer, and proves later alias mutation cannot affect the result. Current evidence is 23/23 focused tests, 65/65
 connection tests, 769/769 pretests, 419/421 core tests with two intentional platform skips, 316/316 posttests, TypeScript,
 full lint, production build with 4/4 rendered checks, all 36 migrations/119 PostgreSQL tables, and clean whitespace.
-Immutable remediation `8e4c20da7166d48cb22c06fd38dfe87ee0016a02` is frozen. A different zero-repair
-re-review remains required before integration; packet SHA-256 is
-`5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
+Immutable remediation `8e4c20da7166d48cb22c06fd38dfe87ee0016a02` is frozen. Its different zero-repair
+re-review packet SHA-256 is `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
+The different reviewer reproduced every deterministic gate plus eight independent hostile-probe groups, closed M-001,
+M-002, L-001, and L-002, and found no new High, Medium, or Low defect. Accepted report SHA-256:
+`7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`. Ordinary integration remains owner-controlled.
 
 ## Parallel build lane
 
@@ -1039,14 +1041,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-070-REMEDIATION — close all four private-loopback framing findings and obtain different re-review
+Block: CR13A-LIVE-070-INTEGRATION — publish the accepted private-loopback framing branch for ordinary CI and owner merge
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: independent review proved that plain SHA does not establish decoder provenance, duplicate JSON keys remain
-ambiguous, and two assurance/evidence claims are inaccurate.
-Expected output: module-private provenance, exact raw-frame identity comparison, bounded duplicate rejection, corrected
-buffer-ownership contract, clean whitespace, full deterministic gates, and acceptance by a different reviewer.
-Owner action: none during remediation/re-review; merge approval will be requested only after acceptance and ordinary CI.
+Why: the accepted transport-boundary diff and its preserved negative/positive evidence require exact integration review.
+Expected output: private branch push, main-target PR, ordinary GitHub CI, exact reviewed-product confirmation, and no
+listener or external effect.
+Owner action: approve merge only after the PR and ordinary CI are green.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

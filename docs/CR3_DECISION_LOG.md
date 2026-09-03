@@ -3003,3 +3003,8 @@ rejected product's whitespace failure remains preserved in its report; the remed
 The immutable remediation is `8e4c20da7166d48cb22c06fd38dfe87ee0016a02`. Its different-reviewer zero-repair
 packet SHA-256 is `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`; neither the
 product nor packet grants listener, SSH, credential, provider, native, production, or deployment authority.
+
+The different reviewer accepted the exact remediation with no new High, Medium, or Low defect after reproducing all
+deterministic gates and eight hostile-probe groups. Accepted report SHA-256:
+`7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`. This permits ordinary integration review only;
+physical listener and external-effect authority remain separate.

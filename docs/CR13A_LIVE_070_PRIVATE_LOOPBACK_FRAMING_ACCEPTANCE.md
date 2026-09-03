@@ -1,7 +1,7 @@
 # CR13A-LIVE-070 private-loopback framing acceptance
 
-**Status:** rejected product retained; all two Medium and two Low findings are remediated in immutable product
-`8e4c20da7166d48cb22c06fd38dfe87ee0016a02`, with a different re-review still required
+**Status:** accepted for immutable product `8e4c20da7166d48cb22c06fd38dfe87ee0016a02` after a different independent
+re-review closed all two Medium and two Low findings with no new defect; integration remains owner-controlled
 **Integration base:** `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`
 **Effect boundary:** repository code and local tests only; no socket bind, listener, SSH session, credential access,
 Hermes/provider call, native process, production PostgreSQL/VPS contact, deployment, DNS, or other network effect
@@ -74,7 +74,7 @@ Current remediation evidence before product freeze:
 - TypeScript, full ESLint, and whitespace validation: pass.
 
 The rejected exact product remains frozen at `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587`. The remediation product is frozen
-at `8e4c20da7166d48cb22c06fd38dfe87ee0016a02` and must be independently re-reviewed before integration.
+at `8e4c20da7166d48cb22c06fd38dfe87ee0016a02` and was accepted by a different independent reviewer.
 
 ## Review and next boundary
 
@@ -103,6 +103,12 @@ change the result, remove whitespace drift, and receive a different zero-repair 
 Those four remediations are frozen at `8e4c20da7166d48cb22c06fd38dfe87ee0016a02`. The different-reviewer packet is
 `docs/reviews/CR13A_LIVE_070_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
 `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
+
+The different reviewer reproduced all deterministic gates plus eight independent hostile-probe groups, closed M-001,
+M-002, L-001, and L-002, and found no new High, Medium, or Low defect. The accepted report is
+`docs/reviews/CR13A_LIVE_070_REMEDIATION_REREVIEW.md`, SHA-256
+`7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`. Acceptance permits ordinary owner-controlled
+integration review only and grants no listener or external-effect authority.
 
 Even after acceptance, a real listener remains a separate owner-controlled block. It must prove the actual bind address,
 exclusive port ownership, tunnel peer and host-key custody, connection lifetime, backpressure, close/recovery behavior,
