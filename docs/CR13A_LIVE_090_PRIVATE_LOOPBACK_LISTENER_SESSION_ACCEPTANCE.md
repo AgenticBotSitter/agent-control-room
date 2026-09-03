@@ -134,4 +134,6 @@ The rejected review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, contai
 target `89be9d7fb486a3fb5855402073466108a19a75ec` under packet SHA-256
 `5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36` because M-002 remained.
 Exact second remediation is `de840c9aef259db18da3c45e1d4e0549bc0f0d85`; a third zero-repair reviewer must close
-M-002, reconfirm M-001, and find no new High, Medium, or Low defect before ordinary owner-controlled integration.
+M-002, reconfirm M-001, and find no new High, Medium, or Low defect before ordinary owner-controlled integration. The
+immutable second-remediation review target is `f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`; packet SHA-256:
+`32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`.

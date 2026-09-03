@@ -1241,4 +1241,6 @@ admission is hardened, and strict-process regressions cover both layers while a 
 proves no getter runs. Producer gates pass at 46/46 focused, 88/88 connections, 769/769 pretests, 419/421 core with two
 intentional platform skips, 339/339 posttests, build with 4/4 rendered routes, 36 migrations/119 tables, type, lint,
 stage zero, and whitespace. A third zero-repair reviewer must close M-002, reconfirm M-001, and find no new High,
-Medium, or Low defect.
+Medium, or Low defect. The immutable second-remediation review target is
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`; packet SHA-256:
+`32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`.

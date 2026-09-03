@@ -3118,4 +3118,6 @@ strict Node rejection handling. Preserve the negative report with SHA-256
 `de840c9aef259db18da3c45e1d4e0549bc0f0d85` observes only safely selected captured/default native construction while
 keeping behavioral/accessor and foreign selections unexecuted and every decorated Promise invalid. It hardens the
 duplicated LIVE-060 boundary and adds strict-process regressions at both layers. A third zero-repair reviewer must close
-M-002, reconfirm M-001, and find no new High, Medium, or Low defect. No external authority is granted.
+M-002, reconfirm M-001, and find no new High, Medium, or Low defect. Review immutable target
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3` under packet SHA-256
+`32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`. No external authority is granted.
