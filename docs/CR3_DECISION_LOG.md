@@ -3106,4 +3106,6 @@ settlement could be correlated with ordered cleanup and a terminal receipt. Exac
 `28a1c0833e8e2b2b3368644536b7442c96bbadcb` makes that call a non-mutating state conflict and adds async-pending and
 synchronous-reentrant regressions proving exactly one admission and recoverable completion. A different zero-repair
 reviewer must independently close M-001 and find no new High, Medium, or Low defect. This amendment grants no listener,
-SSH, credential, native, provider, production, deployment, or network authority.
+SSH, credential, native, provider, production, deployment, or network authority. Review immutable remediation target
+`89be9d7fb486a3fb5855402073466108a19a75ec` under the packet with SHA-256
+`5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.

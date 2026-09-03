@@ -115,4 +115,6 @@ The rejected review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, contai
 `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`. Its zero-repair packet SHA-256 is
 `88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`. The exact remediation is
 `28a1c0833e8e2b2b3368644536b7442c96bbadcb`; a different zero-repair reviewer must independently close M-001 and find
-no new High, Medium, or Low defect before ordinary owner-controlled integration.
+no new High, Medium, or Low defect before ordinary owner-controlled integration. The immutable remediation review
+target is `89be9d7fb486a3fb5855402073466108a19a75ec`; different-reviewer packet SHA-256:
+`5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.

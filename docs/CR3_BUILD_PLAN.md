@@ -1224,4 +1224,6 @@ regressions prove the first admission can settle, cleanup can complete, one rece
 called exactly once. Producer gates pass at 43/43 focused tests, 85/85 connection tests, 769/769 pretests, 419/421 core
 tests with two intentional platform skips, 336/336 posttests, production build plus 4/4 rendered routes, and all 36
 migrations with 119 tables. A different zero-repair reviewer must close M-001 and find no new High, Medium, or Low
-defect before owner-controlled integration.
+defect before owner-controlled integration. The immutable remediation review target is
+`89be9d7fb486a3fb5855402073466108a19a75ec`; packet SHA-256:
+`5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.
