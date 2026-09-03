@@ -1097,3 +1097,25 @@ refresh the owner-attended connector rehearsal. Continue with Sol xhigh if code 
 chronology, authentication, credentials, or signed evidence; use Sol high only for a packet-only refresh under frozen
 contracts. No socket, SSH, Hermes/provider, credential, native, production-database, deployment, or DNS effect is
 authorized by this block.
+
+## CR13A-LIVE-070 — private-loopback single-frame decoder and disabled listener port
+
+Status: implementation candidate over owner-approved LIVE-060 integration
+`a6c08e1553cbb6d3e3db0e262a5e115c8356c664`. See
+`CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` and ADR-156.
+
+The effect-free decoder accepts fresh exact `Uint8Array` chunks for one unsigned-big-endian-length-prefixed fatal UTF-8
+JSON frame. Exact fixed configuration permits only a future IPv4 `127.0.0.1` SSH-tunnel listener, bounds frame bytes and
+chunk count, rejects incomplete/multiple/trailing frames, wipes internal buffers, and makes every completion or failure
+terminal. It extracts only the untrusted enrollment delivery-ID routing hint. LIVE-060 admission, LIVE-050 outer-frame
+authentication, and LIVE-030 inner enrollment verification retain their separate authority.
+
+The protected internal handoff binds raw frame, byte count, routing hint, and framing/listener policy. It denies every
+effect authority and reduces to the exact two-field LIVE-060 request. The local pilot wires only a disabled listener
+port. No networking/process module, socket, SSH connection, browser route, credential, provider, or production service is
+added.
+
+Completion requires the complete deterministic lifecycle, an immutable product, and independent review with no open
+High, Medium, or Low finding. After acceptance and integration, the next block may implement a separately authorized
+private-loopback listener or refresh an owner-attended connector rehearsal packet. Use Sol xhigh for a listener or
+transport security boundary. No physical bind or external effect is authorized here.

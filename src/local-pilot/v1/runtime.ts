@@ -18,8 +18,10 @@ import { AuthenticatedFleetTelemetryFreshnessSourceV1,
   type ConnectionCenterFreshnessSourceV1, type ConnectionCenterRosterSourceV1 } from "../../connection-center/v1";
 import { ConnectionEnrollmentIntakeServiceV1, ConnectionRegistryStoreV1,
   DisabledConnectionEnrollmentDeliverySourceV1, DisabledConnectionEnrollmentNodeIngressV1,
+  DisabledConnectionEnrollmentPrivateLoopbackListenerV1,
   DisabledConnectionEnrollmentTransportAdmissionV1,
   type ConnectionEnrollmentNodeIngressPortV1,
+  type ConnectionEnrollmentPrivateLoopbackListenerPortV1,
   type ConnectionEnrollmentTransportAdmissionPortV1 } from "../../connection-registry/v1";
 import {
   buildProjectWorkspaceVerifiedOwnerSessionV1,
@@ -240,6 +242,7 @@ export interface ControlRoomLocalPilotRuntimeV1{
   connectionEnrollmentIntakeService:Pick<ConnectionEnrollmentIntakeServiceV1,"ingest">;
   connectionEnrollmentNodeIngress:ConnectionEnrollmentNodeIngressPortV1;
   connectionEnrollmentTransportAdmission:ConnectionEnrollmentTransportAdmissionPortV1;
+  connectionEnrollmentPrivateLoopbackListener:ConnectionEnrollmentPrivateLoopbackListenerPortV1;
   syncCatalog(now?:string):Promise<void>;close():Promise<void>;
 }
 
@@ -269,9 +272,11 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
     connectionEnrollmentAuditKey,new DisabledConnectionEnrollmentDeliverySourceV1());
   const connectionEnrollmentNodeIngress=new DisabledConnectionEnrollmentNodeIngressV1();
   const connectionEnrollmentTransportAdmission=new DisabledConnectionEnrollmentTransportAdmissionV1();
+  const connectionEnrollmentPrivateLoopbackListener=new DisabledConnectionEnrollmentPrivateLoopbackListenerV1();
   await catalog.sync(clock());await projectEventReconciler.reconcileAll(LOCAL_PILOT_TENANT_ID_V1);return Object.freeze({mode:LOCAL_PILOT_MODE_V1,ownerSession,operatorService,ownerDecisionService,lifecycleService,
     scopeAuthority:new ProjectWorkspaceOwnerReadScopeAuthorityV1({verify:(credential,now)=>ownerSession.verifyProjectWorkspace(credential,now)},catalogAuthority,new SecurityStore(db)),
     readSource:new LocalPilotProjectReadSourceV1(registry),projectEventSource,connectionRosterSource,connectionFreshnessSource,
     connectionEnrollmentIntakeService,connectionEnrollmentNodeIngress,connectionEnrollmentTransportAdmission,
+    connectionEnrollmentPrivateLoopbackListener,
     syncCatalog:(now=clock())=>catalog.sync(now),close:()=>raw.close()});}
   catch(error){await raw.close().catch(()=>undefined);throw error;}}

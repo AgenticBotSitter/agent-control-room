@@ -2947,3 +2947,35 @@ settlement, and accepted replay remain correct. M-001 and L-001 are closed with 
 permits owner-controlled integration review only and grants no listener, connection, credential, provider, native,
 production, or deployment authority. Accepted report SHA-256 is
 `a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`.
+
+## ADR-156 — One bounded byte frame precedes transport admission and grants no trust
+
+**Decision:** The first future private-loopback transport seam uses exactly one four-byte unsigned big-endian payload
+length followed by one fatal UTF-8 JSON payload. Configuration fixes the proposed transport to an SSH tunnel, IPv4,
+literal `127.0.0.1`, private-loopback visibility, the v1 framing literal, a protocol-bounded byte ceiling, and a bounded
+chunk count. The decoder accepts only exact fresh host `Uint8Array` storage, rejects incomplete, trailing, multiple,
+behavioral, aliased, shared, or malformed input, wipes its internal bytes, and becomes terminal after any outcome.
+
+The framing layer parses only the exact outer JSON key set, declared enrollment-delivery message type, and syntactically
+valid delivery-ID routing hint. It does not trust or validate the claimed identity, signature, chronology, enrollment
+envelope, or authority. A digest-bound protected internal record carries the exact raw frame and byte count to the
+existing transport admission, which still delegates outer authentication to LIVE-050 and independent inner enrollment
+authorization to LIVE-030. The local pilot exposes only a disabled listener port.
+
+**Why:** A physical listener cannot safely pass arbitrary stream fragments directly into the authenticated protocol.
+The framing seam must bound allocation and work, define end-of-message semantics, eliminate multi-frame ambiguity, and
+retain exact bytes without accidentally turning transport parsing into authentication or enrollment authority.
+
+**Alternatives rejected:** Newline-delimited JSON; JSON streaming; multiple frames per connection; caller-supplied
+buffers or partial views; unbounded chunks; accepting trailing bytes; replacing fatal UTF-8; parsing a delivery ID as
+authenticated identity; trusting a loopback configuration literal as physical bind evidence; HTTP/browser enrollment;
+opening a socket or SSH connection in the same block.
+
+**Trade-off:** One frame per session creates more connection churn and exact fresh chunks require the eventual listener
+to copy bytes before this boundary. Enrollment is rare, and those costs are accepted for bounded allocation, simple
+recovery, and an inspectable trust transition. The raw frame remains protected internal data until authentication.
+
+**Reevaluate:** Before implementing the physical listener, supporting multiple frames, changing framing or size/chunk
+limits, accepting another address family or bind address, adding stream abstractions, changing protected handoff fields,
+or altering the split between framing, transport admission, outer authentication, and inner enrollment verification.
+Any such change invalidates CR13A-LIVE-070 review evidence and requires a new effect/readiness decision.

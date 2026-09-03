@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-09-02
+**Updated:** 2026-09-03
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
 
@@ -114,7 +114,8 @@
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
-| CR13A-LIVE-060 bounded transport admission | Remediation `45b4a67...` independently accepted; GitHub integration pending | Different reviewer closed M-001 and L-001 with no new finding; strict crash mode, 24 focused, 53 connection, 304 posttests, 119-table verification; negative report preserved; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
+| CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
+| CR13A-LIVE-070 private-loopback framing | Deterministic implementation complete; product freeze and independent review pending | One bounded big-endian/fatal-UTF-8 frame, exact private-loopback configuration, protected authority-free handoff, disabled local listener, 21 focused and 63 connection tests; complete lifecycle green; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -987,6 +988,24 @@ are closed with no new High, Medium, or Low finding. The accepted report permits
 listener, connection, credential, provider, native, production, or deployment authority. Accepted report SHA-256:
 `a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`.
 
+The owner approved PR #235. GitHub PR CI run `33712118883` passed, the accepted LIVE-060 product merged to `main` as
+`a6c08e1553cbb6d3e3db0e262a5e115c8356c664`, and post-merge CI run `33749415744` passed every stage.
+
+CR13A-LIVE-070 is now the active implementation block. The effect-free decoder accepts exactly one four-byte
+unsigned-big-endian-length-prefixed fatal UTF-8 enrollment-delivery JSON frame from bounded exact host `Uint8Array`
+chunks. Configuration fixes the future posture to an SSH tunnel, IPv4 literal `127.0.0.1`, private-loopback visibility,
+the v1 framing literal, and bounded frame/chunk ceilings. It rejects aliases, partial views, behavioral values, malformed
+prefixes, incomplete/trailing input, invalid UTF-8/JSON/routing shape, and any reuse after a terminal outcome; internal
+buffers are wiped.
+
+The protected handoff binds raw frame, byte count, untrusted delivery-ID hint, and framing/listener policy while denying
+all effect authority. LIVE-060, LIVE-050, and LIVE-030 retain transport admission, outer authentication, and independent
+inner enrollment verification. The local pilot adds only a disabled listener port; no socket, SSH, credential, provider,
+native, production database, route, deployment, DNS, or network effect exists. Current evidence is 21/21 focused tests,
+63/63 connection tests, 769/769 pretests, 419/421 core tests with two intentional platform skips, 314/314 posttests,
+TypeScript, full lint, production build with 4/4 rendered checks, all 36 migrations/119 PostgreSQL tables, and whitespace
+validation. Product freeze and independent review remain pending.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1002,12 +1021,14 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-060-INTEGRATION — publish the independently accepted branch and obtain ordinary CI plus owner approval
+Block: CR13A-LIVE-070-REVIEW — freeze and independently review the private-loopback framing boundary
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact remediation has independent acceptance and now needs the canonical GitHub integration gate.
-Expected output: one main-target pull request, green ordinary CI, and an owner merge decision.
-Owner action: approve merge only after the PR and CI are reported ready.
+Why: future transport bytes and protected raw frames cross this boundary; malformed input, runtime custody, cleanup,
+and disabled-default claims need independent evidence before integration.
+Expected output: complete deterministic lifecycle, immutable product and review packet, and one independent report with
+no unresolved High, Medium, or Low finding.
+Owner action: none during review; merge approval will be requested only after acceptance and ordinary GitHub CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
