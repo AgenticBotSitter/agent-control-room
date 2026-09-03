@@ -1044,3 +1044,56 @@ no ingress listener or external effect is enabled.
 Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
 refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust
 boundary; use Sol high for a packet-only refresh under frozen contracts.
+
+## CR13A-LIVE-060 — bounded transport admission
+
+Status: exact effect-free product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` rejected by independent review over
+owner-approved LIVE-050 integration `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`; Medium M-001 and Low L-001 require
+remediation and another different review. See `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md`, the preserved
+negative report, and ADR-155.
+
+The server-only admission accepts exactly one string frame and untrusted delivery routing hint. It enforces a strict
+UTF-8 byte ceiling before time or ingress use, takes chronology only from a synchronous server clock, and derives
+transport rate-limit identity from frozen policy plus a digest-only channel identity. Configuration admits only an SSH
+tunnel at private loopback. That is a policy contract, not proof of a real bind address; the block opens no listener and
+performs no network I/O.
+
+Only an exact intrinsic native Promise may cross the ingress seam. Foreign thenables, Proxies, Promise subclasses, own
+string properties, and intrinsic `constructor`/`then` drift fail before assimilation. Unknown rejected values retain no
+behavior or raw identity, and only explicitly allowed ingress codes survive as fresh local admission errors. The safe
+receipt is strict, digest-bound, replay-stable, secret-free, and denies listener, I/O, approval, network, command, lease,
+and execution authority. Local pilot composition remains disabled and the app exposes no admission route.
+
+The deterministic gate passes 22 focused admission/ingress tests, 50 connection tests, the complete lifecycle,
+TypeScript, full lint, production build/render, all 36 migrations with 119 PostgreSQL tables, and whitespace validation.
+The zero-repair packet SHA-256 is `0aa34793dff6ffd56d5cef026a250a170e5af12119d3ab7fe91ed199d6cb762f`.
+The first independent review rejects exact product `cee64a8...`. A rejected intrinsic Promise that fails the own-string
+shape rule is not observed and can emit its raw rejection through Node's process-level `unhandledRejection` channel.
+The report also corrects the connection gate from 50/50 to 51/51. Preserve the report, repair without assimilating
+foreign thenables or executing Proxy/accessor/subclass behavior, and require a different zero-repair re-review before
+publication or integration. Rejected report SHA-256:
+`d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.
+
+The exact remediation is frozen at `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9`. A safely observable malformed
+Promise must be a non-Proxy exact same-realm intrinsic instance with unchanged captured prototype constructor/then,
+unchanged constructor species getter, and no instance constructor override. The boundary calls only the captured native
+method with inert handlers; it never reads a supplied `then` or instrumentation accessor. Strict unhandled-rejection and
+process-event regressions prove a decorated rejection creates one bounded local result without raw escape. Foreign
+thenable/Proxy and Promise runtime replacements execute zero behavior.
+
+Corrected gates pass 24/24 focused admission/ingress, 53/53 connections, and 304/304 posttests, plus the unchanged full
+pretest/core lifecycle, TypeScript, lint, build/render, migration, and whitespace gates. A different reviewer must close
+M-001 and L-001 with no new finding before publication or integration. Closure-packet SHA-256:
+`07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`.
+
+The different zero-repair reviewer reproduced the complete required gate and private Promise-cleanup probes against the
+exact remediation. M-001 and L-001 are closed with no new High, Medium, or Low finding. The accepted report is
+`docs/reviews/CR13A_LIVE_060_REMEDIATION_REREVIEW.md`, SHA-256
+`a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`. This authorizes ordinary GitHub integration review
+only and does not enable a listener or another external effect.
+
+Next after independent acceptance and owner-approved integration: define a disabled private-loopback listener adapter or
+refresh the owner-attended connector rehearsal. Continue with Sol xhigh if code touches listener, transport, identity,
+chronology, authentication, credentials, or signed evidence; use Sol high only for a packet-only refresh under frozen
+contracts. No socket, SSH, Hermes/provider, credential, native, production-database, deployment, or DNS effect is
+authorized by this block.

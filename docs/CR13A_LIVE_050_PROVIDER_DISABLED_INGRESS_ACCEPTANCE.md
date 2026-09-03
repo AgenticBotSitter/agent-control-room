@@ -1,6 +1,7 @@
 # CR13A-LIVE-050 provider-disabled enrollment ingress acceptance
 
-**Status:** independently accepted for exact provider-disabled product `ffcdb586022ff67494cb2e404df7749b3a093b22`; owner-approved integration pending
+**Status:** independently accepted for exact provider-disabled product `ffcdb586022ff67494cb2e404df7749b3a093b22` and
+integrated through owner-approved PR #234 as `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`
 **Effect boundary:** server-only repository composition and PGlite tests; no listener, HTTP/browser mutation, live
 connector, SSH, Hermes/provider call, credential access, production PostgreSQL/VPS contact, deployment, or network effect
 
@@ -153,9 +154,17 @@ report is `docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW.md`, SHA-2
 `a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. This permits owner-controlled integration only
 and does not enable an ingress listener or any live effect.
 
+## Integration record
+
+The owner approved PR #234. The accepted product and its complete durable review history merged to `main` as
+`5a94bfd7f28d336274f6b29ad50575eb5a90a9b1` on 2026-09-03 UTC. Ordinary post-merge GitHub CI run `33708554981` passed
+all stages in 10m50s. The integration did not enable a listener, transport, live connector, credential, provider, native,
+production-database, deployment, or network effect.
+
 ## Next boundary
 
-After independent acceptance and owner-approved integration, a later block may define one bounded transport admission
-contract or owner-attended enrolled-connector rehearsal packet. That work must stop before an actual listener, machine
-connection, SSH/Hermes/native action, credential use, provider call, production PostgreSQL/VPS contact, or deployment
-unless separately authorized against a new exact packet.
+Integration is complete. CR13A-LIVE-060 now defines one bounded, effect-free transport-admission contract. It must pass
+independent review and owner-approved integration before a later block can define a disabled listener adapter or refresh
+an owner-attended connector rehearsal. Every block still stops before an actual listener, machine connection,
+SSH/Hermes/native action, credential use, provider call, production PostgreSQL/VPS contact, or deployment unless
+separately authorized against a new exact packet.

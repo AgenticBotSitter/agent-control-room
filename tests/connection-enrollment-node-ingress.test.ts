@@ -6,9 +6,11 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import {
   ConnectionEnrollmentNodeIngressErrorV1,
+  ConnectionEnrollmentTransportAdmissionV1,
   DatabaseConnectionEnrollmentNodeIngressV1,
   DisabledConnectionEnrollmentNodeIngressV1,
   parseConnectionEnrollmentNodeIngressReceiptV1,
+  parseConnectionEnrollmentTransportAdmissionReceiptV1,
 } from "../src/connection-registry/v1/index.ts";
 import {
   IDEA_LAB_HERMES_021_CONNECTION_ENROLLMENT_V1,
@@ -228,6 +230,38 @@ test("CR13A-LIVE-050 composes delivery and independent intake into one stable sa
       first.registryRevision, first.grantsApproval, first.grantsNetworkAuthority, first.grantsCommandAuthority,
       first.grantsLeaseAuthority, first.grantsExecutionAuthority],
     ["accepted", "accepted", "accepted", 1, false, false, false, false, false]);
+    const serialized = JSON.stringify(first);
+    for (const protectedValue of [tenantId,nodeId,keyId,connectionId,deliveryId,enrollmentId,spki,frame.signature]) {
+      assert.equal(serialized.includes(protectedValue), false, protectedValue);
+    }
+    const counts = await raw.query<{ deliveries: number; intake: number; connections: number }>(
+      `SELECT (SELECT count(*)::int FROM control_connection_enrollment_protocol_deliveries) AS deliveries,
+      (SELECT count(*)::int FROM control_connection_enrollment_intake_receipts) AS intake,
+      (SELECT count(*)::int FROM control_connection_enrollments) AS connections`);
+    assert.deepEqual(counts.rows[0], { deliveries: 1, intake: 1, connections: 1 });
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-060 admits one bounded SSH-tunnel frame through the complete protected ingress", async () => {
+  const { raw, keys, spki, ingress } = await fixture();
+  const clock = { value: receivedAt, now() { return this.value; } };
+  const admission = new ConnectionEnrollmentTransportAdmissionV1(ingress, {
+    admissionId: "transport-admission:node-ingress-test",
+    transport: "ssh_tunnel",
+    listenerVisibility: "private_loopback",
+    channelIdentityDigest: digest("transport-channel-identity"),
+    maximumFrameBytes: 262_144,
+  }, clock);
+  try {
+    const frame = deliveryFrame(keys.privateKey, spki);
+    const first = await admission.admit({ rawFrame: JSON.stringify(frame), deliveryId });
+    clock.value = retryAt;
+    const replay = await admission.admit({ rawFrame: JSON.stringify(frame), deliveryId });
+    assert.deepEqual(replay, first);
+    assert.deepEqual(parseConnectionEnrollmentTransportAdmissionReceiptV1(first), first);
+    assert.deepEqual([first.transport, first.listenerVisibility, first.receivedAt, first.registryRevision,
+      first.opensListener, first.performsNetworkIo, first.grantsNetworkAuthority, first.grantsExecutionAuthority],
+    ["ssh_tunnel", "private_loopback", receivedAt, 1, false, false, false, false]);
     const serialized = JSON.stringify(first);
     for (const protectedValue of [tenantId,nodeId,keyId,connectionId,deliveryId,enrollmentId,spki,frame.signature]) {
       assert.equal(serialized.includes(protectedValue), false, protectedValue);

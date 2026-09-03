@@ -123,6 +123,11 @@ function assertCanonicalRuntimeV1(): void {
   }
 }
 
+/** Shared runtime assertion for adjacent enrollment ingress boundaries. */
+export function assertConnectionEnrollmentNodeIngressRuntimeV1(): void {
+  assertCanonicalRuntimeV1();
+}
+
 function patternMatchesV1(pattern: RegExp, value: string): boolean {
   return reflectApplyV1(regexpExecV1, pattern, [value]) !== null;
 }
