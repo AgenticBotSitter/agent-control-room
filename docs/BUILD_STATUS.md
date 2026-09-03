@@ -119,7 +119,7 @@
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
-| CR13A-LIVE-110 native-driver and activation-evidence contract | Independent review rejected immutable target; remediation in progress | 0 High/2 Medium/0 Low: exact-object provenance and exported method-function freezing; no native implementation, listener, or network effect |
+| CR13A-LIVE-110 native-driver and activation-evidence contract | Exact remediation `565bc25...`; different independent zero-repair re-review required | M-001 exact-object provenance and M-002 exported method-function freezing remediated; 66/66 focused tests; no native implementation, listener, or network effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1219,6 +1219,16 @@ defects contradict the acceptance contract. The negative report is preserved at
 `4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation and a different independent
 re-review are required before integration.
 
+Exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d` adds private readiness-to-plan,
+contract-to-plan/readiness, rehearsal-to-contract/driver, and driver-to-contract relationships and verifies exact
+object identity during composition. It freezes the exported fake-driver class and each captured prototype method
+function. New regressions reproduce all three M-001 substitution paths and the complete M-002 function mutation
+family; all fail closed with zero replacement executions. The remediation passes macOS stage zero, TypeScript, lint,
+66/66 focused tests, 108/108 connection tests, 124/124 CR13A tests, 769/769 pretests, 419/421 core tests with two
+established platform skips, 359/359 posttests, production build, 4/4 rendered routes, 36 migrations/119 tables through
+the listener-free verifier, and whitespace. A different zero-repair re-review is required; no external-effect
+authority has been added.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1234,11 +1244,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-110-REMEDIATION — close the two independent-review integrity findings
+Block: CR13A-LIVE-110-REMEDIATION-REREVIEW — independently attack the exact remediation
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: exact provenance and immutable callable surfaces are security boundaries, even while the fake remains blocked.
-Expected output: module-private exact-object relationship checks, frozen exported driver methods, hostile regressions for M-001/M-002, complete deterministic gates, and a different zero-repair reviewer reporting no remaining finding.
+Why: the remediated exact-object and callable-surface boundaries must be attacked by a different reviewer before integration.
+Expected output: immutable remediation target and a different zero-repair reviewer reproducing both original findings, the full hostile matrix, and complete deterministic gates with no remaining High, Medium, or Low finding.
 Owner action: none; independent reviews are already authorized. Approve only the exact pull request after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

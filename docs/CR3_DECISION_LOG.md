@@ -3267,6 +3267,14 @@ the three method function objects stored on it. Preserve the negative report at
 `4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation and a different independent
 zero-repair re-review are mandatory before integration.
 
+**Remediation amendment:** Exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d` makes exact-object
+provenance a private relationship rather than a public-digest inference. Readiness is bound to its exact input plan;
+contracts are bound to their exact plan/readiness pair; rehearsals are bound to their exact contract/driver pair; and
+drivers are bound to their exact contract. Evidence composition revalidates those relationships. The exported fake
+driver class and each captured prototype method function are frozen. Hostile regressions reject all reported
+equal-identity substitutions and method-function changes with zero replacement executions. A different zero-repair
+re-review remains mandatory, and the change grants no native or external-effect authority.
+
 **Reevaluate:** Before admitting any physical-driver object, signed native evidence, owner activation, actual port,
 socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
 contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a

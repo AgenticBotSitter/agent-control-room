@@ -1,6 +1,7 @@
 # CR13A-LIVE-110 native-driver and activation-evidence contract acceptance
 
-**Status:** rejected by independent zero-repair review; remediation required before a new immutable review
+**Status:** exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d`; different independent zero-repair
+re-review required before integration
 **Integration base:** owner-approved LIVE-100 merge `d1d2b8723797cd2d09efc70384fa98403223a8ec`
 **Effect boundary:** repository code and deterministic tests only; injected repository fake only; no native driver,
 socket, listener, port, SSH, credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS,
@@ -98,6 +99,23 @@ Remediation must retain exact readiness-to-plan, contract-to-plan/readiness, and
 provenance in module-private state and verify those relationships at every composition boundary. It must also freeze
 the captured `status`, `rehearse`, and `close` function objects themselves and add hostile regressions for every
 reported substitution. The negative review grants no integration or external-effect authority.
+
+Exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d` closes the reported seams. LIVE-100 now retains a
+module-private readiness-to-exact-plan relationship and exposes a validation-only assertion for later composition.
+LIVE-110 retains frozen module-private contract-to-plan/readiness, rehearsal-to-contract/driver, and
+driver-to-contract relationships. Contract creation and activation-evidence composition revalidate exact object
+identity through those relationships, so separately minted but publicly equal objects are not interchangeable.
+
+The exported repository-fake class, its prototype, and each captured `status`, `rehearse`, and `close` function object
+are frozen. The regression matrix attempts own `call`, `apply`, `bind`, custom-property, `prototype`, and function
+prototype changes across all three methods; every mutation is rejected and replacement execution remains zero.
+
+Remediation producer evidence passes macOS stage zero, TypeScript, full lint, 66/66 focused tests, 108/108 connection
+tests, 124/124 CR13A tests, 769/769 pretests, 419/421 core tests with two established platform skips, 359/359
+posttests, production build, 4/4 rendered routes, migrations `0001` through `0036` with 119 PostgreSQL tables through
+the listener-free verifier, and whitespace. The ordinary database wrapper preserved the known sandbox-only `tsx`
+temporary IPC `listen EPERM` before migration work. No native, listener, network, SSH, credential, provider,
+production, deployment, DNS, or hosting effect occurred.
 
 Acceptance would permit ordinary owner-controlled integration only. It would not authorize adding a physical native
 driver, accepting live activation evidence, opening or closing a listener, selecting or exposing a port, starting SSH,
