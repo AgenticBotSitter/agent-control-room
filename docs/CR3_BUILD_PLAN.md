@@ -1186,3 +1186,24 @@ The different reviewer reproduced every deterministic gate and hostile-probe fam
 and found no new High, Medium, or Low defect. Accepted report SHA-256:
 `3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. This permits ordinary owner-controlled
 integration only and grants no listener, SSH, credential, native, provider, production, deployment, or network authority.
+
+## CR13A-LIVE-090 — one-frame listener-session and authenticated admission composition
+
+Status: implementation frozen at `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe` over owner-approved LIVE-080 merge
+`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; independent zero-repair review required. See
+`CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` and ADR-158.
+
+This block composes one accepted private-loopback frame and the repository-fake listener lifecycle into exactly one
+authenticated transport-admission call. The session owns actual decoder chunk counting, module-private protected-frame
+creation, raw-input reduction, a digest of the exact admission input, single-flight admission, listener/admission policy
+matching, ordered close/drain/cleanup, reduced evidence clearing, and one public-safe correlation receipt.
+
+The session neither opens nor implements a listener. It has no socket, SSH, network, process, credential, route, or
+local-pilot integration. Listener evidence remains repository fake and every native/effect/authority claim remains
+false. Admission cannot be retried or interrupted after its native promise is accepted; concurrent or wrong-order calls
+cannot revive, duplicate, or corrupt it. A future native adapter must independently enforce wall-clock timeouts and
+backpressure and prove physical bind, port exclusivity, tunnel/host-key identity, shutdown, and cleanup.
+
+Completion requires immutable implementation, the complete deterministic repository lifecycle, a zero-repair attack
+packet, and a fresh independent reviewer with no open High, Medium, or Low finding. Use Sol xhigh for the protected-byte,
+async-settlement, and cleanup boundary. Independent acceptance permits ordinary owner-controlled integration only.

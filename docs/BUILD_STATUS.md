@@ -116,7 +116,8 @@
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
-| CR13A-LIVE-080 private-loopback listener lifecycle | Exact remediation `884ff423...` independently accepted; integration in progress | Different reviewer closed M-001/L-001/L-002 with no new finding; report SHA `3e5ea006...`; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
+| CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
+| CR13A-LIVE-090 listener-session admission composition | Implementation frozen at `5ff9d9b...`; independent zero-repair review required | One decoded protected frame reaches exactly one authenticated admission call, with single-flight settlement and terminal cleanup; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1063,6 +1064,33 @@ found no new High, Medium, or Low defect. The unchanged accepted report SHA-256 
 `3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. Ordinary owner-controlled integration is
 now permitted; listener, SSH, credential, native, provider, production, deployment, and network authority remain absent.
 
+The owner approved PR #237. GitHub PR CI run `33764405948` passed, the accepted LIVE-080 product merged to `main` as
+`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`, and post-merge CI run `33766513282` passed every stage in 10m52s.
+
+CR13A-LIVE-090 is now the active implementation and review block. It composes the accepted LIVE-070 decoder and
+remediated LIVE-080 lifecycle with exactly one LIVE-060 authenticated transport-admission call. The repository-only
+session constructs the protected-frame observation internally, counts actual successful decoder chunks, reduces the
+raw frame to the exact admission input, binds that input by digest, captures the admission method and receiver before
+use, and requires the admission receipt to match the planned transport, visibility, channel identity, and frame ceiling.
+
+Admission is single-flight. After the downstream intrinsic Promise is accepted, concurrent completion, close, cleanup,
+or abort cannot interrupt, revive, duplicate, or corrupt the in-flight attempt. Malformed same-realm Promise rejection
+is safely observed; foreign thenables remain unassimilated. Only after admission settles successfully may the session
+close the connection, drain, clean up the fake listener, and emit one strict public-safe correlation receipt. Every
+terminal failure clears retained decoder, lifecycle, digest, chunk-count, and safe-receipt evidence.
+
+The block opens no listener and imports no socket, SSH, network, process, credential, Hermes/provider, route, or
+production service. Its lifecycle evidence remains repository fake and its receipt fixes all native, effect, and
+authority claims false. The coordinator deliberately does not claim a wall-clock admission timeout; the future native
+adapter must separately prove timeouts, backpressure, cancellation, shutdown, and process-kill recovery.
+
+Implementation is frozen at `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe` over owner-approved integration base
+`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`. Producer gates pass: stage zero with no native attempt, TypeScript, full
+lint, 42/42 focused LIVE-060/070/080/090 tests, 84/84 connection tests, the complete 769/769 pretests plus 419/421 core
+tests with two intentional platform skips plus 335/335 posttests, production build with 4/4 rendered checks, all 36
+migrations with 119 PostgreSQL tables, and clean whitespace. A fresh independent zero-repair review must find no open
+High, Medium, or Low defect before publication or integration.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1078,12 +1106,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-080-INTEGRATION — integrate the independently accepted listener-lifecycle contract
+Block: CR13A-LIVE-090-INDEPENDENT-REVIEW — attack the listener-session/admission composition
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: exact remediation and immutable independent acceptance are complete; GitHub transfer and ordinary CI remain.
-Expected output: accepted report preserved, clean branch pushed, main-target PR opened, and ordinary GitHub CI green.
-Owner action: approve the exact PR merge after ordinary CI is green.
+Why: the block handles protected bytes, asynchronous admission, concurrency, and cleanup correlation.
+Expected output: immutable zero-repair packet, exact-target independent gates and hostile probes, accepted only with no open High, Medium, or Low finding.
+Owner action: none; all independent reviews are already authorized. Approve only the exact PR after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

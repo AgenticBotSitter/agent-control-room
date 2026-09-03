@@ -3064,3 +3064,32 @@ Remediation re-review packet SHA-256: `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b
 and private hostile probes, closed M-001, L-001, and L-002, and found no new High, Medium, or Low defect. Accepted report
 SHA-256: `3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. This permits ordinary
 owner-controlled integration only; every physical listener and external-effect boundary remains separate.
+
+## ADR-158 — One session owns decoding, admission serialization, and cleanup correlation
+
+**Decision:** Place a repository-only single-session coordinator between the accepted LIVE-070 decoder, remediated
+LIVE-080 lifecycle, and LIVE-060 transport admission. It constructs the protected-frame observation internally, counts
+actual chunk pushes, reduces the protected frame to the exact admission input, invokes admission exactly once, prevents
+in-flight interruption or reentry, matches returned channel/transport/frame policy, and permits a receipt only after
+connection close, drain, and cleanup complete.
+
+The session retains no protected frame or raw admission input as object state. It keeps only reduced digests, counts, and
+a parsed safe admission receipt, clearing them on failure and before final receipt construction. The final public digest
+is consistency-only. All native-listener and effect claims remain fixed false.
+
+**Why:** A native socket callback must not independently choose parsing, admission, replay, or cleanup behavior. This
+composition makes that future adapter a narrow byte/event source and ensures exactly one decoded enrollment reaches the
+already authenticated and idempotent admission boundary.
+
+**Alternatives rejected:** Let a socket callback call ingress directly; accept caller-supplied protected frames or chunk
+counts; permit overlapping admission; abort an already dispatched admission and pretend it did not settle; retry after
+uncertainty; retain raw frames for later receipts; treat a public digest as authenticated evidence; or add application
+wiring before native review.
+
+**Trade-off:** The coordinator awaits its downstream admission and does not itself own a wall-clock timer. That is
+honest for this repository-fake block but means the future native adapter must provide separately reviewed deadline,
+backpressure, cancellation, process-kill, and recovery evidence before activation.
+
+**Reevaluate:** Before adding a `node:net` import, listener factory, address/port, timer, socket callback, SSH operation,
+credential reference, application composition, or native qualification. Each remains separately authority-gated and
+must not be inferred from a passing repository session receipt.
