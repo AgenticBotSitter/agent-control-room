@@ -1,7 +1,8 @@
 # CR13A-LIVE-060 bounded transport admission acceptance
 
-**Status:** exact effect-free product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` rejected by independent review;
-Medium M-001 and Low L-001 require remediation and a different re-review before publication or integration
+**Status:** first effect-free product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` rejected; exact remediation
+`45b4a67477fb39811d02ba1b1a67e8c78cf98ee9` frozen and awaiting a different independent re-review before publication or
+integration
 **Integration base:** `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`
 **Effect boundary:** repository code and PGlite tests only; no listener, socket, SSH session, Hermes/provider call,
 credential access, native process, production PostgreSQL/VPS contact, deployment, DNS, or network effect
@@ -74,9 +75,9 @@ class requires explicit server-side ingress, policy, and clock dependencies; con
 - macOS stage zero: `ready_for_runtime_check`, no native attempt;
 - TypeScript: pass;
 - full ESLint: pass;
-- admission plus ingress: 22/22 pass;
-- complete connection slice: 50/50 pass;
-- complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and 302/302
+- admission plus ingress: 24/24 pass;
+- complete connection slice: 53/53 pass;
+- complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and 304/304
   posttests;
 - production build: pass, including 4/4 rendered-page checks;
 - migrations `0001` through `0036`: pass, 119 PostgreSQL tables;
@@ -100,6 +101,32 @@ own-string shape rule was not observed, allowing its raw rejection to escape thr
 rejection channel. Low L-001 records that the connection-suite total is 51/51, not 50/50. The negative report is
 preserved at `docs/reviews/CR13A_LIVE_060_INDEPENDENT_REVIEW.md`. No publication or integration is permitted.
 The rejected report SHA-256 is `d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.
+
+## M-001 and L-001 remediation candidate
+
+The remediation separates exact Promise admission from safely observing a malformed intrinsic Promise. A value is
+eligible for observation only when it is a non-Proxy object with the exact captured same-realm Promise prototype, the
+captured native prototype `constructor` and `then` selections remain unchanged, the native Promise constructor's
+captured `Symbol.species` getter remains unchanged, and the instance has no own `constructor` override. The boundary then
+calls the captured native `then` directly with inert fulfillment and rejection handlers. It never reads the value's
+`then` or any instrumentation property, and the derived observer Promise always fulfills with `undefined`.
+
+Foreign thenables, Proxies, subclasses, constructor overrides, and unsafe runtime drift remain untouched and rejected.
+A decorated rejected intrinsic Promise now returns only `integrity_failed` while creating no `unhandledRejection` event
+and exposing no raw rejection. One in-process event regression uses an unreadable instrumentation accessor; a separate
+child process runs with `--unhandled-rejections=strict` and must exit zero with exactly one bounded local result. Promise
+prototype `constructor`, `then`, and constructor `Symbol.species` replacement probes execute zero replacement behavior.
+
+The corrected deterministic totals are 24/24 focused admission/ingress tests, 53/53 connection tests, and 304/304
+posttests. The full 769/769 pretest and 419/421 core lifecycle with two intentional platform skips, TypeScript, full
+lint, production build with 4/4 rendered checks, all 36 migrations with 119 PostgreSQL tables, and whitespace validation
+also pass. The exact remediation is frozen at `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9`. It changes no request, receipt,
+proof, persistence, protocol, schema, migration, runtime-default, listener, or external-effect contract.
+
+The zero-repair closure packet is `docs/reviews/CR13A_LIVE_060_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`. A reviewer different from the producer and
+first LIVE-060 reviewer must close M-001 and L-001 with no new High, Medium, or Low finding before publication or
+integration.
 
 After independent acceptance and owner-approved integration, the next block may define a disabled private-loopback
 listener adapter or a refreshed owner-attended connector rehearsal packet. It must not bind a socket, open SSH, retrieve

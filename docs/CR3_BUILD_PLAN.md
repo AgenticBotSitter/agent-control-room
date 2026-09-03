@@ -1074,6 +1074,18 @@ foreign thenables or executing Proxy/accessor/subclass behavior, and require a d
 publication or integration. Rejected report SHA-256:
 `d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.
 
+The exact remediation is frozen at `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9`. A safely observable malformed
+Promise must be a non-Proxy exact same-realm intrinsic instance with unchanged captured prototype constructor/then,
+unchanged constructor species getter, and no instance constructor override. The boundary calls only the captured native
+method with inert handlers; it never reads a supplied `then` or instrumentation accessor. Strict unhandled-rejection and
+process-event regressions prove a decorated rejection creates one bounded local result without raw escape. Foreign
+thenable/Proxy and Promise runtime replacements execute zero behavior.
+
+Corrected gates pass 24/24 focused admission/ingress, 53/53 connections, and 304/304 posttests, plus the unchanged full
+pretest/core lifecycle, TypeScript, lint, build/render, migration, and whitespace gates. A different reviewer must close
+M-001 and L-001 with no new finding before publication or integration. Closure-packet SHA-256:
+`07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`.
+
 Next after independent acceptance and owner-approved integration: define a disabled private-loopback listener adapter or
 refresh the owner-attended connector rehearsal. Continue with Sol xhigh if code touches listener, transport, identity,
 chronology, authentication, credentials, or signed evidence; use Sol high only for a packet-only refresh under frozen

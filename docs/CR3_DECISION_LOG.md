@@ -2927,3 +2927,14 @@ Promises that can be handled through captured native operations without consulti
 subclasses, accessors, or caller-controlled `then`; return only bounded local failure; and add strict regression evidence.
 The acceptance record must also report the independently observed 51/51 connection-suite total. Rejected report SHA-256
 is `d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.
+
+**M-001/L-001 remediation amendment:** Safely observing a malformed result is limited to an exact non-Proxy same-realm
+intrinsic Promise while the captured prototype constructor/then and constructor species selections remain unchanged and
+the instance has no constructor override. The boundary invokes the captured native `then` with inert handlers that both
+return `undefined`; it never reads a caller `then` or instrumentation accessor. All other malformed values remain
+untouched and fail closed. A process-event regression and a separate strict unhandled-rejection subprocess must prove
+the decorated raw rejection cannot escape, while foreign thenables, Proxies, subclasses, accessors, and runtime
+replacement execute no behavior. The corrected evidence totals are 24/24 focused, 53/53 connection, and 304/304
+posttests. Exact remediation `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9` requires a different independent
+zero-repair re-review before integration. Closure-packet SHA-256 is
+`07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`.
