@@ -3141,3 +3141,33 @@ unchanged accepted report at `docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDE
 `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. Ordinary owner-controlled integration is now
 permitted. No listener, SSH, credential, native, provider, production database, deployment, DNS, hosting, network, or
 other external-effect authority is granted.
+
+## ADR-159 — Native-listener activation starts from an unconditionally disabled contract
+
+**Decision:** Before introducing `node:net` or any physical bind, freeze a plan-bound native-listener readiness record
+and adapter that cannot activate. The readiness record carries only safe plan identity plus literal loopback,
+private-unpublished-port, single-connection, zero-queue, one-frame, and no-restart policy. It fixes twelve independent
+driver, owner, platform, port, tunnel, host-key, deadline, backpressure, cleanup, and recovery gates as missing. Every
+native, effect, retry, approval, network, command, lease, and execution claim remains false.
+
+The default adapter owns no driver, accepts no activation input, always rejects `start()` as disabled, and treats
+repeated close as a no-op. It is exported for later composition but is not wired into the local pilot or an application
+route. Its readiness digest is public consistency evidence only. Even a correctly recomputed digest cannot convert any
+false gate to true because this version of the parser accepts only the exact disabled shape and ordered blockers.
+
+**Why:** The future listener will cross an operating-system and network boundary. Defining its complete gate vocabulary
+first prevents configuration presence, a fake lifecycle receipt, a caller-controlled boolean, or a public digest from
+becoming accidental authority. It also gives later code and operator surfaces one exact list of what remains unproven.
+
+**Alternatives rejected:** Add a `node:net` driver and activation token in the same block; let local configuration enable
+the listener; accept caller-reported gate booleans; treat loopback text as physical bind evidence; publish an address or
+port in readiness; reuse LIVE-080 repository-fake evidence as native proof; wire the local pilot before review; or make
+the disabled adapter attempt-and-close a socket merely to demonstrate failure.
+
+**Trade-off:** This block does not connect a Hermes node and does not exercise operating-system socket behavior. It adds
+one deliberate review stage, but makes the subsequent native driver smaller and reviewable against an exact checklist.
+
+**Reevaluate:** Before importing `node:net`, accepting any driver or activation evidence, wiring a runtime, opening or
+closing a physical listener, selecting a port, starting SSH, reading a credential, accepting native evidence, running a
+platform qualification, or making the record activation-eligible. Each requires a new contract, immutable review, and
+separate owner authority; a real bind additionally requires an exact owner-attended effect packet.

@@ -1268,3 +1268,31 @@ reconfirmed M-001/M-002, and found no new High, Medium, or Low defect. The uncha
 `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. The disposable review clone was removed and
 the shared checkout remained clean. This permits ordinary owner-controlled integration only and grants no listener,
 SSH, credential, native, provider, production, deployment, DNS, hosting, or network authority.
+
+## CR13A-LIVE-100 — default-disabled native-listener adapter contract
+
+Status: repository implementation candidate frozen at `8ba1057450414015c05f6e6ddfb94cd5abd7b99c` over
+owner-approved LIVE-090 merge `65ea851c123993d7760d6492966845f74ca1d665`; fresh independent zero-repair review
+required. See `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` and ADR-159.
+
+This block freezes the exact non-authorizing contract immediately before any future physical listener. One readiness
+record binds the accepted listener ID and plan digest to literal IPv4-loopback, private-unpublished-port, one-active,
+zero-queued, one-frame, and no-restart policy. It then records twelve required native/owner/platform/deadline/
+backpressure/cleanup/recovery gates as absent, fixes activation and all effects false, and reports zero attempts.
+
+The default-disabled adapter owns no native driver and accepts no activation evidence. Its `start()` always returns a
+bounded disabled error and its repeatable `close()` performs no operation. The module is exported but remains absent
+from local-pilot, browser, HTTP, Hermes, worker, and service composition. It imports no networking/process module and
+contains no listener, connection, SSH, provider, credential, or deployment operation.
+
+Parser tests prove that callers cannot enable the record by adding fields, removing or reordering blockers, changing
+bounded identity, supplying Proxy/accessor behavior, or recomputing the public digest around true activation claims.
+The focused suite passes 53/53, the complete connection slice passes 95/95, and the full repository lifecycle passes
+769/769 pretests, 419/421 core tests with two intentional platform skips, and 346/346 posttests. Type, full lint,
+production build with 4/4 rendered routes, all 36 migrations/119 tables through the listener-free verifier, stage zero,
+and whitespace validation pass.
+
+Completion requires an immutable zero-repair packet and a fresh different reviewer with no open High, Medium, or Low
+finding. Independent acceptance permits ordinary owner-controlled integration only. It grants no right to add a native
+driver, open a listener, select/expose a port, start SSH, read credentials, contact Hermes/provider, run a native
+qualification, touch production, deploy, change DNS, or use external network. Use Sol xhigh.
