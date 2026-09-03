@@ -1393,8 +1393,8 @@ network connection, SSH operation, credential read, native qualification, produc
 
 ## CR13A-LIVE-120 — physical native-driver design and qualification boundary
 
-Status: design complete; separately authorized unwired implementation frozen at
-`959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`; independent review and physical qualification remain blocked.
+Status: design complete; first unwired implementation rejected; nine findings remediated at
+`5a579342b7a03bb013de21663c69a3a6118e11c6`; different re-review and physical qualification remain blocked.
 See `CR13A_LIVE_120_PHYSICAL_NATIVE_DRIVER_DESIGN.md`. Use Sol xhigh.
 
 Before any `node:net` import, physical driver implementation, runtime wiring, port selection, listener operation, or
@@ -1431,3 +1431,25 @@ posttests, TypeScript, full lint, macOS stage zero, production build with 4/4 re
 `e42cde8b401117e8bb71971315fff0219a5e8f17827e7df7a480a42ca967c9b5`. A different zero-repair review must return
 0 High, 0 Medium, and 0 Low findings before integration. Even acceptance would grant no physical attempt or runtime
 activation authority.
+
+A different report-only reviewer rejected the first target with four High and five Medium findings. Exact first-socket
+admission did not exist; decoder calls were replaceable; local callbacks could self-attest closed/recovered truth;
+cleanup could retain decoder bytes and capability references; backpressure resumed without low-water observation;
+exports remained mutable; ambient `Number` could execute and leak; the native factory used public digest equality;
+and drain/final shutdown were not separate. Preserve the report at
+`docs/reviews/CR13A_LIVE_120_INDEPENDENT_REVIEW.md`; SHA-256:
+`baefddebe2af5bcf3f2132d2a8ef2b9bce9c84f02477fff8e95de9319b8b8e66`.
+
+Exact remediation `5a579342b7a03bb013de21663c69a3a6118e11c6` requires a private exact-socket admission bound to
+attempt, ordinal, deadline, tunnel-peer proof, and host-key proof before installing handlers. It captures/freezes
+decoder and exported callables, retains exact private digests rather than re-entering ambient hashing during parsing,
+requires exact contract/implementation objects, measures pending bytes across high/low watermarks, and converges every
+post-marker path on decoder wipe, callback/timer removal, socket destruction, separately bounded drain/shutdown, and
+capability release. Because signer, durable ledger, high-water checkpoint, and independent resource observation are
+absent, physical cleanup always remains `cleanup_failed`; local truth can never produce `closed_verified`.
+
+Remediation gates pass at 34/34 dedicated tests, 123/123 connection tests, 139/139 CR13A tests, 769/769 pretests,
+372/372 core tests, 374/374 posttests, TypeScript, full lint, macOS stage zero, production build with 4/4 rendered
+routes, migrations through `0036` with 119 tables via the no-IPC verifier, and whitespace. Re-review packet SHA-256 is
+`28e91c4cbbd948c2636e1e1aeae19b1c27b5a113909c50fdaa50708f8c3e8dca`. A different zero-repair reviewer must
+close all nine findings before integration. No physical attempt or runtime activation is authorized.

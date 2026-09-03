@@ -1,7 +1,8 @@
 # CR13A-LIVE-120 unwired physical native-driver implementation
 
-**Status:** implementation frozen; independent zero-repair review required
-**Product target:** `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`
+**Status:** nine independent-review findings remediated; different zero-repair re-review required
+**Product target:** `5a579342b7a03bb013de21663c69a3a6118e11c6`
+**Rejected target:** `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`
 **Integration base:** `1ee5409c0b66afbd802582459af864ec0d198f5c`
 **Model:** `gpt-5.6-sol`
 **Reasoning effort:** `xhigh`
@@ -12,8 +13,13 @@ credential, Hermes/provider, production, deployment, DNS, or hosting effect
 ## Outcome
 
 The owner authorized one unwired, fake-tested native loopback driver with one allowlisted `node:net` server module and
-explicitly withheld runtime wiring and a physical listener attempt. Exact product target
-`959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38` implements that boundary without crossing it.
+explicitly withheld runtime wiring and a physical listener attempt. A different independent reviewer rejected the
+first target with four High and five Medium findings. The exact report is preserved at
+`docs/reviews/CR13A_LIVE_120_INDEPENDENT_REVIEW.md` with SHA-256
+`baefddebe2af5bcf3f2132d2a8ef2b9bce9c84f02477fff8e95de9319b8b8e66`; passing producer tests did not override it.
+
+Exact remediation target `5a579342b7a03bb013de21663c69a3a6118e11c6` closes the reported code paths without
+crossing the authorized boundary. It remains a candidate until a different report-only reviewer accepts it.
 
 The new server-only module contains a literal-IPv4-loopback Node networking backend and the shared five-operation
 lifecycle controller. It deliberately exports neither the physical backend factory nor any bind-capability issuer.
@@ -34,17 +40,23 @@ The isolated physical backend is prepared for later review with these fixed cont
 - one `node:net` server module and captured Node server/socket operations;
 - literal `127.0.0.1`, exclusive binding, and a backlog of one, without claiming a zero kernel queue;
 - one admitted socket and immediate destruction of additional connections;
+- private exact-socket admission before data handlers or decoding, bound to the attempt, ordinal, deadline,
+  tunnel-peer proof, and host-key proof; the admission and proof registries deliberately have no insertion path;
 - the already-reviewed length-prefixed single-frame decoder with maximum frame bytes and chunk limits;
-- transport pause/resume, fixed low/high watermarks, and a hard buffered-byte ceiling from an opaque capability;
+- captured and frozen decoder construction and methods, with no dynamic decoder dispatch;
+- transport pause/resume based on observed pending bytes, fixed low/high watermarks, and a hard buffered-byte ceiling;
 - separate start, admission, connection, idle, frame, total-attempt, drain, and shutdown deadlines;
-- one-use owner-window and durable-marker truth, exact contract/implementation binding, tunnel-peer and host-key proof,
-  exclusive-port readiness, and platform-signer trust inside the private capability;
+- one-use private proof objects for owner spend, durable marker, exact contract/implementation binding, tunnel peer,
+  host-key custody, exclusive-port readiness, and platform-signer trust instead of caller-reducible booleans;
 - terminal post-marker ambiguity, terminal cleanup failure, no automatic restart, and recovery that cannot bind or
   reopen; and
-- ordered timer clearing, socket destruction, bounded server close, capability release, and late-callback guards.
+- one idempotent cleanup path with timer and callback clearing, decoder wiping, socket destruction, separately bounded
+  drain/shutdown, capability release, and late-callback guards.
 
-These are implementation claims awaiting hostile review, not physical evidence. The unavailable private capability
-issuer, absent signer composition, and absent runtime consumer are intentional blockers.
+The remediation intentionally makes every native post-marker cleanup end as `cleanup_failed`. Without a trusted
+signer, durable attempt ledger, independent high-water checkpoint, and native-resource observer, volatile local state
+can never become `closed_verified`. These are implementation claims awaiting hostile re-review, not physical evidence.
+The unavailable capability/admission issuers, absent signer composition, and absent runtime consumer remain blockers.
 
 ## Verification evidence
 
@@ -53,11 +65,12 @@ The product target passed:
 - macOS stage zero: `ready_for_runtime_check`;
 - TypeScript: pass;
 - full repository lint: pass;
-- dedicated physical-driver gate: 32/32;
-- combined CR13A gate: 137/137;
+- dedicated physical-driver gate: 34/34;
+- connection gate: 123/123;
+- combined CR13A gate: 139/139;
 - registered pretests: 769/769;
 - core tests: 372/372;
-- public/application posttests: 372/372;
+- public/application posttests: 374/374;
 - production build and rendered routes: 4/4;
 - migrations `0001` through `0036`: 119 PostgreSQL tables verified through the no-IPC Node fallback; and
 - exact-range whitespace check: pass.
@@ -69,18 +82,20 @@ denial was unrelated to the new driver and did not invoke it.
 The focused evidence includes four terminal scenarios, 32 concurrent prepare calls, 32 concurrent start calls with
 one accepted start and 31 fail-closed duplicates, 32 serialized close calls, 32 serialized recovery calls, exact
 object/status provenance, copy/accessor/symbol/Proxy rejection, frozen callable surfaces, borrowed-receiver rejection,
-captured-intrinsic checks, public sanitation, import/consumer allowlists, and zero native effects.
+captured-intrinsic checks, ambient `Number` replacement, frozen decoder dispatch, private admission/proof insertion
+searches, cleanup/deadline/backpressure source invariants, public sanitation, import/consumer allowlists, and zero
+native effects.
 
 ## Honest limits and next gate
 
 Repository tests did not run the physical backend and cannot prove that macOS will bind, admit, apply backpressure,
 meet deadlines, close resources, or recover as designed. No platform signer, private locator broker, owner-spend
-composition, or runtime activation exists. The implementation has not been independently accepted.
+composition, or runtime activation exists. The remediated implementation has not been independently accepted.
 
 A different report-only reviewer must attack the exact product target under
-`docs/reviews/CR13A_LIVE_120_IMPLEMENTATION_INDEPENDENT_REVIEW_PACKET.md`. Any High, Medium, or Low finding rejects the
-target. The frozen packet SHA-256 is
-`e42cde8b401117e8bb71971315fff0219a5e8f17827e7df7a480a42ca967c9b5`. A passing review permits only ordinary
+`docs/reviews/CR13A_LIVE_120_REMEDIATION_REREVIEW_PACKET.md`. Any High, Medium, or Low finding rejects the target. The
+frozen remediation packet SHA-256 is
+`28e91c4cbbd948c2636e1e1aeae19b1c27b5a113909c50fdaa50708f8c3e8dca`. A passing review permits only ordinary
 integration consideration. It does not authorize a listener attempt, runtime wiring, SSH, credentials,
 Hermes/provider contact, production use, or deployment.
 

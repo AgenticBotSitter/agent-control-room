@@ -120,7 +120,7 @@
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
 | CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
-| CR13A-LIVE-120 unwired physical native driver | Implementation frozen at `959b8cb...`; independent review required | One isolated `node:net` server module, unreachable private capability, no barrel/runtime consumer, four fake terminal scenarios, 32/32 focused and 137/137 CR13A tests, zero listener/network effects; see `CR13A_LIVE_120_UNWIRED_PHYSICAL_NATIVE_DRIVER_ACCEPTANCE.md` |
+| CR13A-LIVE-120 unwired physical native driver | Rejected target `959b8cb...` preserved; nine findings remediated at `5a57934...`; different re-review required | Exact socket admission, captured decoder, mandatory wipe/cleanup, fail-closed physical proof, low-water backpressure, frozen exports, captured validation, exact provenance, separate drain/shutdown; 34/34 focused and 139/139 CR13A tests; zero listener/network effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1244,6 +1244,21 @@ Owner-approved PR #240 merged exact branch head `2978c84a07aee8566d8d3de5d02689d
 Integration grants no physical-driver, listener, network, SSH, credential, provider, production, or deployment
 authority.
 
+CR13A-LIVE-120 now has honest negative and remediation evidence. A different report-only reviewer rejected first
+target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38` with four High and five Medium findings: unauthenticated
+first-arrival admission, mutable decoder dispatch, self-attested cleanup/recovery, retained protected bytes and
+capability state, unconditional resume, mutable exports, ambient `Number` leakage, digest-only native provenance, and
+missing separate drain/shutdown deadlines. The report is preserved with SHA-256
+`baefddebe2af5bcf3f2132d2a8ef2b9bce9c84f02477fff8e95de9319b8b8e66`.
+
+Exact remediation `5a579342b7a03bb013de21663c69a3a6118e11c6` adds exact one-use socket admission before handlers,
+captured/frozen decoder dispatch, one mandatory cleanup path, fail-closed absence of independent signed physical
+evidence, measured pending-byte watermarks, frozen exported functions, captured status validation, exact
+contract/implementation capability provenance, and separately bounded drain/shutdown. Stage zero, typecheck, lint,
+34/34 focused, 123/123 connection, 139/139 CR13A, 769/769 pretests, 372/372 core, 374/374 posttests, production build,
+4/4 rendered routes, migrations 0001-0036/119 tables, and whitespace checks pass. No native backend, bind capability,
+connection admission, listener, socket, port, network, SSH, credential, provider, production, or deployment effect ran.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1259,12 +1274,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-120-INDEPENDENT-IMPLEMENTATION-REVIEW — attack the exact unwired implementation without repair or native execution
+Block: CR13A-LIVE-120-REMEDIATION-REREVIEW — independently attack all nine remediations without repair or native execution
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the driver contains unreachable but security-sensitive socket lifecycle code; an independent reviewer must challenge capability custody, races, cleanup, bounds, sanitation, and static non-wiring before integration.
-Expected output: one immutable report for target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`, with 0 High, 0 Medium, and 0 Low findings for acceptance; no repair and no physical listener attempt.
-Owner action: authorize a different independent report-only reviewer if no standing review authorization applies. A physical attempt remains a later, separately owner-attended decision even after a pass.
+Why: the original reviewer found real boundary defects; a different reviewer must reproduce them and prove exact admission, decoder custody, cleanup, backpressure, provenance, deadlines, and non-wiring now fail closed.
+Expected output: one immutable report for target `5a579342b7a03bb013de21663c69a3a6118e11c6`, with 0 High, 0 Medium, and 0 Low findings for acceptance; no repair and no physical listener attempt.
+Owner action: none for the already-authorized independent review. A physical attempt remains a later, separately owner-attended decision even after a pass.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

@@ -3350,3 +3350,35 @@ and external effects are all zero. Independent review packet SHA-256:
 **Reevaluate:** After a different zero-repair reviewer accepts the exact target with no findings, and again before any
 capability issuer, locator broker, signer, runtime consumer, socket/listener attempt, SSH or credential use, physical
 qualification, production contact, or deployment. Each remains a separate reviewed and owner-controlled stage.
+
+## ADR-163 — Fail closed on every unproved physical identity and cleanup fact
+
+**Decision:** Preserve the rejected LIVE-120 target and remediate all nine independent findings without adding an
+issuer, runtime consumer, or physical attempt. A socket must carry a private exact one-use admission bound to the
+attempt, ordinal, deadline, tunnel-peer proof, and host-key proof before any data handler or decoder can run. Decoder
+and exported callable dispatch is captured and frozen. Native contract, implementation, capability, and admission
+relationships use exact private identity, never public digest equality alone. Backpressure uses observed pending bytes,
+and every post-marker path converges on one cleanup operation with decoder wiping, callback/timer clearing, socket
+destruction, separate drain and final-shutdown bounds, and capability release.
+
+**Why:** Loopback origin does not authenticate the SSH tunnel, mutable same-process callables can bypass validation,
+and a graceful server callback does not prove bytes, handles, timers, capabilities, durable markers, or high-water
+truth are clean. The safe repository boundary must remain unusable until every required private proof is supplied and
+must refuse to translate local volatile observations into physical success.
+
+**Alternatives rejected:** Admit the first connection and authenticate its frame later; represent peer, host-key,
+marker, owner-spend, or signer truth as booleans; call decoder methods dynamically; immediately resume after a pause;
+use public digest equality as provenance; share one timeout between drain and final cleanup; treat local socket destroy
+or server close as signed durable cleanup; or weaken findings because the module is currently unwired.
+
+**Evidence:** First target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38` is rejected by the preserved report with
+four High and five Medium findings; report SHA-256
+`baefddebe2af5bcf3f2132d2a8ef2b9bce9c84f02477fff8e95de9319b8b8e66`. Remediation target
+`5a579342b7a03bb013de21663c69a3a6118e11c6` passes 34/34 focused, 123/123 connection, 139/139 CR13A,
+769/769 pretests, 372/372 core tests, 374/374 posttests, build/render, and migration verification. No native,
+listener, socket, port, network, SSH, credential, provider, production, or deployment action occurred.
+
+**Reevaluate:** Only after a different report-only reviewer closes every finding, and again before adding any private
+proof issuer, signer, durable attempt ledger, high-water checkpoint, resource observer, locator broker, runtime
+consumer, physical attempt, SSH/credential operation, production contact, or deployment. Until those boundaries are
+separately implemented and accepted, native cleanup cannot become `closed_verified`.
