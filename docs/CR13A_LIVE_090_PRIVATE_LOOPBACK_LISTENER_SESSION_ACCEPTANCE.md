@@ -1,6 +1,6 @@
 # CR13A-LIVE-090 private-loopback listener session acceptance
 
-**Status:** original target rejected; exact remediation frozen at `28a1c0833e8e2b2b3368644536b7442c96bbadcb`; different-reviewer zero-repair re-review required
+**Status:** first remediation closed M-001 but its re-review found M-002; exact second remediation frozen at `de840c9aef259db18da3c45e1d4e0549bc0f0d85`; third-reviewer zero-repair re-review required
 **Integration base:** owner-approved LIVE-080 merge `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`
 **Effect boundary:** repository code, fake admission, and local deterministic tests only; no socket, listener, SSH,
 credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS, or external network effect
@@ -85,16 +85,32 @@ both an externally pending admission and synchronous reentry. In each case the f
 can complete its exact close/drain/listener-cleanup sequence, one correlation receipt can be emitted, and the admission
 method is called exactly once. No authority or effect boundary changed.
 
+The different re-reviewer independently closed M-001 but rejected remediation target
+`89be9d7fb486a3fb5855402073466108a19a75ec`. M-002 showed that an already-rejected same-realm Promise with an inert own
+`constructor` data property selecting the captured native Promise constructor was invalid but left unobserved. Under
+strict Node rejection handling, that malformed in-process collaborator result terminated the bounded process instead
+of returning only the local `integrity_failed` result. Preserve the second negative report at
+`docs/reviews/CR13A_LIVE_090_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`ca1b7ef365cd6a9b4fe79e22eade3d48667a8ccc1d8befc2f09bcb6f469803f2`.
+
+Exact second remediation `de840c9aef259db18da3c45e1d4e0549bc0f0d85` keeps every decorated Promise invalid
+but safely observes settlement when an own `constructor` is an ordinary data descriptor selecting the captured native
+constructor or native default. It performs that descriptor check without reading supplied properties, then uses only
+the already captured intrinsic Promise method. Behavioral/accessor constructors, foreign constructor selections,
+Proxies, subclasses, and foreign thenables remain unassimilated and unexecuted. The same duplicated safety boundary in
+LIVE-060 transport admission is hardened in the same change. Strict-process regressions cover the reported listener
+and transport paths, and an additional regression proves a behavioral constructor remains unread.
+
 ## Deterministic evidence
 
 Producer verification for the exact remediation:
 
 - macOS stage zero: pass (`ready_for_runtime_check`), with no native attempt;
 - TypeScript and full ESLint: pass;
-- focused LIVE-060/070/080/090 suite: 43/43 pass;
-- complete connection slice: 85/85 pass;
+- focused LIVE-060/070/080/090 suite: 46/46 pass;
+- complete connection slice: 88/88 pass;
 - complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and
-  336/336 posttests;
+  339/339 posttests;
 - production build and 4/4 rendered-route checks: pass;
 - PostgreSQL migrations `0001` through `0036`: pass with 119 tables; and
 - whitespace validation: pass.
@@ -114,7 +130,8 @@ timers/backpressure, shutdown and process-kill recovery, and a separately owner-
 The rejected review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen implementation
 `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`. Its zero-repair packet SHA-256 is
 `88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`. The exact remediation is
-`28a1c0833e8e2b2b3368644536b7442c96bbadcb`; a different zero-repair reviewer must independently close M-001 and find
-no new High, Medium, or Low defect before ordinary owner-controlled integration. The immutable remediation review
-target is `89be9d7fb486a3fb5855402073466108a19a75ec`; different-reviewer packet SHA-256:
-`5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.
+`28a1c0833e8e2b2b3368644536b7442c96bbadcb`. The different reviewer closed M-001 but rejected immutable remediation
+target `89be9d7fb486a3fb5855402073466108a19a75ec` under packet SHA-256
+`5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36` because M-002 remained.
+Exact second remediation is `de840c9aef259db18da3c45e1d4e0549bc0f0d85`; a third zero-repair reviewer must close
+M-002, reconfirm M-001, and find no new High, Medium, or Low defect before ordinary owner-controlled integration.

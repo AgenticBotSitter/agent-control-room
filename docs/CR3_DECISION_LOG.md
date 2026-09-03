@@ -3109,3 +3109,13 @@ reviewer must independently close M-001 and find no new High, Medium, or Low def
 SSH, credential, native, provider, production, deployment, or network authority. Review immutable remediation target
 `89be9d7fb486a3fb5855402073466108a19a75ec` under the packet with SHA-256
 `5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.
+
+**Second independent-review amendment:** The different reviewer closed M-001 but rejected remediation target
+`89be9d7fb486a3fb5855402073466108a19a75ec`. M-002 proves an invalid, already-rejected same-realm Promise with an inert
+own constructor data property selecting the captured native Promise constructor could remain unobserved and terminate
+strict Node rejection handling. Preserve the negative report with SHA-256
+`ca1b7ef365cd6a9b4fe79e22eade3d48667a8ccc1d8befc2f09bcb6f469803f2`. Exact second remediation
+`de840c9aef259db18da3c45e1d4e0549bc0f0d85` observes only safely selected captured/default native construction while
+keeping behavioral/accessor and foreign selections unexecuted and every decorated Promise invalid. It hardens the
+duplicated LIVE-060 boundary and adds strict-process regressions at both layers. A third zero-repair reviewer must close
+M-002, reconfirm M-001, and find no new High, Medium, or Low defect. No external authority is granted.

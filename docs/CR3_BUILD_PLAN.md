@@ -1189,9 +1189,9 @@ integration only and grants no listener, SSH, credential, native, provider, prod
 
 ## CR13A-LIVE-090 — one-frame listener-session and authenticated admission composition
 
-Status: original target rejected; exact remediation `28a1c0833e8e2b2b3368644536b7442c96bbadcb` frozen over
-owner-approved LIVE-080 merge `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; different-reviewer zero-repair
-re-review required. See
+Status: first remediation closed M-001 but its re-review found M-002; exact second remediation
+`de840c9aef259db18da3c45e1d4e0549bc0f0d85` frozen over owner-approved LIVE-080 merge
+`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; third-reviewer zero-repair re-review required. See
 `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` and ADR-158.
 
 This block composes one accepted private-loopback frame and the repository-fake listener lifecycle into exactly one
@@ -1227,3 +1227,18 @@ migrations with 119 tables. A different zero-repair reviewer must close M-001 an
 defect before owner-controlled integration. The immutable remediation review target is
 `89be9d7fb486a3fb5855402073466108a19a75ec`; packet SHA-256:
 `5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.
+
+That reviewer closed M-001 but rejected the target for M-002. A malformed already-rejected same-realm Promise with an
+inert own `constructor` data property selecting the captured native Promise constructor remained unobserved and could
+terminate strict Node rejection handling. Preserve the second negative report; SHA-256:
+`ca1b7ef365cd6a9b4fe79e22eade3d48667a8ccc1d8befc2f09bcb6f469803f2`.
+
+Exact second remediation `de840c9aef259db18da3c45e1d4e0549bc0f0d85` preserves rejection of decorated Promises
+while safely attaching the captured settlement observer when the own constructor is an inert data descriptor selecting
+the captured native constructor or native default. Behavioral/accessor or foreign constructor selections, Proxies,
+subclasses, and foreign thenables remain unexecuted and unassimilated. The same Promise boundary in LIVE-060 transport
+admission is hardened, and strict-process regressions cover both layers while a behavioral-constructor regression
+proves no getter runs. Producer gates pass at 46/46 focused, 88/88 connections, 769/769 pretests, 419/421 core with two
+intentional platform skips, 339/339 posttests, build with 4/4 rendered routes, 36 migrations/119 tables, type, lint,
+stage zero, and whitespace. A third zero-repair reviewer must close M-002, reconfirm M-001, and find no new High,
+Medium, or Low defect.

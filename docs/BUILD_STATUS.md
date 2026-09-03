@@ -117,7 +117,7 @@
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
-| CR13A-LIVE-090 listener-session admission composition | Original target rejected; exact remediation `28a1c08...` frozen; different zero-repair re-review required | M-001 closed by making `finish()` non-mutating during in-flight admission, with async and synchronous-reentry regressions; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
+| CR13A-LIVE-090 listener-session admission composition | First remediation closed M-001 but re-review found M-002; exact second remediation `de840c9...` frozen; third zero-repair re-review required | Safe native-Promise rejection ownership is hardened in both listener session and transport admission; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1108,6 +1108,20 @@ whitespace. A different zero-repair reviewer must close M-001 and find no new Hi
 The immutable remediation review target is `89be9d7fb486a3fb5855402073466108a19a75ec`; packet SHA-256:
 `5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.
 
+The different reviewer independently closed M-001 but rejected that remediation target for M-002. An invalid,
+already-rejected same-realm Promise with an inert own constructor data property selecting the captured native Promise
+constructor remained unobserved and could terminate strict Node rejection handling. The immutable second negative
+report has SHA-256 `ca1b7ef365cd6a9b4fe79e22eade3d48667a8ccc1d8befc2f09bcb6f469803f2`.
+
+Exact second remediation `de840c9aef259db18da3c45e1d4e0549bc0f0d85` keeps all decorated Promises invalid but
+safely takes rejection ownership when an own constructor is an inert data descriptor selecting the captured native
+constructor or native default. Behavioral/accessor and foreign selections, Proxies, subclasses, and foreign thenables
+remain unexecuted and unassimilated. The duplicated transport-admission boundary is hardened too. Strict-process
+regressions cover both layers, and a behavioral-constructor regression proves no getter runs. Producer gates pass:
+stage zero with no native attempt, TypeScript, lint, 46/46 focused tests, 88/88 connection tests, 769/769 pretests,
+419/421 core with two intentional platform skips, 339/339 posttests, production build with 4/4 rendered checks, all 36
+migrations with 119 tables, and whitespace. A third zero-repair reviewer must close M-002 and reconfirm M-001.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1123,11 +1137,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-090-REMEDIATION-REREVIEW — independently verify the in-flight finish fix
+Block: CR13A-LIVE-090-SECOND-REMEDIATION-REREVIEW — independently verify Promise rejection containment
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the first reviewer found a real Medium race across asynchronous admission, session state, and cleanup correlation.
-Expected output: immutable remediation packet and a different reviewer's exact-target gates and hostile probes, accepted only after M-001 is closed with no open High, Medium, or Low finding.
+Why: the second reviewer closed the admission race but found a real Medium strict-process escape in malformed native-Promise handling.
+Expected output: immutable second-remediation packet and a third reviewer's exact-target gates and hostile probes, accepted only after M-002 is closed, M-001 remains closed, and no High, Medium, or Low finding remains.
 Owner action: none; all independent reviews are already authorized. Approve only the exact PR after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
