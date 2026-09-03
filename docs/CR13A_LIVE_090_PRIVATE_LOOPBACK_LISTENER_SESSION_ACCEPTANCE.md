@@ -1,6 +1,6 @@
 # CR13A-LIVE-090 private-loopback listener session acceptance
 
-**Status:** second remediation closed M-002 but its re-review found M-003; exact third remediation frozen at `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`; fourth-reviewer zero-repair re-review required
+**Status:** independently accepted after three remediation rounds; M-001, M-002, and M-003 closed with no new High, Medium, or Low finding; ordinary owner-controlled integration permitted
 **Integration base:** owner-approved LIVE-080 merge `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`
 **Effect boundary:** repository code, fake admission, and local deterministic tests only; no socket, listener, SSH,
 credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS, or external network effect
@@ -130,12 +130,22 @@ Producer verification for the exact remediation:
 - PostgreSQL migrations `0001` through `0036`: pass with 119 tables; and
 - whitespace validation: pass.
 
+The fourth different independent reviewer reproduced 47/47 focused tests, 89/89 connection tests, the complete
+769/769 pretest plus 419/421 core test plus 340/340 posttest lifecycle, 4/4 rendered checks, both required diff checks,
+and a 29/29 bounded hostile matrix including 22/22 strict-policy Promise cases. The ordinary database wrapper alone
+was blocked from creating its local `tsx` IPC listener in the disposable sandbox; the reviewer preserved that failure
+and independently ran the listener-free verifier successfully across migrations `0001` through `0036` and 119 tables.
+M-001, M-002, and M-003 are closed, with no new High, Medium, or Low finding. The accepted unchanged report is
+`docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`.
+
 ## Review and next boundary
 
-The different independent re-review must attack method capture and receiver binding, ordinary-data observation capture, actual chunk
-count, decoder provenance, raw-input reduction, admission single-flight behavior, concurrent reentry, pending abort,
-malformed native promises, foreign thenables, post-await runtime custody, policy mismatch, cleanup after every failure,
-receipt correlation, safe output, public-digest recomputation, and the no-listener/no-runtime-wiring boundary.
+The fourth different independent reviewer attacked method capture and receiver binding, ordinary-data observation
+capture, actual chunk count, decoder provenance, raw-input reduction, admission single-flight behavior, concurrent
+reentry, pending abort, malformed native promises, foreign thenables, post-await runtime custody, policy mismatch,
+cleanup after every failure, receipt correlation, safe output, public-digest recomputation, and the
+no-listener/no-runtime-wiring boundary. It accepted the exact target with no High, Medium, or Low finding.
 
 Acceptance permits ordinary owner-controlled integration only. It does not authorize a physical listener, SSH tunnel,
 credential read, native attempt, production database contact, deployment, or network action. The next native block must
@@ -154,7 +164,8 @@ immutable second-remediation review target is `f0a64ae4fab6b0a7d926fca573c9ce324
 `32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`.
 
 That third reviewer closed M-002 and reconfirmed M-001 but rejected the target for M-003. Exact third remediation is
-`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`; a fourth zero-repair reviewer must close M-003, reconfirm M-001/M-002,
-and find no new High, Medium, or Low defect before ordinary owner-controlled integration. The immutable
+`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`. A fourth zero-repair reviewer closed M-003, reconfirmed M-001/M-002,
+and found no new High, Medium, or Low defect. The immutable
 third-remediation review target is `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`; packet SHA-256:
 `82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`.
+Accepted report SHA-256: `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`.

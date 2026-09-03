@@ -1189,9 +1189,9 @@ integration only and grants no listener, SSH, credential, native, provider, prod
 
 ## CR13A-LIVE-090 — one-frame listener-session and authenticated admission composition
 
-Status: second remediation closed M-002 but its re-review found M-003; exact third remediation
-`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` frozen over owner-approved LIVE-080 merge
-`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; fourth-reviewer zero-repair re-review required. See
+Status: independently accepted after three remediation rounds; exact third remediation
+`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` reviewed over owner-approved LIVE-080 merge
+`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; ordinary owner-controlled integration permitted. See
 `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` and ADR-158.
 
 This block composes one accepted private-loopback frame and the repository-fake listener lifecycle into exactly one
@@ -1258,6 +1258,13 @@ calling ambient replacement behavior. Both listener and transport seams observe 
 drift. Strict-process regressions cover both and prove replacement calls remain zero. Producer gates pass at 47/47
 focused, 89/89 connections, 769/769 pretests, 419/421 core with two intentional platform skips, 340/340 posttests,
 build with 4/4 rendered routes, 36 migrations/119 tables, stage zero, type, lint, and whitespace. A fourth zero-repair
-reviewer must close M-003, reconfirm M-001/M-002, and find no new High, Medium, or Low defect. The immutable
+reviewer was required to close M-003, reconfirm M-001/M-002, and find no new High, Medium, or Low defect. The immutable
 third-remediation review target is `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`; packet SHA-256:
 `82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`.
+
+The fourth different zero-repair reviewer reproduced the exact gates plus a 29/29 hostile matrix, closed M-003,
+reconfirmed M-001/M-002, and found no new High, Medium, or Low defect. The unchanged accepted report is
+`docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. The disposable review clone was removed and
+the shared checkout remained clean. This permits ordinary owner-controlled integration only and grants no listener,
+SSH, credential, native, provider, production, deployment, DNS, hosting, or network authority.

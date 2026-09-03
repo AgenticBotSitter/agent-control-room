@@ -117,7 +117,7 @@
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
-| CR13A-LIVE-090 listener-session admission composition | Second remediation closed M-002 but re-review found M-003; exact third remediation `77ef10c...` frozen; fourth zero-repair re-review required | Promise validation and safe rejection cleanup are separated at both listener and transport seams; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
+| CR13A-LIVE-090 listener-session admission composition | Independently accepted after three remediation rounds; owner-controlled integration is ready | Fourth different reviewer closed M-001/M-002/M-003 with no new High, Medium, or Low finding; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1135,10 +1135,19 @@ only the captured observer, and never executes the drifted ambient method. Both 
 safely before reporting runtime-integrity failure. Strict-process regressions cover both and record zero replacement
 calls. Producer gates pass: stage zero with no native attempt, TypeScript, lint, 47/47 focused tests, 89/89 connection
 tests, 769/769 pretests, 419/421 core with two intentional platform skips, 340/340 posttests, production build with 4/4
-rendered checks, all 36 migrations with 119 tables, and whitespace. A fourth zero-repair reviewer must close M-003 and
+rendered checks, all 36 migrations with 119 tables, and whitespace. A fourth zero-repair reviewer was required to close M-003 and
 reconfirm M-001/M-002.
 The immutable third-remediation review target is `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`; packet SHA-256:
 `82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`.
+
+The fourth different zero-repair reviewer reproduced 47/47 focused tests, 89/89 connection tests, 769/769 pretests,
+419/421 core tests with two intentional platform skips, 340/340 posttests, 4/4 rendered checks, both diff checks, and a
+29/29 hostile matrix including 22/22 strict-policy Promise cases. The standard database wrapper alone could not create
+its `tsx` IPC listener in the disposable sandbox; that failure was preserved, and the listener-free verifier passed all
+36 migrations and 119 tables. M-001, M-002, and M-003 are closed with no new High, Medium, or Low finding. The accepted
+report SHA-256 is `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. Ordinary owner-controlled
+integration is ready. No listener, SSH, credential, native, provider, production database, deployment, DNS, hosting,
+network, or other external effect is authorized.
 
 ## Parallel build lane
 
@@ -1155,12 +1164,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-090-THIRD-REMEDIATION-REREVIEW — independently verify safe cleanup across runtime drift
+Block: CR13A-LIVE-090-INTEGRATION — publish the accepted listener-session composition for owner-controlled integration
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the third reviewer closed the reported malformed-Promise case but found a related Medium cleanup gap during ambient runtime drift.
-Expected output: immutable third-remediation packet and a fourth reviewer's exact-target gates and robustness probes, accepted only after M-003 is closed, M-001/M-002 remain closed, and no High, Medium, or Low finding remains.
-Owner action: none; all independent reviews are already authorized. Approve only the exact PR after accepted review and ordinary CI.
+Why: the exact security-sensitive composition is independently accepted; only branch publication, ordinary GitHub CI, and owner-controlled merge remain before the next native boundary.
+Expected output: immutable accepted report and acceptance records, one main-target pull request, and passing ordinary GitHub CI.
+Owner action: approve only the exact pull request after CI passes. After merge, CR13A-LIVE-100 may define a default-disabled native-listener adapter contract without activating it.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

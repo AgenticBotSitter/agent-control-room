@@ -3128,7 +3128,16 @@ unnecessarily disabling safe rejection cleanup through already captured intrinsi
 SHA-256 `7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`. Exact third
 remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` independently proves an inert effective constructor/species selection,
 uses only the captured observer, and observes before returning integrity failure at both listener and transport seams.
-Ambient replacement code remains uncalled. A fourth zero-repair reviewer must close M-003, reconfirm M-001/M-002, and
+Ambient replacement code remains uncalled. A fourth zero-repair reviewer was required to close M-003, reconfirm M-001/M-002, and
 find no new High, Medium, or Low defect. Review immutable target
 `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066` under packet SHA-256
 `82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`. No external authority is granted.
+
+**Third-remediation acceptance amendment:** A fourth different zero-repair reviewer accepted exact review target
+`a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`, containing implementation
+`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`. It reproduced the complete deterministic gate and a 29/29 bounded
+hostile matrix, closed M-003, reconfirmed M-001/M-002, and found no new High, Medium, or Low defect. Preserve the
+unchanged accepted report at `docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. Ordinary owner-controlled integration is now
+permitted. No listener, SSH, credential, native, provider, production database, deployment, DNS, hosting, network, or
+other external-effect authority is granted.
