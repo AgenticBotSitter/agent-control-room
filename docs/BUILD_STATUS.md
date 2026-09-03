@@ -116,7 +116,7 @@
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
-| CR13A-LIVE-080 private-loopback listener lifecycle | Implementation code frozen at exact `7333ea4...`; independent review pending | Exact plan, six-step terminal fake rehearsal, decoder-minted frame provenance, bounded connection/drain policy, safe negative-authority receipt, and no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
+| CR13A-LIVE-080 private-loopback listener lifecycle | Exact target `4ecc453...` rejected; one Medium and two Low findings require remediation | Protected-frame retention on two terminal paths, missing receipt listener-ID bound, and recomputable rehearsal-reference rebinding; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1050,6 +1050,13 @@ The immutable implementation code is `7333ea48577b1000fd5eac0e6789b3e21cfeb559`;
 The exact review target is `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e`. Its zero-repair independent review
 packet has SHA-256 `00c005a2371f20dc4de66685659f9fde7a0bd6513627829fd7894ace0451f4a0`.
 
+The independent reviewer reproduced every deterministic gate and confirmed that no listener or external effect exists,
+but rejected the target with Medium M-001 plus Low L-001 and L-002. Wrong-order and premature-finish terminal paths can
+retain the complete protected frame; receipt parsing lacks the listener-ID length ceiling; and the rehearsal reference
+can be changed and publicly re-digested instead of being rederived from the plan. The immutable negative report SHA-256
+is `0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`. Remediation and a different independent
+zero-repair re-review are mandatory.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1065,13 +1072,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-080-REVIEW — freeze and independently review the private-loopback listener lifecycle contract
+Block: CR13A-LIVE-080-REMEDIATION — close M-001, L-001, and L-002 in the listener lifecycle contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: this is the lifecycle security boundary immediately surrounding future untrusted network input.
-Expected output: full deterministic gates, immutable product, zero-repair review packet, independent adversarial report,
-and, only after acceptance, a private main-target PR with ordinary GitHub CI and no listener or external effect.
-Owner action: none until an accepted PR is ready; approve merge only after review and ordinary CI are green.
+Why: terminal failure currently retains protected bytes and two receipt identity/bound checks are incomplete.
+Expected output: reduced frame retention, fail-path clearing, bounded listener identity, derived reference equality,
+regressions, full deterministic gates, immutable remediation, and different-reviewer zero-repair acceptance.
+Owner action: none until an accepted PR is ready; approve merge only after re-review and ordinary CI are green.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

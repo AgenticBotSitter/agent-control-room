@@ -3049,3 +3049,10 @@ network, credential, and native authority outside repository-only work.
 connection, changing time/capacity limits, permitting restart, changing identity binding, using the receipt as native
 evidence, or composing the listener into LIVE-060. Any such step requires a new exact contract, explicit effect
 authority, deterministic tests, immutable review evidence, and owner-controlled integration.
+
+**Independent-review amendment:** Preserve rejected target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e`. Terminal
+means both behavioral rejection and data release: after protected-frame validation, retain only the reduced digest and
+byte-count facts needed for a successful receipt, and clear those facts on every failure path. Receipt parsing must
+apply the same 27–160 listener-ID bound as the plan and must rederive `rehearsalReference` from `planDigest`; a public
+digest alone cannot establish either semantic relationship. One Medium and two Low findings remain open. Negative
+report SHA-256: `0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`.

@@ -1,6 +1,7 @@
 # CR13A-LIVE-080 private-loopback listener lifecycle acceptance
 
-**Status:** implementation code frozen at `7333ea48577b1000fd5eac0e6789b3e21cfeb559`; independent review pending
+**Status:** exact target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e` rejected with one Medium and two
+Low findings; remediation and different re-review required
 **Integration base:** `b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`
 **Effect boundary:** repository code and local tests only; no socket bind, listener, SSH session, credential access,
 Hermes/provider call, native process, production PostgreSQL/VPS contact, deployment, DNS, or other network effect
@@ -94,6 +95,17 @@ or uncertainty remains negative evidence and requires remediation plus a differe
 
 The zero-repair packet is `docs/reviews/CR13A_LIVE_080_INDEPENDENT_REVIEW_PACKET.md`, SHA-256
 `00c005a2371f20dc4de66685659f9fde7a0bd6513627829fd7894ace0451f4a0`.
+
+The independent reviewer reproduced every deterministic count and confirmed the no-effect boundary, but rejected the
+target. Medium M-001 shows that premature `finish` or a wrong-order call after frame acceptance can leave the protected
+raw frame retained in the terminal object. Low L-001 shows that receipt parsing omits the plan's 160-character listener
+ID ceiling. Low L-002 shows that a caller can change `rehearsalReference`, recompute the public digest, and rebind the
+receipt away from the reference derived from `planDigest`.
+
+The negative report is preserved at `docs/reviews/CR13A_LIVE_080_INDEPENDENT_REVIEW.md`, SHA-256
+`0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`. Remediation must retain only reduced
+frame evidence after validation, clear it on every terminal path, enforce listener-ID bounds in receipts, derive and
+compare the rehearsal reference during parsing, add regressions, and receive a different zero-repair re-review.
 
 Independent acceptance would permit ordinary owner-controlled integration only. It would not authorize the next native
 block. A future physical listener requires separate exact owner authority and must prove real exclusive loopback bind,
