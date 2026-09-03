@@ -7,3 +7,4 @@ export * from "./private-loopback-framing";
 export * from "./private-loopback-listener-lifecycle";
 export * from "./private-loopback-listener-session";
 export * from "./private-loopback-native-listener-adapter";
+export * from "./private-loopback-native-driver-contract";
