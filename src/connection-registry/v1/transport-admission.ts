@@ -108,12 +108,16 @@ function exactNativePromiseV1(value: unknown): value is Promise<unknown> {
 /**
  * Mark a malformed same-realm Promise observed without reading its `then`.
  * The native method's SpeciesConstructor path is safe only while the captured
- * prototype/species selection remains exact and the instance cannot override
- * `constructor`; every other value stays completely untouched.
+ * prototype/species selection remains exact. An own `constructor` is safe only
+ * when its ordinary data value selects the captured constructor (or the native
+ * default); every behavioral or foreign selection stays completely untouched.
  */
 function observeMalformedIntrinsicPromiseV1(value: unknown): void {
-  if (!intrinsicNativePromiseV1(value) || !exactPromiseRuntimeV1()
-    || objectGetOwnPropertyDescriptorV1(value, "constructor") !== undefined) return;
+  if (!intrinsicNativePromiseV1(value) || !exactPromiseRuntimeV1()) return;
+  const constructorDescriptor = objectGetOwnPropertyDescriptorV1(value, "constructor");
+  if (constructorDescriptor !== undefined
+    && (!("value" in constructorDescriptor)
+      || (constructorDescriptor.value !== undefined && constructorDescriptor.value !== promiseConstructorV1))) return;
   try {
     reflectApplyV1(promiseThenV1, value, [discardPromiseSettlementV1, discardPromiseSettlementV1]);
   } catch {

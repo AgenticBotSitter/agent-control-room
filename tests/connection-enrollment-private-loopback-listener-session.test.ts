@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -307,6 +308,66 @@ test("CR13A-LIVE-090 captures an inert admission method and observes malformed n
   } finally {
     process.removeListener("unhandledRejection", listener);
   }
+});
+
+test("CR13A-LIVE-090 contains constructor-decorated native rejection under strict process policy", async () => {
+  if (process.env.CR13A_LIVE_090_STRICT_PROMISE_CHILD !== "1") {
+    const completed = spawnSync(process.execPath, [
+      "--unhandled-rejections=strict",
+      "--import",
+      "tsx",
+      "--test",
+      "--test-name-pattern",
+      "CR13A-LIVE-090 contains constructor-decorated native rejection under strict process policy",
+      "tests/connection-enrollment-private-loopback-listener-session.test.ts",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, CR13A_LIVE_090_STRICT_PROMISE_CHILD: "1", NODE_OPTIONS: "" },
+    });
+    assert.equal(completed.status, 0, completed.stderr);
+    assert.equal(completed.signal, null);
+    return;
+  }
+
+  const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(configuration());
+  const protectedFailure = Object.freeze({ privateValue: "must-not-escape" });
+  const malformed = Promise.reject(protectedFailure);
+  Object.defineProperty(malformed, "constructor", {
+    configurable: true,
+    enumerable: false,
+    value: Promise,
+    writable: false,
+  });
+  const session = new ConnectionEnrollmentPrivateLoopbackListenerSessionV1(plan, {
+    admit() { return malformed as Promise<ConnectionEnrollmentTransportAdmissionReceiptV1>; },
+  });
+  const input = observations(plan);
+  session.observeBind(input.bind);
+  session.observeConnectionOpen(input.open);
+  session.pushFrameChunk(packetFor(enrollmentFrame()));
+  await expectRejection(() => session.completeFrameAndAdmit(input.frame), "integrity_failed");
+  await new Promise<void>((resolveImmediate) => setImmediate(resolveImmediate));
+});
+
+test("CR13A-LIVE-090 leaves behavioral Promise constructors inert", async () => {
+  const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(configuration());
+  const malformed = Promise.reject(new Error("already observed test rejection"));
+  Reflect.apply(Promise.prototype.then, malformed, [undefined, () => undefined]);
+  let constructorReads = 0;
+  Object.defineProperty(malformed, "constructor", {
+    configurable: true,
+    get() { constructorReads += 1; throw new Error("must remain inert"); },
+  });
+  const session = new ConnectionEnrollmentPrivateLoopbackListenerSessionV1(plan, {
+    admit() { return malformed as Promise<ConnectionEnrollmentTransportAdmissionReceiptV1>; },
+  });
+  const input = observations(plan);
+  session.observeBind(input.bind);
+  session.observeConnectionOpen(input.open);
+  session.pushFrameChunk(packetFor(enrollmentFrame()));
+  await expectRejection(() => session.completeFrameAndAdmit(input.frame), "integrity_failed");
+  assert.equal(constructorReads, 0);
 });
 
 test("CR13A-LIVE-090 requires admission before close and complete cleanup before finish", async () => {

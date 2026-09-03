@@ -301,6 +301,47 @@ test("CR13A-LIVE-060 remains bounded under strict unhandled-rejection policy", (
   assert.equal(completed.stderr, "");
 });
 
+test("CR13A-LIVE-060 contains inert constructor-decorated rejection under strict policy", () => {
+  const probe = `
+    import {
+      ConnectionEnrollmentTransportAdmissionErrorV1,
+      ConnectionEnrollmentTransportAdmissionV1,
+    } from "./src/connection-registry/v1/index.ts";
+    const rawRejectedValue = Object.freeze({ protected: "must-not-escape" });
+    const malformed = Promise.reject(rawRejectedValue);
+    Object.defineProperty(malformed, "constructor", {
+      configurable: true, enumerable: false, value: Promise, writable: false,
+    });
+    const ingress = { receive() { return malformed; } };
+    const clock = { now() { return "2026-09-03T03:00:00.000Z"; } };
+    const configuration = {
+      admissionId: "transport-admission:strict-constructor-probe",
+      transport: "ssh_tunnel",
+      listenerVisibility: "private_loopback",
+      channelIdentityDigest: "sha256:${"b".repeat(64)}",
+      maximumFrameBytes: 4096,
+    };
+    const admission = new ConnectionEnrollmentTransportAdmissionV1(ingress, configuration, clock);
+    let bounded = false;
+    try {
+      await admission.admit({ rawFrame: "{}", deliveryId: "delivery:strict-constructor-probe" });
+    } catch (error) {
+      bounded = error instanceof ConnectionEnrollmentTransportAdmissionErrorV1
+        && error.safeCode === "integrity_failed" && error !== rawRejectedValue;
+    }
+    await new Promise((resolveImmediate) => setImmediate(resolveImmediate));
+    if (!bounded) throw new Error("probe did not return one bounded local failure");
+    process.stdout.write("bounded\\n");
+  `;
+  const completed = spawnSync(process.execPath,
+    ["--unhandled-rejections=strict", "--import", "tsx", "--input-type=module", "--eval", probe],
+    { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" } });
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.signal, null);
+  assert.equal(completed.stdout, "bounded\n");
+  assert.equal(completed.stderr, "");
+});
+
 test("CR13A-LIVE-060 rechecks native Promise custody before awaiting ingress", async () => {
   const prototype = Object.getPrototypeOf((async () => undefined)());
   const getDescriptor = Object.getOwnPropertyDescriptor, defineProperty = Object.defineProperty;

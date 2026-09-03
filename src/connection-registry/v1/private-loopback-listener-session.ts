@@ -113,8 +113,11 @@ function exactNativePromiseV1(value: unknown): value is Promise<unknown> {
 }
 
 function observeMalformedIntrinsicPromiseV1(value: unknown): void {
-  if (!intrinsicNativePromiseV1(value) || !exactPromiseRuntimeV1()
-    || objectGetOwnPropertyDescriptorV1(value, "constructor") !== undefined) return;
+  if (!intrinsicNativePromiseV1(value) || !exactPromiseRuntimeV1()) return;
+  const constructorDescriptor = objectGetOwnPropertyDescriptorV1(value, "constructor");
+  if (constructorDescriptor !== undefined
+    && (!("value" in constructorDescriptor)
+      || (constructorDescriptor.value !== undefined && constructorDescriptor.value !== promiseConstructorV1))) return;
   try {
     reflectApplyV1(promiseThenV1, value, [discardPromiseSettlementV1, discardPromiseSettlementV1]);
   } catch {
