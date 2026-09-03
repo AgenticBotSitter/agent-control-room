@@ -1137,6 +1137,8 @@ calls. Producer gates pass: stage zero with no native attempt, TypeScript, lint,
 tests, 769/769 pretests, 419/421 core with two intentional platform skips, 340/340 posttests, production build with 4/4
 rendered checks, all 36 migrations with 119 tables, and whitespace. A fourth zero-repair reviewer must close M-003 and
 reconfirm M-001/M-002.
+The immutable third-remediation review target is `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`; packet SHA-256:
+`82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`.
 
 ## Parallel build lane
 

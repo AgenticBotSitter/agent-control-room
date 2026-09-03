@@ -3129,4 +3129,6 @@ SHA-256 `7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`. Exac
 remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` independently proves an inert effective constructor/species selection,
 uses only the captured observer, and observes before returning integrity failure at both listener and transport seams.
 Ambient replacement code remains uncalled. A fourth zero-repair reviewer must close M-003, reconfirm M-001/M-002, and
-find no new High, Medium, or Low defect. No external authority is granted.
+find no new High, Medium, or Low defect. Review immutable target
+`a94241fb4578af7ff8ba2b85afa4d18f2fdd4066` under packet SHA-256
+`82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`. No external authority is granted.

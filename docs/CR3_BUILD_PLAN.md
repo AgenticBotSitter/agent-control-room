@@ -1258,4 +1258,6 @@ calling ambient replacement behavior. Both listener and transport seams observe 
 drift. Strict-process regressions cover both and prove replacement calls remain zero. Producer gates pass at 47/47
 focused, 89/89 connections, 769/769 pretests, 419/421 core with two intentional platform skips, 340/340 posttests,
 build with 4/4 rendered routes, 36 migrations/119 tables, stage zero, type, lint, and whitespace. A fourth zero-repair
-reviewer must close M-003, reconfirm M-001/M-002, and find no new High, Medium, or Low defect.
+reviewer must close M-003, reconfirm M-001/M-002, and find no new High, Medium, or Low defect. The immutable
+third-remediation review target is `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`; packet SHA-256:
+`82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`.

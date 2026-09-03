@@ -155,4 +155,6 @@ immutable second-remediation review target is `f0a64ae4fab6b0a7d926fca573c9ce324
 
 That third reviewer closed M-002 and reconfirmed M-001 but rejected the target for M-003. Exact third remediation is
 `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`; a fourth zero-repair reviewer must close M-003, reconfirm M-001/M-002,
-and find no new High, Medium, or Low defect before ordinary owner-controlled integration.
+and find no new High, Medium, or Low defect before ordinary owner-controlled integration. The immutable
+third-remediation review target is `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`; packet SHA-256:
+`82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`.
