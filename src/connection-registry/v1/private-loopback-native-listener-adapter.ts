@@ -327,10 +327,13 @@ export function bindDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeList
 BoundDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1 {
   assertAdapterRuntimeV1("integrity_failed");
   assertExactNativeListenerAdapterReceiverV1(value);
+  const status = objectFreezeV1(() => reflectApplyV1(nativeListenerAdapterStatusV1, value, []));
+  const start = objectFreezeV1(() => reflectApplyV1(nativeListenerAdapterStartV1, value, []));
+  const close = objectFreezeV1(() => reflectApplyV1(nativeListenerAdapterCloseV1, value, []));
   return objectFreezeV1({
     enabled: false,
-    status: () => reflectApplyV1(nativeListenerAdapterStatusV1, value, []),
-    start: () => reflectApplyV1(nativeListenerAdapterStartV1, value, []),
-    close: () => reflectApplyV1(nativeListenerAdapterCloseV1, value, []),
+    status,
+    start,
+    close,
   });
 }

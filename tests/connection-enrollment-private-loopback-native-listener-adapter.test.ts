@@ -204,6 +204,13 @@ test("CR13A-LIVE-100 exact-brands and freezes adapter and captured consumer oper
   const bound = bindDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1(adapter);
   assert.equal(Object.isFrozen(bound), true);
   assert.equal(bound.enabled, false);
+  for (const operation of [bound.status, bound.start, bound.close]) {
+    assert.equal(Object.isFrozen(operation), true);
+    assert.equal(Object.isExtensible(operation), false);
+    assert.throws(() => Object.defineProperty(operation, "call", { value: () => "replacement" }), TypeError);
+    assert.throws(() => Object.defineProperty(operation, "prototype", { value: {} }), TypeError);
+    assert.throws(() => Object.setPrototypeOf(operation, { call: () => "replacement" }), TypeError);
+  }
   assert.deepEqual(bound.status(), adapter.status());
   const starts = await Promise.allSettled(Array.from({ length: 16 }, () => bound.start()));
   assert.equal(starts.every((result) => result.status === "rejected"
