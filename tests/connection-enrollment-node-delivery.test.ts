@@ -23,6 +23,7 @@ import {
   NODE_PROTOCOL_V1,
   NodeEnrollmentStore,
   NodeProtocolAuthenticator,
+  ProtocolAuthenticationError,
   signEnrollmentProof,
   signNodeFrame,
   type EnrollmentChallenge,
@@ -414,4 +415,36 @@ test("CR13A-LIVE-040 executes no behavioral database row and adds no browser or 
     assert.doesNotMatch(connectionRoute, /NodeDeliveryAdapter|connection\.enrollment\.deliver|\bPOST\b/);
     assert.doesNotMatch(appRuntime, /NodeDeliveryAdapter|connection\.enrollment\.deliver/);
   } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-050 maps only declared protocol authentication codes", async () => {
+  const fixtureValue = await fixture();
+  let behaviorReads = 0;
+  const rejection = Object.create(ProtocolAuthenticationError.prototype) as object;
+  Object.defineProperties(rejection, {
+    code: { value: "not_in_protocol_authentication_allowlist" },
+    message: { get() { behaviorReads += 1; throw new Error("message must remain unread"); } },
+  });
+  const rejectingDatabase: DatabaseClient = {
+    async query(): Promise<never> { throw rejection; },
+    transaction: <T>(callback: (session: DatabaseSession) => Promise<T>) => fixtureValue.db.transaction(callback),
+    transactionWithPreCommitCheck: <T>(callback: (session: DatabaseSession) => Promise<T>,
+      preCommitCheck: () => void) => fixtureValue.db.transactionWithPreCommitCheck(callback, preCommitCheck),
+  };
+  const adapter = new DatabaseConnectionEnrollmentNodeDeliveryAdapterV1(rejectingDatabase, deliveryKey,
+    new FixedWindowProtocolRateLimiter(100, 60));
+  try {
+    let failure: unknown;
+    try { await adapter.deliver(JSON.stringify(deliveryFrame(fixtureValue.keys.privateKey, fixtureValue.spki)),
+      deliveryOptions()); }
+    catch (error) { failure = error; }
+    assert.equal(behaviorReads, 0);
+    assert.notEqual(failure, rejection);
+    assert.ok(failure instanceof ConnectionEnrollmentNodeDeliveryErrorV1);
+    assert.equal(failure.safeCode, "integrity_failed");
+    const counts = await fixtureValue.raw.query<{ replay: number; deliveries: number }>(
+      `SELECT (SELECT count(*)::int FROM node_protocol_replay) AS replay,
+      (SELECT count(*)::int FROM control_connection_enrollment_protocol_deliveries) AS deliveries`);
+    assert.deepEqual(counts.rows[0], { replay: 1, deliveries: 0 });
+  } finally { await fixtureValue.raw.close(); }
 });

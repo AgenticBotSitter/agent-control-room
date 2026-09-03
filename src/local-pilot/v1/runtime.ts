@@ -17,7 +17,8 @@ import {
 import { AuthenticatedFleetTelemetryFreshnessSourceV1,
   type ConnectionCenterFreshnessSourceV1, type ConnectionCenterRosterSourceV1 } from "../../connection-center/v1";
 import { ConnectionEnrollmentIntakeServiceV1, ConnectionRegistryStoreV1,
-  DisabledConnectionEnrollmentDeliverySourceV1 } from "../../connection-registry/v1";
+  DisabledConnectionEnrollmentDeliverySourceV1, DisabledConnectionEnrollmentNodeIngressV1,
+  type ConnectionEnrollmentNodeIngressPortV1 } from "../../connection-registry/v1";
 import {
   buildProjectWorkspaceVerifiedOwnerSessionV1,
   buildProtectedProjectCatalogHighWaterV1,
@@ -235,6 +236,7 @@ export interface ControlRoomLocalPilotRuntimeV1{
   connectionRosterSource:ConnectionCenterRosterSourceV1;
   connectionFreshnessSource:ConnectionCenterFreshnessSourceV1;
   connectionEnrollmentIntakeService:Pick<ConnectionEnrollmentIntakeServiceV1,"ingest">;
+  connectionEnrollmentNodeIngress:ConnectionEnrollmentNodeIngressPortV1;
   syncCatalog(now?:string):Promise<void>;close():Promise<void>;
 }
 
@@ -262,9 +264,10 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
   const connectionFreshnessSource:ConnectionCenterFreshnessSourceV1=new AuthenticatedFleetTelemetryFreshnessSourceV1(db,connectionFreshnessKey);
   const connectionEnrollmentIntakeService=new ConnectionEnrollmentIntakeServiceV1(db,connectionRegistryKey,
     connectionEnrollmentAuditKey,new DisabledConnectionEnrollmentDeliverySourceV1());
+  const connectionEnrollmentNodeIngress=new DisabledConnectionEnrollmentNodeIngressV1();
   await catalog.sync(clock());await projectEventReconciler.reconcileAll(LOCAL_PILOT_TENANT_ID_V1);return Object.freeze({mode:LOCAL_PILOT_MODE_V1,ownerSession,operatorService,ownerDecisionService,lifecycleService,
     scopeAuthority:new ProjectWorkspaceOwnerReadScopeAuthorityV1({verify:(credential,now)=>ownerSession.verifyProjectWorkspace(credential,now)},catalogAuthority,new SecurityStore(db)),
     readSource:new LocalPilotProjectReadSourceV1(registry),projectEventSource,connectionRosterSource,connectionFreshnessSource,
-    connectionEnrollmentIntakeService,
+    connectionEnrollmentIntakeService,connectionEnrollmentNodeIngress,
     syncCatalog:(now=clock())=>catalog.sync(now),close:()=>raw.close()});}
   catch(error){await raw.close().catch(()=>undefined);throw error;}}

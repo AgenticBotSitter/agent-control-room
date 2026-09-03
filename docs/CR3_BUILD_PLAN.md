@@ -949,7 +949,8 @@ if LIVE-040 changes signed node-protocol schemas or the live ingress trust bound
 ## CR13A-LIVE-040 — authenticated node-protocol enrollment delivery
 
 Status: independently accepted remediation `67c16c5c11d06d3752b434fd8e3641c1c1482e8b` after immutable product
-`6493118f2b7272308d3c508b963f3ddd52cc9863` was rejected; owner-approved integration remains. See
+`6493118f2b7272308d3c508b963f3ddd52cc9863` was rejected; integrated through owner-approved PR #233 as
+`34379984d3c4793f2c2d464ffb3545ab98717ba5`. See
 `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md`,
 `docs/reviews/CR13A_LIVE_040_INDEPENDENT_REVIEW.md`, and ADR-151.
 
@@ -976,3 +977,70 @@ not a live effect.
 Next after independent acceptance and owner-approved integration: CR13A-LIVE-050 may compose a provider-disabled server
 ingress boundary or prepare one bounded enrolled-connector rehearsal without enabling a live effect. Use Sol xhigh if the
 next block changes transport trust or any signed contract; otherwise use Sol high for review/integration.
+
+## CR13A-LIVE-050 — provider-disabled enrollment ingress composition
+
+Status: independently accepted for exact provider-disabled product `ffcdb586022ff67494cb2e404df7749b3a093b22`;
+owner-approved integration pending. See
+`CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` and ADR-152.
+
+The server-only coordinator composes authenticated node delivery, protected ledger re-read, exact routing-hint/evidence
+binding, and independent enrollment intake into one byte-stable safe receipt. The database composition requires separate
+delivery, registry, and intake-audit HMAC keys. Outer transport authentication still cannot replace inner enrollment
+authorization, and no transport-provided label can select a different pending delivery.
+
+The repository-fake local runtime holds only a disabled ingress port. No application route, listener, connector,
+SSH/Hermes/native action, credential access, provider call, production PostgreSQL/VPS contact, deployment, or network
+effect is added.
+
+The zero-repair independent review packet is
+`docs/reviews/CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_REVIEW_PACKET.md`, SHA-256
+`8836319fe7d396a73d93192db10a0bf97eece09e4d85b463a32470a67063ac8c`.
+
+The independent report rejected the exact target with one Medium finding: mutable ambient canonicalization could execute
+after import and make a drifted final receipt pass its original digest. Rejected report SHA-256:
+`ae40c366c16ac9d72cdc0be6db0393fd02904eef77b07b3e04bd8a07b7c6b255`. Preserve that negative evidence. Remediation must
+re-establish the selected runtime after awaited seams and before receipt construction/parsing, then receive a different
+independent re-review.
+
+The remediation candidate captures the complete canonicalization/hash runtime selected by the ingress receipt, checks it
+at public entry and after every awaited proof seam, and uses captured slicing/cleanup operations. A 20-operation direct
+replacement matrix and a separate change injected after successful intake commit both fail before the replacement can
+execute. The committed result remains exactly recoverable after the original call closes. The change does not alter the
+wire contract, persistence, proof ordering, receipt schema, disabled runtime, or external-effect boundary.
+
+The zero-repair remediation closure packet is
+`docs/reviews/CR13A_LIVE_050_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`5ed0af3e0552fbd4722211bf035b6bc705c50624ccca3c45445c0906b11bd1a9`.
+
+That re-review closes M-001 but rejects the exact target with inherited Medium M-002. A self-throwing Proxy rejection can
+execute through node-delivery and ingress `instanceof` classification and escape raw before persistence. Rejected report
+SHA-256: `67b8eaeffd6bbcc86eb81d061107beaf464b5dcb0f680317ad3d18cb89c85992`. The next remediation must classify caught
+unknown values behavior-free, preserve only bounded codes, and prove zero persistent writes.
+
+The second remediation removes behavioral rejection classification from the registry, intake, node-delivery, and
+ingress catch boundaries. A shared host-level classifier rejects direct Proxies, requires the exact immediate local
+error prototype, and reads only an own string data descriptor. Every accepted code is reconstructed as a fresh bounded
+local error; any other value becomes bounded failure. Direct-Proxy and unusual-prototype database regressions execute no
+caller behavior and create no delivery, intake, or registry records. The exact frozen target is
+`bbd3bcbd659ab91461bb52117718a95098c7bb80`; its zero-repair packet is
+`docs/reviews/CR13A_LIVE_050_ERROR_CONTAINMENT_REVIEW_PACKET.md`, SHA-256
+`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`. The review closes M-001 and M-002's reported
+defects but finds Low L-001: the node-delivery authentication catch must compare the captured code with the protocol's
+seven-code allowlist rather than accept every string. The rejected report SHA-256 is
+`61c934aca63942f043b613e5137b1ba2824f5f2139534031ba62ad65e732a86b`. A narrow third remediation and another different
+review are required before integration.
+
+The third remediation explicitly compares the captured protocol-authentication code with all seven declared literals
+and maps every other string to conservative integrity failure. Adapter and complete-ingress regressions prove the
+unknown value runs no behavior, cannot escape raw, and creates no delivery, intake, or registry record. The exact frozen
+target is `ffcdb586022ff67494cb2e404df7749b3a093b22`; its zero-repair packet is
+`docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`. A fourth different reviewer reproduced every
+required gate and found no High, Medium, or Low defect. M-001, M-002, and L-001 are closed. Accepted report SHA-256:
+`a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. This permits owner-controlled integration only;
+no ingress listener or external effect is enabled.
+
+Next after independent acceptance and owner-approved integration: define one bounded transport-admission contract or
+refresh one enrolled-connector rehearsal packet without running it. Use Sol xhigh for any transport/listener trust
+boundary; use Sol high for a packet-only refresh under frozen contracts.

@@ -112,7 +112,8 @@
 | CR13A-LIVE-010 protected Connection Center | Accepted and integrated on `main` through PR #230 | Different reviewer reproduced the rejected locator leak and accepted remediation `c32bb190...`; post-merge GitHub CI run `33562917320` passed; main integration `737d974...`; see `CR13A_LIVE_010_CONNECTION_CENTER_ACCEPTANCE.md` |
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
-| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted remediation `67c16c5...`; ready for owner-approved integration | A fresh different reviewer closed the preserved High, two Medium, and Low findings with no new findings; report SHA `217dd95...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
+| CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
+| CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted for exact product `ffcdb58...`; owner-approved integration pending | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; no listener, live connection, provider, production, or deployment effect; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -860,7 +861,74 @@ producer and the first CR13A-LIVE-040 reviewer, reproduced every required gate a
 PGlite ledger, concurrent replay/recovery, wrong-key/tag, and 28-operation post-import mutation probes. All four findings
 are closed with no new High, Medium, or Low finding. The accepted report SHA-256 is
 `217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`. The branch is ready for publication and
-owner-approved integration; no live effect is authorized.
+owner-approved integration; no live effect is authorized. PR #233 CI run `33590140698` passed in 8m36s and the owner
+approved merge `34379984d3c4793f2c2d464ffb3545ab98717ba5` into `main`.
+
+CR13A-LIVE-050 is now the active implementation block. The server-only coordinator authenticates and durably stores one
+node enrollment-delivery frame, re-reads the exact protected evidence at canonical replay time, proves the untrusted
+routing hint selects that evidence, and only then invokes the independently authenticated enrollment intake. Three
+distinct HMAC key domains protect delivery, registry, and intake audit evidence. Exact later and concurrent retries
+return one stable digest-only receipt; definite intake failure can recover without duplicating delivery or registry
+state. Forged outer signatures, invalid inner signatures, mismatched routing, duplicate keys, behavioral input, and
+receipt drift fail closed. The local runtime holds only a disabled ingress port, and the app exposes no listener, route,
+or mutation. Stage zero, TypeScript, full lint, 7/7 focused tests, 35/35 connection tests, the complete 769/769 pretest
+plus 419/421 core with two intentional platform skips plus 286/286 posttest lifecycle, all 36 migrations with 119
+PostgreSQL tables, the production build, 4/4 rendered routes, and whitespace validation pass. The exact product is
+frozen at `b86e60e5f8389029030deaaada890267e5f92f53`, and its zero-repair independent review packet is published at
+`docs/reviews/CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_REVIEW_PACKET.md`, SHA-256
+`8836319fe7d396a73d93192db10a0bf97eece09e4d85b463a32470a67063ac8c`. The independent review rejected that target with
+one Medium finding: post-import replacement of an ambient canonicalization operation could execute and let a drifted
+receipt pass the original digest. The negative report is preserved; remediation must capture and recheck the selected
+runtime after every await and before receipt parsing/construction, with zero-execution regression evidence. Rejected
+report SHA-256: `ae40c366c16ac9d72cdc0be6db0393fd02904eef77b07b3e04bd8a07b7c6b255`.
+
+The remediation candidate captures and verifies every canonicalization/hash operation selected by the final ingress
+receipt, including the native hash update/digest methods. It rechecks the exact runtime at receive entry, after each of
+the three awaited proof seams, and before final receipt construction. The 20-operation direct replacement matrix and a
+separate replacement injected after successful intake commit both close before the replacement executes; restoring the
+runtime permits the committed response-loss result to recover exactly once. Focused ingress passes 9/9, the connection
+slice passes 37/37, the complete lifecycle passes 769/769 pretests, 419/421 core tests with two intentional skips, and
+288/288 posttests. TypeScript, full lint, migrations 0001-0036 with 119 PostgreSQL tables, production build, 4/4 rendered
+checks, and whitespace validation pass. The exact remediation is
+`7c79837cb60e497a7f49a203f20382afe133bd91`; its zero-repair closure packet is
+`docs/reviews/CR13A_LIVE_050_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`5ed0af3e0552fbd4722211bf035b6bc705c50624ccca3c45445c0906b11bd1a9`. A different independent re-review remains
+required.
+
+That re-review closes M-001 but rejects the exact target with inherited Medium M-002: a self-throwing Proxy rejection can
+execute through delivery and ingress `instanceof` classification and escape raw before persistence. The rejected report
+SHA-256 is `67b8eaeffd6bbcc86eb81d061107beaf464b5dcb0f680317ad3d18cb89c85992`. The second remediation must classify caught
+unknown values through behavior-free host checks, return only bounded errors, and prove zero replay/delivery/intake/
+registry writes.
+
+The second remediation is frozen at `bbd3bcbd659ab91461bb52117718a95098c7bb80`. The registry, intake, node-delivery,
+and ingress catches no longer use `instanceof` or expose an unknown rejected value. A shared host-level classifier rejects
+direct Proxies, requires the exact immediate local error prototype, and reads only an own string data descriptor before
+each boundary reconstructs a bounded local error. Direct-Proxy and unusual-prototype database rejections execute zero
+caller behavior and create no delivery, intake, or registry record. Focused ingress passes 11/11, the connection slice
+passes 39/39, the complete lifecycle passes 769/769 pretests, 419/421 core tests with two intentional skips, and 290/290
+posttests. TypeScript, full lint, all 36 migrations with 119 PostgreSQL tables, production build, 4/4 rendered checks,
+and whitespace validation pass. Its zero-repair review packet is
+`docs/reviews/CR13A_LIVE_050_ERROR_CONTAINMENT_REVIEW_PACKET.md`, SHA-256
+`f60a27488b7751a3630c16e31704a326445809acfdd2398c263ed8e0c7fbbfeb`. The different reviewer closes M-001 and M-002's
+reported behavior-execution/raw-escape defect, but rejects the exact target with Low L-001: the node-delivery
+authentication catch accepts any exact-prototype own string code rather than the protocol's seven-code allowlist. The
+value remains bounded and inert, but an unknown dependency failure can be mislabeled as authentication failure. The
+preserved rejected report SHA-256 is `61c934aca63942f043b613e5137b1ba2824f5f2139534031ba62ad65e732a86b`.
+
+The narrow third remediation is frozen at `ffcdb586022ff67494cb2e404df7749b3a093b22`. Node delivery compares the captured
+protocol code with all seven declared `ProtocolAuthenticationCode` literals and maps every other string to conservative
+integrity failure. Adapter and complete-ingress regressions prove zero accessor execution, no raw escape, unchanged
+preexisting replay state, and zero delivery, intake, or registry persistence. Focused intake/delivery/ingress passes
+26/26, the connection slice passes 41/41, and the complete lifecycle passes 769/769 pretests, 419/421 core tests with two
+intentional skips, and 292/292 posttests. TypeScript, full lint, migrations 0001-0036 with 119 PostgreSQL tables,
+production build, 4/4 rendered checks, and whitespace validation pass. The zero-repair packet is
+`docs/reviews/CR13A_LIVE_050_ALLOWLIST_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`34e6475f0d62eecc0989573e9cc6caf7d0550367e74e39f32b7c3f310ec6cb22`. A fourth different reviewer reproduced all
+required gates, confirmed exact equality between the seven declared and recognized protocol codes, and found no High,
+Medium, or Low defect. M-001, M-002, and L-001 are closed. The accepted report SHA-256 is
+`a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. The exact provider-disabled product is ready for
+branch publication and owner-controlled integration; it enables no live ingress or external effect.
 
 ## Parallel build lane
 
@@ -877,12 +945,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-040-INTEGRATION — publish and integrate the accepted authenticated node-protocol delivery
+Block: CR13A-LIVE-050-INTEGRATION — publish the accepted branch and obtain ordinary CI plus owner approval
 Set model: gpt-5.6-sol
-Set reasoning effort: high
-Why: the security-sensitive product is already frozen and independently accepted; this step is controlled publication, CI, and integration review.
-Expected output: push the reviewed branch, open the pull request, verify ordinary GitHub CI, and merge only after owner approval.
-Owner action: approve the pull-request merge after the branch and CI evidence are presented.
+Set reasoning effort: xhigh
+Why: the exact provider-disabled product has independent acceptance and must now pass the canonical GitHub integration gate.
+Expected output: one main-target pull request, green ordinary CI, and an owner merge decision.
+Owner action: approve merge only after the PR and CI are reported ready.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

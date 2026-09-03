@@ -54,6 +54,20 @@ export function ownDataPropertyValueV1(value: unknown, key: PropertyKey): unknow
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
+/**
+ * Read a string code only from an ordinary exact-prototype error object.
+ * Unlike `instanceof`, this never walks through a Proxy prototype chain and
+ * never reads a caller-controlled accessor.
+ */
+export function exactHostErrorCodeV1(value: unknown, expectedPrototype: object,
+  key: PropertyKey): string | undefined {
+  if (!value || typeof value !== "object" || isHostProxyV1(value)
+    || isHostProxyV1(expectedPrototype) || objectGetPrototypeOf(value) !== expectedPrototype) return undefined;
+  const descriptor = objectGetOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value : undefined;
+}
+
 /** Capture one own accessor getter without invoking it or accepting a callable Proxy. */
 export function ownAccessorPropertyGetterV1(value: unknown, key: PropertyKey): ((...args: unknown[]) => unknown) | undefined {
   if (!value || (typeof value !== "object" && typeof value !== "function") || isHostProxyV1(value)) return undefined;

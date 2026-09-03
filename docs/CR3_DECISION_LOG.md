@@ -2776,3 +2776,106 @@ concurrent replay/recovery, wrong-key/tag, and 28-operation post-import mutation
 Low finding. Accepted report SHA-256 is `217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`.
 This permits owner-controlled integration review only and does not enable any listener, connector, credential,
 native/provider, production-database, deployment, or network effect.
+
+## ADR-152 — Enrollment ingress composes two independent proofs and trusts no routing label
+
+**Decision:** A server-only coordinator may receive one raw signed node frame plus a transport-derived delivery-ID routing
+hint, receive time, and transport identity. It must first persist/authenticate the exact frame through the accepted
+LIVE-040 adapter, then re-read the protected delivery at the canonical replay time and prove its evidence digest equals
+the authenticated receipt before invoking the accepted LIVE-030 intake. Intake still resolves the active database key
+and verifies the nested enrollment signature independently.
+
+The database composition uses separate 32-byte HMAC keys for delivery evidence, connection-registry evidence, and intake
+audit evidence. Exact later and concurrent retries return one stable combined digest-only receipt. The local runtime
+contains only a disabled ingress port, and no application route or listener is exported.
+
+**Why:** Calling delivery and intake separately would leave the caller responsible for joining a raw frame to a protected
+delivery ID. A buggy or hostile transport could point intake at a different pending delivery. Re-reading and digest-binding
+the protected record before intake keeps correlation inside the server trust boundary without collapsing outer and inner
+signatures or exposing protected identifiers in the result.
+
+**Alternatives rejected:** Trusting the routing hint; parsing an unauthenticated body to choose intake; returning the raw
+delivery ID; letting a transport call intake directly; reusing one HMAC key for multiple ledgers; treating node-protocol
+authentication as enrollment approval; adding an HTTP/browser write route; opening a listener; composing a live
+connector; or attaching production PostgreSQL in this block.
+
+**Trade-off:** The coordinator re-reads the authenticated delivery before intake, and intake reads it again inside its
+own verification flow. Enrollment is rare, so the extra protected database work is accepted in exchange for explicit
+evidence binding and independent verification. A delivery can persist when inner enrollment is rejected; this is honest
+negative evidence and an exact retry does not create a second delivery.
+
+**Reevaluate:** Before adding a transport listener, acknowledgement, connector dispatch, public mutation surface,
+delivery retention/pruning, key rotation intake, production database composition, native qualification, live-panel
+admission, or deployment. Any correlation rule, receipt field, failure mapping, HMAC domain, runtime default, outer/inner
+verification ordering, or negative-authority change invalidates CR13A-LIVE-050 review evidence.
+
+## ADR-153 — Ingress receipt integrity is re-established across every asynchronous proof seam
+
+**Decision:** Preserve the rejected CR13A-LIVE-050 product and report. The remediation must capture and verify the exact
+canonicalization and native-hash runtime selected by final ingress receipt construction and parsing. Verification occurs
+at public entry, immediately after delivery, protected-read, and intake awaits, and once more before final construction.
+Any selected-runtime drift closes with a bounded integrity error before the changed operation executes.
+
+The selected boundary includes global object/constructor identity, property inspection, object keys/freezing, array
+classification/mapping/sorting/joining, numeric checks, JSON encoding, chronology, string slicing, regex execution,
+reflection, typed-array cleanup, and native hash update/digest methods. Receipt reference slicing and temporary-key wiping
+use captured operations. Definite response loss after successful intake remains recoverable through exact replay after
+the runtime is restored.
+
+**Why:** A digest cannot prove receipt integrity when an ambient canonicalization operation can be replaced after module
+import and change only the temporary material being hashed. Awaited proof and database seams are the points where another
+same-process component can change selected runtime state. Rechecking immediately after each seam prevents that state from
+reaching result parsing or final hashing.
+
+**Alternatives rejected:** Treating the digest as self-protecting; checking only at module import; checking only at
+receive entry; relying on the accepted delivery adapter's runtime check to protect a later ingress parser; omitting native
+hash methods; accepting one replacement execution before failure; removing the receipt digest; or widening this block to
+a listener, connector, credential, provider, native, production, or deployment effect.
+
+**Trade-off:** Each enrollment performs several exact runtime-selection comparisons and a small private digest sentinel.
+Enrollment is rare, and the deterministic overhead is accepted to keep a same-process integrity boundary across awaited
+composition. The check intentionally fails closed if another component changes a selected intrinsic.
+
+**Reevaluate:** Before changing receipt canonicalization/hash implementation, adding or removing an awaited seam,
+changing any selected host operation, exporting an injectable proof coordinator, or enabling transport admission. Such a
+change invalidates CR13A-LIVE-050 remediation review evidence.
+
+## ADR-154 — Rejected values are data, not executable error identity
+
+**Decision:** Every connection-registry catch boundary treats its caught value as untrusted data. It may preserve a code
+only when Node's host predicate says the value is not a Proxy, its immediate prototype is exactly the captured local
+error prototype, and the code is an own string data property in the boundary's allowlist. The boundary then constructs a
+fresh local error. It never uses `instanceof`, walks an unknown prototype chain, invokes an accessor, logs or serializes
+the caught value, or throws it onward unchanged.
+
+**Why:** JavaScript error identity checks can consult a caller-controlled prototype chain. A rejected promise is not
+guaranteed to contain an `Error`, even when the database object and method are ordinary. Treating the rejection as data
+keeps dependency failure inside the documented safe-code contract and prevents unknown behavior from crossing the
+public ingress boundary.
+
+**Alternatives rejected:** Using `instanceof`; reading `.safeCode` directly; accepting subclasses or inherited codes;
+walking until a known prototype is found; serializing the rejected value for diagnostics; rethrowing an unknown value;
+or widening a dependency's error text into the ingress receipt.
+
+**Trade-off:** Subclassed or cross-realm errors lose their original safe code and become a conservative bounded failure.
+That diagnostic loss is accepted at this trust boundary. Genuine exact local errors retain their established mappings,
+and observability can count the bounded outcome without retaining the rejected object.
+
+**Reevaluate:** Before adding a connection-registry dependency boundary, changing local error prototypes or safe-code
+allowlists, introducing cross-realm workers, or exposing richer error diagnostics. Any change to classification or
+reconstruction invalidates the CR13A-LIVE-050 second-remediation review evidence.
+
+**Independent-review amendment:** Exact prototype and own-data checks are necessary but do not themselves validate a
+code's meaning. Every classifier must also compare the captured string with its explicit declared allowlist. Unknown
+strings become the conservative local integrity outcome; they cannot be mapped through a broad non-`undefined` check.
+The rejected second-remediation report is preserved before this narrow correction.
+
+**L-001 remediation amendment:** The node-delivery classifier enumerates every declared `ProtocolAuthenticationCode`
+literal. Recognition of the error prototype and own data property is followed by semantic allowlist validation; any
+other string becomes a fresh local integrity error. Adapter and composed-ingress cases require zero behavior execution,
+no raw escape, and no new persistent state.
+
+**Independent acceptance amendment:** A fourth different reviewer reproduced the focused and connection suites,
+migration verification, exact allowlist equality, and unchanged prior boundaries against immutable product
+`ffcdb586022ff67494cb2e404df7749b3a093b22`. M-001, M-002, and L-001 are closed with no new High, Medium, or Low finding.
+Accepted report SHA-256 is `a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. This authorizes integration review only.

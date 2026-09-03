@@ -9,6 +9,7 @@ import {
   isConnectionEnrollmentDeliveryIdV1,
   opaqueTokenDigest,
   ProtocolAuthenticationError,
+  type ProtocolAuthenticationCode,
   type ProtocolRateLimitGuard,
   type ReplayGuard,
   type SignedNodeFrame,
@@ -19,6 +20,7 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
 import {
   dataMethodV1,
+  exactHostErrorCodeV1,
   exactHostDataArrayV1,
   exactHostDataSnapshotV1,
   exactHostUint8ArrayV1,
@@ -84,6 +86,14 @@ const bufferByteLengthV1 = Buffer.byteLength;
 const bufferToStringV1 = Buffer.prototype.toString;
 const globalBufferGetterV1 = objectGetOwnPropertyDescriptorV1(globalThis, "Buffer")?.get;
 if (typeof globalBufferGetterV1 !== "function") throw new Error("Buffer runtime unavailable");
+const protocolAuthenticationErrorPrototypeV1 = ProtocolAuthenticationError.prototype;
+
+function capturedProtocolAuthenticationCodeV1(value: unknown): ProtocolAuthenticationCode | undefined {
+  const code = exactHostErrorCodeV1(value, protocolAuthenticationErrorPrototypeV1, "code");
+  return code === "malformed_frame" || code === "unsupported_version" || code === "expired"
+    || code === "unauthenticated" || code === "forbidden" || code === "replayed" || code === "rate_limited"
+    ? code : undefined;
+}
 
 const runtimeSentinelKeyV1 = new Uint8Array(32);
 for (let index = 0; index < runtimeSentinelKeyV1.length; index += 1) runtimeSentinelKeyV1[index] = 149;
@@ -314,6 +324,13 @@ export class ConnectionEnrollmentNodeDeliveryErrorV1 extends Error {
     "scope_mismatch" | "replay_conflict" | "integrity_failed") {
     super(safeCode); this.name = "ConnectionEnrollmentNodeDeliveryErrorV1";
   }
+}
+const connectionEnrollmentNodeDeliveryErrorPrototypeV1 = ConnectionEnrollmentNodeDeliveryErrorV1.prototype;
+
+function capturedDeliveryErrorCodeV1(value: unknown): ConnectionEnrollmentNodeDeliveryErrorV1["safeCode"] | undefined {
+  const code = exactHostErrorCodeV1(value, connectionEnrollmentNodeDeliveryErrorPrototypeV1, "safeCode");
+  return code === "invalid_input" || code === "authentication_failed" || code === "wrong_message_type"
+    || code === "scope_mismatch" || code === "replay_conflict" || code === "integrity_failed" ? code : undefined;
 }
 
 /** Exact-row resolver used only by this hostile live-ingress boundary. */
@@ -575,7 +592,7 @@ implements ConnectionEnrollmentProtectedDeliverySourceV1 {
       });
       assertCanonicalRuntimeV1();
     } catch (error) {
-      if (error instanceof ProtocolAuthenticationError) {
+      if (capturedProtocolAuthenticationCodeV1(error) !== undefined) {
         throw new ConnectionEnrollmentNodeDeliveryErrorV1("authentication_failed");
       }
       throw new ConnectionEnrollmentNodeDeliveryErrorV1("integrity_failed");
@@ -695,7 +712,8 @@ implements ConnectionEnrollmentProtectedDeliverySourceV1 {
       });
       assertCanonicalRuntimeV1();
     } catch (error) {
-      if (error instanceof ConnectionEnrollmentNodeDeliveryErrorV1) throw error;
+      const code = capturedDeliveryErrorCodeV1(error);
+      if (code) throw new ConnectionEnrollmentNodeDeliveryErrorV1(code);
       throw new ConnectionEnrollmentNodeDeliveryErrorV1("integrity_failed");
     }
     const material: Omit<ConnectionEnrollmentNodeDeliveryReceiptV1, "receiptDigest"> = {
@@ -747,7 +765,8 @@ implements ConnectionEnrollmentProtectedDeliverySourceV1 {
       assertCanonicalRuntimeV1();
       return result;
     } catch (error) {
-      if (error instanceof ConnectionEnrollmentNodeDeliveryErrorV1) throw error;
+      const code = capturedDeliveryErrorCodeV1(error);
+      if (code) throw new ConnectionEnrollmentNodeDeliveryErrorV1(code);
       throw new ConnectionEnrollmentNodeDeliveryErrorV1("integrity_failed");
     }
   }
