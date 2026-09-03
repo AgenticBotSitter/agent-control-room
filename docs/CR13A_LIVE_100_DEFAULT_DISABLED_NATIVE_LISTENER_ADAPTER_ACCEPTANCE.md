@@ -1,8 +1,7 @@
 # CR13A-LIVE-100 default-disabled native-listener adapter acceptance
 
-**Status:** first remediation re-review rejected immutable target `ea81bf82ef4726aa230841420beaca6e96f162cc`;
-remaining M-001 and new L-003 remediated in `fbfdda99c8063f043bee6166ab664ba494382c85`; fresh third
-zero-repair re-review required before integration
+**Status:** independently accepted after two remediation rounds; M-001, L-001, L-002, and L-003 closed with no new
+High, Medium, or Low finding; ordinary owner-controlled integration permitted
 **Integration base:** owner-approved LIVE-090 merge `65ea851c123993d7760d6492966845f74ca1d665`
 **Effect boundary:** repository code and deterministic tests only; no native driver, socket, listener, port, SSH,
 credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS, hosting, or network effect
@@ -103,8 +102,16 @@ Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` freezes and makes 
 operation before the enclosing binder is frozen, with own-`call`, function-property, and prototype-chain mutation
 regressions. A three-path `.gitattributes` rule disables only the trailing-space check for the exact immutable evidence
 files that intentionally preserve Markdown hard breaks; every other whitespace rule and repository path remains
-unchanged. All three exact diff checks now pass. A fresh third reviewer must reproduce every original and remediation
-case with zero repair. Any High, Medium, or Low finding still blocks integration and must be preserved.
+unchanged. All three exact diff checks now pass.
+
+The third different zero-repair reviewer independently reproduced 55/55 focused tests, 97/97 connection tests,
+769/769 pretests, 419/421 core tests with two established platform skips, 348/348 posttests, 4/4 rendered checks, all
+36 migrations/119 tables through the listener-free verifier, three immutable-range diff checks, and a 15/15 hostile
+matrix. It also proved that unrelated trailing whitespace and other whitespace errors remain detectable. M-001 and
+L-003 are closed, L-001 and L-002 remain closed, and no new High, Medium, or Low finding remains. The immutable review
+target is `2efc17abf0f04325e0f462420f0bccc319c07d43`. Accepted report:
+`docs/reviews/CR13A_LIVE_100_SECOND_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`8a9ac5c6191303e75d8957fa776844639e6ecb4f4a56aab9b0c687d4f2fdc465`.
 
 Acceptance would permit ordinary owner-controlled integration only. It would not authorize adding `node:net`, opening
 a listener, selecting or exposing a port, starting SSH, reading a credential, contacting Hermes, running a native

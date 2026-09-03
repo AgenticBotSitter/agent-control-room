@@ -3199,6 +3199,15 @@ while disabling only trailing-space classification for those exact evidence path
 pass. This remains producer evidence; a third independent zero-repair reviewer must close M-001 and L-003, reconfirm
 L-001/L-002, and find no new High, Medium, or Low defect.
 
+**Second remediation acceptance amendment:** The third different zero-repair reviewer reproduced the full repository
+gates, exact evidence hashes, all three immutable diff checks, narrow whitespace behavior, and a 15/15 hostile matrix.
+M-001 and L-003 are closed; L-001 and L-002 remain closed; no new High, Medium, or Low defect remains. Preserve the
+accepted report at `docs/reviews/CR13A_LIVE_100_SECOND_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`8a9ac5c6191303e75d8957fa776844639e6ecb4f4a56aab9b0c687d4f2fdc465`. Immutable target
+`2efc17abf0f04325e0f462420f0bccc319c07d43` is ready for ordinary owner-controlled integration. This grants no
+listener, connection, SSH, credential, native, provider, production database, deployment, DNS, hosting, publication,
+or network authority.
+
 **Reevaluate:** Before importing `node:net`, accepting any driver or activation evidence, wiring a runtime, opening or
 closing a physical listener, selecting a port, starting SSH, reading a credential, accepting native evidence, running a
 platform qualification, or making the record activation-eligible. Each requires a new contract, immutable review, and

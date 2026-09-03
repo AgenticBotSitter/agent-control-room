@@ -1274,10 +1274,9 @@ Owner-approved PR #238 merged accepted branch head `ecb5ea373ccb0cdbee1ef036b80e
 
 ## CR13A-LIVE-100 — default-disabled native-listener adapter contract
 
-Status: first remediation re-review rejected immutable target `ea81bf82ef4726aa230841420beaca6e96f162cc`;
-remaining M-001 and new L-003 remediated in `fbfdda99c8063f043bee6166ab664ba494382c85`; fresh third
-zero-repair re-review required. See `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` and
-ADR-159.
+Status: independently accepted after two remediation rounds; immutable target
+`2efc17abf0f04325e0f462420f0bccc319c07d43`; ordinary owner-controlled integration permitted. See
+`CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` and ADR-159.
 
 This block freezes the exact non-authorizing contract immediately before any future physical listener. One readiness
 record binds a derived non-locator listener reference and accepted plan digest to literal IPv4-loopback,
@@ -1316,8 +1315,12 @@ before freezing the binder, with own-`call`, function-property, and prototype-ch
 scoped `.gitattributes` rule preserves the exact three immutable evidence files while disabling only their
 trailing-space classification. The base-to-target, original-to-target, and working-tree diff checks now pass.
 
-Completion requires an immutable remediation zero-repair packet and a fresh different reviewer with no open High,
-Medium, or Low finding across every original and remediation-specific case. Independent acceptance permits ordinary
-owner-controlled integration only. It grants no right to add a native
+The third different zero-repair reviewer reproduced every deterministic gate, all three immutable diff checks, exact
+evidence hashes, narrow whitespace behavior, and a 15/15 hostile matrix. It closed M-001 and L-003, reconfirmed L-001
+and L-002, and found no new High, Medium, or Low defect. The accepted report is
+`docs/reviews/CR13A_LIVE_100_SECOND_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`8a9ac5c6191303e75d8957fa776844639e6ecb4f4a56aab9b0c687d4f2fdc465`.
+
+Independent acceptance permits ordinary owner-controlled integration only. It grants no right to add a native
 driver, open a listener, select/expose a port, start SSH, read credentials, contact Hermes/provider, run a native
 qualification, touch production, deploy, change DNS, or use external network. Use Sol xhigh.
