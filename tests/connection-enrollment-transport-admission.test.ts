@@ -342,6 +342,59 @@ test("CR13A-LIVE-060 contains inert constructor-decorated rejection under strict
   assert.equal(completed.stderr, "");
 });
 
+test("CR13A-LIVE-060 contains rejected Promise settlement across safe then drift", () => {
+  const probe = `
+    import {
+      ConnectionEnrollmentTransportAdmissionErrorV1,
+      ConnectionEnrollmentTransportAdmissionV1,
+    } from "./src/connection-registry/v1/index.ts";
+    const rawRejectedValue = Object.freeze({ protected: "must-not-escape" });
+    const malformed = Promise.reject(rawRejectedValue);
+    Object.defineProperty(malformed, "instrumentation", { value: "invalid-own-string" });
+    const prototype = Object.getPrototypeOf(Promise.resolve());
+    const originalThen = Object.getOwnPropertyDescriptor(prototype, "then");
+    if (!originalThen || !("value" in originalThen)) throw new Error("missing native then");
+    let replacementCalls = 0;
+    const ingress = {
+      receive() {
+        Object.defineProperty(prototype, "then", {
+          ...originalThen,
+          value() { replacementCalls += 1; throw new Error("must remain inert"); },
+        });
+        return malformed;
+      },
+    };
+    const clock = { now() { return "2026-09-03T03:00:00.000Z"; } };
+    const configuration = {
+      admissionId: "transport-admission:strict-then-drift-probe",
+      transport: "ssh_tunnel",
+      listenerVisibility: "private_loopback",
+      channelIdentityDigest: "sha256:${"c".repeat(64)}",
+      maximumFrameBytes: 4096,
+    };
+    const admission = new ConnectionEnrollmentTransportAdmissionV1(ingress, configuration, clock);
+    let bounded = false;
+    try {
+      await admission.admit({ rawFrame: "{}", deliveryId: "delivery:strict-then-drift-probe" });
+    } catch (error) {
+      bounded = error instanceof ConnectionEnrollmentTransportAdmissionErrorV1
+        && error.safeCode === "integrity_failed" && error !== rawRejectedValue;
+    } finally {
+      Object.defineProperty(prototype, "then", originalThen);
+    }
+    await new Promise((resolveImmediate) => setImmediate(resolveImmediate));
+    if (!bounded || replacementCalls !== 0) throw new Error("probe was not bounded and inert");
+    process.stdout.write("bounded\\n");
+  `;
+  const completed = spawnSync(process.execPath,
+    ["--unhandled-rejections=strict", "--import", "tsx", "--input-type=module", "--eval", probe],
+    { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" } });
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.signal, null);
+  assert.equal(completed.stdout, "bounded\n");
+  assert.equal(completed.stderr, "");
+});
+
 test("CR13A-LIVE-060 rechecks native Promise custody before awaiting ingress", async () => {
   const prototype = Object.getPrototypeOf((async () => undefined)());
   const getDescriptor = Object.getOwnPropertyDescriptor, defineProperty = Object.defineProperty;

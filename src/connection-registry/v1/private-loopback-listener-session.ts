@@ -112,12 +112,21 @@ function exactNativePromiseV1(value: unknown): value is Promise<unknown> {
   return true;
 }
 
+function safelyObservablePromiseSelectionV1(value: Promise<unknown>): boolean {
+  const ownConstructor = objectGetOwnPropertyDescriptorV1(value, "constructor");
+  const selectedConstructor = ownConstructor === undefined
+    ? objectGetOwnPropertyDescriptorV1(promisePrototypeV1, "constructor")
+    : ownConstructor;
+  if (!selectedConstructor || !("value" in selectedConstructor)) return false;
+  if (selectedConstructor.value === undefined) return true;
+  if (selectedConstructor.value !== promiseConstructorV1) return false;
+  const speciesDescriptor = objectGetOwnPropertyDescriptorV1(promiseConstructorV1, symbolSpeciesV1);
+  return Boolean(speciesDescriptor && "get" in speciesDescriptor
+    && speciesDescriptor.get === promiseSpeciesGetterV1 && speciesDescriptor.set === undefined);
+}
+
 function observeMalformedIntrinsicPromiseV1(value: unknown): void {
-  if (!intrinsicNativePromiseV1(value) || !exactPromiseRuntimeV1()) return;
-  const constructorDescriptor = objectGetOwnPropertyDescriptorV1(value, "constructor");
-  if (constructorDescriptor !== undefined
-    && (!("value" in constructorDescriptor)
-      || (constructorDescriptor.value !== undefined && constructorDescriptor.value !== promiseConstructorV1))) return;
+  if (!intrinsicNativePromiseV1(value) || !safelyObservablePromiseSelectionV1(value)) return;
   try {
     reflectApplyV1(promiseThenV1, value, [discardPromiseSettlementV1, discardPromiseSettlementV1]);
   } catch {
@@ -337,7 +346,10 @@ export class ConnectionEnrollmentPrivateLoopbackListenerSessionV1 {
     catch (error) { this.#mapAdmissionFailure(error); }
     admissionInput = undefined;
     try { assertConnectionEnrollmentNodeIngressRuntimeV1(); }
-    catch { this.#fail("integrity_failed"); }
+    catch {
+      observeMalformedIntrinsicPromiseV1(pending);
+      this.#fail("integrity_failed");
+    }
     if (!exactNativePromiseV1(pending)) {
       observeMalformedIntrinsicPromiseV1(pending);
       this.#fail("integrity_failed");

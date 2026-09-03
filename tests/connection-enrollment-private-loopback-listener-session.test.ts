@@ -348,6 +348,34 @@ test("CR13A-LIVE-090 contains constructor-decorated native rejection under stric
   session.pushFrameChunk(packetFor(enrollmentFrame()));
   await expectRejection(() => session.completeFrameAndAdmit(input.frame), "integrity_failed");
   await new Promise<void>((resolveImmediate) => setImmediate(resolveImmediate));
+
+  const driftPlan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(configuration());
+  const driftInput = observations(driftPlan);
+  const drifted = Promise.reject(Object.freeze({ privateValue: "must-not-escape" }));
+  Object.defineProperty(drifted, "instrumentation", { value: "invalid-own-string" });
+  const promisePrototype = Object.getPrototypeOf(Promise.resolve());
+  const originalThen = Object.getOwnPropertyDescriptor(promisePrototype, "then");
+  assert.ok(originalThen && "value" in originalThen);
+  let replacementCalls = 0;
+  const driftSession = new ConnectionEnrollmentPrivateLoopbackListenerSessionV1(driftPlan, {
+    admit() {
+      Object.defineProperty(promisePrototype, "then", {
+        ...originalThen,
+        value() { replacementCalls += 1; throw new Error("must remain inert"); },
+      });
+      return drifted as Promise<ConnectionEnrollmentTransportAdmissionReceiptV1>;
+    },
+  });
+  driftSession.observeBind(driftInput.bind);
+  driftSession.observeConnectionOpen(driftInput.open);
+  driftSession.pushFrameChunk(packetFor(enrollmentFrame()));
+  try {
+    await expectRejection(() => driftSession.completeFrameAndAdmit(driftInput.frame), "integrity_failed");
+  } finally {
+    Object.defineProperty(promisePrototype, "then", originalThen);
+  }
+  await new Promise<void>((resolveImmediate) => setImmediate(resolveImmediate));
+  assert.equal(replacementCalls, 0);
 });
 
 test("CR13A-LIVE-090 leaves behavioral Promise constructors inert", async () => {
