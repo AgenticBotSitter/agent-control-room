@@ -16,12 +16,18 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_READINESS_V1
   "control-room-connection-enrollment-private-loopback-native-listener-readiness/v1" as const;
 
 const objectFreezeV1 = Object.freeze;
+const objectGetPrototypeOfV1 = Object.getPrototypeOf;
+const objectIsFrozenV1 = Object.isFrozen;
 const regexpExecV1 = RegExp.prototype.exec;
 const reflectApplyV1 = Reflect.apply;
 const stringSliceV1 = String.prototype.slice;
+const weakSetAddV1 = WeakSet.prototype.add;
+const weakSetHasV1 = WeakSet.prototype.has;
 const digestPatternV1 = /^sha256:[a-f0-9]{64}$/;
-const listenerIdPatternV1 = /^private-loopback-listener:[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+const listenerReferencePatternV1 = /^native-listener:[a-f0-9]{24}$/;
 const readinessReferencePatternV1 = /^native-listener-readiness:[a-f0-9]{24}$/;
+const nativeListenerReadinessRecordsV1 = new WeakSet<object>();
+const nativeListenerAdaptersV1 = new WeakSet<object>();
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_BLOCKERS_V1 = objectFreezeV1([
   "native_driver_unaccepted",
@@ -45,7 +51,7 @@ export type ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 = Reado
   contractVersion: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_READINESS_V1;
   readinessReference: string;
   adapterContract: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_ADAPTER_V1;
-  listenerId: string;
+  listenerReference: string;
   listenerPlanDigest: string;
   transport: "ssh_tunnel";
   listenerVisibility: "private_loopback";
@@ -101,6 +107,15 @@ function readinessReferenceV1(planDigest: string): string {
   return `native-listener-readiness:${reflectApplyV1(stringSliceV1, planDigest, [7, 31])}`;
 }
 
+function listenerReferenceV1(plan: ConnectionEnrollmentPrivateLoopbackListenerPlanV1): string {
+  const digest = sha256Digest({ listenerId: plan.listenerId, listenerPlanDigest: plan.planDigest });
+  return `native-listener:${reflectApplyV1(stringSliceV1, digest, [7, 31])}`;
+}
+
+function weakSetContainsV1(set: WeakSet<object>, value: unknown): value is object {
+  return value !== null && typeof value === "object" && reflectApplyV1(weakSetHasV1, set, [value]);
+}
+
 function assertAdapterRuntimeV1(code: ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1["safeCode"]):
 void {
   try { assertConnectionEnrollmentNodeIngressRuntimeV1(); }
@@ -117,7 +132,7 @@ function materialForPlanV1(plan: ConnectionEnrollmentPrivateLoopbackListenerPlan
     contractVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_READINESS_V1,
     readinessReference: readinessReferenceV1(plan.planDigest),
     adapterContract: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_ADAPTER_V1,
-    listenerId: plan.listenerId,
+    listenerReference: listenerReferenceV1(plan),
     listenerPlanDigest: plan.planDigest,
     transport: "ssh_tunnel" as const,
     listenerVisibility: "private_loopback" as const,
@@ -161,12 +176,15 @@ export function createConnectionEnrollmentPrivateLoopbackNativeListenerReadiness
 ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 {
   assertAdapterRuntimeV1("invalid_configuration");
   const plan = parsePlanV1(planValue), material = materialForPlanV1(plan);
-  assertNoSecretMaterial(material, "private loopback native listener readiness");
-  return objectFreezeV1({ ...material, readinessDigest: sha256Digest(material) });
+  try { assertNoSecretMaterial(material, "private loopback native listener readiness"); }
+  catch { throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_configuration"); }
+  const readiness = objectFreezeV1({ ...material, readinessDigest: sha256Digest(material) });
+  reflectApplyV1(weakSetAddV1, nativeListenerReadinessRecordsV1, [readiness]);
+  return readiness;
 }
 
 const readinessKeysV1 = [
-  "contractVersion", "readinessReference", "adapterContract", "listenerId", "listenerPlanDigest", "transport",
+  "contractVersion", "readinessReference", "adapterContract", "listenerReference", "listenerPlanDigest", "transport",
   "listenerVisibility", "bindPolicy", "portPolicy", "maximumConcurrentConnections", "maximumQueuedConnections",
   "oneFramePerConnection", "automaticRestartAllowed", "activationMode", "nativeDriverAccepted",
   "ownerActivationAccepted", "platformQualificationAccepted", "exclusivePortOwnershipProven",
@@ -181,6 +199,9 @@ const readinessKeysV1 = [
 export function parseConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(value: unknown):
 ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 {
   assertAdapterRuntimeV1("invalid_readiness");
+  if (!weakSetContainsV1(nativeListenerReadinessRecordsV1, value) || !objectIsFrozenV1(value)) {
+    throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_readiness");
+  }
   const captured = exactHostDataSnapshotV1(value, readinessKeysV1);
   if (!captured) throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_readiness");
   const blockers = exactHostDataArrayV1(captured.blockerCodes,
@@ -196,8 +217,8 @@ ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 {
   }
   if (captured.contractVersion !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_READINESS_V1
     || captured.adapterContract !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_ADAPTER_V1
-    || typeof captured.listenerId !== "string" || captured.listenerId.length < 27
-    || captured.listenerId.length > 160 || !patternMatchesV1(listenerIdPatternV1, captured.listenerId)
+    || typeof captured.listenerReference !== "string"
+    || !patternMatchesV1(listenerReferencePatternV1, captured.listenerReference)
     || typeof captured.listenerPlanDigest !== "string"
     || !patternMatchesV1(digestPatternV1, captured.listenerPlanDigest)
     || typeof captured.readinessReference !== "string"
@@ -234,8 +255,7 @@ ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 {
   }
   try { assertNoSecretMaterial(material, "private loopback native listener readiness"); }
   catch { throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_readiness"); }
-  return objectFreezeV1({ ...material, readinessDigest: captured.readinessDigest }) as
-    ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1;
+  return value as ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1;
 }
 
 /**
@@ -249,16 +269,68 @@ ConnectionEnrollmentPrivateLoopbackListenerPortV1 {
   readonly #readiness: ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1;
 
   constructor(planValue: unknown) {
+    if (new.target !== DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1) {
+      throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_configuration");
+    }
     this.#readiness = createConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(planValue);
+    reflectApplyV1(weakSetAddV1, nativeListenerAdaptersV1, [this]);
+    objectFreezeV1(this);
   }
 
   status(): ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 {
+    assertExactNativeListenerAdapterReceiverV1(this);
     return this.#readiness;
   }
 
   async start(): Promise<void> {
+    assertExactNativeListenerAdapterReceiverV1(this);
     throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("disabled");
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> { assertExactNativeListenerAdapterReceiverV1(this); }
+}
+
+const nativeListenerAdapterPrototypeV1 =
+  DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1.prototype;
+const nativeListenerAdapterStatusV1 = nativeListenerAdapterPrototypeV1.status;
+const nativeListenerAdapterStartV1 = nativeListenerAdapterPrototypeV1.start;
+const nativeListenerAdapterCloseV1 = nativeListenerAdapterPrototypeV1.close;
+objectFreezeV1(nativeListenerAdapterPrototypeV1);
+
+function isExactNativeListenerAdapterV1(value: unknown):
+value is DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1 {
+  return weakSetContainsV1(nativeListenerAdaptersV1, value)
+    && objectGetPrototypeOfV1(value) === nativeListenerAdapterPrototypeV1
+    && objectIsFrozenV1(value);
+}
+
+function assertExactNativeListenerAdapterReceiverV1(value: unknown): asserts value is
+DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1 {
+  if (!isExactNativeListenerAdapterV1(value)) {
+    throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("integrity_failed");
+  }
+}
+
+export type BoundDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1 = Readonly<{
+  enabled: false;
+  status: () => ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1;
+  start: () => Promise<void>;
+  close: () => Promise<void>;
+}>;
+
+/**
+ * Future composition must consume the adapter through this exact-brand binder.
+ * The binder rejects lookalikes and returns frozen closures over captured base
+ * operations, so consumer dispatch cannot be redirected through caller methods.
+ */
+export function bindDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1(value: unknown):
+BoundDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1 {
+  assertAdapterRuntimeV1("integrity_failed");
+  assertExactNativeListenerAdapterReceiverV1(value);
+  return objectFreezeV1({
+    enabled: false,
+    status: () => reflectApplyV1(nativeListenerAdapterStatusV1, value, []),
+    start: () => reflectApplyV1(nativeListenerAdapterStartV1, value, []),
+    close: () => reflectApplyV1(nativeListenerAdapterCloseV1, value, []),
+  });
 }

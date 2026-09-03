@@ -8,6 +8,7 @@ import {
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_READINESS_V1,
   ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1,
   DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1,
+  bindDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1,
   createConnectionEnrollmentPrivateLoopbackListenerPlanV1,
   createConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1,
   parseConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1,
@@ -50,7 +51,8 @@ test("CR13A-LIVE-100 freezes one plan-bound, default-disabled native-listener re
   const readiness = createConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(plan);
   assert.equal(readiness.contractVersion, CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_READINESS_V1);
   assert.equal(readiness.adapterContract, CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_ADAPTER_V1);
-  assert.equal(readiness.listenerId, plan.listenerId);
+  assert.equal(readiness.listenerReference,
+    `native-listener:${sha256Digest({ listenerId: plan.listenerId, listenerPlanDigest: plan.planDigest }).slice(7, 31)}`);
   assert.equal(readiness.listenerPlanDigest, plan.planDigest);
   assert.equal(readiness.readinessReference, `native-listener-readiness:${plan.planDigest.slice(7, 31)}`);
   assert.deepEqual({ transport: readiness.transport, visibility: readiness.listenerVisibility,
@@ -100,7 +102,7 @@ test("CR13A-LIVE-100 keeps all native, effect, retry, and authority truth false"
   assert.doesNotMatch(serialized, /127\.0\.0\.1|endpointIdentity|ownerIdentity|tunnelPeerIdentity|channelIdentity/i);
 });
 
-test("CR13A-LIVE-100 rejects forged readiness even after public digest recomputation", () => {
+test("CR13A-LIVE-100 accepts only module-created readiness and rejects re-digested identity substitution", () => {
   const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration());
   const readiness = createConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(plan);
   const { readinessDigest: _readinessDigest, ...unsigned } = readiness;
@@ -108,17 +110,32 @@ test("CR13A-LIVE-100 rejects forged readiness even after public digest recomputa
   const forgedActivation = { ...unsigned, nativeDriverAccepted: true, ownerActivationAccepted: true,
     platformQualificationAccepted: true, activationEligible: true, listenerEnabled: true,
     opensListener: true, performsNetworkIo: true };
-  const overlongListener = { ...unsigned,
-    listenerId: `private-loopback-listener:${"a".repeat(135)}` };
+  const substitutedListener = { ...unsigned,
+    listenerReference: `native-listener:${"a".repeat(24)}` };
+  const substitutedPlan = { ...unsigned, listenerPlanDigest: digest("other-plan"),
+    readinessReference: `native-listener-readiness:${digest("other-plan").slice(7, 31)}` };
   for (const invalid of [
+    { ...readiness },
     { ...readiness, extra: true },
     { ...readiness, listenerPlanDigest: digest("other-plan") },
     { ...readiness, blockerCodes: readiness.blockerCodes.slice(1) },
     { ...readiness, blockerCodes: [...readiness.blockerCodes].reverse() },
     { ...forgedActivation, readinessDigest: sha256Digest(forgedActivation) },
-    { ...overlongListener, readinessDigest: sha256Digest(overlongListener) },
+    { ...substitutedListener, readinessDigest: sha256Digest(substitutedListener) },
+    { ...substitutedPlan, readinessDigest: sha256Digest(substitutedPlan) },
   ]) expectCode(() => parseConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(invalid),
     "invalid_readiness");
+});
+
+test("CR13A-LIVE-100 never retains locator-shaped listener IDs in public readiness", () => {
+  const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration({
+    listenerId: "private-loopback-listener:127.0.0.1:3000",
+  }));
+  const readiness = createConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(plan);
+  assert.match(readiness.listenerReference, /^native-listener:[a-f0-9]{24}$/);
+  const serialized = JSON.stringify(readiness);
+  assert.doesNotMatch(serialized, /127\.0\.0\.1|3000/);
+  assert.equal("listenerId" in readiness, false);
 });
 
 test("CR13A-LIVE-100 leaves Proxy, accessor, and nested-array behavior inert", () => {
@@ -164,6 +181,39 @@ test("CR13A-LIVE-100 adapter remains disabled and close is harmless and repeatab
   await adapter.close();
   assert.equal(adapter.status().listenerAttemptsMade, 0);
   assert.equal(adapter.status().networkIoEventsObserved, 0);
+});
+
+test("CR13A-LIVE-100 exact-brands and freezes adapter and captured consumer operations", async () => {
+  const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration());
+  const adapter = new DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1(plan);
+  const prototype = DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1.prototype;
+  assert.equal(Object.isFrozen(adapter), true);
+  assert.equal(Object.isFrozen(prototype), true);
+  assert.equal(Object.isExtensible(adapter), false);
+  assert.throws(() => Object.defineProperty(adapter, "enabled", { value: true }), TypeError);
+  assert.throws(() => Object.defineProperty(adapter, "start", { value: async () => {} }), TypeError);
+  assert.throws(() => Object.defineProperty(prototype, "start", { value: async () => {} }), TypeError);
+  assert.throws(() => Object.setPrototypeOf(adapter, { start: async () => {} }), TypeError);
+
+  class Subclass extends DefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1 {}
+  expectCode(() => new Subclass(plan), "invalid_configuration");
+  expectCode(() => prototype.status.call({}), "integrity_failed");
+  await expectRejection(() => prototype.start.call({}), "integrity_failed");
+  await expectRejection(() => prototype.close.call({}), "integrity_failed");
+
+  const bound = bindDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1(adapter);
+  assert.equal(Object.isFrozen(bound), true);
+  assert.equal(bound.enabled, false);
+  assert.deepEqual(bound.status(), adapter.status());
+  const starts = await Promise.allSettled(Array.from({ length: 16 }, () => bound.start()));
+  assert.equal(starts.every((result) => result.status === "rejected"
+    && result.reason instanceof ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1
+    && result.reason.safeCode === "disabled"), true);
+  await bound.close();
+  await bound.close();
+  expectCode(() => bindDefaultDisabledConnectionEnrollmentPrivateLoopbackNativeListenerAdapterV1({
+    enabled: false, status: () => adapter.status(), start: () => adapter.start(), close: () => adapter.close(),
+  }), "integrity_failed");
 });
 
 test("CR13A-LIVE-100 adds no native driver, listener call, route, or runtime activation", async () => {
