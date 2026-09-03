@@ -1,6 +1,6 @@
 # CR13A-LIVE-080 private-loopback listener lifecycle acceptance
 
-**Status:** local implementation candidate awaiting immutable freeze and independent review
+**Status:** implementation code frozen at `7333ea48577b1000fd5eac0e6789b3e21cfeb559`; independent review pending
 **Integration base:** `b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`
 **Effect boundary:** repository code and local tests only; no socket bind, listener, SSH session, credential access,
 Hermes/provider call, native process, production PostgreSQL/VPS contact, deployment, DNS, or other network effect
@@ -67,7 +67,7 @@ used as native readiness, physical bind, tunnel, enrollment, connection, deploym
 
 ## Deterministic evidence
 
-Current pre-freeze evidence:
+Frozen deterministic evidence:
 
 - macOS stage zero: pass (`ready_for_runtime_check`), with no native attempt;
 - TypeScript: pass;
@@ -79,6 +79,10 @@ Current pre-freeze evidence:
 - production build and 4/4 rendered-route checks: pass;
 - PostgreSQL migrations `0001` through `0036`: pass with 119 tables; and
 - whitespace validation: pass.
+
+Intermediate commit `c98ae8128195469d2789357df31ada18b32480e3` was superseded before reviewer dispatch when
+architect self-review added explicit canonicalization/hash runtime custody. It was never presented as independent-review
+evidence. The immutable implementation code is `7333ea48577b1000fd5eac0e6789b3e21cfeb559`.
 
 ## Review and next boundary
 

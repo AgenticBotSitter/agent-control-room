@@ -116,7 +116,7 @@
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
-| CR13A-LIVE-080 private-loopback listener lifecycle | Active local implementation candidate | Exact plan, six-step terminal fake rehearsal, decoder-minted frame provenance, bounded connection/drain policy, safe negative-authority receipt, and no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
+| CR13A-LIVE-080 private-loopback listener lifecycle | Implementation code frozen at exact `7333ea4...`; independent review pending | Exact plan, six-step terminal fake rehearsal, decoder-minted frame provenance, bounded connection/drain policy, safe negative-authority receipt, and no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1039,10 +1039,14 @@ accepted LIVE-070 module-private protected frame for the same listener can enter
 Every observation rejects native evidence. A passing safe receipt retains no raw frame, delivery ID, signature, address,
 credential, or host material and explicitly denies actual bind, exclusive port ownership, tunnel authentication,
 host-key custody, native cleanup, listener enablement, network I/O, and every effect authority. The local pilot remains
-disabled and this block imports no listener, network, or process-launch module. Stage zero, TypeScript, full lint, 33/33
-focused tests, 75/75 connection tests, the full 769/769 pretest plus 419/421 core lifecycle with two intentional platform
-skips plus 326/326 posttests, production build, 4/4 rendered routes, all 36 migrations with 119 PostgreSQL tables, and
-whitespace pass. Immutable freeze and independent review remain required.
+disabled and this block imports no listener, network, or process-launch module. Stage zero, TypeScript, full lint, 34/34
+focused tests, 76/76 connection tests, the full 769/769 pretest plus 419/421 core lifecycle with two intentional platform
+skips plus 327/327 posttests, production build, 4/4 rendered routes, all 36 migrations with 119 PostgreSQL tables, and
+whitespace pass. Implementation freeze is complete; independent review remains required.
+
+Architect self-review superseded intermediate pre-review commit `c98ae81...` with explicit canonicalization/hash runtime
+custody and a zero-execution replacement regression. That intermediate commit was never sent for independent review.
+The immutable implementation code is `7333ea48577b1000fd5eac0e6789b3e21cfeb559`; independent review remains required.
 
 ## Parallel build lane
 

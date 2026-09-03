@@ -1139,8 +1139,8 @@ found no new High, Medium, or Low defect and grants integration review only.
 
 ## CR13A-LIVE-080 — private-loopback listener lifecycle contract and fake rehearsal
 
-Status: active local implementation over owner-approved LIVE-070 integration
-`b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`. See
+Status: implementation code frozen at `7333ea48577b1000fd5eac0e6789b3e21cfeb559` over owner-approved LIVE-070
+integration `b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`; independent review pending. See
 `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` and ADR-157.
 
 This block defines the exact lifecycle around the accepted LIVE-070 decoder without opening a listener. One strict,
