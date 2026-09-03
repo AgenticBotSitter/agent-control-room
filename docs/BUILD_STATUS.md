@@ -121,7 +121,7 @@
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
 | CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
 | CR13A-LIVE-120 unwired physical native driver | Independently accepted and integrated on `main` through PR #241 | Different reviewer closed all four High and five Medium findings; owner-approved merge `19a8716...`; zero native/listener/network effects |
-| CR13A-LIVE-130 physical qualification prerequisite boundary | Exact implementation candidate verified; independent zero-repair review pending | Product `339c2e8...` binds accepted source evidence plus twelve still-missing private qualification prerequisites; 24/24 focused, 131/131 connections, 148/148 CR13A, complete lifecycle/build/migrations pass; no candidate, issuer, native effect, or authority |
+| CR13A-LIVE-130 physical qualification prerequisite boundary | Exact implementation verified; first review rejected on protocol; corrected independent review pending | Product `339c2e8...` unchanged; denied reviewer IPC attempt and contradictory test list preserved; corrected packet permits readiness-only dynamic review; no product native/effect action or authority |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1282,9 +1282,19 @@ safe connection-registry barrel; the module imports no physical driver or effect
 Producer verification passed stage zero, TypeScript, lint, 24/24 dedicated readiness tests, 131/131 connection tests,
 148/148 CR13A tests, the complete registered test lifecycle, production build with 4/4 rendered routes, migrations
 0001-0036/119 tables through the listener-free fallback, and whitespace. The immutable independent packet is
-`docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md`. A different report-only zero-repair reviewer must now
-attack the exact commit; any High, Medium, or Low finding rejects it. No qualification candidate, capability/proof
-issuer, native construction, listener/socket/port attempt, network I/O, or external effect ran.
+`docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md`.
+
+The first independent run is rejected/invalid and preserved at
+`docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW.md`; SHA-256
+`3cb87af1ad725c86ad09a3deb1f0ea98dadb3caffaf381f917d768b7cbf2e15d`. Its reviewer made one `tsx --version` call;
+the sandbox denied the attempted IPC listener before bind. It also found Medium packet defect
+`CR13A-LIVE-130-PACKET-M-001`: the no-physical-driver-import rule contradicted broader required scripts that import
+the predecessor driver test. No successful listener, physical-driver import, network I/O, external contact, or
+product mutation occurred, but the run cannot be acceptance evidence.
+
+The corrected packet `docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` leaves product `339c2e8...`
+unchanged, forbids `tsx` CLI/version probes and all broader driver-importing tests, and requires a second different
+reviewer to run only the nine readiness tests plus listener-free static/build/migration gates and hostile probes.
 
 ## Parallel build lane
 
@@ -1301,11 +1311,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-130 — independently review the exact physical qualification prerequisite readiness candidate
+Block: CR13A-LIVE-130 — complete the corrected second independent review of exact readiness product `339c2e8...`
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: producer verification is complete, but a different reviewer must independently attack exact product `339c2e8...` before Codex may call the boundary accepted.
-Expected output: one immutable report covering all twelve hostile-review groups, exact current-run gate counts, 0 High/Medium/Low findings for acceptance, and zero native/effect counts.
+Why: the product remains producer-verified, but the first review is invalid due to one denied reviewer IPC attempt and a contradictory command list; a new reviewer must use the corrected readiness-only protocol.
+Expected output: one immutable second-review report covering all twelve hostile groups, exact safe gate counts, closure of packet M-001, 0 High/Medium/Low findings for acceptance, and zero listener/IPC/native/effect counts.
 Owner action: none for the report-only review. Candidate assembly and any physical attempt remain later separately authorized decisions.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

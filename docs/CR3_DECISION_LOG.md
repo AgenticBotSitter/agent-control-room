@@ -3416,8 +3416,11 @@ successful repository test clear a native blocker.
 is owner-approved LIVE-120 merge `19a87163c9210730140ec0d769c2effa6bbb5e1b`; accepted remediation is
 `5a579342b7a03bb013de21663c69a3a6118e11c6`; accepted independent-report SHA-256 is
 `420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. The LIVE-130 implementation adds no native
-driver import, runtime consumer, capability issuer, listener/network action, or external effect. Independent review
-remains pending under `docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md`.
+driver import, runtime consumer, capability issuer, listener/network action, or external effect. The first independent
+run is rejected/invalid and preserved at `docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW.md`: one reviewer-side
+`tsx --version` IPC-listener attempt was denied before bind, and the packet's no-driver-import rule contradicted its
+broader driver-importing test list. Corrected second review remains pending under
+`docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md`; the exact product remains unchanged.
 
 **Reevaluate:** Before implementing a private provider, candidate assembler, owner-spend path, native harness,
 physical attempt, evidence acceptance registry, runtime consumer, SSH/credential path, production contact, or

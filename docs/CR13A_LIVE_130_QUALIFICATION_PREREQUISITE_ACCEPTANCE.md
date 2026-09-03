@@ -1,6 +1,6 @@
 # CR13A-LIVE-130 physical qualification prerequisite readiness
 
-**Status:** exact implementation candidate verified; independent zero-repair review pending
+**Status:** exact implementation candidate verified; first review rejected on protocol; corrected independent review pending
 **Product target:** `339c2e8a61e7c2ac0a40fc6f51711a512badbf6c`
 **Product tree:** `06b57cdcec6f139a407d1475e3171ce3798ad64d`
 **Design parent:** `aa5284ba1bba34d1d24ece90cedfd1160c45b0b7`
@@ -65,11 +65,20 @@ listener. No native or external effect occurred during any producer verification
 
 ## Review gate
 
-The immutable packet at `docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md` requires a different independent,
-report-only, zero-repair reviewer to inspect the exact product commit and attack provenance, immutability, hostile
-inputs, sanitation, authority truth, and runtime non-wiring. Any High, Medium, or Low finding rejects the target.
+The first immutable packet is preserved at `docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md`; SHA-256
+`ab8a46c8b34fb4a3ca6cb1908fc5d8d8ac93fcc0016b417a1a944853e1324b0e`. Its review is permanently rejected/invalid
+because one reviewer-side `tsx --version` check attempted a denied IPC listener and the packet simultaneously forbade
+physical-driver imports while requiring broader test scripts that transitively import that module. Preserve the exact
+negative report at `docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW.md`; SHA-256
+`3cb87af1ad725c86ad09a3deb1f0ea98dadb3caffaf381f917d768b7cbf2e15d`.
 
-This document does not claim independent acceptance while that review is pending. A future accepted report may permit
+The corrected immutable packet at `docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` requires a
+second different independent, report-only, zero-repair reviewer. It permits only the nine-test readiness file and
+listener-free static/build/migration checks, explicitly forbids every broader script that imports the physical driver,
+and forbids `tsx` CLI or version probes. Any High, Medium, or Low finding or nonzero listener/IPC attempt rejects the
+run.
+
+This document does not claim independent acceptance while the corrected review is pending. A future accepted report may permit
 ordinary owner-controlled integration consideration only.
 
 ## Honest limits and next gate

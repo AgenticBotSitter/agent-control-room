@@ -1473,7 +1473,7 @@ production system, or deploy.
 ## CR13A-LIVE-130 — physical qualification prerequisite boundary
 
 Status: exact effect-free implementation candidate `339c2e8a61e7c2ac0a40fc6f51711a512badbf6c` is producer-
-verified; different independent zero-repair review is pending. See
+verified; the first review is rejected on protocol and a corrected second independent zero-repair review is pending. See
 `CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_BOUNDARY.md`,
 `CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_ACCEPTANCE.md`, and ADR-164. Use Sol xhigh.
 
@@ -1491,5 +1491,9 @@ private providers, owner authorization, native qualification, and runtime activa
 The exact product passes 24/24 focused readiness tests, 131/131 connection tests, 148/148 CR13A tests, the complete
 registered lifecycle, production build with 4/4 rendered routes, and migrations 0001-0036/119 tables through the
 listener-free fallback. Its immutable review packet is
-`docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md`. These producer results do not substitute for the pending
-independent disposition and did not construct or import the native driver.
+`docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md`. Its first run preserved one denied reviewer-side IPC
+attempt and Medium packet contradiction `CR13A-LIVE-130-PACKET-M-001`; it is not acceptance evidence. The corrected
+packet `docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` forbids `tsx` CLI probes and all broader
+driver-importing test scripts, and instead requires the nine readiness tests plus listener-free static/build/migration
+checks and hostile probes from a second different reviewer. These producer results and review corrections did not
+construct or import the native driver.
