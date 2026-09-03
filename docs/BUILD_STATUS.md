@@ -115,7 +115,8 @@
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
-| CR13A-LIVE-070 private-loopback framing | Independently accepted at exact `8e4c20d...`; ordinary integration pending | Different reviewer closed all four findings with eight hostile probe groups and no new defect; accepted report SHA `7ac1a5f...`; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
+| CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
+| CR13A-LIVE-080 private-loopback listener lifecycle | Exact remediation `884ff423...` independently accepted; integration in progress | Different reviewer closed M-001/L-001/L-002 with no new finding; report SHA `3e5ea006...`; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1026,6 +1027,42 @@ The different reviewer reproduced every deterministic gate plus eight independen
 M-002, L-001, and L-002, and found no new High, Medium, or Low defect. Accepted report SHA-256:
 `7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`. Ordinary integration remains owner-controlled.
 
+The owner approved PR #236. GitHub PR CI run `33756343379` passed, the accepted LIVE-070 product merged to `main` as
+`b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`, and post-merge CI run `33757989813` passed every stage in 11m27s.
+
+CR13A-LIVE-080 is now the active implementation block. It defines an exact, digest-bound future-listener plan and an
+effect-free six-step repository rehearsal from simulated loopback bind through one decoded frame, connection close,
+drain, and cleanup. Policy fixes literal IPv4 loopback over an SSH tunnel, five digest-only identity bindings, one active
+connection, zero queued connections, one frame, bounded total/idle/shutdown time, and no automatic restart. Only an
+accepted LIVE-070 module-private protected frame for the same listener can enter the frame step.
+
+Every observation rejects native evidence. A passing safe receipt retains no raw frame, delivery ID, signature, address,
+credential, or host material and explicitly denies actual bind, exclusive port ownership, tunnel authentication,
+host-key custody, native cleanup, listener enablement, network I/O, and every effect authority. The local pilot remains
+disabled and this block imports no listener, network, or process-launch module. Stage zero, TypeScript, full lint, 34/34
+focused tests, 76/76 connection tests, the full 769/769 pretest plus 419/421 core lifecycle with two intentional platform
+skips plus 327/327 posttests, production build, 4/4 rendered routes, all 36 migrations with 119 PostgreSQL tables, and
+whitespace pass. Implementation freeze is complete; independent review remains required.
+
+Architect self-review superseded intermediate pre-review commit `c98ae81...` with explicit canonicalization/hash runtime
+custody and a zero-execution replacement regression. That intermediate commit was never sent for independent review.
+The immutable implementation code is `7333ea48577b1000fd5eac0e6789b3e21cfeb559`; independent review remains required.
+The exact review target is `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e`. Its zero-repair independent review
+packet has SHA-256 `00c005a2371f20dc4de66685659f9fde7a0bd6513627829fd7894ace0451f4a0`.
+
+The independent reviewer reproduced every deterministic gate and confirmed that no listener or external effect exists,
+but rejected the target with Medium M-001 plus Low L-001 and L-002. Exact remediation
+`884ff423914ab4e442500bd194970b0713da72ca` now stores only reduced frame facts, clears all evidence on every terminal
+path, enforces the 27–160 receipt listener-ID bound, and rederives the rehearsal reference from the plan digest.
+Regressions cover the reported terminal paths, exact listener bounds, and recomputed semantic drift. The immutable
+negative report SHA-256 is `0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`. All producer
+gates pass. The immutable re-review packet SHA-256 is
+`a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`; a different independent zero-repair re-review
+was mandatory. That reviewer reproduced all required gates and hostile probes, closed M-001, L-001, and L-002, and
+found no new High, Medium, or Low defect. The unchanged accepted report SHA-256 is
+`3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. Ordinary owner-controlled integration is
+now permitted; listener, SSH, credential, native, provider, production, deployment, and network authority remain absent.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1041,13 +1078,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-070-INTEGRATION — publish the accepted private-loopback framing branch for ordinary CI and owner merge
+Block: CR13A-LIVE-080-INTEGRATION — integrate the independently accepted listener-lifecycle contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the accepted transport-boundary diff and its preserved negative/positive evidence require exact integration review.
-Expected output: private branch push, main-target PR, ordinary GitHub CI, exact reviewed-product confirmation, and no
-listener or external effect.
-Owner action: approve merge only after the PR and ordinary CI are green.
+Why: exact remediation and immutable independent acceptance are complete; GitHub transfer and ordinary CI remain.
+Expected output: accepted report preserved, clean branch pushed, main-target PR opened, and ordinary GitHub CI green.
+Owner action: approve the exact PR merge after ordinary CI is green.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

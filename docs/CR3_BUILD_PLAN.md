@@ -1136,3 +1136,53 @@ caller-buffer retention; post-push alias mutation is proven irrelevant. The reme
 Different-reviewer packet SHA-256: `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
 The accepted report SHA-256 is `7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`; it
 found no new High, Medium, or Low defect and grants integration review only.
+
+## CR13A-LIVE-080 — private-loopback listener lifecycle contract and fake rehearsal
+
+Status: exact remediation `884ff423914ab4e442500bd194970b0713da72ca` independently accepted over
+owner-approved LIVE-070 integration `b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`; ordinary owner-controlled
+integration remains. See
+`CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` and ADR-157.
+
+This block defines the exact lifecycle around the accepted LIVE-070 decoder without opening a listener. One strict,
+digest-bound policy plan fixes IPv4 literal loopback over an SSH tunnel, endpoint/owner/tunnel-peer/host-key/channel
+identity digests, frame/chunk limits, exactly one active connection, zero queued connections, one frame per connection,
+total/idle/shutdown deadlines, and no automatic restart. The public plan is non-authorizing policy; its unkeyed digest
+proves consistency only.
+
+The repository-fake rehearsal admits six exact ordered observations: simulated bind, connection open, protected frame,
+connection close, drain start, and listener close. Chunk, connection-age, idle-age, and shutdown chronology are bounded
+and monotonic. Every observation is explicitly fake and rejects native evidence.
+Only a module-private LIVE-070 decoder-minted frame bound to the same listener may pass. Identity drift, excess capacity,
+deadline breach, sequence drift, added or behavioral input, cleanup failure, incomplete finish, and any reuse after a
+terminal result fail closed.
+
+The safe receipt contains only digest/size/policy evidence and explicitly denies actual bind, exclusive port ownership,
+tunnel authentication, host-key custody, native cleanup, listener enablement, network I/O, and all approval/effect
+authority. A recomputed public digest cannot change those exact negative literals into native truth. Local-pilot wiring
+remains the accepted disabled listener; no socket, SSH, credential, Hermes/provider, native process, route, production
+database, deployment, DNS, or external effect is added.
+
+Plan and receipt hashing reuses the accepted enrollment-ingress runtime-custody assertion. Selected post-import
+canonicalization, reflection, pattern, typed-array, or hash operation replacement fails before changed behavior runs.
+
+Completion requires the full deterministic repository lifecycle, immutable product freeze, a zero-repair packet, and a
+fresh independent review with no open High, Medium, or Low finding. Independent acceptance permits owner-controlled
+integration only. A physical listener, SSH tunnel, credential operation, or native qualification remains a new,
+separately authorized block. Use Sol xhigh throughout this listener-security boundary.
+
+The exact review target is `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e`, containing frozen implementation
+`7333ea48577b1000fd5eac0e6789b3e21cfeb559`. Zero-repair packet SHA-256:
+`00c005a2371f20dc4de66685659f9fde7a0bd6513627829fd7894ace0451f4a0`.
+
+Independent review reproduced every deterministic gate and the no-effect claims but found one Medium and two Low
+defects. Exact remediation `884ff423914ab4e442500bd194970b0713da72ca` retains only digest/size/chunk frame facts,
+clears all evidence on every terminal failure, enforces the receipt listener-ID ceiling, rederives the rehearsal
+reference from `planDigest`, and adds regressions for the reported paths and exact bounds. Preserve the rejected product
+and report. A different zero-repair reviewer must independently reproduce closure. Negative report SHA-256:
+`0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`.
+Remediation re-review packet SHA-256: `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`.
+The different reviewer reproduced every deterministic gate and hostile-probe family, closed M-001, L-001, and L-002,
+and found no new High, Medium, or Low defect. Accepted report SHA-256:
+`3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. This permits ordinary owner-controlled
+integration only and grants no listener, SSH, credential, native, provider, production, deployment, or network authority.
