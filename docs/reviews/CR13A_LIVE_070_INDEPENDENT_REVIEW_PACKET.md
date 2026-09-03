@@ -1,10 +1,10 @@
 # CR13A-LIVE-070 private-loopback framing independent review packet
 
-**Mode:** independent review, report only  
-**Immutable integration base:** `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`  
-**Immutable product target:** `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587`  
-**Reviewer:** must be different from the producer and prior CR13A-LIVE-060 reviewers  
-**Required model / effort:** `gpt-5.6-sol` / `xhigh`  
+**Mode:** independent review, report only
+**Immutable integration base:** `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`
+**Immutable product target:** `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587`
+**Reviewer:** must be different from the producer and prior CR13A-LIVE-060 reviewers
+**Required model / effort:** `gpt-5.6-sol` / `xhigh`
 **Repair budget:** zero; do not edit, commit, push, or repair
 
 ## Objective

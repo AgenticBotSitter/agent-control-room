@@ -2953,8 +2953,9 @@ production, or deployment authority. Accepted report SHA-256 is
 **Decision:** The first future private-loopback transport seam uses exactly one four-byte unsigned big-endian payload
 length followed by one fatal UTF-8 JSON payload. Configuration fixes the proposed transport to an SSH tunnel, IPv4,
 literal `127.0.0.1`, private-loopback visibility, the v1 framing literal, a protocol-bounded byte ceiling, and a bounded
-chunk count. The decoder accepts only exact fresh host `Uint8Array` storage, rejects incomplete, trailing, multiple,
-behavioral, aliased, shared, or malformed input, wipes its internal bytes, and becomes terminal after any outcome.
+chunk count. The decoder accepts only exact full ordinary backing-store `Uint8Array` views, synchronously copies and
+retains no caller buffer, rejects incomplete, trailing, multiple, behavioral, partial, shared, or malformed input, wipes
+its internal bytes, and becomes terminal after any outcome.
 
 The framing layer parses only the exact outer JSON key set, declared enrollment-delivery message type, and syntactically
 valid delivery-ID routing hint. It does not trust or validate the claimed identity, signature, chronology, enrollment
@@ -2971,9 +2972,10 @@ buffers or partial views; unbounded chunks; accepting trailing bytes; replacing 
 authenticated identity; trusting a loopback configuration literal as physical bind evidence; HTTP/browser enrollment;
 opening a socket or SSH connection in the same block.
 
-**Trade-off:** One frame per session creates more connection churn and exact fresh chunks require the eventual listener
-to copy bytes before this boundary. Enrollment is rare, and those costs are accepted for bounded allocation, simple
-recovery, and an inspectable trust transition. The raw frame remains protected internal data until authentication.
+**Trade-off:** One frame per session creates more connection churn and full-backing-store chunks require the eventual
+listener to copy partial network buffers before this boundary. Enrollment is rare, and those costs are accepted for
+bounded allocation, simple recovery, and an inspectable trust transition. The raw frame remains protected internal data
+until authentication.
 
 **Reevaluate:** Before implementing the physical listener, supporting multiple frames, changing framing or size/chunk
 limits, accepting another address family or bind address, adding stream abstractions, changing protected handoff fields,
@@ -2988,3 +2990,12 @@ duplicate-aware preflight must reject them before extraction. Ordinary JavaScrip
 exists for an `ArrayBuffer`; the enforceable rule is exact full ordinary backing storage, synchronous copy into private
 decoder memory, and no caller-buffer retention. Review evidence must state that rule and prove later caller mutation is
 irrelevant. Negative report SHA-256: `91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`.
+
+**M-001/M-002/L-001/L-002 remediation amendment:** Protected frames are now ephemeral in-process capabilities recorded
+in a module-private WeakSet and frozen before release. Neither an exact clone nor a record with a caller-recomputed SHA
+can pass the provenance check. Protected parsing re-runs bounded duplicate-aware routing extraction over the raw frame
+and requires the extracted delivery ID to equal the record before reduction. The iterative JSON preflight uses the
+accepted native parser for grammar, then tracks decoded key identity independently in every object without recursion;
+direct and escape-equivalent duplicate members fail before routing. Input assurance is corrected to full ordinary
+backing-store coverage, synchronous private copy, and no retention rather than unprovable exclusive ownership. The
+rejected product's whitespace failure remains preserved in its report; the remediation diff must be clean.

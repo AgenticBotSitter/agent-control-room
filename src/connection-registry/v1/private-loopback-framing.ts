@@ -27,8 +27,15 @@ const jsonParseV1 = JSON.parse;
 const bufferByteLengthV1 = Buffer.byteLength;
 const reflectApplyV1 = Reflect.apply;
 const regexpExecV1 = RegExp.prototype.exec;
+const setConstructorV1 = Set;
+const setAddV1 = Set.prototype.add;
+const setHasV1 = Set.prototype.has;
+const stringSliceV1 = String.prototype.slice;
 const uint8ArrayConstructorV1 = Uint8Array;
 const uint8ArrayFillV1 = Uint8Array.prototype.fill;
+const weakSetAddV1 = WeakSet.prototype.add;
+const weakSetHasV1 = WeakSet.prototype.has;
+const protectedFrameOriginsV1 = new WeakSet<object>();
 const textDecoderV1 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const textDecoderPrototypeV1 = Object.getPrototypeOf(textDecoderV1) as object;
 const textDecoderDecodeCandidateV1 = objectGetOwnPropertyDescriptorV1(
@@ -99,7 +106,8 @@ export interface ConnectionEnrollmentPrivateLoopbackListenerPortV1 {
 export class ConnectionEnrollmentPrivateLoopbackFramingErrorV1 extends Error {
   constructor(readonly safeCode: "invalid_configuration" | "invalid_chunk" | "chunk_limit_exceeded" |
     "malformed_prefix" | "frame_too_large" | "incomplete_frame" | "trailing_bytes" |
-    "invalid_utf8" | "invalid_json" | "wrong_message_type" | "invalid_delivery_id" |
+    "invalid_utf8" | "invalid_json" | "duplicate_json_member" | "wrong_message_type" |
+    "invalid_delivery_id" |
     "integrity_failed" | "disabled" | "state_conflict") {
     super(safeCode);
     this.name = "ConnectionEnrollmentPrivateLoopbackFramingErrorV1";
@@ -147,6 +155,10 @@ export function parseConnectionEnrollmentPrivateLoopbackProtectedFrameV1(value: 
 ConnectionEnrollmentPrivateLoopbackProtectedFrameV1 {
   try { assertFramingRuntimeV1(); }
   catch { throw new ConnectionEnrollmentPrivateLoopbackFramingErrorV1("integrity_failed"); }
+  if (!value || typeof value !== "object" || isHostProxyV1(value)
+    || reflectApplyV1(weakSetHasV1, protectedFrameOriginsV1, [value]) !== true) {
+    throw new ConnectionEnrollmentPrivateLoopbackFramingErrorV1("integrity_failed");
+  }
   const captured = exactHostDataSnapshotV1(value, ["contractVersion", "listenerId", "transport",
     "listenerVisibility", "framing", "rawFrame", "deliveryId", "frameBytes", "frameDigest", "grantsApproval",
     "grantsNetworkAuthority", "grantsCommandAuthority", "grantsLeaseAuthority", "grantsExecutionAuthority"]);
@@ -170,7 +182,14 @@ ConnectionEnrollmentPrivateLoopbackProtectedFrameV1 {
     || sha256Digest(unsignedProtectedFrameV1(frame)) !== frame.frameDigest) {
     throw new ConnectionEnrollmentPrivateLoopbackFramingErrorV1("integrity_failed");
   }
-  return objectFreezeV1(frame);
+  const routing = deliveryIdFromRawFrameV1(frame.rawFrame);
+  if (routing.status !== "accepted" || routing.deliveryId !== frame.deliveryId) {
+    throw new ConnectionEnrollmentPrivateLoopbackFramingErrorV1("integrity_failed");
+  }
+  // The snapshot above is used only for inert validation. Preserve the
+  // module-branded, already-frozen original so provenance survives repeated
+  // parser and reducer calls without exposing a caller-manufacturable copy.
+  return value as ConnectionEnrollmentPrivateLoopbackProtectedFrameV1;
 }
 
 /** Reduce the protected transport record to the exact input admitted downstream. */
@@ -180,22 +199,149 @@ Readonly<{ rawFrame: string; deliveryId: string }> {
   return objectFreezeV1({ rawFrame: frame.rawFrame, deliveryId: frame.deliveryId });
 }
 
-function deliveryIdFromRawFrameV1(rawFrame: string): string {
+type JsonContainerV1 = {
+  kind: "object";
+  state: "key_or_end" | "colon" | "value" | "comma_or_end";
+  keys: Set<string>;
+} | {
+  kind: "array";
+  state: "value_or_end" | "comma_or_end";
+};
+
+/**
+ * Native parsing establishes JSON grammar first. This bounded, iterative pass
+ * then rejects duplicate object members before parsed-object routing is used.
+ */
+function hasUniqueJsonMembersV1(rawFrame: string): boolean {
+  const stack: JsonContainerV1[] = [];
+  const root = { state: "value" as "value" | "complete" };
+  const beginValue = (): boolean => {
+    const parent = stack[stack.length - 1];
+    if (!parent) {
+      if (root.state !== "value") return false;
+      root.state = "complete";
+      return true;
+    }
+    if (parent.kind === "object") {
+      if (parent.state !== "value") return false;
+      parent.state = "comma_or_end";
+      return true;
+    }
+    if (parent.state !== "value_or_end") return false;
+    parent.state = "comma_or_end";
+    return true;
+  };
+  let index = 0;
+  while (index < rawFrame.length) {
+    const character = rawFrame[index]!;
+    if (character === " " || character === "\t" || character === "\n" || character === "\r") {
+      index += 1;
+      continue;
+    }
+    if (character === "{") {
+      if (!beginValue()) return false;
+      stack[stack.length] = { kind: "object", state: "key_or_end", keys: new setConstructorV1<string>() };
+      index += 1;
+      continue;
+    }
+    if (character === "[") {
+      if (!beginValue()) return false;
+      stack[stack.length] = { kind: "array", state: "value_or_end" };
+      index += 1;
+      continue;
+    }
+    if (character === "}" || character === "]") {
+      const current = stack[stack.length - 1];
+      if (!current || (character === "}" && (current.kind !== "object"
+        || (current.state !== "key_or_end" && current.state !== "comma_or_end")))
+        || (character === "]" && (current.kind !== "array"
+          || (current.state !== "value_or_end" && current.state !== "comma_or_end")))) return false;
+      stack.length -= 1;
+      index += 1;
+      continue;
+    }
+    if (character === ",") {
+      const current = stack[stack.length - 1];
+      if (!current || current.state !== "comma_or_end") return false;
+      current.state = current.kind === "object" ? "key_or_end" : "value_or_end";
+      index += 1;
+      continue;
+    }
+    if (character === ":") {
+      const current = stack[stack.length - 1];
+      if (!current || current.kind !== "object" || current.state !== "colon") return false;
+      current.state = "value";
+      index += 1;
+      continue;
+    }
+    if (character === "\"") {
+      const start = index;
+      index += 1;
+      let escaped = false;
+      while (index < rawFrame.length) {
+        const stringCharacter = rawFrame[index]!;
+        if (escaped) escaped = false;
+        else if (stringCharacter === "\\") escaped = true;
+        else if (stringCharacter === "\"") { index += 1; break; }
+        index += 1;
+      }
+      const current = stack[stack.length - 1];
+      if (current?.kind === "object" && current.state === "key_or_end") {
+        let key: unknown;
+        try {
+          const token = reflectApplyV1(stringSliceV1, rawFrame, [start, index]) as string;
+          key = reflectApplyV1(jsonParseV1, jsonObjectV1, [token]);
+        } catch { return false; }
+        if (typeof key !== "string") return false;
+        if (reflectApplyV1(setHasV1, current.keys, [key]) === true) return false;
+        reflectApplyV1(setAddV1, current.keys, [key]);
+        current.state = "colon";
+      } else if (!beginValue()) return false;
+      continue;
+    }
+    const start = index;
+    while (index < rawFrame.length) {
+      const scalarCharacter = rawFrame[index]!;
+      if (scalarCharacter === " " || scalarCharacter === "\t" || scalarCharacter === "\n"
+        || scalarCharacter === "\r" || scalarCharacter === "," || scalarCharacter === "}"
+        || scalarCharacter === "]") break;
+      index += 1;
+    }
+    if (index === start || !beginValue()) return false;
+  }
+  return stack.length === 0 && root.state === "complete";
+}
+
+type DeliveryRoutingResultV1 = Readonly<{ status: "accepted"; deliveryId: string }> |
+Readonly<{ status: "rejected"; safeCode: "invalid_json" | "duplicate_json_member" |
+  "wrong_message_type" | "invalid_delivery_id" }>;
+
+function deliveryIdFromRawFrameV1(rawFrame: string): DeliveryRoutingResultV1 {
   let parsed: unknown;
   try { parsed = reflectApplyV1(jsonParseV1, jsonObjectV1, [rawFrame]); }
-  catch { throw new ConnectionEnrollmentPrivateLoopbackFramingErrorV1("invalid_json"); }
+  catch { return objectFreezeV1({ status: "rejected", safeCode: "invalid_json" }); }
+  if (!hasUniqueJsonMembersV1(rawFrame)) {
+    return objectFreezeV1({ status: "rejected", safeCode: "duplicate_json_member" });
+  }
   const frame = exactHostDataSnapshotV1(parsed, ["protocol", "direction", "messageId", "correlationId",
     "tenantId", "actorId", "senderKind", "keyId", "connectionId", "sequence", "sentAt", "expiresAt",
     "nonce", "bodyDigest", "signature", "type", "body"], ["causationId"]);
   if (!frame || frame.type !== "connection.enrollment.deliver") {
-    throw new ConnectionEnrollmentPrivateLoopbackFramingErrorV1("wrong_message_type");
+    return objectFreezeV1({ status: "rejected", safeCode: "wrong_message_type" });
   }
   const body = exactHostDataSnapshotV1(frame.body,
     ["deliveryId", "enrollmentContract", "envelopeDigest", "envelope"]);
   if (!body || !isConnectionEnrollmentDeliveryIdV1(body.deliveryId)) {
-    throw new ConnectionEnrollmentPrivateLoopbackFramingErrorV1("invalid_delivery_id");
+    return objectFreezeV1({ status: "rejected", safeCode: "invalid_delivery_id" });
   }
-  return body.deliveryId;
+  return objectFreezeV1({ status: "accepted", deliveryId: body.deliveryId });
+}
+
+function sealProtectedFrameV1(material: Omit<ConnectionEnrollmentPrivateLoopbackProtectedFrameV1,
+"frameDigest">): ConnectionEnrollmentPrivateLoopbackProtectedFrameV1 {
+  const protectedFrame = objectFreezeV1({ ...material, frameDigest: sha256Digest(material) });
+  reflectApplyV1(weakSetAddV1, protectedFrameOriginsV1, [protectedFrame]);
+  return parseConnectionEnrollmentPrivateLoopbackProtectedFrameV1(protectedFrame);
 }
 
 /**
@@ -255,14 +401,9 @@ export class ConnectionEnrollmentPrivateLoopbackFrameDecoderV1 {
       rawFrame = reflectApplyV1(textDecoderDecodeV1, textDecoderV1,
         [this.#frame, { stream: false }]) as string;
     } catch { this.#fail("invalid_utf8"); }
-    let deliveryId: string;
-    try { deliveryId = deliveryIdFromRawFrameV1(rawFrame); }
-    catch (error) {
-      if (error instanceof ConnectionEnrollmentPrivateLoopbackFramingErrorV1) {
-        this.#fail(error.safeCode);
-      }
-      this.#fail("integrity_failed");
-    }
+    const routing = deliveryIdFromRawFrameV1(rawFrame);
+    if (routing.status !== "accepted") this.#fail(routing.safeCode);
+    const deliveryId = routing.deliveryId;
     const material: Omit<ConnectionEnrollmentPrivateLoopbackProtectedFrameV1, "frameDigest"> = {
       contractVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FRAME_V1,
       listenerId: this.#configuration.listenerId,
@@ -278,10 +419,9 @@ export class ConnectionEnrollmentPrivateLoopbackFrameDecoderV1 {
       grantsLeaseAuthority: false,
       grantsExecutionAuthority: false,
     };
-    const protectedFrame = parseConnectionEnrollmentPrivateLoopbackProtectedFrameV1({
-      ...material,
-      frameDigest: sha256Digest(material),
-    });
+    let protectedFrame: ConnectionEnrollmentPrivateLoopbackProtectedFrameV1;
+    try { protectedFrame = sealProtectedFrameV1(material); }
+    catch { this.#fail("integrity_failed"); }
     this.#wipe();
     this.#state = "complete";
     return protectedFrame;

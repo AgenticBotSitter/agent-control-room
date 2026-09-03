@@ -14,6 +14,7 @@ import {
   parseConnectionEnrollmentPrivateLoopbackProtectedFrameV1,
   toConnectionEnrollmentTransportAdmissionInputV1,
 } from "../src/connection-registry/v1/index.ts";
+import { sha256Digest } from "../src/security/index.ts";
 
 const deliveryId = "delivery:private-loopback:001";
 
@@ -187,7 +188,7 @@ test("CR13A-LIVE-070 rejects malformed bytes and message routing before admissio
   expectCode(() => decode(packetFor(frame({ body: { deliveryId, extra: true } }))), "invalid_delivery_id");
 });
 
-test("CR13A-LIVE-070 rejects behavioral or aliased binary chunks without invoking them", () => {
+test("CR13A-LIVE-070 rejects behavioral or partial binary chunks without invoking them", () => {
   const packet = packetFor(frame());
   const decoder = new ConnectionEnrollmentPrivateLoopbackFrameDecoderV1(configuration());
   expectCode(() => decoder.push(Buffer.from(packet)), "invalid_chunk");
@@ -203,6 +204,16 @@ test("CR13A-LIVE-070 rejects behavioral or aliased binary chunks without invokin
   expectCode(() => new ConnectionEnrollmentPrivateLoopbackFrameDecoderV1(configuration()).push(proxy),
     "invalid_chunk");
   assert.equal(traps, 0);
+});
+
+test("CR13A-LIVE-070 synchronously copies a full backing-store view and retains no caller bytes", () => {
+  const packet = packetFor(frame()), alias = new Uint8Array(packet.buffer);
+  const decoder = new ConnectionEnrollmentPrivateLoopbackFrameDecoderV1(configuration());
+  decoder.push(alias);
+  packet.fill(0);
+  const decoded = decoder.finish();
+  assert.equal(decoded.deliveryId, deliveryId);
+  assert.equal(JSON.parse(decoded.rawFrame).body.deliveryId, deliveryId);
 });
 
 test("CR13A-LIVE-070 makes decoder failures and completion terminal", () => {
@@ -234,11 +245,45 @@ test("CR13A-LIVE-070 validates protected handoffs and keeps the listener disable
   })), "integrity_failed");
   assert.equal(traps, 0);
 
+  const { frameDigest: _frameDigest, ...unsigned } = accepted;
+  void _frameDigest;
+  const forged = {
+    ...unsigned,
+    deliveryId: "delivery:private-loopback:manufactured",
+    frameDigest: sha256Digest({ ...unsigned, deliveryId: "delivery:private-loopback:manufactured" }),
+  };
+  expectCode(() => parseConnectionEnrollmentPrivateLoopbackProtectedFrameV1(forged), "integrity_failed");
+  expectCode(() => toConnectionEnrollmentTransportAdmissionInputV1(forged), "integrity_failed");
+  expectCode(() => parseConnectionEnrollmentPrivateLoopbackProtectedFrameV1({ ...accepted }),
+    "integrity_failed");
+
   const listener = new DisabledConnectionEnrollmentPrivateLoopbackListenerV1();
   assert.equal(listener.enabled, false);
   await assert.rejects(listener.start(), (error: unknown) =>
     error instanceof ConnectionEnrollmentPrivateLoopbackFramingErrorV1 && error.safeCode === "disabled");
   await listener.close();
+});
+
+test("CR13A-LIVE-070 rejects duplicate JSON members before routing extraction", () => {
+  const raw = JSON.stringify(frame());
+  const duplicateType = raw.replace(`"type":"connection.enrollment.deliver"`,
+    `"type":"node.heartbeat","type":"connection.enrollment.deliver"`);
+  const duplicateDelivery = raw.replace(`"deliveryId":"${deliveryId}"`,
+    `"deliveryId":"delivery:private-loopback:first","deliveryId":"${deliveryId}"`);
+  const escapedDuplicateDelivery = raw.replace(`"deliveryId":"${deliveryId}"`,
+    `"deliveryId":"delivery:private-loopback:first","delivery\\u0049d":"${deliveryId}"`);
+  const duplicateNested = raw.replace(`"envelope":{"fixture":true}`,
+    `"envelope":{"fixture":true,"fixture":false}`);
+  for (const duplicate of [duplicateType, duplicateDelivery, escapedDuplicateDelivery, duplicateNested]) {
+    expectCode(() => decode(packetFor(duplicate)), "duplicate_json_member");
+  }
+  const separateObjects = frame({ body: {
+    deliveryId,
+    enrollmentContract: "control-room-idea-lab-hermes-021-connection-enrollment/v1",
+    envelopeDigest: `sha256:${"b".repeat(64)}`,
+    envelope: { nested: { same: 1 }, other: { same: 2 } },
+  } });
+  assert.equal(decode(packetFor(separateObjects)).deliveryId, deliveryId);
 });
 
 test("CR13A-LIVE-070 local pilot wiring opens no listener or route", async () => {

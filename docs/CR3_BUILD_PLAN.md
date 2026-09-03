@@ -1101,11 +1101,11 @@ authorized by this block.
 ## CR13A-LIVE-070 — private-loopback single-frame decoder and disabled listener port
 
 Status: exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` rejected over owner-approved LIVE-060
-integration `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`; M-001, M-002, L-001, and L-002 require remediation and a different
-review. See
+integration `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`; M-001, M-002, L-001, and L-002 are remediated locally, with immutable
+product freeze and a different re-review still required. See
 `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` and ADR-156.
 
-The effect-free decoder accepts fresh exact `Uint8Array` chunks for one unsigned-big-endian-length-prefixed fatal UTF-8
+The effect-free decoder accepts exact full-backing-store `Uint8Array` chunks for one unsigned-big-endian-length-prefixed fatal UTF-8
 JSON frame. Exact fixed configuration permits only a future IPv4 `127.0.0.1` SSH-tunnel listener, bounds frame bytes and
 chunk count, rejects incomplete/multiple/trailing frames, wipes internal buffers, and makes every completion or failure
 terminal. It extracts only the untrusted enrollment delivery-ID routing hint. LIVE-060 admission, LIVE-050 outer-frame
@@ -1127,3 +1127,9 @@ parsing accepts duplicate lexical members with last-member routing. L-001 correc
 to exact full-backing-store input, synchronous internal copy, and no retention. L-002 records the immutable product's two
 trailing-whitespace lines. Preserve the negative report and remediate all four findings before a different zero-repair
 re-review. Report SHA-256: `91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`.
+
+The remediation gives decoder-created frames module-private provenance, re-extracts delivery identity from the exact raw
+frame before reduction, and rejects duplicate JSON members at every nesting level, including escape-equivalent names.
+The corrected binary assurance is exact full ordinary backing-store coverage, synchronous private copy, and no
+caller-buffer retention; post-push alias mutation is proven irrelevant. The remediation passes 23/23 focused tests,
+65/65 connection tests, the complete repository lifecycle, build/render, migration, type, lint, and whitespace gates.
