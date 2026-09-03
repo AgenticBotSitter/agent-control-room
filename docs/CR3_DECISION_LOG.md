@@ -3098,3 +3098,12 @@ must not be inferred from a passing repository session receipt.
 implementation `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`, under the zero-repair packet with SHA-256
 `88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`. A passing report permits ordinary
 integration review only and grants no listener or external-effect authority.
+
+**Independent-review amendment:** Preserve rejected target `dbdb297aa04ea7465ab636c94ccf1084003cdf27` and its
+negative report with SHA-256 `0f3db267c28605f0687d18f831c303c9c1055a6b4e9f64be65b9b50dd3e716bd`.
+M-001 proves `finish()` was destructive while admission was in flight: it cleared the only session before a downstream
+settlement could be correlated with ordered cleanup and a terminal receipt. Exact remediation
+`28a1c0833e8e2b2b3368644536b7442c96bbadcb` makes that call a non-mutating state conflict and adds async-pending and
+synchronous-reentrant regressions proving exactly one admission and recoverable completion. A different zero-repair
+reviewer must independently close M-001 and find no new High, Medium, or Low defect. This amendment grants no listener,
+SSH, credential, native, provider, production, deployment, or network authority.

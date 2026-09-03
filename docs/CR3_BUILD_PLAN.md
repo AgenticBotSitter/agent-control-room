@@ -1189,8 +1189,9 @@ integration only and grants no listener, SSH, credential, native, provider, prod
 
 ## CR13A-LIVE-090 — one-frame listener-session and authenticated admission composition
 
-Status: implementation frozen at `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe` over owner-approved LIVE-080 merge
-`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; independent zero-repair review required. See
+Status: original target rejected; exact remediation `28a1c0833e8e2b2b3368644536b7442c96bbadcb` frozen over
+owner-approved LIVE-080 merge `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; different-reviewer zero-repair
+re-review required. See
 `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` and ADR-158.
 
 This block composes one accepted private-loopback frame and the repository-fake listener lifecycle into exactly one
@@ -1211,3 +1212,16 @@ async-settlement, and cleanup boundary. Independent acceptance permits ordinary 
 The exact review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen implementation
 `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`. Zero-repair packet SHA-256:
 `88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`.
+
+The first reviewer rejected that immutable target. M-001 proves `finish()` could destructively fail and clear a session
+while its sole admission was still pending, leaving a later successful settlement unable to complete the required
+cleanup and receipt sequence. Preserve the negative report; SHA-256:
+`0f3db267c28605f0687d18f831c303c9c1055a6b4e9f64be65b9b50dd3e716bd`.
+
+Exact remediation `28a1c0833e8e2b2b3368644536b7442c96bbadcb` rejects `finish()` during `admitting` as a
+non-mutating state conflict before any runtime assertion or evidence mutation. Async-pending and synchronous-reentrant
+regressions prove the first admission can settle, cleanup can complete, one receipt can be emitted, and the method is
+called exactly once. Producer gates pass at 43/43 focused tests, 85/85 connection tests, 769/769 pretests, 419/421 core
+tests with two intentional platform skips, 336/336 posttests, production build plus 4/4 rendered routes, and all 36
+migrations with 119 tables. A different zero-repair reviewer must close M-001 and find no new High, Medium, or Low
+defect before owner-controlled integration.

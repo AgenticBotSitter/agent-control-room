@@ -1,6 +1,6 @@
 # CR13A-LIVE-090 private-loopback listener session acceptance
 
-**Status:** implementation frozen at `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`; independent zero-repair review required
+**Status:** original target rejected; exact remediation frozen at `28a1c0833e8e2b2b3368644536b7442c96bbadcb`; different-reviewer zero-repair re-review required
 **Integration base:** owner-approved LIVE-080 merge `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`
 **Effect boundary:** repository code, fake admission, and local deterministic tests only; no socket, listener, SSH,
 credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS, or external network effect
@@ -69,23 +69,39 @@ session receipt is emitted. The accepted LIVE-060 ingress remains idempotent, so
 may observe a duplicate downstream result; that later success does not erase the failed cleanup evidence. Real
 process-kill, admission-timeout, socket-error, and shutdown ambiguity remain native-adapter review cases.
 
+## Original review and remediation
+
+The first independent reviewer reproduced every required gate but rejected the exact target. M-001 showed that calling
+`finish()` while the sole authenticated admission was still settling destructively changed the session from `admitting`
+to `failed` and cleared its evidence. The downstream call could still succeed, but the caller could no longer complete
+the ordered close, drain, cleanup, and correlation receipt. Both an ordinary pending Promise and synchronous reentry
+from the admission method reproduced the defect. The immutable negative report is preserved at
+`docs/reviews/CR13A_LIVE_090_INDEPENDENT_REVIEW.md`; SHA-256:
+`0f3db267c28605f0687d18f831c303c9c1055a6b4e9f64be65b9b50dd3e716bd`.
+
+Exact remediation `28a1c0833e8e2b2b3368644536b7442c96bbadcb` makes `finish()` during `admitting` a
+non-mutating `state_conflict`, checked before runtime-custody assertion or any state/evidence change. Regressions cover
+both an externally pending admission and synchronous reentry. In each case the first admission can settle, the session
+can complete its exact close/drain/listener-cleanup sequence, one correlation receipt can be emitted, and the admission
+method is called exactly once. No authority or effect boundary changed.
+
 ## Deterministic evidence
 
-Producer verification for the frozen implementation:
+Producer verification for the exact remediation:
 
 - macOS stage zero: pass (`ready_for_runtime_check`), with no native attempt;
 - TypeScript and full ESLint: pass;
-- focused LIVE-060/070/080/090 suite: 42/42 pass;
-- complete connection slice: 84/84 pass;
+- focused LIVE-060/070/080/090 suite: 43/43 pass;
+- complete connection slice: 85/85 pass;
 - complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and
-  335/335 posttests;
+  336/336 posttests;
 - production build and 4/4 rendered-route checks: pass;
 - PostgreSQL migrations `0001` through `0036`: pass with 119 tables; and
 - whitespace validation: pass.
 
 ## Review and next boundary
 
-Independent review must attack method capture and receiver binding, ordinary-data observation capture, actual chunk
+The different independent re-review must attack method capture and receiver binding, ordinary-data observation capture, actual chunk
 count, decoder provenance, raw-input reduction, admission single-flight behavior, concurrent reentry, pending abort,
 malformed native promises, foreign thenables, post-await runtime custody, policy mismatch, cleanup after every failure,
 receipt correlation, safe output, public-digest recomputation, and the no-listener/no-runtime-wiring boundary.
@@ -95,6 +111,8 @@ credential read, native attempt, production database contact, deployment, or net
 define a concrete default-disabled socket adapter, exact activation authority, real loopback and port evidence, bounded
 timers/backpressure, shutdown and process-kill recovery, and a separately owner-authorized disposable qualification.
 
-The exact review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen implementation
-`5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`. Zero-repair packet SHA-256:
-`88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`.
+The rejected review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen implementation
+`5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`. Its zero-repair packet SHA-256 is
+`88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`. The exact remediation is
+`28a1c0833e8e2b2b3368644536b7442c96bbadcb`; a different zero-repair reviewer must independently close M-001 and find
+no new High, Medium, or Low defect before ordinary owner-controlled integration.

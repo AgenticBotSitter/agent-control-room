@@ -117,7 +117,7 @@
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
-| CR13A-LIVE-090 listener-session admission composition | Implementation frozen at `5ff9d9b...`; independent zero-repair review required | One decoded protected frame reaches exactly one authenticated admission call, with single-flight settlement and terminal cleanup; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
+| CR13A-LIVE-090 listener-session admission composition | Original target rejected; exact remediation `28a1c08...` frozen; different zero-repair re-review required | M-001 closed by making `finish()` non-mutating during in-flight admission, with async and synchronous-reentry regressions; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1092,7 +1092,19 @@ migrations with 119 PostgreSQL tables, and clean whitespace. A fresh independent
 High, Medium, or Low defect before publication or integration.
 
 The exact review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`. Its zero-repair independent review packet
-has SHA-256 `88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`.
+has SHA-256 `88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`. The first independent
+review reproduced every required gate but rejected integration. M-001 showed that `finish()` while admission was still
+settling destructively failed the session and erased the evidence needed to complete cleanup and emit a correlated
+receipt. Both an ordinary pending Promise and synchronous reentry reproduced the defect. The immutable negative report
+is preserved with SHA-256 `0f3db267c28605f0687d18f831c303c9c1055a6b4e9f64be65b9b50dd3e716bd`.
+
+Exact remediation `28a1c0833e8e2b2b3368644536b7442c96bbadcb` makes `finish()` during `admitting` a
+non-mutating state conflict before runtime assertion or evidence mutation. The two regressions prove the first
+admission can settle, the exact close/drain/listener-cleanup sequence can finish, one receipt can be emitted, and the
+admission method is called exactly once. Producer gates pass: stage zero with no native attempt, TypeScript, full lint,
+43/43 focused tests, 85/85 connection tests, 769/769 pretests, 419/421 core tests with two intentional platform skips,
+336/336 posttests, production build with 4/4 rendered checks, all 36 migrations with 119 PostgreSQL tables, and clean
+whitespace. A different zero-repair reviewer must close M-001 and find no new High, Medium, or Low defect.
 
 ## Parallel build lane
 
@@ -1109,11 +1121,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-090-INDEPENDENT-REVIEW — attack the listener-session/admission composition
+Block: CR13A-LIVE-090-REMEDIATION-REREVIEW — independently verify the in-flight finish fix
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the block handles protected bytes, asynchronous admission, concurrency, and cleanup correlation.
-Expected output: immutable zero-repair packet, exact-target independent gates and hostile probes, accepted only with no open High, Medium, or Low finding.
+Why: the first reviewer found a real Medium race across asynchronous admission, session state, and cleanup correlation.
+Expected output: immutable remediation packet and a different reviewer's exact-target gates and hostile probes, accepted only after M-001 is closed with no open High, Medium, or Low finding.
 Owner action: none; all independent reviews are already authorized. Approve only the exact PR after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
