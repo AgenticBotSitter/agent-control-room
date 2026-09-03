@@ -3185,6 +3185,20 @@ Readiness parsing now requires module-private provenance, and the public record 
 derived non-locator reference. This closes the three known findings in producer tests but does not constitute
 acceptance; a different independent zero-repair re-review remains mandatory.
 
+**First remediation re-review amendment:** The different reviewer closed L-001 and L-002 but rejected immutable target
+`ea81bf82ef4726aa230841420beaca6e96f162cc`. M-001 remained because the binder record was frozen while its three
+function values were still extensible. New L-003 recorded that both exact-range `git diff --check` commands rejected
+the intentionally preserved Markdown hard-break spaces in the original negative report. The second negative report is
+preserved at `docs/reviews/CR13A_LIVE_100_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`bcf4a8aa173c4c898205adc7b6cb4c1431f6105a8cae7719e43e5d5202db708e`.
+
+Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` freezes each captured bound function before inserting
+it into the frozen binder and adds direct own-`call`, property, and prototype-chain mutation tests. A three-path
+`.gitattributes` rule preserves the exact bytes and hashes of the two negative reports and first remediation packet
+while disabling only trailing-space classification for those exact evidence paths. All three required diff checks now
+pass. This remains producer evidence; a third independent zero-repair reviewer must close M-001 and L-003, reconfirm
+L-001/L-002, and find no new High, Medium, or Low defect.
+
 **Reevaluate:** Before importing `node:net`, accepting any driver or activation evidence, wiring a runtime, opening or
 closing a physical listener, selecting a port, starting SSH, reading a credential, accepting native evidence, running a
 platform qualification, or making the record activation-eligible. Each requires a new contract, immutable review, and

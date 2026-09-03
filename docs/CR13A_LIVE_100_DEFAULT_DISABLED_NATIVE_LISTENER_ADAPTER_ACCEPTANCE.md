@@ -1,7 +1,7 @@
 # CR13A-LIVE-100 default-disabled native-listener adapter acceptance
 
-**Status:** first independent review rejected immutable target `5582d57247f38498efe3c587762257bababa7658`;
-M-001, L-001, and L-002 remediated in `915a5ed20bafe76367e0ae8ab06252dd05e54dac`; fresh different
+**Status:** first remediation re-review rejected immutable target `ea81bf82ef4726aa230841420beaca6e96f162cc`;
+remaining M-001 and new L-003 remediated in `fbfdda99c8063f043bee6166ab664ba494382c85`; fresh third
 zero-repair re-review required before integration
 **Integration base:** owner-approved LIVE-090 merge `65ea851c123993d7760d6492966845f74ca1d665`
 **Effect boundary:** repository code and deterministic tests only; no native driver, socket, listener, port, SSH,
@@ -64,7 +64,7 @@ fake/native evidence equivalent and does not introduce a way for an application 
 
 ## Deterministic evidence
 
-Producer evidence for remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac`:
+Producer evidence for second remediation `fbfdda99c8063f043bee6166ab664ba494382c85`:
 
 - macOS stage zero: `ready_for_runtime_check`, with no native attempt;
 - TypeScript and full ESLint: pass;
@@ -87,12 +87,24 @@ L-001, and L-002. The negative report is preserved at
 `docs/reviews/CR13A_LIVE_100_INDEPENDENT_REVIEW.md`; SHA-256:
 `8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
 
-Remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` closes M-001 with exact instance provenance,
-subclass rejection, frozen instance/prototype surfaces, exact-receiver enforcement, and a captured-operation binder;
-closes L-001 by accepting only module-minted frozen readiness records; and closes L-002 by replacing the raw listener
-ID with a derived non-locator reference. A fresh different reviewer must now reproduce every original case plus the
-three remediation-specific attacks. The reviewer performs zero repair. Any High, Medium, or Low finding still blocks
-integration and must be preserved.
+First remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` addressed M-001 at the adapter-instance boundary
+with exact provenance, subclass rejection, frozen instance/prototype surfaces, exact-receiver enforcement, and a
+captured-operation binder; it closed L-001 by accepting only module-minted frozen readiness records and closed L-002 by
+replacing the raw listener ID with a derived non-locator reference.
+
+The different remediation reviewer closed L-001 and L-002 but rejected target
+`ea81bf82ef4726aa230841420beaca6e96f162cc`. M-001 remained because the frozen binder contained three function objects
+that were not themselves frozen. New L-003 recorded that exact-diff whitespace checks rejected Markdown hard-break
+spaces retained in immutable evidence. That report is preserved at
+`docs/reviews/CR13A_LIVE_100_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`bcf4a8aa173c4c898205adc7b6cb4c1431f6105a8cae7719e43e5d5202db708e`.
+
+Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` freezes and makes non-extensible each bound
+operation before the enclosing binder is frozen, with own-`call`, function-property, and prototype-chain mutation
+regressions. A three-path `.gitattributes` rule disables only the trailing-space check for the exact immutable evidence
+files that intentionally preserve Markdown hard breaks; every other whitespace rule and repository path remains
+unchanged. All three exact diff checks now pass. A fresh third reviewer must reproduce every original and remediation
+case with zero repair. Any High, Medium, or Low finding still blocks integration and must be preserved.
 
 Acceptance would permit ordinary owner-controlled integration only. It would not authorize adding `node:net`, opening
 a listener, selecting or exposing a port, starting SSH, reading a credential, contacting Hermes, running a native

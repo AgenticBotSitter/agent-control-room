@@ -1274,8 +1274,8 @@ Owner-approved PR #238 merged accepted branch head `ecb5ea373ccb0cdbee1ef036b80e
 
 ## CR13A-LIVE-100 — default-disabled native-listener adapter contract
 
-Status: first independent review rejected immutable target `5582d57247f38498efe3c587762257bababa7658`;
-M-001, L-001, and L-002 remediated in `915a5ed20bafe76367e0ae8ab06252dd05e54dac`; fresh different
+Status: first remediation re-review rejected immutable target `ea81bf82ef4726aa230841420beaca6e96f162cc`;
+remaining M-001 and new L-003 remediated in `fbfdda99c8063f043bee6166ab664ba494382c85`; fresh third
 zero-repair re-review required. See `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` and
 ADR-159.
 
@@ -1297,12 +1297,24 @@ readiness identity substitution (L-001), and locator-shaped listener-ID retentio
 is `docs/reviews/CR13A_LIVE_100_INDEPENDENT_REVIEW.md`; SHA-256:
 `8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
 
-Remediation accepts only module-minted frozen readiness records, omits the raw listener ID in favor of a derived
-non-locator reference, and closes subclass, prototype, own-method, instance-field, and receiver substitution. The
+First remediation accepts only module-minted frozen readiness records, omits the raw listener ID in favor of a derived
+non-locator reference, and closes adapter subclass, prototype-method, instance-field, and receiver substitution. The
 focused suite passes 55/55, the complete connection slice passes 97/97, and the full repository lifecycle passes
 769/769 pretests, 419/421 core tests with two intentional platform skips, and 348/348 posttests. Type, full lint,
 production build with 4/4 rendered routes, all 36 migrations/119 tables through the listener-free verifier, stage zero,
 and whitespace validation pass.
+
+The different remediation reviewer closed L-001 and L-002 but rejected target
+`ea81bf82ef4726aa230841420beaca6e96f162cc` with remaining M-001 and new L-003. The enclosing binder was frozen, but
+its three function values were not individually frozen; immutable diff checks also classified preserved Markdown hard
+breaks as trailing whitespace. The second negative report is
+`docs/reviews/CR13A_LIVE_100_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`bcf4a8aa173c4c898205adc7b6cb4c1431f6105a8cae7719e43e5d5202db708e`.
+
+Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` freezes and makes non-extensible each bound function
+before freezing the binder, with own-`call`, function-property, and prototype-chain mutation regressions. A narrowly
+scoped `.gitattributes` rule preserves the exact three immutable evidence files while disabling only their
+trailing-space classification. The base-to-target, original-to-target, and working-tree diff checks now pass.
 
 Completion requires an immutable remediation zero-repair packet and a fresh different reviewer with no open High,
 Medium, or Low finding across every original and remediation-specific case. Independent acceptance permits ordinary

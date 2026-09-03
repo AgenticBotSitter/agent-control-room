@@ -118,7 +118,7 @@
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
-| CR13A-LIVE-100 default-disabled native-listener adapter contract | First independent review rejected; M-001/L-001/L-002 remediated at `915a5ed...`; different zero-repair re-review required | Frozen exact adapter, module-minted readiness provenance, and non-locator public identity; 55/55 focused and 97/97 connection tests; no listener/network effect; see `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` |
+| CR13A-LIVE-100 default-disabled native-listener adapter contract | First remediation re-review rejected; remaining M-001 and new L-003 remediated at `fbfdda9...`; third zero-repair review required | Individually frozen bound operations plus exact evidence-file whitespace handling; 55/55 focused and 97/97 connection tests; no listener/network effect; see `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1172,12 +1172,20 @@ adapter surface (M-001), readiness identity substitution (L-001), and locator-sh
 The negative report is preserved with SHA-256
 `8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
 
-Remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` closes all three findings by exact-branding and freezing
-the adapter, requiring module-private readiness provenance, and exposing only a derived non-locator reference. It
-passes macOS stage zero, TypeScript, full lint, 55/55 focused tests, 97/97 connection tests, 769/769 pretests, 419/421
-core tests with two intentional platform skips, 348/348 posttests, production build, 4/4 rendered routes, all 36
-migrations with 119 tables through the listener-free verifier, and whitespace. The ordinary database wrapper preserved
-its known sandbox-only `tsx` IPC denial before migration work. A fresh different zero-repair re-review remains mandatory.
+First remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` exact-branded and froze the adapter, required
+module-private readiness provenance, and exposed only a derived non-locator reference. The different remediation
+reviewer closed L-001 and L-002 but rejected immutable target `ea81bf82ef4726aa230841420beaca6e96f162cc` because the
+three functions inside the frozen binder were not themselves frozen (remaining M-001) and immutable diff checks found
+Markdown hard-break spaces in preserved evidence (new L-003). The second negative report is preserved with SHA-256
+`bcf4a8aa173c4c898205adc7b6cb4c1431f6105a8cae7719e43e5d5202db708e`.
+
+Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` individually freezes every bound operation and adds
+function-object mutation regressions. A narrowly scoped three-file `.gitattributes` rule preserves the exact evidence
+bytes while disabling only their trailing-space classification; all three required diff checks now pass. The complete
+candidate passes macOS stage zero, TypeScript, full lint, 55/55 focused tests, 97/97 connection tests, 769/769 pretests,
+419/421 core tests with two intentional platform skips, 348/348 posttests, production build, 4/4 rendered routes, all
+36 migrations with 119 tables through the listener-free verifier, and whitespace. The ordinary database wrapper
+preserved its known sandbox-only `tsx` IPC denial before migration work. A fresh third zero-repair review is mandatory.
 
 ## Parallel build lane
 
@@ -1194,11 +1202,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-100-REMEDIATION-RE-REVIEW — independently attack closure of M-001, L-001, and L-002
+Block: CR13A-LIVE-100-SECOND-REMEDIATION-RE-REVIEW — independently attack closure of M-001 and L-003 while reconfirming L-001/L-002
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the first review found real in-process mutation, identity-pairing, and public-output defects; their exact remediations must be attacked before integration.
-Expected output: immutable zero-repair remediation packet and a different reviewer reproducing every original case plus subclass/prototype/own-method attacks, re-digested readiness substitution, locator-shaped identity, receiver misuse, captured-operation dispatch, and the full repository gates with no High, Medium, or Low finding.
+Why: the first remediation review closed identity and public-output defects but found mutable function objects and a failing exact-diff gate; both exact fixes must be attacked before integration.
+Expected output: immutable second-remediation packet and a third reviewer reproducing every original case plus function-object own-property/prototype attacks, exact evidence hash preservation, all three diff checks, re-digested readiness substitution, locator-shaped identity, receiver misuse, captured-operation dispatch, and the full repository gates with no High, Medium, or Low finding.
 Owner action: none; independent reviews are already authorized. Approve only the exact pull request after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
