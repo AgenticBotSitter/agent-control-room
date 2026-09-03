@@ -3289,3 +3289,105 @@ remain absent.
 socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
 contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a
 physical bind requires a fresh owner-attended one-attempt packet.
+
+**Integration amendment:** The owner approved PR #240 at exact branch head
+`2978c84a07aee8566d8d3de5d02689d5d9eff609`. It merged to `main` as
+`1ee5409c0b66afbd802582459af864ec0d198f5c`; pre-merge CI run `33803032198` and post-merge run `33804402020`
+passed. Integration changes no effect or authority boundary.
+
+## ADR-161 — Design the physical listener boundary before importing a native driver
+
+**Decision:** CR13A-LIVE-120 is an effect-free design block. It must freeze the physical driver's exact input,
+operation, lifetime, backpressure, cleanup, recovery, tunnel-authentication, host-key, evidence, ambiguity, and retry
+semantics before any native implementation or operating-system listener code is admitted. Implementation, activation
+evidence, owner authorization, platform qualification, and the single physical attempt remain separate stages.
+
+**Why:** LIVE-110 proves a fake can satisfy the abstract operation contract without gaining authority. The next risk is
+that socket construction, port ownership, asynchronous callbacks, shutdown races, or restart behavior silently widen
+that contract. Freezing the boundary first makes those behaviors independently reviewable and keeps repository success
+from being mistaken for a live bind.
+
+**Alternatives rejected:** Add `node:net` while discovering the contract; wire a driver into the local pilot before
+review; choose or expose a port in repository data; infer tunnel identity or host-key custody from configuration; allow
+automatic retry after ambiguous bind/start/close outcomes; combine implementation with an owner-attended physical
+attempt; or let repository-fake evidence clear a native blocker.
+
+**Reevaluate:** Before adding any native/socket implementation, runtime consumer, live listener, port selection, SSH
+operation, credential access, signed native evidence, qualification attempt, production contact, or deployment. Those
+steps require a separately frozen contract, independent review, and the exact authority appropriate to the effect.
+
+**Design-contract amendment:** `docs/CR13A_LIVE_120_PHYSICAL_NATIVE_DRIVER_DESIGN.md` fixes the exact staged
+authority split, private input custody, lifecycle, loopback bind, admission, capacity, framing, deadlines,
+backpressure, shutdown, cleanup, restart, ambiguity, no-retry, evidence, qualification, and independent-review
+requirements. It authorizes no native import, physical driver, listener, port, connection, SSH, credential, provider,
+runtime activation, production contact, or deployment. The unwired implementation and the later physical attempt each
+require separate exact owner authority.
+
+## ADR-162 — Keep the first physical driver present but structurally unreachable
+
+**Decision:** Under the owner's exact LIVE-120 implementation authorization, admit one isolated `node:net` server
+module at product target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`. The module may contain the bounded physical
+loopback lifecycle, but it must export no physical factory or bind-capability issuer, receive no package-barrel or
+runtime import, and expose only a non-authorizing implementation description plus the repository fake used to test
+the shared five-operation controller. The physical capability registry remains unable to accept entries.
+
+**Why:** This lets the security-sensitive lifecycle be reviewed as concrete code without making it constructible or
+mistaking fake success for native evidence. The implementation can be attacked for state, race, deadline,
+backpressure, cleanup, recovery, provenance, and leakage defects before a private locator broker, signer, owner-spend
+composition, or operating-system attempt exists.
+
+**Alternatives rejected:** Export a native factory for convenience; publish the private port; add the driver to the
+connection-registry barrel; wire it into the local pilot; let tests mint a production-shaped bind capability; replace
+the repository fake with a real loopback self-test; treat a clean build as platform qualification; or combine
+implementation review with the owner-attended physical attempt.
+
+**Evidence:** The immutable product passes 32/32 dedicated tests, 137/137 CR13A tests, 769/769 pretests, 372/372 core
+tests, 372/372 posttests, TypeScript, full lint, macOS stage zero, production build with 4/4 rendered routes, 36
+migrations/119 PostgreSQL tables through the no-IPC verifier, and whitespace. Listener attempts, network observations,
+and external effects are all zero. Independent review packet SHA-256:
+`e42cde8b401117e8bb71971315fff0219a5e8f17827e7df7a480a42ca967c9b5`.
+
+**Reevaluate:** After a different zero-repair reviewer accepts the exact target with no findings, and again before any
+capability issuer, locator broker, signer, runtime consumer, socket/listener attempt, SSH or credential use, physical
+qualification, production contact, or deployment. Each remains a separate reviewed and owner-controlled stage.
+
+## ADR-163 — Fail closed on every unproved physical identity and cleanup fact
+
+**Decision:** Preserve the rejected LIVE-120 target and remediate all nine independent findings without adding an
+issuer, runtime consumer, or physical attempt. A socket must carry a private exact one-use admission bound to the
+attempt, ordinal, deadline, tunnel-peer proof, and host-key proof before any data handler or decoder can run. Decoder
+and exported callable dispatch is captured and frozen. Native contract, implementation, capability, and admission
+relationships use exact private identity, never public digest equality alone. Backpressure uses observed pending bytes,
+and every post-marker path converges on one cleanup operation with decoder wiping, callback/timer clearing, socket
+destruction, separate drain and final-shutdown bounds, and capability release.
+
+**Why:** Loopback origin does not authenticate the SSH tunnel, mutable same-process callables can bypass validation,
+and a graceful server callback does not prove bytes, handles, timers, capabilities, durable markers, or high-water
+truth are clean. The safe repository boundary must remain unusable until every required private proof is supplied and
+must refuse to translate local volatile observations into physical success.
+
+**Alternatives rejected:** Admit the first connection and authenticate its frame later; represent peer, host-key,
+marker, owner-spend, or signer truth as booleans; call decoder methods dynamically; immediately resume after a pause;
+use public digest equality as provenance; share one timeout between drain and final cleanup; treat local socket destroy
+or server close as signed durable cleanup; or weaken findings because the module is currently unwired.
+
+**Evidence:** First target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38` is rejected by the preserved report with
+four High and five Medium findings; report SHA-256
+`baefddebe2af5bcf3f2132d2a8ef2b9bce9c84f02477fff8e95de9319b8b8e66`. Remediation target
+`5a579342b7a03bb013de21663c69a3a6118e11c6` passes 34/34 focused, 123/123 connection, 139/139 CR13A,
+769/769 pretests, 372/372 core tests, 374/374 posttests, build/render, and migration verification. No native,
+listener, socket, port, network, SSH, credential, provider, production, or deployment action occurred.
+
+**Remediation acceptance:** A different independent zero-repair reviewer reproduced all nine original defects,
+closed every one against exact remediation `5a579342b7a03bb013de21663c69a3a6118e11c6`, and found no new High, Medium,
+or Low defect. The current runner passed 34/34 focused, 123/123 connection, 139/139 CR13A, 769/769 pretests, 419/421
+core tests with two established Windows-only skips, 374/374 posttests, build/render, migrations, and the independent
+hostile probe. Preserve the accepted report at
+`docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. This permits ordinary owner-controlled
+integration only and grants no physical or external-effect authority.
+
+**Reevaluate:** Before adding any private proof issuer, signer, durable attempt ledger, high-water checkpoint, resource
+observer, locator broker, runtime consumer, physical attempt, SSH/credential operation, production contact, or
+deployment. Until those boundaries are separately implemented and accepted, native cleanup cannot become
+`closed_verified`.

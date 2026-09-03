@@ -129,3 +129,11 @@ Acceptance would permit ordinary owner-controlled integration only. It would not
 driver, accepting live activation evidence, opening or closing a listener, selecting or exposing a port, starting SSH,
 reading a credential, contacting Hermes, running a native qualification, touching production, or deploying. Each
 remains a separate future block with a fresh exact contract, independent review, and owner authority.
+
+## Integration
+
+The owner approved PR #240 at exact branch head `2978c84a07aee8566d8d3de5d02689d5d9eff609`. GitHub merged it
+to `main` as `1ee5409c0b66afbd802582459af864ec0d198f5c` after pre-merge CI run `33803032198` passed. Post-merge
+`main` CI run `33804402020` passed in 8m48s, including dependency preparation, TypeScript, lint, the full test
+lifecycle, production build/render, and database migration verification. Integration adds no physical driver,
+listener, network, SSH, credential, provider, production, deployment, DNS, or hosting authority.

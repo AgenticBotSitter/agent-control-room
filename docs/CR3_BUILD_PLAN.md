@@ -1385,3 +1385,82 @@ intrinsic attacks, 64 concurrent calls, zero replacement executions, and zero ef
 at `docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
 `d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. The branch is ready for ordinary
 owner-controlled pull-request integration and grants no native or external-effect authority.
+
+Owner-approved PR #240 merged exact accepted branch head `2978c84a07aee8566d8d3de5d02689d5d9eff609` to `main` as
+`1ee5409c0b66afbd802582459af864ec0d198f5c`. Pre-merge CI run `33803032198` and post-merge `main` CI run
+`33804402020` passed. LIVE-110 is integrated without adding or authorizing a physical driver, socket, listener,
+network connection, SSH operation, credential read, native qualification, production contact, or deployment.
+
+## CR13A-LIVE-120 — physical native-driver design and qualification boundary
+
+Status: design complete; first unwired implementation rejected; exact remediation
+`5a579342b7a03bb013de21663c69a3a6118e11c6` independently accepted; owner-controlled integration ready and physical
+qualification remains blocked.
+See `CR13A_LIVE_120_PHYSICAL_NATIVE_DRIVER_DESIGN.md`. Use Sol xhigh.
+
+Before any `node:net` import, physical driver implementation, runtime wiring, port selection, listener operation, or
+native attempt, freeze the exact operating-system boundary. The design must define literal IPv4 loopback binding,
+private unpublished port custody, one active connection and zero queued connections, one bounded frame, connection,
+idle, and admission deadlines, backpressure, ordered close and drain, process-restart recovery, authenticated tunnel
+peer and host-key evidence, terminal ambiguity, and automatic-retry prohibition.
+
+The design must keep implementation, activation evidence, owner authorization, platform qualification, and the one
+physical attempt as non-collapsible stages. Repository tests remain fake-only and cannot clear any LIVE-110 blocker.
+No socket code, live port, SSH, credential access, runtime wiring, or external effect belongs in the design block.
+A later implementation requires a new immutable review target; a later physical bind requires a fresh owner-attended
+one-attempt packet and exact authority.
+
+The completed design fixes the non-collapsible implementation, activation-candidate, owner-spend, physical-observation,
+independent-evidence, and runtime-activation stages; a four-component driver/locator-broker/signer/disabled-composition
+split; exact private inputs; terminal lifecycle states; literal-loopback and non-authentication truth; admission,
+frame, byte, chunk, backpressure, timer, cleanup, restart, ambiguity, and no-retry rules; public sanitation; the later
+qualification packet; and the mandatory hostile review. It adds no native module, listener, port, connection, SSH,
+credential, provider, production, or deployment path. Implementation now requires a separate exact owner grant; the
+physical attempt will require another later owner-attended grant.
+
+The owner granted the bounded implementation authority without runtime wiring or a physical attempt. Product
+`959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38` adds one isolated `node:net` server-driver module. Its physical factory
+and bind-capability registry are unreachable from exports, the registry has no issuer, the package barrel omits the
+module, and no source consumer imports it. The shared five-operation controller is exercised only through a fixed
+repository fake over closed, pre-bind-failure, post-marker-ambiguity, and cleanup-failure outcomes. All public status
+records remain exact-branded, sanitized, non-authorizing, and explicit about zero listener attempts and zero network
+observations.
+
+Producer gates pass at 32/32 dedicated tests, 137/137 CR13A tests, 769/769 pretests, 372/372 core tests, 372/372
+posttests, TypeScript, full lint, macOS stage zero, production build with 4/4 rendered routes, migrations through
+`0036` with 119 tables via the no-IPC verifier, and whitespace. Review packet SHA-256 is
+`e42cde8b401117e8bb71971315fff0219a5e8f17827e7df7a480a42ca967c9b5`. A different zero-repair review must return
+0 High, 0 Medium, and 0 Low findings before integration. Even acceptance would grant no physical attempt or runtime
+activation authority.
+
+A different report-only reviewer rejected the first target with four High and five Medium findings. Exact first-socket
+admission did not exist; decoder calls were replaceable; local callbacks could self-attest closed/recovered truth;
+cleanup could retain decoder bytes and capability references; backpressure resumed without low-water observation;
+exports remained mutable; ambient `Number` could execute and leak; the native factory used public digest equality;
+and drain/final shutdown were not separate. Preserve the report at
+`docs/reviews/CR13A_LIVE_120_INDEPENDENT_REVIEW.md`; SHA-256:
+`baefddebe2af5bcf3f2132d2a8ef2b9bce9c84f02477fff8e95de9319b8b8e66`.
+
+Exact remediation `5a579342b7a03bb013de21663c69a3a6118e11c6` requires a private exact-socket admission bound to
+attempt, ordinal, deadline, tunnel-peer proof, and host-key proof before installing handlers. It captures/freezes
+decoder and exported callables, retains exact private digests rather than re-entering ambient hashing during parsing,
+requires exact contract/implementation objects, measures pending bytes across high/low watermarks, and converges every
+post-marker path on decoder wipe, callback/timer removal, socket destruction, separately bounded drain/shutdown, and
+capability release. Because signer, durable ledger, high-water checkpoint, and independent resource observation are
+absent, physical cleanup always remains `cleanup_failed`; local truth can never produce `closed_verified`.
+
+Remediation gates pass at 34/34 dedicated tests, 123/123 connection tests, 139/139 CR13A tests, 769/769 pretests,
+372/372 core tests, 374/374 posttests, TypeScript, full lint, macOS stage zero, production build with 4/4 rendered
+routes, migrations through `0036` with 119 tables via the no-IPC verifier, and whitespace. Re-review packet SHA-256 is
+`28e91c4cbbd948c2636e1e1aeae19b1c27b5a113909c50fdaa50708f8c3e8dca`. Acceptance required a different zero-repair
+reviewer to close all nine findings before integration. No physical attempt or runtime activation is authorized.
+
+That different zero-repair reviewer accepted the exact remediation with 0 High, 0 Medium, and 0 Low findings. All
+four original High and five Medium findings are closed. Current-run evidence passed 34/34 focused, 123/123 connection,
+139/139 CR13A, 769/769 pretests, 419/421 core tests with two established Windows-only skips, 374/374 posttests,
+production build with 4/4 rendered routes, migrations through `0036` with 119 tables, and an independent 3/3 hostile
+probe. Hostile replacement executions, protected-byte exposures, native constructions, bind capabilities, admissions,
+physical listener/socket/port attempts, network observations, and external effects were all zero. Preserve the
+accepted report at `docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. Ordinary owner-controlled integration is
+ready. Physical qualification and runtime activation remain separate, blocked stages.

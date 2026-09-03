@@ -119,7 +119,8 @@
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
-| CR13A-LIVE-110 native-driver and activation-evidence contract | Exact remediation independently accepted; ordinary owner-controlled integration ready | Different reviewer closed M-001/M-002 with 0 findings; accepted target `8643513...`; no native implementation, listener, or network effect |
+| CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
+| CR13A-LIVE-120 unwired physical native driver | Exact remediation `5a57934...` independently accepted; owner-controlled integration pending | Different reviewer closed all four High and five Medium findings with no new finding; 34/34 focused and 139/139 CR13A tests; zero native/listener/network effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1237,6 +1238,39 @@ attacks, and kept 64 concurrent calls stable with zero replacement executions or
 `d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. Ordinary owner-controlled integration is
 ready; no native or external-effect authority is granted.
 
+Owner-approved PR #240 merged exact branch head `2978c84a07aee8566d8d3de5d02689d5d9eff609` to `main` as
+`1ee5409c0b66afbd802582459af864ec0d198f5c`. Pre-merge CI run `33803032198` and post-merge `main` run
+`33804402020` passed; the latter completed in 8m48s. The Mac clone is synchronized cleanly at the merge commit.
+Integration grants no physical-driver, listener, network, SSH, credential, provider, production, or deployment
+authority.
+
+CR13A-LIVE-120 now has honest negative and remediation evidence. A different report-only reviewer rejected first
+target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38` with four High and five Medium findings: unauthenticated
+first-arrival admission, mutable decoder dispatch, self-attested cleanup/recovery, retained protected bytes and
+capability state, unconditional resume, mutable exports, ambient `Number` leakage, digest-only native provenance, and
+missing separate drain/shutdown deadlines. The report is preserved with SHA-256
+`baefddebe2af5bcf3f2132d2a8ef2b9bce9c84f02477fff8e95de9319b8b8e66`.
+
+Exact remediation `5a579342b7a03bb013de21663c69a3a6118e11c6` adds exact one-use socket admission before handlers,
+captured/frozen decoder dispatch, one mandatory cleanup path, fail-closed absence of independent signed physical
+evidence, measured pending-byte watermarks, frozen exported functions, captured status validation, exact
+contract/implementation capability provenance, and separately bounded drain/shutdown. Stage zero, typecheck, lint,
+34/34 focused, 123/123 connection, 139/139 CR13A, 769/769 pretests, 372/372 core, 374/374 posttests, production build,
+4/4 rendered routes, migrations 0001-0036/119 tables, and whitespace checks pass. No native backend, bind capability,
+connection admission, listener, socket, port, network, SSH, credential, provider, production, or deployment effect ran.
+
+A different independent zero-repair reviewer accepted exact remediation `5a579342b7a03bb013de21663c69a3a6118e11c6`
+with 0 High, 0 Medium, and 0 Low findings. The reviewer reproduced all nine original defects against the rejected
+target, closed every one against the remediation, completed the twelve-group hostile matrix, and observed zero hostile
+replacement executions, protected-byte exposures, native backend constructions, bind capabilities, admissions,
+physical listener/socket/port attempts, network observations, or external effects. Current-run gates passed at 34/34
+focused tests, 123/123 connection tests, 139/139 CR13A tests, 769/769 pretests, 419/421 core tests with two established
+Windows-only skips, 374/374 posttests, production build, 4/4 rendered routes, and migrations 0001-0036/119 tables.
+The accepted report is `docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. Ordinary owner-controlled integration is
+ready. Physical construction, capability/admission issuance, listener activation, qualification, SSH, credentials,
+Hermes/provider contact, production use, deployment, DNS, and hosting remain unauthorized.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1252,12 +1286,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-110-INTEGRATION — run ordinary GitHub CI and request exact owner merge approval
+Block: CR13A-LIVE-120-INTEGRATION — publish the independently accepted unwired driver, require clean CI, and await exact owner merge approval
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact remediation is independently accepted and now needs only ordinary repository integration controls.
-Expected output: one scoped pull request from the reviewed branch, passing GitHub CI, exact owner approval, merge, and passing post-merge main CI.
-Owner action: none; independent reviews are already authorized. Approve only the exact pull request after accepted review and ordinary CI.
+Why: the exact remediation and independent acceptance are complete; integration now needs an auditable branch, pull request, and green repository CI without widening authority.
+Expected output: one PR targeting `main` with exact accepted report SHA-256 `420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`, clean required checks, and no native effect.
+Owner action: give exact approval to merge the numbered PR after CI passes. A physical attempt remains a later, separately owner-attended decision.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
