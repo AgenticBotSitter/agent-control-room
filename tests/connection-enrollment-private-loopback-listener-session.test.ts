@@ -344,13 +344,17 @@ test("CR13A-LIVE-090 serializes admission and cannot interrupt a pending admissi
   await Promise.resolve();
   expectCode(() => session.observeConnectionClose(input.connectionClose), "state_conflict");
   expectCode(() => session.abort(), "state_conflict");
+  expectCode(() => session.finish(), "state_conflict");
   settle?.(admissionReceipt(plan));
   await pending;
   assert.equal(calls, 1);
   session.observeConnectionClose(input.connectionClose);
   session.observeDrainStart(input.drain);
   session.observeListenerClose(input.listenerClose);
-  session.finish();
+  const receipt = session.finish();
+  assert.equal(receipt.admissionCompleted, true);
+  assert.equal(receipt.listenerEventCount, 6);
+  assert.equal(calls, 1);
 
   let release: ((value: ConnectionEnrollmentTransportAdmissionReceiptV1) => void) | undefined;
   const secondDeferred = new Promise<ConnectionEnrollmentTransportAdmissionReceiptV1>((resolvePromise) => {
@@ -366,6 +370,36 @@ test("CR13A-LIVE-090 serializes admission and cannot interrupt a pending admissi
   await expectRejection(() => second.completeFrameAndAdmit(input.frame), "state_conflict");
   release?.(admissionReceipt(plan));
   await firstAttempt;
+});
+
+test("CR13A-LIVE-090 finish cannot interrupt synchronous admission reentry", async () => {
+  const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(configuration());
+  const input = observations(plan);
+  let calls = 0;
+  const sessionHolder: { current?: ConnectionEnrollmentPrivateLoopbackListenerSessionV1 } = {};
+  const admission = {
+    admit() {
+      calls += 1;
+      const current = sessionHolder.current;
+      assert.ok(current);
+      expectCode(() => current.finish(), "state_conflict");
+      return Promise.resolve(admissionReceipt(plan));
+    },
+  };
+  const session = new ConnectionEnrollmentPrivateLoopbackListenerSessionV1(plan, admission);
+  sessionHolder.current = session;
+  session.observeBind(input.bind);
+  session.observeConnectionOpen(input.open);
+  session.pushFrameChunk(packetFor(enrollmentFrame()));
+  await session.completeFrameAndAdmit(input.frame);
+  assert.equal(calls, 1);
+  session.observeConnectionClose(input.connectionClose);
+  session.observeDrainStart(input.drain);
+  session.observeListenerClose(input.listenerClose);
+  const receipt = session.finish();
+  assert.equal(receipt.admissionCompleted, true);
+  assert.equal(receipt.listenerEventCount, 6);
+  assert.equal(calls, 1);
 });
 
 test("CR13A-LIVE-090 session receipt rejects drift, behavior, and recomputed native claims", async () => {

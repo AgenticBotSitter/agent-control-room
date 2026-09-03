@@ -374,11 +374,11 @@ export class ConnectionEnrollmentPrivateLoopbackListenerSessionV1 {
   }
 
   finish(): ConnectionEnrollmentPrivateLoopbackListenerSessionReceiptV1 {
-    try { assertConnectionEnrollmentNodeIngressRuntimeV1(); }
-    catch { this.#fail("integrity_failed"); }
-    if (this.#state === "complete") {
+    if (this.#state === "admitting" || this.#state === "complete") {
       throw new ConnectionEnrollmentPrivateLoopbackListenerSessionErrorV1("state_conflict");
     }
+    try { assertConnectionEnrollmentNodeIngressRuntimeV1(); }
+    catch { this.#fail("integrity_failed"); }
     if (this.#state !== "closed" || !this.#admissionReceipt || !this.#admissionInputDigest
       || this.#frameChunks < 1) this.#fail("incomplete_session");
     let listenerReceipt;
