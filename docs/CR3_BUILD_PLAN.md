@@ -1189,7 +1189,7 @@ integration only and grants no listener, SSH, credential, native, provider, prod
 
 ## CR13A-LIVE-090 — one-frame listener-session and authenticated admission composition
 
-Status: independently accepted after three remediation rounds; exact third remediation
+Status: independently accepted after three remediation rounds and integrated through owner-approved PR #238; exact third remediation
 `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` reviewed over owner-approved LIVE-080 merge
 `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; ordinary owner-controlled integration permitted. See
 `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` and ADR-158.
@@ -1268,6 +1268,9 @@ reconfirmed M-001/M-002, and found no new High, Medium, or Low defect. The uncha
 `cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. The disposable review clone was removed and
 the shared checkout remained clean. This permits ordinary owner-controlled integration only and grants no listener,
 SSH, credential, native, provider, production, deployment, DNS, hosting, or network authority.
+
+Owner-approved PR #238 merged accepted branch head `ecb5ea373ccb0cdbee1ef036b80ee29730a3ec0b` to `main` as
+`65ea851c123993d7760d6492966845f74ca1d665`. PR CI run `33784095714` and post-merge run `33785601437` passed.
 
 ## CR13A-LIVE-100 — default-disabled native-listener adapter contract
 

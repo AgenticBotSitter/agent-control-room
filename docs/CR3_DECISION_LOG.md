@@ -3142,6 +3142,11 @@ unchanged accepted report at `docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDE
 permitted. No listener, SSH, credential, native, provider, production database, deployment, DNS, hosting, network, or
 other external-effect authority is granted.
 
+**Integration amendment:** The owner approved PR #238. Accepted branch head
+`ecb5ea373ccb0cdbee1ef036b80ee29730a3ec0b` merged to `main` as
+`65ea851c123993d7760d6492966845f74ca1d665`; PR CI run `33784095714` and post-merge run `33785601437` passed.
+No listener or external-effect authority was added by integration.
+
 ## ADR-159 — Native-listener activation starts from an unconditionally disabled contract
 
 **Decision:** Before introducing `node:net` or any physical bind, freeze a plan-bound native-listener readiness record

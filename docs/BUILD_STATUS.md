@@ -117,7 +117,7 @@
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
-| CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; PR CI passed; owner-approved merge `65ea851...`; post-merge CI tracked separately; no listener/network effect |
+| CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Implementation candidate frozen at `8ba1057...`; independent zero-repair review required | Plan-bound twelve-gate readiness plus a driverless adapter that cannot start; 53/53 focused and 95/95 connection tests; no listener/network effect; see `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
@@ -1152,7 +1152,7 @@ network, or other external effect is authorized.
 
 The owner approved PR #238. Its exact accepted LIVE-090 branch head `ecb5ea373ccb0cdbee1ef036b80ee29730a3ec0b`
 merged to `main` as `65ea851c123993d7760d6492966845f74ca1d665` after PR CI run `33784095714` passed in
-12m7s. The post-merge run is `33785601437`; its final result remains tracked separately.
+12m7s. Post-merge run `33785601437` then passed on that exact authoritative main commit.
 
 CR13A-LIVE-100 is now the active implementation and review block. It freezes the exact boundary immediately before a
 future physical listener without adding one. The plan-bound readiness record retains no endpoint, address, port,
