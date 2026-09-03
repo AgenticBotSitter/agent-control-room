@@ -1136,3 +1136,33 @@ caller-buffer retention; post-push alias mutation is proven irrelevant. The reme
 Different-reviewer packet SHA-256: `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
 The accepted report SHA-256 is `7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`; it
 found no new High, Medium, or Low defect and grants integration review only.
+
+## CR13A-LIVE-080 — private-loopback listener lifecycle contract and fake rehearsal
+
+Status: active local implementation over owner-approved LIVE-070 integration
+`b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`. See
+`CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` and ADR-157.
+
+This block defines the exact lifecycle around the accepted LIVE-070 decoder without opening a listener. One strict,
+digest-bound policy plan fixes IPv4 literal loopback over an SSH tunnel, endpoint/owner/tunnel-peer/host-key/channel
+identity digests, frame/chunk limits, exactly one active connection, zero queued connections, one frame per connection,
+total/idle/shutdown deadlines, and no automatic restart. The public plan is non-authorizing policy; its unkeyed digest
+proves consistency only.
+
+The repository-fake rehearsal admits six exact ordered observations: simulated bind, connection open, protected frame,
+connection close, drain start, and listener close. Chunk, connection-age, idle-age, and shutdown chronology are bounded
+and monotonic. Every observation is explicitly fake and rejects native evidence.
+Only a module-private LIVE-070 decoder-minted frame bound to the same listener may pass. Identity drift, excess capacity,
+deadline breach, sequence drift, added or behavioral input, cleanup failure, incomplete finish, and any reuse after a
+terminal result fail closed.
+
+The safe receipt contains only digest/size/policy evidence and explicitly denies actual bind, exclusive port ownership,
+tunnel authentication, host-key custody, native cleanup, listener enablement, network I/O, and all approval/effect
+authority. A recomputed public digest cannot change those exact negative literals into native truth. Local-pilot wiring
+remains the accepted disabled listener; no socket, SSH, credential, Hermes/provider, native process, route, production
+database, deployment, DNS, or external effect is added.
+
+Completion requires the full deterministic repository lifecycle, immutable product freeze, a zero-repair packet, and a
+fresh independent review with no open High, Medium, or Low finding. Independent acceptance permits owner-controlled
+integration only. A physical listener, SSH tunnel, credential operation, or native qualification remains a new,
+separately authorized block. Use Sol xhigh throughout this listener-security boundary.

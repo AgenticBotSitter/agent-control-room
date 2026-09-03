@@ -115,7 +115,8 @@
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
-| CR13A-LIVE-070 private-loopback framing | Independently accepted at exact `8e4c20d...`; ordinary integration pending | Different reviewer closed all four findings with eight hostile probe groups and no new defect; accepted report SHA `7ac1a5f...`; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
+| CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
+| CR13A-LIVE-080 private-loopback listener lifecycle | Active local implementation candidate | Exact plan, six-step terminal fake rehearsal, decoder-minted frame provenance, bounded connection/drain policy, safe negative-authority receipt, and no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1026,6 +1027,23 @@ The different reviewer reproduced every deterministic gate plus eight independen
 M-002, L-001, and L-002, and found no new High, Medium, or Low defect. Accepted report SHA-256:
 `7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`. Ordinary integration remains owner-controlled.
 
+The owner approved PR #236. GitHub PR CI run `33756343379` passed, the accepted LIVE-070 product merged to `main` as
+`b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`, and post-merge CI run `33757989813` passed every stage in 11m27s.
+
+CR13A-LIVE-080 is now the active implementation block. It defines an exact, digest-bound future-listener plan and an
+effect-free six-step repository rehearsal from simulated loopback bind through one decoded frame, connection close,
+drain, and cleanup. Policy fixes literal IPv4 loopback over an SSH tunnel, five digest-only identity bindings, one active
+connection, zero queued connections, one frame, bounded total/idle/shutdown time, and no automatic restart. Only an
+accepted LIVE-070 module-private protected frame for the same listener can enter the frame step.
+
+Every observation rejects native evidence. A passing safe receipt retains no raw frame, delivery ID, signature, address,
+credential, or host material and explicitly denies actual bind, exclusive port ownership, tunnel authentication,
+host-key custody, native cleanup, listener enablement, network I/O, and every effect authority. The local pilot remains
+disabled and this block imports no listener, network, or process-launch module. Stage zero, TypeScript, full lint, 33/33
+focused tests, 75/75 connection tests, the full 769/769 pretest plus 419/421 core lifecycle with two intentional platform
+skips plus 326/326 posttests, production build, 4/4 rendered routes, all 36 migrations with 119 PostgreSQL tables, and
+whitespace pass. Immutable freeze and independent review remain required.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1041,13 +1059,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-070-INTEGRATION — publish the accepted private-loopback framing branch for ordinary CI and owner merge
+Block: CR13A-LIVE-080-REVIEW — freeze and independently review the private-loopback listener lifecycle contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the accepted transport-boundary diff and its preserved negative/positive evidence require exact integration review.
-Expected output: private branch push, main-target PR, ordinary GitHub CI, exact reviewed-product confirmation, and no
-listener or external effect.
-Owner action: approve merge only after the PR and ordinary CI are green.
+Why: this is the lifecycle security boundary immediately surrounding future untrusted network input.
+Expected output: full deterministic gates, immutable product, zero-repair review packet, independent adversarial report,
+and, only after acceptance, a private main-target PR with ordinary GitHub CI and no listener or external effect.
+Owner action: none until an accepted PR is ready; approve merge only after review and ordinary CI are green.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

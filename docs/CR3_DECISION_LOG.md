@@ -3008,3 +3008,41 @@ The different reviewer accepted the exact remediation with no new High, Medium, 
 deterministic gates and eight hostile-probe groups. Accepted report SHA-256:
 `7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`. This permits ordinary integration review only;
 physical listener and external-effect authority remain separate.
+
+## ADR-157 — Listener lifecycle policy is rehearsed before any physical bind
+
+**Decision:** Define and independently review an effect-free private-loopback listener lifecycle before implementing a
+socket or SSH adapter. The plan fixes an SSH-tunnel transport, IPv4 literal `127.0.0.1`, accepted LIVE-070 single-frame
+framing, digest-only endpoint/owner/tunnel-peer/host-key/channel identities, one active connection, zero queued
+connections, total/idle/shutdown ceilings, one frame per connection, and no automatic restart. Its digest provides
+public consistency, not authenticity or authority.
+
+The repository-fake state machine requires exactly six ordered observations: bind, open, decoded frame, connection
+close, drain, and listener close. It accepts only the module-private LIVE-070 protected frame bound to the same listener.
+Every observation states that it is repository fake and that no native evidence is accepted. Chunk count and elapsed
+connection, idle, drain, and close times are bounded; successive ages cannot move backward. Invalid ordering, identity,
+capacity, lifetime, provenance, cleanup, incomplete finish, or reuse is terminal.
+
+A passing receipt is safe, strict, and digest-bound but explicitly states that no actual bind, exclusive port ownership,
+tunnel-peer authentication, host-key custody, or native cleanup was proven. It also denies listener enablement, network
+I/O, approval, network, command, lease, and execution authority. These are exact literals, so recomputing the unkeyed
+digest cannot turn fake rehearsal evidence into native proof.
+
+**Why:** The physical-listener block will combine untrusted stream behavior, operating-system port state, tunnel
+identity, protected bytes, timeouts, backpressure, and shutdown. Freezing its lifecycle and truth vocabulary first makes
+the later effectful adapter smaller and prevents a convenient fake or configuration literal from being mistaken for
+real host evidence.
+
+**Alternatives rejected:** Open a loopback socket while designing the lifecycle; let the listener infer tunnel identity;
+permit multiple or queued enrollment connections; retry automatically after ambiguous shutdown; accept caller-made
+protected frames; place raw enrollment frames in receipts; treat a public SHA digest as native attestation; modify
+Hermes; expose browser/HTTP enrollment; or claim physical readiness from repository-fake observations.
+
+**Trade-off:** This block does not make a remote Hermes agent connect yet and repeats lifecycle facts that a future
+native adapter must independently prove. That deliberate separation costs one implementation/review stage but keeps
+network, credential, and native authority outside repository-only work.
+
+**Reevaluate:** Before opening a listener, starting an SSH tunnel, reading a credential, accepting more than one frame or
+connection, changing time/capacity limits, permitting restart, changing identity binding, using the receipt as native
+evidence, or composing the listener into LIVE-060. Any such step requires a new exact contract, explicit effect
+authority, deterministic tests, immutable review evidence, and owner-controlled integration.
