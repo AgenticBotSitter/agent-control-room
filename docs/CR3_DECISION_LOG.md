@@ -3315,3 +3315,10 @@ attempt; or let repository-fake evidence clear a native blocker.
 **Reevaluate:** Before adding any native/socket implementation, runtime consumer, live listener, port selection, SSH
 operation, credential access, signed native evidence, qualification attempt, production contact, or deployment. Those
 steps require a separately frozen contract, independent review, and the exact authority appropriate to the effect.
+
+**Design-contract amendment:** `docs/CR13A_LIVE_120_PHYSICAL_NATIVE_DRIVER_DESIGN.md` fixes the exact staged
+authority split, private input custody, lifecycle, loopback bind, admission, capacity, framing, deadlines,
+backpressure, shutdown, cleanup, restart, ambiguity, no-retry, evidence, qualification, and independent-review
+requirements. It authorizes no native import, physical driver, listener, port, connection, SSH, credential, provider,
+runtime activation, production contact, or deployment. The unwired implementation and the later physical attempt each
+require separate exact owner authority.

@@ -1393,7 +1393,8 @@ network connection, SSH operation, credential read, native qualification, produc
 
 ## CR13A-LIVE-120 — physical native-driver design and qualification boundary
 
-Status: next effect-free architecture block. Use Sol xhigh.
+Status: effect-free design contract complete locally; physical implementation and qualification remain unauthorized.
+See `CR13A_LIVE_120_PHYSICAL_NATIVE_DRIVER_DESIGN.md`. Use Sol xhigh.
 
 Before any `node:net` import, physical driver implementation, runtime wiring, port selection, listener operation, or
 native attempt, freeze the exact operating-system boundary. The design must define literal IPv4 loopback binding,
@@ -1406,3 +1407,11 @@ physical attempt as non-collapsible stages. Repository tests remain fake-only an
 No socket code, live port, SSH, credential access, runtime wiring, or external effect belongs in the design block.
 A later implementation requires a new immutable review target; a later physical bind requires a fresh owner-attended
 one-attempt packet and exact authority.
+
+The completed design fixes the non-collapsible implementation, activation-candidate, owner-spend, physical-observation,
+independent-evidence, and runtime-activation stages; a four-component driver/locator-broker/signer/disabled-composition
+split; exact private inputs; terminal lifecycle states; literal-loopback and non-authentication truth; admission,
+frame, byte, chunk, backpressure, timer, cleanup, restart, ambiguity, and no-retry rules; public sanitation; the later
+qualification packet; and the mandatory hostile review. It adds no native module, listener, port, connection, SSH,
+credential, provider, production, or deployment path. Implementation now requires a separate exact owner grant; the
+physical attempt will require another later owner-attended grant.

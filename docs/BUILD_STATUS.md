@@ -120,6 +120,7 @@
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
 | CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
+| CR13A-LIVE-120 physical native-driver boundary | Effect-free design contract complete locally; implementation not authorized | Exact component split, state machine, bounds, cleanup, recovery, qualification, and no-retry rules; no native code or effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1258,12 +1259,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-120-NATIVE-DRIVER-DESIGN — freeze the real-driver implementation and qualification boundary
+Block: CR13A-LIVE-120-NATIVE-DRIVER-IMPLEMENTATION — implement the reviewed boundary without wiring or running it
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the next code could touch operating-system socket behavior, so its lifetime, cleanup, provenance, and one-attempt evidence must be fixed before implementation.
-Expected output: an effect-free architecture and acceptance contract for one unwired physical driver, exact activation evidence, failure and cleanup semantics, and a later owner-attended qualification packet.
-Owner action: none for the design contract. Fresh exact authority will be required before importing native socket code or running a physical attempt.
+Why: the effect-free design is now fixed; the next change would add a single allowlisted native networking module and therefore needs a separate exact authority boundary.
+Expected output: one unwired physical-driver implementation behind exact internal ports, fake-only deterministic tests, static import/consumer allowlists, and independent zero-repair review; no real bind or runtime activation.
+Owner action: authorize the bounded repository-code implementation before any native networking import. A separate later authorization will still be required for one physical attempt.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
