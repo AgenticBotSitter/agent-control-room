@@ -53,7 +53,16 @@ if (!promiseConstructorDescriptorV1 || !("value" in promiseConstructorDescriptor
 }
 const promiseConstructorV1 = promiseConstructorDescriptorV1.value;
 const promiseThenV1 = promiseThenDescriptorV1.value;
+const symbolSpeciesV1 = Symbol.species;
+const promiseSpeciesDescriptorV1 = objectGetOwnPropertyDescriptorV1(promiseConstructorV1, symbolSpeciesV1);
+if (!promiseSpeciesDescriptorV1 || !("get" in promiseSpeciesDescriptorV1)
+  || typeof promiseSpeciesDescriptorV1.get !== "function" || isHostProxyV1(promiseSpeciesDescriptorV1.get)
+  || promiseSpeciesDescriptorV1.set !== undefined) {
+  throw new Error("Promise species runtime unavailable");
+}
+const promiseSpeciesGetterV1 = promiseSpeciesDescriptorV1.get;
 const ingressErrorPrototypeV1 = ConnectionEnrollmentNodeIngressErrorV1.prototype;
+const discardPromiseSettlementV1 = (): undefined => undefined;
 
 function patternMatchesV1(pattern: RegExp, value: string): boolean {
   return reflectApplyV1(regexpExecV1, pattern, [value]) !== null;
@@ -70,19 +79,47 @@ function exactInstantV1(value: unknown): value is string {
   } catch { return false; }
 }
 
-function exactNativePromiseV1(value: unknown): value is Promise<unknown> {
-  if (!value || typeof value !== "object" || isHostProxyV1(value)
-    || objectGetPrototypeOfV1(value) !== promisePrototypeV1) return false;
+function intrinsicNativePromiseV1(value: unknown): value is Promise<unknown> {
+  return value !== null && value !== undefined && typeof value === "object" && !isHostProxyV1(value)
+    && objectGetPrototypeOfV1(value) === promisePrototypeV1;
+}
+
+function exactPromiseRuntimeV1(): boolean {
   const constructorDescriptor = objectGetOwnPropertyDescriptorV1(promisePrototypeV1, "constructor");
   const thenDescriptor = objectGetOwnPropertyDescriptorV1(promisePrototypeV1, "then");
+  const speciesDescriptor = objectGetOwnPropertyDescriptorV1(promiseConstructorV1, symbolSpeciesV1);
   if (!constructorDescriptor || !("value" in constructorDescriptor)
     || constructorDescriptor.value !== promiseConstructorV1
-    || !thenDescriptor || !("value" in thenDescriptor) || thenDescriptor.value !== promiseThenV1) return false;
+    || !thenDescriptor || !("value" in thenDescriptor) || thenDescriptor.value !== promiseThenV1
+    || !speciesDescriptor || !("get" in speciesDescriptor) || speciesDescriptor.get !== promiseSpeciesGetterV1
+    || speciesDescriptor.set !== undefined) return false;
+  return true;
+}
+
+function exactNativePromiseV1(value: unknown): value is Promise<unknown> {
+  if (!intrinsicNativePromiseV1(value) || !exactPromiseRuntimeV1()) return false;
   const keys = reflectOwnKeysV1(value);
   for (let index = 0; index < keys.length; index += 1) {
     if (typeof keys[index] === "string") return false;
   }
   return true;
+}
+
+/**
+ * Mark a malformed same-realm Promise observed without reading its `then`.
+ * The native method's SpeciesConstructor path is safe only while the captured
+ * prototype/species selection remains exact and the instance cannot override
+ * `constructor`; every other value stays completely untouched.
+ */
+function observeMalformedIntrinsicPromiseV1(value: unknown): void {
+  if (!intrinsicNativePromiseV1(value) || !exactPromiseRuntimeV1()
+    || objectGetOwnPropertyDescriptorV1(value, "constructor") !== undefined) return;
+  try {
+    reflectApplyV1(promiseThenV1, value, [discardPromiseSettlementV1, discardPromiseSettlementV1]);
+  } catch {
+    // The admission still returns only its bounded integrity result. Never
+    // inspect, serialize, or rethrow the dependency value or observer failure.
+  }
 }
 
 export type ConnectionEnrollmentTransportAdmissionConfigurationV1 = Readonly<{
@@ -305,6 +342,7 @@ export class ConnectionEnrollmentTransportAdmissionV1 implements ConnectionEnrol
     try { assertConnectionEnrollmentNodeIngressRuntimeV1(); }
     catch { throw new ConnectionEnrollmentTransportAdmissionErrorV1("integrity_failed"); }
     if (!exactNativePromiseV1(pending)) {
+      observeMalformedIntrinsicPromiseV1(pending);
       throw new ConnectionEnrollmentTransportAdmissionErrorV1("integrity_failed");
     }
 

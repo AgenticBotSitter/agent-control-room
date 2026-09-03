@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -237,6 +238,69 @@ test("CR13A-LIVE-060 rejects non-native ingress thenables before assimilation", 
   assert.deepEqual([behaviorReads, proxyTraps], [0, 0]);
 });
 
+test("CR13A-LIVE-060 observes malformed intrinsic Promise rejection without process escape", async () => {
+  const rawRejectedValue = Object.freeze({ protected: "must-not-reach-process-event" });
+  const malformed = Promise.reject(rawRejectedValue);
+  let instrumentationReads = 0;
+  Object.defineProperty(malformed, "instrumentation", {
+    get() { instrumentationReads += 1; throw new Error("instrumentation accessor must remain inert"); },
+  });
+  const ingress = {
+    receive() { return malformed as Promise<ConnectionEnrollmentNodeIngressReceiptV1>; },
+  };
+  const admission = new ConnectionEnrollmentTransportAdmissionV1(ingress, configuration(), new FixedClock());
+  const escaped: unknown[] = [];
+  const listener = (value: unknown) => { escaped.push(value); };
+  process.on("unhandledRejection", listener);
+  try {
+    await expectAdmissionRejection(() => admission.admit({ rawFrame: "{}", deliveryId }), "integrity_failed");
+    await new Promise<void>((resolveImmediate) => setImmediate(resolveImmediate));
+    assert.deepEqual(escaped, []);
+    assert.equal(instrumentationReads, 0);
+  } finally {
+    process.off("unhandledRejection", listener);
+  }
+});
+
+test("CR13A-LIVE-060 remains bounded under strict unhandled-rejection policy", () => {
+  const probe = `
+    import {
+      ConnectionEnrollmentTransportAdmissionErrorV1,
+      ConnectionEnrollmentTransportAdmissionV1,
+    } from "./src/connection-registry/v1/index.ts";
+    const rawRejectedValue = Object.freeze({ protected: "must-not-escape" });
+    const malformed = Promise.reject(rawRejectedValue);
+    Object.defineProperty(malformed, "instrumentation", { value: "unexpected-own-string" });
+    const ingress = { receive() { return malformed; } };
+    const clock = { now() { return "2026-09-03T03:00:00.000Z"; } };
+    const configuration = {
+      admissionId: "transport-admission:strict-rejection-probe",
+      transport: "ssh_tunnel",
+      listenerVisibility: "private_loopback",
+      channelIdentityDigest: "sha256:${"a".repeat(64)}",
+      maximumFrameBytes: 4096,
+    };
+    const admission = new ConnectionEnrollmentTransportAdmissionV1(ingress, configuration, clock);
+    let bounded = false;
+    try {
+      await admission.admit({ rawFrame: "{}", deliveryId: "delivery:strict-rejection-probe" });
+    } catch (error) {
+      bounded = error instanceof ConnectionEnrollmentTransportAdmissionErrorV1
+        && error.safeCode === "integrity_failed" && error !== rawRejectedValue;
+    }
+    await new Promise((resolveImmediate) => setImmediate(resolveImmediate));
+    if (!bounded) throw new Error("probe did not return one bounded local failure");
+    process.stdout.write("bounded\\n");
+  `;
+  const completed = spawnSync(process.execPath,
+    ["--unhandled-rejections=strict", "--import", "tsx", "--input-type=module", "--eval", probe],
+    { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" } });
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.signal, null);
+  assert.equal(completed.stdout, "bounded\n");
+  assert.equal(completed.stderr, "");
+});
+
 test("CR13A-LIVE-060 rechecks native Promise custody before awaiting ingress", async () => {
   const prototype = Object.getPrototypeOf((async () => undefined)());
   const getDescriptor = Object.getOwnPropertyDescriptor, defineProperty = Object.defineProperty;
@@ -263,6 +327,33 @@ test("CR13A-LIVE-060 rechecks native Promise custody before awaiting ingress", a
     await expectAdmissionRejection(() => pending!, "integrity_failed");
     assert.equal(replacementCalls, 0, key);
   }
+
+  const constructorDescriptor = getDescriptor(prototype, "constructor");
+  assert.ok(constructorDescriptor && "value" in constructorDescriptor
+    && typeof constructorDescriptor.value === "function");
+  const promiseConstructor = constructorDescriptor.value;
+  const speciesDescriptor = getDescriptor(promiseConstructor, Symbol.species);
+  assert.ok(speciesDescriptor && "get" in speciesDescriptor && typeof speciesDescriptor.get === "function");
+  let speciesCalls = 0, speciesInstalled = false;
+  const ingress = {
+    receive() {
+      const pending = (async () => ingressReceipt())();
+      defineProperty(promiseConstructor, Symbol.species, {
+        ...speciesDescriptor,
+        get() { speciesCalls += 1; return promiseConstructor; },
+      });
+      speciesInstalled = true;
+      return pending;
+    },
+  };
+  const admission = new ConnectionEnrollmentTransportAdmissionV1(ingress, configuration(), new FixedClock());
+  let pending: Promise<unknown> | undefined;
+  try { pending = admission.admit({ rawFrame: "{}", deliveryId }); }
+  finally {
+    if (speciesInstalled) defineProperty(promiseConstructor, Symbol.species, speciesDescriptor);
+  }
+  await expectAdmissionRejection(() => pending!, "integrity_failed");
+  assert.equal(speciesCalls, 0);
 });
 
 test("CR13A-LIVE-060 receipt parser detects drift and runs no input behavior", async () => {
