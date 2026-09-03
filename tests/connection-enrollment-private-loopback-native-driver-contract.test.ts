@@ -236,6 +236,59 @@ test("CR13A-LIVE-110 rejects cross-plan and cross-driver evidence substitution",
   }), "invalid_evidence");
 });
 
+test("CR13A-LIVE-110 rejects publicly equal but separately minted provenance", () => {
+  const firstPlan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration());
+  const secondPlan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration());
+  const firstReadiness = createConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(firstPlan);
+  const secondReadiness = createConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(secondPlan);
+  assert.notEqual(firstPlan, secondPlan);
+  assert.equal(firstPlan.planDigest, secondPlan.planDigest);
+  assert.equal(firstReadiness.readinessDigest, secondReadiness.readinessDigest);
+  expectCode(() => createConnectionEnrollmentPrivateLoopbackNativeDriverContractV1({
+    plan: firstPlan,
+    readiness: secondReadiness,
+  }), "invalid_configuration");
+
+  const firstContract = createConnectionEnrollmentPrivateLoopbackNativeDriverContractV1({
+    plan: firstPlan,
+    readiness: firstReadiness,
+  });
+  const secondContract = createConnectionEnrollmentPrivateLoopbackNativeDriverContractV1({
+    plan: secondPlan,
+    readiness: secondReadiness,
+  });
+  const firstDriver = new RepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1(firstContract);
+  const firstRehearsal = firstDriver.rehearse();
+  assert.notEqual(firstContract, secondContract);
+  assert.equal(firstContract.contractDigest, secondContract.contractDigest);
+  expectCode(() => createConnectionEnrollmentPrivateLoopbackNativeActivationEvidenceV1({
+    readiness: secondReadiness,
+    driverContract: secondContract,
+    driverRehearsal: firstRehearsal,
+  }), "invalid_evidence");
+
+  const alternateReadiness = createConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(firstPlan);
+  assert.notEqual(firstReadiness, alternateReadiness);
+  assert.equal(firstReadiness.readinessDigest, alternateReadiness.readinessDigest);
+  expectCode(() => createConnectionEnrollmentPrivateLoopbackNativeActivationEvidenceV1({
+    readiness: alternateReadiness,
+    driverContract: firstContract,
+    driverRehearsal: firstRehearsal,
+  }), "invalid_evidence");
+
+  const alternateContract = createConnectionEnrollmentPrivateLoopbackNativeDriverContractV1({
+    plan: firstPlan,
+    readiness: firstReadiness,
+  });
+  assert.notEqual(firstContract, alternateContract);
+  assert.equal(firstContract.contractDigest, alternateContract.contractDigest);
+  expectCode(() => createConnectionEnrollmentPrivateLoopbackNativeActivationEvidenceV1({
+    readiness: firstReadiness,
+    driverContract: alternateContract,
+    driverRehearsal: firstRehearsal,
+  }), "invalid_evidence");
+});
+
 test("CR13A-LIVE-110 exact-brands and freezes the repository fake driver and binder", () => {
   const { contract, driver, rehearsal } = buildFixture();
   const prototype = RepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1.prototype;
@@ -250,6 +303,25 @@ test("CR13A-LIVE-110 exact-brands and freezes the repository fake driver and bin
   expectCode(() => prototype.status.call({}), "integrity_failed");
   expectCode(() => prototype.rehearse.call({}), "integrity_failed");
   expectCode(() => prototype.close.call({}), "integrity_failed");
+
+  let replacementExecutions = 0;
+  for (const operation of [prototype.status, prototype.rehearse, prototype.close]) {
+    assert.equal(Object.isFrozen(operation), true);
+    assert.equal(Object.isExtensible(operation), false);
+    for (const key of ["call", "apply", "bind", "replacement"] as const) {
+      assert.throws(() => Object.defineProperty(operation, key, {
+        value: () => { replacementExecutions += 1; },
+      }), TypeError);
+    }
+    assert.throws(() => Object.defineProperty(operation, "prototype", { value: {} }), TypeError);
+    assert.throws(() => Object.setPrototypeOf(operation, {
+      call: () => { replacementExecutions += 1; },
+    }), TypeError);
+  }
+  assert.equal(Reflect.apply(prototype.status, driver, []), contract);
+  assert.equal(Reflect.apply(prototype.rehearse, driver, []), rehearsal);
+  assert.equal(Reflect.apply(prototype.close, driver, []), undefined);
+  assert.equal(replacementExecutions, 0);
 
   const bound = bindRepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1(driver);
   assert.equal(Object.isFrozen(bound), true);

@@ -6,6 +6,7 @@ import {
 } from "../../security/host-value";
 import { assertConnectionEnrollmentNodeIngressRuntimeV1 } from "./node-ingress";
 import {
+  assertConnectionEnrollmentPrivateLoopbackNativeListenerReadinessForPlanV1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_BLOCKERS_V1,
   parseConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1,
   type ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1,
@@ -29,6 +30,8 @@ const numberIsSafeIntegerV1 = Number.isSafeInteger;
 const reflectApplyV1 = Reflect.apply;
 const regexpExecV1 = RegExp.prototype.exec;
 const stringSliceV1 = String.prototype.slice;
+const weakMapGetV1 = WeakMap.prototype.get;
+const weakMapSetV1 = WeakMap.prototype.set;
 const weakSetAddV1 = WeakSet.prototype.add;
 const weakSetHasV1 = WeakSet.prototype.has;
 const digestPatternV1 = /^sha256:[a-f0-9]{64}$/;
@@ -40,6 +43,16 @@ const nativeDriverContractsV1 = new WeakSet<object>();
 const nativeDriverRehearsalsV1 = new WeakSet<object>();
 const nativeActivationEvidenceRecordsV1 = new WeakSet<object>();
 const repositoryFakeNativeDriversV1 = new WeakSet<object>();
+const nativeDriverContractProvenanceV1 = new WeakMap<object, Readonly<{
+  plan: object;
+  readiness: ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1;
+}>>();
+const nativeDriverRehearsalProvenanceV1 = new WeakMap<object, Readonly<{
+  contract: ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1;
+  driver: RepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1;
+}>>();
+const repositoryFakeNativeDriverContractsV1 = new WeakMap<object,
+ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1>();
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_DRIVER_OPERATIONS_V1 = objectFreezeV1([
   "prepare",
@@ -245,7 +258,9 @@ ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1 {
   if (!input) throw new ConnectionEnrollmentPrivateLoopbackNativeDriverContractErrorV1("invalid_configuration");
   const plan = parsePlanV1(input.plan);
   const readiness = parseReadinessV1(input.readiness);
-  if (readiness.listenerPlanDigest !== plan.planDigest) {
+  try {
+    assertConnectionEnrollmentPrivateLoopbackNativeListenerReadinessForPlanV1(input.plan, readiness);
+  } catch {
     throw new ConnectionEnrollmentPrivateLoopbackNativeDriverContractErrorV1("invalid_configuration");
   }
   const material = {
@@ -292,6 +307,10 @@ ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1 {
   catch { throw new ConnectionEnrollmentPrivateLoopbackNativeDriverContractErrorV1("invalid_configuration"); }
   const contract = objectFreezeV1({ ...material, contractDigest: sha256Digest(material) });
   reflectApplyV1(weakSetAddV1, nativeDriverContractsV1, [contract]);
+  reflectApplyV1(weakMapSetV1, nativeDriverContractProvenanceV1, [contract, objectFreezeV1({
+    plan: input.plan as object,
+    readiness,
+  })]);
   return contract;
 }
 
@@ -372,7 +391,8 @@ ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1 {
   return value as ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1;
 }
 
-function createRepositoryFakeRehearsalV1(contractValue: unknown):
+function createRepositoryFakeRehearsalV1(contractValue: unknown,
+  driver: RepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1):
 ConnectionEnrollmentPrivateLoopbackNativeDriverRehearsalV1 {
   const contract = parseConnectionEnrollmentPrivateLoopbackNativeDriverContractV1(contractValue);
   const material = {
@@ -415,6 +435,10 @@ ConnectionEnrollmentPrivateLoopbackNativeDriverRehearsalV1 {
   };
   const rehearsal = objectFreezeV1({ ...material, rehearsalDigest: sha256Digest(material) });
   reflectApplyV1(weakSetAddV1, nativeDriverRehearsalsV1, [rehearsal]);
+  reflectApplyV1(weakMapSetV1, nativeDriverRehearsalProvenanceV1, [rehearsal, objectFreezeV1({
+    contract,
+    driver,
+  })]);
   return rehearsal;
 }
 
@@ -498,8 +522,9 @@ export class RepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1 {
       throw new ConnectionEnrollmentPrivateLoopbackNativeDriverContractErrorV1("invalid_driver");
     }
     this.#contract = parseConnectionEnrollmentPrivateLoopbackNativeDriverContractV1(contractValue);
-    this.#rehearsal = createRepositoryFakeRehearsalV1(this.#contract);
     reflectApplyV1(weakSetAddV1, repositoryFakeNativeDriversV1, [this]);
+    reflectApplyV1(weakMapSetV1, repositoryFakeNativeDriverContractsV1, [this, this.#contract]);
+    this.#rehearsal = createRepositoryFakeRehearsalV1(this.#contract, this);
     objectFreezeV1(this);
   }
 
@@ -521,7 +546,11 @@ const repositoryFakeDriverPrototypeV1 =
 const repositoryFakeDriverStatusV1 = repositoryFakeDriverPrototypeV1.status;
 const repositoryFakeDriverRehearseV1 = repositoryFakeDriverPrototypeV1.rehearse;
 const repositoryFakeDriverCloseV1 = repositoryFakeDriverPrototypeV1.close;
+objectFreezeV1(repositoryFakeDriverStatusV1);
+objectFreezeV1(repositoryFakeDriverRehearseV1);
+objectFreezeV1(repositoryFakeDriverCloseV1);
 objectFreezeV1(repositoryFakeDriverPrototypeV1);
+objectFreezeV1(RepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1);
 
 function isExactRepositoryFakeDriverV1(value: unknown):
 value is RepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1 {
@@ -562,7 +591,27 @@ ConnectionEnrollmentPrivateLoopbackNativeActivationEvidenceV1 {
   const readiness = parseReadinessV1(input.readiness);
   const contract = parseConnectionEnrollmentPrivateLoopbackNativeDriverContractV1(input.driverContract);
   const rehearsal = parseConnectionEnrollmentPrivateLoopbackNativeDriverRehearsalV1(input.driverRehearsal);
-  if (contract.listenerReference !== readiness.listenerReference
+  const contractProvenance = reflectApplyV1(weakMapGetV1, nativeDriverContractProvenanceV1, [contract]) as
+    { plan: object; readiness: ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 } | undefined;
+  const rehearsalProvenance = reflectApplyV1(weakMapGetV1, nativeDriverRehearsalProvenanceV1, [rehearsal]) as
+    { contract: ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1;
+      driver: RepositoryFakeConnectionEnrollmentPrivateLoopbackNativeDriverV1 } | undefined;
+  if (!contractProvenance) {
+    throw new ConnectionEnrollmentPrivateLoopbackNativeDriverContractErrorV1("invalid_evidence");
+  }
+  try {
+    assertConnectionEnrollmentPrivateLoopbackNativeListenerReadinessForPlanV1(
+      contractProvenance.plan,
+      readiness,
+    );
+  } catch {
+    throw new ConnectionEnrollmentPrivateLoopbackNativeDriverContractErrorV1("invalid_evidence");
+  }
+  if (contractProvenance.readiness !== readiness
+    || !rehearsalProvenance || rehearsalProvenance.contract !== contract
+    || !isExactRepositoryFakeDriverV1(rehearsalProvenance.driver)
+    || reflectApplyV1(weakMapGetV1, repositoryFakeNativeDriverContractsV1, [rehearsalProvenance.driver]) !== contract
+    || contract.listenerReference !== readiness.listenerReference
     || contract.listenerPlanDigest !== readiness.listenerPlanDigest
     || contract.disabledReadinessDigest !== readiness.readinessDigest
     || rehearsal.driverReference !== contract.driverReference
