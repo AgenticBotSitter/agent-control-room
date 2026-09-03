@@ -1207,3 +1207,7 @@ backpressure and prove physical bind, port exclusivity, tunnel/host-key identity
 Completion requires immutable implementation, the complete deterministic repository lifecycle, a zero-repair attack
 packet, and a fresh independent reviewer with no open High, Medium, or Low finding. Use Sol xhigh for the protected-byte,
 async-settlement, and cleanup boundary. Independent acceptance permits ordinary owner-controlled integration only.
+
+The exact review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen implementation
+`5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`. Zero-repair packet SHA-256:
+`88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`.

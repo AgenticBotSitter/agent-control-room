@@ -1091,6 +1091,9 @@ tests with two intentional platform skips plus 335/335 posttests, production bui
 migrations with 119 PostgreSQL tables, and clean whitespace. A fresh independent zero-repair review must find no open
 High, Medium, or Low defect before publication or integration.
 
+The exact review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`. Its zero-repair independent review packet
+has SHA-256 `88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.

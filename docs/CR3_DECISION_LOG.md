@@ -3093,3 +3093,8 @@ backpressure, cancellation, process-kill, and recovery evidence before activatio
 **Reevaluate:** Before adding a `node:net` import, listener factory, address/port, timer, socket callback, SSH operation,
 credential reference, application composition, or native qualification. Each remains separately authority-gated and
 must not be inferred from a passing repository session receipt.
+
+**Independent-review freeze:** Review exact target `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen
+implementation `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`, under the zero-repair packet with SHA-256
+`88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`. A passing report permits ordinary
+integration review only and grants no listener or external-effect authority.

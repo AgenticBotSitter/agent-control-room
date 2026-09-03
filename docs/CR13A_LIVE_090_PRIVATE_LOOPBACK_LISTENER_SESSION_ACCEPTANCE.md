@@ -94,3 +94,7 @@ Acceptance permits ordinary owner-controlled integration only. It does not autho
 credential read, native attempt, production database contact, deployment, or network action. The next native block must
 define a concrete default-disabled socket adapter, exact activation authority, real loopback and port evidence, bounded
 timers/backpressure, shutdown and process-kill recovery, and a separately owner-authorized disposable qualification.
+
+The exact review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen implementation
+`5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`. Zero-repair packet SHA-256:
+`88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`.
