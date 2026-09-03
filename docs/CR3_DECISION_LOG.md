@@ -2999,3 +2999,7 @@ accepted native parser for grammar, then tracks decoded key identity independent
 direct and escape-equivalent duplicate members fail before routing. Input assurance is corrected to full ordinary
 backing-store coverage, synchronous private copy, and no retention rather than unprovable exclusive ownership. The
 rejected product's whitespace failure remains preserved in its report; the remediation diff must be clean.
+
+The immutable remediation is `8e4c20da7166d48cb22c06fd38dfe87ee0016a02`. Its different-reviewer zero-repair
+packet SHA-256 is `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`; neither the
+product nor packet grants listener, SSH, credential, provider, native, production, or deployment authority.

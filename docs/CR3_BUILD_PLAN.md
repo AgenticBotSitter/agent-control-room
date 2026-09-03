@@ -1101,8 +1101,8 @@ authorized by this block.
 ## CR13A-LIVE-070 — private-loopback single-frame decoder and disabled listener port
 
 Status: exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` rejected over owner-approved LIVE-060
-integration `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`; M-001, M-002, L-001, and L-002 are remediated locally, with immutable
-product freeze and a different re-review still required. See
+integration `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`; M-001, M-002, L-001, and L-002 are remediated in immutable product
+`8e4c20da7166d48cb22c06fd38dfe87ee0016a02`, with a different re-review still required. See
 `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` and ADR-156.
 
 The effect-free decoder accepts exact full-backing-store `Uint8Array` chunks for one unsigned-big-endian-length-prefixed fatal UTF-8
@@ -1133,3 +1133,4 @@ frame before reduction, and rejects duplicate JSON members at every nesting leve
 The corrected binary assurance is exact full ordinary backing-store coverage, synchronous private copy, and no
 caller-buffer retention; post-push alias mutation is proven irrelevant. The remediation passes 23/23 focused tests,
 65/65 connection tests, the complete repository lifecycle, build/render, migration, type, lint, and whitespace gates.
+Different-reviewer packet SHA-256: `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.

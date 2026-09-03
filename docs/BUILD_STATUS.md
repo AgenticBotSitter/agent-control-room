@@ -115,7 +115,7 @@
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
-| CR13A-LIVE-070 private-loopback framing | Four rejected-product findings remediated locally; immutable freeze and different re-review pending | Private provenance, raw-frame identity recheck, duplicate-key rejection, accurate full-buffer-copy assurance, and clean whitespace now pass 23 focused/65 connection tests; negative report retained; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
+| CR13A-LIVE-070 private-loopback framing | Four rejected-product findings remediated at exact `8e4c20d...`; different re-review pending | Private provenance, raw-frame identity recheck, duplicate-key rejection, accurate full-buffer-copy assurance, and clean whitespace pass 23 focused/65 connection tests; negative report retained; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1020,7 +1020,9 @@ The binary contract now accurately accepts only exact full ordinary backing-stor
 caller buffer, and proves later alias mutation cannot affect the result. Current evidence is 23/23 focused tests, 65/65
 connection tests, 769/769 pretests, 419/421 core tests with two intentional platform skips, 316/316 posttests, TypeScript,
 full lint, production build with 4/4 rendered checks, all 36 migrations/119 PostgreSQL tables, and clean whitespace.
-Immutable remediation freeze and a different zero-repair re-review remain required before integration.
+Immutable remediation `8e4c20da7166d48cb22c06fd38dfe87ee0016a02` is frozen. A different zero-repair
+re-review remains required before integration; packet SHA-256 is
+`5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
 
 ## Parallel build lane
 

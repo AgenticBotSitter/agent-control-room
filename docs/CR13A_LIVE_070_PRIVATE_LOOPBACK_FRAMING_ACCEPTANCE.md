@@ -1,7 +1,7 @@
 # CR13A-LIVE-070 private-loopback framing acceptance
 
-**Status:** rejected product retained; all two Medium and two Low findings are remediated locally, with immutable
-product freeze and a different re-review still required
+**Status:** rejected product retained; all two Medium and two Low findings are remediated in immutable product
+`8e4c20da7166d48cb22c06fd38dfe87ee0016a02`, with a different re-review still required
 **Integration base:** `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`
 **Effect boundary:** repository code and local tests only; no socket bind, listener, SSH session, credential access,
 Hermes/provider call, native process, production PostgreSQL/VPS contact, deployment, DNS, or other network effect
@@ -73,8 +73,8 @@ Current remediation evidence before product freeze:
 - migrations `0001` through `0036`: pass, 119 PostgreSQL tables;
 - TypeScript, full ESLint, and whitespace validation: pass.
 
-The rejected exact product remains frozen at `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587`. The remediation product must be
-committed immutably and independently re-reviewed before integration.
+The rejected exact product remains frozen at `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587`. The remediation product is frozen
+at `8e4c20da7166d48cb22c06fd38dfe87ee0016a02` and must be independently re-reviewed before integration.
 
 ## Review and next boundary
 
@@ -99,6 +99,10 @@ The negative report is preserved at `docs/reviews/CR13A_LIVE_070_INDEPENDENT_REV
 add module-private decoder provenance, re-extract and compare delivery identity, reject duplicate JSON members before
 object extraction, state the enforceable full-backing-store synchronous-copy rule, prove post-push caller mutation cannot
 change the result, remove whitespace drift, and receive a different zero-repair re-review.
+
+Those four remediations are frozen at `8e4c20da7166d48cb22c06fd38dfe87ee0016a02`. The different-reviewer packet is
+`docs/reviews/CR13A_LIVE_070_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`.
 
 Even after acceptance, a real listener remains a separate owner-controlled block. It must prove the actual bind address,
 exclusive port ownership, tunnel peer and host-key custody, connection lifetime, backpressure, close/recovery behavior,
