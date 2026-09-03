@@ -2879,3 +2879,42 @@ no raw escape, and no new persistent state.
 migration verification, exact allowlist equality, and unchanged prior boundaries against immutable product
 `ffcdb586022ff67494cb2e404df7749b3a093b22`. M-001, M-002, and L-001 are closed with no new High, Medium, or Low finding.
 Accepted report SHA-256 is `a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. This authorizes integration review only.
+
+## ADR-155 — Transport admission supplies bounded evidence, never listener or enrollment authority
+
+**Decision:** The first transport-facing enrollment contract is an effect-free server admission between one
+already-decoded frame and the accepted LIVE-050 ingress. It accepts exactly `rawFrame` plus an untrusted `deliveryId`,
+validates exact shape and UTF-8 byte length before time or ingress use, and obtains canonical chronology only from a
+synchronous server-owned clock. Transport rate-limit identity is derived from immutable admission policy and an opaque
+channel-identity digest; no frame or request identity contributes to it.
+
+Configuration accepts only `ssh_tunnel` and `private_loopback` with a bounded frame ceiling. Those literals describe the
+required future transport posture but do not prove a physical bind or grant network authority. The contract opens no
+listener and performs no network I/O. The local runtime exposes only a disabled implementation.
+
+The asynchronous ingress seam accepts only an exact intrinsic native Promise with no own string keys and unchanged
+intrinsic prototype `constructor`/`then` selection. Proxy, subclass, or foreign thenable input is rejected before Promise
+assimilation. Error classification preserves only exact local codes in an explicit allowlist and otherwise constructs a
+fresh bounded integrity failure. The strict receipt binds policy and accepted ingress evidence while denying listener,
+I/O, approval, network, command, lease, and execution authority.
+
+**Why:** A future SSH/loopback listener needs a small contract that limits frames, supplies trusted time, and gives the
+ingress a stable rate-limit identity. Letting transport input claim authentication, chronology, enrollment, or authority
+would collapse the independently reviewed outer node-frame and inner enrollment-signature proofs. Separating admission
+from the physical listener also permits adversarial review without opening a socket or using credentials.
+
+**Alternatives rejected:** Passing transport-supplied receive time or authenticated booleans; deriving identity from the
+frame, delivery ID, remote address, hostname, route, or username; accepting arbitrary transport/listener strings;
+implicitly trusting `private_loopback` as runtime evidence; unbounded strings; Promise/thenable duck typing; preserving
+unknown rejections; exposing an HTTP/browser mutation; opening SSH or a listener in the same block; enabling the local
+pilot by default.
+
+**Trade-off:** Exact Promise custody rejects cross-realm/subclassed Promises and any own string instrumentation, while
+allowing inert own symbol metadata used by Node's test runner. The adapter must be composed with a synchronous trusted
+clock and frozen channel digest, and a later real listener still needs separate bind/tunnel verification. These costs are
+accepted because enrollment is rare and this seam is security-sensitive.
+
+**Reevaluate:** Before implementing a listener, accepting stream or binary frames, changing the byte ceiling, transport
+identity or clock source, adding rate-limit state, allowing another transport, crossing a worker/realm boundary, changing
+Promise instrumentation, altering safe-code mapping or receipt fields, enabling local runtime composition, or running a
+native/provider/production/deployment effect. Any such change invalidates CR13A-LIVE-060 review evidence.

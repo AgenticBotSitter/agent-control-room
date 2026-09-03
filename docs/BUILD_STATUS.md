@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-09-01
+**Updated:** 2026-09-02
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
 
@@ -113,7 +113,8 @@
 | CR13A-LIVE-020 durable connection registry and signal freshness | Accepted and integrated on `main` through PR #231 | Exact reviewed product `ed5bb96d...`, preserved negative and accepted review evidence, ordinary GitHub CI run `33570606104`, and merge `ad0e3aee...`; see `CR13A_LIVE_020_CONNECTION_REGISTRY_ACCEPTANCE.md` |
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
-| CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted for exact product `ffcdb58...`; owner-approved integration pending | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; no listener, live connection, provider, production, or deployment effect; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
+| CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
+| CR13A-LIVE-060 bounded transport admission | Product frozen at `cee64a8...`; independent security review required | Exact private-loopback SSH-tunnel configuration, server-owned time, UTF-8 frame ceiling, config-derived channel identity, behavior-free ingress failure containment, safe non-authorizing receipt, disabled local composition, and 22 focused tests; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -928,7 +929,33 @@ production build, 4/4 rendered checks, and whitespace validation pass. The zero-
 required gates, confirmed exact equality between the seven declared and recognized protocol codes, and found no High,
 Medium, or Low defect. M-001, M-002, and L-001 are closed. The accepted report SHA-256 is
 `a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. The exact provider-disabled product is ready for
-branch publication and owner-controlled integration; it enables no live ingress or external effect.
+branch publication and owner-controlled integration; it enables no live ingress or external effect. The owner approved
+PR #234, which merged the accepted product to `main` as `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`. Ordinary
+post-merge GitHub CI run `33708554981` passed every stage.
+
+CR13A-LIVE-060 is now the active build block. `ConnectionEnrollmentTransportAdmissionV1` is an effect-free handoff from
+one future already-decoded private SSH-tunnel frame to the accepted LIVE-050 ingress. It accepts exactly `rawFrame` and
+an untrusted `deliveryId`; validates the UTF-8 byte ceiling before time or ingress use; sources canonical chronology from
+a synchronous server-owned clock; and derives transport rate-limit identity only from frozen policy and channel-identity
+digests. Configuration is restricted to `ssh_tunnel` plus `private_loopback`, with a 4,096-byte minimum and the accepted
+node-protocol maximum ceiling. It does not verify that a physical listener is private and therefore grants no listener
+or network authority.
+
+The admission boundary admits only an exact intrinsic Promise from the captured ingress. Proxy or foreign thenables are
+rejected before assimilation; own string properties and mutation of the intrinsic Promise `constructor` or `then`
+selection fail closed before execution. Ingress failures retain only an explicit safe-code allowlist, and unknown
+rejections become a fresh local integrity error without escaping or executing the rejected value. The output is a
+strict, digest-bound receipt that records policy, channel, ingress evidence, canonical time, and seven explicit negative
+effect/authority facts. The local pilot wires only `DisabledConnectionEnrollmentTransportAdmissionV1`, and the app adds
+no route or listener.
+
+The exact product is frozen at `cee64a8197a011a91c06e6085d5f4d11e978ddbc` over integration base
+`5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`. Stage zero, TypeScript, full lint, 22/22 focused admission/ingress tests,
+50/50 connection tests, the complete 769/769 pretest plus 419/421 core lifecycle with two intentional platform skips
+plus 302/302 posttests, production build with 4/4 rendered checks, all 36 migrations with 119 PostgreSQL tables, and
+whitespace validation pass. The zero-repair packet SHA-256 is
+`0aa34793dff6ffd56d5cef026a250a170e5af12119d3ab7fe91ed199d6cb762f`. Independent review remains required before
+publication or integration.
 
 ## Parallel build lane
 
@@ -945,12 +972,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-050-INTEGRATION — publish the accepted branch and obtain ordinary CI plus owner approval
+Block: CR13A-LIVE-060-INDEPENDENT-REVIEW — attack the frozen bounded transport-admission boundary
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact provider-disabled product has independent acceptance and must now pass the canonical GitHub integration gate.
-Expected output: one main-target pull request, green ordinary CI, and an owner merge decision.
-Owner action: approve merge only after the PR and CI are reported ready.
+Why: this is the first contract between a future private tunnel and durable enrollment ingress, so Promise assimilation,
+     time, identity, frame limits, failure containment, and negative authority need independent adversarial review.
+Expected output: one immutable report against exact product `cee64a8...`, accepted only with no High, Medium, or Low finding.
+Owner action: none while review runs; approve a later merge only after an accepted report and green ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
