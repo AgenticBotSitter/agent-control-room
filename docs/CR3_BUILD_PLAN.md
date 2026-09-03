@@ -1186,3 +1186,85 @@ The different reviewer reproduced every deterministic gate and hostile-probe fam
 and found no new High, Medium, or Low defect. Accepted report SHA-256:
 `3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. This permits ordinary owner-controlled
 integration only and grants no listener, SSH, credential, native, provider, production, deployment, or network authority.
+
+## CR13A-LIVE-090 — one-frame listener-session and authenticated admission composition
+
+Status: independently accepted after three remediation rounds; exact third remediation
+`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` reviewed over owner-approved LIVE-080 merge
+`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; ordinary owner-controlled integration permitted. See
+`CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` and ADR-158.
+
+This block composes one accepted private-loopback frame and the repository-fake listener lifecycle into exactly one
+authenticated transport-admission call. The session owns actual decoder chunk counting, module-private protected-frame
+creation, raw-input reduction, a digest of the exact admission input, single-flight admission, listener/admission policy
+matching, ordered close/drain/cleanup, reduced evidence clearing, and one public-safe correlation receipt.
+
+The session neither opens nor implements a listener. It has no socket, SSH, network, process, credential, route, or
+local-pilot integration. Listener evidence remains repository fake and every native/effect/authority claim remains
+false. Admission cannot be retried or interrupted after its native promise is accepted; concurrent or wrong-order calls
+cannot revive, duplicate, or corrupt it. A future native adapter must independently enforce wall-clock timeouts and
+backpressure and prove physical bind, port exclusivity, tunnel/host-key identity, shutdown, and cleanup.
+
+Completion requires immutable implementation, the complete deterministic repository lifecycle, a zero-repair attack
+packet, and a fresh independent reviewer with no open High, Medium, or Low finding. Use Sol xhigh for the protected-byte,
+async-settlement, and cleanup boundary. Independent acceptance permits ordinary owner-controlled integration only.
+
+The exact review target is `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen implementation
+`5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`. Zero-repair packet SHA-256:
+`88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`.
+
+The first reviewer rejected that immutable target. M-001 proves `finish()` could destructively fail and clear a session
+while its sole admission was still pending, leaving a later successful settlement unable to complete the required
+cleanup and receipt sequence. Preserve the negative report; SHA-256:
+`0f3db267c28605f0687d18f831c303c9c1055a6b4e9f64be65b9b50dd3e716bd`.
+
+Exact remediation `28a1c0833e8e2b2b3368644536b7442c96bbadcb` rejects `finish()` during `admitting` as a
+non-mutating state conflict before any runtime assertion or evidence mutation. Async-pending and synchronous-reentrant
+regressions prove the first admission can settle, cleanup can complete, one receipt can be emitted, and the method is
+called exactly once. Producer gates pass at 43/43 focused tests, 85/85 connection tests, 769/769 pretests, 419/421 core
+tests with two intentional platform skips, 336/336 posttests, production build plus 4/4 rendered routes, and all 36
+migrations with 119 tables. A different zero-repair reviewer must close M-001 and find no new High, Medium, or Low
+defect before owner-controlled integration. The immutable remediation review target is
+`89be9d7fb486a3fb5855402073466108a19a75ec`; packet SHA-256:
+`5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.
+
+That reviewer closed M-001 but rejected the target for M-002. A malformed already-rejected same-realm Promise with an
+inert own `constructor` data property selecting the captured native Promise constructor remained unobserved and could
+terminate strict Node rejection handling. Preserve the second negative report; SHA-256:
+`ca1b7ef365cd6a9b4fe79e22eade3d48667a8ccc1d8befc2f09bcb6f469803f2`.
+
+Exact second remediation `de840c9aef259db18da3c45e1d4e0549bc0f0d85` preserves rejection of decorated Promises
+while safely attaching the captured settlement observer when the own constructor is an inert data descriptor selecting
+the captured native constructor or native default. Behavioral/accessor or foreign constructor selections, Proxies,
+subclasses, and foreign thenables remain unexecuted and unassimilated. The same Promise boundary in LIVE-060 transport
+admission is hardened, and strict-process regressions cover both layers while a behavioral-constructor regression
+proves no getter runs. Producer gates pass at 46/46 focused, 88/88 connections, 769/769 pretests, 419/421 core with two
+intentional platform skips, 339/339 posttests, build with 4/4 rendered routes, 36 migrations/119 tables, type, lint,
+stage zero, and whitespace. A third zero-repair reviewer must close M-002, reconfirm M-001, and find no new High,
+Medium, or Low defect. The immutable second-remediation review target is
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`; packet SHA-256:
+`32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`.
+
+The third reviewer reconfirmed M-001 and closed M-002 but rejected the target for M-003. Ambient
+`Promise.prototype.then` drift correctly invalidated a dependency result but unnecessarily disabled the already
+captured safe settlement observer, permitting a pre-rejected malformed result to reach strict Node rejection handling.
+Preserve the third negative report; SHA-256:
+`7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`.
+
+Exact third remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` separates strict Promise acceptance from
+safe rejection cleanup. It uses only captured descriptors and intrinsics to prove native default/captured
+constructor-and-species selection, observes the rejected settlement, and still returns local integrity failure without
+calling ambient replacement behavior. Both listener and transport seams observe before failure on detected runtime
+drift. Strict-process regressions cover both and prove replacement calls remain zero. Producer gates pass at 47/47
+focused, 89/89 connections, 769/769 pretests, 419/421 core with two intentional platform skips, 340/340 posttests,
+build with 4/4 rendered routes, 36 migrations/119 tables, stage zero, type, lint, and whitespace. A fourth zero-repair
+reviewer was required to close M-003, reconfirm M-001/M-002, and find no new High, Medium, or Low defect. The immutable
+third-remediation review target is `a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`; packet SHA-256:
+`82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`.
+
+The fourth different zero-repair reviewer reproduced the exact gates plus a 29/29 hostile matrix, closed M-003,
+reconfirmed M-001/M-002, and found no new High, Medium, or Low defect. The unchanged accepted report is
+`docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. The disposable review clone was removed and
+the shared checkout remained clean. This permits ordinary owner-controlled integration only and grants no listener,
+SSH, credential, native, provider, production, deployment, DNS, hosting, or network authority.

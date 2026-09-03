@@ -3064,3 +3064,80 @@ Remediation re-review packet SHA-256: `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b
 and private hostile probes, closed M-001, L-001, and L-002, and found no new High, Medium, or Low defect. Accepted report
 SHA-256: `3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. This permits ordinary
 owner-controlled integration only; every physical listener and external-effect boundary remains separate.
+
+## ADR-158 — One session owns decoding, admission serialization, and cleanup correlation
+
+**Decision:** Place a repository-only single-session coordinator between the accepted LIVE-070 decoder, remediated
+LIVE-080 lifecycle, and LIVE-060 transport admission. It constructs the protected-frame observation internally, counts
+actual chunk pushes, reduces the protected frame to the exact admission input, invokes admission exactly once, prevents
+in-flight interruption or reentry, matches returned channel/transport/frame policy, and permits a receipt only after
+connection close, drain, and cleanup complete.
+
+The session retains no protected frame or raw admission input as object state. It keeps only reduced digests, counts, and
+a parsed safe admission receipt, clearing them on failure and before final receipt construction. The final public digest
+is consistency-only. All native-listener and effect claims remain fixed false.
+
+**Why:** A native socket callback must not independently choose parsing, admission, replay, or cleanup behavior. This
+composition makes that future adapter a narrow byte/event source and ensures exactly one decoded enrollment reaches the
+already authenticated and idempotent admission boundary.
+
+**Alternatives rejected:** Let a socket callback call ingress directly; accept caller-supplied protected frames or chunk
+counts; permit overlapping admission; abort an already dispatched admission and pretend it did not settle; retry after
+uncertainty; retain raw frames for later receipts; treat a public digest as authenticated evidence; or add application
+wiring before native review.
+
+**Trade-off:** The coordinator awaits its downstream admission and does not itself own a wall-clock timer. That is
+honest for this repository-fake block but means the future native adapter must provide separately reviewed deadline,
+backpressure, cancellation, process-kill, and recovery evidence before activation.
+
+**Reevaluate:** Before adding a `node:net` import, listener factory, address/port, timer, socket callback, SSH operation,
+credential reference, application composition, or native qualification. Each remains separately authority-gated and
+must not be inferred from a passing repository session receipt.
+
+**Independent-review freeze:** Review exact target `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen
+implementation `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`, under the zero-repair packet with SHA-256
+`88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`. A passing report permits ordinary
+integration review only and grants no listener or external-effect authority.
+
+**Independent-review amendment:** Preserve rejected target `dbdb297aa04ea7465ab636c94ccf1084003cdf27` and its
+negative report with SHA-256 `0f3db267c28605f0687d18f831c303c9c1055a6b4e9f64be65b9b50dd3e716bd`.
+M-001 proves `finish()` was destructive while admission was in flight: it cleared the only session before a downstream
+settlement could be correlated with ordered cleanup and a terminal receipt. Exact remediation
+`28a1c0833e8e2b2b3368644536b7442c96bbadcb` makes that call a non-mutating state conflict and adds async-pending and
+synchronous-reentrant regressions proving exactly one admission and recoverable completion. A different zero-repair
+reviewer must independently close M-001 and find no new High, Medium, or Low defect. This amendment grants no listener,
+SSH, credential, native, provider, production, deployment, or network authority. Review immutable remediation target
+`89be9d7fb486a3fb5855402073466108a19a75ec` under the packet with SHA-256
+`5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.
+
+**Second independent-review amendment:** The different reviewer closed M-001 but rejected remediation target
+`89be9d7fb486a3fb5855402073466108a19a75ec`. M-002 proves an invalid, already-rejected same-realm Promise with an inert
+own constructor data property selecting the captured native Promise constructor could remain unobserved and terminate
+strict Node rejection handling. Preserve the negative report with SHA-256
+`ca1b7ef365cd6a9b4fe79e22eade3d48667a8ccc1d8befc2f09bcb6f469803f2`. Exact second remediation
+`de840c9aef259db18da3c45e1d4e0549bc0f0d85` observes only safely selected captured/default native construction while
+keeping behavioral/accessor and foreign selections unexecuted and every decorated Promise invalid. It hardens the
+duplicated LIVE-060 boundary and adds strict-process regressions at both layers. A third zero-repair reviewer must close
+M-002, reconfirm M-001, and find no new High, Medium, or Low defect. Review immutable target
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3` under packet SHA-256
+`32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`. No external authority is granted.
+
+**Third independent-review amendment:** The third reviewer reconfirmed M-001 and closed M-002 but rejected target
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`. M-003 proves full Promise-runtime drift must invalidate a result without
+unnecessarily disabling safe rejection cleanup through already captured intrinsics. Preserve the negative report with
+SHA-256 `7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`. Exact third
+remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` independently proves an inert effective constructor/species selection,
+uses only the captured observer, and observes before returning integrity failure at both listener and transport seams.
+Ambient replacement code remains uncalled. A fourth zero-repair reviewer was required to close M-003, reconfirm M-001/M-002, and
+find no new High, Medium, or Low defect. Review immutable target
+`a94241fb4578af7ff8ba2b85afa4d18f2fdd4066` under packet SHA-256
+`82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`. No external authority is granted.
+
+**Third-remediation acceptance amendment:** A fourth different zero-repair reviewer accepted exact review target
+`a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`, containing implementation
+`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`. It reproduced the complete deterministic gate and a 29/29 bounded
+hostile matrix, closed M-003, reconfirmed M-001/M-002, and found no new High, Medium, or Low defect. Preserve the
+unchanged accepted report at `docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. Ordinary owner-controlled integration is now
+permitted. No listener, SSH, credential, native, provider, production database, deployment, DNS, hosting, network, or
+other external-effect authority is granted.

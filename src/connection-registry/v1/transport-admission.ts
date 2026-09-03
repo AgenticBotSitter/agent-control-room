@@ -105,15 +105,28 @@ function exactNativePromiseV1(value: unknown): value is Promise<unknown> {
   return true;
 }
 
+function safelyObservablePromiseSelectionV1(value: Promise<unknown>): boolean {
+  const ownConstructor = objectGetOwnPropertyDescriptorV1(value, "constructor");
+  const selectedConstructor = ownConstructor === undefined
+    ? objectGetOwnPropertyDescriptorV1(promisePrototypeV1, "constructor")
+    : ownConstructor;
+  if (!selectedConstructor || !("value" in selectedConstructor)) return false;
+  if (selectedConstructor.value === undefined) return true;
+  if (selectedConstructor.value !== promiseConstructorV1) return false;
+  const speciesDescriptor = objectGetOwnPropertyDescriptorV1(promiseConstructorV1, symbolSpeciesV1);
+  return Boolean(speciesDescriptor && "get" in speciesDescriptor
+    && speciesDescriptor.get === promiseSpeciesGetterV1 && speciesDescriptor.set === undefined);
+}
+
 /**
  * Mark a malformed same-realm Promise observed without reading its `then`.
- * The native method's SpeciesConstructor path is safe only while the captured
- * prototype/species selection remains exact and the instance cannot override
- * `constructor`; every other value stays completely untouched.
+ * Acceptance still requires the complete Promise runtime to remain exact, but
+ * cleanup needs only a demonstrably inert effective constructor/species path
+ * because it calls the already-captured intrinsic method. Every behavioral or
+ * foreign selection stays completely untouched.
  */
 function observeMalformedIntrinsicPromiseV1(value: unknown): void {
-  if (!intrinsicNativePromiseV1(value) || !exactPromiseRuntimeV1()
-    || objectGetOwnPropertyDescriptorV1(value, "constructor") !== undefined) return;
+  if (!intrinsicNativePromiseV1(value) || !safelyObservablePromiseSelectionV1(value)) return;
   try {
     reflectApplyV1(promiseThenV1, value, [discardPromiseSettlementV1, discardPromiseSettlementV1]);
   } catch {
@@ -340,7 +353,10 @@ export class ConnectionEnrollmentTransportAdmissionV1 implements ConnectionEnrol
         receivedAt, transportIdentity: this.#transportIdentity });
     } catch (error) { mapIngressFailureV1(error); }
     try { assertConnectionEnrollmentNodeIngressRuntimeV1(); }
-    catch { throw new ConnectionEnrollmentTransportAdmissionErrorV1("integrity_failed"); }
+    catch {
+      observeMalformedIntrinsicPromiseV1(pending);
+      throw new ConnectionEnrollmentTransportAdmissionErrorV1("integrity_failed");
+    }
     if (!exactNativePromiseV1(pending)) {
       observeMalformedIntrinsicPromiseV1(pending);
       throw new ConnectionEnrollmentTransportAdmissionErrorV1("integrity_failed");
