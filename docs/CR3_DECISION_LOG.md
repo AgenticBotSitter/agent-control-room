@@ -3289,3 +3289,29 @@ remain absent.
 socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
 contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a
 physical bind requires a fresh owner-attended one-attempt packet.
+
+**Integration amendment:** The owner approved PR #240 at exact branch head
+`2978c84a07aee8566d8d3de5d02689d5d9eff609`. It merged to `main` as
+`1ee5409c0b66afbd802582459af864ec0d198f5c`; pre-merge CI run `33803032198` and post-merge run `33804402020`
+passed. Integration changes no effect or authority boundary.
+
+## ADR-161 — Design the physical listener boundary before importing a native driver
+
+**Decision:** CR13A-LIVE-120 is an effect-free design block. It must freeze the physical driver's exact input,
+operation, lifetime, backpressure, cleanup, recovery, tunnel-authentication, host-key, evidence, ambiguity, and retry
+semantics before any native implementation or operating-system listener code is admitted. Implementation, activation
+evidence, owner authorization, platform qualification, and the single physical attempt remain separate stages.
+
+**Why:** LIVE-110 proves a fake can satisfy the abstract operation contract without gaining authority. The next risk is
+that socket construction, port ownership, asynchronous callbacks, shutdown races, or restart behavior silently widen
+that contract. Freezing the boundary first makes those behaviors independently reviewable and keeps repository success
+from being mistaken for a live bind.
+
+**Alternatives rejected:** Add `node:net` while discovering the contract; wire a driver into the local pilot before
+review; choose or expose a port in repository data; infer tunnel identity or host-key custody from configuration; allow
+automatic retry after ambiguous bind/start/close outcomes; combine implementation with an owner-attended physical
+attempt; or let repository-fake evidence clear a native blocker.
+
+**Reevaluate:** Before adding any native/socket implementation, runtime consumer, live listener, port selection, SSH
+operation, credential access, signed native evidence, qualification attempt, production contact, or deployment. Those
+steps require a separately frozen contract, independent review, and the exact authority appropriate to the effect.

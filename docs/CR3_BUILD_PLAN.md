@@ -1385,3 +1385,24 @@ intrinsic attacks, 64 concurrent calls, zero replacement executions, and zero ef
 at `docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
 `d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. The branch is ready for ordinary
 owner-controlled pull-request integration and grants no native or external-effect authority.
+
+Owner-approved PR #240 merged exact accepted branch head `2978c84a07aee8566d8d3de5d02689d5d9eff609` to `main` as
+`1ee5409c0b66afbd802582459af864ec0d198f5c`. Pre-merge CI run `33803032198` and post-merge `main` CI run
+`33804402020` passed. LIVE-110 is integrated without adding or authorizing a physical driver, socket, listener,
+network connection, SSH operation, credential read, native qualification, production contact, or deployment.
+
+## CR13A-LIVE-120 — physical native-driver design and qualification boundary
+
+Status: next effect-free architecture block. Use Sol xhigh.
+
+Before any `node:net` import, physical driver implementation, runtime wiring, port selection, listener operation, or
+native attempt, freeze the exact operating-system boundary. The design must define literal IPv4 loopback binding,
+private unpublished port custody, one active connection and zero queued connections, one bounded frame, connection,
+idle, and admission deadlines, backpressure, ordered close and drain, process-restart recovery, authenticated tunnel
+peer and host-key evidence, terminal ambiguity, and automatic-retry prohibition.
+
+The design must keep implementation, activation evidence, owner authorization, platform qualification, and the one
+physical attempt as non-collapsible stages. Repository tests remain fake-only and cannot clear any LIVE-110 blocker.
+No socket code, live port, SSH, credential access, runtime wiring, or external effect belongs in the design block.
+A later implementation requires a new immutable review target; a later physical bind requires a fresh owner-attended
+one-attempt packet and exact authority.

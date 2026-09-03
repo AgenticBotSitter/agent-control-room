@@ -119,7 +119,7 @@
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
-| CR13A-LIVE-110 native-driver and activation-evidence contract | Exact remediation independently accepted; ordinary owner-controlled integration ready | Different reviewer closed M-001/M-002 with 0 findings; accepted target `8643513...`; no native implementation, listener, or network effect |
+| CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1237,6 +1237,12 @@ attacks, and kept 64 concurrent calls stable with zero replacement executions or
 `d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. Ordinary owner-controlled integration is
 ready; no native or external-effect authority is granted.
 
+Owner-approved PR #240 merged exact branch head `2978c84a07aee8566d8d3de5d02689d5d9eff609` to `main` as
+`1ee5409c0b66afbd802582459af864ec0d198f5c`. Pre-merge CI run `33803032198` and post-merge `main` run
+`33804402020` passed; the latter completed in 8m48s. The Mac clone is synchronized cleanly at the merge commit.
+Integration grants no physical-driver, listener, network, SSH, credential, provider, production, or deployment
+authority.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1252,12 +1258,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-110-INTEGRATION — run ordinary GitHub CI and request exact owner merge approval
+Block: CR13A-LIVE-120-NATIVE-DRIVER-DESIGN — freeze the real-driver implementation and qualification boundary
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact remediation is independently accepted and now needs only ordinary repository integration controls.
-Expected output: one scoped pull request from the reviewed branch, passing GitHub CI, exact owner approval, merge, and passing post-merge main CI.
-Owner action: none; independent reviews are already authorized. Approve only the exact pull request after accepted review and ordinary CI.
+Why: the next code could touch operating-system socket behavior, so its lifetime, cleanup, provenance, and one-attempt evidence must be fixed before implementation.
+Expected output: an effect-free architecture and acceptance contract for one unwired physical driver, exact activation evidence, failure and cleanup semantics, and a later owner-attended qualification packet.
+Owner action: none for the design contract. Fresh exact authority will be required before importing native socket code or running a physical attempt.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
