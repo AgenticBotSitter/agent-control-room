@@ -3212,3 +3212,49 @@ or network authority.
 closing a physical listener, selecting a port, starting SSH, reading a credential, accepting native evidence, running a
 platform qualification, or making the record activation-eligible. Each requires a new contract, immutable review, and
 separate owner authority; a real bind additionally requires an exact owner-attended effect packet.
+
+**Integration amendment:** The owner approved PR #239. Accepted branch head
+`7a11d6b132b7016a63a4e160ce049b29dcff21db` merged to `main` as
+`d1d2b8723797cd2d09efc70384fa98403223a8ec`; PR CI run `33793948835` and post-merge run `33796044403` passed.
+No listener or external-effect authority was added by integration.
+
+## ADR-160 — Rehearsing the native-driver contract cannot create activation truth
+
+**Decision:** Define the physical listener's driver and activation-evidence vocabulary before adding a physical
+implementation. The repository creates one plan/readiness-bound driver contract with fixed operations, limits, and
+required proofs. The only executable object in this block is an exact-branded repository fake with no callback or
+behavioral input. Its fixed rehearsal may prove contract coherence but always records zero native/listener/network
+attempts and cannot satisfy any LIVE-100 activation blocker.
+
+Activation evidence in this block accepts only exact module-created disabled readiness, driver contract, and fake
+rehearsal records. It binds their digests and identities, explicitly labels the evidence `repository_fake`, retains all
+twelve blockers, and fixes eligibility, activation, native truth, retry, effects, and authority false. Copies,
+re-digests, cross-plan or cross-driver combinations, lookalikes, subclasses, changed receivers, and mutable operations
+are not accepted.
+
+**Why:** A native-driver interface and a passing fake can otherwise become an accidental authorization seam. Keeping
+contract rehearsal separate from native qualification makes it impossible for configuration presence, test success,
+a public digest, or an injected callback to open a listener. The future physical implementation has an exact small
+target while every operating-system and network fact remains independently unproven.
+
+**Alternatives rejected:** Add `node:net` with the contract; accept a generic injected driver or callback; let a fake
+receipt clear the native-driver blocker; treat a digest as approval; accept serialized or caller-created evidence;
+expose the listener ID, address, or port; wire the fake into the local pilot; infer real deadlines, cleanup, or recovery
+from repository simulation; or combine contract definition, native implementation, owner activation, and physical bind
+in one review block.
+
+**Trade-off:** This block does not open a listener or establish that a native implementation works. It adds a separate
+review step, but the later native implementation and live qualification can be measured against a fixed contract
+without granting the repository fake any effect authority.
+
+**Producer evidence:** Exact implementation `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab` passes macOS stage zero,
+TypeScript, full lint, 65/65 focused tests,
+107/107 connection tests, 123/123 CR13A tests, 769/769 pretests, 419/421 core tests with two established platform skips,
+358/358 posttests, production build with 4/4 rendered routes, all 36 migrations/119 tables through the listener-free
+verifier, and whitespace. The ordinary database wrapper preserved its known sandbox-only `tsx` IPC denial before
+migration work. No native, listener, network, SSH, credential, provider, production, or deployment effect occurred.
+
+**Reevaluate:** Before admitting any physical-driver object, signed native evidence, owner activation, actual port,
+socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
+contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a
+physical bind requires a fresh owner-attended one-attempt packet.
