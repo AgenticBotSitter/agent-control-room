@@ -1100,8 +1100,9 @@ authorized by this block.
 
 ## CR13A-LIVE-070 — private-loopback single-frame decoder and disabled listener port
 
-Status: exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` frozen over owner-approved LIVE-060
-integration `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`; independent review pending. See
+Status: exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` rejected over owner-approved LIVE-060
+integration `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`; M-001, M-002, L-001, and L-002 require remediation and a different
+review. See
 `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` and ADR-156.
 
 The effect-free decoder accepts fresh exact `Uint8Array` chunks for one unsigned-big-endian-length-prefixed fatal UTF-8
@@ -1119,3 +1120,10 @@ Completion requires the complete deterministic lifecycle, an immutable product, 
 High, Medium, or Low finding. After acceptance and integration, the next block may implement a separately authorized
 private-loopback listener or refresh an owner-attended connector rehearsal packet. Use Sol xhigh for a listener or
 transport security boundary. No physical bind or external effect is authorized here.
+
+The independent review reproduced every functional gate but rejected integration. M-001 proves the public SHA digest
+cannot establish decoder provenance or prevent a caller from manufacturing a changed handoff. M-002 proves native JSON
+parsing accepts duplicate lexical members with last-member routing. L-001 corrects the unprovable alias-rejection claim
+to exact full-backing-store input, synchronous internal copy, and no retention. L-002 records the immutable product's two
+trailing-whitespace lines. Preserve the negative report and remediate all four findings before a different zero-repair
+re-review. Report SHA-256: `91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`.

@@ -2979,3 +2979,12 @@ recovery, and an inspectable trust transition. The raw frame remains protected i
 limits, accepting another address family or bind address, adding stream abstractions, changing protected handoff fields,
 or altering the split between framing, transport admission, outer authentication, and inner enrollment verification.
 Any such change invalidates CR13A-LIVE-070 review evidence and requires a new effect/readiness decision.
+
+**Independent-review amendment:** Preserve rejected product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` and its
+negative report. A publicly recomputable digest proves only record consistency, not provenance from the decoder; an
+ephemeral protected handoff must also carry module-private unforgeable origin and re-prove the routing hint from the raw
+frame. Exact object validation after native JSON parsing cannot observe duplicate lexical members, so a bounded
+duplicate-aware preflight must reject them before extraction. Ordinary JavaScript cannot prove that no second full view
+exists for an `ArrayBuffer`; the enforceable rule is exact full ordinary backing storage, synchronous copy into private
+decoder memory, and no caller-buffer retention. Review evidence must state that rule and prove later caller mutation is
+irrelevant. Negative report SHA-256: `91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`.

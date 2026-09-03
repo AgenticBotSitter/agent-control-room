@@ -115,7 +115,7 @@
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
-| CR13A-LIVE-070 private-loopback framing | Exact product `ff00d3f...` frozen; independent review pending | One bounded big-endian/fatal-UTF-8 frame, exact private-loopback configuration, protected authority-free handoff, disabled local listener, 21 focused and 63 connection tests; complete lifecycle green; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
+| CR13A-LIVE-070 private-loopback framing | Exact product `ff00d3f...` rejected; four findings require remediation and different re-review | Functional gates passed, but decoder provenance, duplicate JSON keys, alias assurance wording, and frozen whitespace evidence failed; negative report SHA `91f9e00...`; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1007,6 +1007,14 @@ TypeScript, full lint, production build with 4/4 rendered checks, all 36 migrati
 validation. Exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` is frozen; independent review remains
 pending. Zero-repair packet SHA-256: `052f4b621e8606f807425a677e10e5211214563d2e05b1235dc803dac42fd2e6`.
 
+The independent review reproduced all claimed functional counts but rejected the immutable product. Medium M-001 proves
+a caller can manufacture a protected handoff by recomputing its unkeyed digest, including a routing hint that does not
+match the raw frame. Medium M-002 proves duplicate JSON members collapse to last-member routing before exact object
+validation. Low L-001 corrects the impossible absolute alias-rejection claim to full-backing-store input synchronously
+copied and never retained. Low L-002 records two trailing-whitespace lines in the exact product. The negative report is
+preserved with SHA-256 `91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`; no integration
+is permitted.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1022,14 +1030,14 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-070-REVIEW — freeze and independently review the private-loopback framing boundary
+Block: CR13A-LIVE-070-REMEDIATION — close all four private-loopback framing findings and obtain different re-review
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: future transport bytes and protected raw frames cross this boundary; malformed input, runtime custody, cleanup,
-and disabled-default claims need independent evidence before integration.
-Expected output: complete deterministic lifecycle, immutable product and review packet, and one independent report with
-no unresolved High, Medium, or Low finding.
-Owner action: none during review; merge approval will be requested only after acceptance and ordinary GitHub CI.
+Why: independent review proved that plain SHA does not establish decoder provenance, duplicate JSON keys remain
+ambiguous, and two assurance/evidence claims are inaccurate.
+Expected output: module-private provenance, exact raw-frame identity comparison, bounded duplicate rejection, corrected
+buffer-ownership contract, clean whitespace, full deterministic gates, and acceptance by a different reviewer.
+Owner action: none during remediation/re-review; merge approval will be requested only after acceptance and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

@@ -1,7 +1,7 @@
 # CR13A-LIVE-070 private-loopback framing acceptance
 
-**Status:** exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` frozen; independent review required
-before integration
+**Status:** exact product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` rejected by independent review; two
+Medium and two Low findings require remediation and a different re-review
 **Integration base:** `a6c08e1553cbb6d3e3db0e262a5e115c8356c664`  
 **Effect boundary:** repository code and local tests only; no socket bind, listener, SSH session, credential access,
 Hermes/provider call, native process, production PostgreSQL/VPS contact, deployment, DNS, or other network effect
@@ -79,6 +79,20 @@ cannot be converted into acceptance; remediation requires a new immutable produc
 
 The zero-repair packet is `docs/reviews/CR13A_LIVE_070_INDEPENDENT_REVIEW_PACKET.md`, SHA-256
 `052f4b621e8606f807425a677e10e5211214563d2e05b1235dc803dac42fd2e6`.
+
+The independent report rejects the product with Medium M-001 and M-002 plus Low L-001 and L-002. An unkeyed digest
+cannot prove that a protected handoff came from this decoder; a caller can manufacture or change the record and recompute
+the digest. Native JSON parsing collapses duplicate members before exact object validation and therefore permits
+last-member routing syntax. The code accepts a second full view of one ordinary backing store, contradicting an
+unenforceable absolute alias-rejection claim even though synchronous copy and no-retention prevent an observed mutation
+race. Finally, the immutable product's acceptance heading had two trailing-whitespace lines and failed the required
+exact diff gate.
+
+The negative report is preserved at `docs/reviews/CR13A_LIVE_070_INDEPENDENT_REVIEW.md`, SHA-256
+`91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`. No integration is permitted. Remediation must
+add module-private decoder provenance, re-extract and compare delivery identity, reject duplicate JSON members before
+object extraction, state the enforceable full-backing-store synchronous-copy rule, prove post-push caller mutation cannot
+change the result, remove whitespace drift, and receive a different zero-repair re-review.
 
 Even after acceptance, a real listener remains a separate owner-controlled block. It must prove the actual bind address,
 exclusive port ownership, tunnel peer and host-key custody, connection lifetime, backpressure, close/recovery behavior,
