@@ -1,6 +1,7 @@
 import { NODE_PROTOCOL_MAX_FRAME_BYTES } from "../../node-protocol/v1";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { exactHostDataSnapshotV1, exactHostErrorCodeV1 } from "../../security/host-value";
+import { assertConnectionEnrollmentNodeIngressRuntimeV1 } from "./node-ingress";
 import {
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FRAMING_V1,
   parseConnectionEnrollmentPrivateLoopbackProtectedFrameV1,
@@ -162,8 +163,16 @@ function assertPublicSafeV1(value: unknown, label: string,
   catch { throw new ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1(errorCode); }
 }
 
+function assertListenerLifecycleRuntimeV1(
+  errorCode: ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1["safeCode"],
+): void {
+  try { assertConnectionEnrollmentNodeIngressRuntimeV1(); }
+  catch { throw new ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1(errorCode); }
+}
+
 export function createConnectionEnrollmentPrivateLoopbackListenerPlanV1(value: unknown):
 ConnectionEnrollmentPrivateLoopbackListenerPlanV1 {
+  assertListenerLifecycleRuntimeV1("invalid_configuration");
   const captured = exactHostDataSnapshotV1(value, ["listenerId", "endpointIdentityDigest", "ownerIdentityDigest",
     "tunnelPeerIdentityDigest", "tunnelHostKeyDigest", "channelIdentityDigest", "maximumFrameBytes", "maximumChunks",
     "maximumConnectionDurationMs", "idleTimeoutMs", "shutdownGraceMs"]);
@@ -214,6 +223,7 @@ ConnectionEnrollmentPrivateLoopbackListenerPlanV1 {
 
 export function parseConnectionEnrollmentPrivateLoopbackListenerPlanV1(value: unknown):
 ConnectionEnrollmentPrivateLoopbackListenerPlanV1 {
+  assertListenerLifecycleRuntimeV1("invalid_plan");
   const captured = exactHostDataSnapshotV1(value, ["contractVersion", "listenerId", "transport",
     "listenerVisibility", "addressFamily", "bindAddress", "framing", "endpointIdentityDigest",
     "ownerIdentityDigest", "tunnelPeerIdentityDigest", "tunnelHostKeyDigest", "channelIdentityDigest",
@@ -255,6 +265,7 @@ Omit<ConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1, "receiptDige
 
 export function parseConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1(value: unknown):
 ConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1 {
+  assertListenerLifecycleRuntimeV1("integrity_failed");
   const captured = exactHostDataSnapshotV1(value, ["contractVersion", "rehearsalReference", "listenerId",
     "planDigest", "evidenceMode", "disposition", "eventCount", "frameDigest", "frameBytes", "frameChunks",
     "maximumObservedConcurrentConnections", "maximumObservedQueuedConnections", "bindPolicyMatched",
@@ -441,6 +452,8 @@ export class ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1 {
   }
 
   finish(): ConnectionEnrollmentPrivateLoopbackListenerRehearsalReceiptV1 {
+    try { assertConnectionEnrollmentNodeIngressRuntimeV1(); }
+    catch { this.#fail("integrity_failed"); }
     if (this.#state === "complete") {
       throw new ConnectionEnrollmentPrivateLoopbackListenerLifecycleErrorV1("state_conflict");
     }

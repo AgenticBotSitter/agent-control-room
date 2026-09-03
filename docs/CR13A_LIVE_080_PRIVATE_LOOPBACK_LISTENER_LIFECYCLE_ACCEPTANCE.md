@@ -26,6 +26,10 @@ Plan values are strict ordinary data. Extra keys, accessors, Proxies, aliases, i
 and stale digest-bound mutations fail closed without invoking caller behavior. The plan is public policy and therefore
 does not use its unkeyed digest as authenticity or authority proof.
 
+Before each plan or receipt digest boundary, the lifecycle reuses the accepted enrollment-ingress runtime-custody check.
+Post-import replacement of a selected canonicalization, reflection, pattern, typed-array, or hash operation fails with a
+bounded local code before the changed behavior executes.
+
 ## Six-step lifecycle
 
 The rehearsal accepts exactly six ordered repository-fake observations:
@@ -68,10 +72,10 @@ Current pre-freeze evidence:
 - macOS stage zero: pass (`ready_for_runtime_check`), with no native attempt;
 - TypeScript: pass;
 - full ESLint: pass;
-- focused lifecycle/framing/admission suite: 33/33 pass;
-- complete connection slice: 75/75 pass;
+- focused lifecycle/framing/admission suite: 34/34 pass;
+- complete connection slice: 76/76 pass;
 - complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and
-  326/326 posttests;
+  327/327 posttests;
 - production build and 4/4 rendered-route checks: pass;
 - PostgreSQL migrations `0001` through `0036`: pass with 119 tables; and
 - whitespace validation: pass.

@@ -364,3 +364,36 @@ test("CR13A-LIVE-080 adds no listener, network, process, route, or runtime enabl
   assert.doesNotMatch(source, /ssh2|fetch\s*\(|WebSocket/i);
   assert.match(runtime, /new DisabledConnectionEnrollmentPrivateLoopbackListenerV1\(\)/);
 });
+
+test("CR13A-LIVE-080 rejects selected runtime replacement before executing it", () => {
+  const original = Object.keys;
+  let replacementExecutions = 0;
+  Object.keys = (() => {
+    replacementExecutions += 1;
+    throw new Error("replacement must remain inert");
+  }) as typeof Object.keys;
+  try {
+    expectCode(() => createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration()),
+      "invalid_configuration");
+    assert.equal(replacementExecutions, 0);
+  } finally {
+    Object.keys = original;
+  }
+
+  const plan = createConnectionEnrollmentPrivateLoopbackListenerPlanV1(planConfiguration());
+  const input = observations(plan);
+  const rehearsal = new ConnectionEnrollmentPrivateLoopbackListenerRehearsalV1(plan);
+  rehearsal.observeBind(input.bind); rehearsal.observeConnectionOpen(input.open);
+  rehearsal.observeFrameComplete(input.frame); rehearsal.observeConnectionClose(input.connectionClose);
+  rehearsal.observeDrainStart(input.drain); rehearsal.observeListenerClose(input.listenerClose);
+  Object.keys = (() => {
+    replacementExecutions += 1;
+    throw new Error("replacement must remain inert");
+  }) as typeof Object.keys;
+  try {
+    expectCode(() => rehearsal.finish(), "integrity_failed");
+    assert.equal(replacementExecutions, 0);
+  } finally {
+    Object.keys = original;
+  }
+});

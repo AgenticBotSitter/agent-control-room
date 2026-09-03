@@ -3028,6 +3028,9 @@ tunnel-peer authentication, host-key custody, or native cleanup was proven. It a
 I/O, approval, network, command, lease, and execution authority. These are exact literals, so recomputing the unkeyed
 digest cannot turn fake rehearsal evidence into native proof.
 
+Plan and receipt digest boundaries must first re-establish the accepted canonicalization and hash runtime custody. A
+selected post-import runtime replacement fails closed before replacement behavior can execute.
+
 **Why:** The physical-listener block will combine untrusted stream behavior, operating-system port state, tunnel
 identity, protected bytes, timeouts, backpressure, and shutdown. Freezing its lifecycle and truth vocabulary first makes
 the later effectful adapter smaller and prevents a convenient fake or configuration literal from being mistaken for

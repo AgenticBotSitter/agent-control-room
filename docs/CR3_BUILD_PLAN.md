@@ -1162,6 +1162,9 @@ authority. A recomputed public digest cannot change those exact negative literal
 remains the accepted disabled listener; no socket, SSH, credential, Hermes/provider, native process, route, production
 database, deployment, DNS, or external effect is added.
 
+Plan and receipt hashing reuses the accepted enrollment-ingress runtime-custody assertion. Selected post-import
+canonicalization, reflection, pattern, typed-array, or hash operation replacement fails before changed behavior runs.
+
 Completion requires the full deterministic repository lifecycle, immutable product freeze, a zero-repair packet, and a
 fresh independent review with no open High, Medium, or Low finding. Independent acceptance permits owner-controlled
 integration only. A physical listener, SSH tunnel, credential operation, or native qualification remains a new,
