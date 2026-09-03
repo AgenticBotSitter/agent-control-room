@@ -10,6 +10,8 @@ import {
 } from "../src/connection-registry/v1/index.ts";
 import * as physicalDriverModule from
   "../src/connection-registry/v1/private-loopback-physical-native-driver.ts";
+import { ConnectionEnrollmentPrivateLoopbackFrameDecoderV1 } from
+  "../src/connection-registry/v1/private-loopback-framing.ts";
 import { sha256Digest } from "../src/security/index.ts";
 
 const {
@@ -271,6 +273,38 @@ test("CR13A-LIVE-120 freezes the fake driver's callable surface and rejects borr
   assert.equal(replacementExecutions, 0);
 });
 
+test("CR13A-LIVE-120 freezes every exported callable and the captured decoder surface", () => {
+  const exportedCallables = Object.values(physicalDriverModule).filter(
+    (value): value is (...args: unknown[]) => unknown => typeof value === "function",
+  );
+  assert.equal(exportedCallables.length, 6);
+  for (const callable of exportedCallables) {
+    assert.equal(Object.isFrozen(callable), true);
+    assert.equal(Object.isExtensible(callable), false);
+    for (const property of ["call", "apply", "bind"] as const) {
+      assert.throws(() => Object.defineProperty(callable, property, {
+        value: () => assert.fail("decorated callable executed"),
+      }), TypeError);
+    }
+  }
+  assert.equal(Object.isFrozen(ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1.prototype), true);
+  assert.equal(Object.isFrozen(ConnectionEnrollmentPrivateLoopbackFrameDecoderV1), true);
+  assert.equal(Object.isFrozen(ConnectionEnrollmentPrivateLoopbackFrameDecoderV1.prototype), true);
+  for (const method of [
+    ConnectionEnrollmentPrivateLoopbackFrameDecoderV1.prototype.push,
+    ConnectionEnrollmentPrivateLoopbackFrameDecoderV1.prototype.finish,
+    ConnectionEnrollmentPrivateLoopbackFrameDecoderV1.prototype.close,
+  ]) {
+    assert.equal(Object.isFrozen(method), true);
+    assert.throws(() => Object.defineProperty(method, "call", {
+      value: () => assert.fail("decoder replacement executed"),
+    }), TypeError);
+  }
+  assert.throws(() => Object.defineProperty(ConnectionEnrollmentPrivateLoopbackFrameDecoderV1.prototype, "push", {
+    value: () => assert.fail("decoder replacement executed"),
+  }), TypeError);
+});
+
 test("CR13A-LIVE-120 uses captured validation intrinsics", async () => {
   const { driver } = buildDriver("closed_verified", "captured-intrinsics");
   await driver.prepare();
@@ -287,6 +321,30 @@ test("CR13A-LIVE-120 uses captured validation intrinsics", async () => {
     Number.isSafeInteger = originalSafeInteger;
   }
   assert.equal(replacements, 0);
+});
+
+test("CR13A-LIVE-120 does not resolve the ambient Number receiver during status validation", async () => {
+  const { driver } = buildDriver("closed_verified", "captured-number-receiver");
+  await driver.prepare();
+  const status = await driver.start();
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Number");
+  assert.ok(originalDescriptor);
+  let executions = 0;
+  let parsed: unknown;
+  try {
+    Object.defineProperty(globalThis, "Number", {
+      configurable: true,
+      get() {
+        executions += 1;
+        throw new Error("raw ambient sentinel");
+      },
+    });
+    parsed = parseConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusV1(status);
+  } finally {
+    Object.defineProperty(globalThis, "Number", originalDescriptor);
+  }
+  assert.equal(parsed, status);
+  assert.equal(executions, 0);
 });
 
 test("CR13A-LIVE-120 exposes no native constructor, bind issuer, locator, or protected identity", async () => {
@@ -315,8 +373,31 @@ test("CR13A-LIVE-120 allowlists one isolated node:net server module with no runt
   assert.doesNotMatch(implementationSource, /export\s+(?:async\s+)?function\s+createUnwiredNodeNetPortV1/);
   assert.doesNotMatch(implementationSource, /weakMapSetV1,\s*nativeBindCapabilitiesV1/);
   assert.doesNotMatch(implementationSource, /nativeBindCapabilitiesV1\.set\s*\(/);
+  assert.match(implementationSource, /nativeConnectionAdmissionsV1/);
+  assert.doesNotMatch(implementationSource, /weakMapSetV1,\s*nativeConnectionAdmissionsV1/);
+  assert.doesNotMatch(implementationSource, /nativeConnectionAdmissionsV1\.set\s*\(/);
   assert.doesNotMatch(implementationSource, /node:(?:tls|http|https|dgram|child_process)/);
   assert.doesNotMatch(implementationSource, /fetch\s*\(|WebSocket|ssh2|process\.env|process\.on\s*\(/i);
+
+  const nativeBackendSource = implementationSource.slice(implementationSource.indexOf("type NativeBindCapabilityStateV1"));
+  assert.match(nativeBackendSource, /capability\.contract !== exactContract/);
+  assert.match(nativeBackendSource, /capability\.implementation !== exactImplementation/);
+  assert.match(nativeBackendSource, /admission\.tunnelPeerProof !== capability\.tunnelPeerProof/);
+  assert.match(nativeBackendSource, /admission\.hostKeyCustodyProof !== capability\.hostKeyCustodyProof/);
+  assert.match(nativeBackendSource, /admission\.admissionDeadlineMs !== capability\.admissionDeadlineMs/);
+  assert.match(nativeBackendSource, /admission\.spent = true/);
+  assert.match(nativeBackendSource, /reflectApplyV1\(frameDecoderPushV1, activeDecoder/);
+  assert.match(nativeBackendSource, /reflectApplyV1\(frameDecoderFinishV1, activeDecoder/);
+  assert.match(nativeBackendSource, /reflectApplyV1\(frameDecoderCloseV1, activeDecoder/);
+  assert.doesNotMatch(nativeBackendSource, /decoder\.(?:push|finish|close)\s*\(/);
+  assert.match(nativeBackendSource, /pendingBufferedBytes <= capability\.backpressureLowWaterBytes/);
+  assert.doesNotMatch(nativeBackendSource, /backpressureLowWaterBytes >= 0/);
+  assert.match(nativeBackendSource, /capability\.drainDeadlineMs/);
+  assert.match(nativeBackendSource, /capability\.shutdownDeadlineMs/);
+  assert.match(nativeBackendSource, /no signer, durable attempt ledger, high-water checkpoint/);
+  assert.match(nativeBackendSource, /disposition = "cleanup_failed"/);
+  assert.doesNotMatch(nativeBackendSource, /\? "closed_verified"/);
+  assert.doesNotMatch(nativeBackendSource, /tunnelPeerAuthenticated|hostKeyCustodyProven|platformSignerTrustAccepted/);
 
   const connectionRegistryFiles = await sourceFiles(resolve("src/connection-registry/v1"));
   const netImporters: string[] = [];

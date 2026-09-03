@@ -29,8 +29,11 @@ const objectFreezeV1 = Object.freeze;
 const objectGetPrototypeOfV1 = Object.getPrototypeOf;
 const objectIsFrozenV1 = Object.isFrozen;
 const arrayIncludesV1 = Array.prototype.includes;
+const globalObjectV1 = globalThis;
+const numberConstructorV1 = Number;
 const numberIsSafeIntegerV1 = Number.isSafeInteger;
 const reflectApplyV1 = Reflect.apply;
+const reflectConstructV1 = Reflect.construct;
 const reflectOwnKeysV1 = Reflect.ownKeys;
 const regexpExecV1 = RegExp.prototype.exec;
 const stringSliceV1 = String.prototype.slice;
@@ -47,12 +50,25 @@ const serverCloseV1 = NodeNetServerV1.prototype.close;
 const serverListenV1 = NodeNetServerV1.prototype.listen;
 const serverOnV1 = NodeNetServerV1.prototype.on;
 const serverOnceV1 = NodeNetServerV1.prototype.once;
+const serverRemoveAllListenersV1 = NodeNetServerV1.prototype.removeAllListeners;
 const socketDestroyV1 = NodeNetSocketV1.prototype.destroy;
 const socketOnV1 = NodeNetSocketV1.prototype.on;
 const socketPauseV1 = NodeNetSocketV1.prototype.pause;
 const socketResumeV1 = NodeNetSocketV1.prototype.resume;
+const socketRemoveAllListenersV1 = NodeNetSocketV1.prototype.removeAllListeners;
+const frameDecoderConstructorV1 = ConnectionEnrollmentPrivateLoopbackFrameDecoderV1;
+const frameDecoderPushV1 = ConnectionEnrollmentPrivateLoopbackFrameDecoderV1.prototype.push;
+const frameDecoderFinishV1 = ConnectionEnrollmentPrivateLoopbackFrameDecoderV1.prototype.finish;
+const frameDecoderCloseV1 = ConnectionEnrollmentPrivateLoopbackFrameDecoderV1.prototype.close;
 const literalIpv4LoopbackV1 = "127.0.0.1" as const;
 const nativeAttemptReferencePatternV1 = /^native-attempt:[a-f0-9]{24}$/;
+const digestPatternV1 = /^sha256:[a-f0-9]{64}$/;
+
+for (const decoderCallable of [frameDecoderConstructorV1, frameDecoderPushV1, frameDecoderFinishV1,
+  frameDecoderCloseV1]) {
+  objectFreezeV1(decoderCallable);
+}
+objectFreezeV1(frameDecoderConstructorV1.prototype);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_PHYSICAL_NATIVE_STATES_V1 = objectFreezeV1([
   "created",
@@ -202,8 +218,10 @@ type InternalDriverStateV1 = {
 
 const implementationsV1 = new WeakSet<object>();
 const implementationContractsV1 = new WeakMap<object, ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1>();
+const implementationDigestsV1 = new WeakMap<object, string>();
 const statusRecordsV1 = new WeakSet<object>();
 const statusDriversV1 = new WeakMap<object, object>();
+const statusDigestsV1 = new WeakMap<object, string>();
 const driversV1 = new WeakSet<object>();
 const driverStatesV1 = new WeakMap<object, InternalDriverStateV1>();
 const internalPortsV1 = new WeakSet<object>();
@@ -278,6 +296,7 @@ ConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1 {
   const implementation = objectFreezeV1({ ...material, implementationDigest: sha256Digest(material) });
   reflectApplyV1(weakSetAddV1, implementationsV1, [implementation]);
   reflectApplyV1(weakMapSetV1, implementationContractsV1, [implementation, contract]);
+  reflectApplyV1(weakMapSetV1, implementationDigestsV1, [implementation, implementation.implementationDigest]);
   return implementation;
 }
 
@@ -290,6 +309,7 @@ ConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1 {
     ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1 | undefined;
   if (!contract) throw new ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1("integrity_failed");
   const implementation = value as ConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1;
+  const expectedDigest = reflectApplyV1(weakMapGetV1, implementationDigestsV1, [value]) as string | undefined;
   const captured = exactHostDataSnapshotV1(implementation, [
     "contractVersion", "implementationReference", "driverContractDigest", "operationSet", "serverModule",
     "bindPolicy", "portPolicy", "maximumConcurrentConnections", "maximumQueuedConnections",
@@ -300,9 +320,7 @@ ConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1 {
     "grantsNetworkAuthority", "grantsCommandAuthority", "grantsLeaseAuthority", "grantsExecutionAuthority",
     "implementationDigest",
   ]);
-  const { implementationDigest: _digest, ...unsigned } = implementation;
-  void _digest;
-  if (!captured || sha256Digest(unsigned) !== implementation.implementationDigest
+  if (!captured || expectedDigest !== implementation.implementationDigest
     || implementation.contractVersion !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_PHYSICAL_NATIVE_IMPLEMENTATION_V1
     || implementation.implementationReference !== implementationReferenceV1(contract.contractDigest)
     || implementation.driverContractDigest !== contract.contractDigest
@@ -390,6 +408,7 @@ ConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusV1 {
   const status = objectFreezeV1({ ...material, statusDigest: sha256Digest(material) });
   reflectApplyV1(weakSetAddV1, statusRecordsV1, [status]);
   reflectApplyV1(weakMapSetV1, statusDriversV1, [status, driver]);
+  reflectApplyV1(weakMapSetV1, statusDigestsV1, [status, status.statusDigest]);
   return status;
 }
 
@@ -409,6 +428,7 @@ ConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusV1 {
   }
   const status = value as ConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusV1;
   const state = readDriverStateV1(driver);
+  const expectedDigest = reflectApplyV1(weakMapGetV1, statusDigestsV1, [value]) as string | undefined;
   const captured = exactHostDataSnapshotV1(status, [
     "contractVersion", "implementationReference", "implementationDigest", "driverContractDigest", "evidenceMode",
     "scenario", "state", "prepareCalls", "startCalls", "statusCalls", "closeCalls", "recoverCalls",
@@ -418,8 +438,6 @@ ConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusV1 {
     "externalEffectOccurred", "automaticRetryAllowed", "grantsApproval", "grantsNetworkAuthority",
     "grantsCommandAuthority", "grantsLeaseAuthority", "grantsExecutionAuthority", "statusDigest",
   ]);
-  const { statusDigest: _digest, ...unsigned } = status;
-  void _digest;
   if (!captured || status.contractVersion !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_PHYSICAL_NATIVE_STATUS_V1
     || status.implementationReference !== state.implementation.implementationReference
     || status.implementationDigest !== state.implementation.implementationDigest
@@ -427,12 +445,13 @@ ConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusV1 {
     || !isScenarioV1(status.scenario)
     || reflectApplyV1(arrayIncludesV1, CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_PHYSICAL_NATIVE_STATES_V1,
       [status.state]) !== true
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [status.prepareCalls]) || status.prepareCalls < 0
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [status.startCalls]) || status.startCalls < 0
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [status.statusCalls]) || status.statusCalls < 0
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [status.closeCalls]) || status.closeCalls < 0
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [status.recoverCalls]) || status.recoverCalls < 0
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [status.transitionCount]) || status.transitionCount < 0
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [status.prepareCalls]) || status.prepareCalls < 0
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [status.startCalls]) || status.startCalls < 0
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [status.statusCalls]) || status.statusCalls < 0
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [status.closeCalls]) || status.closeCalls < 0
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [status.recoverCalls]) || status.recoverCalls < 0
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [status.transitionCount])
+    || status.transitionCount < 0
     || typeof status.preEffectMarkerSimulated !== "boolean" || typeof status.bindCallSimulated !== "boolean"
     || typeof status.cleanupVerifiedSimulated !== "boolean" || typeof status.recoveryChecked !== "boolean"
     || status.nativeImplementationPresent !== true || status.nativeDriverAccepted !== false
@@ -441,7 +460,7 @@ ConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusV1 {
     || status.externalEffectOccurred !== false || status.automaticRetryAllowed !== false
     || status.grantsApproval !== false || status.grantsNetworkAuthority !== false
     || status.grantsCommandAuthority !== false || status.grantsLeaseAuthority !== false
-    || status.grantsExecutionAuthority !== false || sha256Digest(unsigned) !== status.statusDigest) {
+    || status.grantsExecutionAuthority !== false || expectedDigest !== status.statusDigest) {
     throw new ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1("invalid_status");
   }
   safePublicRecordV1(status, "physical native fake status", "invalid_status");
@@ -639,68 +658,120 @@ export function assertConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusFor
  */
 type NativeBindCapabilityStateV1 = {
   port: number;
-  contractDigest: string;
-  implementationDigest: string;
+  contract: ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1;
+  implementation: ConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1;
   attemptReference: string;
   startDeadlineMs: number;
   admissionDeadlineMs: number;
   frameDeadlineMs: number;
   totalAttemptDeadlineMs: number;
+  drainDeadlineMs: number;
+  shutdownDeadlineMs: number;
   backpressureLowWaterBytes: number;
   backpressureHighWaterBytes: number;
   hardBufferedByteCeiling: number;
   spent: boolean;
   released: boolean;
-  durableMarkerCommitted: true;
-  ownerWindowSpent: true;
-  exclusivePortEvidenceReady: true;
-  tunnelPeerAuthenticated: true;
-  hostKeyCustodyProven: true;
-  platformSignerTrustAccepted: true;
+  durableMarkerProof: object;
+  ownerWindowSpendProof: object;
+  exclusivePortProof: object;
+  tunnelPeerProof: object;
+  hostKeyCustodyProof: object;
+  platformSignerTrustProof: object;
+};
+
+type NativeConnectionAdmissionStateV1 = {
+  attemptReference: string;
+  connectionOrdinal: 1;
+  admissionDeadlineMs: number;
+  admissionEvidenceDigest: string;
+  tunnelPeerProof: object;
+  hostKeyCustodyProof: object;
+  spent: boolean;
 };
 
 const nativeBindCapabilitiesV1 = new WeakMap<object, NativeBindCapabilityStateV1>();
+const nativeConnectionAdmissionsV1 = new WeakMap<Socket, NativeConnectionAdmissionStateV1>();
+const nativeDurableMarkerProofsV1 = new WeakSet<object>();
+const nativeOwnerWindowSpendProofsV1 = new WeakSet<object>();
+const nativeExclusivePortProofsV1 = new WeakSet<object>();
+const nativeTunnelPeerProofsV1 = new WeakSet<object>();
+const nativeHostKeyCustodyProofsV1 = new WeakSet<object>();
+const nativePlatformSignerTrustProofsV1 = new WeakSet<object>();
 
 function createUnwiredNodeNetPortV1(capabilityValue: unknown,
   contract: ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1,
   implementation: ConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1): InternalDriverPortV1 {
+  let exactContract: ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1;
+  let exactImplementation: ConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1;
+  try {
+    exactContract = parseConnectionEnrollmentPrivateLoopbackNativeDriverContractV1(contract);
+    exactImplementation = parseConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1(implementation);
+  } catch {
+    throw new ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1("native_activation_unavailable");
+  }
+  const implementationContract = reflectApplyV1(weakMapGetV1, implementationContractsV1,
+    [exactImplementation]) as ConnectionEnrollmentPrivateLoopbackNativeDriverContractV1 | undefined;
   if (!capabilityValue || typeof capabilityValue !== "object" || isHostProxyV1(capabilityValue)
-    || reflectOwnKeysV1(capabilityValue).length !== 0 || objectGetPrototypeOfV1(capabilityValue) !== null) {
+    || reflectOwnKeysV1(capabilityValue).length !== 0 || objectGetPrototypeOfV1(capabilityValue) !== null
+    || implementationContract !== exactContract) {
     throw new ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1("native_activation_unavailable");
   }
   const capability = reflectApplyV1(weakMapGetV1, nativeBindCapabilitiesV1, [capabilityValue]) as
     NativeBindCapabilityStateV1 | undefined;
-  if (!capability || capability.spent || capability.released || capability.durableMarkerCommitted !== true
-    || capability.ownerWindowSpent !== true || capability.exclusivePortEvidenceReady !== true
-    || capability.tunnelPeerAuthenticated !== true || capability.hostKeyCustodyProven !== true
-    || capability.platformSignerTrustAccepted !== true || capability.contractDigest !== contract.contractDigest
-    || capability.implementationDigest !== implementation.implementationDigest
+  if (!capability || capability.spent || capability.released || capability.contract !== exactContract
+    || capability.implementation !== exactImplementation
+    || !weakSetContainsV1(nativeDurableMarkerProofsV1, capability.durableMarkerProof)
+    || !weakSetContainsV1(nativeOwnerWindowSpendProofsV1, capability.ownerWindowSpendProof)
+    || !weakSetContainsV1(nativeExclusivePortProofsV1, capability.exclusivePortProof)
+    || !weakSetContainsV1(nativeTunnelPeerProofsV1, capability.tunnelPeerProof)
+    || !weakSetContainsV1(nativeHostKeyCustodyProofsV1, capability.hostKeyCustodyProof)
+    || !weakSetContainsV1(nativePlatformSignerTrustProofsV1, capability.platformSignerTrustProof)
     || typeof capability.attemptReference !== "string"
     || reflectApplyV1(regexpExecV1, nativeAttemptReferencePatternV1, [capability.attemptReference]) === null
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [capability.port])
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.port])
     || capability.port < 1 || capability.port > 65_535
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [capability.startDeadlineMs])
-    || capability.startDeadlineMs < 100 || capability.startDeadlineMs > contract.shutdownGraceMs
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [capability.admissionDeadlineMs])
-    || capability.admissionDeadlineMs < 100 || capability.admissionDeadlineMs > contract.idleTimeoutMs
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [capability.frameDeadlineMs])
-    || capability.frameDeadlineMs < 100 || capability.frameDeadlineMs > contract.maximumConnectionDurationMs
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [capability.totalAttemptDeadlineMs])
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.startDeadlineMs])
+    || capability.startDeadlineMs < 100 || capability.startDeadlineMs > exactContract.shutdownGraceMs
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.admissionDeadlineMs])
+    || capability.admissionDeadlineMs < 100 || capability.admissionDeadlineMs > exactContract.idleTimeoutMs
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.frameDeadlineMs])
+    || capability.frameDeadlineMs < 100 || capability.frameDeadlineMs > exactContract.maximumConnectionDurationMs
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.totalAttemptDeadlineMs])
     || capability.totalAttemptDeadlineMs < 100
-    || capability.totalAttemptDeadlineMs > contract.maximumConnectionDurationMs
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [capability.backpressureLowWaterBytes])
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [capability.backpressureHighWaterBytes])
-    || !reflectApplyV1(numberIsSafeIntegerV1, Number, [capability.hardBufferedByteCeiling])
+    || capability.totalAttemptDeadlineMs > exactContract.maximumConnectionDurationMs
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.drainDeadlineMs])
+    || capability.drainDeadlineMs < 100 || capability.drainDeadlineMs > exactContract.shutdownGraceMs
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.shutdownDeadlineMs])
+    || capability.shutdownDeadlineMs < 100 || capability.shutdownDeadlineMs > exactContract.shutdownGraceMs
+    || capability.drainDeadlineMs + capability.shutdownDeadlineMs > exactContract.shutdownGraceMs
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.backpressureLowWaterBytes])
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.backpressureHighWaterBytes])
+    || !reflectApplyV1(numberIsSafeIntegerV1, numberConstructorV1, [capability.hardBufferedByteCeiling])
     || capability.backpressureLowWaterBytes < 0
     || capability.backpressureHighWaterBytes <= capability.backpressureLowWaterBytes
     || capability.hardBufferedByteCeiling < capability.backpressureHighWaterBytes
-    || capability.hardBufferedByteCeiling > contract.maximumFrameBytes + 4) {
+    || capability.hardBufferedByteCeiling > exactContract.maximumFrameBytes + 4) {
     throw new ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1("native_activation_unavailable");
   }
 
   let server: Server | undefined;
   let socket: Socket | undefined;
   let disposition: InternalRecoverResultV1 = "failed_before_bind";
+  let decoder = reflectConstructV1(frameDecoderConstructorV1, [{
+    listenerId: `private-loopback-listener:${reflectApplyV1(stringSliceV1, exactContract.contractDigest, [7])}`,
+    transport: "ssh_tunnel",
+    listenerVisibility: "private_loopback",
+    addressFamily: "ipv4",
+    bindAddress: literalIpv4LoopbackV1,
+    framing: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FRAMING_V1,
+    maximumFrameBytes: exactContract.maximumFrameBytes,
+    maximumChunks: exactContract.maximumChunks,
+  }]) as ConnectionEnrollmentPrivateLoopbackFrameDecoderV1 | undefined;
+  if (!decoder || objectGetPrototypeOfV1(decoder) !== frameDecoderConstructorV1.prototype) {
+    throw new ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1("native_activation_unavailable");
+  }
+  objectFreezeV1(decoder);
   let startTimer: ReturnType<typeof setTimeout> | undefined;
   let admissionTimer: ReturnType<typeof setTimeout> | undefined;
   let connectionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -708,23 +779,12 @@ function createUnwiredNodeNetPortV1(capabilityValue: unknown,
   let frameTimer: ReturnType<typeof setTimeout> | undefined;
   let totalTimer: ReturnType<typeof setTimeout> | undefined;
   let connectionCount = 0;
-  let wireBytes = 0;
+  let pendingBufferedBytes = 0;
   let terminal = false;
-  let listeningObserved = false;
-  let ambiguousFailureObserved = false;
-  const decoder = new ConnectionEnrollmentPrivateLoopbackFrameDecoderV1({
-    listenerId: `private-loopback-listener:${reflectApplyV1(stringSliceV1, contract.contractDigest, [7])}`,
-    transport: "ssh_tunnel",
-    listenerVisibility: "private_loopback",
-    addressFamily: "ipv4",
-    bindAddress: literalIpv4LoopbackV1,
-    framing: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FRAMING_V1,
-    maximumFrameBytes: contract.maximumFrameBytes,
-    maximumChunks: contract.maximumChunks,
-  });
+  let cleanupPromise: Promise<InternalCloseResultV1> | undefined;
 
   const clearTimer = (timer: ReturnType<typeof setTimeout> | undefined): void => {
-    if (timer !== undefined) reflectApplyV1(clearTimeoutV1, globalThis, [timer]);
+    if (timer !== undefined) reflectApplyV1(clearTimeoutV1, globalObjectV1, [timer]);
   };
   const clearAllTimers = (): void => {
     clearTimer(startTimer);
@@ -736,23 +796,113 @@ function createUnwiredNodeNetPortV1(capabilityValue: unknown,
     startTimer = admissionTimer = connectionTimer = idleTimer = frameTimer = totalTimer = undefined;
   };
   const destroySocket = (target: Socket | undefined): void => {
-    if (target && !target.destroyed) reflectApplyV1(socketDestroyV1, target, []);
+    if (target) reflectApplyV1(socketDestroyV1, target, []);
   };
-  const failAfterMarker = (): void => {
-    if (terminal) return;
+
+  const closeServerWithinDrainDeadline = async (): Promise<boolean> => {
+    const target = server;
+    if (!target) return true;
+    return await new promiseConstructorV1<boolean>((resolve) => {
+      let settled = false;
+      let drainTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (result: boolean): void => {
+        if (settled) return;
+        settled = true;
+        clearTimer(drainTimer);
+        if (result) server = undefined;
+        resolve(result);
+      };
+      try {
+        drainTimer = reflectApplyV1(setTimeoutV1, globalObjectV1,
+          [() => finish(false), capability.drainDeadlineMs]) as ReturnType<typeof setTimeout>;
+        reflectApplyV1(serverCloseV1, target, [() => {
+          if (server === target) server = undefined;
+          finish(true);
+        }]);
+      } catch { finish(false); }
+    });
+  };
+
+  const finishLocalCleanupWithinShutdownDeadline = async (serverClosed: boolean): Promise<boolean> =>
+    await new promiseConstructorV1<boolean>((resolve) => {
+      let settled = false;
+      let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (result: boolean): void => {
+        if (settled) return;
+        settled = true;
+        clearTimer(shutdownTimer);
+        resolve(result);
+      };
+      try {
+        shutdownTimer = reflectApplyV1(setTimeoutV1, globalObjectV1,
+          [() => finish(false), capability.shutdownDeadlineMs]) as ReturnType<typeof setTimeout>;
+        capability.released = true;
+        socket = undefined;
+        decoder = undefined;
+        pendingBufferedBytes = 0;
+        finish(serverClosed);
+      } catch {
+        capability.released = true;
+        socket = undefined;
+        decoder = undefined;
+        pendingBufferedBytes = 0;
+        finish(false);
+      }
+    });
+
+  const beginMandatoryCleanup = (): Promise<InternalCloseResultV1> => {
+    if (cleanupPromise) return cleanupPromise;
+    let settleCleanup: ((result: InternalCloseResultV1) => void) | undefined;
+    cleanupPromise = new promiseConstructorV1<InternalCloseResultV1>((resolve) => { settleCleanup = resolve; });
     terminal = true;
-    ambiguousFailureObserved = true;
-    disposition = "ambiguous_after_marker";
     clearAllTimers();
-    destroySocket(socket);
-    if (server) {
-      try { reflectApplyV1(serverCloseV1, server, []); } catch { disposition = "cleanup_failed"; }
+    let localCleanupSucceeded = true;
+    const activeSocket = socket;
+    const activeDecoder = decoder;
+    const activeServer = server;
+    if (activeServer) {
+      try { reflectApplyV1(serverRemoveAllListenersV1, activeServer, []); }
+      catch { localCleanupSucceeded = false; }
     }
+    if (activeSocket) {
+      try { reflectApplyV1(socketPauseV1, activeSocket, []); } catch { localCleanupSucceeded = false; }
+      try { reflectApplyV1(socketRemoveAllListenersV1, activeSocket, []); }
+      catch { localCleanupSucceeded = false; }
+      try { destroySocket(activeSocket); } catch { localCleanupSucceeded = false; }
+    }
+    if (activeDecoder) {
+      try { reflectApplyV1(frameDecoderCloseV1, activeDecoder, []); }
+      catch { localCleanupSucceeded = false; }
+    }
+    void (async (): Promise<void> => {
+      try {
+        const serverClosed = await closeServerWithinDrainDeadline();
+        await finishLocalCleanupWithinShutdownDeadline(serverClosed && localCleanupSucceeded);
+      } catch {
+        capability.released = true;
+        socket = undefined;
+        decoder = undefined;
+        pendingBufferedBytes = 0;
+      }
+      /*
+       * LIVE-120 has no signer, durable attempt ledger, high-water checkpoint, or independent resource observer.
+       * Local cleanup is still mandatory, but it can never promote volatile callbacks to closed_verified truth.
+       */
+      disposition = "cleanup_failed";
+      settleCleanup?.("cleanup_failed");
+    })();
+    return cleanupPromise;
+  };
+
+  const failAfterMarker = (): void => {
+    if (terminal && cleanupPromise) return;
+    disposition = "ambiguous_after_marker";
+    void beginMandatoryCleanup();
   };
   const resetIdleTimer = (): void => {
     clearTimer(idleTimer);
-    idleTimer = reflectApplyV1(setTimeoutV1, globalThis,
-      [failAfterMarker, contract.idleTimeoutMs]) as ReturnType<typeof setTimeout>;
+    idleTimer = reflectApplyV1(setTimeoutV1, globalObjectV1,
+      [failAfterMarker, exactContract.idleTimeoutMs]) as ReturnType<typeof setTimeout>;
   };
   const handleSocket = (candidate: Socket): void => {
     if (terminal || socket || connectionCount >= 1) {
@@ -760,43 +910,72 @@ function createUnwiredNodeNetPortV1(capabilityValue: unknown,
       failAfterMarker();
       return;
     }
-    socket = candidate;
-    connectionCount += 1;
-    clearTimer(admissionTimer);
-    connectionTimer = reflectApplyV1(setTimeoutV1, globalThis,
-      [failAfterMarker, contract.maximumConnectionDurationMs]) as ReturnType<typeof setTimeout>;
-    frameTimer = reflectApplyV1(setTimeoutV1, globalThis,
-      [failAfterMarker, capability.frameDeadlineMs]) as ReturnType<typeof setTimeout>;
-    resetIdleTimer();
-    reflectApplyV1(socketOnV1, candidate, ["data", (chunk: Buffer) => {
-      if (terminal || candidate !== socket) return;
-      wireBytes += chunk.byteLength;
-      let paused = false;
-      if (wireBytes >= capability.backpressureHighWaterBytes) {
-        reflectApplyV1(socketPauseV1, candidate, []);
-        paused = true;
-      }
-      if (wireBytes > capability.hardBufferedByteCeiling) {
-        failAfterMarker();
-        return;
-      }
-      try { decoder.push(new uint8ArrayConstructorV1(chunk)); }
-      catch { failAfterMarker(); return; }
+    try { reflectApplyV1(socketPauseV1, candidate, []); }
+    catch { destroySocket(candidate); failAfterMarker(); return; }
+    const admission = reflectApplyV1(weakMapGetV1, nativeConnectionAdmissionsV1, [candidate]) as
+      NativeConnectionAdmissionStateV1 | undefined;
+    if (!admission || admission.spent || admission.attemptReference !== capability.attemptReference
+      || admission.connectionOrdinal !== 1
+      || admission.admissionDeadlineMs !== capability.admissionDeadlineMs
+      || typeof admission.admissionEvidenceDigest !== "string"
+      || reflectApplyV1(regexpExecV1, digestPatternV1, [admission.admissionEvidenceDigest]) === null
+      || admission.tunnelPeerProof !== capability.tunnelPeerProof
+      || admission.hostKeyCustodyProof !== capability.hostKeyCustodyProof
+      || !weakSetContainsV1(nativeTunnelPeerProofsV1, admission.tunnelPeerProof)
+      || !weakSetContainsV1(nativeHostKeyCustodyProofsV1, admission.hostKeyCustodyProof)) {
+      destroySocket(candidate);
+      failAfterMarker();
+      return;
+    }
+    admission.spent = true;
+    try {
+      socket = candidate;
+      connectionCount += 1;
+      clearTimer(admissionTimer);
+      connectionTimer = reflectApplyV1(setTimeoutV1, globalObjectV1,
+        [failAfterMarker, exactContract.maximumConnectionDurationMs]) as ReturnType<typeof setTimeout>;
+      frameTimer = reflectApplyV1(setTimeoutV1, globalObjectV1,
+        [failAfterMarker, capability.frameDeadlineMs]) as ReturnType<typeof setTimeout>;
       resetIdleTimer();
-      if (!terminal && paused && capability.backpressureLowWaterBytes >= 0) {
+      reflectApplyV1(socketOnV1, candidate, ["data", (chunk: Buffer) => {
+        if (terminal || candidate !== socket) return;
+        try {
+          pendingBufferedBytes += chunk.byteLength;
+          let paused = false;
+          if (pendingBufferedBytes >= capability.backpressureHighWaterBytes) {
+            reflectApplyV1(socketPauseV1, candidate, []);
+            paused = true;
+          }
+          if (pendingBufferedBytes > capability.hardBufferedByteCeiling) {
+            failAfterMarker();
+            return;
+          }
+          const activeDecoder = decoder;
+          if (!activeDecoder) { failAfterMarker(); return; }
+          reflectApplyV1(frameDecoderPushV1, activeDecoder, [new uint8ArrayConstructorV1(chunk)]);
+          pendingBufferedBytes -= chunk.byteLength;
+          resetIdleTimer();
+          if (!terminal && paused && pendingBufferedBytes <= capability.backpressureLowWaterBytes) {
+            reflectApplyV1(socketResumeV1, candidate, []);
+          }
+        } catch { failAfterMarker(); }
+      }]);
+      reflectApplyV1(socketOnV1, candidate, ["end", () => {
+        if (terminal || candidate !== socket) return;
+        const activeDecoder = decoder;
+        if (!activeDecoder) { failAfterMarker(); return; }
+        try { void reflectApplyV1(frameDecoderFinishV1, activeDecoder, []); }
+        catch { failAfterMarker(); return; }
+        clearTimer(connectionTimer);
+        clearTimer(idleTimer);
+        clearTimer(frameTimer);
+        void beginMandatoryCleanup();
+      }]);
+      reflectApplyV1(socketOnV1, candidate, ["error", failAfterMarker]);
+      if (!terminal && pendingBufferedBytes <= capability.backpressureLowWaterBytes) {
         reflectApplyV1(socketResumeV1, candidate, []);
       }
-    }]);
-    reflectApplyV1(socketOnV1, candidate, ["end", () => {
-      if (terminal || candidate !== socket) return;
-      try { decoder.finish(); }
-      catch { failAfterMarker(); return; }
-      clearTimer(connectionTimer);
-      clearTimer(idleTimer);
-      clearTimer(frameTimer);
-      destroySocket(candidate);
-    }]);
-    reflectApplyV1(socketOnV1, candidate, ["error", failAfterMarker]);
+    } catch { failAfterMarker(); }
   };
 
   const port = objectFreezeV1({
@@ -825,12 +1004,12 @@ function createUnwiredNodeNetPortV1(capabilityValue: unknown,
             failAfterMarker();
             finish("ambiguous_after_marker");
           }]);
-          startTimer = reflectApplyV1(setTimeoutV1, globalThis, [() => {
+          startTimer = reflectApplyV1(setTimeoutV1, globalObjectV1, [() => {
             failAfterMarker();
             finish("ambiguous_after_marker");
           }, capability.startDeadlineMs]) as
             ReturnType<typeof setTimeout>;
-          totalTimer = reflectApplyV1(setTimeoutV1, globalThis,
+          totalTimer = reflectApplyV1(setTimeoutV1, globalObjectV1,
             [failAfterMarker, capability.totalAttemptDeadlineMs]) as ReturnType<typeof setTimeout>;
           reflectApplyV1(serverListenV1, server, [{
             host: literalIpv4LoopbackV1,
@@ -839,8 +1018,7 @@ function createUnwiredNodeNetPortV1(capabilityValue: unknown,
             backlog: 1,
           }, () => {
             if (terminal || settled) return;
-            listeningObserved = true;
-            admissionTimer = reflectApplyV1(setTimeoutV1, globalThis,
+            admissionTimer = reflectApplyV1(setTimeoutV1, globalObjectV1,
               [failAfterMarker, capability.admissionDeadlineMs]) as ReturnType<typeof setTimeout>;
             finish("listening");
           }]);
@@ -851,42 +1029,12 @@ function createUnwiredNodeNetPortV1(capabilityValue: unknown,
       });
     }),
     close: objectFreezeV1(async (): Promise<InternalCloseResultV1> => {
-      if (terminal && disposition === "cleanup_failed") return "cleanup_failed";
-      terminal = true;
-      clearAllTimers();
-      destroySocket(socket);
-      if (server) {
-        try {
-          const closed = await new promiseConstructorV1<boolean>((resolve) => {
-            let settled = false;
-            const finish = (result: boolean): void => { if (!settled) { settled = true; resolve(result); } };
-            const timer = reflectApplyV1(setTimeoutV1, globalThis,
-              [() => finish(false), contract.shutdownGraceMs]) as
-              ReturnType<typeof setTimeout>;
-            reflectApplyV1(serverCloseV1, server!, [() => {
-              reflectApplyV1(clearTimeoutV1, globalThis, [timer]);
-              finish(true);
-            }]);
-          });
-          if (!closed) {
-            disposition = "cleanup_failed";
-            capability.released = true;
-            return "cleanup_failed";
-          }
-        } catch {
-          disposition = "cleanup_failed";
-          capability.released = true;
-          return "cleanup_failed";
-        }
-      }
-      capability.released = true;
-      server = undefined;
-      socket = undefined;
-      disposition = listeningObserved && !ambiguousFailureObserved
-        ? "closed_verified" : "ambiguous_after_marker";
-      return "closed";
+      return await beginMandatoryCleanup();
     }),
-    recover: objectFreezeV1(async (): Promise<InternalRecoverResultV1> => disposition),
+    recover: objectFreezeV1(async (): Promise<InternalRecoverResultV1> => {
+      if (cleanupPromise) await cleanupPromise;
+      return disposition;
+    }),
   });
   reflectApplyV1(weakSetAddV1, internalPortsV1, [port]);
   return port;
@@ -894,3 +1042,15 @@ function createUnwiredNodeNetPortV1(capabilityValue: unknown,
 
 // Preserve the reviewed implementation in this isolated module without creating a runtime construction path.
 void createUnwiredNodeNetPortV1;
+
+for (const exportedCallable of [
+  ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1,
+  describeConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1,
+  parseConnectionEnrollmentPrivateLoopbackPhysicalNativeImplementationV1,
+  parseConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusV1,
+  createRepositoryFakeConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverV1,
+  assertConnectionEnrollmentPrivateLoopbackPhysicalNativeStatusForDriverV1,
+]) {
+  objectFreezeV1(exportedCallable);
+}
+objectFreezeV1(ConnectionEnrollmentPrivateLoopbackPhysicalNativeDriverErrorV1.prototype);
