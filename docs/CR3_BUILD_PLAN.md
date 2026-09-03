@@ -1139,8 +1139,9 @@ found no new High, Medium, or Low defect and grants integration review only.
 
 ## CR13A-LIVE-080 — private-loopback listener lifecycle contract and fake rehearsal
 
-Status: exact target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e` rejected over owner-approved LIVE-070
-integration `b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`; remediation and different re-review required. See
+Status: rejected target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e` remediated at exact commit
+`884ff423914ab4e442500bd194970b0713da72ca` over owner-approved LIVE-070 integration
+`b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`; different re-review required. See
 `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` and ADR-157.
 
 This block defines the exact lifecycle around the accepted LIVE-070 decoder without opening a listener. One strict,
@@ -1175,9 +1176,9 @@ The exact review target is `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e`, containin
 `00c005a2371f20dc4de66685659f9fde7a0bd6513627829fd7894ace0451f4a0`.
 
 Independent review reproduced every deterministic gate and the no-effect claims but found one Medium and two Low
-defects. Terminal wrong-order and premature-finish paths can retain the complete protected frame; receipt parsing omits
-the listener-ID length ceiling; and a recomputed public digest can rebind the rehearsal reference away from the value
-derived from `planDigest`. Preserve the rejected product and report. Remediation must reduce retained frame evidence to
-digest/size/chunk facts, clear all evidence on every terminal failure, restore receipt bounds and derived identity, add
-regressions, and receive a different zero-repair re-review. Negative report SHA-256:
+defects. Exact remediation `884ff423914ab4e442500bd194970b0713da72ca` retains only digest/size/chunk frame facts,
+clears all evidence on every terminal failure, enforces the receipt listener-ID ceiling, rederives the rehearsal
+reference from `planDigest`, and adds regressions for the reported paths and exact bounds. Preserve the rejected product
+and report. A different zero-repair reviewer must independently reproduce closure. Negative report SHA-256:
 `0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`.
+Remediation re-review packet SHA-256: `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`.

@@ -1,7 +1,7 @@
 # CR13A-LIVE-080 private-loopback listener lifecycle acceptance
 
-**Status:** exact target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e` rejected with one Medium and two
-Low findings; remediation and different re-review required
+**Status:** rejected target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e` remediated at exact commit
+`884ff423914ab4e442500bd194970b0713da72ca`; different zero-repair re-review required
 **Integration base:** `b0b129824f99dbaeb86f7cc6eac4001530fbe1fa`
 **Effect boundary:** repository code and local tests only; no socket bind, listener, SSH session, credential access,
 Hermes/provider call, native process, production PostgreSQL/VPS contact, deployment, DNS, or other network effect
@@ -49,8 +49,9 @@ observations. Abort clears the protected frame and terminates the rehearsal.
 
 The lifecycle accepts only the exact module-private protected frame minted by LIVE-070 and requires the same listener
 identity and frame ceiling. A clone, a caller-recomputed digest, or a valid frame minted for a different listener fails
-before it can become lifecycle evidence. The raw frame remains in private memory only until the receipt is constructed,
-then the lifecycle releases its reference.
+before it can become lifecycle evidence. Immediately after validation, the lifecycle retains only the frame digest,
+byte count, and chunk count needed for the receipt; it never stores the complete protected frame. Every terminal failure
+and explicit abort clears those reduced facts plus transient timing evidence.
 
 ## Receipt truth and authority
 
@@ -83,7 +84,8 @@ Frozen deterministic evidence:
 
 Intermediate commit `c98ae8128195469d2789357df31ada18b32480e3` was superseded before reviewer dispatch when
 architect self-review added explicit canonicalization/hash runtime custody. It was never presented as independent-review
-evidence. The immutable implementation code is `7333ea48577b1000fd5eac0e6789b3e21cfeb559`.
+evidence. The rejected implementation code is `7333ea48577b1000fd5eac0e6789b3e21cfeb559`. The exact remediation is
+`884ff423914ab4e442500bd194970b0713da72ca`.
 
 ## Review and next boundary
 
@@ -103,9 +105,16 @@ ID ceiling. Low L-002 shows that a caller can change `rehearsalReference`, recom
 receipt away from the reference derived from `planDigest`.
 
 The negative report is preserved at `docs/reviews/CR13A_LIVE_080_INDEPENDENT_REVIEW.md`, SHA-256
-`0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`. Remediation must retain only reduced
-frame evidence after validation, clear it on every terminal path, enforce listener-ID bounds in receipts, derive and
-compare the rehearsal reference during parsing, add regressions, and receive a different zero-repair re-review.
+`0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`. Exact remediation
+`884ff423914ab4e442500bd194970b0713da72ca` closes M-001 by retaining only reduced frame evidence and clearing all
+evidence on every terminal path. It closes L-001 by enforcing the receipt listener-ID bound of 27–160 characters. It
+closes L-002 by deriving and comparing the rehearsal reference from the validated plan digest. Regressions cover both
+frame-bearing terminal paths, recomputed semantic drift, and the exact listener-ID boundaries. A different independent
+reviewer must now reproduce closure without repairing the product.
+
+The immutable zero-repair re-review packet is
+`docs/reviews/CR13A_LIVE_080_REMEDIATION_REREVIEW_PACKET.md`, SHA-256
+`a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`.
 
 Independent acceptance would permit ordinary owner-controlled integration only. It would not authorize the next native
 block. A future physical listener requires separate exact owner authority and must prove real exclusive loopback bind,

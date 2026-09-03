@@ -3054,5 +3054,8 @@ authority, deterministic tests, immutable review evidence, and owner-controlled 
 means both behavioral rejection and data release: after protected-frame validation, retain only the reduced digest and
 byte-count facts needed for a successful receipt, and clear those facts on every failure path. Receipt parsing must
 apply the same 27–160 listener-ID bound as the plan and must rederive `rehearsalReference` from `planDigest`; a public
-digest alone cannot establish either semantic relationship. One Medium and two Low findings remain open. Negative
-report SHA-256: `0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`.
+digest alone cannot establish either semantic relationship. Exact remediation
+`884ff423914ab4e442500bd194970b0713da72ca` implements those requirements and adds regressions; the three findings
+remain unaccepted until a different zero-repair reviewer independently confirms closure. Negative report SHA-256:
+`0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`.
+Remediation re-review packet SHA-256: `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`.
