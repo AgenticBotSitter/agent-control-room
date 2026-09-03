@@ -2918,3 +2918,12 @@ accepted because enrollment is rare and this seam is security-sensitive.
 identity or clock source, adding rate-limit state, allowing another transport, crossing a worker/realm boundary, changing
 Promise instrumentation, altering safe-code mapping or receipt fields, enabling local runtime composition, or running a
 native/provider/production/deployment effect. Any such change invalidates CR13A-LIVE-060 review evidence.
+
+**Independent-review amendment:** Preserve rejected product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` and its
+negative report. Exact Promise shape rejection is not sufficient if the rejected Promise remains unobserved. A malformed
+intrinsic Promise with an own string decoration can carry a raw rejection into Node's process-wide unhandled-rejection
+channel, where it may be logged or terminate the process. Remediation must safely observe only the class of intrinsic
+Promises that can be handled through captured native operations without consulting foreign thenables, Proxies,
+subclasses, accessors, or caller-controlled `then`; return only bounded local failure; and add strict regression evidence.
+The acceptance record must also report the independently observed 51/51 connection-suite total. Rejected report SHA-256
+is `d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.

@@ -114,7 +114,7 @@
 | CR13A-LIVE-030 protected enrollment intake | Accepted and integrated on `main` through PR #232 | Different reviewer found no High, Medium, or Low defects; merge `10605afd...` and post-merge GitHub CI run `33579561077` passed; see `CR13A_LIVE_030_ENROLLMENT_INTAKE_ACCEPTANCE.md` |
 | CR13A-LIVE-040 authenticated node-protocol enrollment delivery | Independently accepted and integrated through PR #233 | Remediation `67c16c5...`, accepted report SHA `217dd95...`, PR CI run `33590140698`, merge `34379984...`; see `CR13A_LIVE_040_AUTHENTICATED_NODE_DELIVERY_ACCEPTANCE.md` |
 | CR13A-LIVE-050 provider-disabled enrollment ingress | Independently accepted and integrated through PR #234 | M-001, M-002, and L-001 closed; accepted report SHA `a172987...`; owner-approved merge `5a94bfd...`; post-merge CI run `33708554981` passed; see `CR13A_LIVE_050_PROVIDER_DISABLED_INGRESS_ACCEPTANCE.md` |
-| CR13A-LIVE-060 bounded transport admission | Product frozen at `cee64a8...`; independent security review required | Exact private-loopback SSH-tunnel configuration, server-owned time, UTF-8 frame ceiling, config-derived channel identity, behavior-free ingress failure containment, safe non-authorizing receipt, disabled local composition, and 22 focused tests; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
+| CR13A-LIVE-060 bounded transport admission | First product `cee64a8...` rejected; M-001 and L-001 remediation required | A malformed rejected native Promise can escape through Node's unhandled-rejection channel; the acceptance record also understated the connection total; negative report preserved; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -953,9 +953,18 @@ The exact product is frozen at `cee64a8197a011a91c06e6085d5f4d11e978ddbc` over i
 `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`. Stage zero, TypeScript, full lint, 22/22 focused admission/ingress tests,
 50/50 connection tests, the complete 769/769 pretest plus 419/421 core lifecycle with two intentional platform skips
 plus 302/302 posttests, production build with 4/4 rendered checks, all 36 migrations with 119 PostgreSQL tables, and
-whitespace validation pass. The zero-repair packet SHA-256 is
-`0aa34793dff6ffd56d5cef026a250a170e5af12119d3ab7fe91ed199d6cb762f`. Independent review remains required before
-publication or integration.
+whitespace validation pass. The reviewer independently observed 51/51 connection tests, correcting the producer's stale
+50/50 count. The zero-repair packet SHA-256 is
+`0aa34793dff6ffd56d5cef026a250a170e5af12119d3ab7fe91ed199d6cb762f`.
+
+The independent report rejects the exact product with Medium M-001 and Low L-001. A rejected intrinsic Promise that
+fails the own-string shape rule is not observed, so its raw rejection can escape through Node's process-wide
+`unhandledRejection` event and may terminate the process under strict policy. The exact `npm run db:verify` reproduction
+also hit a sandbox-only `tsx` IPC denial; the listener-free equivalent verified all migrations. The negative report is
+preserved at `docs/reviews/CR13A_LIVE_060_INDEPENDENT_REVIEW.md`. Remediation must safely observe decorated intrinsic
+rejections without assimilating foreign thenables or executing Proxy/accessor/subclass behavior, correct the counts, and
+receive a zero-repair review from another different agent before publication or integration. Rejected report SHA-256:
+`d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.
 
 ## Parallel build lane
 
@@ -972,13 +981,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-060-INDEPENDENT-REVIEW — attack the frozen bounded transport-admission boundary
+Block: CR13A-LIVE-060-M001-REMEDIATION — contain malformed intrinsic Promise rejections
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: this is the first contract between a future private tunnel and durable enrollment ingress, so Promise assimilation,
-     time, identity, frame limits, failure containment, and negative authority need independent adversarial review.
-Expected output: one immutable report against exact product `cee64a8...`, accepted only with no High, Medium, or Low finding.
-Owner action: none while review runs; approve a later merge only after an accepted report and green ordinary CI.
+Why: the first independent review proved a raw rejected value can reach Node's process-wide rejection channel.
+Expected output: one immutable remediation with strict unhandled-rejection regression evidence, corrected counts, and a
+                 zero-repair re-review by another different agent.
+Owner action: none while remediation and re-review run; approve a later merge only after acceptance and green CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

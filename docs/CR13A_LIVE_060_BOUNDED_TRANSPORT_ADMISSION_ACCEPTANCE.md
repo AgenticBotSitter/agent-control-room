@@ -1,7 +1,7 @@
 # CR13A-LIVE-060 bounded transport admission acceptance
 
-**Status:** exact effect-free product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` frozen; independent security and
-integrity review required before publication or integration
+**Status:** exact effect-free product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` rejected by independent review;
+Medium M-001 and Low L-001 require remediation and a different re-review before publication or integration
 **Integration base:** `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`
 **Effect boundary:** repository code and PGlite tests only; no listener, socket, SSH session, Hermes/provider call,
 credential access, native process, production PostgreSQL/VPS contact, deployment, DNS, or network effect
@@ -94,6 +94,12 @@ The zero-repair packet is `docs/reviews/CR13A_LIVE_060_INDEPENDENT_REVIEW_PACKET
 `0aa34793dff6ffd56d5cef026a250a170e5af12119d3ab7fe91ed199d6cb762f`. A different reviewer must attack the exact
 base-to-product diff and return one durable report. A rejection or uncertainty cannot be upgraded to acceptance;
 remediation requires a new immutable product and another different review.
+
+The first independent report rejected the target with Medium M-001: a rejected intrinsic Promise that failed the
+own-string shape rule was not observed, allowing its raw rejection to escape through Node's process-wide unhandled
+rejection channel. Low L-001 records that the connection-suite total is 51/51, not 50/50. The negative report is
+preserved at `docs/reviews/CR13A_LIVE_060_INDEPENDENT_REVIEW.md`. No publication or integration is permitted.
+The rejected report SHA-256 is `d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.
 
 After independent acceptance and owner-approved integration, the next block may define a disabled private-loopback
 listener adapter or a refreshed owner-attended connector rehearsal packet. It must not bind a socket, open SSH, retrieve

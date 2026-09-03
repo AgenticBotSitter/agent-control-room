@@ -1047,9 +1047,10 @@ boundary; use Sol high for a packet-only refresh under frozen contracts.
 
 ## CR13A-LIVE-060 — bounded transport admission
 
-Status: exact effect-free product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` frozen over owner-approved LIVE-050
-integration `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`; independent security and integrity review required. See
-`CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` and ADR-155.
+Status: exact effect-free product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` rejected by independent review over
+owner-approved LIVE-050 integration `5a94bfd7f28d336274f6b29ad50575eb5a90a9b1`; Medium M-001 and Low L-001 require
+remediation and another different review. See `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md`, the preserved
+negative report, and ADR-155.
 
 The server-only admission accepts exactly one string frame and untrusted delivery routing hint. It enforces a strict
 UTF-8 byte ceiling before time or ingress use, takes chronology only from a synchronous server clock, and derives
@@ -1066,7 +1067,12 @@ and execution authority. Local pilot composition remains disabled and the app ex
 The deterministic gate passes 22 focused admission/ingress tests, 50 connection tests, the complete lifecycle,
 TypeScript, full lint, production build/render, all 36 migrations with 119 PostgreSQL tables, and whitespace validation.
 The zero-repair packet SHA-256 is `0aa34793dff6ffd56d5cef026a250a170e5af12119d3ab7fe91ed199d6cb762f`.
-Independent review must attack exact product `cee64a8...` with zero repair before publication or integration.
+The first independent review rejects exact product `cee64a8...`. A rejected intrinsic Promise that fails the own-string
+shape rule is not observed and can emit its raw rejection through Node's process-level `unhandledRejection` channel.
+The report also corrects the connection gate from 50/50 to 51/51. Preserve the report, repair without assimilating
+foreign thenables or executing Proxy/accessor/subclass behavior, and require a different zero-repair re-review before
+publication or integration. Rejected report SHA-256:
+`d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.
 
 Next after independent acceptance and owner-approved integration: define a disabled private-loopback listener adapter or
 refresh the owner-attended connector rehearsal. Continue with Sol xhigh if code touches listener, transport, identity,
