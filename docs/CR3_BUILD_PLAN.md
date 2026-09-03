@@ -1324,3 +1324,64 @@ and L-002, and found no new High, Medium, or Low defect. The accepted report is
 Independent acceptance permits ordinary owner-controlled integration only. It grants no right to add a native
 driver, open a listener, select/expose a port, start SSH, read credentials, contact Hermes/provider, run a native
 qualification, touch production, deploy, change DNS, or use external network. Use Sol xhigh.
+
+Owner-approved PR #239 merged accepted branch head `7a11d6b132b7016a63a4e160ce049b29dcff21db` to `main` as
+`d1d2b8723797cd2d09efc70384fa98403223a8ec`. PR CI run `33793948835` and post-merge run `33796044403` passed.
+
+## CR13A-LIVE-110 — native-driver and activation-evidence contract
+
+Status: local effect-free implementation candidate `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab`; independent
+zero-repair review required. See
+`CR13A_LIVE_110_NATIVE_DRIVER_ACTIVATION_EVIDENCE_ACCEPTANCE.md` and ADR-160.
+
+This block defines the exact contract a future physical native listener must implement without adding that
+implementation. One module-created contract binds the LIVE-100 disabled readiness, accepted listener plan, safe
+listener reference, fixed five-operation set, all capacity and deadline limits, and every required port, tunnel,
+host-key, backpressure, shutdown, and recovery proof. It remains repository-fake-only, accepts no activation input,
+and fixes every effect and authority claim false.
+
+The exact-branded repository fake accepts no callback or behavioral input. It rehearses six fixed declarative events,
+proves only the repository contract shape, and records zero native attempts, listener attempts, network observations,
+or external effects. Frozen captured operations prevent caller method, prototype, receiver, or lookalike substitution.
+
+The activation-evidence assessment consumes only exact module-created readiness, contract, and fake rehearsal records.
+It binds their digests and identities but retains all twelve LIVE-100 blockers. Even a complete fake rehearsal remains
+`blocked_repository_evidence_only`; it cannot assert native-driver acceptance, owner activation, platform
+qualification, port/tunnel/host-key evidence, real deadlines/backpressure, native cleanup/recovery, or eligibility.
+
+The new module is exported for review but remains absent from the local pilot and every browser, HTTP, worker, Hermes,
+service, and deployment composition. It contains no networking, process, SSH, credential, provider, or runtime effect
+implementation. Producer gates pass at 65/65 focused tests, 107/107 connection tests, 123/123 CR13A tests, 769/769
+pretests, 419/421 core tests with two established platform skips, 358/358 posttests, TypeScript, lint, production build
+with 4/4 rendered routes, macOS stage zero, all 36 migrations/119 tables through the listener-free verifier, and
+whitespace. Completion requires a different independent zero-repair review with no High, Medium, or Low finding.
+Acceptance permits ordinary owner-controlled integration only and grants no real listener or external-effect
+authority. Use Sol xhigh.
+
+The immutable review target is `3c756154744a1b933093771a878ab6b64f243f2e`; review packet SHA-256:
+`6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`.
+
+The independent reviewer rejected the target with 0 High, 2 Medium, and 0 Low findings. M-001 reproduced
+cross-provenance substitution among separately minted but publicly equal plan/readiness and contract/rehearsal
+records. M-002 reproduced mutation of the exported driver prototype method function objects. The negative report is
+preserved at `docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW.md`; SHA-256:
+`4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation must add module-private
+exact-object relationship checks, freeze the three method function objects, add hostile regressions, and receive a
+different zero-repair re-review before integration.
+
+Exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d` adds private readiness-to-plan,
+contract-to-plan/readiness, rehearsal-to-contract/driver, and driver-to-contract relationships and enforces them at
+contract and activation-evidence composition. It freezes the exported fake-driver class and all three prototype method
+function objects. New regressions close all reproduced equal-identity substitutions and method-function mutation
+paths with zero replacement executions. The complete producer gates pass at 66/66 focused tests, 108/108 connection
+tests, 124/124 CR13A tests, 769/769 pretests, 419/421 core tests with two established platform skips, 359/359
+posttests, TypeScript, lint, production build with 4/4 rendered routes, stage zero, migrations `0001` through `0036`
+with 119 tables through the listener-free verifier, and whitespace. A different zero-repair re-review is mandatory.
+
+A different zero-repair reviewer accepted immutable target `8643513a5ff807c9fdfa74874053b9098ac447a9`
+with 0 High, 0 Medium, and 0 Low findings. M-001 and M-002 are closed. The accepted hostile evidence includes 36
+copy/behavior cases, 113 individual truth replacements, 15 array mutations, 11 numeric-bound violations, 20 ambient
+intrinsic attacks, 64 concurrent calls, zero replacement executions, and zero effects. Preserve the accepted report
+at `docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. The branch is ready for ordinary
+owner-controlled pull-request integration and grants no native or external-effect authority.

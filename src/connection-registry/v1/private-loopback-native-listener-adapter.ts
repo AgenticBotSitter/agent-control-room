@@ -21,12 +21,15 @@ const objectIsFrozenV1 = Object.isFrozen;
 const regexpExecV1 = RegExp.prototype.exec;
 const reflectApplyV1 = Reflect.apply;
 const stringSliceV1 = String.prototype.slice;
+const weakMapGetV1 = WeakMap.prototype.get;
+const weakMapSetV1 = WeakMap.prototype.set;
 const weakSetAddV1 = WeakSet.prototype.add;
 const weakSetHasV1 = WeakSet.prototype.has;
 const digestPatternV1 = /^sha256:[a-f0-9]{64}$/;
 const listenerReferencePatternV1 = /^native-listener:[a-f0-9]{24}$/;
 const readinessReferencePatternV1 = /^native-listener-readiness:[a-f0-9]{24}$/;
 const nativeListenerReadinessRecordsV1 = new WeakSet<object>();
+const nativeListenerReadinessPlansV1 = new WeakMap<object, object>();
 const nativeListenerAdaptersV1 = new WeakSet<object>();
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_LISTENER_BLOCKERS_V1 = objectFreezeV1([
@@ -176,10 +179,14 @@ export function createConnectionEnrollmentPrivateLoopbackNativeListenerReadiness
 ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 {
   assertAdapterRuntimeV1("invalid_configuration");
   const plan = parsePlanV1(planValue), material = materialForPlanV1(plan);
+  if (!planValue || typeof planValue !== "object") {
+    throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_configuration");
+  }
   try { assertNoSecretMaterial(material, "private loopback native listener readiness"); }
   catch { throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_configuration"); }
   const readiness = objectFreezeV1({ ...material, readinessDigest: sha256Digest(material) });
   reflectApplyV1(weakSetAddV1, nativeListenerReadinessRecordsV1, [readiness]);
+  reflectApplyV1(weakMapSetV1, nativeListenerReadinessPlansV1, [readiness, planValue]);
   return readiness;
 }
 
@@ -256,6 +263,23 @@ ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1 {
   try { assertNoSecretMaterial(material, "private loopback native listener readiness"); }
   catch { throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_readiness"); }
   return value as ConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1;
+}
+
+/**
+ * Later native-driver composition must prove the exact plan/readiness pairing,
+ * not merely compare deterministic public digests from separately minted data.
+ */
+export function assertConnectionEnrollmentPrivateLoopbackNativeListenerReadinessForPlanV1(
+  planValue: unknown,
+  readinessValue: unknown,
+): void {
+  assertAdapterRuntimeV1("invalid_configuration");
+  parsePlanV1(planValue);
+  const readiness = parseConnectionEnrollmentPrivateLoopbackNativeListenerReadinessV1(readinessValue);
+  if (!planValue || typeof planValue !== "object"
+    || reflectApplyV1(weakMapGetV1, nativeListenerReadinessPlansV1, [readiness]) !== planValue) {
+    throw new ConnectionEnrollmentPrivateLoopbackNativeListenerAdapterErrorV1("invalid_configuration");
+  }
 }
 
 /**

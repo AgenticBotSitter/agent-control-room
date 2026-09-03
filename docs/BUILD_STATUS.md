@@ -118,7 +118,8 @@
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
-| CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted after two remediation rounds; owner-controlled integration ready | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002 with no new finding; accepted target `2efc17a...`; no listener/network effect; see `CR13A_LIVE_100_DEFAULT_DISABLED_NATIVE_LISTENER_ADAPTER_ACCEPTANCE.md` |
+| CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
+| CR13A-LIVE-110 native-driver and activation-evidence contract | Exact remediation independently accepted; ordinary owner-controlled integration ready | Different reviewer closed M-001/M-002 with 0 findings; accepted target `8643513...`; no native implementation, listener, or network effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1154,7 +1155,7 @@ The owner approved PR #238. Its exact accepted LIVE-090 branch head `ecb5ea373cc
 merged to `main` as `65ea851c123993d7760d6492966845f74ca1d665` after PR CI run `33784095714` passed in
 12m7s. Post-merge run `33785601437` then passed on that exact authoritative main commit.
 
-CR13A-LIVE-100 is now the active remediation re-review block. It freezes the exact boundary immediately before a
+CR13A-LIVE-100 froze the exact boundary immediately before a
 future physical listener without adding one. The plan-bound readiness record retains no endpoint, address, port,
 tunnel, host-key, credential, or provider value. It lists twelve missing gates covering the native driver, fresh owner
 activation, platform qualification, exclusive port ownership, SSH peer and host-key proof, three deadlines,
@@ -1195,6 +1196,47 @@ Medium, or Low finding remains. The accepted immutable target is
 ready. No listener, SSH, credential, native, provider, production, deployment, DNS, hosting, or network authority is
 granted.
 
+Owner-approved PR #239 merged exact branch head `7a11d6b132b7016a63a4e160ce049b29dcff21db` to `main` as
+`d1d2b8723797cd2d09efc70384fa98403223a8ec`. PR CI run `33793948835` and post-merge run `33796044403` passed.
+
+CR13A-LIVE-110 now defines the future physical-driver contract without adding a physical driver. The contract is
+bound to the LIVE-100 readiness and listener plan, freezes five operations plus capacity/deadline requirements, and
+fixes native implementation, activation input, effects, and authority false. An exact-branded repository fake accepts
+no callbacks or behavioral input and produces one fixed six-event rehearsal with zero listener attempts and zero
+network observations. A separate activation-evidence assessment binds the exact records but retains all twelve
+LIVE-100 blockers and remains `blocked_repository_evidence_only`. The module is not wired into any runtime. TypeScript,
+lint, 65/65 focused tests, 107/107 connection tests, 123/123 CR13A tests, the complete repository lifecycle, production
+build/render, migrations, stage zero, and whitespace pass. Independent zero-repair review rejected the target with
+two Medium integrity findings.
+The immutable review target is `3c756154744a1b933093771a878ab6b64f243f2e`; packet SHA-256:
+`6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`.
+
+M-001 proved that digest equality allowed separately minted but publicly equal plan/readiness and
+contract/rehearsal combinations to cross exact-object boundaries. M-002 proved that the exported `status`, `rehearse`,
+and `close` prototype method function objects remained extensible. The fake remained blocked and effect-free, but both
+defects contradict the acceptance contract. The negative report is preserved at
+`docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW.md`; SHA-256:
+`4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation and a different independent
+re-review are required before integration.
+
+Exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d` adds private readiness-to-plan,
+contract-to-plan/readiness, rehearsal-to-contract/driver, and driver-to-contract relationships and verifies exact
+object identity during composition. It freezes the exported fake-driver class and each captured prototype method
+function. New regressions reproduce all three M-001 substitution paths and the complete M-002 function mutation
+family; all fail closed with zero replacement executions. The remediation passes macOS stage zero, TypeScript, lint,
+66/66 focused tests, 108/108 connection tests, 124/124 CR13A tests, 769/769 pretests, 419/421 core tests with two
+established platform skips, 359/359 posttests, production build, 4/4 rendered routes, 36 migrations/119 tables through
+the listener-free verifier, and whitespace. A different zero-repair re-review is required; no external-effect
+authority has been added.
+
+The different zero-repair reviewer accepted exact target `8643513a5ff807c9fdfa74874053b9098ac447a9` with 0 High,
+0 Medium, and 0 Low findings. M-001 and M-002 are closed. The reviewer reproduced every gate, rejected 36
+copy/behavior cases, 113 individual truth replacements, 15 array mutations, 11 bounds violations, and 20 ambient
+attacks, and kept 64 concurrent calls stable with zero replacement executions or effects. The accepted report is
+`docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. Ordinary owner-controlled integration is
+ready; no native or external-effect authority is granted.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1210,12 +1252,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-100-INTEGRATION — integrate the independently accepted default-disabled native-listener boundary
+Block: CR13A-LIVE-110-INTEGRATION — run ordinary GitHub CI and request exact owner merge approval
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the security contract, two rejected reports, both remediation rounds, and a clean third-party acceptance now form one complete reviewable branch.
-Expected output: one pull request with passing ordinary GitHub CI and exact owner approval before merge; after integration, begin CR13A-LIVE-110 as an effect-free native-driver and activation-evidence contract using injected fakes only.
-Owner action: approve only the exact LIVE-100 pull request after its CI passes.
+Why: the exact remediation is independently accepted and now needs only ordinary repository integration controls.
+Expected output: one scoped pull request from the reviewed branch, passing GitHub CI, exact owner approval, merge, and passing post-merge main CI.
+Owner action: none; independent reviews are already authorized. Approve only the exact pull request after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

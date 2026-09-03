@@ -1,7 +1,7 @@
 # CR13A-LIVE-100 default-disabled native-listener adapter acceptance
 
-**Status:** independently accepted after two remediation rounds; M-001, L-001, L-002, and L-003 closed with no new
-High, Medium, or Low finding; ordinary owner-controlled integration permitted
+**Status:** independently accepted after two remediation rounds and integrated through owner-approved PR #239;
+M-001, L-001, L-002, and L-003 closed with no new High, Medium, or Low finding
 **Integration base:** owner-approved LIVE-090 merge `65ea851c123993d7760d6492966845f74ca1d665`
 **Effect boundary:** repository code and deterministic tests only; no native driver, socket, listener, port, SSH,
 credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS, hosting, or network effect
@@ -113,8 +113,15 @@ target is `2efc17abf0f04325e0f462420f0bccc319c07d43`. Accepted report:
 `docs/reviews/CR13A_LIVE_100_SECOND_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
 `8a9ac5c6191303e75d8957fa776844639e6ecb4f4a56aab9b0c687d4f2fdc465`.
 
-Acceptance would permit ordinary owner-controlled integration only. It would not authorize adding `node:net`, opening
+Acceptance permitted ordinary owner-controlled integration only. It did not authorize adding `node:net`, opening
 a listener, selecting or exposing a port, starting SSH, reading a credential, contacting Hermes, running a native
 qualification, touching production, or deploying. The following block may define the separately gated native driver
 and activation-evidence verifier, still default-disabled and tested only through injected fakes. Any real bind remains a
 new owner-attended effect with a fresh exact packet and authorization.
+
+## Integration evidence
+
+Owner-approved PR #239 merged exact branch head `7a11d6b132b7016a63a4e160ce049b29dcff21db` to `main` as
+`d1d2b8723797cd2d09efc70384fa98403223a8ec`. PR CI run `33793948835` and post-merge run `33796044403` passed.
+Integration added no listener, socket, port, SSH, credential, native, provider, production, deployment, DNS, hosting,
+or network authority.

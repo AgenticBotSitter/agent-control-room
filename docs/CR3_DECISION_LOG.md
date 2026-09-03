@@ -3212,3 +3212,80 @@ or network authority.
 closing a physical listener, selecting a port, starting SSH, reading a credential, accepting native evidence, running a
 platform qualification, or making the record activation-eligible. Each requires a new contract, immutable review, and
 separate owner authority; a real bind additionally requires an exact owner-attended effect packet.
+
+**Integration amendment:** The owner approved PR #239. Accepted branch head
+`7a11d6b132b7016a63a4e160ce049b29dcff21db` merged to `main` as
+`d1d2b8723797cd2d09efc70384fa98403223a8ec`; PR CI run `33793948835` and post-merge run `33796044403` passed.
+No listener or external-effect authority was added by integration.
+
+## ADR-160 — Rehearsing the native-driver contract cannot create activation truth
+
+**Decision:** Define the physical listener's driver and activation-evidence vocabulary before adding a physical
+implementation. The repository creates one plan/readiness-bound driver contract with fixed operations, limits, and
+required proofs. The only executable object in this block is an exact-branded repository fake with no callback or
+behavioral input. Its fixed rehearsal may prove contract coherence but always records zero native/listener/network
+attempts and cannot satisfy any LIVE-100 activation blocker.
+
+Activation evidence in this block accepts only exact module-created disabled readiness, driver contract, and fake
+rehearsal records. It binds their digests and identities, explicitly labels the evidence `repository_fake`, retains all
+twelve blockers, and fixes eligibility, activation, native truth, retry, effects, and authority false. Copies,
+re-digests, cross-plan or cross-driver combinations, lookalikes, subclasses, changed receivers, and mutable operations
+are not accepted.
+
+**Why:** A native-driver interface and a passing fake can otherwise become an accidental authorization seam. Keeping
+contract rehearsal separate from native qualification makes it impossible for configuration presence, test success,
+a public digest, or an injected callback to open a listener. The future physical implementation has an exact small
+target while every operating-system and network fact remains independently unproven.
+
+**Alternatives rejected:** Add `node:net` with the contract; accept a generic injected driver or callback; let a fake
+receipt clear the native-driver blocker; treat a digest as approval; accept serialized or caller-created evidence;
+expose the listener ID, address, or port; wire the fake into the local pilot; infer real deadlines, cleanup, or recovery
+from repository simulation; or combine contract definition, native implementation, owner activation, and physical bind
+in one review block.
+
+**Trade-off:** This block does not open a listener or establish that a native implementation works. It adds a separate
+review step, but the later native implementation and live qualification can be measured against a fixed contract
+without granting the repository fake any effect authority.
+
+**Producer evidence:** Exact implementation `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab` passes macOS stage zero,
+TypeScript, full lint, 65/65 focused tests,
+107/107 connection tests, 123/123 CR13A tests, 769/769 pretests, 419/421 core tests with two established platform skips,
+358/358 posttests, production build with 4/4 rendered routes, all 36 migrations/119 tables through the listener-free
+verifier, and whitespace. The ordinary database wrapper preserved its known sandbox-only `tsx` IPC denial before
+migration work. No native, listener, network, SSH, credential, provider, production, or deployment effect occurred.
+
+**Independent-review freeze:** Review exact target `3c756154744a1b933093771a878ab6b64f243f2e`, containing
+implementation `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab`, under the zero-repair packet with SHA-256
+`6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`. A passing report permits ordinary
+integration review only and grants no listener or external-effect authority.
+
+**Independent-review rejection:** The different zero-repair reviewer rejected the immutable target with 0 High,
+2 Medium, and 0 Low findings. M-001 showed that matching public digests did not prove exact-object provenance across
+the plan/readiness, contract, and rehearsal boundaries. M-002 showed that freezing the driver prototype did not freeze
+the three method function objects stored on it. Preserve the negative report at
+`docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW.md`; SHA-256:
+`4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation and a different independent
+zero-repair re-review are mandatory before integration.
+
+**Remediation amendment:** Exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d` makes exact-object
+provenance a private relationship rather than a public-digest inference. Readiness is bound to its exact input plan;
+contracts are bound to their exact plan/readiness pair; rehearsals are bound to their exact contract/driver pair; and
+drivers are bound to their exact contract. Evidence composition revalidates those relationships. The exported fake
+driver class and each captured prototype method function are frozen. Hostile regressions reject all reported
+equal-identity substitutions and method-function changes with zero replacement executions. A different zero-repair
+re-review remains mandatory, and the change grants no native or external-effect authority.
+
+**Remediation acceptance amendment:** A different zero-repair reviewer accepted immutable target
+`8643513a5ff807c9fdfa74874053b9098ac447a9` with 0 High, 0 Medium, and 0 Low findings. M-001 and M-002 are
+closed. All deterministic gates, original reproductions, exact-object crossings, callable-surface attacks, truth and
+array mutations, bounds, ambient changes, concurrency, whitespace behavior, sanitation, and runtime non-wiring
+passed with zero replacement executions and zero effects. Preserve the accepted report at
+`docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. Ordinary owner-controlled integration is
+permitted; physical driver, listener, SSH, credential, native qualification, production, and deployment authority
+remain absent.
+
+**Reevaluate:** Before admitting any physical-driver object, signed native evidence, owner activation, actual port,
+socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
+contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a
+physical bind requires a fresh owner-attended one-attempt packet.
