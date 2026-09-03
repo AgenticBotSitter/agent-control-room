@@ -1464,3 +1464,24 @@ physical listener/socket/port attempts, network observations, and external effec
 accepted report at `docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
 `420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. Ordinary owner-controlled integration is
 ready. Physical qualification and runtime activation remain separate, blocked stages.
+
+Owner-approved PR #241 merged exact accepted branch head `6f86881879d4c42bc21294eff559200aae0b439f` to `main` as
+`19a87163c9210730140ec0d769c2effa6bbb5e1b`. This integration does not issue a capability or admission, construct the
+native backend, open a listener/socket/port, wire runtime activation, use SSH or credentials, contact a provider or
+production system, or deploy.
+
+## CR13A-LIVE-130 — physical qualification prerequisite boundary
+
+Status: architecture contract frozen for effect-free implementation. See
+`CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_BOUNDARY.md` and ADR-164. Use Sol xhigh.
+
+LIVE-130 must create one exact frozen readiness record that distinguishes independently accepted source from physical
+qualification. It binds the exact LIVE-120 integration/remediation/review evidence, lists twelve missing private
+prerequisites in fixed order, keeps every physical/effect count and authority grant false, and cannot assemble a
+candidate or accept caller-supplied proof. The module imports no native driver or effectful subsystem and may expose
+only safe status projection through the connection-registry barrel.
+
+Completion requires strict exact provenance, hostile copy/accessor/symbol/Proxy and decoration tests, public
+sanitation, static non-wiring, relevant and full repository gates, one immutable review packet, and a different
+zero-repair reviewer with no High, Medium, or Low finding. Acceptance permits owner-controlled integration only; all
+private providers, owner authorization, native qualification, and runtime activation remain later separate blocks.

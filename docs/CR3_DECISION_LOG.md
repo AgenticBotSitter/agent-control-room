@@ -3391,3 +3391,31 @@ integration only and grants no physical or external-effect authority.
 observer, locator broker, runtime consumer, physical attempt, SSH/credential operation, production contact, or
 deployment. Until those boundaries are separately implemented and accepted, native cleanup cannot become
 `closed_verified`.
+
+## ADR-164 — Record accepted source separately from physical qualification readiness
+
+**Decision:** CR13A-LIVE-130 adds one effect-free, exact-branded qualification-prerequisite readiness record. It binds
+the owner-approved LIVE-120 integration, accepted remediation, rejected target, and both preserved review hashes while
+keeping twelve private prerequisites explicitly missing. The record may truthfully say that source implementation and
+independent source review are accepted, but candidate assembly, owner authorization, physical qualification, runtime
+activation, every native/effect count, and every authority grant remain false.
+
+**Why:** A reviewed `node:net` source file is not a runnable candidate and cannot prove host identity, private locator
+custody, tunnel peer, host key, owner presence, durable spend, cleanup, or restart truth. Recording the accepted source
+and missing physical prerequisites separately prevents UI, automation, CI, or a future worker from collapsing source
+review into permission to open a socket.
+
+**Alternatives rejected:** Mark the LIVE-120 implementation object physically accepted; let a caller submit prerequisite
+booleans; mint repository-fake production proofs; import the native driver merely to display readiness; assemble a
+candidate before the private providers exist; reuse the LIVE-120 merge approval as an owner attempt window; or let a
+successful repository test clear a native blocker.
+
+**Evidence:** The controlling design is `docs/CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_BOUNDARY.md`. The integration
+base is owner-approved LIVE-120 merge `19a87163c9210730140ec0d769c2effa6bbb5e1b`; accepted remediation is
+`5a579342b7a03bb013de21663c69a3a6118e11c6`; accepted independent-report SHA-256 is
+`420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. The design adds no runtime code or external
+effect.
+
+**Reevaluate:** Before implementing a private provider, candidate assembler, owner-spend path, native harness,
+physical attempt, evidence acceptance registry, runtime consumer, SSH/credential path, production contact, or
+deployment.

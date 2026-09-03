@@ -120,7 +120,8 @@
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
 | CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
-| CR13A-LIVE-120 unwired physical native driver | Exact remediation `5a57934...` independently accepted; owner-controlled integration pending | Different reviewer closed all four High and five Medium findings with no new finding; 34/34 focused and 139/139 CR13A tests; zero native/listener/network effects |
+| CR13A-LIVE-120 unwired physical native driver | Independently accepted and integrated on `main` through PR #241 | Different reviewer closed all four High and five Medium findings; owner-approved merge `19a8716...`; zero native/listener/network effects |
+| CR13A-LIVE-130 physical qualification prerequisite boundary | Architecture frozen; effect-free implementation in progress | Exact accepted source evidence plus twelve still-missing private qualification prerequisites; no candidate, issuer, native effect, or authority |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1286,12 +1287,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-120-INTEGRATION — publish the independently accepted unwired driver, require clean CI, and await exact owner merge approval
+Block: CR13A-LIVE-130 — implement and independently review the effect-free physical qualification prerequisite record
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact remediation and independent acceptance are complete; integration now needs an auditable branch, pull request, and green repository CI without widening authority.
-Expected output: one PR targeting `main` with exact accepted report SHA-256 `420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`, clean required checks, and no native effect.
-Owner action: give exact approval to merge the numbered PR after CI passes. A physical attempt remains a later, separately owner-attended decision.
+Why: reviewed source must not be confused with a runnable candidate; Control Room needs exact visible truth about every missing private provider, owner window, physical proof, and activation decision.
+Expected output: one exact-branded frozen readiness module, tests, acceptance record, immutable zero-repair review packet, and independent disposition with zero native/effect counts.
+Owner action: none for repository-only implementation and review. Candidate assembly and any physical attempt remain later separately authorized decisions.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
