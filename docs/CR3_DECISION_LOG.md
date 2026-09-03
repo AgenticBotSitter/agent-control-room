@@ -3322,3 +3322,31 @@ backpressure, shutdown, cleanup, restart, ambiguity, no-retry, evidence, qualifi
 requirements. It authorizes no native import, physical driver, listener, port, connection, SSH, credential, provider,
 runtime activation, production contact, or deployment. The unwired implementation and the later physical attempt each
 require separate exact owner authority.
+
+## ADR-162 — Keep the first physical driver present but structurally unreachable
+
+**Decision:** Under the owner's exact LIVE-120 implementation authorization, admit one isolated `node:net` server
+module at product target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`. The module may contain the bounded physical
+loopback lifecycle, but it must export no physical factory or bind-capability issuer, receive no package-barrel or
+runtime import, and expose only a non-authorizing implementation description plus the repository fake used to test
+the shared five-operation controller. The physical capability registry remains unable to accept entries.
+
+**Why:** This lets the security-sensitive lifecycle be reviewed as concrete code without making it constructible or
+mistaking fake success for native evidence. The implementation can be attacked for state, race, deadline,
+backpressure, cleanup, recovery, provenance, and leakage defects before a private locator broker, signer, owner-spend
+composition, or operating-system attempt exists.
+
+**Alternatives rejected:** Export a native factory for convenience; publish the private port; add the driver to the
+connection-registry barrel; wire it into the local pilot; let tests mint a production-shaped bind capability; replace
+the repository fake with a real loopback self-test; treat a clean build as platform qualification; or combine
+implementation review with the owner-attended physical attempt.
+
+**Evidence:** The immutable product passes 32/32 dedicated tests, 137/137 CR13A tests, 769/769 pretests, 372/372 core
+tests, 372/372 posttests, TypeScript, full lint, macOS stage zero, production build with 4/4 rendered routes, 36
+migrations/119 PostgreSQL tables through the no-IPC verifier, and whitespace. Listener attempts, network observations,
+and external effects are all zero. Independent review packet SHA-256:
+`e42cde8b401117e8bb71971315fff0219a5e8f17827e7df7a480a42ca967c9b5`.
+
+**Reevaluate:** After a different zero-repair reviewer accepts the exact target with no findings, and again before any
+capability issuer, locator broker, signer, runtime consumer, socket/listener attempt, SSH or credential use, physical
+qualification, production contact, or deployment. Each remains a separate reviewed and owner-controlled stage.

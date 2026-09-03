@@ -1,7 +1,7 @@
 # CR13A-LIVE-120 physical native-driver design and qualification boundary
 
-**Status:** effect-free architecture contract complete; physical implementation and native qualification remain
-blocked pending separate exact authority
+**Status:** architecture contract complete; separately authorized unwired implementation frozen at
+`959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`; independent review and physical qualification remain blocked
 **Integration base:** owner-approved LIVE-110 merge `1ee5409c0b66afbd802582459af864ec0d198f5c`
 **Required model:** `gpt-5.6-sol`
 **Required reasoning effort:** `xhigh`
@@ -275,7 +275,13 @@ effect. Negative evidence is preserved before remediation.
 
 ## Current disposition
 
-The design contract is complete. No native implementation exists, no `node:net` import is authorized, and no prior
-owner statement authorizes a socket or qualification attempt. The next block may implement the exact unwired driver
-only after the owner explicitly authorizes that bounded repository-code change. A separate later authorization is
-still required for the physical attempt.
+The owner separately authorized the bounded repository-code implementation, and exact product
+`959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38` now contains one isolated, unwired `node:net` server-driver module.
+No physical backend factory or bind-capability issuer is exported, the capability registry has no insertion path, the
+module is absent from the connection-registry barrel, and no source consumer imports it. Repository fakes exercised
+the fixed lifecycle with zero listener attempts and zero network observations.
+
+This does not accept the implementation or authorize a socket. A different zero-repair reviewer must review the
+exact target under packet SHA-256 `e42cde8b401117e8bb71971315fff0219a5e8f17827e7df7a480a42ca967c9b5`.
+The private broker/signer composition, runtime wiring, and the first owner-attended physical attempt remain separate
+later blocks requiring their own review and exact authority.

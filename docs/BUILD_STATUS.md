@@ -120,7 +120,7 @@
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
 | CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
-| CR13A-LIVE-120 physical native-driver boundary | Effect-free design contract complete locally; implementation not authorized | Exact component split, state machine, bounds, cleanup, recovery, qualification, and no-retry rules; no native code or effect |
+| CR13A-LIVE-120 unwired physical native driver | Implementation frozen at `959b8cb...`; independent review required | One isolated `node:net` server module, unreachable private capability, no barrel/runtime consumer, four fake terminal scenarios, 32/32 focused and 137/137 CR13A tests, zero listener/network effects; see `CR13A_LIVE_120_UNWIRED_PHYSICAL_NATIVE_DRIVER_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1259,12 +1259,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-120-NATIVE-DRIVER-IMPLEMENTATION — implement the reviewed boundary without wiring or running it
+Block: CR13A-LIVE-120-INDEPENDENT-IMPLEMENTATION-REVIEW — attack the exact unwired implementation without repair or native execution
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the effect-free design is now fixed; the next change would add a single allowlisted native networking module and therefore needs a separate exact authority boundary.
-Expected output: one unwired physical-driver implementation behind exact internal ports, fake-only deterministic tests, static import/consumer allowlists, and independent zero-repair review; no real bind or runtime activation.
-Owner action: authorize the bounded repository-code implementation before any native networking import. A separate later authorization will still be required for one physical attempt.
+Why: the driver contains unreachable but security-sensitive socket lifecycle code; an independent reviewer must challenge capability custody, races, cleanup, bounds, sanitation, and static non-wiring before integration.
+Expected output: one immutable report for target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`, with 0 High, 0 Medium, and 0 Low findings for acceptance; no repair and no physical listener attempt.
+Owner action: authorize a different independent report-only reviewer if no standing review authorization applies. A physical attempt remains a later, separately owner-attended decision even after a pass.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
