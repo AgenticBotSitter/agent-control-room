@@ -1189,9 +1189,9 @@ integration only and grants no listener, SSH, credential, native, provider, prod
 
 ## CR13A-LIVE-090 — one-frame listener-session and authenticated admission composition
 
-Status: first remediation closed M-001 but its re-review found M-002; exact second remediation
-`de840c9aef259db18da3c45e1d4e0549bc0f0d85` frozen over owner-approved LIVE-080 merge
-`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; third-reviewer zero-repair re-review required. See
+Status: second remediation closed M-002 but its re-review found M-003; exact third remediation
+`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` frozen over owner-approved LIVE-080 merge
+`04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`; fourth-reviewer zero-repair re-review required. See
 `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` and ADR-158.
 
 This block composes one accepted private-loopback frame and the repository-fake listener lifecycle into exactly one
@@ -1244,3 +1244,18 @@ stage zero, and whitespace. A third zero-repair reviewer must close M-002, recon
 Medium, or Low defect. The immutable second-remediation review target is
 `f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`; packet SHA-256:
 `32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`.
+
+The third reviewer reconfirmed M-001 and closed M-002 but rejected the target for M-003. Ambient
+`Promise.prototype.then` drift correctly invalidated a dependency result but unnecessarily disabled the already
+captured safe settlement observer, permitting a pre-rejected malformed result to reach strict Node rejection handling.
+Preserve the third negative report; SHA-256:
+`7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`.
+
+Exact third remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` separates strict Promise acceptance from
+safe rejection cleanup. It uses only captured descriptors and intrinsics to prove native default/captured
+constructor-and-species selection, observes the rejected settlement, and still returns local integrity failure without
+calling ambient replacement behavior. Both listener and transport seams observe before failure on detected runtime
+drift. Strict-process regressions cover both and prove replacement calls remain zero. Producer gates pass at 47/47
+focused, 89/89 connections, 769/769 pretests, 419/421 core with two intentional platform skips, 340/340 posttests,
+build with 4/4 rendered routes, 36 migrations/119 tables, stage zero, type, lint, and whitespace. A fourth zero-repair
+reviewer must close M-003, reconfirm M-001/M-002, and find no new High, Medium, or Low defect.

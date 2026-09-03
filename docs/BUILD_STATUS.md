@@ -117,7 +117,7 @@
 | CR13A-LIVE-060 bounded transport admission | Independently accepted and integrated on `main` through PR #235 | Different reviewer closed M-001 and L-001; merge `a6c08e1...`; PR CI `33712118883` and post-merge CI `33749415744` passed; no listener or network effect; see `CR13A_LIVE_060_BOUNDED_TRANSPORT_ADMISSION_ACCEPTANCE.md` |
 | CR13A-LIVE-070 private-loopback framing | Independently accepted and integrated on `main` through PR #236 | Owner-approved merge `b0b1298...`; PR CI `33756343379` and post-merge CI `33757989813` passed; no listener or network effect; see `CR13A_LIVE_070_PRIVATE_LOOPBACK_FRAMING_ACCEPTANCE.md` |
 | CR13A-LIVE-080 private-loopback listener lifecycle | Independently accepted and integrated on `main` through PR #237 | Owner-approved merge `04dfd79...`; post-merge CI run `33766513282` passed; no listener/network effect; see `CR13A_LIVE_080_PRIVATE_LOOPBACK_LISTENER_LIFECYCLE_ACCEPTANCE.md` |
-| CR13A-LIVE-090 listener-session admission composition | First remediation closed M-001 but re-review found M-002; exact second remediation `de840c9...` frozen; third zero-repair re-review required | Safe native-Promise rejection ownership is hardened in both listener session and transport admission; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
+| CR13A-LIVE-090 listener-session admission composition | Second remediation closed M-002 but re-review found M-003; exact third remediation `77ef10c...` frozen; fourth zero-repair re-review required | Promise validation and safe rejection cleanup are separated at both listener and transport seams; no listener/network effect; see `CR13A_LIVE_090_PRIVATE_LOOPBACK_LISTENER_SESSION_ACCEPTANCE.md` |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1124,6 +1124,20 @@ migrations with 119 tables, and whitespace. A third zero-repair reviewer must cl
 The immutable second-remediation review target is `f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`; packet SHA-256:
 `32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`.
 
+The third reviewer reconfirmed M-001 and closed M-002 but rejected that target for M-003. Ambient
+`Promise.prototype.then` drift correctly invalidated the result yet unnecessarily disabled use of the already captured
+safe observer, allowing a pre-rejected malformed collaborator result to reach strict Node rejection handling. The third
+immutable negative report has SHA-256 `7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`.
+
+Exact third remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` separates full runtime acceptance from
+safe rejection cleanup. It proves effective native constructor/species selection using captured own descriptors, calls
+only the captured observer, and never executes the drifted ambient method. Both listener and transport paths observe
+safely before reporting runtime-integrity failure. Strict-process regressions cover both and record zero replacement
+calls. Producer gates pass: stage zero with no native attempt, TypeScript, lint, 47/47 focused tests, 89/89 connection
+tests, 769/769 pretests, 419/421 core with two intentional platform skips, 340/340 posttests, production build with 4/4
+rendered checks, all 36 migrations with 119 tables, and whitespace. A fourth zero-repair reviewer must close M-003 and
+reconfirm M-001/M-002.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1139,11 +1153,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-090-SECOND-REMEDIATION-REREVIEW — independently verify Promise rejection containment
+Block: CR13A-LIVE-090-THIRD-REMEDIATION-REREVIEW — independently verify safe cleanup across runtime drift
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the second reviewer closed the admission race but found a real Medium strict-process escape in malformed native-Promise handling.
-Expected output: immutable second-remediation packet and a third reviewer's exact-target gates and hostile probes, accepted only after M-002 is closed, M-001 remains closed, and no High, Medium, or Low finding remains.
+Why: the third reviewer closed the reported malformed-Promise case but found a related Medium cleanup gap during ambient runtime drift.
+Expected output: immutable third-remediation packet and a fourth reviewer's exact-target gates and robustness probes, accepted only after M-003 is closed, M-001/M-002 remain closed, and no High, Medium, or Low finding remains.
 Owner action: none; all independent reviews are already authorized. Approve only the exact PR after accepted review and ordinary CI.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

@@ -3121,3 +3121,12 @@ duplicated LIVE-060 boundary and adds strict-process regressions at both layers.
 M-002, reconfirm M-001, and find no new High, Medium, or Low defect. Review immutable target
 `f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3` under packet SHA-256
 `32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`. No external authority is granted.
+
+**Third independent-review amendment:** The third reviewer reconfirmed M-001 and closed M-002 but rejected target
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`. M-003 proves full Promise-runtime drift must invalidate a result without
+unnecessarily disabling safe rejection cleanup through already captured intrinsics. Preserve the negative report with
+SHA-256 `7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`. Exact third
+remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` independently proves an inert effective constructor/species selection,
+uses only the captured observer, and observes before returning integrity failure at both listener and transport seams.
+Ambient replacement code remains uncalled. A fourth zero-repair reviewer must close M-003, reconfirm M-001/M-002, and
+find no new High, Medium, or Low defect. No external authority is granted.

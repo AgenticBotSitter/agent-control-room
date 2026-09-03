@@ -1,6 +1,6 @@
 # CR13A-LIVE-090 private-loopback listener session acceptance
 
-**Status:** first remediation closed M-001 but its re-review found M-002; exact second remediation frozen at `de840c9aef259db18da3c45e1d4e0549bc0f0d85`; third-reviewer zero-repair re-review required
+**Status:** second remediation closed M-002 but its re-review found M-003; exact third remediation frozen at `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`; fourth-reviewer zero-repair re-review required
 **Integration base:** owner-approved LIVE-080 merge `04dfd7958b7b030ff00cbcda0ba0d8329ea31e3d`
 **Effect boundary:** repository code, fake admission, and local deterministic tests only; no socket, listener, SSH,
 credential, Hermes/provider, native process, production PostgreSQL/VPS, deployment, DNS, or external network effect
@@ -101,16 +101,31 @@ Proxies, subclasses, and foreign thenables remain unassimilated and unexecuted. 
 LIVE-060 transport admission is hardened in the same change. Strict-process regressions cover the reported listener
 and transport paths, and an additional regression proves a behavioral constructor remains unread.
 
+The third reviewer reconfirmed M-001 and closed M-002 but rejected second-remediation target
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`. M-003 showed that post-import drift of the ambient
+`Promise.prototype.then` made result validation fail as intended, but also prevented use of the already captured safe
+observer even while effective constructor/species selection remained demonstrably native. A malformed pre-rejected
+collaborator result could therefore remain unobserved under strict Node handling. Preserve the third negative report at
+`docs/reviews/CR13A_LIVE_090_SECOND_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`.
+
+Exact third remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` separates full Promise acceptance from
+safe rejection cleanup. Validation still rejects every runtime drift. Cleanup independently resolves the effective
+constructor from captured own descriptors and permits only the native default or captured native constructor with the
+captured species path, then calls the captured intrinsic observer. Drifted ambient `then` behavior is never called.
+Both listener and transport now observe safely before returning an integrity failure if runtime custody changed.
+Strict-process regressions reproduce the reported drift at both seams and prove the replacement runs zero times.
+
 ## Deterministic evidence
 
 Producer verification for the exact remediation:
 
 - macOS stage zero: pass (`ready_for_runtime_check`), with no native attempt;
 - TypeScript and full ESLint: pass;
-- focused LIVE-060/070/080/090 suite: 46/46 pass;
-- complete connection slice: 88/88 pass;
+- focused LIVE-060/070/080/090 suite: 47/47 pass;
+- complete connection slice: 89/89 pass;
 - complete repository lifecycle: 769/769 pretests, 419/421 core tests with two intentional platform skips, and
-  339/339 posttests;
+  340/340 posttests;
 - production build and 4/4 rendered-route checks: pass;
 - PostgreSQL migrations `0001` through `0036`: pass with 119 tables; and
 - whitespace validation: pass.
@@ -137,3 +152,7 @@ Exact second remediation is `de840c9aef259db18da3c45e1d4e0549bc0f0d85`; a third 
 M-002, reconfirm M-001, and find no new High, Medium, or Low defect before ordinary owner-controlled integration. The
 immutable second-remediation review target is `f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`; packet SHA-256:
 `32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`.
+
+That third reviewer closed M-002 and reconfirmed M-001 but rejected the target for M-003. Exact third remediation is
+`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`; a fourth zero-repair reviewer must close M-003, reconfirm M-001/M-002,
+and find no new High, Medium, or Low defect before ordinary owner-controlled integration.
