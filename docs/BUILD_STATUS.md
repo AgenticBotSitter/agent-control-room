@@ -1047,6 +1047,8 @@ whitespace pass. Implementation freeze is complete; independent review remains r
 Architect self-review superseded intermediate pre-review commit `c98ae81...` with explicit canonicalization/hash runtime
 custody and a zero-execution replacement regression. That intermediate commit was never sent for independent review.
 The immutable implementation code is `7333ea48577b1000fd5eac0e6789b3e21cfeb559`; independent review remains required.
+The exact review target is `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e`. Its zero-repair independent review
+packet has SHA-256 `00c005a2371f20dc4de66685659f9fde7a0bd6513627829fd7894ace0451f4a0`.
 
 ## Parallel build lane
 

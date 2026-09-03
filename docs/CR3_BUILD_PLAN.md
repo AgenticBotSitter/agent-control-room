@@ -1169,3 +1169,7 @@ Completion requires the full deterministic repository lifecycle, immutable produ
 fresh independent review with no open High, Medium, or Low finding. Independent acceptance permits owner-controlled
 integration only. A physical listener, SSH tunnel, credential operation, or native qualification remains a new,
 separately authorized block. Use Sol xhigh throughout this listener-security boundary.
+
+The exact review target is `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e`, containing frozen implementation
+`7333ea48577b1000fd5eac0e6789b3e21cfeb559`. Zero-repair packet SHA-256:
+`00c005a2371f20dc4de66685659f9fde7a0bd6513627829fd7894ace0451f4a0`.

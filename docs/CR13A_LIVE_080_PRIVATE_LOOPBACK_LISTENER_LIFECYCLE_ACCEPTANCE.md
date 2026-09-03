@@ -92,6 +92,9 @@ receipt parsing, behavioral inputs, identity drift, frame provenance, ordering, 
 cleanup, public-safe output, recomputed negative claims, and absence of listener/network/runtime enablement. A rejection
 or uncertainty remains negative evidence and requires remediation plus a different re-review.
 
+The zero-repair packet is `docs/reviews/CR13A_LIVE_080_INDEPENDENT_REVIEW_PACKET.md`, SHA-256
+`00c005a2371f20dc4de66685659f9fde7a0bd6513627829fd7894ace0451f4a0`.
+
 Independent acceptance would permit ordinary owner-controlled integration only. It would not authorize the next native
 block. A future physical listener requires separate exact owner authority and must prove real exclusive loopback bind,
 SSH-tunnel peer authentication, host-key custody, native backpressure/timeouts, one-frame delivery into LIVE-060,
