@@ -3,6 +3,7 @@ import { assertNoSecretMaterial, sha256Digest } from "../../security";
 const objectFreezeV1 = Object.freeze;
 const objectIsFrozenV1 = Object.isFrozen;
 const objectDefinePropertiesV1 = Object.defineProperties;
+const objectSetPrototypeOfV1 = Object.setPrototypeOf;
 const reflectApplyV1 = Reflect.apply;
 const stringSliceV1 = String.prototype.slice;
 const weakMapGetV1 = WeakMap.prototype.get;
@@ -405,7 +406,9 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1
     grantsLeaseAuthority: false as const,
     grantsExecutionAuthority: false as const,
   };
-  const status = objectFreezeV1({ ...material, statusDigest: statusDigestV1 });
+  const status = objectFreezeV1(reflectApplyV1(objectSetPrototypeOfV1, Object,
+    [{ ...material, statusDigest: statusDigestV1 }, null]) as
+      ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1);
   reflectApplyV1(weakSetAddV1, statusRecordsV1, [status]);
   reflectApplyV1(weakMapSetV1, statusCompositionsV1, [status, composition]);
   reflectApplyV1(weakMapSetV1, statusDigestsV1, [status, status.statusDigest]);

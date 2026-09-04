@@ -207,10 +207,17 @@ test("CR13A-LIVE-240 binds status and rejects hostile values without behavior", 
 test("CR13A-LIVE-240 freezes surfaces and resists ambient replacement", async () => {
   const originals = [Object.freeze, Object.isFrozen, Object.defineProperties, WeakSet.prototype.has,
     WeakMap.prototype.get, Reflect.apply, Array.prototype.includes, Array.prototype.slice,
-    Array.prototype.push, Object.keys, JSON.stringify] as const;
+    Array.prototype.push, Object.keys, JSON.stringify, Object.setPrototypeOf] as const;
+  const originalInheritedThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
   const composition = createConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionFakeV1("transferred_then_closed");
-  const executions = new Array(11).fill(0);
+  const executions = new Array(12).fill(0);
+  let inheritedThenExecutions = 0;
+  let settledStatus: object | undefined;
   try {
+    Object.defineProperty(Object.prototype, "then", {
+      configurable: true,
+      get() { inheritedThenExecutions += 1; throw new Error("raw inherited thenable ambient"); },
+    });
     Object.freeze = <T>(value: T): Readonly<T> => { executions[0] += 1; return value; };
     Object.isFrozen = () => { executions[1] += 1; return false; };
     Object.defineProperties = (value) => { executions[2] += 1; return value; };
@@ -222,10 +229,11 @@ test("CR13A-LIVE-240 freezes surfaces and resists ambient replacement", async ()
     Array.prototype.push = () => { executions[8] += 1; return 0; };
     Object.keys = () => { executions[9] += 1; return []; };
     JSON.stringify = () => { executions[10] += 1; return "raw ambient"; };
+    Object.setPrototypeOf = <T extends object>(value: T): T => { executions[11] += 1; return value; };
     assert.equal(parseConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1(
       connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1),
     connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1);
-    await composition.run();
+    settledStatus = await composition.run();
   } finally {
     Object.freeze = originals[0];
     Object.isFrozen = originals[1];
@@ -238,8 +246,14 @@ test("CR13A-LIVE-240 freezes surfaces and resists ambient replacement", async ()
     Array.prototype.push = originals[8];
     Object.keys = originals[9];
     JSON.stringify = originals[10];
+    Object.setPrototypeOf = originals[11];
+    if (originalInheritedThen) Object.defineProperty(Object.prototype, "then", originalInheritedThen);
+    else delete (Object.prototype as { then?: unknown }).then;
   }
-  assert.deepEqual(executions, new Array(11).fill(0));
+  assert.deepEqual(executions, new Array(12).fill(0));
+  assert.equal(inheritedThenExecutions, 0);
+  assert.ok(settledStatus);
+  assert.equal(Object.getPrototypeOf(settledStatus), null);
   assert.equal(Object.isFrozen(composition), true);
   for (const callable of Object.values(compositionModule).filter((value) => typeof value === "function")) {
     assert.equal(Object.isFrozen(callable), true);
