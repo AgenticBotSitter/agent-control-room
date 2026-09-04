@@ -134,21 +134,27 @@
 | CR13A-LIVE-230 private native issuer composition contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `3974f16...`; 12/12 commands/groups, 10/10 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; exact ordering and custody contract; zero native/listener/network/persistence effects |
 | CR13A-LIVE-240 unreachable private issuer composition implementation | Independently accepted after security hardening; ordinary owner-controlled integration of unreachable code ready | Product `71e4c73...`; seventh reviewer closed M-001 through M-006, 12/12 commands, 10/10 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero native/listener/network/persistence effects |
 | CR13A-LIVE-250 private one-use native-factory retrieval bridge contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `9b855d4...`; 12/12 commands, 8/8 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; no exported retrieval callable and zero real retrieval/invocation/effects |
+| CR13A-LIVE-260 private same-module native-composition shell contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `01bfa65...`; 12/12 commands, 8/8 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 20 zero actual totals and eight false authority grants |
+| CR13A-LIVE-270 unreachable native-composition shell implementation | Architecture frozen; implementation begins after LIVE-260 integration | Same-module non-exported/no-input shell and one-use bridge, no invocation, consumer, listener, locator, native effect, or runtime wiring |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-250 is independently accepted at exact product `9b855d4193837fdf6d0d0fce1dcfd65a94cce49f`. A different
-report-only reviewer passed all twelve commands with 0 High/Medium/Low, 8/8 focused tests, five build phases, four
-rendered routes, and 119 tables. The contract exposes no retrieval callable and all real retrieval, native, persistence,
-network, protected-read, wiring, eligibility, blocker, and authority values remain zero or false. Preserve
-`docs/reviews/CR13A_LIVE_250_INDEPENDENT_REVIEW.md`; SHA-256
-`2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6`.
+CR13A-LIVE-260 exact product `01bfa6540cc83dc6099564e4fc9043be4cafddc6` is independently accepted. The
+contract freezes the same-module private call graph, separates factory retrieval/receipt/invocation/resource truth,
+preserves continuous exact-object custody, and makes ambiguity and restart non-retryable. Producer gates passed 8/8
+dedicated, 271/271 CR13A, 769/769 pretests, 392/392 core, 392/392 posttests, 5/5 build phases, 4/4 rendered routes,
+36 migrations/119 tables, typecheck, lint, stage zero, whitespace, and clean status. A different reviewer ran the fixed
+12-command sequence once with 0 High/Medium/Low. Review SHA-256:
+`41c55ae9437f8951e18f919ec1569bbebe1f795cafeaade51a41826fc3d0f9f1`. No shell/bridge implementation,
+factory retrieval/invocation, native resource, locator, listener, persistence, network, protected read, or authority
+occurred.
 
-Next block: CR13A-LIVE-260, the private same-module native-composition shell contract. It may freeze the exact internal
-call graph that will co-locate future native composition with LIVE-220 factory custody, but must not modify LIVE-220 or
-LIVE-240; implement or exercise the bridge; expose, retrieve, invoke, or test the real factory; wire runtime use; open a
-listener; observe a locator; or make a physical attempt. Use `gpt-5.6-sol` at `xhigh` effort.
+Next block: CR13A-LIVE-270, the unreachable same-module native-composition shell implementation. It may add only a
+non-exported no-input shell and one-use bridge inside the existing LIVE-220 native module, with zero invocations and no
+runtime consumer. It must not run native methods, create/listen/inspect/close a server, expose a locator or factory,
+write persistence, wire runtime use, contact Hermes/provider, deploy, or make a physical attempt. Use `gpt-5.6-sol` at
+`xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1377,12 +1383,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-260 — freeze the private same-module native-composition shell contract
+Block: CR13A-LIVE-270 — implement the unreachable same-module native-composition shell
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-250 is independently accepted; a no-export bridge can remain private only if the future native composition is co-located with the existing factory custody rather than receiving an exported capability.
-Expected output: exact same-module native-composition shell contract, private call graph and custody rules, no-input/non-export boundaries, failure and restart semantics, full verification, and independent review with zero native effects.
-Owner action: none for the contract, fake evidence, and review. Modifying LIVE-220, implementing the bridge, or retrieving/invoking the factory remains later separately authorized work.
+Why: LIVE-260 is independently accepted; the next risk is proving that the shell and retrieval bridge can exist only inside LIVE-220 factory custody without becoming exported, invoked, or wired.
+Expected output: exact same-module private shell and one-use bridge implementation, static and hostile evidence of zero use/effects, full verification, and independent review.
+Owner action: the current build instruction permits repository implementation and ordinary merges only. A native invocation or physical qualification still requires a new exact owner-attended authorization.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

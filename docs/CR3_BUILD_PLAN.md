@@ -1794,7 +1794,8 @@ report-only reviewer ran all twelve commands exactly once with 0 High/Medium/Low
 
 ## CR13A-LIVE-260 — private same-module native-composition shell contract
 
-Status: next isolated contract block. Use Sol xhigh.
+Status: exact product `01bfa6540cc83dc6099564e4fc9043be4cafddc6` independently accepted; ordinary integration
+ready. Use Sol xhigh.
 
 LIVE-260 may freeze an inert contract for the future private native-composition shell that must live in the same source
 module as LIVE-220 factory custody. It must define the exact internal call graph, exact accepted LIVE-250 binding,
@@ -1806,3 +1807,25 @@ return, invoke, serialize, or test the real factory; import a new native/effect 
 transfer, or close a real resource; observe or expose a locator; issue or spend live authority; write live persistence;
 wire runtime use; clear a blocker; assemble a candidate; make a physical attempt; contact a provider; or deploy.
 Immutable repository evidence and a different independent zero-repair review are required before ordinary integration.
+
+Producer verification passed 8/8 dedicated, 271/271 CR13A, 769/769 pretests, 392/392 core tests, 392/392 posttests,
+all five build phases, 4/4 rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and
+whitespace. A different report-only reviewer ran all twelve commands exactly once with 0 High/Medium/Low, zero hostile
+or ambient execution, twenty zero actual totals, eight false authority grants, and no real effects. Preserve
+`docs/reviews/CR13A_LIVE_260_INDEPENDENT_REVIEW.md`; SHA-256
+`41c55ae9437f8951e18f919ec1569bbebe1f795cafeaade51a41826fc3d0f9f1`.
+
+## CR13A-LIVE-270 — unreachable same-module native-composition shell implementation
+
+Status: architecture frozen; implementation begins only after accepted LIVE-260 integration. Use Sol xhigh.
+
+LIVE-270 may implement the accepted shell and one-use retrieval bridge only in the LIVE-220 module that already owns
+the quarantined factory WeakMap. Both remain non-exported, no-input, runtime-unwired, and uninvoked. The factory may
+become lexically reachable only inside the private shell, while every public actual retrieval/invocation/effect count
+remains zero and native invocation remains disabled.
+
+The block must not invoke any native primitive; create, bind, listen on, inspect, retain, transfer, or close a real
+resource; observe or expose a locator; accept caller data or callbacks; import LIVE-240 or a new native module; write
+live persistence; call an adapter or driver; wire app/API/worker/Idea Lab/Hermes/startup use; assemble a candidate;
+perform a physical attempt; contact a provider; clear a blocker; or deploy. Immutable producer evidence and a different
+independent report-only zero-repair review are required before ordinary integration.

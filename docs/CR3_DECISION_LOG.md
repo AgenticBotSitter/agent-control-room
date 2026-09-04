@@ -3890,3 +3890,44 @@ full producer verification; and a different independent report-only zero-repair 
 **Reevaluate:** Before modifying LIVE-220/LIVE-240; implementing the shell or bridge; retrieving or invoking the
 factory; creating, observing, transferring, or closing a resource; wiring runtime use; making a physical attempt;
 contacting a provider; clearing a blocker; or deploying.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_260_PRIVATE_NATIVE_COMPOSITION_SHELL_CONTRACT.md` on the accepted
+LIVE-250 integration tip. The contract-only implementation may publish immutable safe evidence and hostile
+zero-execution tests; it may not implement or exercise the shell, bridge, factory, or native path.
+
+**Accepted evidence:** Exact product `01bfa6540cc83dc6099564e4fc9043be4cafddc6` passed 8/8 dedicated,
+271/271 CR13A, the complete 769/769 pretest, 392/392 core, and 392/392 posttest lifecycle, five build phases, 4/4
+rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A different
+report-only reviewer ran all twelve fixed commands once with 0 High/Medium/Low. All hostile and ambient executions,
+twenty actual effect totals, and eight authority grants remained zero or false. Accepted report SHA-256:
+`41c55ae9437f8951e18f919ec1569bbebe1f795cafeaade51a41826fc3d0f9f1`.
+
+## ADR-178 — Implement private reachability before permitting native invocation
+
+**Decision:** CR13A-LIVE-270 may implement the LIVE-260 shell and one-use retrieval bridge only inside the LIVE-220
+source module that owns the quarantined factory. Both remain non-exported, no-input, unreachable from runtime and tests,
+and uninvoked. This block may prove private lexical reachability, but every public actual retrieval, invocation,
+resource, listener, locator, persistence, and network count remains zero.
+
+**Why:** LIVE-260 proves the intended boundary but not that the bridge and shell can be co-located without exporting a
+factory or accepting a caller capability. Establishing unreachable source custody before any invocation keeps private
+reachability review separate from the first native resource effect.
+
+**Alternatives rejected:** export the factory, getter, bridge, shell, callback, token, or resource; accept a caller
+dependency; place composition in another module; import LIVE-240 fake ports into the native module; invoke the factory
+in a test; monkey-patch `node:net`; dynamically import a cache-bypass copy; wire a runtime consumer; or combine source
+reachability, physical qualification, activation, and deployment.
+
+**Evidence required:** exact accepted LIVE-220/LIVE-240/LIVE-250/LIVE-260 product and review bindings; same-module
+private source custody; a non-exported no-input one-use bridge and shell; no invocation or behavioral native test; no
+new native importer or runtime consumer; strict safe provenance; hostile and ambient zero execution; exact zero-effect
+and false-authority truth; full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before invoking the factory or any native primitive; creating, observing, retaining, transferring, or
+closing a server; observing a locator; issuing or spending live authority; writing persistence; calling an adapter or
+driver; assembling a candidate; performing an owner-attended attempt; wiring runtime use; contacting a provider; or
+deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_270_UNREACHABLE_NATIVE_COMPOSITION_SHELL_IMPLEMENTATION.md`. Repository implementation is authorized
+by the current owner build instruction; native invocation and physical qualification are not.
