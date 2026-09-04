@@ -781,14 +781,16 @@ test("CR13A-LIVE-490 transitive production import graph is exact and effect-iner
   assert.deepEqual([...discovered].sort(), [...graph.keys()].sort());
 });
 
-test("CR13A-LIVE-490 has only the safe connection-registry barrel as a production consumer", async () => {
+test("CR13A-LIVE-490 has only the safe barrel and dependency-ordered LIVE-500 contract as consumers", async () => {
   const consumers: string[] = [];
   const barrel = resolve(root, "src/connection-registry/v1/index.ts");
+  const live500Contract = resolve(root,
+    "src/connection-registry/v1/private-loopback-owner-present-issuer-contract.ts");
   for (const file of await sourceFiles(resolve(root, "src"))) {
     if (file === modulePath) continue;
     if ((await readFile(file, "utf8")).includes(moduleName)) consumers.push(file);
   }
-  assert.deepEqual(consumers, [barrel]);
+  assert.deepEqual(consumers.sort(), [barrel, live500Contract].sort());
   assert.equal(connectionRegistryBarrel.connectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1,
     connectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1);
 });

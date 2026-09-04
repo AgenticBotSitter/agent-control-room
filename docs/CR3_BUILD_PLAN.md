@@ -2398,7 +2398,7 @@ rendered routes, migrations 0001-0038 with 124 tables, macOS stage zero, and the
 
 ## CR13A-LIVE-500 — inert owner-present issuer and strong-factor evidence contract
 
-Status: next. Use Sol xhigh.
+Status: independently accepted for ordinary integration after remediation of 2 High/1 Medium. No next block started.
 
 LIVE-500 is the next dependency-ordered repository-only slice from LIVE-470. It will freeze the exact input evidence,
 product and policy bindings, owner-presence ceremony, strong-factor evidence classes, trusted-time and nonce intent,
@@ -2412,3 +2412,32 @@ construct or seal an authorization, sign or verify, register anything, call Post
 contact a provider/source/network, or wire a UI/API/runtime. Exact singleton parsing, independent ordered fixtures,
 hostile-value non-execution, complete transitive import/export/call inertia, full producer verification, and a
 different independent zero-repair review are required before ordinary integration.
+
+Implemented product: `src/connection-registry/v1/private-loopback-owner-present-issuer-contract.ts` plus its safe
+barrel export and exact producer test. The contract binds accepted LIVE-480 and LIVE-490 product/tree/review/
+acceptance identities; accepts only one future module-minted request; requires target-host owner presence and one
+policy-selected factor class; marks password-manager TOTP non-phishing-resistant; requires a post-factor rooted-trust
+recheck; fixes fresh 256-bit nonce and private PostgreSQL transaction-time intent; and limits both ceremony and owner
+authorization to 300 seconds. Issuance can return only one private sealed unregistered envelope. Registration, nonce
+reservation, qualification, candidate, activation, and execution remain separate and false.
+
+The first independent review found that the original vocabulary did not root the challenge minter, factor verifier,
+or replay guard to exact trusted products and keys; did not mandate exact timestamp chronology and fresh trusted-time
+checks; and allowed a new ceremony to reuse the same request/attempt scope. The remediation requires a separately
+accepted signed-manifest/registry extension for three pairwise-distinct issuer dependencies before protected
+implementation, a domain-separated 256-bit minimum-entropy challenge with durable one-use reservation, rooted
+verifier-key evidence, five named PostgreSQL-time boundaries with closed chronology, and permanent request/attempt
+burn after challenge reservation, success, or uncertainty. A restart always requires new request and attempt IDs.
+
+Producer verification passes 14/14 focused tests, 29/29 combined LIVE-490/LIVE-500 preflight tests, the existing
+473/473 CR13A suite, the complete 769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes,
+migrations 0001-0038 with 124 tables, macOS stage zero, and whitespace validation. The product exposes no issuer,
+prompt, verifier, clock, nonce, sealer, trust resolver, store, registration, database, process, native, network, or
+runtime path. All 42 actuals remain zero and all eight authority grants remain false.
+
+A different independent reviewer accepted exact product `2689c10e9964b3ec936253a776ef470e01948e44`, tree
+`4c47d229b6d9fb60606eaa68ac0129cae5b62fb0`, with 0 High, 0 Medium, and 0 Low. The reviewer independently passed
+14/14 focused tests, 29/29 combined LIVE-490/LIVE-500 preflight tests, 473/473 CR13A tests, the complete
+769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-0038 with 124
+tables, macOS stage zero, and the whitespace gate. See `docs/reviews/CR13A_LIVE_500_INDEPENDENT_REVIEW.md` and
+`docs/CR13A_LIVE_500_ACCEPTANCE.md`. Further build work is paused by owner direction after integration.

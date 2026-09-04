@@ -4780,3 +4780,68 @@ implementation. A different independent reviewer accepted exact product
 
 **Reevaluate:** Before any owner-present issuer, key creation/access, registry or manifest parser/resolver, anchor or
 PostgreSQL store, recovery effect, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.
+
+## ADR-201 — Freeze owner-presence and strong-factor issuance before any credential or signing effect
+
+**Decision:** Represent the future owner-present issuer first as one inert exact singleton bound to the independently
+accepted LIVE-480 owner-authorization and LIVE-490 rooted-trust products, trees, reviews, and acceptance evidence. A
+future issuer may accept only a module-minted exact request after current trust preflight, present that exact scope on
+the target host, and observe separate owner-presence and strong-factor evidence bound to one challenge. The policy may
+select exactly one of platform phishing-resistant user verification, roaming-hardware phishing-resistant user
+verification, or password-manager TOTP with separate owner presence. TOTP is explicitly non-phishing-resistant; login
+state, a UI click, or conversational approval is never strong-factor evidence and no factor fallback is allowed.
+
+Before any owner display or factor work, the future issuer must durably reserve and burn one exact request/attempt
+tuple, complete rooted preflight, mint and reserve one domain-separated challenge with at least 256 bits of entropy,
+and bind its pairwise-distinct challenge-minter, factor-verifier, and replay-guard products and keys through a current
+signed manifest and trust registry. Those dependency roles require a separately accepted manifest/registry extension
+before protected implementation.
+
+After at most one factor verification for that tuple, the future issuer must recheck the owner root, registry,
+manifest, both anchors, every dependency product and key, exact evidence, scope, and policy. The ceremony follows one
+closed chronology using fresh private PostgreSQL time at challenge creation, factor acceptance, final recheck,
+nonce/body construction, and immediately before sealing; future-dated, expired, reordered, rolled-back, skewed, or
+uncertain time is terminal. Only then may it obtain a fresh nonce with at least 256 bits of
+entropy and private PostgreSQL transaction time, construct the exact LIVE-480 body internally, seal it once, and
+return one private sealed-but-unregistered envelope. The owner ceremony and authorization each last at most 300
+seconds. Separate authenticated registration and nonce reservation remain mandatory. Any uncertainty after factor
+verification or sealing is terminal and cannot retry or resume. Challenge reservation, success, or post-marker
+uncertainty permanently burns the request/attempt tuple; even a proven pre-challenge refusal requires a new request,
+attempt, ceremony, challenge, and nonce.
+
+**Why:** A login session, owner-facing button, conversational instruction, or signed-looking envelope does not prove
+that the owner was present for the exact native scope or that current rooted trust authorized the issuer and sealing
+key. Freezing the evidence, ordering, lifetime, downgrade, privacy, and uncertainty boundaries before a prompt,
+credential read, nonce, clock, body, key, or signature operation makes the future implementation reviewable without
+creating an authorization path now.
+
+**Alternatives rejected:** accept caller-constructed requests or bodies; treat the Control Room login or chat approval
+as the strong factor; silently downgrade a phishing-resistant policy to TOTP; call TOTP phishing-resistant; retain a
+raw TOTP code, credential, biometric, assertion, or owner identity; generate the authorization nonce before factor
+verification; trust local wall-clock time; skip the final manifest/anchor recheck; return an unsigned body or key;
+treat issuance as registration or native authority; retry after an uncertain verifier or sealing outcome; expose a
+dependency-taking issuer factory with the contract.
+
+**Evidence required:** exact LIVE-480 and LIVE-490 product/tree/review/acceptance binding; independently repeated
+ordered request, ceremony, factor, trust-preflight, time/nonce, stage, state, decision, refusal, output, prohibited-
+effect, and rule fixtures; explicit TOTP assurance truth; singleton-only hostile parsing; captured-intrinsic
+resistance; exact transitive import graph and effect rejection; safe consumer audit; 42 zero actuals and eight false
+grants; full producer gates; and a different independent zero-repair review.
+
+**Current evidence:** The inert product and 14-test focused suite are implemented. The combined LIVE-490/LIVE-500
+preflight passes 29/29, the existing CR13A suite passes 473/473, the complete 769/421/392 lifecycle passes, and
+TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-0038 with 124 tables, macOS stage zero,
+and whitespace validation pass. No prompt, credential, biometric, Keychain, factor call, time, nonce, body, seal,
+signature, trust read, database, registration, process, network, native, runtime, or deployment effect occurred.
+The first independent review rejected 2 High and 1 Medium findings covering unrooted dependency authority, incomplete
+time chronology, and reusable attempt scope. Those findings are remediated in exact product
+`2689c10e9964b3ec936253a776ef470e01948e44`, tree
+`4c47d229b6d9fb60606eaa68ac0129cae5b62fb0`. A different independent reviewer accepted it with 0 High, 0 Medium,
+and 0 Low. Preserve `docs/reviews/CR13A_LIVE_500_INDEPENDENT_REVIEW.md` with SHA-256
+`23dbd1e6ff2bd69f1ef75168579b5b4af237680cdc248f23b98f7766534285df` and
+`docs/CR13A_LIVE_500_ACCEPTANCE.md` with SHA-256
+`288e60c896f67caf48954a36467327f64e480dff0660edd6addd50acb4d2d9f0`. No next block is started.
+
+**Reevaluate:** Before any real owner prompt or UI, credential/biometric/Keychain/authenticator access, factor verifier,
+trusted-time or nonce source, body constructor, sealer or signer, trust resolver, registration/nonce store, PostgreSQL
+operation, capsule, provider/source, process, native, runtime, or deployment implementation.

@@ -509,7 +509,7 @@ test("CR13A-LIVE-480 transitive production import graph is exact and effect-iner
   assert.deepEqual([...discovered].sort(), [...graph.keys()].sort());
 });
 
-test("CR13A-LIVE-480 has only the safe barrel and dependency-ordered LIVE-490 contract as consumers", async () => {
+test("CR13A-LIVE-480 has only the safe barrel and dependency-ordered LIVE-490/LIVE-500 contracts as consumers", async () => {
   const consumers: string[] = [];
   const barrel = resolve(root, "src/connection-registry/v1/index.ts");
   for (const file of await sourceFiles(resolve(root, "src"))) {
@@ -517,7 +517,9 @@ test("CR13A-LIVE-480 has only the safe barrel and dependency-ordered LIVE-490 co
     if ((await readFile(file, "utf8")).includes(moduleName)) consumers.push(file);
   }
   const live490Contract = resolve(root, "src/connection-registry/v1/private-loopback-trust-manifest-anchor-contract.ts");
-  assert.deepEqual(consumers.sort(), [barrel, live490Contract].sort());
+  const live500Contract = resolve(root,
+    "src/connection-registry/v1/private-loopback-owner-present-issuer-contract.ts");
+  assert.deepEqual(consumers.sort(), [barrel, live490Contract, live500Contract].sort());
   assert.equal(connectionRegistryBarrel.connectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationContractV1,
     connectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationContractV1);
 });

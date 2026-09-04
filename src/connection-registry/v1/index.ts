@@ -32,3 +32,4 @@ export * from "./private-loopback-single-source-invocation-handoff-contract";
 export * from "./private-loopback-observation-attestation-pipeline-contract";
 export * from "./private-loopback-owner-native-authorization-contract";
 export * from "./private-loopback-trust-manifest-anchor-contract";
+export * from "./private-loopback-owner-present-issuer-contract";

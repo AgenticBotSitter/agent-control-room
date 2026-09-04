@@ -158,6 +158,7 @@
 | CR13A-LIVE-470 production capsule and owner-native authorization architecture | Independently accepted for architecture-only integration | First review 5 High/4 Medium/0 Low, all remediated; different re-review 0/0/0; same-module capsule, rooted/anchored trust, exact owner/schema/rollback/IPC boundaries; zero current effects |
 | CR13A-LIVE-480 inert owner-native authorization contract | Independently accepted after all 2 High/2 Medium findings were remediated; ordinary inert integration ready | Product `6d510d6...`, tree `ac8655e...`; 64 body fields plus 42 exact component product/tree/review bindings, 28 closed key bindings, one-per-provider ceilings; 12/12 focused, 473/473 CR13A, 0/0/0 |
 | CR13A-LIVE-490 inert trust, manifest, key-lifecycle, and rollback-anchor contract | Independently accepted after 3 High/2 Medium were remediated; ordinary inert integration ready | Product `dc313b1...`, tree `de7b731...`; exact signature-free rotation body/dual envelope, 28-role signed overlap schema, closed registry/manifest signatures, five exact independent anchor bindings, closed CAS receipts/recovery, exact graph/export/call audit; 15/15 focused plus 473/473 CR13A; 0/0/0 |
+| CR13A-LIVE-500 inert owner-present issuer and strong-factor evidence contract | Independently accepted after 2 High/1 Medium were remediated; ordinary inert integration ready | Product `2689c10...`, tree `4c47d22...`; exact rooted challenge/verifier/replay dependencies, 256-bit reserved challenge, closed chronology, durable one-use request/attempt tuple; 14/14 focused plus 473/473 CR13A; 0/0/0; 42 zero actuals/eight false grants |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -295,6 +296,38 @@ top-level call, and constructor. A different independent reviewer accepted exact
 `56b03b7941971c50867553dc26c65a74cb9e4e291ba1a2543f5a9ac2708b2eb7` and
 `docs/CR13A_LIVE_490_ACCEPTANCE.md` with SHA-256
 `2307475e02a176465c158cbe93b4a8c8a2b39ec6f3bb74cfba2281441a484f9d`.
+
+CR13A-LIVE-500 implements the inert owner-present issuer boundary. One exact frozen singleton binds the independently
+accepted LIVE-480 owner-authorization and LIVE-490 rooted-trust products and evidence. It fixes one module-minted
+request, target-host owner presence, three policy-selected strong-factor classes, final trust/manifest/anchor recheck,
+fresh 256-bit nonce intent, private PostgreSQL transaction time, a 300-second authorization ceiling, closed refusal
+and ambiguity outcomes, and one private sealed-but-unregistered output. Password-manager TOTP is explicitly marked
+non-phishing-resistant and requires separate owner presence; login state, a UI click, or conversational approval is
+never factor evidence. The first independent review rejected the original product with 2 High and 1 Medium findings:
+the challenge minter, factor verifier, and replay guard were not rooted to exact trusted products and keys; timestamp
+ceilings lacked mandatory chronology and fresh trusted-time checks; and the one-use boundary did not durably prevent
+new ceremonies for the same request/attempt tuple.
+
+The remediated contract requires a separately accepted signed-manifest/registry extension before any protected
+implementation may select the three pairwise-distinct dependency products and keys. It fixes a domain-separated
+256-bit minimum-entropy issuer challenge, durable reservation and attempt burn before owner display or factor work,
+exact verifier-key evidence, five named fresh PostgreSQL-time boundaries, closed timestamp ordering, terminal
+rollback/skew/expiry/uncertainty, and one request, ceremony, challenge, factor call, and seal per exact tenant/node/
+source-owner/runner/attempt tuple. Every restart requires a new request and attempt identity.
+
+The LIVE-500 product remains repository-only and inert. It cannot prompt, read a credential, biometric, Keychain,
+clock, nonce, database, trust registry, manifest, anchor, filesystem, environment, host, source, provider, process,
+network, or native value. It cannot construct or seal an authorization, verify a factor, register or consume an
+authorization, or grant approval or execution authority. Its status reports 42 zero actuals and eight false grants.
+The focused suite passes 14/14, the combined LIVE-490/LIVE-500 preflight passes 29/29, the existing CR13A suite passes
+473/473, and the complete 769/421/392 lifecycle exits zero. TypeScript, full lint, 5/5 build phases, 4/4 rendered
+routes, migrations 0001-0038 with 124 tables, macOS stage zero, and whitespace validation pass. A different
+independent reviewer accepted exact product `2689c10e9964b3ec936253a776ef470e01948e44`, tree
+`4c47d229b6d9fb60606eaa68ac0129cae5b62fb0`, with 0 High, 0 Medium, and 0 Low. Preserve
+`docs/reviews/CR13A_LIVE_500_INDEPENDENT_REVIEW.md` with SHA-256
+`23dbd1e6ff2bd69f1ef75168579b5b4af237680cdc248f23b98f7766534285df` and
+`docs/CR13A_LIVE_500_ACCEPTANCE.md` with SHA-256
+`288e60c896f67caf48954a36467327f64e480dff0660edd6addd50acb4d2d9f0`.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1523,13 +1556,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-500 — inert owner-present issuer and strong-factor evidence contract
-Set model: gpt-5.6-sol
-Set reasoning effort: xhigh
-Why: LIVE-490 is independently accepted. The next dependency-ordered slice makes owner presence, strong-factor evidence, trusted-time and nonce intent, issuer decisions, refusals, and the sealed-output boundary exact before any real owner interaction, credential access, nonce, clock, key, or signing operation can exist.
-Expected output: exact frozen singleton vocabularies and zero-use status for accepted-product evidence, owner-presence ceremony, strong-factor classes, trust preflight, nonce/time intent, issuance decisions, refusal outcomes, lifetime ceilings, sealed output, hostile parsing, transitive inertia, and different independent review.
-Owner action: none for this inert repository-only contract. Real owner prompts, Keychain/biometric/credential access, nonce or clock reads, signing, authorization registration, PostgreSQL, capsule/provider/source/native/runtime/deployment work remain separately gated.
-Stop before: any owner prompt or credential read, Keychain or biometric access, nonce generation or clock read, body construction, sealing or signing, real issuer/resolver/store, registration, database/anchor/native/runtime/deployment work, live Hermes/provider contact, or any unapproved external effect.
+Block: paused after CR13A-LIVE-500 integration
+Set model: none
+Set reasoning effort: none
+Why: the owner directed completion and merge of existing work only, with no new work started.
+Expected output: none until a new block is explicitly authorized.
+Owner action: request the next build block when ready.
+Stop before: every new build block or implementation.
 ```
 
 ## Update rule
