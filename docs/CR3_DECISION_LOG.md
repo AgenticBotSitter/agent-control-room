@@ -3540,5 +3540,14 @@ let a fake or digest clear custody; modify the accepted driver inside this bound
 privacy and hostile tests, runtime non-wiring, complete producer gates, and a different independent zero-repair review.
 No native resource may be created in this block.
 
+**Accepted evidence:** Exact product `97d46c74e413d21c1f81c9704b9eb0b66447be5c` passes 8/8 dedicated, 157/157
+connection, 174/174 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer passed twelve fixed commands
+and all twelve review groups with 0 High/Medium/Low; fifteen direct hostile cases and four ambient replacements executed
+zero behavior, and every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_160_INDEPENDENT_REVIEW.md`; SHA-256
+`0a0837acbd36ba9292e8b3f37b57d4900290aa03c54c3c13c73413aebd8345a6`. Acceptance is effect-free and leaves the
+driver handoff blocker present.
+
 **Reevaluate:** Before any driver API change, native reservation provider, `node:net` import, bind/listen/port operation,
 retained handle, capability handoff, ledger/checkpoint write, resource observer, physical attempt, or runtime wiring.

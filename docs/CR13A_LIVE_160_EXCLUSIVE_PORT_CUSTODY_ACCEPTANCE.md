@@ -1,6 +1,6 @@
 # CR13A-LIVE-160 exclusive port custody boundary acceptance
 
-**Status:** exact effect-free product verified; independent review pending
+**Status:** independently accepted; ordinary owner-controlled integration ready
 **Product target/tree:** `97d46c74e413d21c1f81c9704b9eb0b66447be5c` /
 `5acfee71d14d3b6869bb90d9d2b628766aa2a9b0`
 **Design parent:** `db4662c819858b235d336ac1af035bf2b9a10a42`
@@ -30,11 +30,13 @@ All host/port observations, selections, reservations, retained resources, handof
 constructions, physical-listener/IPC-listener/socket/timer attempts, network observations, protected reads, blocker
 clearances, authority grants, and external effects remain zero or false.
 
-## Pending review and limits
+## Independent review and limits
 
-A different report-only, zero-repair reviewer must pass the immutable fixed-command packet, inspect the exact
-provenance/privacy/import/consumer/issuer boundary, report 0 High/Medium/Low, and reproduce every zero effect count.
-The product may not change during review.
+A different report-only, zero-repair reviewer passed all twelve fixed commands and review groups against the immutable
+product. The review found 0 High, 0 Medium, and 0 Low defects. Fifteen direct hostile cases and four ambient replacement
+attempts executed zero behavior, and every authority/effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_160_INDEPENDENT_REVIEW.md`; SHA-256
+`0a0837acbd36ba9292e8b3f37b57d4900290aa03c54c3c13c73413aebd8345a6`.
 
 Even acceptance permits ordinary owner-controlled integration only. It does not repair the driver, implement a custody
 provider, reserve a port, transfer a native listener, clear a blocker, assemble a candidate, or authorize a physical
