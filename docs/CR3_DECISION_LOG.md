@@ -4468,3 +4468,36 @@ with 0 High/Medium/Low; 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 
 32 zero actuals, eight false grants, and zero source/native/listener/network/provider/production/external effects.
 Preserve `docs/reviews/CR13A_LIVE_410_INDEPENDENT_REVIEW.md`; SHA-256
 `c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`.
+
+## ADR-193 — Consolidate the first source lookup into the source-owning module
+
+**Decision:** CR13A-LIVE-420 may modify the LIVE-330 source-owning module to add one non-barrel private composition.
+It constructs the exact accepted authorization store, re-expresses LIVE-400's accepted one-spend/one-recheck algorithm
+inside that module, and performs one captured `WeakMap.get` with the existing module-owned implementation key only
+after its own exact fresh spend and immediate successful recheck. It verifies the exact module-minted frozen source,
+keeps it lexical, and stops before invocation. LIVE-330's prior unreachable public truth must be superseded honestly.
+
+**Why:** JavaScript lexical module privacy provides no way to join LIVE-400's final private branch with LIVE-330's
+private `WeakMap` from a third module without exporting either a success capability or retrieval seam. Both are
+forbidden by accepted LIVE-410. Re-expressing the accepted database ordering inside the source-owning module preserves
+the unbroken control flow while keeping the source/map/key private and making the first lookup separately reviewable
+from the first native read.
+
+**Alternatives rejected:** call the public LIVE-400 runner and branch on its result; export a private LIVE-400 success
+record or continuation; export a LIVE-330 map/key/source/getter/lookup; pass a callback between modules; copy the
+source into a second module and call it the accepted source; infer authority from result identity, digest, receipt,
+database row, or implementation ID; invoke the source in the lookup block; or add a runtime/provider/production path.
+
+**Evidence required:** exact LIVE-410 product/review binding; truthful LIVE-330 reachability supersession; exact store
+construction and spend/recheck parity; one private exact-source lookup and zero invocations/native reads; terminal
+failure/no-retry semantics; frozen sanitized records; hostile, replay, concurrency, expiry, mutation, database-failure,
+and ambient tests; no barrel/runtime consumer; full producer verification; and a different independent report-only
+zero-repair review.
+
+**Reevaluate:** Before source invocation, descriptor/process/OS/host/path read, raw observation handoff, attestation,
+replay checkpoint, candidate, owner authorization, physical attempt, runtime wiring, provider contact, production
+database use, or deployment.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_420_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_IMPLEMENTATION.md`. Current authority covers repository and
+local synthetic PGlite lookup proof only; it does not authorize source invocation or a protected native read.

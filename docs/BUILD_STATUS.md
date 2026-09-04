@@ -177,6 +177,13 @@ SHA-256: `c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`. No 
 source lookup/invocation, protected native read, runtime consumer, production contact, network, provider, or external
 effect is authorized. The contract must stop before source lookup.
 
+CR13A-LIVE-420 architecture is frozen. It will consolidate the accepted spend/recheck ordering into the source-owning
+module, use one captured module-keyed lookup only after its own exact fresh spend and immediate successful recheck,
+keep the exact source lexical, and stop before invocation. The public LIVE-400 result remains non-authorizing and no
+map, key, source, getter, callback, receipt, or capability may escape. Implementation, hostile local PGlite tests, full
+verification, and independent review are in progress. No source invocation, protected native read, runtime consumer,
+production contact, network, provider, deployment, or external effect is authorized.
+
 Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
 remains unreachable with no native reads and no lookup.
 

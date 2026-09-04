@@ -2188,3 +2188,18 @@ High/Medium/Low; 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 migrati
 zero actuals, eight false grants, and zero source/native/listener/network/provider/production/external effects.
 Preserve `docs/reviews/CR13A_LIVE_410_INDEPENDENT_REVIEW.md`; SHA-256
 `c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`.
+
+## CR13A-LIVE-420 — private same-module atomic source-lookup bridge implementation
+
+Status: architecture frozen; implementation, verification, and independent review in progress. Use Sol xhigh.
+
+LIVE-420 may modify the LIVE-330 source-owning module to add one non-barrel factory that constructs the exact accepted
+authorization store, re-expresses the accepted LIVE-400 spend/recheck ordering in that module, and performs one lookup
+of the exact module-minted source only after its own fresh spend and immediate successful recheck. The source stays
+private, frozen, stored once, unexported, and uninvoked. The superseded LIVE-330 public reachability status must be
+updated honestly.
+
+The public LIVE-400 runner/result is never an input or authority. Every result is terminal and sanitized; success
+reports only that one private lookup completed and the flow stopped before source invocation. No receipt, source, map,
+key, getter, callback, continuation, or capability escapes. See
+`docs/CR13A_LIVE_420_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_IMPLEMENTATION.md`.
