@@ -123,6 +123,7 @@
 | CR13A-LIVE-120 unwired physical native driver | Independently accepted and integrated on `main` through PR #241 | Different reviewer closed all four High and five Medium findings; owner-approved merge `19a8716...`; post-merge CI `33818001699` passed; zero native/listener/network effects |
 | CR13A-LIVE-130 physical qualification prerequisite boundary | Independently accepted; ordinary owner-controlled integration ready | Product `339c2e8...`; rejected first protocol preserved; corrected second review 0 High/Medium/Low, 9/9 readiness, 4/4 render, 119 tables, 30 hostile attempts/0 executions, and zero listener/IPC/native/network/effects |
 | CR13A-LIVE-140 target-runtime attestation boundary | Independently accepted; ordinary owner-controlled integration ready | Product `6e716bd...` unchanged; fifth different reviewer passed 16/16 exact commands and all 12 groups; 63 hostile and 8 replacement attempts executed zero behavior; 0 High/Medium/Low and zero host/listener/IPC/native/network/effects |
+| CR13A-LIVE-150 private locator broker boundary | Independently accepted; ordinary owner-controlled integration ready | Product `f089f89...`; 12/12 commands and groups, 9/9 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; no locator/port/capability/native/network effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1325,6 +1326,20 @@ external-effect counts were zero. P-001 through P-004 closed with 0 High, 0 Medi
 `483ab05695b5cecaa6fe02ca4cc63b2e640733ac42270e2a435364c6be0ea6d8`. Ordinary owner-controlled integration is
 ready; `target_runtime_attestation_missing` remains true and no live authority exists.
 
+CR13A-LIVE-150 exact product `f089f896073fcc5aab24616a17fac592eba5146b` freezes an opaque private locator policy
+and exact repository fake. It defines fourteen future private bindings, a 30-second maximum capability lifetime, a
+single-spend ceiling, terminal tombstoning, and no retry while exposing no literal address, port, interface,
+reservation, or capability. Both locator-broker and exclusive-port-custody blockers remain true; every issuance,
+spend, selection, reservation, native/network/effect count is zero.
+
+Producer verification passed 9/9 dedicated, 149/149 connection, 166/166 CR13A, the complete registered lifecycle,
+5/5 build phases, 4/4 rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace.
+A different reviewer passed all twelve fixed commands and twelve hostile groups with 0 High/Medium/Low. Sixteen hostile
+cases and four ambient replacement attempts executed zero hostile behavior, and every forbidden-effect count remained
+zero. Preserve `docs/reviews/CR13A_LIVE_150_INDEPENDENT_REVIEW.md`; SHA-256
+`e7047c506fad1f969563d3bb1ae31df28083761b2470bc322a91c4aa733abd67`. Ordinary owner-controlled integration is
+ready; no real broker or locator exists.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1340,12 +1355,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-150 — freeze and implement the effect-free private locator broker boundary
+Block: CR13A-LIVE-160 — freeze and implement the effect-free exclusive port custody boundary
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-140 is independently accepted; the next unresolved prerequisite is private locator custody, but repository work must define its opaque one-use boundary before any address or port can be selected.
-Expected output: frozen locator-broker architecture, exact repository fake and strict parser, deterministic hostile tests, no raw locator disclosure, no capability issuance/spend, no port selection, runtime non-wiring, full verification, and independent review.
-Owner action: none for architecture, effect-free implementation, fake tests, and review. Any real locator or exclusive-port reservation remains a later owner-attended, separately authorized action.
+Why: LIVE-150 is independently accepted; exclusive operating-system port reservation and custody remains a separate blocker that must be specified before any real broker capability can exist.
+Expected output: frozen exclusive-custody architecture, exact repository fake and parser, deterministic hostile tests, no port/address/reservation disclosure, no reservation or socket operation, runtime non-wiring, full verification, and independent review.
+Owner action: none for architecture, effect-free implementation, fake tests, and review. Any real port reservation remains a later owner-attended, separately authorized action.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

@@ -3503,6 +3503,15 @@ or activation authority; permit automatic retry after an ambiguous spend; or let
 substitution, ambient-intrinsic, sanitation, non-wiring, no-issuer, and zero-effect tests; full producer gates; and a
 different independent zero-repair review. No host or network effect belongs in this block.
 
+**Accepted evidence:** Exact product `f089f896073fcc5aab24616a17fac592eba5146b` passes 9/9 dedicated, 149/149
+connection, 166/166 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer passed twelve fixed commands
+and all twelve hostile groups with 0 High/Medium/Low; 16 direct hostile cases and four ambient replacements executed
+zero hostile behavior, and every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_150_INDEPENDENT_REVIEW.md`; SHA-256
+`e7047c506fad1f969563d3bb1ae31df28083761b2470bc322a91c4aa733abd67`. Acceptance is effect-free and clears no
+blocker.
+
 **Reevaluate:** Before any address/interface observation, DNS resolution, port selection/reservation, capability
 issuance/spend, ledger/checkpoint write, resource observer, driver handoff, candidate, physical attempt, SSH/credential
 operation, production contact, or deployment.

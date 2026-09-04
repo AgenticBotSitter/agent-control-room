@@ -1,6 +1,6 @@
 # CR13A-LIVE-150 private locator broker boundary acceptance
 
-**Status:** exact effect-free product verified; independent review pending
+**Status:** independently accepted; ordinary owner-controlled integration ready
 **Product target:** `f089f896073fcc5aab24616a17fac592eba5146b`
 **Product tree:** `b421964004d82f785ad8c8aff1338f865893eb41`
 **Design parent:** `60f87d5031f5e292e0f69c010f345fedf7928f9e`
@@ -46,15 +46,22 @@ Exact product `f089f896073fcc5aab24616a17fac592eba5146b` passed:
 No address/port/host observation, physical-driver construction, listener, IPC, socket, timer, network I/O, protected
 value read, or external effect occurred.
 
-## Pending review
+## Independent review
 
-Independent acceptance requires one different report-only, zero-repair reviewer to reproduce the fixed safe gates,
-inspect the exact source/import/consumer/issuer boundary, cover provenance and hostile cases, report 0 High/Medium/Low,
-and record every forbidden-effect count as zero. The product may not change during review.
+A different report-only, zero-repair reviewer accepted the unchanged product under packet SHA-256
+`5ef8be99015c6f4820050e4d10601d05dec979aeb1037f95f91e648c27ce68ea`. All twelve fixed commands and twelve
+hostile-review groups passed. Findings were 0 High, 0 Medium, and 0 Low. The dedicated gate passed 9/9, build 5/5,
+render 4/4, and migrations 0001-0036/119 tables; initial and final status were clean.
 
-Until that report is accepted, this target is not integration-ready. Even acceptance would permit only ordinary
-owner-controlled integration; it would not create a real locator, reserve a port, issue/spend a capability, clear a
-blocker, assemble a candidate, perform a physical attempt, or activate runtime behavior.
+Sixteen direct hostile cases and four ambient replacement attempts executed zero hostile behavior. Address/host
+observations, interface enumerations, DNS resolutions, port selections/reservations, capability issuances/spends,
+native constructions, physical-listener/IPC-listener/socket/timer attempts, network observations, protected reads,
+driver handoffs, blocker clearances, and external effects were all zero.
+
+Preserve `docs/reviews/CR13A_LIVE_150_INDEPENDENT_REVIEW.md`; SHA-256
+`e7047c506fad1f969563d3bb1ae31df28083761b2470bc322a91c4aa733abd67`. Acceptance permits only ordinary
+owner-controlled integration; it creates no real locator, port reservation, capability, blocker clearance, candidate,
+physical attempt, or runtime behavior.
 
 ## Reevaluate
 
