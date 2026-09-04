@@ -4179,3 +4179,41 @@ candidate; authorizing/performing a physical attempt; wiring runtime use; contac
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_340_PRIVATE_ONE_USE_NATIVE_OBSERVATION_INVOCATION_CONTRACT.md`. Current authority covers only the inert
 contract and ordinary integration; it does not authorize retrieval, invocation, or a host read.
+
+**Accepted evidence:** Exact product `3108a8759863c4692ade2d5532e88cd28f259779` passed 11/11 dedicated, 350/350
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, exact four-path scope, verified disposable cleanup, and zero authorization,
+replay, spend, lookup, invocation, native read, persistence, network, provider, or external effects. Accepted report
+SHA-256: `bbe5b2bc027ad0d71838ab1784ed1081750ffb96eba9ae1b26fd162b6a9234af`.
+
+## ADR-186 — Register authorization and nonce without making the source reachable
+
+**Decision:** CR13A-LIVE-350 will implement one PostgreSQL-compatible append-only store that verifies an already sealed
+exact invocation-authorization body and atomically records it with a separate tenant-scoped digest-only nonce replay
+reservation. A separately protected HMAC key authenticates the body and persisted record but is never generated,
+persisted, or exposed by the store. Exact replay is inert; changed reuse fails closed. The store cannot issue, consume,
+revoke, list, or turn registration evidence into invocation authority.
+
+**Why:** LIVE-340 requires authenticated identity and independent replay state before atomic consumption and source
+lookup. Persisting the exact authorization and nonce reservation first makes replay and PostgreSQL concurrency
+reviewable without crossing the native-read boundary or prematurely coupling source custody to database behavior.
+
+**Alternatives rejected:** keep authorizations only in process memory; persist a raw nonce or key; combine registration
+with consumption or source lookup; let a receipt serve as a callable capability; accept caller-selected operations or
+callables; use SQLite/PGlite as production authority; connect to production PostgreSQL during repository proof; or add
+an API, listener, provider, physical attempt, runtime activation, or deployment in the same block.
+
+**Evidence required:** exact LIVE-340 product/review binding; authenticated immutable exact body; defensive key custody;
+atomic authorization and digest-only nonce insertion; inert exact replay; conflict, tamper, rollback, foreign-scope,
+restart, and local-concurrency rejection; append-only schema; sanitized receipts; no downstream consumer/native import;
+negative production and authority truth; full producer verification; and a different independent report-only
+zero-repair review.
+
+**Reevaluate:** Before implementing an issuer, production key or database configuration, current-time authority,
+consumption, revocation, source lookup/invocation, native read, attestation, candidate, owner authorization, listener,
+physical qualification, runtime wiring, provider contact, or deployment.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_350_AUTHENTICATED_INVOCATION_AUTHORIZATION_STORE.md`. Current authority covers repository implementation,
+local PGlite proof, and ordinary integration only; it does not authorize production database contact or invocation.

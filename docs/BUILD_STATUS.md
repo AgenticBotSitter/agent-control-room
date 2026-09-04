@@ -142,23 +142,26 @@
 | CR13A-LIVE-310 unreachable trusted native-binding validator | Independently accepted after one code-remediation pass and one report-format correction; ordinary integration of unreachable source ready | Corrected product `d95738b...`; third reviewer closed M-001/M-002/L-001, passed 14/14 commands, 12/12 focused, 318/318 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero native/descriptor/process/external effects |
 | CR13A-LIVE-320 private atomic native-observation composition contract | Independently accepted; ordinary integration of the inert contract ready | Product `0c90641...`; 14/14 commands, 10/10 focused, 328/328 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 13 rules, 15 stages, 14 blockers, and zero native/host/external effects |
 | CR13A-LIVE-330 unreachable atomic native-observation source consolidation | Independently accepted; ordinary integration of exact unreachable source ready | Product `06be655...`; 14/14 commands, 11/11 focused, 339/339 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; private source stored once with zero lookup/invocation/native reads |
-| CR13A-LIVE-340 private one-use native-observation invocation contract | Architecture frozen; inert contract implementation next | Future retrieval requires exact authenticated one-use lineage/time/operation binding and atomic pre-lookup spend; LIVE-340 performs no lookup, invocation, native read, or persistence |
+| CR13A-LIVE-340 private one-use native-observation invocation contract | Independently accepted; ordinary integration of inert contract ready | Product `3108a87...`; 14/14 commands, 11/11 focused, 350/350 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 39 zero actuals and zero authorization/native/external effects |
+| CR13A-LIVE-350 authenticated invocation-authorization store | Architecture frozen; repository implementation next | PostgreSQL-compatible authenticated registration plus digest-only nonce replay reservation; no consumption, source lookup/invocation, native read, or production database contact |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-330 product `06be655d188c45902c015f85225673dfc31c445d` is independently accepted. One private frozen
-no-input synchronous function contains exact descriptor validation, direct descriptor-value consumption, OS result
-validation, and private observation construction. It is stored once with no lookup, export, invocation, or production
-consumer. A fresh reviewer passed all twelve groups and fourteen commands once with 0 High/Medium/Low, 11/11 focused
-tests, 339/339 CR13A tests, 5/5 build phases, 4/4 rendered routes, and 119 tables. Zero descriptor/process/OS/host
-reads, source lookups/invocations, or external effects occurred. Accepted review SHA-256:
-`da2c7529b8a5e023b706df8e6ab912e2096c2742edfda0e74758991721031f85`.
+CR13A-LIVE-340 product `3108a8759863c4692ade2d5532e88cd28f259779` is independently accepted. It freezes exact
+identity, lineage, trusted-time, nonce, operation, replay, atomic-spend, terminal-ambiguity, same-module custody, and
+raw-value privacy rules before any retrieval bridge exists. A fresh reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, 11/11 focused tests, 350/350 CR13A tests, 5/5 build phases, 4/4 rendered routes,
+and 119 tables. Zero authorization, clock, nonce, replay, spend, lookup, invocation, native read, persistence, network,
+provider, or external effects occurred. Accepted review SHA-256:
+`bbe5b2bc027ad0d71838ab1784ed1081750ffb96eba9ae1b26fd162b6a9234af`.
 
-Next block: CR13A-LIVE-340, the private one-use native-observation invocation contract. It will freeze exact identity,
-lineage, trusted-time, nonce, operation, replay, atomic-spend, uncertainty, same-module custody, and raw-value privacy
-rules before any retrieval bridge exists. LIVE-340 is inert and must add no lookup, invocation, native read,
-authorization store, token, persistence, listener, provider, or deployment effect. Use `gpt-5.6-sol` at `xhigh` effort.
+Next block: CR13A-LIVE-350, the authenticated invocation-authorization store and durable replay reservation. It will
+add one PostgreSQL-compatible immutable registration path and PGlite evidence while keeping authorization consumption,
+source lookup/invocation, native reads, production PostgreSQL, listener, provider, and deployment behavior absent. Use
+`gpt-5.6-sol` at `xhigh` effort.
+
+LIVE-350 performs no source lookup, invocation, or native read.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1387,12 +1390,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-340 — implement private one-use native-observation invocation contract
+Block: CR13A-LIVE-350 — implement authenticated invocation-authorization store and replay reservation
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-330 is independently accepted and contains the real source, but it remains unreachable. The next contract must make one-use authorization consumption, replay protection, uncertainty, and same-module custody explicit before any source lookup can be implemented.
-Expected output: one inert exact contract for a future authenticated one-use invocation authorization, atomic pre-lookup spend, terminal ambiguity after uncertain commit, exact stage/blocker/outcome rules, sanitized zero-use evidence, hostile tests, full verification, and independent review.
-Owner action: none for the inert repository contract and ordinary merges. Authorization-store implementation, lookup/invocation, descriptor/process/OS/host reads, observation use, attestation, or physical qualification remain separately gated.
+Why: LIVE-340 independently accepted the one-use boundary. The next missing prerequisite is durable authenticated registration and a tenant-scoped nonce replay reservation before a later block can design atomic consumption.
+Expected output: one append-only PostgreSQL-compatible store and migration, exact authenticated sealed body, digest-only nonce reservation, inert exact replay, conflict/tamper/restart/local-concurrency evidence in PGlite, sanitized receipts, hostile tests, full verification, and independent review.
+Owner action: none for repository implementation, PGlite tests, independent review, and ordinary merges. Production keys/database contact, consumption, lookup/invocation, native reads, and physical qualification remain separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
