@@ -3854,3 +3854,7 @@ different independent zero-repair review.
 **Reevaluate:** Before implementing a bridge, making the factory reachable inside composition, retrieving or invoking
 it, adding live persistence or adapter ports, creating a native resource, observing a locator, wiring runtime use,
 assembling a qualification candidate, making a physical attempt, contacting a provider, or deploying.
+
+**Architecture evidence:** Frozen from exact merged base `bd1acec22c9b1e7bfa06f302ec665a854bc3048b` in
+`docs/CR13A_LIVE_250_PRIVATE_NATIVE_FACTORY_RETRIEVAL_BRIDGE_CONTRACT.md`. The contract-only implementation may publish
+immutable safe evidence and hostile zero-execution tests; it may not implement or exercise the bridge.

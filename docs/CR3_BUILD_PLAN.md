@@ -1771,7 +1771,8 @@ listener, network, persistence, protected-read, wiring, blocker, and authority v
 
 ## CR13A-LIVE-250 — private one-use native-factory retrieval bridge contract
 
-Status: next isolated contract block. Use Sol xhigh.
+Status: architecture frozen from exact merged base `bd1acec22c9b1e7bfa06f302ec665a854bc3048b`; repository-only contract
+implementation and independent review in progress. Use Sol xhigh.
 
 LIVE-250 may freeze the exact same-module, non-exported bridge by which accepted LIVE-240 prerequisite and durable
 marker evidence could later permit one retrieval of the quarantined LIVE-220 factory. It must define exact product and
