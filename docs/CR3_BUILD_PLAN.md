@@ -1884,8 +1884,8 @@ mandatory future boundary against ambient process replacement, getters, and prox
 
 ## CR13A-LIVE-300 — private target-runtime observation trust contract
 
-Status: architecture frozen; inert contract implementation begins only after accepted LIVE-290 integration. Use Sol
-xhigh.
+Status: exact product `aca7b98405fd12163b74fbc949a6a671d69fe310` independently accepted; ordinary integration
+of the inert contract ready. Use Sol xhigh.
 
 LIVE-300 may implement a strict safe contract fixing the future fail-closed boundary for trusted native sources,
 descriptor validation, one private raw observation, observation-versus-attestation separation, one-use and uncertainty
@@ -1897,3 +1897,24 @@ environment, path, clock, nonce, credential, locator, or provider values; implem
 digest, sign, persist, or expose an observation; retrieve the native shell; open a listener; wire a runtime consumer;
 clear a blocker; contact Hermes/provider; perform a physical attempt; or deploy. Immutable producer evidence and a
 different independent report-only zero-repair review are required before ordinary integration.
+
+Producer verification passed 10/10 dedicated, 306/306 CR13A, the complete 769/392/392 lifecycle, all five build
+phases, 4/4 rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A
+different reviewer ran all fourteen commands once with 0 High/Medium/Low, zero hostile behavior, and zero native,
+observation, network, persistence, provider, or external effects. Preserve
+`docs/reviews/CR13A_LIVE_300_INDEPENDENT_REVIEW.md`; SHA-256
+`86721e47c4c3c743aee97d5c577a1701242f799fdf6063c3dfbcfd3997d1758e`.
+
+## CR13A-LIVE-310 — unreachable trusted native-binding validator
+
+Status: architecture frozen; source implementation begins only after accepted LIVE-300 integration. Use Sol xhigh.
+
+LIVE-310 may statically import one `node:process` module namespace, define one private frozen no-input descriptor
+validator, and store it once in a private WeakMap with no lookup. Property access and descriptor inspection may exist
+only inside the unreachable validator body. Fixed public records may state source presence and zero use/effects.
+
+The block must not invoke the validator; inspect a descriptor; read a process/environment/path value; import or compose
+LIVE-290; return a native binding; create an observation, attestation, nonce, replay checkpoint, signature, or
+candidate; retrieve the native shell; open a listener; wire runtime use; clear a blocker; contact Hermes/provider;
+perform a physical attempt; or deploy. Immutable producer evidence and a different independent report-only zero-repair
+review are required before ordinary integration.

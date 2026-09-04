@@ -4035,3 +4035,32 @@ owner window; performing native listener activity; contacting a provider; or dep
 `docs/CR13A_LIVE_300_PRIVATE_TARGET_RUNTIME_OBSERVATION_TRUST_CONTRACT.md`. Current authority covers the inert repository
 contract and ordinary integration only; it does not authorize any host read, observer use, attestation, physical
 attempt, or external effect.
+
+## ADR-182 — Capture a static native process namespace before enabling validation
+
+**Decision:** CR13A-LIVE-310 may add one private no-input validator closed over one static `node:process` module
+namespace. It may store the frozen validator once in a private WeakMap with no lookup. All descriptor inspection and
+property access remain inside the unreachable body; initialization and tests execute zero process reads.
+
+**Why:** LIVE-300 rejects ambient `globalThis.process` and caller-supplied objects but intentionally implements no real
+binding source. A statically selected builtin namespace removes caller and ambient-global substitution from the future
+validation path while preserving a clean review boundary before the first descriptor or process value is read.
+
+**Alternatives rejected:** pass a process object into the validator; resolve `globalThis.process`; choose a module by
+input or dynamic import; capture process values while the module loads; invoke validation in tests; export a validator,
+getter, callback, token, or capability; combine validation with observer invocation or attestation; or treat source
+presence as blocker clearance.
+
+**Evidence required:** exact accepted LIVE-300 product/review binding; one static `node:process` namespace import; one
+private frozen no-input validator stored once; zero lookup/invocation/descriptor/process reads; no ambient process
+access; no LIVE-290 import or composition; no production consumer; sanitized zero-use truth; hostile ambient
+replacement proof; all actual totals zero; all grants false; full verification; and a different independent report-only
+zero-repair review.
+
+**Reevaluate:** Before retrieving or invoking the validator; inspecting descriptors or process values; composing the
+validator with LIVE-290; creating a raw observation or attestation; issuing replay or candidate authority; performing
+native listener activity; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_310_UNREACHABLE_TRUSTED_NATIVE_BINDING_VALIDATOR.md`. Current
+authority covers unreachable repository source and ordinary integration only; it does not authorize validation,
+process reads, observer use, attestation, physical qualification, or external effects.
