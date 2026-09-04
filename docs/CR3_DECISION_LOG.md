@@ -4411,5 +4411,12 @@ must separately freeze and review the source lookup boundary. See
 the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables, TypeScript, lint,
 macOS stage zero, whitespace, and clean status. Replay, concurrency, recheck expiry, commit-return uncertainty,
 database failure, mid-flight mutation, and hostile inputs all stop before lookup. Both receipts remain lexical and
-unreturned; the module is absent from the barrel and has no source/native/runtime consumer. This is producer evidence
-only; different independent review is pending.
+unreturned; the module is absent from the barrel and has no source/native/runtime consumer. This producer evidence is
+kept separate from the later independent reruns.
+
+**Accepted evidence:** A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once
+with 0 High/Medium/Low; 12/12 focused tests; 415/415 CR13A tests; 5/5 build phases; 4/4 rendered routes; and migrations
+0001-0038/124 tables. The reviewer verified exact private receipt custody, terminal replay/ambiguity/failure handling,
+23 zero static actuals, eight false grants, no source/native/runtime consumer or receipt exposure, and exact disposable
+cleanup. Preserve `docs/reviews/CR13A_LIVE_400_INDEPENDENT_REVIEW.md`; SHA-256
+`fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`.
