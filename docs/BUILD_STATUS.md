@@ -153,6 +153,7 @@
 | CR13A-LIVE-420 private same-module atomic source-lookup composition | Independently accepted; ordinary integration of unwired lookup ready | Product `c128781...`; 14/14 commands, 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; one guarded lookup and zero source invocation/native reads |
 | CR13A-LIVE-430 private single source-invocation/raw-observation handoff contract | Independently accepted; ordinary integration of inert contract ready | Product `a1c3230...`; 14/14 commands, 11/11 focused, 450/450 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 44 zero actuals, eight false grants, and zero source calls/native reads |
 | CR13A-LIVE-440 same-module source-invocation/raw-handoff implementation design | Architecture remediated; dormant implementation waits for accepted private pipeline and native execution remains owner-gated | Exact source-owner seam and raw domains, module-minted deterministic fault seam, distinct signer/checkpoint/high-water, authenticated future evidence, and zero current effects |
+| CR13A-LIVE-450 private observation-to-attestation pipeline design | Independently accepted for architecture-only integration | 3 High/6 Medium/0 Low remediated to 0/0/0; separate owner-native authority and exact-product attempt ceiling; production-only capsule; five ordered provider lanes; 36 attestation stages; exact PostgreSQL/high-water split-commit recovery; pre-reserved after-exit cleanup; zero current effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -211,6 +212,14 @@ Dormant code and real execution authorities are separate. Source/raw application
 the first post-call await; later protected-stage failures map to one exact terminal non-accepting public outcome. Any
 later native evidence must be authenticated by the exact signer/checkpoint/high-water chain, not a file digest. The
 design changes no source code and performs zero effects.
+
+CR13A-LIVE-450 architecture is independently accepted after remediation from 3 High/6 Medium/0 Low to 0/0/0. The eight-value native source is
+explicitly insufficient to clear target-runtime attestation: running executable-content identity, exact boot session,
+high-entropy attestor-process session, running harness identity, and running physical-driver identity require five
+separate private provider lanes. The design now preserves a separate one-use owner-native authorization, an exact-
+product attempt ceiling, a production-only module capsule, 36 attestation stages, a complete signed canonical
+envelope, exact PostgreSQL/high-water pending/CAS recovery, and pre-reserved after-exit cleanup. Documentation work
+performs zero source/native/key/database/network/production/external effects.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1439,12 +1448,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-450 — private observation-to-attestation intake contract design
+Block: CR13A-LIVE-460 — inert private attestation pipeline contract implementation
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-440 shows the source cannot safely be invoked until a complete trusted private pipeline exists. The next repository-only block must specify exact context preparation, synchronous raw transfer, lineage, trusted time, nonce, signature, durable replay checkpoint, independent high-water, failure, privacy, and evidence boundaries without handling real host data.
-Expected output: one inert normative pipeline contract design and ADR binding exact accepted LIVE-430/LIVE-440 evidence, preserving distinct stage results, authenticated evidence, strict no-export/no-retry rules, and zero source/native/database/runtime/external effects.
-Owner action: none for architecture-only documentation. Implementation, signer/key access, persistence rehearsal, or any source invocation/native read remains separately gated.
+Why: LIVE-450 now fixes the complete private pipeline architecture. The next safe repository block turns only its frozen public policy, stage/state/outcome, claim, parser, and zero-use boundaries into an inert contract without constructing the production capsule or touching any protected dependency.
+Expected output: one exact inert contract plus hostile parser tests and static zero-effect evidence for all 36 stages, 14 claims, five provider lanes, durable states, recovery outcomes, cleanup requirements, authority ceilings, and separate later successors; independent product review required before integration.
+Owner action: none. Contract work is repository-only and non-native. Provider implementation, source-owner modification, signer/key access, persistence/high-water work, native qualification, runtime wiring, or deployment remains separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
