@@ -5,14 +5,22 @@ import { dirname, relative, resolve } from "node:path";
 import test from "node:test";
 import ts from "typescript";
 import {
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_INVARIANTS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_SETTLEMENTS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_REQUEST_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_ROLE_REQUIREMENTS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_STATE_FIELDS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_DEPLOYMENT_MANIFEST_BODY_FIELDS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INDEPENDENT_ANCHOR_ROLES_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_LIFECYCLE_RULES_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_DUAL_SIGNATURE_FIELDS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_PIN_FIELDS_V1,
-  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_BODY_FIELDS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_SIGNATURE_SCOPES_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_REVISION_STATES_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SIGNED_ENVELOPE_FIELDS_V1,
@@ -20,6 +28,8 @@ import {
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_ANCHOR_PROHIBITED_EFFECTS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_ANCHOR_RULES_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_QUARANTINE_TRIGGERS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_ENTRY_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_POLICIES_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_BODY_FIELDS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_FIELDS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_SCHEMA_V1,
@@ -85,12 +95,12 @@ test("CR13A-LIVE-490 freezes every exact ordered vocabulary and the complete key
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_SIGNATURE_SCOPES_V1, [
       "trust_registry_genesis", "trust_registry_revision", "dual_signed_owner_root_rotation_statement",
     ]],
-    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_FIELDS_V1, [
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_BODY_FIELDS_V1, [
       "rotation_schema_version", "prior_root_key_id_digest", "prior_root_revision",
       "prior_root_sha256_fingerprint", "successor_root_key_id_digest", "successor_root_public_key_algorithm",
       "successor_root_revision", "successor_root_sha256_fingerprint", "newly_pinned_deployment_product_commit",
       "newly_pinned_deployment_product_tree", "newly_pinned_deployment_product_review_sha256",
-      "rotation_reason", "not_before", "expires_at", "prior_root_signature", "successor_root_signature",
+      "rotation_reason", "not_before", "expires_at",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_FIELDS_V1, [
       "role", "key_id_digest", "algorithm", "fingerprint", "revision", "status", "not_before",
@@ -112,14 +122,18 @@ test("CR13A-LIVE-490 freezes every exact ordered vocabulary and the complete key
       "each_key_epoch_cross_links_prior_epoch_final_revision_and_digest",
       "revocation_stops_new_writes_and_quarantines_dependent_unsettled_attempts",
       "destruction_requires_separately_accepted_archive_retention_proof", "unknown_key_state_is_terminal",
+      "active_revision_is_monotonic_and_never_reactivates_a_lower_revision",
+      "one_role_has_at_most_one_open_signed_overlap_declaration",
+      "manifest_selects_exactly_one_revision_during_registry_overlap",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_BODY_FIELDS_V1, [
       "registry_schema_version", "registry_id_digest", "registry_sequence", "prior_registry_digest",
       "policy_revision", "product_catalog_revision", "ordered_key_entries",
+      "ordered_rotation_overlap_declarations",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SIGNED_ENVELOPE_FIELDS_V1, [
-      "envelope_version", "codec_version", "signature_algorithm", "body", "canonical_body_digest",
-      "signing_key_id_digest", "signing_key_fingerprint", "signing_key_revision", "authentication_tag",
+      "envelope_version", "codec_version", "body", "canonical_body_digest", "ordered_signatures",
+      "envelope_digest",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_DEPLOYMENT_MANIFEST_BODY_FIELDS_V1, [
       "manifest_schema_version", "manifest_id_digest", "manifest_sequence", "prior_manifest_digest",
@@ -148,9 +162,41 @@ test("CR13A-LIVE-490 freezes every exact ordered vocabulary and the complete key
       "writer_key_binding_digest", "request_authentication_tag",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_FIELDS_V1, [
-      "receipt_schema_version", "anchor_role", "stream_id_digest", "request_id_digest",
+      "receipt_schema_version", "anchor_role", "stream_id_digest", "request_id_digest", "request_body_digest",
       "observed_prior_revision", "observed_prior_head_digest", "settled_revision", "settled_head_digest",
-      "settlement", "settled_at", "receipt_authentication_tag",
+      "settlement", "settled_at", "request_deadline_at", "receipt_authentication_tag",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_DUAL_SIGNATURE_FIELDS_V1, [
+      "envelope_schema_version", "canonical_rotation_body", "canonical_rotation_body_digest",
+      "prior_root_key_id_digest", "prior_root_revision", "prior_root_signature_algorithm", "prior_root_signature",
+      "successor_root_key_id_digest", "successor_root_revision", "successor_root_signature_algorithm",
+      "successor_root_signature",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_ENTRY_FIELDS_V1, [
+      "signer_role", "signature_algorithm", "signing_key_id_digest", "signing_key_fingerprint",
+      "signing_key_revision", "signed_body_digest", "signature",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_FIELDS_V1, [
+      "overlap_schema_version", "overlap_id_digest", "role", "prior_key_entry_digest", "prior_revision",
+      "successor_key_entry_digest", "successor_revision", "overlap_not_before", "overlap_expires_at",
+      "authorizing_registry_sequence", "dependent_manifest_id_digest", "dependent_manifest_sequence",
+      "dependent_manifest_transition_digest",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_FIELDS_V1, [
+      "anchor_role", "adapter_component_role", "adapter_product_binding_digest", "writer_key_role",
+      "writer_key_binding_digest", "stream_domain", "protected_destination_digest", "custody_domain_digest",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_SETTLEMENTS_V1, [
+      "desired_state_adopted", "proven_expected_state_unchanged", "proven_authenticated_conflict",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_INVARIANTS_V1, [
+      "receipt_request_id_and_body_digest_match_one_exact_immutable_request",
+      "desired_state_adopted_requires_exact_desired_revision_and_head",
+      "proven_expected_state_unchanged_requires_exact_expected_revision_and_head",
+      "proven_authenticated_conflict_requires_state_distinct_from_expected_and_desired",
+      "settled_at_is_not_after_the_exclusive_request_deadline",
+      "unknown_timeout_or_malformed_outcome_has_no_receipt_and_quarantines",
+      "receipt_cannot_authorize_retry_reconstruction_signing_or_cross_role_adoption",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_REVISION_STATES_V1, ["pending_anchor", "adopted", "revoked"]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SPLIT_COMMIT_RECOVERY_CASES_V1, [
@@ -182,12 +228,17 @@ test("CR13A-LIVE-490 freezes every exact ordered vocabulary and the complete key
       "forbid_database_environment_manifest_registry_or_runtime_from_replacing_owner_root_pin",
       "keep_owner_root_private_key_offline_and_out_of_runtime", "limit_owner_root_signatures_to_three_exact_scopes",
       "require_dual_root_signatures_and_newly_pinned_deployment_product_for_normal_root_rotation",
+      "signatures_are_outside_rotation_body_and_both_cover_one_exact_canonical_body_digest",
       "forbid_automatic_root_rotation_when_compromise_makes_old_root_unavailable",
       "make_trust_registry_a_strict_canonical_owner_root_signed_chain",
+      "require_root_signature_at_genesis_and_root_plus_trust_registry_signer_on_every_later_registry_revision",
+      "require_every_signature_entry_to_repeat_the_one_exact_canonical_body_digest",
       "make_registry_sequence_monotonic_and_prior_digest_zero_only_at_genesis",
       "order_registry_keys_by_role_then_revision_and_require_unique_role_revision_pairs",
       "require_exact_key_roles_statuses_time_intervals_and_pairwise_distinct_material",
       "permit_only_explicit_bounded_300_second_rotation_overlap",
+      "bind_each_overlap_to_prior_and_successor_entries_registry_authorization_and_dependent_manifest_transition",
+      "forbid_inferred_oversized_overlapping_reversed_stale_replayed_or_lower_revision_overlap",
       "retain_historical_keys_for_verification_only_and_forbid_new_writes",
       "make_unknown_revoked_or_destroyed_key_state_fail_closed",
       "make_deployment_manifest_canonical_immutable_and_manifest_key_signed",
@@ -198,10 +249,13 @@ test("CR13A-LIVE-490 freezes every exact ordered vocabulary and the complete key
       "bind_allowed_effects_and_zero_ceilings_for_every_prohibited_effect",
       "keep_manifest_signer_distinct_from_every_runtime_and_business_state_key",
       "separate_all_five_anchor_roles_writer_keys_and_custody_boundaries",
+      "bind_each_anchor_to_one_exact_adapter_product_writer_key_stream_destination_and_custody_domain",
       "limit_anchor_state_to_stream_revision_head_last_request_and_authentication",
       "forbid_anchors_from_storing_or_deciding_business_state", "forbid_cross_role_anchor_adoption",
       "append_pending_database_revision_before_one_exact_idempotent_anchor_cas",
       "append_adopted_only_after_exact_receipt_and_current_anchor_verification",
+      "accept_only_three_closed_receipt_settlements_with_exact_request_revision_head_and_deadline_invariants",
+      "create_no_receipt_for_unknown_timeout_or_malformed_anchor_outcome",
       "reject_old_valid_signature_after_authenticated_anchor_advances", "apply_exact_closed_split_commit_recovery_matrix",
       "permit_recovery_to_reissue_only_the_byte_identical_stored_cas_request",
       "forbid_recovery_from_reconstructing_signing_substituting_rolling_back_or_activating",
@@ -218,9 +272,20 @@ test("CR13A-LIVE-490 freezes every exact ordered vocabulary and the complete key
     assert.equal(new Set(actual).size, actual.length);
     assert.equal(Object.isFrozen(actual), true);
   }
+  const expectedKeyRoles = [
+    "out_of_band_owner_root", "trust_registry_signer", "trust_anchor_writer", "deployment_manifest_signer",
+    "manifest_anchor_writer", "owner_authorization_sealing", "owner_state", "product_attempt_state",
+    "owner_attempt_anchor_writer", "broker_invocation_sealing", "broker_invocation_state",
+    "broker_invocation_consumption", "privacy_transform", "running_executable_content_provider",
+    "operating_system_boot_session_provider", "attestor_process_session_provider",
+    "running_qualification_harness_provider", "running_physical_driver_provider", "platform_signer", "launch_ipc",
+    "settlement_ipc", "attestation_database_state", "attestation_anchor_writer", "cleanup_signer",
+    "cleanup_database_state", "cleanup_anchor_writer", "tls_transport", "node_channel",
+  ];
+  assert.deepEqual(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_ROLES_V1, expectedKeyRoles);
   assert.deepEqual(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_SCHEMA_V1, {
     fields: fixtures[3]?.[1],
-    allowedRoles: [...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_ROLES_V1],
+    allowedRoles: expectedKeyRoles,
     statuses: fixtures[4]?.[1], ordering: "role_order_then_revision_ascending", uniqueBy: "role_and_revision",
     everyRoleRequired: true, atLeastOneCurrentActiveRevisionPerRequiredRole: true,
     maximumActiveRevisionsPerRoleDuringDeclaredOverlap: 2,
@@ -242,8 +307,40 @@ test("CR13A-LIVE-490 makes root recovery manual and rotation narrowly bounded", 
   assert.equal(contract.rootPinReplaceableByTrustRegistry, false);
   assert.equal(contract.automaticCompromiseRotationAllowed, false);
   assert.equal(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_SIGNATURE_SCOPES_V1.length, 3);
-  assert.ok(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_FIELDS_V1.includes("prior_root_signature"));
-  assert.ok(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_FIELDS_V1.includes("successor_root_signature"));
+  assert.doesNotMatch(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_BODY_FIELDS_V1.join(" "), /signature/);
+  assert.ok(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_DUAL_SIGNATURE_FIELDS_V1
+    .includes("prior_root_signature"));
+  assert.ok(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_DUAL_SIGNATURE_FIELDS_V1
+    .includes("successor_root_signature"));
+  assert.deepEqual(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_POLICIES_V1, [
+    { artifact: "trust_registry_genesis", orderedSignerRoles: ["out_of_band_owner_root"], exactSignatureCount: 1 },
+    { artifact: "trust_registry_revision",
+      orderedSignerRoles: ["out_of_band_owner_root", "trust_registry_signer"], exactSignatureCount: 2 },
+    { artifact: "deployment_manifest", orderedSignerRoles: ["deployment_manifest_signer"], exactSignatureCount: 1 },
+  ]);
+  for (const policy of CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_POLICIES_V1) {
+    assert.equal(Object.isFrozen(policy), true);
+    assert.equal(Object.isFrozen(policy.orderedSignerRoles), true);
+    assert.equal(new Set(policy.orderedSignerRoles).size, policy.exactSignatureCount);
+  }
+});
+
+test("CR13A-LIVE-490 makes every key overlap explicit, bounded, monotonic, and manifest-bound", () => {
+  assert.deepEqual(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1, {
+    fields: ["overlap_schema_version", "overlap_id_digest", "role", "prior_key_entry_digest", "prior_revision",
+      "successor_key_entry_digest", "successor_revision", "overlap_not_before", "overlap_expires_at",
+      "authorizing_registry_sequence", "dependent_manifest_id_digest", "dependent_manifest_sequence",
+      "dependent_manifest_transition_digest"],
+    allowedRoles: [...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_ROLES_V1],
+    requiredRegistrySignerRoles: ["out_of_band_owner_root", "trust_registry_signer"],
+    requiredDependentManifestSignerRole: "deployment_manifest_signer",
+    successorRevisionStrictlyGreaterThanPrior: true, lowerRevisionReactivationAllowed: false,
+    overlappingDeclarationsForRoleAllowed: false, declarationReplayAllowed: false,
+    maximumDurationSeconds: 300, extraFieldsAllowed: false,
+  });
+  assert.equal(Object.isFrozen(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1), true);
+  assert.equal(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_BODY_FIELDS_V1.at(-1),
+    "ordered_rotation_overlap_declarations");
 });
 
 test("CR13A-LIVE-490 binds all products, keys, trust state, scope, effects, and five anchors", () => {
@@ -261,6 +358,27 @@ test("CR13A-LIVE-490 binds all products, keys, trust state, scope, effects, and 
   assert.equal(contract.anchorBusinessStateAllowed, false);
   assert.equal(contract.crossRoleAnchorAdoptionAllowed, false);
   assert.equal(contract.postgresqlSoleGlobalWriteAuthorityRequired, true);
+  assert.deepEqual(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_ROLE_REQUIREMENTS_V1, [
+    { anchorRole: "trust_registry_anchor", adapterComponentRole: "trust_registry_anchor_adapter",
+      writerKeyRole: "trust_anchor_writer", streamDomain: "trust_registry_head" },
+    { anchorRole: "deployment_manifest_anchor", adapterComponentRole: "manifest_anchor_adapter",
+      writerKeyRole: "manifest_anchor_writer", streamDomain: "deployment_manifest_head" },
+    { anchorRole: "composite_owner_attempt_anchor", adapterComponentRole: "owner_attempt_anchor_adapter",
+      writerKeyRole: "owner_attempt_anchor_writer", streamDomain: "composite_owner_attempt_head" },
+    { anchorRole: "attestation_anchor", adapterComponentRole: "attestation_anchor_adapter",
+      writerKeyRole: "attestation_anchor_writer", streamDomain: "attestation_head" },
+    { anchorRole: "cleanup_anchor", adapterComponentRole: "cleanup_anchor_adapter",
+      writerKeyRole: "cleanup_anchor_writer", streamDomain: "cleanup_head" },
+  ]);
+  assert.deepEqual(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1.pairwiseDistinctFields,
+    ["anchor_role", "adapter_component_role", "adapter_product_binding_digest", "writer_key_role",
+      "writer_key_binding_digest", "stream_domain", "protected_destination_digest", "custody_domain_digest"]);
+  assert.equal(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1.exactCardinality, 5);
+  assert.equal(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1
+    .sharedWriterAdapterDestinationCustodyOrStreamAllowed, false);
+  for (const requirement of CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_ROLE_REQUIREMENTS_V1) {
+    assert.equal(Object.isFrozen(requirement), true);
+  }
 });
 
 test("CR13A-LIVE-490 closes split-commit recovery without signing, substitution, rollback, or activation", () => {
@@ -270,6 +388,11 @@ test("CR13A-LIVE-490 closes split-commit recovery without signing, substitution,
   assert.equal(connectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1
     .recoveryMaySignSubstituteRollbackOrActivate, false);
   assert.equal(connectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1.maximumCurrentProtectedOperations, 0);
+  assert.deepEqual(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_SETTLEMENTS_V1,
+    ["desired_state_adopted", "proven_expected_state_unchanged", "proven_authenticated_conflict"]);
+  assert.equal(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_INVARIANTS_V1.length, 7);
+  assert.ok(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_INVARIANTS_V1
+    .includes("unknown_timeout_or_malformed_outcome_has_no_receipt_and_quarantines"));
 });
 
 test("CR13A-LIVE-490 requires protective properties while implementing and granting nothing", () => {
@@ -334,6 +457,48 @@ test("CR13A-LIVE-490 rejects copies, accessors, Symbols, and Proxies without beh
     "invalid_contract");
   expectCode(() => parseConnectionEnrollmentPrivateLoopbackTrustManifestAnchorStatusV1(proxy), "invalid_status");
   assert.equal(executions, 0);
+});
+
+test("CR13A-LIVE-490 rejects signature, overlap, anchor, and receipt-policy substitution", () => {
+  const contract = connectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1;
+  const substitutions = [
+    { trustArtifactSignaturePolicies: Object.freeze([
+      Object.freeze({ artifact: "trust_registry_revision",
+        orderedSignerRoles: Object.freeze(["trust_registry_signer", "out_of_band_owner_root"]),
+        exactSignatureCount: 2 }),
+    ]) },
+    { trustArtifactSignaturePolicies: Object.freeze([
+      Object.freeze({ artifact: "trust_registry_revision",
+        orderedSignerRoles: Object.freeze(["out_of_band_owner_root", "trust_registry_signer"]),
+        exactSignatureCount: 1 }),
+    ]) },
+    { trustArtifactSignatureEntryFields: Object.freeze([
+      "signer_role", "signature_algorithm", "signing_key_id_digest", "signing_key_fingerprint",
+      "signing_key_revision", "different_body_digest", "signature",
+    ]) },
+    { ownerRootRotationBodyFields: Object.freeze([
+      ...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_BODY_FIELDS_V1, "prior_root_signature",
+    ]) },
+    { keyRotationOverlapSchema: Object.freeze({
+      ...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1, maximumDurationSeconds: 301,
+    }) },
+    { keyRotationOverlapSchema: Object.freeze({
+      ...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1,
+      lowerRevisionReactivationAllowed: true, overlappingDeclarationsForRoleAllowed: true,
+    }) },
+    { anchorBindingSchema: Object.freeze({
+      ...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1,
+      sharedWriterAdapterDestinationCustodyOrStreamAllowed: true,
+    }) },
+    { anchorCasReceiptSettlements: Object.freeze([
+      ...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_SETTLEMENTS_V1, "unknown_success",
+    ]) },
+  ];
+  for (const substitution of substitutions) {
+    expectCode(() => parseConnectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1(Object.freeze({
+      ...contract, ...substitution,
+    })), "invalid_contract");
+  }
 });
 
 test("CR13A-LIVE-490 freezes records, parsers, nested schemas, and safe errors", () => {
@@ -406,6 +571,104 @@ test("CR13A-LIVE-490 transitive production import graph is exact and effect-iner
     "appendFileSync", "open", "openSync", "rm", "rmSync", "unlink", "unlinkSync", "query", "transaction",
     "getaddrinfo", "lookup", "chdir", "cwd", "exit", "kill",
   ]);
+  const expectedExports = new Map<string, readonly string[]>([
+    ["src/connection-registry/v1/private-loopback-trust-manifest-anchor-contract.ts", [
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_ANCHOR_CONTRACT_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_ANCHOR_STATUS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_PIN_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_SIGNATURE_SCOPES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_BODY_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_DUAL_SIGNATURE_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_ENTRY_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_POLICIES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_STATUSES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_SCHEMA_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_LIFECYCLE_RULES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_BODY_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SIGNED_ENVELOPE_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_DEPLOYMENT_MANIFEST_BODY_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INDEPENDENT_ANCHOR_ROLES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_ROLE_REQUIREMENTS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_STATE_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_REQUEST_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_SETTLEMENTS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_INVARIANTS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_REVISION_STATES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SPLIT_COMMIT_RECOVERY_CASES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_QUARANTINE_TRIGGERS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_ANCHOR_PROHIBITED_EFFECTS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_ANCHOR_RULES_V1",
+      "ConnectionEnrollmentPrivateLoopbackTrustManifestAnchorErrorV1",
+      "connectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1",
+      "ConnectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1",
+      "connectionEnrollmentPrivateLoopbackTrustManifestAnchorStatusV1",
+      "ConnectionEnrollmentPrivateLoopbackTrustManifestAnchorStatusV1",
+      "parseConnectionEnrollmentPrivateLoopbackTrustManifestAnchorContractV1",
+      "parseConnectionEnrollmentPrivateLoopbackTrustManifestAnchorStatusV1",
+    ]],
+    ["src/connection-registry/v1/private-loopback-owner-native-authorization-contract.ts", [
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_CONTRACT_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_STATUS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_PRODUCT_BINDING_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_PRODUCT_BINDING_ROLES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_BINDING_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_PRODUCT_BINDING_SCHEMA_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_BODY_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_ENVELOPE_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_RESERVATION_INTENTS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_PROVIDER_SCOPES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_CLEANUP_FACTS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_ALLOWED_EFFECTS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_PROHIBITED_EFFECTS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_PUBLIC_TERMINAL_FIELDS_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_OPERATION_BUDGET_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_STATES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_TERMINAL_OUTCOMES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_ROLES_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_BINDING_SCHEMA_V1",
+      "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_RULES_V1",
+      "ConnectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationContractV1",
+      "ConnectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationStatusV1",
+      "ConnectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationErrorV1",
+      "connectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationContractV1",
+      "connectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationStatusV1",
+      "parseConnectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationContractV1",
+      "parseConnectionEnrollmentPrivateLoopbackOwnerNativeAuthorizationStatusV1",
+    ]],
+    ["src/security/canonical-digest.ts", ["canonicalJson", "sha256Digest"]],
+    ["src/security/host-value.ts", [
+      "isHostProxyV1", "ownDataPropertyValueV1", "exactHostErrorCodeV1", "ownAccessorPropertyGetterV1",
+      "dataPropertyValueV1", "dataMethodV1", "exactHostDataSnapshotV1", "exactHostDataArrayV1",
+      "HostCancellationSignalV1", "HostCancellationControllerV1", "createHostCancellationControllerV1",
+      "exactHostCancellationSignalV1", "hostCancellationAbortedV1", "HostCancellationSubscriptionV1",
+      "subscribeHostCancellationV1", "ExactHostUint8ArrayV1", "hostUint8ArrayByteLengthV1",
+      "exactHostUint8ArrayV1", "wipeHostUint8ArrayV1", "HostResultCollectorV1", "createHostResultCollectorV1",
+    ]],
+    ["src/security/redaction.ts", ["RedactionResult", "containsSecretMaterial", "assertNoSecretMaterial",
+      "redactSecrets"]],
+  ]);
+  const expectedTopLevelCalls = new Map<string, readonly string[]>([
+    ["src/connection-registry/v1/private-loopback-trust-manifest-anchor-contract.ts",
+      ["objectFreezeV1", "reflectApplyV1", "safePublicRecordV1", "sha256Digest"]],
+    ["src/connection-registry/v1/private-loopback-owner-native-authorization-contract.ts",
+      ["budgetV1", "objectFreezeV1", "providerBudgetV1", "reflectApplyV1", "safePublicRecordV1", "sha256Digest"]],
+    ["src/security/canonical-digest.ts", []],
+    ["src/security/host-value.ts", ["objectCreate", "objectFreeze", "objectGetOwnPropertyDescriptor",
+      "objectGetPrototypeOf"]],
+    ["src/security/redaction.ts", []],
+  ]);
+  const expectedTopLevelConstructors = new Map<string, readonly string[]>([
+    ["src/connection-registry/v1/private-loopback-trust-manifest-anchor-contract.ts", ["WeakMap", "WeakSet"]],
+    ["src/connection-registry/v1/private-loopback-owner-native-authorization-contract.ts", ["WeakMap", "WeakSet"]],
+    ["src/security/canonical-digest.ts", []], ["src/security/host-value.ts", ["Error", "WeakMap"]],
+    ["src/security/redaction.ts", []],
+  ]);
   const discovered = new Set<string>();
   const pending = [modulePath];
   while (pending.length > 0) {
@@ -418,13 +681,63 @@ test("CR13A-LIVE-490 transitive production import graph is exact and effect-iner
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const imports: string[] = [];
     for (const statement of source.statements) {
-      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
-      const specifier = statement.moduleSpecifier.text;
+      let specifier: string | undefined;
+      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+        specifier = statement.moduleSpecifier.text;
+      } else if (ts.isExportDeclaration(statement) && statement.moduleSpecifier
+        && ts.isStringLiteral(statement.moduleSpecifier)) {
+        specifier = statement.moduleSpecifier.text;
+      } else if (ts.isImportEqualsDeclaration(statement)
+        && ts.isExternalModuleReference(statement.moduleReference)
+        && statement.moduleReference.expression && ts.isStringLiteral(statement.moduleReference.expression)) {
+        specifier = statement.moduleReference.expression.text;
+      }
+      if (specifier === undefined) continue;
       imports.push(specifier);
-      assert.doesNotMatch(specifier, prohibitedModules, `${relativeFile}: prohibited import ${specifier}`);
+      assert.doesNotMatch(specifier, prohibitedModules, `${relativeFile}: prohibited dependency ${specifier}`);
       if (specifier.startsWith(".")) pending.push(`${resolve(dirname(file), specifier)}.ts`);
     }
     assert.deepEqual(imports, graph.get(relativeFile), `${relativeFile}: import graph drift`);
+
+    const exportedNames: string[] = [];
+    for (const statement of source.statements) {
+      const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+      const hasExport = modifiers?.some(({ kind }) => kind === ts.SyntaxKind.ExportKeyword) === true;
+      if (hasExport && ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name)) exportedNames.push(declaration.name.text);
+        }
+      } else if (hasExport && (ts.isClassDeclaration(statement) || ts.isFunctionDeclaration(statement)
+        || ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)
+        || ts.isEnumDeclaration(statement) || ts.isModuleDeclaration(statement))
+        && statement.name && ts.isIdentifier(statement.name)) {
+        exportedNames.push(statement.name.text);
+      } else if (ts.isExportDeclaration(statement) && statement.exportClause
+        && ts.isNamedExports(statement.exportClause)) {
+        for (const element of statement.exportClause.elements) exportedNames.push(element.name.text);
+      }
+    }
+    assert.deepEqual(exportedNames, expectedExports.get(relativeFile), `${relativeFile}: export surface drift`);
+
+    const topLevelCalls = new Set<string>();
+    const topLevelConstructors = new Set<string>();
+    const inspectTopLevel = (node: ts.Node, insideFunctionOrClass = false): void => {
+      const nested = insideFunctionOrClass || ts.isFunctionLike(node) || ts.isClassLike(node);
+      if (!insideFunctionOrClass && ts.isCallExpression(node)) {
+        const calledName = ts.isIdentifier(node.expression) ? node.expression.text
+          : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : node.expression.getText(source);
+        topLevelCalls.add(calledName);
+      } else if (!insideFunctionOrClass && ts.isNewExpression(node)) {
+        const calledName = ts.isIdentifier(node.expression) ? node.expression.text : node.expression.getText(source);
+        topLevelConstructors.add(calledName);
+      }
+      ts.forEachChild(node, (child) => inspectTopLevel(child, nested));
+    };
+    for (const statement of source.statements) inspectTopLevel(statement);
+    assert.deepEqual([...topLevelCalls].sort(), [...(expectedTopLevelCalls.get(relativeFile) ?? [])].sort(),
+      `${relativeFile}: top-level call drift`);
+    assert.deepEqual([...topLevelConstructors].sort(),
+      [...(expectedTopLevelConstructors.get(relativeFile) ?? [])].sort(), `${relativeFile}: constructor drift`);
     const taintedAliases = new Set(effectNames);
     let changed = true;
     while (changed) {
@@ -448,6 +761,7 @@ test("CR13A-LIVE-490 transitive production import graph is exact and effect-iner
         if (node.expression.kind === ts.SyntaxKind.ImportKeyword) violations.push("dynamic import");
         const calledName = ts.isIdentifier(node.expression) ? node.expression.text
           : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
+        if (calledName === "require" || calledName === "createRequire") violations.push(`loader call ${calledName}`);
         if (calledName && taintedAliases.has(calledName)) violations.push(`effect call ${calledName}`);
       } else if (ts.isNewExpression(node)) {
         const calledName = ts.isIdentifier(node.expression) ? node.expression.text

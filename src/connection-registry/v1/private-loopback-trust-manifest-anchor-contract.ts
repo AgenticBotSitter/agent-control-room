@@ -40,7 +40,7 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_SIGNATURE_SCOPES_
   "dual_signed_owner_root_rotation_statement",
 ] as const);
 
-export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_FIELDS_V1 = objectFreezeV1([
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_BODY_FIELDS_V1 = objectFreezeV1([
   "rotation_schema_version",
   "prior_root_key_id_digest",
   "prior_root_revision",
@@ -55,8 +55,48 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_FIELDS_V
   "rotation_reason",
   "not_before",
   "expires_at",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_DUAL_SIGNATURE_FIELDS_V1 = objectFreezeV1([
+  "envelope_schema_version",
+  "canonical_rotation_body",
+  "canonical_rotation_body_digest",
+  "prior_root_key_id_digest",
+  "prior_root_revision",
+  "prior_root_signature_algorithm",
   "prior_root_signature",
+  "successor_root_key_id_digest",
+  "successor_root_revision",
+  "successor_root_signature_algorithm",
   "successor_root_signature",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_ENTRY_FIELDS_V1 = objectFreezeV1([
+  "signer_role",
+  "signature_algorithm",
+  "signing_key_id_digest",
+  "signing_key_fingerprint",
+  "signing_key_revision",
+  "signed_body_digest",
+  "signature",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_POLICIES_V1 = objectFreezeV1([
+  objectFreezeV1({
+    artifact: "trust_registry_genesis" as const,
+    orderedSignerRoles: objectFreezeV1(["out_of_band_owner_root"] as const),
+    exactSignatureCount: 1 as const,
+  }),
+  objectFreezeV1({
+    artifact: "trust_registry_revision" as const,
+    orderedSignerRoles: objectFreezeV1(["out_of_band_owner_root", "trust_registry_signer"] as const),
+    exactSignatureCount: 2 as const,
+  }),
+  objectFreezeV1({
+    artifact: "deployment_manifest" as const,
+    orderedSignerRoles: objectFreezeV1(["deployment_manifest_signer"] as const),
+    exactSignatureCount: 1 as const,
+  }),
 ] as const);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_FIELDS_V1 = objectFreezeV1([
@@ -92,6 +132,36 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_SCH
   extraFieldsAllowed: false as const,
 });
 
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_FIELDS_V1 = objectFreezeV1([
+  "overlap_schema_version",
+  "overlap_id_digest",
+  "role",
+  "prior_key_entry_digest",
+  "prior_revision",
+  "successor_key_entry_digest",
+  "successor_revision",
+  "overlap_not_before",
+  "overlap_expires_at",
+  "authorizing_registry_sequence",
+  "dependent_manifest_id_digest",
+  "dependent_manifest_sequence",
+  "dependent_manifest_transition_digest",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1 = objectFreezeV1({
+  fields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_FIELDS_V1,
+  allowedRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_ROLES_V1,
+  requiredRegistrySignerRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_POLICIES_V1[1]
+    .orderedSignerRoles,
+  requiredDependentManifestSignerRole: "deployment_manifest_signer" as const,
+  successorRevisionStrictlyGreaterThanPrior: true as const,
+  lowerRevisionReactivationAllowed: false as const,
+  overlappingDeclarationsForRoleAllowed: false as const,
+  declarationReplayAllowed: false as const,
+  maximumDurationSeconds: 300 as const,
+  extraFieldsAllowed: false as const,
+});
+
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_LIFECYCLE_RULES_V1 = objectFreezeV1([
   "activation_requires_current_manifest_role_purpose_scope_and_time",
   "all_key_material_is_pairwise_byte_distinct_across_roles_and_revisions",
@@ -106,6 +176,9 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_LIFECYCLE_RULES_V1 = obj
   "revocation_stops_new_writes_and_quarantines_dependent_unsettled_attempts",
   "destruction_requires_separately_accepted_archive_retention_proof",
   "unknown_key_state_is_terminal",
+  "active_revision_is_monotonic_and_never_reactivates_a_lower_revision",
+  "one_role_has_at_most_one_open_signed_overlap_declaration",
+  "manifest_selects_exactly_one_revision_during_registry_overlap",
 ] as const);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_BODY_FIELDS_V1 = objectFreezeV1([
@@ -116,18 +189,16 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_BODY_FIELDS_V
   "policy_revision",
   "product_catalog_revision",
   "ordered_key_entries",
+  "ordered_rotation_overlap_declarations",
 ] as const);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SIGNED_ENVELOPE_FIELDS_V1 = objectFreezeV1([
   "envelope_version",
   "codec_version",
-  "signature_algorithm",
   "body",
   "canonical_body_digest",
-  "signing_key_id_digest",
-  "signing_key_fingerprint",
-  "signing_key_revision",
-  "authentication_tag",
+  "ordered_signatures",
+  "envelope_digest",
 ] as const);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_DEPLOYMENT_MANIFEST_BODY_FIELDS_V1 = objectFreezeV1([
@@ -178,6 +249,47 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INDEPENDENT_ANCHOR_ROLES_V1 
   "cleanup_anchor",
 ] as const);
 
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_FIELDS_V1 = objectFreezeV1([
+  "anchor_role",
+  "adapter_component_role",
+  "adapter_product_binding_digest",
+  "writer_key_role",
+  "writer_key_binding_digest",
+  "stream_domain",
+  "protected_destination_digest",
+  "custody_domain_digest",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_ROLE_REQUIREMENTS_V1 = objectFreezeV1([
+  objectFreezeV1({ anchorRole: "trust_registry_anchor" as const,
+    adapterComponentRole: "trust_registry_anchor_adapter" as const,
+    writerKeyRole: "trust_anchor_writer" as const, streamDomain: "trust_registry_head" as const }),
+  objectFreezeV1({ anchorRole: "deployment_manifest_anchor" as const,
+    adapterComponentRole: "manifest_anchor_adapter" as const,
+    writerKeyRole: "manifest_anchor_writer" as const, streamDomain: "deployment_manifest_head" as const }),
+  objectFreezeV1({ anchorRole: "composite_owner_attempt_anchor" as const,
+    adapterComponentRole: "owner_attempt_anchor_adapter" as const,
+    writerKeyRole: "owner_attempt_anchor_writer" as const, streamDomain: "composite_owner_attempt_head" as const }),
+  objectFreezeV1({ anchorRole: "attestation_anchor" as const,
+    adapterComponentRole: "attestation_anchor_adapter" as const,
+    writerKeyRole: "attestation_anchor_writer" as const, streamDomain: "attestation_head" as const }),
+  objectFreezeV1({ anchorRole: "cleanup_anchor" as const,
+    adapterComponentRole: "cleanup_anchor_adapter" as const,
+    writerKeyRole: "cleanup_anchor_writer" as const, streamDomain: "cleanup_head" as const }),
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1 = objectFreezeV1({
+  fields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_FIELDS_V1,
+  orderedRequirements: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_ROLE_REQUIREMENTS_V1,
+  exactCardinality: 5 as const,
+  pairwiseDistinctFields: objectFreezeV1(["anchor_role", "adapter_component_role", "adapter_product_binding_digest",
+    "writer_key_role", "writer_key_binding_digest", "stream_domain", "protected_destination_digest",
+    "custody_domain_digest"] as const),
+  crossRoleAdoptionAllowed: false as const,
+  sharedWriterAdapterDestinationCustodyOrStreamAllowed: false as const,
+  extraFieldsAllowed: false as const,
+});
+
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_STATE_FIELDS_V1 = objectFreezeV1([
   "anchor_schema_version",
   "anchor_role",
@@ -207,13 +319,31 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_FIELDS_V1
   "anchor_role",
   "stream_id_digest",
   "request_id_digest",
+  "request_body_digest",
   "observed_prior_revision",
   "observed_prior_head_digest",
   "settled_revision",
   "settled_head_digest",
   "settlement",
   "settled_at",
+  "request_deadline_at",
   "receipt_authentication_tag",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_SETTLEMENTS_V1 = objectFreezeV1([
+  "desired_state_adopted",
+  "proven_expected_state_unchanged",
+  "proven_authenticated_conflict",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_INVARIANTS_V1 = objectFreezeV1([
+  "receipt_request_id_and_body_digest_match_one_exact_immutable_request",
+  "desired_state_adopted_requires_exact_desired_revision_and_head",
+  "proven_expected_state_unchanged_requires_exact_expected_revision_and_head",
+  "proven_authenticated_conflict_requires_state_distinct_from_expected_and_desired",
+  "settled_at_is_not_after_the_exclusive_request_deadline",
+  "unknown_timeout_or_malformed_outcome_has_no_receipt_and_quarantines",
+  "receipt_cannot_authorize_retry_reconstruction_signing_or_cross_role_adoption",
 ] as const);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_REVISION_STATES_V1 = objectFreezeV1([
@@ -276,12 +406,17 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_ANCHOR_RULES_
   "keep_owner_root_private_key_offline_and_out_of_runtime",
   "limit_owner_root_signatures_to_three_exact_scopes",
   "require_dual_root_signatures_and_newly_pinned_deployment_product_for_normal_root_rotation",
+  "signatures_are_outside_rotation_body_and_both_cover_one_exact_canonical_body_digest",
   "forbid_automatic_root_rotation_when_compromise_makes_old_root_unavailable",
   "make_trust_registry_a_strict_canonical_owner_root_signed_chain",
+  "require_root_signature_at_genesis_and_root_plus_trust_registry_signer_on_every_later_registry_revision",
+  "require_every_signature_entry_to_repeat_the_one_exact_canonical_body_digest",
   "make_registry_sequence_monotonic_and_prior_digest_zero_only_at_genesis",
   "order_registry_keys_by_role_then_revision_and_require_unique_role_revision_pairs",
   "require_exact_key_roles_statuses_time_intervals_and_pairwise_distinct_material",
   "permit_only_explicit_bounded_300_second_rotation_overlap",
+  "bind_each_overlap_to_prior_and_successor_entries_registry_authorization_and_dependent_manifest_transition",
+  "forbid_inferred_oversized_overlapping_reversed_stale_replayed_or_lower_revision_overlap",
   "retain_historical_keys_for_verification_only_and_forbid_new_writes",
   "make_unknown_revoked_or_destroyed_key_state_fail_closed",
   "make_deployment_manifest_canonical_immutable_and_manifest_key_signed",
@@ -292,11 +427,14 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_ANCHOR_RULES_
   "bind_allowed_effects_and_zero_ceilings_for_every_prohibited_effect",
   "keep_manifest_signer_distinct_from_every_runtime_and_business_state_key",
   "separate_all_five_anchor_roles_writer_keys_and_custody_boundaries",
+  "bind_each_anchor_to_one_exact_adapter_product_writer_key_stream_destination_and_custody_domain",
   "limit_anchor_state_to_stream_revision_head_last_request_and_authentication",
   "forbid_anchors_from_storing_or_deciding_business_state",
   "forbid_cross_role_anchor_adoption",
   "append_pending_database_revision_before_one_exact_idempotent_anchor_cas",
   "append_adopted_only_after_exact_receipt_and_current_anchor_verification",
+  "accept_only_three_closed_receipt_settlements_with_exact_request_revision_head_and_deadline_invariants",
+  "create_no_receipt_for_unknown_timeout_or_malformed_anchor_outcome",
   "reject_old_valid_signature_after_authenticated_anchor_advances",
   "apply_exact_closed_split_commit_recovery_matrix",
   "permit_recovery_to_reissue_only_the_byte_identical_stored_cas_request",
@@ -344,16 +482,23 @@ const contractSeedV1 = sha256Digest({
   acceptedLive480AcceptanceSha256: "5f549c3f05ce77cd5a536e9b711a4e7a1c5bddde7ee8d75fd68474fe6578ab46",
   ownerRootPinFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_PIN_FIELDS_V1,
   ownerRootSignatureScopes: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_SIGNATURE_SCOPES_V1,
-  ownerRootRotationFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_FIELDS_V1,
+  ownerRootRotationBodyFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_BODY_FIELDS_V1,
+  ownerRootDualSignatureFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_DUAL_SIGNATURE_FIELDS_V1,
+  trustArtifactSignatureEntryFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_ENTRY_FIELDS_V1,
+  trustArtifactSignaturePolicies: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_POLICIES_V1,
   trustRegistryKeyEntrySchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_SCHEMA_V1,
+  keyRotationOverlapSchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1,
   keyLifecycleRules: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_LIFECYCLE_RULES_V1,
   trustRegistryBodyFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_BODY_FIELDS_V1,
   signedEnvelopeFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SIGNED_ENVELOPE_FIELDS_V1,
   deploymentManifestBodyFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_DEPLOYMENT_MANIFEST_BODY_FIELDS_V1,
   independentAnchorRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INDEPENDENT_ANCHOR_ROLES_V1,
+  anchorBindingSchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1,
   anchorStateFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_STATE_FIELDS_V1,
   anchorCasRequestFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_REQUEST_FIELDS_V1,
   anchorCasReceiptFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_FIELDS_V1,
+  anchorCasReceiptSettlements: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_SETTLEMENTS_V1,
+  anchorCasReceiptInvariants: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_INVARIANTS_V1,
   revisionStates: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_REVISION_STATES_V1,
   splitCommitRecoveryCases: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SPLIT_COMMIT_RECOVERY_CASES_V1,
   quarantineTriggers: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_QUARANTINE_TRIGGERS_V1,
@@ -375,18 +520,28 @@ const contractMaterialV1 = {
   acceptedKeyRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_ROLES_V1,
   ownerRootPinFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_PIN_FIELDS_V1,
   ownerRootSignatureScopes: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_SIGNATURE_SCOPES_V1,
-  ownerRootRotationFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_FIELDS_V1,
+  ownerRootRotationBodyFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_ROTATION_BODY_FIELDS_V1,
+  ownerRootDualSignatureFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_ROOT_DUAL_SIGNATURE_FIELDS_V1,
+  trustArtifactSignatureEntryFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_ENTRY_FIELDS_V1,
+  trustArtifactSignaturePolicies: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_ARTIFACT_SIGNATURE_POLICIES_V1,
   trustRegistryKeyEntryFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_FIELDS_V1,
   trustRegistryKeyStatuses: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_STATUSES_V1,
   trustRegistryKeyEntrySchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_SCHEMA_V1,
+  keyRotationOverlapFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_FIELDS_V1,
+  keyRotationOverlapSchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1,
   keyLifecycleRules: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_LIFECYCLE_RULES_V1,
   trustRegistryBodyFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_BODY_FIELDS_V1,
   signedEnvelopeFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SIGNED_ENVELOPE_FIELDS_V1,
   deploymentManifestBodyFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_DEPLOYMENT_MANIFEST_BODY_FIELDS_V1,
   independentAnchorRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INDEPENDENT_ANCHOR_ROLES_V1,
+  anchorBindingFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_FIELDS_V1,
+  anchorRoleRequirements: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_ROLE_REQUIREMENTS_V1,
+  anchorBindingSchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1,
   anchorStateFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_STATE_FIELDS_V1,
   anchorCasRequestFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_REQUEST_FIELDS_V1,
   anchorCasReceiptFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_FIELDS_V1,
+  anchorCasReceiptSettlements: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_SETTLEMENTS_V1,
+  anchorCasReceiptInvariants: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_CAS_RECEIPT_INVARIANTS_V1,
   revisionStates: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_REVISION_STATES_V1,
   splitCommitRecoveryCases: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_SPLIT_COMMIT_RECOVERY_CASES_V1,
   quarantineTriggers: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_MANIFEST_QUARANTINE_TRIGGERS_V1,
@@ -538,10 +693,13 @@ const contractKeysV1 = objectFreezeV1([
   "contractVersion", "contractReference", "live480ProductCommit", "live480ProductTree",
   "acceptedLive480ReviewSha256", "acceptedLive480AcceptanceSha256", "acceptedProductBindingSchema",
   "acceptedKeyBindingSchema", "acceptedKeyRoles", "ownerRootPinFields", "ownerRootSignatureScopes",
-  "ownerRootRotationFields", "trustRegistryKeyEntryFields", "trustRegistryKeyStatuses",
-  "trustRegistryKeyEntrySchema", "keyLifecycleRules", "trustRegistryBodyFields", "signedEnvelopeFields",
-  "deploymentManifestBodyFields", "independentAnchorRoles", "anchorStateFields", "anchorCasRequestFields",
-  "anchorCasReceiptFields", "revisionStates", "splitCommitRecoveryCases", "quarantineTriggers",
+  "ownerRootRotationBodyFields", "ownerRootDualSignatureFields", "trustArtifactSignatureEntryFields",
+  "trustArtifactSignaturePolicies", "trustRegistryKeyEntryFields", "trustRegistryKeyStatuses",
+  "trustRegistryKeyEntrySchema", "keyRotationOverlapFields", "keyRotationOverlapSchema", "keyLifecycleRules",
+  "trustRegistryBodyFields", "signedEnvelopeFields", "deploymentManifestBodyFields", "independentAnchorRoles",
+  "anchorBindingFields", "anchorRoleRequirements", "anchorBindingSchema", "anchorStateFields",
+  "anchorCasRequestFields", "anchorCasReceiptFields", "anchorCasReceiptSettlements",
+  "anchorCasReceiptInvariants", "revisionStates", "splitCommitRecoveryCases", "quarantineTriggers",
   "prohibitedEffects", "rules", "maximumRotationOverlapSeconds", "maximumCurrentOwnerRootPins",
   "maximumCurrentKeyEntries", "maximumCurrentTrustRegistryRevisions", "maximumCurrentDeploymentManifestRevisions",
   "maximumCurrentAnchorStates", "maximumCurrentProtectedOperations", "outOfBandOwnerRootRequired",
@@ -615,6 +773,8 @@ export function parseConnectionEnrollmentPrivateLoopbackTrustManifestAnchorContr
     || record.acceptedKeyRoles !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_KEY_ROLES_V1
     || record.trustRegistryKeyEntrySchema !==
       CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_REGISTRY_KEY_ENTRY_SCHEMA_V1
+    || record.keyRotationOverlapSchema !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_KEY_ROTATION_OVERLAP_SCHEMA_V1
+    || record.anchorBindingSchema !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ANCHOR_BINDING_SCHEMA_V1
     || record.maximumRotationOverlapSeconds !== 300 || record.maximumCurrentOwnerRootPins !== 0
     || record.maximumCurrentKeyEntries !== 0 || record.maximumCurrentTrustRegistryRevisions !== 0
     || record.maximumCurrentDeploymentManifestRevisions !== 0 || record.maximumCurrentAnchorStates !== 0

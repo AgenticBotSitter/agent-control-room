@@ -2355,7 +2355,8 @@ independent zero-repair re-review accepted exact product `6d510d6f1b80a98c00c16f
 
 ## CR13A-LIVE-490 — inert owner-root, key-role, trust-registry, manifest, and anchor contract
 
-Status: implemented and producer-prevalidated; independent review pending. Use Sol xhigh.
+Status: first independent review rejected 3 High/2 Medium; remediated product is producer-prevalidated and awaits a
+different independent re-review. Use Sol xhigh.
 
 LIVE-490 is the next dependency-ordered repository-only slice from LIVE-470. It will freeze the out-of-band owner-root
 pin and recovery/rotation vocabulary; exact key-entry fields, states, use separation, overlap rules, and historical
@@ -2378,6 +2379,13 @@ eight-case split-commit recovery matrix. It exposes vocabulary and singleton par
 external-effect counts remain zero; no signer, verifier, key, registry, manifest, anchor, store, migration, runtime,
 or deployment implementation exists.
 
-Producer verification passes the 13/13 focused suite, the 473/473 existing CR13A suite, the complete
+Producer verification passes the 15/15 focused suite, the 473/473 existing CR13A suite, the complete
 769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-0038 with
 124 tables, macOS stage zero, and whitespace validation. Independent review is still mandatory.
+
+The original immutable product was rejected with H-001 through H-003 and M-001 through M-002. The remediation makes
+root-rotation signatures external to one canonical body; fixes registry genesis, revision, and manifest signer sets;
+adds exact signed per-role overlap declarations with monotonic/non-reactivation rules; binds each of five anchors to
+its required adapter product, writer key, stream, destination, and distinct custody domain; closes CAS settlements and
+deadline/head invariants; and expands the transitive audit across imports, re-exports, legacy loaders, exact exports,
+top-level calls, and constructors. No implementation or effect surface was added.

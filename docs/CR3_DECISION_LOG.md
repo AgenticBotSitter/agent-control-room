@@ -4765,11 +4765,14 @@ closed split-commit recovery; singleton-only hostile parsing; captured-intrinsic
 graph with AST effect rejection; safe consumer audit; 44 zero actuals and eight false grants; full producer gates;
 and a different independent zero-repair review.
 
-**Current evidence:** The inert product and 13-test focused suite are implemented. Focused tests, 473 existing CR13A
+**Current evidence:** The inert product and 15-test focused suite are implemented. Focused tests, 473 existing CR13A
 tests, the complete 769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations
 0001-0038 with 124 tables, macOS stage zero, and whitespace validation pass. No key, signer, verifier, registry,
 manifest, anchor, store, production database, native, runtime, or deployment effect occurred. Independent review and
-final acceptance evidence are pending.
+final acceptance evidence are pending. The first independent review rejected the original revision with 3 High and
+2 Medium findings: circular/ambiguous signing, undeclared overlap and key rollback, unbound anchor custody, open CAS
+settlements, and an incomplete graph/export audit. All five are remediated without adding a protected implementation;
+a different independent re-review is required.
 
 **Reevaluate:** Before any owner-present issuer, key creation/access, registry or manifest parser/resolver, anchor or
 PostgreSQL store, recovery effect, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.

@@ -157,7 +157,7 @@
 | CR13A-LIVE-460 inert private observation-to-attestation pipeline contract | Independently accepted; ordinary integration ready | Product `2cab7df...`, tree `676cc41...`; 0 High/Medium/Low; 11/11 focused, 461/461 CR13A, full lifecycle pass, 5/5 build, 4/4 render, 38 migrations/124 tables; 58 zero actuals/eight false grants; no capsule/source/provider/key/database/native/runtime path |
 | CR13A-LIVE-470 production capsule and owner-native authorization architecture | Independently accepted for architecture-only integration | First review 5 High/4 Medium/0 Low, all remediated; different re-review 0/0/0; same-module capsule, rooted/anchored trust, exact owner/schema/rollback/IPC boundaries; zero current effects |
 | CR13A-LIVE-480 inert owner-native authorization contract | Independently accepted after all 2 High/2 Medium findings were remediated; ordinary inert integration ready | Product `6d510d6...`, tree `ac8655e...`; 64 body fields plus 42 exact component product/tree/review bindings, 28 closed key bindings, one-per-provider ceilings; 12/12 focused, 473/473 CR13A, 0/0/0 |
-| CR13A-LIVE-490 inert trust, manifest, key-lifecycle, and rollback-anchor contract | Producer verified; independent review required before integration | Exact out-of-band owner-root pin/rotation, 28-role key registry, signed registry/manifest chains, five independent CAS anchors, closed split-commit recovery; 13/13 focused plus 473/473 CR13A; zero protected operations |
+| CR13A-LIVE-490 inert trust, manifest, key-lifecycle, and rollback-anchor contract | First independent review rejected 3 High/2 Medium; all five are remediated and await different re-review | Exact signature-free rotation body/dual envelope, 28-role signed overlap schema, closed registry/manifest signatures, five exact independent anchor bindings, closed CAS receipts/recovery, exact graph/export/call audit; 15/15 focused plus 473/473 CR13A; zero protected operations |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -275,10 +275,19 @@ replacement, and recovery may only reissue the byte-identical stored CAS request
 The product remains repository-only and inert. It creates or reads no key, registry, manifest, anchor, database,
 clock, filesystem, environment, host, credential, source, provider, process, network, or native value; exposes no
 signer, resolver, store, migration, CAS adapter, or dependency factory; and grants no authority. Its status publishes
-44 zero actual totals and eight false grants. Dedicated tests pass 13/13, the existing CR13A suite passes 473/473,
+44 zero actual totals and eight false grants. Dedicated tests pass 15/15, the existing CR13A suite passes 473/473,
 the complete 769/421/392 lifecycle exits zero, all five build phases and 4/4 rendered routes pass, and migrations
 0001-0038 verify 124 tables. TypeScript, full lint, macOS stage zero, and whitespace validation pass. A different
 independent zero-repair review remains required before the block may be integrated or advance the active frontier.
+
+The first independent review rejected the original product with 3 High and 2 Medium findings. H-001 found a circular
+root-rotation signature shape and ambiguous registry signer participation. H-002 found that the claimed key overlap
+had no signed declaration or rollback rule. H-003 found five anchor names without exact adapter, writer-key,
+destination, stream, and custody bindings. M-001 found an open receipt settlement field. M-002 found that the graph
+test missed re-exports/loaders and did not freeze exports or top-level calls. The remediation splits canonical bodies
+from signatures, fixes exact artifact signer sets, adds a signed manifest-bound overlap declaration, maps all five
+anchor custody domains, closes receipt outcomes/invariants, and audits every resolved module dependency, export,
+top-level call, and constructor. A different independent re-review is pending.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
