@@ -163,10 +163,11 @@ once with 0 High/Medium/Low, independently reran 11/11 focused and 403/403 CR13A
 migration gates, and removed the exact disposable root. Accepted review SHA-256:
 `c41370441890e64ef53c76c65a8990119520f550cea093e59aa71d7a4926e586`.
 
-Next block: CR13A-LIVE-400, private fresh-spend/recheck composition implementation. It may compose the exact accepted
-LIVE-370 spend and LIVE-380 recheck behind one non-exported factory-owned path, retain both receipts only in private
-custody, return only a sanitized non-authorizing outcome, and stop before source lookup. Use `gpt-5.6-sol` at `xhigh`
-effort. Architecture must be frozen before executable code is added.
+Active implementation block: CR13A-LIVE-400, private fresh-spend/recheck composition implementation. Architecture is
+frozen in `docs/CR13A_LIVE_400_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_IMPLEMENTATION.md`. It may compose the exact
+accepted LIVE-370 spend and LIVE-380 recheck behind one non-barrel-exported factory-owned path, retain both receipts
+only in private custody, return only a sanitized non-authorizing outcome, and stop before source lookup. Use
+`gpt-5.6-sol` at `xhigh` effort.
 
 Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
 remains unreachable with no native reads and no lookup.

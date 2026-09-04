@@ -2131,3 +2131,19 @@ native, provider, network, or external effect. A fresh different reviewer passed
 commands exactly once with 0 High/Medium/Low, verified cleanup, and zero product/source/native/listener/network/
 provider/production/external effects. Preserve `docs/reviews/CR13A_LIVE_390_INDEPENDENT_REVIEW.md`; SHA-256
 `c41370441890e64ef53c76c65a8990119520f550cea093e59aa71d7a4926e586`.
+
+## CR13A-LIVE-400 — private fresh-spend/recheck composition implementation
+
+Status: architecture frozen for repository implementation on independently accepted LIVE-390 product `34640c7...`;
+use Sol xhigh.
+
+LIVE-400 may add one non-barrel-exported repository factory that constructs the exact accepted invocation-
+authorization store from a database client and three protected keys, then returns one frozen runner. Each runner entry
+accepts only the sealed authorization, performs one LIVE-370 spend, privately passes the exact fresh receipt and same
+sealed value through one LIVE-380 recheck, returns neither receipt, and emits only a frozen coarse terminal result.
+Unknown spend state, replay, mutation, expiry, or recheck failure is terminal before lookup. Success is
+`completed_and_stopped_before_lookup`, not a capability.
+
+No source import/lookup/invocation, native read, observation, attestation, candidate, owner window, runtime consumer,
+network, provider, production database, deployment, or external effect is permitted. Local PGlite spend/recheck
+verification is allowed. See `docs/CR13A_LIVE_400_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_IMPLEMENTATION.md`.
