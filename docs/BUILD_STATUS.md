@@ -147,6 +147,7 @@
 | CR13A-LIVE-360 trusted database-time and lineage validation | Independently accepted after one bounded hostile-row repair; ordinary integration ready | Corrected product `6028bad...`; 14/14 commands, 23/23 focused, 373/373 CR13A, 5/5 build, 4/4 render, 122 tables, 0 residual High/Medium/Low; original Medium preserved; zero consumption/source/native/external effects |
 | CR13A-LIVE-370 atomic invocation-authorization consumption | Independently accepted; ordinary integration ready | Product `6f908cc...`; 14/14 commands, 34/34 focused, 384/384 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; one-use spend remains source-free |
 | CR13A-LIVE-380 post-transaction database-time recheck | Independently accepted; ordinary integration ready | Product `1b79bbc...`; 14/14 commands, 42/42 focused, 392/392 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; read-only and source-free |
+| CR13A-LIVE-390 private fresh-spend/recheck composition contract | Architecture frozen; repository implementation in progress | Future private flow must obtain its own fresh LIVE-370 spend, immediately complete LIVE-380 recheck, keep both receipts private, and stop before source lookup; no executable composition or external effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block

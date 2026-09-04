@@ -4346,3 +4346,34 @@ TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer p
 commands once with 0 High/Medium/Low, verified cleanup, and zero new-spend/source/native/listener/production-database/
 network/provider/external effects. Accepted review SHA-256:
 `4a5f60f8ca2ad08ee04f1603773279aef97558edfa27acda1604592f8ae610bd`.
+
+## ADR-190 — Keep fresh spend and post-transaction recheck in one private flow
+
+**Decision:** CR13A-LIVE-390 will freeze an inert contract requiring a future non-exported control flow to obtain its
+own fresh LIVE-370 spend, immediately perform LIVE-380's recheck with the same sealed authorization and that exact
+receipt, keep both receipts private, and stop before the first source lookup. The composition cannot accept caller
+receipts, replay, retry, replacement authorization, or fallback. Uncertainty at or after spend is terminal.
+
+**Why:** LIVE-370 and LIVE-380 are separately reviewable primitives, but their public sanitized receipts are evidence,
+not bearer capabilities. The native source must never become reachable through a later caller-supplied, reconstructed,
+or replayed receipt. Private same-flow custody makes freshness structural and keeps the next native boundary explicit.
+
+**Alternatives rejected:** accept a spend or recheck receipt from a caller; expose either receipt from the private
+flow; infer freshness from object identity; perform recheck later in a different call; retry or replace an authorization
+after commit uncertainty or recheck failure; look up the source before the recheck; or combine the contract with source
+lookup/invocation, protected native reads, attestation, qualification, provider contact, or deployment.
+
+**Evidence required:** exact accepted LIVE-370 and LIVE-380 product/review binding; exact same-flow and immediate-order
+rules; terminal failure and no-retry semantics; private receipt custody; a mandatory stop before source lookup; strict
+immutable singleton provenance; hostile and ambient zero execution; all actual totals zero; all grants false; full
+producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before importing or instantiating the authorization store; adding executable composition; calling spend
+or recheck; importing, retrieving, or looking up the private source; invoking it; reading protected native material;
+creating an observation, attestation, checkpoint, candidate, or owner window; performing a physical attempt; wiring
+runtime use; contacting a provider or production database; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_390_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_CONTRACT.md`. Current authority covers only an inert
+repository contract and deterministic tests; it does not authorize a spend, database call, source lookup, protected
+native read, or external effect.

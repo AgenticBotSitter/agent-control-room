@@ -2107,9 +2107,18 @@ source/native/listener/production-database/network/provider/external effects. Pr
 
 ## CR13A-LIVE-390 — private fresh-spend/recheck composition contract
 
-Status: contract architecture next on accepted LIVE-380. Use Sol xhigh.
+Status: architecture frozen; effect-free repository contract implementation may proceed on accepted LIVE-380. Use Sol
+xhigh.
 
-LIVE-390 will freeze an inert private contract requiring one control flow to obtain its own fresh LIVE-370 spend,
-complete LIVE-380's post-transaction database-time recheck, preserve terminal failure and no-retry semantics, and stop
-before the first source lookup. It must not add executable composition, import/retrieve/invoke LIVE-330, read protected
-native material, wire runtime use, contact production PostgreSQL, or add any external effect.
+LIVE-390 may freeze one inert private contract requiring a future non-exported control flow to obtain its own fresh
+LIVE-370 spend, immediately complete LIVE-380's post-transaction database-time recheck with the same sealed
+authorization and exact fresh receipt, keep both receipts private, preserve terminal failure and no-retry semantics,
+and stop before the first source lookup. It may export only immutable safe contract/status records, fixed rule/stage/
+blocker/outcome arrays, strict parsers, and safe errors.
+
+The block must not import or instantiate the authorization store; add executable composition; call validation,
+consumption, recheck, database, or source behavior; accept caller receipts/time/callables; add a migration; import,
+modify, retrieve, or invoke LIVE-330; inspect descriptors; read/expose protected native material; create an observation,
+attestation, checkpoint, candidate, owner authorization, listener, physical attempt, runtime/provider/deployment
+behavior; clear a blocker; or contact production state. Immutable producer evidence and a different independent
+report-only zero-repair review are required before ordinary integration.
