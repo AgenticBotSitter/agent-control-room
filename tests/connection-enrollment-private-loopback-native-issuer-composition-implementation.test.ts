@@ -213,10 +213,11 @@ test("CR13A-LIVE-240 freezes surfaces and resists ambient replacement", async ()
     Array.prototype.push, objectConstructor.keys, JSON.stringify, objectConstructor.setPrototypeOf] as const;
   const originalInheritedThen = objectConstructor.getOwnPropertyDescriptor(objectConstructor.prototype, "then");
   const originalGlobalObject = objectConstructor.getOwnPropertyDescriptor(globalThis, "Object");
-  const composition = createConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionFakeV1("transferred_then_closed");
   const executions = new Array(12).fill(0);
   let inheritedThenExecutions = 0;
   let ambientGlobalObjectReads = 0;
+  let composition: ReturnType<typeof createConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionFakeV1> |
+    undefined;
   let settledStatus: object | undefined;
   try {
     objectDefineProperty(objectConstructor.prototype, "then", {
@@ -239,6 +240,7 @@ test("CR13A-LIVE-240 freezes surfaces and resists ambient replacement", async ()
       configurable: true,
       get() { ambientGlobalObjectReads += 1; return objectConstructor; },
     });
+    composition = createConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionFakeV1("transferred_then_closed");
     assert.equal(parseConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1(
       connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1),
     connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1);
@@ -263,6 +265,7 @@ test("CR13A-LIVE-240 freezes surfaces and resists ambient replacement", async ()
   assert.deepEqual(executions, new Array(12).fill(0));
   assert.equal(inheritedThenExecutions, 0);
   assert.equal(ambientGlobalObjectReads, 0);
+  assert.ok(composition);
   assert.ok(settledStatus);
   assert.equal(Object.getPrototypeOf(settledStatus), null);
   assert.equal(Object.isFrozen(composition), true);

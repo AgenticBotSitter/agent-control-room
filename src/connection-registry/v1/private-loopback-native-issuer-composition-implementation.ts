@@ -611,7 +611,7 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionFakeV1 {
   };
   objectFreezeV1(run);
   objectFreezeV1(status);
-  reflectApplyV1(objectDefinePropertiesV1, Object, [composition, {
+  reflectApplyV1(objectDefinePropertiesV1, undefined, [composition, {
     run: { value: run, enumerable: true },
     status: { value: status, enumerable: true },
   }]);
