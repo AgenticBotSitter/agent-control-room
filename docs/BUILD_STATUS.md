@@ -138,24 +138,24 @@
 | CR13A-LIVE-270 unreachable native-composition shell implementation | Independently accepted; ordinary owner-controlled integration of unreachable source ready | Product `5e5384b...`; 12/12 fixed review commands, 33/33 focused review tests, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero shell retrieval/native/listener/network effects |
 | CR13A-LIVE-280 private physical-qualification candidate contract | Independently accepted; ordinary integration of inert contract ready | Product `c1743b7...`; corrected rereview 14/14 commands, 10/10 focused, 286/286 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; original procedural rejection preserved |
 | CR13A-LIVE-290 unreachable native target-runtime observer | Independently accepted; ordinary integration of unreachable source ready | Product `3d09b2b...`; 14/14 commands, 10/10 focused, 296/296 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero lookups/invocations/host reads |
-| CR13A-LIVE-300 private target-runtime observation trust contract | Architecture frozen; inert implementation begins after LIVE-290 integration | Prevent ambient process replacement/getter/proxy evidence forgery before any future observer use; no imports, lookup, invocation, or host reads |
+| CR13A-LIVE-300 private target-runtime observation trust contract | Independently accepted; ordinary integration of inert contract ready | Product `aca7b98...`; 14/14 commands, 10/10 focused, 306/306 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 32 zero actuals and eight false grants |
+| CR13A-LIVE-310 unreachable trusted native-binding validator | Architecture frozen; source implementation begins after LIVE-300 integration | One private static `node:process` validator stored with zero lookups/invocations/descriptor or process reads; no observer composition or runtime wiring |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-290 exact product `3d09b2b9287b1174a3e7ebe931bc2860a5ce2bba` is independently accepted. It adds one
-real private no-input observer outside the safe barrel and stores it once with no lookup, export, consumer, or
-invocation path. Producer gates passed 10/10 dedicated, 296/296 CR13A, the complete 769/392/392 lifecycle, 5/5 build
-phases, 4/4 rendered routes, 36 migrations/119 tables, typecheck, lint, stage zero, whitespace, and clean status. A
-different reviewer passed all twelve groups and fourteen commands once with 0 High/Medium/Low. The observer ran zero
-times; no host/process/path value or external effect was observed. Accepted review SHA-256:
-`df2f3fb2fd414d595f020395dfc69fde2857c413e82d8d206383e66c6555c9b6`.
+CR13A-LIVE-300 exact product `aca7b98405fd12163b74fbc949a6a671d69fe310` is independently accepted. It freezes 11
+trust rules, 12 separate stages, 16 blockers, 32 zero actual totals, and eight false authority grants. Producer gates
+passed 10/10 dedicated, 306/306 CR13A, the complete 769/392/392 lifecycle, 5/5 build phases, 4/4 rendered routes, 36
+migrations/119 tables, typecheck, lint, stage zero, whitespace, and clean status. A different reviewer passed all
+twelve groups and fourteen commands once with 0 High/Medium/Low. No hostile behavior, native binding, descriptor read,
+observer use, host/process/path value, or external effect occurred. Accepted review SHA-256:
+`86721e47c4c3c743aee97d5c577a1701242f799fdf6063c3dfbcfd3997d1758e`.
 
-Next block: CR13A-LIVE-300, the private target-runtime observation trust contract. It will freeze the fail-closed rules
-that prevent ambient `globalThis.process` replacement, getters, proxies, copied records, or caller claims from forging
-future runtime evidence. It remains an inert safe contract: no LIVE-290 import, lookup, invocation, host read,
-attestation, signer, candidate, physical attempt, runtime wiring, provider contact, or deployment. Use `gpt-5.6-sol`
-at `xhigh` effort.
+Next block: CR13A-LIVE-310, the unreachable trusted native-binding validator. It may add one private no-input validator
+closed over one statically imported `node:process` namespace and store it once with no lookup or invocation path. It
+must not inspect a descriptor, read a process value, import or compose LIVE-290, create an observation/attestation,
+perform a physical attempt, wire runtime use, contact a provider, or deploy. Use `gpt-5.6-sol` at `xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1384,12 +1384,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-300 — implement the private target-runtime observation trust contract
+Block: CR13A-LIVE-310 — implement the unreachable trusted native-binding validator
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-290 is independently accepted and its reviewer identified the mandatory next trust boundary: future runtime evidence must not trust a replaced ambient process object, getters, or proxies.
-Expected output: one strict inert contract fixing trusted-source, descriptor-validation, one-use, privacy, attestation-separation, replay, uncertainty, and sanitation rules, with hostile proof and independent review.
-Owner action: none for the inert repository contract and ordinary merges. Observer retrieval/invocation, host/process/path reads, attestation, candidate assembly, native listener activity, or physical qualification remain separately gated.
+Why: LIVE-300 is independently accepted and now requires the minimum genuine private source that can later validate a statically imported process namespace without trusting the ambient global object.
+Expected output: one frozen no-input validator stored privately with zero retrieval/invocation/descriptor/process reads, sanitized zero-use evidence, hostile static proof, full verification, and independent review.
+Owner action: none for unreachable repository source and ordinary merges. Validator retrieval/invocation, descriptor or process reads, observer composition, attestation, native activity, or physical qualification remain separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
