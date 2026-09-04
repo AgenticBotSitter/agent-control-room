@@ -3754,3 +3754,10 @@ verification; and a different independent zero-repair review.
 **Reevaluate:** Before making the private factory reachable, providing a real locator/custody spend, writing a live
 checkpoint, invoking any native primitive, calling LIVE-190 or the physical driver, assembling a candidate, performing
 an owner-attended attempt, wiring runtime use, contacting a provider, or deploying.
+
+**Accepted evidence:** Exact product `2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9` passed 12/12 dedicated,
+15/15 inherited native-isolation, 219/219 connection, 235/235 CR13A, the complete lifecycle, five build phases, 4/4
+rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer
+passed all twelve fixed commands and review groups with 0 High/Medium/Low. The private factory is stored once, never
+retrieved or exported, and every forbidden effect and authority remains zero or false. Accepted report SHA-256:
+`4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30`.

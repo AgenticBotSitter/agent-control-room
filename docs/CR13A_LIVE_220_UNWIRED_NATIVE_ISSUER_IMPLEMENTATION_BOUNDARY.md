@@ -1,6 +1,6 @@
 # CR13A-LIVE-220 unwired native issuer implementation boundary
 
-**Status:** isolated native-code architecture frozen; implementation pending
+**Status:** exact product independently accepted for ordinary integration of unreachable code
 **Model/effort:** `gpt-5.6-sol`, `xhigh`
 **Stacked LIVE-210 base:** `02d4316947226d6a8988bd8e508410ba08dccda4`
 **Accepted LIVE-210 product:** `c4cac41561214117161c9764604f5dc06ecd63b6`
@@ -61,3 +61,13 @@ independent report-only zero-repair review with no High, Medium, or Low finding.
 Acceptance permits ordinary integration of unreachable code only. A later one-attempt physical qualification requires
 a new exact packet, accepted signer/enrollment/preflight evidence, fresh owner-attended authorization, bounded cleanup,
 and no retry.
+
+## Accepted evidence
+
+Exact product `2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9` passed 12/12 dedicated, 15/15 inherited native-
+isolation, 219/219 connection, 235/235 CR13A, the complete lifecycle, all five build phases, 4/4 rendered pages,
+migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A different independent reviewer
+passed all twelve fixed commands and review groups with 0 High/Medium/Low. No private factory retrieval, native call,
+resource, locator, listener, network, persistence, protected read, wiring, effect, blocker clearance, or authority
+occurred. Accepted report SHA-256:
+`4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30`.

@@ -130,22 +130,24 @@
 | CR13A-LIVE-190 unwired native retained-resource adapter | Independently accepted after one formatting remediation; ordinary owner-controlled integration ready | Product `d59c027...`; different rereviewer passed 12/12 commands and groups, 26/26 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; original Low rejection preserved; zero native/listener/network effects |
 | CR13A-LIVE-200 private native retained-resource issuer contract | Independently accepted; ordinary owner-controlled integration ready | Product `9e3cb2a...`; 12/12 commands and groups, 9/9 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; exact private issuer obligations frozen; zero native/listener/network/persistence effects |
 | CR13A-LIVE-210 unwired private native issuer state machine | Independently accepted; ordinary owner-controlled integration ready | Product `c4cac41...`; 12/12 commands and groups, 11/11 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; five scenarios and nine states prove one-use ordering; zero native/listener/network/persistence effects |
+| CR13A-LIVE-220 unwired native issuer implementation boundary | Independently accepted; ordinary owner-controlled integration of unreachable code ready | Product `2e9a2cb...`; 12/12 commands/groups, 27/27 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; factory private and never retrieved; zero native/listener/network/persistence effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-210 is independently accepted at exact product `c4cac41561214117161c9764604f5dc06ecd63b6`.
-Its fake-only issuer state machine proves five scenarios, nine states, exact promise replay, one-use counters, continuous
-simulated custody, exact fake-adapter transfer, mandatory cleanup, and no-reopen recovery. A different reviewer passed
-all twelve commands and groups with 0 High/Medium/Low, 11/11 focused tests, five build phases, four rendered routes, and
-119 tables. Every real native/listener/network/persistence effect remained zero. Preserve
-`docs/reviews/CR13A_LIVE_210_INDEPENDENT_REVIEW.md`; SHA-256
-`c25e22dfa2c8601b23547a8a6f32b68d78da23458a696cd9461678ce084ec2c7`.
+CR13A-LIVE-220 is independently accepted at exact product `2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9`.
+Its isolated `node:net` issuer code captures five exact primitives and one bounded create/listen/close implementation,
+but the private factory is stored once and never retrieved or exported. A different reviewer passed all twelve commands
+and groups with 0 High/Medium/Low, 27/27 focused tests, five build phases, four rendered routes, and 119 tables. Every
+native/listener/network/persistence effect remains zero. Preserve
+`docs/reviews/CR13A_LIVE_220_INDEPENDENT_REVIEW.md`; SHA-256
+`4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30`.
 
-Next block: CR13A-LIVE-220, the unwired native issuer implementation boundary. It may define one isolated native backend
-behind the accepted state machine and fake-test all injected outcomes, but it must remain runtime-unwired and must not
-perform a real listen, allocate or expose a port, contact a provider, clear a blocker, or make a physical attempt. Use
-`gpt-5.6-sol` at `xhigh` effort. Any real native attempt still requires a new exact owner-attended authorization.
+Next block: CR13A-LIVE-230, the private native issuer composition contract. It may freeze how the accepted LIVE-200
+bindings, LIVE-210 one-use state machine, and LIVE-220 private factory will eventually meet after durable claim and
+effect-marker spends. It must remain repository-only: do not retrieve or invoke the factory, observe a locator, create
+or close a server, call the adapter/driver, clear a blocker, wire runtime use, or make a physical attempt. Use
+`gpt-5.6-sol` at `xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release

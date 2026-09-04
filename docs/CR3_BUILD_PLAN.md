@@ -1703,7 +1703,8 @@ six ambient replacements executed zero behavior; every real effect and authority
 
 ## CR13A-LIVE-220 — unwired native issuer implementation boundary
 
-Status: next isolated native-code block. Use Sol xhigh.
+Status: exact product `2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9` independently accepted; ordinary integration of
+unreachable code ready. Use Sol xhigh.
 
 LIVE-220 may define one isolated native issuer backend behind the accepted LIVE-210 state machine and test it only with
 injected fake outcomes. It must retain the exact one-attempt, one-resource, same-object custody, transfer, ambiguity,
@@ -1713,3 +1714,26 @@ The block must not execute a real create/bind/listen/inspect/close operation; se
 port or locator; write live persistence; install handlers; wire an API, worker, Idea Lab, Hermes, startup, or production
 consumer; clear a blocker; assemble a live candidate; contact a provider; deploy; or make a physical attempt. Any later
 physical attempt requires a separately frozen packet and fresh exact owner-attended authorization.
+
+Producer verification passes 12/12 dedicated, 15/15 inherited native-isolation, 219/219 connection, 235/235 CR13A,
+the complete lifecycle, all five build phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint,
+macOS stage zero, and whitespace. A different independent reviewer passed all twelve commands and review groups with
+0 High/Medium/Low and 27/27 focused tests. The private factory is never retrieved or exported; every native, listener,
+network, persistence, protected-read, wiring, effect, blocker, and authority value remains zero or false. Preserve
+`docs/reviews/CR13A_LIVE_220_INDEPENDENT_REVIEW.md`; SHA-256
+`4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30`.
+
+## CR13A-LIVE-230 — private native issuer composition contract
+
+Status: next repository-only contract block. Use Sol xhigh.
+
+LIVE-230 may freeze the exact private composition by which accepted LIVE-200 binding/spend evidence and the LIVE-210
+one-use state machine could later unlock the LIVE-220 private native factory and hand the same retained server to the
+accepted LIVE-190 adapter. It must specify durable claim/effect-marker ordering, private locator observation, continuous
+custody, exact-object transfer, ambiguity, cleanup, and no-reopen recovery without implementing a live composition.
+
+The block must not retrieve or invoke the private factory; create, listen on, inspect, transfer, or close a real server;
+observe, select, reserve, consume, or expose a locator; issue or spend live authority; write live persistence; call the
+adapter or physical driver; wire an app, API, worker, Idea Lab, Hermes, startup, or production consumer; clear a blocker;
+assemble a candidate; contact a provider; deploy; or make a physical attempt. Immutable producer evidence and a
+different independent zero-repair review are required before ordinary integration.
