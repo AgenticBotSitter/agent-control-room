@@ -2326,8 +2326,8 @@ effects. See `docs/CR13A_LIVE_470_PRODUCTION_CAPSULE_OWNER_NATIVE_AUTHORIZATION_
 
 ## CR13A-LIVE-480 — inert owner-native authorization contract
 
-Status: first independent review rejected 2 High/2 Medium; all four are remediated and different re-review is pending.
-Use Sol xhigh.
+Status: independently accepted after all 2 High/2 Medium findings were remediated. Ordinary integration of the inert
+contract is ready. Use Sol xhigh for the next block.
 
 LIVE-480 makes only LIVE-470's owner-native authorization vocabulary machine-checkable. The frozen singleton directly
 binds the accepted LIVE-470 commit/tree and final evidence; enumerates the closed canonical body and envelope fields,
@@ -2349,4 +2349,23 @@ High and two Medium defects: incomplete nested binding shapes, missing per-provi
 tests, and no transitive import audit. All four are remediated; focused tests now pass 12/12 and CR13A passes 473/473.
 The test fixture independently repeats every ordered vocabulary and operation tuple, checks uniqueness and deep
 freezing, and walks the exact four-file production dependency graph with AST-based alias/effect detection. A different
-independent zero-repair re-review is required before ordinary integration.
+independent zero-repair re-review accepted exact product `6d510d6f1b80a98c00c16fcf2b55837afc1cea87`, tree
+`ac8655e1240d25bea9150ae9678f6ad5df56593c`, with 0 High, 0 Medium, and 0 Low. See
+`docs/reviews/CR13A_LIVE_480_INDEPENDENT_REVIEW.md` and `docs/CR13A_LIVE_480_ACCEPTANCE.md`.
+
+## CR13A-LIVE-490 — inert owner-root, key-role, trust-registry, manifest, and anchor contract
+
+Status: next. Use Sol xhigh.
+
+LIVE-490 is the next dependency-ordered repository-only slice from LIVE-470. It will freeze the out-of-band owner-root
+pin and recovery/rotation vocabulary; exact key-entry fields, states, use separation, overlap rules, and historical
+verification-only behavior; signed trust-registry and deployment-manifest body/envelope/link vocabularies; complete
+ordered product/key bindings; and the distinct trust-registry, deployment-manifest, composite owner-attempt,
+attestation, and cleanup anchor head/CAS identities.
+
+The product remains pure vocabulary and zero-use status. It must not create or read a key, trust entry, manifest,
+anchor, clock, filesystem, environment, host value, credential, database, provider, source, process, network, or
+native state. It exposes no signer, resolver, reader, writer, store, migration, CAS adapter, generic locator,
+dependency-injection hook, runtime consumer, or recovery effect. Exact singleton parsers, independently repeated
+ordered fixtures, hostile-value non-execution, full transitive import inertia, full producer verification, and a
+different independent zero-repair review are required before ordinary integration.

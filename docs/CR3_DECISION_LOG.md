@@ -4730,5 +4730,12 @@ for most vocabularies. M-002 found that the source-only string scan neither foll
 internal aliases. The remediation replaces every ambiguous shape, adds exact ordered fixtures and uniqueness/deep-
 freeze checks, splits the reusable canonical digest into an import-inert leaf, and audits the full transitive graph.
 
+**Accepted evidence:** Different independent re-review accepted exact product
+`6d510d6f1b80a98c00c16fcf2b55837afc1cea87`, tree `ac8655e1240d25bea9150ae9678f6ad5df56593c`,
+with 0 High, 0 Medium, and 0 Low. Focused tests pass 12/12, CR13A passes 473/473, the complete lifecycle exits 0, all
+five build phases and 4/4 rendered routes pass, and migrations 0001-0038 verify 124 tables. TypeScript, full lint,
+macOS stage zero, and whitespace validation pass. All 59 actuals remain zero and all eight grants remain false. See
+`docs/reviews/CR13A_LIVE_480_INDEPENDENT_REVIEW.md` and `docs/CR13A_LIVE_480_ACCEPTANCE.md`.
+
 **Reevaluate:** Before any owner-present issuer, sealed body parser, registration/nonce store, key/trust/manifest,
 independent anchor, reservation, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.
