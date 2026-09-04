@@ -3551,3 +3551,28 @@ driver handoff blocker present.
 
 **Reevaluate:** Before any driver API change, native reservation provider, `node:net` import, bind/listen/port operation,
 retained handle, capability handoff, ledger/checkpoint write, resource observer, physical attempt, or runtime wiring.
+
+## ADR-168 — Retained-resource handoff is atomic, private, and single-use
+
+**Decision:** CR13A-LIVE-170 freezes a module-private, non-serializable, single-use seam for transferring the same
+already-retained operating-system listener resource from a future custody provider into the physical driver. Ownership
+changes only when the driver accepts that exact resource. The provider cannot close before acceptance; the driver cannot
+bind a replacement; and failure or uncertainty requires terminal close, independent zero-resource observation, and a
+durable spend/close/tombstone chain without retry, rebind, or reopen.
+
+**Why:** A number, digest, caller-built object, or closed reservation cannot preserve operating-system custody. Passing
+one of those values back into the existing driver recreates the selection-to-bind race that LIVE-160 was designed to
+remove. Resource identity, private provenance, continuous ownership, and terminal cleanup must travel together.
+
+**Alternatives rejected:** pass a port number; expose a server or file descriptor through a public API; serialize a
+handle; let callers mint handoff objects; close then ask the driver to bind; duplicate the resource; use a digest as
+identity proof; allow a second transfer; retry after ambiguous acceptance; let a fake clear the custody blocker; or wire
+the physical driver in this effect-free block.
+
+**Evidence required:** exact immutable policy and repository fake with module-private provenance, strict parsers,
+hostile substitution and ambient-intrinsic tests, privacy and runtime non-wiring proof, zero native/effect counts, full
+producer verification, and a different independent zero-repair review. No native resource may exist in this block.
+
+**Reevaluate:** Before changing the physical driver's native port, creating a custody provider or resource capability,
+importing a native backend, selecting/binding/listening/closing, issuing or spending a handoff, writing a live ledger or
+checkpoint, assembling a candidate, making a physical attempt, wiring runtime use, or deploying.
