@@ -1613,7 +1613,8 @@ replacements executed zero behavior; every forbidden-effect count remained zero.
 
 ## CR13A-LIVE-180 — unwired retained-resource driver port
 
-Status: next effect-free implementation block. Use Sol xhigh.
+Status: exact product `052afc3b4a61f1c6f1957a567f5305f3a2c5bca0` independently accepted; ordinary owner-
+controlled integration ready. Use Sol xhigh.
 
 LIVE-180 may implement a module-private one-use acceptance and cleanup state machine that can later receive the exact
 retained resource described by LIVE-170. Repository fakes must prove identity continuity, one acceptance, serialized
@@ -1621,5 +1622,27 @@ settlement, terminal ambiguity, mandatory cleanup, and no replacement bind or re
 bound, listened on, inspected, transferred, or closed; no address/port/handle may escape; and no runtime consumer,
 qualification candidate, physical attempt, blocker clearance, or activation authority may exist.
 
-The immutable implementation requires full producer verification and a different independent zero-repair review before
-ordinary integration. A later separately authorized owner-attended block is required for any real native attempt.
+Producer verification passes 10/10 dedicated, 176/176 connection, 192/192 CR13A, the complete lifecycle, 5/5 build
+phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. The first
+review passed every product gate but invalidated itself with one extra wrong-commit inspection and is preserved. A
+second different reviewer passed all twelve fixed commands and review groups with 0 High/Medium/Low; twelve hostile
+attempts and six ambient replacements executed zero behavior; every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_180_INDEPENDENT_REREVIEW.md`; SHA-256
+`05c4d57ad9f247916102acdc090c071b22a9b7a9623d1984779caf41d8acfd76`. A later separately authorized owner-attended
+block is required for any real native attempt.
+
+## CR13A-LIVE-190 — unwired native retained-resource adapter boundary
+
+Status: next effect-free implementation block. Use Sol xhigh.
+
+LIVE-190 may define the module-private adapter seam by which the accepted physical driver can later consume the same
+already-retained native server instead of selecting a numeric port and binding a replacement. The block may add exact
+contracts, a repository fake, provenance parsers, state/cleanup policy, hostile tests, and a safe status projection.
+It may refer to the existing allowlisted native server type inside the isolated physical-driver boundary, but all
+repository verification must remain fake-only.
+
+The block must not create, bind, listen on, inspect, transfer, or close a real resource; select or expose an address or
+port; export a native handle/capability/factory; issue or spend a live handoff; wire any app, API, worker, Idea Lab,
+Hermes, startup, or production consumer; clear locator/custody/qualification blockers; assemble a candidate; or make a
+physical attempt. Immutable producer evidence and a different independent zero-repair review are required before
+ordinary integration.

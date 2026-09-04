@@ -3607,6 +3607,17 @@ and concurrency scenarios, retained-resource identity and single-spend assertion
 non-wiring and import checks, exact zero real-effect counts, full producer verification, and a different independent
 zero-repair review.
 
+**Accepted evidence:** Exact product `052afc3b4a61f1c6f1957a567f5305f3a2c5bca0` passes 10/10 dedicated, 176/176
+connection, 192/192 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. The first review passed every product command but
+invalidated itself with one extra wrong-commit inspection; preserve it with SHA-256
+`8e7dc95989a493bcbdec514751d5a5912da7be9794faa01d44f79253285a1568`. A second different reviewer passed all twelve
+fixed commands and groups with 0 High/Medium/Low. Twelve hostile attempts and six ambient replacements executed zero
+behavior; every forbidden effect and authority remained zero or false. Preserve
+`docs/reviews/CR13A_LIVE_180_INDEPENDENT_REREVIEW.md`; SHA-256
+`05c4d57ad9f247916102acdc090c071b22a9b7a9623d1984779caf41d8acfd76`. Acceptance is effect-free and clears no
+blocker.
+
 **Reevaluate:** Before any native backend import or call, physical-driver modification, real resource/capability issuer,
 address or port selection, bind/listen/connect/close, live persistence, resource observation, qualification candidate,
 owner-attended physical attempt, runtime wiring, provider contact, or deployment.

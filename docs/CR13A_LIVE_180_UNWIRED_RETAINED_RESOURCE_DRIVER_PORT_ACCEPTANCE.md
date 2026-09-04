@@ -1,6 +1,6 @@
 # CR13A-LIVE-180 unwired retained-resource driver-port acceptance
 
-**Status:** immutable product awaiting different independent zero-repair review
+**Status:** independently accepted; ordinary owner-controlled integration ready
 **Product target/tree:** `052afc3b4a61f1c6f1957a567f5305f3a2c5bca0` /
 `2e3a8bd1a1b0c49019630f83e78764a2236ec3d8`
 **Design parent:** `47e58d34095be4d7a390534df92d84ef7fe1e9d0`
@@ -43,15 +43,22 @@ Every actual host observation, port selection/reservation, native-resource creat
 issue/spend, driver handoff, native-backend construction, listener/IPC/socket/timer attempt, network observation,
 protected read, authority grant, runtime wiring, and external effect remained zero or false.
 
-## Independent review requirement and limits
+## Independent review and limits
 
-A different report-only reviewer must execute the immutable packet at
-`docs/reviews/CR13A_LIVE_180_INDEPENDENT_REVIEW_PACKET.md` exactly once in a fresh local-only detached clone. Any command
-failure, uncertainty, High/Medium/Low finding, hostile behavior execution, forbidden effect, dirty final status, or
-cleanup doubt rejects the product. The reviewer may not repair or retry it.
+The first different reviewer passed all twelve required product commands with no product finding, but invalidated the
+review by running one extra inspection command against the wrong commit after the fixed sequence. The reviewer stopped
+without retry or repair and removed the disposable checkout. Preserve the procedurally rejected report at
+`docs/reviews/CR13A_LIVE_180_INDEPENDENT_REVIEW.md`; SHA-256
+`8e7dc95989a493bcbdec514751d5a5912da7be9794faa01d44f79253285a1568`.
+
+A second different report-only, zero-repair reviewer then passed all twelve fixed commands and all twelve review groups
+against the unchanged immutable product. The review found 0 High, 0 Medium, and 0 Low defects. Twelve committed hostile
+attempts and six ambient replacement attempts executed zero caller or replacement behavior. All forbidden effects and
+authority totals remained zero or false, both Git statuses were clean, and disposable cleanup plus exact absence
+verification passed. Preserve `docs/reviews/CR13A_LIVE_180_INDEPENDENT_REREVIEW.md`; SHA-256
+`05c4d57ad9f247916102acdc090c071b22a9b7a9623d1984779caf41d8acfd76`.
 
 Even a clean review permits ordinary owner-controlled integration only. It does not create or receive a real native
 resource, change the physical driver, observe or select a locator/port, create a custody provider, issue a capability,
 clear a blocker, assemble a candidate, make a physical attempt, wire a runtime, contact a provider, or grant production
 authority.
-

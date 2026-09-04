@@ -126,29 +126,24 @@
 | CR13A-LIVE-150 private locator broker boundary | Independently accepted; ordinary owner-controlled integration ready | Product `f089f89...`; 12/12 commands and groups, 9/9 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; no locator/port/capability/native/network effect |
 | CR13A-LIVE-160 exclusive port custody boundary | Independently accepted; ordinary owner-controlled integration ready | Product `97d46c7...`; 12/12 commands and groups, 8/8 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; proves the accepted driver still lacks safe same-resource handoff; zero native/listener/network effects |
 | CR13A-LIVE-170 retained-resource handoff boundary | Independently accepted; ordinary owner-controlled integration ready | Product `7e76e19...`; 12/12 commands and groups, 8/8 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; atomic private one-use same-resource transfer contract; zero native/listener/network effects |
+| CR13A-LIVE-180 unwired retained-resource driver port | Independently accepted; ordinary owner-controlled integration ready | Product `052afc3...`; second different reviewer passed 12/12 commands and groups, 10/10 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; first procedural rejection preserved; zero native/listener/network effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-160 is independently accepted at exact product `97d46c74e413d21c1f81c9704b9eb0b66447be5c`.
-It proves that exclusive custody requires continuous ownership and transfer of the same retained operating-system
-resource. The accepted LIVE-120 driver currently accepts only a private port number and binds a new server, so the
-honest blocker remains `driverReservationHandoffGapPresent`. The independent reviewer passed all twelve fixed commands
-and review groups with 0 High/Medium/Low; fifteen hostile cases and four ambient replacements executed zero behavior,
-and every forbidden effect remained zero. Preserve `docs/reviews/CR13A_LIVE_160_INDEPENDENT_REVIEW.md`; SHA-256
-`0a0837acbd36ba9292e8b3f37b57d4900290aa03c54c3c13c73413aebd8345a6`.
+CR13A-LIVE-180 is independently accepted at exact product `052afc3b4a61f1c6f1957a567f5305f3a2c5bca0`.
+It implements an unwired repository-only one-use driver port that proves same-fake identity, serialized acceptance,
+separate definite rejection and uncertainty, mandatory cleanup, and no-reopen recovery without exposing a locator,
+handle, resource, or authority. The first review's procedural invalidation is preserved; a second different reviewer
+passed all twelve commands and groups with 0 High/Medium/Low. Twelve hostile attempts and six ambient replacements
+executed zero behavior, and every forbidden effect remained zero. Preserve
+`docs/reviews/CR13A_LIVE_180_INDEPENDENT_REREVIEW.md`; SHA-256
+`05c4d57ad9f247916102acdc090c071b22a9b7a9623d1984779caf41d8acfd76`.
 
-CR13A-LIVE-170 is independently accepted at exact product `7e76e1980541075f9a1fa45479d20f06a823ef29`.
-It freezes the safe handoff as an atomic, private, non-serializable, single-use transfer of the same retained resource.
-The independent reviewer passed all twelve commands and groups with 0 High/Medium/Low; fifteen hostile cases and four
-ambient replacements executed zero behavior, and every forbidden effect remained zero. Preserve
-`docs/reviews/CR13A_LIVE_170_INDEPENDENT_REVIEW.md`; SHA-256
-`3581dcf33774e730614346d57594738236acf0932fa581214af7931af67c1381`.
-
-Next block: CR13A-LIVE-180, an unwired retained-resource driver-port implementation. It may implement the module-private
-one-use acceptance and cleanup state machine with repository fakes, but it must not create, bind, listen on, inspect, or
-close a real resource; expose a locator/handle; wire runtime use; or perform a physical attempt. Use `gpt-5.6-sol` at
-`xhigh` effort.
+Next block: CR13A-LIVE-190, an unwired native retained-resource adapter boundary. It may define and fake-test the
+module-private seam by which the accepted physical driver will later receive an already-retained native server, but it
+must not create, bind, listen on, inspect, transfer, or close a real resource; issue a real capability; expose a locator
+or handle; wire runtime use; or perform a physical attempt. Use `gpt-5.6-sol` at `xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
