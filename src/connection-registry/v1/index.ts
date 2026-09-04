@@ -15,3 +15,4 @@ export * from "./private-loopback-exclusive-port-custody";
 export * from "./private-loopback-retained-resource-handoff";
 export * from "./private-loopback-retained-resource-driver-port";
 export * from "./private-loopback-native-retained-resource-adapter";
+export * from "./private-loopback-native-retained-resource-issuer-contract";
