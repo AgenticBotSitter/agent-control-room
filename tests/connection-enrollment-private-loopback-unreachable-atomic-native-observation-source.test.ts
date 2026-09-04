@@ -58,14 +58,14 @@ test("CR13A-LIVE-330 fixes the exact process properties and native operation cei
     true);
 });
 
-test("CR13A-LIVE-330 reports real private source presence with no reachability or use", () => {
+test("CR13A-LIVE-420 truthfully supersedes source reachability while retaining private custody and zero use", () => {
   const implementation = connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1;
   for (const key of ["staticProcessNamespaceCaptured", "staticOsOperationsCaptured", "atomicSourcePresent",
     "atomicSourcePrivate", "atomicSourceFrozen", "atomicSourceNoInput", "atomicSourceSynchronous",
-    "atomicSourceStoredOnce", "descriptorValidationSourcePresent", "directDescriptorValueConsumptionSourcePresent",
-    "repositorySourceOnly",
+    "atomicSourceStoredOnce", "atomicSourceRetrievable", "retrievalGuardedByPrivateSpendRecheck",
+    "descriptorValidationSourcePresent", "directDescriptorValueConsumptionSourcePresent", "repositorySourceOnly",
   ] as const) assert.equal(implementation[key], true, key);
-  for (const key of ["atomicSourceExported", "atomicSourceRetrievable", "atomicSourceInvoked",
+  for (const key of ["atomicSourceExported", "lookupBridgeBarrelExported", "atomicSourceInvoked",
     "secondNamespaceReadPresent", "ambientGlobalProcessUsed", "callerBindingAccepted", "callerDescriptorAccepted",
     "callbackAccepted", "promiseOrAwaitPresent", "timerPresent", "automaticRetryPresent",
     "replacementBindingPresent", "nativeValueRead", "rawObservationCreated", "rawObservationExported",
@@ -89,7 +89,9 @@ test("CR13A-LIVE-330 publishes 34 zero actuals and eight false grants", () => {
   assert.deepEqual(actuals, new Array(34).fill(0));
   assert.equal(grants.length, 8);
   assert.deepEqual(grants, new Array(8).fill(false));
-  assert.equal(status.sourceState, "stored_unreachable_uninvoked");
+  assert.equal(status.evidenceClass, "repository_private_lookup_ready_non_native_execution");
+  assert.equal(status.sourceState, "stored_private_lookup_guarded_uninvoked");
+  assert.equal(status.lookupBridgeState, "implemented_unwired");
   assert.equal(status.nativeBindingState, "static_sources_captured_unread");
   assert.equal(status.externalEffectOccurred, false);
 });
@@ -178,7 +180,7 @@ test("CR13A-LIVE-330 contains one exact static native source with no historical 
   assert.doesNotMatch(source, /createServer|\.listen\(|fetch\(|setTimeout|setInterval/);
 });
 
-test("CR13A-LIVE-330 keeps validation and direct descriptor-value consumption atomic and unreachable", async () => {
+test("CR13A-LIVE-420 keeps native validation atomic and exposes only one guarded lookup", async () => {
   const source = await readFile(modulePath, "utf8");
   const bodyStart = source.indexOf("function createQuarantinedAtomicNativeObservationSourceV1");
   const bodyEnd = source.indexOf("const implementationSeedV1");
@@ -198,8 +200,10 @@ test("CR13A-LIVE-330 keeps validation and direct descriptor-value consumption at
   assert.match(body, /reflectApplyV1\(observeOsReleaseV1, undefined, \[\]\)/);
   assert.match(body, /reflectApplyV1\(observeOsUptimeV1, undefined, \[\]\)/);
   assert.doesNotMatch(body, /Promise|\bawait\b|setTimeout|setInterval/);
-  assert.equal((source.match(/quarantinedAtomicNativeObservationSourcesV1/g) ?? []).length, 2);
-  assert.doesNotMatch(source, /weakMapGetV1, quarantinedAtomicNativeObservationSourcesV1/);
+  assert.equal((source.match(/quarantinedAtomicNativeObservationSourcesV1/g) ?? []).length, 3);
+  assert.equal((source.match(/weakMapGetV1, quarantinedAtomicNativeObservationSourcesV1/g) ?? []).length, 1);
+  assert.match(source, /runPrivateAtomicSourceLookupCompositionV1/);
+  assert.doesNotMatch(source, /privateSource\s*\(/);
   assert.doesNotMatch(source, /export (?:function|const) (?:create|retrieve|invoke).*AtomicNativeObservation/);
 });
 
@@ -225,9 +229,12 @@ test("CR13A-LIVE-330 architecture and status retain the zero-read boundary", asy
     "docs/CR13A_LIVE_330_UNREACHABLE_ATOMIC_NATIVE_OBSERVATION_SOURCE_CONSOLIDATION.md"), "utf8");
   const plan = await readFile(resolve(root, "docs/CR3_BUILD_PLAN.md"), "utf8");
   const status = await readFile(resolve(root, "docs/BUILD_STATUS.md"), "utf8");
-  for (const text of [architecture, plan, status]) {
+  for (const text of [architecture, plan]) {
     assert.match(text, /CR13A-LIVE-330/);
     assert.match(text, /unreachable/i);
     assert.match(text, /no lookup|no native reads|zero native reads|no descriptor/i);
   }
+  assert.match(status, /CR13A-LIVE-420/);
+  assert.match(status, /one private lookup|private source lookup/i);
+  assert.match(status, /no source invocation|zero native reads|no native read/i);
 });
