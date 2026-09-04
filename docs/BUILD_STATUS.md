@@ -193,6 +193,13 @@ Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native impo
 now privately retrievable only through the guarded LIVE-420 flow and remains frozen, unexported, and uninvoked with
 zero native reads.
 
+CR13A-LIVE-430 architecture is frozen for one inert repository contract. It requires the future source call to be the
+single synchronous no-argument step immediately after LIVE-420's exact private lookup in the same unbroken lexical
+flow. The raw observation must remain exact, private, unexported, unhashed, unlogged, unpersisted, and directly handed
+to a separately gated same-module attestation stage. Contract implementation and independent review are in progress;
+current source invocation, native read, raw observation, attestation, runtime, provider, network, and production totals
+remain zero.
+
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
 ancestry and 60-commit distance, twelve trusted source hashes, clean runtime paths, lifecycle/replay/control compatibility,
@@ -1420,11 +1427,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-430 — private single source-invocation and raw-observation handoff contract
+Block: CR13A-LIVE-430 — inert private single-invocation and raw-observation handoff contract implementation
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-420 is independently accepted and proves the authorization-spend/recheck/lookup chain without a native read. The next prerequisite is an inert contract for inserting exactly one synchronous call of that private source and keeping the raw observation inside the same lexical flow for a separately gated attestation stage.
-Expected output: exact one-invocation ceiling, private raw-observation custody and zero-export rules, terminal invocation failure/no-retry semantics, direct private attestation handoff requirements, full hostile acceptance plan, and zero current native reads or source invocations.
+Why: LIVE-420 is independently accepted and the LIVE-430 architecture is frozen. The next deliverable is the exact immutable contract that preserves a separate review gate before any source call or protected native read.
+Expected output: exact accepted LIVE-340/LIVE-420 binding; complete one-invocation, private raw-custody, terminal failure, and direct attestation-handoff rules; strict parsers and sanitized zero-use status; hostile tests; full verification; and independent review.
 Owner action: none for an inert repository contract, static tests, independent review, and ordinary merges. Actual source invocation, the first protected native read, provider/production contact, or physical qualification remains separately gated and requires a later explicit execution boundary.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

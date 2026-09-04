@@ -2216,3 +2216,20 @@ High/Medium/Low; 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrati
 guarded lookup, zero source invocation/native reads/listener/network/provider/production/external effects, and no
 barrel/runtime consumer. Preserve `docs/reviews/CR13A_LIVE_420_INDEPENDENT_REVIEW.md`; SHA-256
 `6b472475d1e8d8bb9193b1b1df133316b8a939fbdec8c52e1e5b63bfd2308119`.
+
+## CR13A-LIVE-430 — private single source-invocation and raw-observation handoff contract
+
+Status: architecture frozen; inert contract implementation and independent review pending. Use Sol xhigh.
+
+LIVE-430 may add one repository-only contract binding the exact accepted LIVE-340 one-use invocation contract and
+LIVE-420 guarded private lookup composition. The future implementation must insert exactly one synchronous no-argument
+call of the exact module-minted source directly into LIVE-420's unbroken private lexical flow. No public LIVE-420
+result, receipt, identity, digest, boolean, callback, continuation, or caller assertion can authorize invocation.
+
+The future raw observation remains lexical in the source-owning module, is validated as exact frozen own data, and may
+move only by direct same-module handoff to a separately gated attestation binding before a public result is created.
+It cannot be returned, exported, logged, serialized, hashed, persisted, cached, scheduled, diagnosed, or accepted from
+a caller. Every source throw, invalid/partial observation, uncertainty, or unavailable handoff after committed spend is
+terminal without retry, replacement, refund, fallback, second lookup, or second invocation. The current block remains
+inert with zero source invocation, native read, observation, attestation, persistence, runtime, provider, network, or
+production effects. See `docs/CR13A_LIVE_430_PRIVATE_SINGLE_SOURCE_INVOCATION_HANDOFF_CONTRACT.md`.

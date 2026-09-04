@@ -4501,3 +4501,44 @@ database use, or deployment.
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_420_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_IMPLEMENTATION.md`. Current authority covers repository and
 local synthetic PGlite lookup proof only; it does not authorize source invocation or a protected native read.
+
+**Accepted evidence:** Exact LIVE-420 product `c1287817079e6951ab5d1fbe24829cccc517687d` passed producer and
+independent gates. The different reviewer passed all twelve inspection groups and fourteen commands once with 0
+High/Medium/Low; 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrations/124 local PGlite tables, exact
+cleanup, one guarded lookup, and zero source invocation/native reads/listener/network/provider/production/external
+effects. Preserve `docs/reviews/CR13A_LIVE_420_INDEPENDENT_REVIEW.md`; SHA-256
+`6b472475d1e8d8bb9193b1b1df133316b8a939fbdec8c52e1e5b63bfd2308119`.
+
+## ADR-194 — Keep the first source invocation synchronous, single-use, and raw-output private
+
+**Decision:** CR13A-LIVE-430 will freeze an inert contract for the future first call of the exact source retrieved by
+LIVE-420. The call may occur at most once, synchronously, with no receiver or arguments, only as the immediate next
+stage in the same source-owning module and unbroken lexical flow. The raw record must be exact frozen own data, remain
+lexical, and move only by direct same-module handoff to a separately gated trusted attestation binding before any
+sanitized result is created.
+
+**Why:** LIVE-420's public success result deliberately carries no invocation authority. Exporting the retrieved source,
+a continuation, callback, or raw observation would create a replayable capability or leak host identity. An
+asynchronous boundary would also break the proof that one committed authorization permits only one source call. The
+raw record must therefore remain private input to the next trust stage, not become public evidence or a digest.
+
+**Alternatives rejected:** invoke from a caller or third module; branch on LIVE-420's public result; export or accept a
+source, raw record, callback, getter, continuation, output collector, process/OS binding, descriptor, readiness flag,
+receipt, digest, or boolean; retry after a throw or uncertainty; use a fallback source or replacement authorization;
+hash/log/persist/cache the raw observation; cross a Promise, timer, event, queue, or worker boundary; combine the inert
+contract with the first native read, attestation implementation, runtime wiring, provider contact, or deployment.
+
+**Evidence required:** exact accepted LIVE-340/LIVE-420 product/review binding; fixed one-invocation and same-module
+raw-custody rules; terminal spent/no-retry behavior; direct private attestation handoff; strict immutable singleton
+provenance; hostile and ambient zero execution; all current invocation/native/observation/effect totals zero; all
+grants false; no source import or runtime consumer; full producer verification; and a different independent report-
+only zero-repair review.
+
+**Reevaluate:** Before modifying the source-owning module, invoking the source, reading or handling native material,
+implementing raw validation or attestation/signing/replay persistence, assembling a candidate, spending owner
+authorization, performing a physical attempt, wiring runtime use, contacting a provider or production database, or
+deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_430_PRIVATE_SINGLE_SOURCE_INVOCATION_HANDOFF_CONTRACT.md`. Current authority covers only inert
+repository contract work and deterministic tests; it does not authorize source invocation or a protected native read.
