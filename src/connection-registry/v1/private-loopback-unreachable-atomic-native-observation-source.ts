@@ -5,10 +5,22 @@ import {
   uptime as observeOsUptimeV1,
 } from "node:os";
 import * as nativeProcessNamespaceV1 from "node:process";
+import type { DatabaseClient } from "../../persistence/database";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
-import { exactHostDataSnapshotV1, isHostProxyV1 } from "../../security/host-value";
+import { exactHostDataSnapshotV1, exactHostErrorCodeV1, isHostProxyV1 } from "../../security/host-value";
+import {
+  connectionEnrollmentPrivateLoopbackAtomicSourceLookupBridgeContractV1,
+  parseConnectionEnrollmentPrivateLoopbackAtomicSourceLookupBridgeContractV1,
+} from "./private-loopback-atomic-source-lookup-bridge-contract";
+import {
+  ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1,
+  ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1,
+  type ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptionV1,
+  type ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationRecheckV1,
+} from "./private-loopback-invocation-authorization-store";
 
 const arraySomeV1 = Array.prototype.some;
+const arrayIncludesV1 = Array.prototype.includes;
 const numberIsFiniteV1 = Number.isFinite;
 const numberIsSafeIntegerV1 = Number.isSafeInteger;
 const objectConstructorV1 = Object;
@@ -22,6 +34,12 @@ const weakMapGetV1 = WeakMap.prototype.get;
 const weakMapSetV1 = WeakMap.prototype.set;
 const weakSetAddV1 = WeakSet.prototype.add;
 const weakSetHasV1 = WeakSet.prototype.has;
+
+const consumeForInvocationV1 =
+  ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.consumeForInvocation;
+const recheckAfterConsumptionV1 =
+  ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.recheckAfterConsumption;
+const storeErrorPrototypeV1 = ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1.prototype;
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_UNREACHABLE_ATOMIC_NATIVE_OBSERVATION_SOURCE_V1 =
   "control-room-connection-enrollment-private-loopback-unreachable-atomic-native-observation-source/v1" as const;
@@ -64,7 +82,9 @@ export type ConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservatio
   atomicSourceSynchronous: true;
   atomicSourceStoredOnce: true;
   atomicSourceExported: false;
-  atomicSourceRetrievable: false;
+  atomicSourceRetrievable: true;
+  retrievalGuardedByPrivateSpendRecheck: true;
+  lookupBridgeBarrelExported: false;
   atomicSourceInvoked: false;
   descriptorValidationSourcePresent: true;
   directDescriptorValueConsumptionSourcePresent: true;
@@ -114,8 +134,9 @@ export type ConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservatio
     typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_UNREACHABLE_ATOMIC_NATIVE_OBSERVATION_SOURCE_STATUS_V1;
   implementationReference: string;
   implementationDigest: string;
-  evidenceClass: "repository_static_non_execution";
-  sourceState: "stored_unreachable_uninvoked";
+  evidenceClass: "repository_private_lookup_ready_non_native_execution";
+  sourceState: "stored_private_lookup_guarded_uninvoked";
+  lookupBridgeState: "implemented_unwired";
   nativeBindingState: "static_sources_captured_unread";
   descriptorState: "not_inspected";
   observationState: "not_created";
@@ -205,6 +226,7 @@ const statusRecordsV1 = new WeakSet<object>();
 const statusDigestsV1 = new WeakMap<object, string>();
 const quarantinedAtomicNativeObservationSourcesV1 =
   new WeakMap<object, PrivateAtomicNativeObservationSourceV1>();
+const privateAtomicNativeObservationSourceRecordsV1 = new WeakSet<object>();
 
 function failV1(code: ConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceErrorV1["safeCode"]):
 never {
@@ -313,7 +335,9 @@ const implementationMaterialV1 = {
   atomicSourceSynchronous: true as const,
   atomicSourceStoredOnce: true as const,
   atomicSourceExported: false as const,
-  atomicSourceRetrievable: false as const,
+  atomicSourceRetrievable: true as const,
+  retrievalGuardedByPrivateSpendRecheck: true as const,
+  lookupBridgeBarrelExported: false as const,
   atomicSourceInvoked: false as const,
   descriptorValidationSourcePresent: true as const,
   directDescriptorValueConsumptionSourcePresent: true as const,
@@ -367,9 +391,12 @@ reflectApplyV1(weakSetAddV1, implementationRecordsV1,
 reflectApplyV1(weakMapSetV1, implementationDigestsV1,
   [connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1,
     connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1.implementationDigest]);
+const quarantinedAtomicNativeObservationSourceV1 = createQuarantinedAtomicNativeObservationSourceV1();
+reflectApplyV1(weakSetAddV1, privateAtomicNativeObservationSourceRecordsV1,
+  [quarantinedAtomicNativeObservationSourceV1]);
 reflectApplyV1(weakMapSetV1, quarantinedAtomicNativeObservationSourcesV1,
   [connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1,
-    createQuarantinedAtomicNativeObservationSourceV1()]);
+    quarantinedAtomicNativeObservationSourceV1]);
 
 const zeroActualsV1 = {
   actualSourceLookups: 0 as const,
@@ -414,8 +441,9 @@ const statusMaterialV1 = {
     connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1.implementationReference,
   implementationDigest:
     connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1.implementationDigest,
-  evidenceClass: "repository_static_non_execution" as const,
-  sourceState: "stored_unreachable_uninvoked" as const,
+  evidenceClass: "repository_private_lookup_ready_non_native_execution" as const,
+  sourceState: "stored_private_lookup_guarded_uninvoked" as const,
+  lookupBridgeState: "implemented_unwired" as const,
   nativeBindingState: "static_sources_captured_unread" as const,
   descriptorState: "not_inspected" as const,
   observationState: "not_created" as const,
@@ -463,7 +491,8 @@ export function parseConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeO
     "validatedProperties", "capturedOperations", "intendedPlatformFamily", "intendedRuntimeFamily",
     "staticProcessNamespaceCaptured", "staticOsOperationsCaptured", "atomicSourcePresent", "atomicSourcePrivate",
     "atomicSourceFrozen", "atomicSourceNoInput", "atomicSourceSynchronous", "atomicSourceStoredOnce",
-    "atomicSourceExported", "atomicSourceRetrievable", "atomicSourceInvoked",
+    "atomicSourceExported", "atomicSourceRetrievable", "retrievalGuardedByPrivateSpendRecheck",
+    "lookupBridgeBarrelExported", "atomicSourceInvoked",
     "descriptorValidationSourcePresent", "directDescriptorValueConsumptionSourcePresent",
     "secondNamespaceReadPresent", "ambientGlobalProcessUsed", "callerBindingAccepted", "callerDescriptorAccepted",
     "callbackAccepted", "promiseOrAwaitPresent", "timerPresent", "automaticRetryPresent",
@@ -493,7 +522,8 @@ export function parseConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeO
     || !record.staticProcessNamespaceCaptured || !record.staticOsOperationsCaptured || !record.atomicSourcePresent
     || !record.atomicSourcePrivate || !record.atomicSourceFrozen || !record.atomicSourceNoInput
     || !record.atomicSourceSynchronous || !record.atomicSourceStoredOnce || record.atomicSourceExported
-    || record.atomicSourceRetrievable || record.atomicSourceInvoked || !record.descriptorValidationSourcePresent
+    || !record.atomicSourceRetrievable || !record.retrievalGuardedByPrivateSpendRecheck
+    || record.lookupBridgeBarrelExported || record.atomicSourceInvoked || !record.descriptorValidationSourcePresent
     || !record.directDescriptorValueConsumptionSourcePresent || record.secondNamespaceReadPresent
     || record.ambientGlobalProcessUsed || record.callerBindingAccepted || record.callerDescriptorAccepted
     || record.callbackAccepted || record.promiseOrAwaitPresent || record.timerPresent || record.automaticRetryPresent
@@ -521,7 +551,7 @@ export function parseConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeO
   const record = value as ConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceStatusV1;
   const captured = exactHostDataSnapshotV1(record, [
     "statusVersion", "implementationReference", "implementationDigest", "evidenceClass", "sourceState",
-    "nativeBindingState", "descriptorState", "observationState", "attestationState", "candidateState",
+    "lookupBridgeState", "nativeBindingState", "descriptorState", "observationState", "attestationState", "candidateState",
     "runtimeState", "actualSourceLookups", "actualSourceInvocations", "actualDescriptorInspections",
     "actualProcessVersionReads", "actualProcessExecPathReads", "actualProcessIdReads",
     "actualParentProcessIdReads", "actualOsPlatformCalls", "actualOsArchitectureCalls", "actualOsReleaseCalls",
@@ -558,8 +588,9 @@ export function parseConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeO
       connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1.implementationReference
     || record.implementationDigest !==
       connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1.implementationDigest
-    || record.evidenceClass !== "repository_static_non_execution"
-    || record.sourceState !== "stored_unreachable_uninvoked"
+    || record.evidenceClass !== "repository_private_lookup_ready_non_native_execution"
+    || record.sourceState !== "stored_private_lookup_guarded_uninvoked"
+    || record.lookupBridgeState !== "implemented_unwired"
     || record.nativeBindingState !== "static_sources_captured_unread" || record.descriptorState !== "not_inspected"
     || record.observationState !== "not_created" || record.attestationState !== "not_created"
     || record.candidateState !== "not_assembled" || record.runtimeState !== "not_wired"
@@ -571,7 +602,608 @@ export function parseConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeO
   return record;
 }
 
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_IMPLEMENTATION_V1 =
+  "control-room-connection-enrollment-private-loopback-atomic-source-lookup-composition-implementation/v1" as const;
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_STATUS_V1 =
+  "control-room-connection-enrollment-private-loopback-atomic-source-lookup-composition-status/v1" as const;
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_RESULT_V1 =
+  "control-room-connection-enrollment-private-loopback-atomic-source-lookup-composition-result/v1" as const;
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_TERMINAL_OUTCOMES_V1 =
+  objectFreezeV1([
+    "rejected_before_spend",
+    "terminal_spend_uncertain",
+    "terminal_already_consumed",
+    "terminal_recheck_failed",
+    "terminal_source_lookup_failed",
+    "completed_lookup_and_stopped_before_invocation",
+  ] as const);
+
+export type ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionTerminalOutcomeV1 =
+  typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_TERMINAL_OUTCOMES_V1[number];
+
+export type ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1 = Readonly<{
+  implementationVersion:
+    typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_IMPLEMENTATION_V1;
+  implementationReference: string;
+  live410ProductCommit: "e4d58ff35a44e66454cae8e778b31362902dab6b";
+  acceptedLive410ReviewSha256: "c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf";
+  terminalOutcomes:
+    typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_TERMINAL_OUTCOMES_V1;
+  maximumSpendCallsPerFlow: 1;
+  maximumRecheckCallsPerFlow: 1;
+  maximumSourceLookupsPerFlow: 1;
+  maximumSourceInvocationsPerFlow: 0;
+  sameSourceOwningModule: true;
+  exactStoreConstructedInsideFactory: true;
+  exactStoreMethodsCaptured: true;
+  sameSealedAuthorizationValueRequired: true;
+  exactFreshReceiptPrivatelyForwarded: true;
+  exactModuleOwnedSourceRequired: true;
+  sourceFunctionRemainsPrivate: true;
+  receiptsAcceptedFromCaller: false;
+  receiptsReturnedToCaller: false;
+  sourceAcceptedFromCaller: false;
+  sourceReturnedToCaller: false;
+  callbackAccepted: false;
+  automaticRetryImplemented: false;
+  replacementAuthorizationImplemented: false;
+  fallbackImplemented: false;
+  sourceLookupImplemented: true;
+  sourceInvocationImplemented: false;
+  implementationBarrelExported: false;
+  runtimeWired: false;
+  productionDatabaseConfigured: false;
+  externalEffectOccurred: false;
+  grantsApproval: false;
+  grantsQualificationAuthority: false;
+  grantsCandidateAuthority: false;
+  grantsActivationAuthority: false;
+  grantsNetworkAuthority: false;
+  grantsCommandAuthority: false;
+  grantsLeaseAuthority: false;
+  grantsExecutionAuthority: false;
+  implementationDigest: string;
+}>;
+
+export type ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1 = Readonly<{
+  statusVersion: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_STATUS_V1;
+  implementationReference: string;
+  implementationDigest: string;
+  evidenceClass: "repository_implementation_unwired_non_native_execution";
+  compositionState: "implemented_unwired";
+  sourceState: "stored_private_lookup_guarded_uninvoked";
+  runtimeState: "not_wired";
+  actualFactoryCalls: 0;
+  actualCompositionCalls: 0;
+  actualAuthorizationConsumptions: 0;
+  actualPostTransactionRechecks: 0;
+  actualReceiptInputs: 0;
+  actualReceiptExports: 0;
+  actualRetryAttempts: 0;
+  actualReplacementAuthorizations: 0;
+  actualFallbackAttempts: 0;
+  actualSourceLookups: 0;
+  actualSourceInvocations: 0;
+  actualNativeReads: 0;
+  actualRawObservationReturns: 0;
+  actualAttestationsCreated: 0;
+  actualCandidateAssemblerEntries: 0;
+  actualOwnerAuthorizationSpends: 0;
+  actualPhysicalAttempts: 0;
+  actualNativeListenerAttempts: 0;
+  actualNetworkIoEvents: 0;
+  actualProviderCalls: 0;
+  actualProtectedValuesRead: 0;
+  actualCommandsExecuted: 0;
+  externalEffectOccurred: false;
+  sourceBoundaryCrossed: false;
+  targetRuntimeBlockerCleared: false;
+  physicalQualificationAccepted: false;
+  runtimeWired: false;
+  candidateEligible: false;
+  activationEligible: false;
+  grantsApproval: false;
+  grantsQualificationAuthority: false;
+  grantsCandidateAuthority: false;
+  grantsActivationAuthority: false;
+  grantsNetworkAuthority: false;
+  grantsCommandAuthority: false;
+  grantsLeaseAuthority: false;
+  grantsExecutionAuthority: false;
+  statusDigest: string;
+}>;
+
+export type ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionResultV1 = Readonly<{
+  resultVersion: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_RESULT_V1;
+  implementationReference: string;
+  implementationDigest: string;
+  outcome: ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionTerminalOutcomeV1;
+  spendState: "not_spent" | "spent" | "unknown_or_spent";
+  spendCalls: 1;
+  recheckCalls: 0 | 1;
+  sourceLookupCalls: 0 | 1;
+  postTransactionTimeRechecked: boolean;
+  sourceLookupPerformed: boolean;
+  terminal: true;
+  retryAllowedByResult: false;
+  receiptExported: false;
+  sourceExported: false;
+  sourceInvocationPerformed: false;
+  nativeReadPerformed: false;
+  rawObservationCreated: false;
+  externalEffectOccurred: false;
+  grantsApproval: false;
+  grantsQualificationAuthority: false;
+  grantsCandidateAuthority: false;
+  grantsActivationAuthority: false;
+  grantsNetworkAuthority: false;
+  grantsCommandAuthority: false;
+  grantsLeaseAuthority: false;
+  grantsExecutionAuthority: false;
+  resultDigest: string;
+}>;
+
+export interface ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionRunnerV1 {
+  run(sealedAuthorization: unknown):
+    Promise<ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionResultV1>;
+}
+
+export class ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionErrorV1 extends Error {
+  readonly safeCode: "invalid_implementation" | "invalid_status" | "invalid_result" | "invalid_factory_input"
+    | "integrity_failed";
+
+  constructor(code: unknown) {
+    const allowed = ["invalid_implementation", "invalid_status", "invalid_result", "invalid_factory_input",
+      "integrity_failed"] as const;
+    const safeCode = typeof code === "string" && reflectApplyV1(arrayIncludesV1, allowed, [code])
+      ? code as ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionErrorV1["safeCode"]
+      : "integrity_failed";
+    super(safeCode);
+    this.safeCode = safeCode;
+    this.name = "ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionErrorV1";
+    this.stack = undefined;
+    objectFreezeV1(this);
+  }
+}
+
+const lookupImplementationRecordsV1 = new WeakSet<object>();
+const lookupImplementationDigestsV1 = new WeakMap<object, string>();
+const lookupStatusRecordsV1 = new WeakSet<object>();
+const lookupStatusDigestsV1 = new WeakMap<object, string>();
+const lookupResultRecordsV1 = new WeakSet<object>();
+const lookupResultDigestsV1 = new WeakMap<object, string>();
+
+function failLookupCompositionV1(
+  code: ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionErrorV1["safeCode"],
+): never {
+  throw new ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionErrorV1(code);
+}
+
+function safeLookupPublicRecordV1(value: unknown): void {
+  try { assertNoSecretMaterial(value, "atomic source lookup composition record"); }
+  catch { failLookupCompositionV1("integrity_failed"); }
+}
+
+const lookupImplementationSeedV1 = sha256Digest({
+  live410ProductCommit: "e4d58ff35a44e66454cae8e778b31362902dab6b",
+  acceptedLive410ReviewSha256: "c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf",
+  terminalOutcomes: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_TERMINAL_OUTCOMES_V1,
+  sourceImplementationReference:
+    connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1.implementationReference,
+  sourceImplementationDigest:
+    connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1.implementationDigest,
+});
+
+const lookupImplementationMaterialV1 = {
+  implementationVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_IMPLEMENTATION_V1,
+  implementationReference: `atomic-source-lookup-composition:${reflectApplyV1(stringSliceV1,
+    lookupImplementationSeedV1, [7, 31])}`,
+  live410ProductCommit: "e4d58ff35a44e66454cae8e778b31362902dab6b" as const,
+  acceptedLive410ReviewSha256:
+    "c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf" as const,
+  terminalOutcomes: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_TERMINAL_OUTCOMES_V1,
+  maximumSpendCallsPerFlow: 1 as const,
+  maximumRecheckCallsPerFlow: 1 as const,
+  maximumSourceLookupsPerFlow: 1 as const,
+  maximumSourceInvocationsPerFlow: 0 as const,
+  sameSourceOwningModule: true as const,
+  exactStoreConstructedInsideFactory: true as const,
+  exactStoreMethodsCaptured: true as const,
+  sameSealedAuthorizationValueRequired: true as const,
+  exactFreshReceiptPrivatelyForwarded: true as const,
+  exactModuleOwnedSourceRequired: true as const,
+  sourceFunctionRemainsPrivate: true as const,
+  receiptsAcceptedFromCaller: false as const,
+  receiptsReturnedToCaller: false as const,
+  sourceAcceptedFromCaller: false as const,
+  sourceReturnedToCaller: false as const,
+  callbackAccepted: false as const,
+  automaticRetryImplemented: false as const,
+  replacementAuthorizationImplemented: false as const,
+  fallbackImplemented: false as const,
+  sourceLookupImplemented: true as const,
+  sourceInvocationImplemented: false as const,
+  implementationBarrelExported: false as const,
+  runtimeWired: false as const,
+  productionDatabaseConfigured: false as const,
+  externalEffectOccurred: false as const,
+  grantsApproval: false as const,
+  grantsQualificationAuthority: false as const,
+  grantsCandidateAuthority: false as const,
+  grantsActivationAuthority: false as const,
+  grantsNetworkAuthority: false as const,
+  grantsCommandAuthority: false as const,
+  grantsLeaseAuthority: false as const,
+  grantsExecutionAuthority: false as const,
+};
+
+safeLookupPublicRecordV1(lookupImplementationMaterialV1);
+export const connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1 = objectFreezeV1({
+  ...lookupImplementationMaterialV1,
+  implementationDigest: sha256Digest(lookupImplementationMaterialV1),
+});
+reflectApplyV1(weakSetAddV1, lookupImplementationRecordsV1,
+  [connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1]);
+reflectApplyV1(weakMapSetV1, lookupImplementationDigestsV1,
+  [connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1,
+    connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationDigest]);
+
+const lookupZeroActualsV1 = {
+  actualFactoryCalls: 0 as const,
+  actualCompositionCalls: 0 as const,
+  actualAuthorizationConsumptions: 0 as const,
+  actualPostTransactionRechecks: 0 as const,
+  actualReceiptInputs: 0 as const,
+  actualReceiptExports: 0 as const,
+  actualRetryAttempts: 0 as const,
+  actualReplacementAuthorizations: 0 as const,
+  actualFallbackAttempts: 0 as const,
+  actualSourceLookups: 0 as const,
+  actualSourceInvocations: 0 as const,
+  actualNativeReads: 0 as const,
+  actualRawObservationReturns: 0 as const,
+  actualAttestationsCreated: 0 as const,
+  actualCandidateAssemblerEntries: 0 as const,
+  actualOwnerAuthorizationSpends: 0 as const,
+  actualPhysicalAttempts: 0 as const,
+  actualNativeListenerAttempts: 0 as const,
+  actualNetworkIoEvents: 0 as const,
+  actualProviderCalls: 0 as const,
+  actualProtectedValuesRead: 0 as const,
+  actualCommandsExecuted: 0 as const,
+};
+
+const lookupStatusMaterialV1 = {
+  statusVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_STATUS_V1,
+  implementationReference:
+    connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationReference,
+  implementationDigest:
+    connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationDigest,
+  evidenceClass: "repository_implementation_unwired_non_native_execution" as const,
+  compositionState: "implemented_unwired" as const,
+  sourceState: "stored_private_lookup_guarded_uninvoked" as const,
+  runtimeState: "not_wired" as const,
+  ...lookupZeroActualsV1,
+  externalEffectOccurred: false as const,
+  sourceBoundaryCrossed: false as const,
+  targetRuntimeBlockerCleared: false as const,
+  physicalQualificationAccepted: false as const,
+  runtimeWired: false as const,
+  candidateEligible: false as const,
+  activationEligible: false as const,
+  grantsApproval: false as const,
+  grantsQualificationAuthority: false as const,
+  grantsCandidateAuthority: false as const,
+  grantsActivationAuthority: false as const,
+  grantsNetworkAuthority: false as const,
+  grantsCommandAuthority: false as const,
+  grantsLeaseAuthority: false as const,
+  grantsExecutionAuthority: false as const,
+};
+
+safeLookupPublicRecordV1(lookupStatusMaterialV1);
+export const connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1 = objectFreezeV1({
+  ...lookupStatusMaterialV1,
+  statusDigest: sha256Digest(lookupStatusMaterialV1),
+});
+reflectApplyV1(weakSetAddV1, lookupStatusRecordsV1,
+  [connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1]);
+reflectApplyV1(weakMapSetV1, lookupStatusDigestsV1,
+  [connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1,
+    connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1.statusDigest]);
+
+function buildLookupResultV1(
+  outcome: ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionTerminalOutcomeV1,
+): ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionResultV1 {
+  const spendState = outcome === "rejected_before_spend" ? "not_spent" as const
+    : outcome === "terminal_spend_uncertain" ? "unknown_or_spent" as const : "spent" as const;
+  const recheckCalls = outcome === "terminal_recheck_failed"
+    || outcome === "terminal_source_lookup_failed"
+    || outcome === "completed_lookup_and_stopped_before_invocation" ? 1 as const : 0 as const;
+  const sourceLookupCalls = outcome === "terminal_source_lookup_failed"
+    || outcome === "completed_lookup_and_stopped_before_invocation" ? 1 as const : 0 as const;
+  const postTransactionTimeRechecked = outcome === "terminal_source_lookup_failed"
+    || outcome === "completed_lookup_and_stopped_before_invocation";
+  const sourceLookupPerformed = outcome === "completed_lookup_and_stopped_before_invocation";
+  const material = {
+    resultVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_RESULT_V1,
+    implementationReference:
+      connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationReference,
+    implementationDigest:
+      connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationDigest,
+    outcome,
+    spendState,
+    spendCalls: 1 as const,
+    recheckCalls,
+    sourceLookupCalls,
+    postTransactionTimeRechecked,
+    sourceLookupPerformed,
+    terminal: true as const,
+    retryAllowedByResult: false as const,
+    receiptExported: false as const,
+    sourceExported: false as const,
+    sourceInvocationPerformed: false as const,
+    nativeReadPerformed: false as const,
+    rawObservationCreated: false as const,
+    externalEffectOccurred: false as const,
+    grantsApproval: false as const,
+    grantsQualificationAuthority: false as const,
+    grantsCandidateAuthority: false as const,
+    grantsActivationAuthority: false as const,
+    grantsNetworkAuthority: false as const,
+    grantsCommandAuthority: false as const,
+    grantsLeaseAuthority: false as const,
+    grantsExecutionAuthority: false as const,
+  };
+  safeLookupPublicRecordV1(material);
+  const result = objectFreezeV1({ ...material, resultDigest: sha256Digest(material) });
+  reflectApplyV1(weakSetAddV1, lookupResultRecordsV1, [result]);
+  reflectApplyV1(weakMapSetV1, lookupResultDigestsV1, [result, result.resultDigest]);
+  return result;
+}
+
+async function runPrivateAtomicSourceLookupCompositionV1(
+  store: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1,
+  sealedAuthorization: unknown,
+): Promise<ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionResultV1> {
+  try {
+    if (parseConnectionEnrollmentPrivateLoopbackAtomicSourceLookupBridgeContractV1(
+      connectionEnrollmentPrivateLoopbackAtomicSourceLookupBridgeContractV1,
+    ) !== connectionEnrollmentPrivateLoopbackAtomicSourceLookupBridgeContractV1) {
+      return buildLookupResultV1("rejected_before_spend");
+    }
+  } catch {
+    return buildLookupResultV1("rejected_before_spend");
+  }
+
+  let freshReceipt: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptionV1 | undefined;
+  let recheckReceipt: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationRecheckV1 | undefined;
+  let privateSource: PrivateAtomicNativeObservationSourceV1 | undefined;
+  try {
+    try {
+      freshReceipt = await reflectApplyV1(consumeForInvocationV1, store, [sealedAuthorization]) as
+        ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptionV1;
+    } catch (error) {
+      const code = exactHostErrorCodeV1(error, storeErrorPrototypeV1, "safeCode");
+      return buildLookupResultV1(code === "terminal_ambiguity" || code === undefined
+        ? "terminal_spend_uncertain" : "rejected_before_spend");
+    }
+
+    if (freshReceipt.freshConsumption !== true
+      || freshReceipt.state !== "consumed_pending_post_transaction_time_recheck") {
+      return buildLookupResultV1("terminal_already_consumed");
+    }
+
+    try {
+      recheckReceipt = await reflectApplyV1(recheckAfterConsumptionV1, store,
+        [sealedAuthorization, freshReceipt]) as ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationRecheckV1;
+    } catch {
+      return buildLookupResultV1("terminal_recheck_failed");
+    }
+
+    if (recheckReceipt.state !== "consumed_and_post_transaction_time_rechecked"
+      || recheckReceipt.postTransactionTimeRechecked !== true
+      || recheckReceipt.sourceLookupPerformed !== false
+      || recheckReceipt.sourceInvocationPerformed !== false
+      || recheckReceipt.nativeReadPerformed !== false) {
+      return buildLookupResultV1("terminal_recheck_failed");
+    }
+
+    privateSource = reflectApplyV1(weakMapGetV1, quarantinedAtomicNativeObservationSourcesV1,
+      [connectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1]) as
+        PrivateAtomicNativeObservationSourceV1 | undefined;
+    if (typeof privateSource !== "function" || !objectIsFrozenV1(privateSource)
+      || privateSource !== quarantinedAtomicNativeObservationSourceV1
+      || reflectApplyV1(weakSetHasV1, privateAtomicNativeObservationSourceRecordsV1, [privateSource]) !== true) {
+      return buildLookupResultV1("terminal_source_lookup_failed");
+    }
+
+    return buildLookupResultV1("completed_lookup_and_stopped_before_invocation");
+  } finally {
+    freshReceipt = undefined;
+    recheckReceipt = undefined;
+    privateSource = undefined;
+  }
+}
+
+export const createConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionV1 = objectFreezeV1((
+  database: DatabaseClient,
+  protectedKeys: unknown,
+): ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionRunnerV1 => {
+  let store: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1;
+  try {
+    store = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(database, protectedKeys);
+  } catch {
+    failLookupCompositionV1("invalid_factory_input");
+  }
+  const run = objectFreezeV1((sealedAuthorization: unknown) =>
+    runPrivateAtomicSourceLookupCompositionV1(store, sealedAuthorization));
+  return objectFreezeV1({ run });
+});
+
+export function parseConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1(
+  value: unknown,
+): ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1 {
+  if (value === null || typeof value !== "object" || isHostProxyV1(value)
+    || reflectApplyV1(weakSetHasV1, lookupImplementationRecordsV1, [value]) !== true || !objectIsFrozenV1(value)) {
+    failLookupCompositionV1("invalid_implementation");
+  }
+  const record = value as ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1;
+  const captured = exactHostDataSnapshotV1(record, [
+    "implementationVersion", "implementationReference", "live410ProductCommit", "acceptedLive410ReviewSha256",
+    "terminalOutcomes", "maximumSpendCallsPerFlow", "maximumRecheckCallsPerFlow",
+    "maximumSourceLookupsPerFlow", "maximumSourceInvocationsPerFlow", "sameSourceOwningModule",
+    "exactStoreConstructedInsideFactory", "exactStoreMethodsCaptured", "sameSealedAuthorizationValueRequired",
+    "exactFreshReceiptPrivatelyForwarded", "exactModuleOwnedSourceRequired", "sourceFunctionRemainsPrivate",
+    "receiptsAcceptedFromCaller", "receiptsReturnedToCaller", "sourceAcceptedFromCaller",
+    "sourceReturnedToCaller", "callbackAccepted", "automaticRetryImplemented",
+    "replacementAuthorizationImplemented", "fallbackImplemented", "sourceLookupImplemented",
+    "sourceInvocationImplemented", "implementationBarrelExported", "runtimeWired",
+    "productionDatabaseConfigured", "externalEffectOccurred", "grantsApproval", "grantsQualificationAuthority",
+    "grantsCandidateAuthority", "grantsActivationAuthority", "grantsNetworkAuthority", "grantsCommandAuthority",
+    "grantsLeaseAuthority", "grantsExecutionAuthority", "implementationDigest",
+  ]);
+  const digest = reflectApplyV1(weakMapGetV1, lookupImplementationDigestsV1, [record]) as string | undefined;
+  const grants = [record.grantsApproval, record.grantsQualificationAuthority, record.grantsCandidateAuthority,
+    record.grantsActivationAuthority, record.grantsNetworkAuthority, record.grantsCommandAuthority,
+    record.grantsLeaseAuthority, record.grantsExecutionAuthority];
+  if (!captured || digest !== record.implementationDigest
+    || record !== connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1
+    || record.live410ProductCommit !== "e4d58ff35a44e66454cae8e778b31362902dab6b"
+    || record.acceptedLive410ReviewSha256 !==
+      "c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf"
+    || record.terminalOutcomes !==
+      CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_TERMINAL_OUTCOMES_V1
+    || record.maximumSpendCallsPerFlow !== 1 || record.maximumRecheckCallsPerFlow !== 1
+    || record.maximumSourceLookupsPerFlow !== 1 || record.maximumSourceInvocationsPerFlow !== 0
+    || !record.sameSourceOwningModule || !record.exactStoreConstructedInsideFactory
+    || !record.exactStoreMethodsCaptured || !record.sameSealedAuthorizationValueRequired
+    || !record.exactFreshReceiptPrivatelyForwarded || !record.exactModuleOwnedSourceRequired
+    || !record.sourceFunctionRemainsPrivate || record.receiptsAcceptedFromCaller || record.receiptsReturnedToCaller
+    || record.sourceAcceptedFromCaller || record.sourceReturnedToCaller || record.callbackAccepted
+    || record.automaticRetryImplemented || record.replacementAuthorizationImplemented || record.fallbackImplemented
+    || !record.sourceLookupImplemented || record.sourceInvocationImplemented || record.implementationBarrelExported
+    || record.runtimeWired || record.productionDatabaseConfigured || record.externalEffectOccurred
+    || grants.length !== 8 || reflectApplyV1(arraySomeV1, grants, [(entry: boolean) => entry !== false])) {
+    failLookupCompositionV1("integrity_failed");
+  }
+  safeLookupPublicRecordV1(record);
+  return record;
+}
+
+export function parseConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1(
+  value: unknown,
+): ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1 {
+  if (value === null || typeof value !== "object" || isHostProxyV1(value)
+    || reflectApplyV1(weakSetHasV1, lookupStatusRecordsV1, [value]) !== true || !objectIsFrozenV1(value)) {
+    failLookupCompositionV1("invalid_status");
+  }
+  const record = value as ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1;
+  const captured = exactHostDataSnapshotV1(record, [
+    "statusVersion", "implementationReference", "implementationDigest", "evidenceClass", "compositionState",
+    "sourceState", "runtimeState", "actualFactoryCalls", "actualCompositionCalls",
+    "actualAuthorizationConsumptions", "actualPostTransactionRechecks", "actualReceiptInputs",
+    "actualReceiptExports", "actualRetryAttempts", "actualReplacementAuthorizations", "actualFallbackAttempts",
+    "actualSourceLookups", "actualSourceInvocations", "actualNativeReads", "actualRawObservationReturns",
+    "actualAttestationsCreated", "actualCandidateAssemblerEntries", "actualOwnerAuthorizationSpends",
+    "actualPhysicalAttempts", "actualNativeListenerAttempts", "actualNetworkIoEvents", "actualProviderCalls",
+    "actualProtectedValuesRead", "actualCommandsExecuted", "externalEffectOccurred", "sourceBoundaryCrossed",
+    "targetRuntimeBlockerCleared", "physicalQualificationAccepted", "runtimeWired", "candidateEligible",
+    "activationEligible", "grantsApproval", "grantsQualificationAuthority", "grantsCandidateAuthority",
+    "grantsActivationAuthority", "grantsNetworkAuthority", "grantsCommandAuthority", "grantsLeaseAuthority",
+    "grantsExecutionAuthority", "statusDigest",
+  ]);
+  const digest = reflectApplyV1(weakMapGetV1, lookupStatusDigestsV1, [record]) as string | undefined;
+  const actuals = [record.actualFactoryCalls, record.actualCompositionCalls, record.actualAuthorizationConsumptions,
+    record.actualPostTransactionRechecks, record.actualReceiptInputs, record.actualReceiptExports,
+    record.actualRetryAttempts, record.actualReplacementAuthorizations, record.actualFallbackAttempts,
+    record.actualSourceLookups, record.actualSourceInvocations, record.actualNativeReads,
+    record.actualRawObservationReturns, record.actualAttestationsCreated, record.actualCandidateAssemblerEntries,
+    record.actualOwnerAuthorizationSpends, record.actualPhysicalAttempts, record.actualNativeListenerAttempts,
+    record.actualNetworkIoEvents, record.actualProviderCalls, record.actualProtectedValuesRead,
+    record.actualCommandsExecuted];
+  const grants = [record.grantsApproval, record.grantsQualificationAuthority, record.grantsCandidateAuthority,
+    record.grantsActivationAuthority, record.grantsNetworkAuthority, record.grantsCommandAuthority,
+    record.grantsLeaseAuthority, record.grantsExecutionAuthority];
+  if (!captured || digest !== record.statusDigest
+    || record !== connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1
+    || record.implementationReference !==
+      connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationReference
+    || record.implementationDigest !==
+      connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationDigest
+    || record.evidenceClass !== "repository_implementation_unwired_non_native_execution"
+    || record.compositionState !== "implemented_unwired"
+    || record.sourceState !== "stored_private_lookup_guarded_uninvoked" || record.runtimeState !== "not_wired"
+    || actuals.length !== 22 || reflectApplyV1(arraySomeV1, actuals, [(entry: number) => entry !== 0])
+    || grants.length !== 8 || reflectApplyV1(arraySomeV1, grants, [(entry: boolean) => entry !== false])
+    || record.externalEffectOccurred || record.sourceBoundaryCrossed || record.targetRuntimeBlockerCleared
+    || record.physicalQualificationAccepted || record.runtimeWired || record.candidateEligible
+    || record.activationEligible) failLookupCompositionV1("integrity_failed");
+  safeLookupPublicRecordV1(record);
+  return record;
+}
+
+export function parseConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionResultV1(
+  value: unknown,
+): ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionResultV1 {
+  if (value === null || typeof value !== "object" || isHostProxyV1(value)
+    || reflectApplyV1(weakSetHasV1, lookupResultRecordsV1, [value]) !== true || !objectIsFrozenV1(value)) {
+    failLookupCompositionV1("invalid_result");
+  }
+  const record = value as ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionResultV1;
+  const captured = exactHostDataSnapshotV1(record, [
+    "resultVersion", "implementationReference", "implementationDigest", "outcome", "spendState", "spendCalls",
+    "recheckCalls", "sourceLookupCalls", "postTransactionTimeRechecked", "sourceLookupPerformed", "terminal",
+    "retryAllowedByResult", "receiptExported", "sourceExported", "sourceInvocationPerformed",
+    "nativeReadPerformed", "rawObservationCreated", "externalEffectOccurred", "grantsApproval",
+    "grantsQualificationAuthority", "grantsCandidateAuthority", "grantsActivationAuthority",
+    "grantsNetworkAuthority", "grantsCommandAuthority", "grantsLeaseAuthority", "grantsExecutionAuthority",
+    "resultDigest",
+  ]);
+  const digest = reflectApplyV1(weakMapGetV1, lookupResultDigestsV1, [record]) as string | undefined;
+  const expectedSpendState = record.outcome === "rejected_before_spend" ? "not_spent"
+    : record.outcome === "terminal_spend_uncertain" ? "unknown_or_spent" : "spent";
+  const expectedRecheckCalls = record.outcome === "terminal_recheck_failed"
+    || record.outcome === "terminal_source_lookup_failed"
+    || record.outcome === "completed_lookup_and_stopped_before_invocation" ? 1 : 0;
+  const expectedLookupCalls = record.outcome === "terminal_source_lookup_failed"
+    || record.outcome === "completed_lookup_and_stopped_before_invocation" ? 1 : 0;
+  const expectedRechecked = record.outcome === "terminal_source_lookup_failed"
+    || record.outcome === "completed_lookup_and_stopped_before_invocation";
+  const grants = [record.grantsApproval, record.grantsQualificationAuthority, record.grantsCandidateAuthority,
+    record.grantsActivationAuthority, record.grantsNetworkAuthority, record.grantsCommandAuthority,
+    record.grantsLeaseAuthority, record.grantsExecutionAuthority];
+  if (!captured || digest !== record.resultDigest
+    || record.resultVersion !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_RESULT_V1
+    || record.implementationReference !==
+      connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationReference
+    || record.implementationDigest !==
+      connectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1.implementationDigest
+    || !reflectApplyV1(arrayIncludesV1,
+      CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ATOMIC_SOURCE_LOOKUP_COMPOSITION_TERMINAL_OUTCOMES_V1,
+      [record.outcome])
+    || record.spendState !== expectedSpendState || record.spendCalls !== 1
+    || record.recheckCalls !== expectedRecheckCalls || record.sourceLookupCalls !== expectedLookupCalls
+    || record.postTransactionTimeRechecked !== expectedRechecked
+    || record.sourceLookupPerformed !== (record.outcome === "completed_lookup_and_stopped_before_invocation")
+    || record.terminal !== true || record.retryAllowedByResult !== false || record.receiptExported !== false
+    || record.sourceExported !== false || record.sourceInvocationPerformed !== false
+    || record.nativeReadPerformed !== false || record.rawObservationCreated !== false
+    || record.externalEffectOccurred !== false
+    || grants.length !== 8 || reflectApplyV1(arraySomeV1, grants, [(entry: boolean) => entry !== false])) {
+    failLookupCompositionV1("integrity_failed");
+  }
+  safeLookupPublicRecordV1(record);
+  return record;
+}
+
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceErrorV1.prototype);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceErrorV1);
 objectFreezeV1(parseConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceV1);
 objectFreezeV1(parseConnectionEnrollmentPrivateLoopbackUnreachableAtomicNativeObservationSourceStatusV1);
+objectFreezeV1(ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionErrorV1.prototype);
+objectFreezeV1(ConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionErrorV1);
+objectFreezeV1(parseConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionImplementationV1);
+objectFreezeV1(parseConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionStatusV1);
+objectFreezeV1(parseConnectionEnrollmentPrivateLoopbackAtomicSourceLookupCompositionResultV1);

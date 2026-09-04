@@ -2188,3 +2188,31 @@ High/Medium/Low; 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 migrati
 zero actuals, eight false grants, and zero source/native/listener/network/provider/production/external effects.
 Preserve `docs/reviews/CR13A_LIVE_410_INDEPENDENT_REVIEW.md`; SHA-256
 `c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`.
+
+## CR13A-LIVE-420 — private same-module atomic source-lookup bridge implementation
+
+Status: exact product `c1287817079e6951ab5d1fbe24829cccc517687d` independently accepted; ordinary integration
+of the unwired private lookup composition ready. Use Sol xhigh.
+
+LIVE-420 may modify the LIVE-330 source-owning module to add one non-barrel factory that constructs the exact accepted
+authorization store, re-expresses the accepted LIVE-400 spend/recheck ordering in that module, and performs one lookup
+of the exact module-minted source only after its own fresh spend and immediate successful recheck. The source stays
+private, frozen, stored once, unexported, and uninvoked. The superseded LIVE-330 public reachability status must be
+updated honestly.
+
+The public LIVE-400 runner/result is never an input or authority. Every result is terminal and sanitized; success
+reports only that one private lookup completed and the flow stopped before source invocation. No receipt, source, map,
+key, getter, callback, continuation, or capability escapes. See
+`docs/CR13A_LIVE_420_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_IMPLEMENTATION.md`.
+
+Producer verification passed 13/13 focused tests, 439/439 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0038/124 local PGlite tables, TypeScript, lint, macOS stage zero,
+whitespace, and clean product status. Static source/LIVE-420 statuses publish 34/22 zero actuals and eight false grants
+each. Synthetic success performs one spend, one immediate recheck, one lookup, and zero source invocations/native
+reads/effects.
+
+A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once with 0
+High/Medium/Low; 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, exact cleanup, one
+guarded lookup, zero source invocation/native reads/listener/network/provider/production/external effects, and no
+barrel/runtime consumer. Preserve `docs/reviews/CR13A_LIVE_420_INDEPENDENT_REVIEW.md`; SHA-256
+`6b472475d1e8d8bb9193b1b1df133316b8a939fbdec8c52e1e5b63bfd2308119`.

@@ -207,14 +207,16 @@ test("CR13A-LIVE-410 source contains no executable composition, source, database
   assert.doesNotMatch(source, /function (?:consume|recheck|retrieve|lookup|invoke|observe)/);
 });
 
-test("CR13A-LIVE-410 has only the safe connection-registry barrel as a source consumer", async () => {
+test("CR13A-LIVE-420 adds only the accepted source-owning implementation consumer", async () => {
   const consumers: string[] = [];
   const barrel = resolve(root, "src/connection-registry/v1/index.ts");
+  const sourceOwner = resolve(root, "src/connection-registry/v1",
+    "private-loopback-unreachable-atomic-native-observation-source.ts");
   for (const file of await sourceFiles(resolve(root, "src"))) {
     if (file === modulePath) continue;
     if ((await readFile(file, "utf8")).includes(moduleName)) consumers.push(file);
   }
-  assert.deepEqual(consumers, [barrel]);
+  assert.deepEqual(consumers, [barrel, sourceOwner]);
 });
 
 test("CR13A-LIVE-410 public evidence is sanitized and durable docs preserve the inert boundary", async () => {

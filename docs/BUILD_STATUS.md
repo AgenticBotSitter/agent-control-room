@@ -150,6 +150,7 @@
 | CR13A-LIVE-390 private fresh-spend/recheck composition contract | Independently accepted; ordinary integration of inert contract ready | Product `34640c7...`; 14/14 commands, 11/11 focused, 403/403 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 28 zero actuals and eight false grants |
 | CR13A-LIVE-400 private fresh-spend/recheck composition | Independently accepted; ordinary integration of unwired composition ready | Product `ccce7c8...`; 14/14 commands, 12/12 focused, 415/415 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; receiptless and stopped before source lookup |
 | CR13A-LIVE-410 private same-module atomic source-lookup bridge contract | Independently accepted; ordinary integration of inert contract ready | Product `e4d58ff...`; 14/14 commands, 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 32 zero actuals and eight false grants |
+| CR13A-LIVE-420 private same-module atomic source-lookup composition | Independently accepted; ordinary integration of unwired lookup ready | Product `c128781...`; 14/14 commands, 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; one guarded lookup and zero source invocation/native reads |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -177,8 +178,20 @@ SHA-256: `c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`. No 
 source lookup/invocation, protected native read, runtime consumer, production contact, network, provider, or external
 effect is authorized. The contract must stop before source lookup.
 
-Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
-remains unreachable with no native reads and no lookup.
+CR13A-LIVE-420 exact product `c1287817079e6951ab5d1fbe24829cccc517687d` is independently accepted. It consolidates
+the accepted spend/recheck ordering into the source-owning module, uses one guarded private source lookup only after its
+own exact fresh spend and immediate successful recheck, keeps the exact source lexical, and stops before invocation.
+The public LIVE-400 result remains non-authorizing and no map, key, source, getter, callback, receipt, or capability
+escapes. Producer verification passes 13/13 focused, 439/439 CR13A, the complete 769/421/392 lifecycle, 5/5 build,
+4/4 render, and 38 migrations/124 tables. A fresh different reviewer passed all twelve groups and fourteen commands
+once with 0 High/Medium/Low, verified 34/22 zero static actuals, one guarded lookup, zero source invocation/native
+reads/effects, and exact cleanup. Accepted review SHA-256:
+`6b472475d1e8d8bb9193b1b1df133316b8a939fbdec8c52e1e5b63bfd2308119`. No source invocation, protected native
+read, runtime consumer, production contact, network, provider, deployment, or external effect is authorized.
+
+Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; LIVE-330's source is
+now privately retrievable only through the guarded LIVE-420 flow and remains frozen, unexported, and uninvoked with
+zero native reads.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1407,12 +1420,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-420 — private same-module atomic source-lookup bridge implementation design
+Block: CR13A-LIVE-430 — private single source-invocation and raw-observation handoff contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-410 is independently accepted and fixes the authority boundary. The next prerequisite is a separately frozen design for consolidating the accepted spend/recheck decision with the accepted source storage so one private lookup can occur without exporting a capability.
-Expected output: exact consolidation and one-lookup implementation design, unchanged public-result non-authority, direct private handoff and terminal failure rules, full hostile acceptance plan, and an explicit stop before source invocation.
-Owner action: none for repository design, local synthetic PGlite tests, independent review, and ordinary merges. Actual source invocation, protected native read, production contact, or physical qualification remains separately gated.
+Why: LIVE-420 is independently accepted and proves the authorization-spend/recheck/lookup chain without a native read. The next prerequisite is an inert contract for inserting exactly one synchronous call of that private source and keeping the raw observation inside the same lexical flow for a separately gated attestation stage.
+Expected output: exact one-invocation ceiling, private raw-observation custody and zero-export rules, terminal invocation failure/no-retry semantics, direct private attestation handoff requirements, full hostile acceptance plan, and zero current native reads or source invocations.
+Owner action: none for an inert repository contract, static tests, independent review, and ordinary merges. Actual source invocation, the first protected native read, provider/production contact, or physical qualification remains separately gated and requires a later explicit execution boundary.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
