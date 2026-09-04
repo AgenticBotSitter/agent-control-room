@@ -1,12 +1,14 @@
 # CR13A-LIVE-210 unwired private native issuer state-machine acceptance
 
-**Status:** immutable product awaiting different independent zero-repair review
+**Status:** independently accepted for ordinary owner-controlled integration
 **Product target/tree:** `c4cac41561214117161c9764604f5dc06ecd63b6` /
 `bd829ba22d9f1767ff37ab3ac834afdf08bfacc1`
 **Design parent:** `db42029319e0fcb34fca287323310e37f63bcbb5`
 **Accepted LIVE-200 product:** `9e3cb2afdcd3008dcdac94d113db991f34e49175`
 **Accepted LIVE-200 review SHA-256:**
 `82caf0b6ffc0a66661448a9780d0557221faa179f43956d6b2f691a7a1404185`
+**Accepted LIVE-210 review SHA-256:**
+`c25e22dfa2c8601b23547a8a6f32b68d78da23458a696cd9461678ce084ec2c7`
 **Model/effort:** `gpt-5.6-sol`, `xhigh`
 
 ## Outcome
@@ -31,11 +33,12 @@ Exact product `c4cac41561214117161c9764604f5dc06ecd63b6` passed macOS stage zero
 419 core passes plus two established Windows-only skips, and 392/392 posttests. All five production build phases, 4/4
 rendered routes, migrations 0001-0036/119 PostgreSQL tables, and exact product-range whitespace validation passed.
 
-## Independent review requirement
+## Independent review
 
-A different report-only reviewer must execute `docs/reviews/CR13A_LIVE_210_INDEPENDENT_REVIEW_PACKET.md` against the
-exact immutable product in a fresh local-only detached clone. Any failure, uncertainty, finding, forbidden effect, dirty
-status, or cleanup doubt rejects the product. The reviewer may not repair or retry it.
+A different report-only reviewer executed all twelve fixed commands once against the exact immutable product in a fresh
+local-only detached clone. Every command and review group passed with 0 High, 0 Medium, and 0 Low findings. The checkout
+was clean before and after verification, and the disposable root was removed with exact absence verified. Preserve
+`docs/reviews/CR13A_LIVE_210_INDEPENDENT_REVIEW.md` unchanged.
 
 Acceptance permits ordinary integration only. It grants no real issuer, resource, port, listener, candidate, physical
 attempt, runtime activation, provider contact, deployment, blocker clearance, or production authority.
