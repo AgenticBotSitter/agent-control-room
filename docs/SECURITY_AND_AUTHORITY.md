@@ -1,5 +1,9 @@
 # Security, redaction, and authority invariants
 
+Current delivery direction: `CR14A_INTEGRATION_DIRECTION.md` and ADR-202. The statements below describe
+required production invariants, not evidence that production has been configured. CR14A does not enable
+an old disabled runtime or waive a native, credential, database or deployment gate.
+
 - Control Room is private and protected by Cloudflare Access in deployment.
 - Workers and adapters use outbound HTTPS and individual revocable credentials.
 - Network location, Proton VPN, LAN, or Tailscale membership never grants authority.

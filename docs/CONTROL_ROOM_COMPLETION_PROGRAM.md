@@ -1,299 +1,206 @@
-# Control Room completion program
+# Control Room completion program — private daily use
 
-**Status:** Architect-owned execution program  
-**Frozen:** 2026-08-26  
-**Scope:** Every remaining product block from CR-5D through CR-10  
-**Operating rule:** Codex owns architecture, security, migrations, authority, integration, adversarial acceptance, and releases. External workers build all bounded non-overlapping product slices after their contracts and dependencies are ready. No qualification-only work is issued.
+**Updated:** 2026-09-04
 
-## How work moves without owner relaying
+**Owner direction:** Implement the Astra reassessment; resume repository building.
 
-1. This program is the durable dependency graph. The owner does not need to carry tasks between Codex and workers.
-2. Codex freezes the next security or interface contract and publishes all independent product capsules that contract unlocks.
-3. Workers claim directly from GitHub through `/claim <route>`. A worker may hold multiple independent claims up to its route limit.
-4. Submission immediately releases route capacity. The worker claims another ready jobber while review continues.
-5. Codex reviews in batches, promotes accepted results to the named integration branch, resolves cross-module interactions, and publishes newly unblocked capsules.
-6. A failed or ambiguous attempt uses `/blocked`; the worker preserves evidence and moves to another ready jobber. Codex repairs the contract, integrates a safe correction, replaces the capsule, or closes it.
-7. The owner is contacted only for a genuinely owner-controlled gate: credentials, installs, native host actions, live infrastructure, external effects, consequential approvals, or block/release integration where the platform requires explicit approval.
+**Current block:** CR14A — architecture and delivery rebaseline.
 
-`READY NOW` means a frozen capsule can be claimed. `CONTRACT` means Codex must freeze the exact boundary. `DEPENDENCY` means the work is real and specified here but cannot safely compile or integrate until named predecessors land. `OWNER` means a live or consequential action cannot be delegated. A future item is never labeled ready merely to keep a worker busy.
+**Scope:** Finish a useful private Control Room before optional specialist expansion and public release.
 
-## Immediate production queue
+## Authority and evidence
 
-All five items below are effect-free CR-5D production work on non-overlapping paths. They are the only currently claimable tasks in this program.
+This is the current delivery program. It supersedes the sequencing and model assignments in the
+[archived completion program](archive/CONTROL_ROOM_COMPLETION_PROGRAM_2026_08_26.md) and the historical
+phase map in `CR3_BUILD_PLAN.md`, not accepted security invariants or immutable review evidence.
+`CR14A_INTEGRATION_DIRECTION.md` and ADR-202 define the narrowly scoped integration amendment.
+`BUILD_STATUS.md` records current evidence and the next block. Prior acceptance remains valid only for
+the exact product and scope it actually tested. A new transport does not inherit an old qualification.
 
-| ID | Owner | Product output | Dependency | State |
-|---|---|---|---|---|
-| CR5D-EXEC-001 | Bot | Deterministic synthetic executor, checkpoints, cancellation, and crash simulation | Frozen executor contract | COMPLETE |
-| CR5D-EXEC-002 | Bot | Text artifact manifest and separate producer evidence claim | Frozen executor contract | COMPLETE |
-| CR5D-UI-001 | Bot | Accessible artifact/evidence card that never confuses a producer claim with verification | Frozen initial UI contract | COMPLETE |
-| CR5D-UI-002 | Bot | Accessible synthetic execution event timeline | Frozen initial UI contract | COMPLETE |
-| CR5D-UI-003 | Bot | Worker drain/resume/quarantine request panel with no client-side authority | Frozen initial UI contract | COMPLETE |
+The user authorized this repository correction, not a live installation, credential read, provider call,
+database provisioning, service start, DNS change, deployment, or public release. Those effects remain
+explicitly scoped owner gates. No new live permission is inferred from this plan or from a draft jobber.
 
-## Critical path
+## What finished means
 
-```text
-CR5D executor/evidence/UI
-  -> Codex bridge, persistence, storage, authority and recovery integration
-  -> CR5Q synthetic vertical security gate
-  -> CR6 fleet services, discovery, scheduler, services and operator surfaces
-  -> CR6Q fleet/scheduler gate
-  -> CR7 Hermes + Codex + normalized runs + MCP + package registry
-  -> CR7Q harness/MCP gate
-  -> CR8 Claude + Completion Gate + Telegram + node-local secrets
-  -> CR8Q approval/secrets gate
-  -> CR9 project adapters and separately approved live rehearsal
-  -> CR10 operations, recovery, public packages and independent release gate
-```
+| Level | Evidence required | What it does not mean |
+|---|---|---|
+| Designed | Reviewed interface, ownership, acceptance and dependencies | Code exists or an effect is permitted |
+| Component tested | Implemented code passes the named deterministic checks | The application uses it or a real host works |
+| Connected locally | Mounted application uses the real local service/store; sample data is clearly separate | VPS or multi-machine acceptance |
+| Live validated | Exact authorized runtime/host path completes the named real journey with retained sanitized evidence | Unattended release or broader permissions |
+| Daily-use accepted | Live journeys, monitoring, recovery and upgrade/rollback checks pass for the declared supported fleet | Public distribution or support for untested platforms |
 
-Work within a block runs in parallel where dependencies permit. Security and integration gates remain serial because they define what downstream code is allowed to assume.
+Do not report a phase as complete because every mock passes. A component may land early, but its parent
+feature remains incomplete until application integration and the phase's user-visible acceptance pass.
+No feature silently substitutes fixtures, zero counts, or invented bot responses when a live source fails.
 
-## CR-5D and CR-5Q — first executable vertical slice
+## Owner requirements and current gaps
 
-| ID | Owner | Deliverable | Gate |
+Baseline audited at `17d8a14499d2bdd517bb3b632e3f2501bb4cee88` (source inspection, not a new live test).
+
+| ID | Requirement | Baseline | Delivery |
 |---|---|---|---|
-| CR5D-EXEC-001/002 | Bot | Executor and artifact/evidence modules | COMPLETE |
-| CR5D-UI-001/002/003 | Bot | Evidence, timeline, and worker-operation components | COMPLETE |
-| CR5D-INT-001 | Codex | Admitted execution coordinator; cancel on lease/authority expiry; one terminal outcome | COMPLETE |
-| CR5D-INT-002 | Codex | Map lifecycle events to protocol events and durable bridge delivery | COMPLETE |
-| CR5D-INT-003 | Codex | Persist attempts, checkpoints, terminal state, and artifact lineage transactionally | COMPLETE |
-| CR5D-STOR-001 | Codex | Freeze and implement bounded artifact storage port plus in-memory adapter | COMPLETE |
-| CR5D-STOR-002 | Codex | Disposable filesystem/object adapter with containment, atomicity, hashes, and ambiguity handling | COMPLETE; OWNER for live namespace |
-| CR5D-CTRL-001 | Codex | Quarantine/drain command authority, version binding, idempotency, audit, and API | COMPLETE |
-| CR5D-UI-004 | Codex integration | Integrate accepted components into worker/artifact pages and safe command receipts | COMPLETE |
-| CR5D-REC-001 | Codex | Deterministic kill/restart/reconciliation scenarios | COMPLETE |
-| CR5D-ENV-001 | Codex + Owner | Isolated PostgreSQL/control-plane/node namespace and teardown | OWNER |
-| CR5D-ACC-001 | Codex | Dashboard/API to DB to node to evidence/review end-to-end acceptance | CODEX ACTIVE |
-| CR5Q-001 | Codex + independent review | Crash, restore, replay, redaction, secret-canary, and threat disposition | ACC-001 |
+| R01 | Create arbitrary projects and open each in its own page/tab | Fixture routes and local Idea-promoted projects only | CR14B |
+| R02 | Complete/archive/reopen projects without losing history; closing a view does not cancel work | Local Idea-project lifecycle only | CR14B |
+| R03 | Normal private login with password-manager-friendly MFA and remembered sessions | 15-minute loopback pilot session, not production login | CR14B |
+| R04 | Public informational homepage, separate unlinked private app, no public agent/DB endpoint | Domain inventory and fixture app only | CR14B + LANDING lane |
+| R05 | Approved access at home/phone and an employer-approved work access option | No deployed topology or alternate-origin policy | CR14B; work alias may remain blocked |
+| R06 | One real task, agent progress, artifact/result, review and revision from the website | GitHub queue is real; mounted Control Room execution is not | CR14C |
+| R07 | Mac/Windows/Linux fleet with separate Hermes/Codex identities and scoped credentials | Contracts and platform-specific partial evidence | CR14D |
+| R08 | Multiple independent jobs in flight; submit then continue; blocked jobs visible | GitHub V2 supports this; Control Room loop disabled | CR14D |
+| R09 | Multi-bot ideas -> owner decision -> normal monitored project and proposed work | Repository-fake local flow | CR14E |
+| R10 | ABS fresh news -> research/setup/comparison/draft task -> reviewed result | Synthetic news and local proposal editor | CR14F |
+| R11 | Recurring work, budgets, capabilities, model/effort and skills visible before claim | Component-tested scheduling/packages, not live orchestration | CR14D + CR14G |
+| R12 | Reconnect and rolling updates without duplicate jobs or mandatory browser shutdown | Local/fake contracts; fleet proof absent | CR14C basics + CR14G fleet proof |
+| R13 | Private Hostinger PostgreSQL authority, backups, tested restore, R2 artifacts only | Schema/rehearsal contracts, no live production DB acceptance | CR14B + CR14G |
+| R14 | Shared attention inbox, evidence, costs where observable, review and safe approvals | Component-tested/read-only projections | CR14C + CR14D |
+| R15 | Content Blooms and Wayfarer remain supported consumers, not core architecture | Synthetic/disabled project packs | CR14H specialist lanes |
+| R16 | Later public source and packages with licensing/provenance/support documentation | Prior preparation; publication disabled | CR14H public lane |
 
-CR-5D exits only when one synthetic job completes with audit, restart recovery, and visibly separate artifact locator, producer claim, and independent verification state.
+Closing a browser tab is a display action; project archive and cancellation are distinct commands.
+Each project has Overview, Inbox, Work, Agents, Automations, Files, Reviews, Activity and Settings.
+Project creation must not require an Idea Lab conversation or an engineer-written adapter for ordinary projects.
 
-## CR-6A — native service packaging
+## Delivery phases and models
 
-| ID | Owner | Deliverable | Gate |
+These settings are project allocation decisions, not performance guarantees. Current model roles were
+checked against [official OpenAI guidance](https://developers.openai.com/api/docs/models/compare).
+Keep Astra Xhigh for architecture/security/integration decisions; Sol High for substantial settled implementation;
+Terra High for bounded UI and mechanical work. Do not change the owner's model automatically.
+
+| Phase | Main work | User-visible exit | Lead setting |
 |---|---|---|---|
-| CR6A-CON-001 | Codex | Cross-platform service identity, lifecycle, isolation, paths, logging, update, rollback, and native-effect contract | CR5Q |
-| CR6A-LNX-001 | Bot | systemd unit, value-free environment template, install/uninstall, diagnostics, static tests | CON-001 |
-| CR6A-MAC-001 | Bot | launchd package, install/uninstall, diagnostics, static tests | CON-001; unresolved macOS security status remains visible |
-| CR6A-WIN-001 | Bot | Windows Service package and Job Object cancellation wrapper | CON-001 |
-| CR6A-TST-001 | Bot | Effect-free cross-platform service package conformance harness | LNX/MAC/WIN packages |
-| CR6A-NATIVE-LNX/MAC/WIN | Codex + Owner | Real start/restart/cancel/sleep/reboot/key-store/isolation evidence per host | OWNER; package accepted |
+| CR14A | Reconcile plan, architecture, truth labels, upstream reuse and worker batches | One actionable program with no false ready/live claims | Astra Xhigh |
+| CR14B | VPS Node build, shared auth boundary, general project catalog/lifecycle, PostgreSQL preparation/rehearsal | Sign in to the private app, create/open/archive/reopen a durable project; restore it in a disposable rehearsal | Astra Xhigh integration; Sol High code |
+| CR14C | First supported Hermes adapter and canonical task/result/review wiring | One real bounded task completes from the project page; progress and result survive browser reconnect; review/revision works | Sol High; Astra Xhigh boundary review |
+| CR14D | Remaining host/harness adapters, capacity-aware claims, continuous pickup, skills and attention | Named supported fleet handles independent tasks concurrently; submission frees capacity; failures reach triage without owner message relay | Sol High; host agents validate |
+| CR14E | Real bounded multi-bot Idea Lab | At least two real selected bots contribute; owner-approved synthesis becomes a normal project with proposed initial work | Sol High |
+| CR14F | ABS collectors, curation, durable article actions, draft/review pipeline | A current sourced article creates a real research/setup task and a reviewable artifact | Sol High; Terra High UI |
+| CR14G | Recurring operations, version negotiation, canary upgrades, recovery, monitoring and retention | Sustained multi-machine private trial; interruption/upgrade/rollback and backup/restore evidence accepted | Astra Xhigh integration; Sol High code |
+| CR14H | Specialist consumers; later public source/packages | Each consumer has its own live acceptance; public release has a separate go/no-go | Sol High; Astra Xhigh release review |
 
-## CR-6B — discovery, telemetry, capabilities, and benchmarks
+## Dependency order, with parallel lanes
 
-| ID | Owner | Deliverable | Gate |
+CR14A unlocks the repository implementation lanes below. Core operational order is
+CR14B -> CR14C -> CR14D -> CR14G. CR14E depends on the shared project/job/adapter services from B/C
+and two qualified participants; it need not wait for every operating system or Codex route in D.
+CR14F depends on B/C for real task submission; deterministic curation and presentation can start earlier.
+CR14G's daily-use gate requires D, E and F, but its backup, reconnect and update code starts with B/C.
+LANDING can be prepared independently after A. Publishing it is separate from deploying the private app.
+CR14H does not block private daily use. No Claude/Telegram/Unreal/public-package prerequisite is imposed
+on the first generic project + Hermes task workflow.
+
+### CR14B — one integrated foundation batch
+
+| ID | Owner | Deliverable | Prerequisite |
 |---|---|---|---|
-| CR6B-CON-001 | Codex | Versioned discovery, inventory, telemetry, capability, benchmark, fingerprint, freshness, and trust contracts | CR6A contract; CR5D protocol |
-| CR6B-DISC-001 | Bot | Normalized static hardware/volume/network collectors without private host identity | CON-001 |
-| CR6B-DISC-002 | Bot | Software, harness, executor, and tool inventory manifests | CON-001 |
-| CR6B-DISC-003 | Bot | Stable material-change fingerprints and rediscovery triggers | DISC-001/002 |
-| CR6B-TEL-001 | Bot | Bounded CPU/GPU/RAM/storage/network/power/thermal telemetry ports | CON-001 |
-| CR6B-CAP-001 | Bot | Versioned capability probe runner with explicit pass/fail/blocked | CON-001, DISC-002 |
-| CR6B-BENCH-001 | Bot | Benchmark runner, normalization, environment binding, and expiry | CAP-001 |
-| CR6B-PERS-001 | Codex | Fleet history persistence, tenancy, indexing, freshness, and retention | CON-001 |
-| CR6B-POL-001 | Codex | Scratch/resource/freshness eligibility gates | Telemetry, benchmarks, persistence |
-| CR6B-NATIVE-001 | Codex + Owner | Real per-host inventory/probe/benchmark evidence | OWNER |
+| B-RUNTIME | Codex | Explicit VPS Node build profile; preserve existing Sites preview; no D1 authority or unverified hosting-header fallback | A |
+| B-AUTH | Codex | Common verified-identity boundary for pages, APIs and streams; revocation and session policy; safe return paths | A |
+| B-PROJECT-API | Codex | General project creation/catalog/lifecycle over canonical PostgreSQL, server-derived owner/tenant scope, idempotency and audit | A |
+| CR14B-PROJECT-UI-001 | Worker | Project catalog and creation form, accessible states and tests against the frozen UI contract | Published capsule and accepted claim |
+| CR14B-CONNECTION-UI-001 | Worker | Clear connection onboarding/status presentation and tests, without credential or connect authority | Published capsule and accepted claim |
+| B-WIRE | Codex | Mount accepted UI against B-AUTH/B-PROJECT-API; replace fixture dependence only in the explicit operational profile | B-RUNTIME, B-AUTH, B-PROJECT-API, PROJECT-UI |
+| B-DB-PREP | Codex + owner | Scoped database/host preparation, backup/restore setup and private network evidence | B-RUNTIME design; separate effect packet |
+| B-DB-REHEARSE | Codex + owner | Disposable real PostgreSQL migrations, concurrency, restore, restart and cleanup evidence | B-DB-PREP prerequisite evidence |
+| B-PILOT | Codex + owner | Private deployed sign-in/project acceptance | B-WIRE, B-DB-REHEARSE, explicit deployment authority |
 
-## CR-6C — scheduler, resources, and bottlenecks
+B-PROJECT-API freezes the wire API and browser controller before B-WIRE. The worker components are
+controlled presentation components; they cannot choose authentication, persist a second catalog, or turn
+callbacks into authority. Their separate commits are not reported as a delivered live feature.
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR6C-CON-001 | Codex | Deterministic allocation, fair-share debt, priority, deadline, cost, privacy, maintenance, semaphore, reservation, and explanation contract | Trusted CR6B inputs |
-| CR6C-SCH-001 | Codex | Production scheduler and starvation bounds | CON-001 |
-| CR6C-SEM-001 | Codex | Atomic exclusive-resource/GPU reservations, availability windows, expiry, and recovery | CON-001, CR6B-POL-001 |
-| CR6C-POL-001 | Codex | Cost/privacy/quality/deadline/maintenance constraint evaluator | CON-001 |
-| CR6C-BOT-001 | Bot | Seeded property generators for fairness, starvation, ties, and capacity invariants | CON-001 |
-| CR6C-BOT-002 | Bot | Multi-project simulation catalogue for every allocation and failure mode | CON-001 |
-| CR6C-BOT-003 | Bot | Evidence-backed bottleneck fixtures and expected recommendations | Bottleneck portion of CON-001 |
-| CR6C-BNK-001 | Codex | Bottleneck and projected-impact engine | CON-001, BOT-003 |
-| CR6C-ACC-001 | Codex | Concurrency, fairness, recovery, and explanation acceptance | All CR6C outputs |
+### CR14C/D — useful work first, then more machines
 
-## CR-6D — services, schedules, incidents, and reconciliation
+- C-ADAPTER: freeze a versioned Hermes native-run adapter and its contract recordings; prove exact
+  profile/session identity, idempotency capability, state mapping, bounded event handling and exact-ID stop.
+- C-WORK: wire canonical project request -> job -> attempt -> node-local admission -> Hermes run ->
+  normalized progress/result/artifact -> review. Keep cost estimates distinct from enforceable budgets.
+- CR14C-REVIEW-UI-001: build the result/revision view under the frozen presentation contract.
+- C-REHEARSE: one scoped real useful task on one prepared host, plus reconnect and uncertainty handling.
+  Do not wait for macOS-specific credential issues if another explicitly qualified route can do the task.
+- D-FLEET: add Mac, Windows and Linux host evidence separately; unsupported routes stay visibly unavailable.
+- D-CODEX: add the separately reviewed native Codex adapter; no provider-credential sharing with Hermes.
+- D-QUEUE: move only Control Room-native jobs to the PostgreSQL scheduler; implement continuous pickup,
+  platform/capability checks, route limits, fair sharing, no double claims, blocked-work triage and batch review.
+- D-SKILLS: expose reviewed worker instructions/packages and model/effort requirements before assignment;
+  do not inherit all tools/MCP servers/plugins from a personal agent profile.
+- D-MCP: expose the same scoped job/project/review services as MCP tools; MCP is not a second scheduler.
+- D-CUTOVER: retire bootstrap authority per job class with a recorded cutover; never run GitHub and
+  PostgreSQL as simultaneous independent claim authorities for the same work.
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR6D-CON-001 | Codex | Desired/observed service state, recurrence, timezone/DST, deduplication, incident, and reconciliation contract | CR6C |
-| CR6D-SVC-001 | Bot | Continuous-service reconciler | CON-001 |
-| CR6D-SCH-001 | Bot | Cron/interval/once calculator and idempotent dispatcher | CON-001 |
-| CR6D-INC-001 | Bot | Incident derivation, correlation, state, reason, remedy, and recovery projection | CON-001, SVC-001 |
-| CR6D-PERS-001 | Codex | Transactional persistence, occurrence creation, outbox, and crash replay | Bot engines, CON-001 |
-| CR6D-ACC-001 | Codex | Restart, clock-boundary, duplicate-delivery, incident/recovery acceptance | All CR6D outputs |
+### CR14E/F — owner workflows, not standalone demo panels
 
-## CR-6E and CR-6Q — operator surfaces and fleet gate
+- E-ROOMS: select real profile/device participants, preserve useful private conversation content with
+  project access/retention policy, and show attribution, progress, limits, cancellation and unavailable bots.
+- E-PROMOTE: approve/reject/revise synthesis, create a normal project, propose initial jobs, preserve lineage.
+  A bot conversation or peer message never grants a lease or authorizes a consequential effect.
+- CR14F-NEWS-CORE-001: deterministic source diversity/relevance selection under the frozen contract.
+- F-COLLECT: scoped approved public RSS/Atom sources, safe collection, provenance, freshness, deduplication,
+  manual inputs and archive persistence. Newsletter credentials are a separate optional connection.
+- F-WORK: Research / Setup Guide / Compare / Draft actions materialize durable reviewed work and show
+  the resulting job, agent, artifact and revision in the ABS page. Source text remains untrusted input.
+- F-PUBLISH: separate destination-specific authorization, idempotency and publication acceptance; the
+  private beta can deliver approved drafts before public publishing is enabled.
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR6E-CON-001 | Codex | Fleet/bottleneck, Action Inbox, and Owner Focus view/command contracts | CR6B-D |
-| CR6E-API-001 | Codex | Scoped/redacted fleet, history, service, incident, and bottleneck projections | CON-001, stores |
-| CR6E-UI-001 | Bot | Portfolio/project fleet and bottleneck surfaces | CON-001 fixtures |
-| CR6E-UI-002 | Bot | Worker status/resources/capabilities/software/projects/performance/history/security tabs | CON-001 |
-| CR6E-UI-003 | Bot | Services, schedules, and incidents pages | CR6D, CON-001 |
-| CR6E-ATT-001 | Codex | Canonical Action Inbox and legal-response policy | CON-001 |
-| CR6E-UI-004 | Bot | Action Inbox filters, evidence, expiry, delivery, and safe response forms | ATT-001 |
-| CR6E-FOCUS-001 | Codex | P0/Today semantics and scheduler projection without authority/fairness bypass | CR6C, CON-001 |
-| CR6E-UI-005 | Bot | Owner Focus strip/editor | FOCUS-001 |
-| CR6E-A11Y-001 | Bot | Cross-surface mobile, keyboard, semantic, and rendered test suite | UI slices |
-| CR6E-ACC-001 | Codex + Owner | Owner-facing fleet and attention acceptance | All CR6E outputs |
-| CR6Q-001 | Codex + independent review | Policy-bypass, starvation, capacity-race, platform-drift, stale-evidence, isolation, and redaction review | CR6A-E |
+### CR14G/H — daily use and later expansion
 
-## CR-7 — Hermes, Codex, normalized harness runs, MCP, and package registry
+- G-RECOVER: restart reconciliation, bounded event replay or explicit resnapshot, stale/offline truth,
+  backup monitoring, real restore and incident/action-inbox proof.
+- G-UPDATE: minimum/current protocol versions, admission drain, existing-run reconciliation, immutable
+  release identity, compatible migrations, one-host canary, rollback and later fleet rollout.
+- G-TRIAL: a 24-hour proposed supported-fleet trial with representative scheduled and manual work;
+  owner-visible result/review, a deliberate reconnect, and a staged update without duplicate work.
+  This duration is a release criterion, not permission to create an unattended automation now.
+- G-ACCEPT: verify R01-R14; record explicit exceptions such as an unapproved work-computer alias or
+  disabled public publishing. Core task, access, recovery and authority failures cannot be waived as polish.
+- H-CB / H-WF: finish the existing consumer-specific source boundaries, real rehearsals, storage and
+  publication/delivery gates; retain source-scheduled ownership for Content Blooms.
+- H-PUBLIC: provenance/license audit, supported-version matrix, secret/artifact review, clean install,
+  documentation and separate repository/package/publication approval. Static coming-soon is not this gate.
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR7-FND-001/002 | Codex | Harness manifest/lifecycle/event/usage/lineage contracts and canonical persistence | CR6Q |
-| CR7-FND-003/004 | Codex | Safe run normalization plus Session Watch projection/API | FND-001/002 |
-| CR7-FND-005 | Bot | Responsive Session Watch UI and protected native links | FND-004 contract |
-| CR7A-001 | Codex + Owner | Pin and discover disposable Hermes lifecycle | OWNER |
-| CR7A-002 | Bot | Sanitized Hermes gateway/serve/session/usage/cron/reconnect/cancel fixtures | A-001 |
-| CR7A-003/004 | Bot | Pinned gateway client and read-only serve projection adapter | FND contract, A-002 |
-| CR7A-005/006 | Bot | Hermes composition, health, lifecycle and drift conformance | A-003/004 |
-| CR7B-001 | Bot | Sanitized `codex exec --json` lifecycle fixtures | FND contract, pinned CLI |
-| CR7B-002 | Bot | Codex process wrapper and safe structured-event decoder | B-001 |
-| CR7B-003 | Codex | Worktree, directory, sandbox, cleanup, and authority mapping | B-002, CR6 isolation |
-| CR7B-004/005/006 | Bot | Codex lifecycle, result/usage/file/test lineage, and conformance | B-002/003, FND normalization |
-| CR7C-001/002 | Codex | MCP security contract, authentication, scope, replay, and redaction boundary | Hermes/Codex accepted |
-| CR7C-003/004 | Codex | Scoped read tools plus policy-controlled proposal/delegation/approval-request tools | C-002 |
-| CR7C-005 | Bot | Typed MCP clients and negative fixtures | C-001 |
-| CR7C-006 | Codex | Synthetic MCP delegation, observation, evidence, and review end-to-end | C-002-005 |
-| CR7D-001 | Codex | Public adapter SDK boundary | Two adapters accepted |
-| CR7D-002/003/004 | Bot | Conformance kit, adapter refactor, and example adapter/docs | D-001 |
-| CR7E-001/002 | Codex | Procedure/knowledge contracts and immutable registry persistence | CR7D |
-| CR7E-003/004/005 | Bot | Registry services, harness mappings, compatibility cases, and UI | E-001/002 |
-| CR7E-006 | Codex | Promotion/rejection/rollback acceptance | E-003-005 |
-| CR7Q-001 | Codex + independent review | Harness, MCP, package authority, compatibility, and secret-exposure gate | All CR7 |
-| CR7-I-001 | Codex | Hermes/Codex/Session Watch/MCP/package disposable vertical acceptance | COMPLETE |
+## Break the rehearsal prerequisite loop
 
-## CR-8 — Claude, Completion Gate, Telegram, and node-local secrets
+Existing AUTO-100/110 contracts are retained, not marked passed or silently made permissive.
+B-DB-PREP must introduce an architect-reviewed successor packet that explicitly separates:
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR8A-001/002 | Owner + Codex | Authenticated disposable Claude discovery and frozen authority/lifecycle mapping | CR7 |
-| CR8A-003/004/005 | Bot | Sanitized fixtures, stream client, event decoder, adapter, permission/subagent/worktree/result mapping | A-002 |
-| CR8A-006 | Owner + Codex | Authenticated lifecycle acceptance | OWNER |
-| CR8B-001/002/003 | Codex | Separate approval/review/verification/finding/revision/preference contracts, domain, and persistence | COMPLETE |
-| CR8B-004/005/006/007 | Codex | Exact approval/step-up, independence, risk floors, verification/evidence, bounded revisions | COMPLETE |
-| CR8B-008 | Codex | Code/media/document/operation fixtures and adversarial cases | COMPLETE |
-| CR8C-001 | Codex | Completion Gate view model and safe preview contract | COMPLETE — local-only hold |
-| CR8C-002/003/004/005 | Codex | Review UI, evidence/media/diff/report previews, findings/revisions/preferences, mobile/a11y QA | COMPLETE — local-only hold |
-| CR8D-001 | Codex | Telegram recipient/risk/webhook/replay/expiry/deep-link security contract | COMPLETE — local-only hold |
-| CR8D-002/005 | Codex | Message rendering/preferences and sanitized callback/presentation fixtures | COMPLETE — local-only hold |
-| CR8D-003/004 | Codex | Verified webhook ingress, allowlist, idempotency, delivery, retry, grouping, receipts | COMPLETE — local-only hold |
-| CR8D-006 | Owner + Codex | Disposable bot/chat live callback and cleanup | OWNER |
-| CR8E-001/002/003 | Codex | Reference-only secret contract, safe metadata catalog, node-local invocation and cleanup | COMPLETE — local-only hold |
-| CR8E-004/005/006 | Codex | Bitwarden, 1Password, and destination-native brokers | COMPLETE — effect-free local-only hold |
-| CR8E-007 | Bot | Sanitized provider fixtures, failure cases, and operator docs | COMPLETE — local-only hold |
-| CR8E-008 | Owner + Codex | Live canary, rotate, revoke, failure, and cleanup drills | OWNER |
-| CR8Q-001 | Codex + independent review | Approval/review/Telegram/secrets adversarial gate | COMPLETE |
-| CR8-I-001 | Codex | Question-to-approval-to-evidence-to-independent-revision disposable workflow | COMPLETE — local-only hold |
+1. **Before preparation:** exact target/scope, owner authority, private access path, isolation, resource
+   bounds, cleanup/rollback plan, and no pre-existing data overwritten.
+2. **Produced by preparation:** observed PostgreSQL version/service, roles, private binding, backup/WAL
+   configuration and disposable restore target.
+3. **Before rehearsal:** those preparation observations and authority for the exact test workload.
+4. **Produced by rehearsal:** restore/concurrency/migration/restart/cleanup evidence.
+5. **Before daily use:** accepted rehearsal, deployed auth, monitoring and rollback readiness.
 
-## CR-9 — real project integrations
+A test must not require its own success evidence as an input. Each evidence item names the earlier packet
+that produces it. Existing same-UID/administrator exclusions and compromised-server containment remain explicit.
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR9A-CB-000 | Codex | Content Blooms source-scheduled, read, receipt, disable, and rollback contract | COMPLETE — local-only hold |
-| CR9A-CB-010/020/030/040 | Bot | Sanitized fixtures, read adapter, isolated synchronization, and transcription route comparison | COMPLETE — local-only hold |
-| CR9A-CB-050 | Codex | Placement-request authorization/version/idempotency/source-receipt contract | COMPLETE — local-only hold |
-| CR9A-CB-060/070 | Bot | Bounded placement command plus research/transcription/article project pack | COMPLETE — local-only hold |
-| CR9A-CB-080/090 | Codex + Owner | Authenticated read rehearsal, rollback, threat review, and acceptance | OWNER; offline slices pass |
-| CR9B-WF-000 | Codex | Wayfarer pack, media graph, artifact/QC/review/retention contract | COMPLETE — local-only hold |
-| CR9B-WF-010/020/030 | Bot | Synthetic media fixtures, workflow compiler, typed probe/QC executors | COMPLETE — no-byte synthetic flow |
-| CR9B-WF-040 | Codex | Local/R2 object scope, locator, retention, quarantine, and retry contract | COMPLETE — contract-only, no storage access |
-| CR9B-WF-050/060/070 | Bot | Storage adapter against fakes, media/review UI, GPU/scratch scheduling scenarios | COMPLETE — effect-free local-only hold |
-| CR9B-WF-080 | Codex + Owner | Measured Unreal scene/render benchmark or exact disabled disposition | COMPLETE — packet frozen and disabled; no native attempt |
-| CR9B-WF-090/100 | Bot | Frozen Unreal executor and upload/publish-preparation package without effect | COMPLETE — disabled local package; no native or delivery attempt |
-| CR9B-WF-110/120 | Codex + Owner | Destination-idempotency/approval contract and separately authorized rehearsal or disabled state | COMPLETE — authenticated disabled state; no delivery attempt |
-| CR9B-WF-130 | Codex | Wayfarer acceptance and cross-project isolation | COMPLETE — three-project isolation gate passes |
-| CR9C-LIVE-000/010/020 | Codex + Owner | One-project bounded live rehearsal packet, exact effects, rollback, evidence, and CR9 disposition | OWNER |
-| CR9D-ABS-000 | Codex | Shared Project Workspace plus ABS News story/action/proposal authority contract and synthetic view | COMPLETE — local-only hold |
-| CR9D-ABS-010/020/030 | Codex/Bot | Durable fake store, fake collectors/canonicalization/dedupe, interactive workspace and proposal editor | COMPLETE — local-only hold |
-| CR9D-ABS-040/050 | Codex | Reviewed proposal materialization plus schedule/collector/monitor security contracts | CR8, CR6; no live sources |
-| CR9D-ABS-060 | Codex + Owner | Exact bounded live read rehearsal, cleanup, privacy, cost, and evidence | OWNER |
-| CR9D-ABS-070/080 | Codex + Owner | Publication-preparation/idempotency contract and separately authorized rehearsal or disabled state | COMPLETE — disabled disposition; no publication |
+## Worker wave and owner involvement
 
-## CR-10 — operations, public packaging, and release
+The first four substantial worker capsules are prepared in wave `CR14-PRIVATE-UI-1` under
+`coordination/agent-build/`. They are **draft, local and not claimable**. Their product paths do not overlap;
+their combined work is paired with the named Codex integration tasks above. A draft validator pass means
+structural completeness only, never readiness, an accepted claim, or a live-feature pass.
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR10A-OPS-000 | Codex | Production topology, roles, secret references, health, deploy, rollback, and recovery contract | COMPLETE — exact value-free effect-free contract |
-| CR10A-OPS-010/020/030/040 | Bot | Compose, systemd, value-free protected-edge example, health/readiness/resource checks | COMPLETE — exact value-free references and fake-only health accepted |
-| CR10A-OPS-050/060 | Bot | Backup/WAL dry-run tooling and disposable PITR/clean-host fake recovery harness | COMPLETE — exact no-command plan, authenticated fake lifecycle, eleven-phase disposable recovery, cleanup, and non-authorizing attestation |
-| CR10A-OPS-070 | Bot | Bounded monitoring, deterministic alerts, incident correlation, safe operator view, and disabled notifications | COMPLETE — exact synthetic provider-disabled contract accepted |
-| CR10A-OPS-080 | Bot | Exact canary/rollback planner, authenticated intent truth, reconciliation, safe owner view, and disabled executor | COMPLETE — exact planner-only effect-free contract accepted |
-| CR10A-OPS-090 | Bot | Executable-but-disabled operations runbooks | COMPLETE — eight exact authenticated synthetic runbooks, safe guides, cleanup, reconciliation, and terminal ambiguity accepted |
-| CR10A-OPS-100 | Codex | Privacy, retention, deletion, legal-hold, and audit semantics | COMPLETE — exact policy/evidence/proposal-only contract, hold precedence, audit preservation, and disabled executor accepted |
-| CR10A-OPS-110 | Bot | Dry-run/idempotent retention and quarantine cleanup | COMPLETE — exact twelve-step no-target plan, fake inventory, authenticated one-use lifecycle, tombstone evidence, restart ambiguity, and disabled executor accepted |
-| CR10A-OPS-120/130 | Codex + Owner | Real restore, canary, incident drill, RPO/RTO and operations disposition | OWNER |
-| CR10B-PUB-000 | Codex | Public/private boundaries, supported versions, signing and certification semantics | COMPLETE — exact default-private metadata-only trust contract, 21 hostile tests, and disabled publisher accepted |
-| CR10B-PUB-010/020/030/040 | Bot | Public core, adapter SDK, conformance kit, and synthetic reference adapters | COMPLETE — four exact local candidates, narrow exports, public-only dependencies, synthetic-only references |
-| CR10B-PUB-050/060/070/080 | Bot | Synthetic example deployment, tested guides, reproducible release tooling, clean-room install | COMPLETE — runnable synthetic rehearsal, tested guides/schemas, exact no-archive plan, synthetic-only clean-room assessment |
-| CR10C-MECH-010/020/030/040 | Bot | SBOM, license/NOTICE inventory, schema/fixture/link normalization, private-data scan | COMPLETE — fixed-root digest-only audit, five-component direct-dependency inventory, exact LICENSE/NOTICE records, normalized schemas/fixtures/links, and bounded blocked-finding scanner |
-| CR10C-MECH-050 | Codex | License and public-tree disposition | COMPLETE — exact blocked disposition: 6 local passes, 2 failures, 9 unobserved gates; no legal conclusion or release effect |
-| CR10Q-SEC-000 | Codex | Full public threat/privacy/recovery architect review and frozen independent packet | COMPLETE — 2 high findings remediated, 24-case digest-bound packet, 14-test focused gate; producer claims remain unaccepted |
-| CR10Q-SEC-010 | Independent review | Different reviewer executes the frozen packet and writes one report | COMPLETE — `remediation_required`; 2 high runtime findings and 1 medium scope-count finding preserved in immutable report |
-| CR10Q-SEC-020 | Codex | Bounded security, regression, scope-document, and evidence-contract remediations | COMPLETE locally — null-prototype copies, reserved-key rejection, 256-character key ceiling, 36-file correction, and digest-bound re-review packet |
-| CR10Q-SEC-025 | Different independent review | Re-run all 24 cases and independently re-attack all three remediations | COMPLETE — different report-only reviewer accepted the exact effect-free remediated snapshot; all 24 cases and all 3 repairs verified, no new finding, release blockers retained |
-| CR10Q-SEC-030/040 | Codex + Owner | Supported-version/disclosure policy and real private reporting/signing resources | OWNER; after accepted SEC-025 evidence |
-| CR10Q-SEC-050 | Codex | Final clean-room, restore, attack, privacy, repository, and finding gates | All prior work |
-| CR10Q-SEC-060 | Codex + Owner | Exact first public release, provenance, signing, rollback/revocation | OWNER |
+Before publication: integrate the frozen UI contract, inspect current work/branches, confirm the exact base,
+create the named integration branch, validate capsules as ready, publish canonical issues and wait for
+`CLAIM ACCEPTED`. Use existing known route identities only; do not invent installed models or host readiness.
+Workers may hold up to three independent claims per route and continue after submission. Ordinary code
+has two focused repair iterations; an uncertain native or external effect never gains a retry from that rule.
+T0/T1 admission is based on the real task and prerequisites, not a separate qualification exercise.
 
-## CR-11 — agent teams and bounded project collaboration
+Codex owns architecture, migrations, auth, interfaces, effect admission, integration and final review.
+Workers deliver isolated settled code/tests/UI. Independent review is required when specified and focuses
+on meaningful changes to authority, concurrency, data integrity and cross-module behavior.
+Do not apply the full controlled-effect process to ordinary local UI or documentation changes.
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR11A-TEAM-000 | Codex | Agent identity/presence, routine, War Room, mention-handoff, and authority contract | COMPLETE — exact effect-free contract |
-| CR11A-TEAM-010 | Codex | Strict safe projection, synthetic fixtures, responsive Project Team UI, hostile tests | COMPLETE — local presentation only |
-| CR11A-TEAM-020 | Codex | Authenticated durable room-event, unread/needs-you, and handoff-proposal ledger | COMPLETE — authenticated fake local persistence only |
-| CR11A-TEAM-030 | Codex | Reviewed handoff materialization into canonical proposed work and Action Inbox | COMPLETE — exact authenticated local review and atomic no-dispatch proposed work |
-| CR11A-TEAM-040 | Codex | Pinned read-only Hermes Bot Mode adapter and conformance fixtures | COMPLETE — exact pin, injected-only safe normalization, hostile conformance, no native access |
-| CR11A-TEAM-050 | Codex + Owner | One-profile/one-room native read qualification or disabled disposition | COMPLETE — blocked before attempt; no safe filtered native method at the exact pin |
-| CR11A-TEAM-060 | Codex | Metadata-only filtered Hermes read bridge contract and upstream method requirements | COMPLETE — signed metadata-only contract, empty runtime-pin set, disabled bridge |
+## Reporting and next block
 
-## CR-11B — automatic real-work frontier
+Every block reports: implemented result, evidence level, mounted integration, remaining live blockers,
+tests actually run, and the next block/model. Keep historical evidence separate from current readiness.
+No fresh calendar/percentage completion claim is made until the first real connected workflow is measured.
 
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR11B-AUTO-000 | Codex | Continuous ready-frontier proposal controller contract and safe simulation | COMPLETE — authenticated proposal-only controller and restart-safe fake ledger |
-| CR11B-AUTO-010 | Codex | Authenticated canonical-source adapter, local cycle service, and portfolio/Project Workspace frontier views | COMPLETE — four authenticated reads, manual durable cycle, safe frontier views |
-| CR11B-AUTO-020 | Codex | Standing owner work-policy contract and atomic frontier-to-canonical proposed-work materialization | COMPLETE — authenticated repository policy lifecycle and atomic non-runnable canonical bundle |
-| CR11B-AUTO-030 | Codex | Protected automatic ready promotion and scheduler/jobber handoff under exact standing policy | COMPLETE — fourth remediation independently accepted at exact effect-free commit `adf0804` |
-| CR11B-AUTO-040 | Codex + Owner | End-to-end no-relay agent-job simulation and separately authorized protected activation packet | COMPLETE — exact effect-free commit `fb549eb` independently accepted after four remediations; production consumer, policy custody, hosting, and effects remain owner-gated |
-| CR11B-AUTO-050 | Codex + independent review | Protected multi-process consumer, custody, reconciliation, and production-proof boundary | COMPLETE — exact default-disabled commit `2a47f57` independently accepted after keyed-provenance and artifact-chain remediation; nine proofs remain unobserved and no consumer or production effect exists |
-| CR11B-AUTO-060 | Codex + independent review | Authenticated protected-proof ingress, revocation-aware local evidence ledger, and partial assessment | COMPLETE — exact effect-free commit `be01058` independently accepted after three remediations; every proof remains unqualified |
-| CR11B-AUTO-070 | Codex + independent review | Protected custody and hosted PostgreSQL qualification foundation with multi-process and clock/revocation evidence contracts | COMPLETE — exact effect-free commit `20eeb14` accepted by a seventh different reviewer after six integrity remediations; all nine production gates remain blocked and zero proofs are qualified |
-| CR11B-AUTO-080 | Codex + Owner + independent review | Disposable hosted PostgreSQL controlled-effect request preparation | COMPLETE — exact effect-free commit `091ff11` accepted by a fourth different reviewer after three private-key/keyed-context remediations; every live capability remains false |
-| CR11B-AUTO-090 | Codex + Owner | Hostinger KVM2 PostgreSQL production-target contract and disabled live disposition | COMPLETE AND INTEGRATED — exact target `fd29af5` selects one self-managed private primary, excludes AWS RDS/production PGlite/R2 state, and retains all live blockers |
-| CR11B-AUTO-100 | Codex + independent review | Effect-free Hostinger PostgreSQL readiness packet joining operations and automatic-work production gates | COMPLETE, INDEPENDENTLY ACCEPTED, AND INTEGRATED — exact implementation `34750ed` retains 3 repository contracts and 36 production blockers; PR #173 and final `main` CI passed |
-| CR11B-AUTO-110 | Codex + Owner + independent review | Later owner-authorized native PostgreSQL rehearsal, sanitized evidence, and verified disposition | EFFECT-FREE PACKET COMPLETE — exact remediation `f3b6449` independently accepted after closing caller-mintable owner provenance; native rehearsal remains blocked by all 36 live gates and a fresh strong-factor owner effect window |
-
-## CR-12A — local operator pilot
-
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR12A-PILOT-000 | Codex | Shared navigable Project Workspace with real core deep links and retained project extensions | COMPLETE AND INTEGRATED — presentation-only synthetic pilot; no new authority |
-| CR12A-PILOT-010 | Codex | Protected project-scoped read composition, isolation, freshness, and honest unavailable states | COMPLETE AND INTEGRATED — PR #177; existing protected operator read port; no production connection |
-| CR12A-PILOT-015 | Codex | Protected project catalog provenance, revocation, and owner-session read-scope derivation | COMPLETE LOCALLY — strict protected ports and disabled runtime; no live session or configured catalog |
-| CR12A-PILOT-020 | Codex + Owner | Owner-attended local pilot against an explicitly selected non-production data profile | OWNER; after PILOT-015 acceptance |
-| CR12A-PILOT-030 | Codex | Pilot findings, usability remediation, and go/no-go disposition for later hosted beta | PILOT-020 evidence |
-
-## CR-12B — Idea Lab and dynamic project lifecycle
-
-| ID | Owner | Deliverable | Gate |
-|---|---|---|---|
-| CR12B-IDEA-000 | Codex | Bounded diverse idea-panel, deterministic synthesis, and explicit owner-decision contracts | COMPLETE LOCALLY — effect-free exact contracts; no live provider |
-| CR12B-IDEA-010 | Codex | PostgreSQL-authoritative session, decision, project registry, and reversible lifecycle persistence | COMPLETE LOCALLY — PGlite rehearsal only; production database untouched |
-| CR12B-IDEA-020 | Codex | Idea Lab interface and standard monitoring page for every promoted project | COMPLETE LOCALLY — deterministic injected fixture; no mutation or dispatch |
-| CR12B-IDEA-030 | Codex + Owner | Authenticated Bot Mode panel coordinator and protected owner-promotion API | IDEA-000/010/020 acceptance plus separately authorized compatible provider path |
-| CR12B-IDEA-040 | Codex | Project registry protected reads, lifecycle controls, notifications, and project close/reopen usability | IDEA-030 and protected owner session |
-
-## Block acceptance and promotion
-
-Every bot contribution passes capsule intake and focused tests. Every integration branch then runs, as applicable:
-
-```text
-pnpm check
-pnpm lint
-pnpm test
-pnpm test:build
-pnpm db:verify
-```
-
-Passing worker tests do not close a block. Codex must reconcile interactions, run the named security/durability gate, record risks and evidence, and update `docs/BUILD_STATUS.md`. A blocked native host or live credential gate remains visible, but it does not stop unrelated effect-free work on an isolated integration branch.
+After CR14A acceptance, the next architect block is **B-RUNTIME + B-AUTH + B-PROJECT-API design and
+effect-free implementation**, using **Astra Xhigh**. Publish the prepared worker wave only after its base
+and shared contract are available; no extra owner message is needed for ordinary already-scoped code work.
+Stop before live credentials, host changes, provider calls, database services or deployment without the
+corresponding explicit scoped authority.

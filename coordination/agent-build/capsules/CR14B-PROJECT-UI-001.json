@@ -1,0 +1,98 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR14B-PROJECT-UI-001",
+  "waveId": "CR14-PRIVATE-UI-1",
+  "block": "CR14B",
+  "summary": "Build the general project catalog and creation form",
+  "platform": "any",
+  "status": "draft",
+  "mode": "standard-work",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "low",
+  "baseCommit": "17d8a14499d2bdd517bb3b632e3f2501bb4cee88",
+  "integrationBranch": "integration/cr14-private-ui-1",
+  "eligibleRoutes": [
+    "marvin-macos",
+    "johnny5-linux",
+    "ziggy-windows"
+  ],
+  "routeClaimants": {
+    "marvin-macos": [
+      "MarvinAi5"
+    ],
+    "johnny5-linux": [
+      "MarvinAi5"
+    ],
+    "ziggy-windows": [
+      "MarvinAi5"
+    ]
+  },
+  "dependencies": [],
+  "requiredTools": [
+    "Git",
+    "Node.js >=22.13.0",
+    "repository dependencies",
+    "authenticated GitHub CLI"
+  ],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": false,
+    "independence": "none"
+  },
+  "objective": "Implement the complete general project catalog and controlled creation form under CR14A_WORKER_BATCH_CONTRACT.md section CR14B-PROJECT-UI-001, including accessible loading/empty/unavailable/lifecycle/selection states, draft validation, server-confirmed result presentation and deterministic tests. This is the production presentation layer for B-WIRE, not a new fixture page or a live project-creation claim.",
+  "contractRefs": [
+    "docs/CR14A_WORKER_BATCH_CONTRACT.md",
+    "docs/CR14A_INTEGRATION_DIRECTION.md",
+    "docs/AGENT_BUILD_SYSTEM_V2.md"
+  ],
+  "allowedPaths": [
+    "app/components/project-catalog.tsx",
+    "app/components/project-create-form.tsx",
+    "tests/project-catalog.test.tsx",
+    "tests/project-create-form.test.tsx"
+  ],
+  "forbiddenPrefixes": [
+    "db",
+    ".github",
+    ".agents",
+    "skills",
+    "coordination/agent-build/capsules",
+    "coordination/agent-build/waves",
+    "docs",
+    "app/api",
+    "app/globals.css",
+    "src/security",
+    "src/node",
+    "package.json",
+    "pnpm-lock.yaml",
+    "vite.config.ts",
+    ".openai"
+  ],
+  "acceptanceCommands": [
+    "node --import tsx --test tests/project-catalog.test.tsx tests/project-create-form.test.tsx",
+    "node node_modules/typescript/bin/tsc --noEmit",
+    "node node_modules/eslint/bin/eslint.js app/components/project-catalog.tsx app/components/project-create-form.tsx tests/project-catalog.test.tsx tests/project-create-form.test.tsx",
+    "git diff --check integration/cr14-private-ui-1...HEAD"
+  ],
+  "semanticAcceptance": [
+    "Export the exact ProjectCatalog, ProjectCreateForm and validateProjectDraft interfaces in the contract; demonstrate all boundary and rendering cases.",
+    "Do not persist a second project catalog, choose tenant/actor/authority, fetch an endpoint or synthesize successful creation. Catalog project links are internally constructed and safe.",
+    "Deliver both components and their tests together; actual API/controller wiring remains Codex B-WIRE work."
+  ],
+  "limits": {
+    "maxChangedFiles": 4,
+    "maxChangedLines": 1100,
+    "maxRepairIterations": 2
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Do not begin while this capsule is draft; it must be published as ready and the queue controller must record CLAIM ACCEPTED.",
+    "Stop if the committed shared contract or integration base is unavailable, scope is ambiguous, or any path outside allowedPaths is needed.",
+    "No installation, download, live provider/agent call, credential access, native qualification, persistent service, production database, deployment or external effect.",
+    "After two focused ordinary-code repairs, preserve failed evidence and use the blocked handoff; do not self-merge or transfer the same attempted capsule."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR14B-PROJECT-UI-001.json"
+}

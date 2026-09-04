@@ -56,6 +56,14 @@ A wave is the smallest managed batch. Before its status becomes `ready`, Codex r
 
 Only `ready` capsules may be claimed through the serialized queue controller. Agents cannot assign themselves by editing an issue, promote a draft capsule, substitute a base, or start a capsule whose dependencies are incomplete. Codex may pause a wave without converting partial work into accepted evidence.
 
+Architects may prepare substantial future batches as `draft` and check them with
+`node scripts/validate-agent-intake.mjs --mode capsule-draft --capsule <path>`.
+`valid-draft-not-claimable` checks structure only; it grants no claim, dispatch, result-intake or execution
+authority and does not prove dependencies or the integration branch are ready. Normal capsule validation and
+result intake still require `ready`. The jobber renderer rejects drafts rather than mislabelling them `READY`.
+The base pin is an immutable product-ancestry boundary; workers start from the named published integration head,
+which must contain the accepted shared contract. Codex rechecks both before publishing a draft as ready.
+
 ## Fluid jobber queue
 
 A jobber is the GitHub queue view of one capsule. Its title exposes eligibility before any agent spends time opening it:
@@ -138,17 +146,21 @@ The owner sees one block-level decision surface. Native attempts, installs, cred
 
 ## Route qualification
 
-Routes are promoted per task class, not by model reputation:
+Routes are admitted per real task and its prerequisites, not by model reputation or a qualification-only exercise.
+This reflects the owner's 2026-08-25 instruction to stop calibration-only work, reaffirmed by CR14A:
 
 | Tier | Permitted work | Initial state |
 |---|---|---|
-| T0 mechanical | docs, exact fixtures, inventories, formatting | calibration required |
-| T1 bounded implementation | isolated code under frozen contracts | requires successful T0 evidence |
+| T0 mechanical | docs, exact fixtures, inventories, formatting | eligible when the actual capsule prerequisites are met |
+| T1 bounded implementation | isolated code under frozen contracts | eligible under the frozen capsule; no separate T0 graduation |
 | T2 integration candidate | pinned foreign interfaces and larger bounded modules | elevated verification required |
 | T3 platform validation | immutable harness evidence on a named host | explicit packet and owner gates |
 | architect-only | architecture, security, migrations, authority, final integration | never delegated |
 
-A scope or authority violation quarantines the result and removes promotion eligibility until a new calibration wave passes. Track first-pass success, semantic defects, scope/security violations, review minutes, corrections, accepted versus discarded lines, and completion time.
+A scope or authority violation quarantines the result and requires Codex to reassess that route and task scope.
+It does not automatically create a calibration wave. Ordinary failed tests may use the capsule's repair budget;
+controlled/native attempts retain their explicit attempt limits. Track first-pass success, semantic defects,
+scope violations, review minutes, corrections and completion time using real delivered work.
 
 ## Migration from the legacy queue
 

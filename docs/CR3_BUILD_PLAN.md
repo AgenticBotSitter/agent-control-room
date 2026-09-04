@@ -1,7 +1,11 @@
 # CR-3 phased build plan
 
-**Status:** Accepted; operator-workflow amendment accepted 2026-08-24; CR-5 implementation active
+**Status:** Accepted architecture and historical component plan; current delivery order amended by ADR-202 (2026-09-04).
 **Rule:** A phase authorizes only the changes named in that phase. Passing tests—not elapsed time—advances the build.
+
+For current product requirements, implementation batches, model settings and live acceptance, use
+`CONTROL_ROOM_COMPLETION_PROGRAM.md`, `CR14A_INTEGRATION_DIRECTION.md`, and `BUILD_STATUS.md`.
+Historical component completions and native blockers below are preserved; they are not operational-release claims.
 
 ## Delivery strategy
 
@@ -28,8 +32,9 @@ The model is selected per **build block**, not once for the entire project. At t
 
 Current baseline, based on [official OpenAI model guidance](https://developers.openai.com/api/docs/guides/latest-model) and the [current model catalog](https://developers.openai.com/api/docs/models):
 
-- `gpt-5.6-sol`: frontier choice for architecture, security, concurrency, data integrity, protocol design, and difficult reviews;
-- `gpt-5.6-terra`: balanced choice for ordinary implementation, adapters, platform packaging, UI, and test expansion;
+- `gpt-6-astra`: current choice for the architecture rebaseline, security boundaries, concurrency, migrations and final integration review, normally `xhigh`;
+- `gpt-5.6-sol`: substantial settled implementation, connectors and feature integration, normally `high`;
+- `gpt-5.6-terra`: bounded UI, mechanical work and test expansion under settled contracts, normally `high`;
 - `gpt-5.6-luna`: efficient choice for bounded mechanical work whose correctness is determined by existing schemas/tests.
 
 Reasoning-effort intent:
@@ -43,23 +48,18 @@ Do not use `max` simply because a block is large. Split oversized blocks first. 
 
 ### Local and external model qualification
 
-Do not infer that a local model is equivalent to Luna, Terra, or Sol from parameter count, benchmark reputation, or a successful demonstration. Each `(harness, model, machine, toolchain)` route begins as `provisional` and runs a repository-specific qualification pack covering:
-
-1. schema-to-type implementation;
-2. deterministic fixture and test generation;
-3. bounded bug repair;
-4. UI implementation from an accepted specification;
-5. adapter mapping against recorded fixtures;
-6. documentation and packaging maintenance.
-
-Score compilation/test success, contract correctness, security-rule violations, unnecessary patch size, human review time, and rework rate. Promotion is task-class-specific:
+Do not infer model equivalence from parameter count, benchmark reputation or a demonstration. Admit routes
+against the prerequisites of a **real bounded task** and learn from delivered work. Per owner direction, no
+qualification-only pack or T0 graduation is required before ordinary T1 code work. Native/platform operations
+still need their separately scoped real evidence and owner authority. Assess task-class-specific results:
 
 - `mechanical`: documentation, fixtures, formatting, inventories, and exact-schema transforms;
 - `bounded_implementation`: ordinary code under settled contracts and explicit allowed paths;
 - `integration_candidate`: foreign-interface work using pinned fixtures, always with elevated review;
-- `architecture_security`: never granted automatically; these decisions remain Sol-owned in the initial build.
+- `architecture_security`: never delegated to external workers; these decisions remain Codex-owned.
 
-Marvin's Qwen 3.8 27B route is therefore a strong candidate for early qualification, not pre-declared Terra/Luna-equivalent capacity. Qualification results later become ordinary Control Room capability evidence.
+Model/host availability is checked before each real capsule claim. No particular installed local model or
+host capability is asserted by this plan. The current completion program overrides historical model assignments below.
 
 ### Delegation classes by build block
 

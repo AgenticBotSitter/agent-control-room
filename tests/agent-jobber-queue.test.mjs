@@ -75,6 +75,7 @@ test("submission URL must belong to the current repository", () => {
 test("jobber renderer exposes eligibility and canonical queue markers", () => {
   const rendered = renderJobber({
     ...capsule,
+    status: "ready",
     integrationBranch: "integration/cr5d-w1",
     mode: "standard-work",
     risk: "low",
@@ -94,6 +95,14 @@ test("jobber renderer exposes eligibility and canonical queue markers", () => {
   assert.ok(rendered.body.includes("Capsule: `coordination/agent-build/capsules/CR5D-W1-001.json`"));
   assert.ok(rendered.body.includes("Integration: `integration/cr5d-w1`"));
   assert.ok(rendered.body.includes("Required tools:\n- node >=22.13.0"));
+});
+
+test("jobber renderer cannot advertise a draft or inactive capsule as READY", () => {
+  for (const status of [undefined, "draft", "blocked", "complete", "paused"]) {
+    assert.throws(() => renderJobber({ ...capsule, status }, "coordination/agent-build/capsules/CR5D-W1-001.json"),
+      /only ready capsules/);
+  }
+  assert.throws(() => renderJobber(null, "unused"), /only ready capsules/);
 });
 
 test("queue controller atomically claims a ready jobber through the GitHub API", async () => {

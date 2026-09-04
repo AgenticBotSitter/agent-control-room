@@ -1,0 +1,96 @@
+{
+  "schema": "control-room.agent-build-capsule/v2",
+  "capsuleId": "CR14F-NEWS-CORE-001",
+  "waveId": "CR14-PRIVATE-UI-1",
+  "block": "CR14F",
+  "summary": "Build deterministic ABS news digest selection and diversity",
+  "platform": "any",
+  "status": "draft",
+  "mode": "standard-work",
+  "taskClass": "T1-bounded-implementation",
+  "risk": "low",
+  "baseCommit": "17d8a14499d2bdd517bb3b632e3f2501bb4cee88",
+  "integrationBranch": "integration/cr14-private-ui-1",
+  "eligibleRoutes": [
+    "marvin-macos",
+    "johnny5-linux",
+    "ziggy-windows"
+  ],
+  "routeClaimants": {
+    "marvin-macos": [
+      "MarvinAi5"
+    ],
+    "johnny5-linux": [
+      "MarvinAi5"
+    ],
+    "ziggy-windows": [
+      "MarvinAi5"
+    ]
+  },
+  "dependencies": [],
+  "requiredTools": [
+    "Git",
+    "Node.js >=22.13.0",
+    "repository dependencies",
+    "authenticated GitHub CLI"
+  ],
+  "maxConcurrentClaimsPerRoute": 3,
+  "verification": {
+    "required": false,
+    "independence": "none"
+  },
+  "objective": "Implement the complete selectAbsNewsDigestV1 helper under CR14A_WORKER_BATCH_CONTRACT.md section CR14F-NEWS-CORE-001 over the existing normalized AbsNewsStoryV1 records. Include freshness, score, archive/verification filtering, cluster deduplication, source diversity, deterministic order and comprehensive tests. Write original code from the frozen selection contract; do not download or copy an upstream module.",
+  "contractRefs": [
+    "docs/CR14A_WORKER_BATCH_CONTRACT.md",
+    "docs/CR14A_INTEGRATION_DIRECTION.md",
+    "docs/AGENT_BUILD_SYSTEM_V2.md"
+  ],
+  "allowedPaths": [
+    "src/project-adapters/abs-news/v1/digest-selection.ts",
+    "tests/abs-news-digest-selection.test.ts"
+  ],
+  "forbiddenPrefixes": [
+    "db",
+    ".github",
+    ".agents",
+    "skills",
+    "coordination/agent-build/capsules",
+    "coordination/agent-build/waves",
+    "docs",
+    "app/api",
+    "app/globals.css",
+    "src/security",
+    "src/node",
+    "package.json",
+    "pnpm-lock.yaml",
+    "vite.config.ts",
+    ".openai"
+  ],
+  "acceptanceCommands": [
+    "node --import tsx --test tests/abs-news-digest-selection.test.ts",
+    "node node_modules/typescript/bin/tsc --noEmit",
+    "node node_modules/eslint/bin/eslint.js src/project-adapters/abs-news/v1/digest-selection.ts tests/abs-news-digest-selection.test.ts",
+    "git diff --check integration/cr14-private-ui-1...HEAD"
+  ],
+  "semanticAcceptance": [
+    "Selection and deferral match every frozen time/score/cluster/source/limit/tie/identity rule and are deterministic under input permutation.",
+    "Frozen input records and their digests remain unchanged; invalid options and conflicting story identities produce the specified fixed errors.",
+    "No clock read, network, provider call, storage mutation, barrel change, authority change or live collection/task dispatch; F-COLLECT/F-WORK own integration."
+  ],
+  "limits": {
+    "maxChangedFiles": 2,
+    "maxChangedLines": 800,
+    "maxRepairIterations": 2
+  },
+  "effects": {
+    "level": "none",
+    "maxCount": 0
+  },
+  "stopConditions": [
+    "Do not begin while this capsule is draft; it must be published as ready and the queue controller must record CLAIM ACCEPTED.",
+    "Stop if the committed shared contract or integration base is unavailable, scope is ambiguous, or any path outside allowedPaths is needed.",
+    "No installation, download, live provider/agent call, credential access, native qualification, persistent service, production database, deployment or external effect.",
+    "After two focused ordinary-code repairs, preserve failed evidence and use the blocked handoff; do not self-merge or transfer the same attempted capsule."
+  ],
+  "resultManifestPath": "coordination/agent-build/results/CR14F-NEWS-CORE-001.json"
+}

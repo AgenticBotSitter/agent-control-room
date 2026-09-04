@@ -11,6 +11,7 @@ function bullets(values) {
 }
 
 export function renderJobber(capsule, capsulePath) {
+  if (capsule?.status !== "ready") throw new Error("only ready capsules can be rendered as claimable jobbers");
   const title = jobberTitle("READY", capsule);
   const body = `Capsule: \`${capsulePath}\`
 Integration: \`${capsule.integrationBranch}\`

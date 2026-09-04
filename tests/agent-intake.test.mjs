@@ -89,6 +89,13 @@ test("eligible result passes structural intake", () => {
   assert.deepEqual(report.errors, []);
 });
 
+test("draft capsule cannot pass ordinary result intake", () => {
+  const { completed, report } = run({ capsule: { status: "draft" } });
+  assert.equal(completed.status, 1);
+  assert.equal(report.disposition, "quarantined");
+  assert.ok(report.errors.includes("capsule_not_claimable"));
+});
+
 test("scope expansion is quarantined", () => {
   const { completed, report } = run({ result: { changedFiles: [{ path: "src/security/escape.ts", additions: 1, deletions: 0 }] } });
   assert.equal(completed.status, 1);

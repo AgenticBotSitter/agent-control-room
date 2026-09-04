@@ -4,7 +4,15 @@ Control Room is a private, project-agnostic operations layer for coordinating pr
 
 ![Abstract Control Room routing preview](public/control-room-preview.png)
 
-This repository currently implements **CR-0 through CR-5B plus CR-5C.1 through CR-5C.9**; CR-5C.9H real-host qualification remains active. The phase summary below is architectural orientation. [Current build status](docs/BUILD_STATUS.md) is authoritative for completed slices, accepted evidence, and the next block.
+The repository contains accepted contracts/components through **CR13A-LIVE-500** and a runnable
+**repository-fake local pilot**. It is not yet an operational multi-machine private beta: general live project
+creation, production login, mounted Hermes/Codex dispatch, live ABS collection and fleet update/recovery still
+need integration and real acceptance. The GitHub V2 worker queue is the existing build-coordination mechanism.
+
+The active direction is **CR14A: private-beta integration rebaseline**. Start with the
+[current completion program](docs/CONTROL_ROOM_COMPLETION_PROGRAM.md),
+[integration decisions](docs/CR14A_INTEGRATION_DIRECTION.md), and
+[build status](docs/BUILD_STATUS.md). The older phase summary below is historical architecture, not current readiness.
 
 - **CR-0 — Contract:** versioned project-adapter types and schemas, authority boundaries, safe projections, cursors, idempotency, command receipts, and redaction rules.
 - **CR-1 — Read-only interface:** an all-project portfolio, attention queue, running work, blockers, worker and agent views, project drilldowns, worker history, and a deterministic capacity simulator.
@@ -37,10 +45,13 @@ Workers are global resources and can be exclusive, preferred, shared, opportunis
 
 ## Local setup
 
-Prerequisites: Node.js 22.13+ and pnpm 11.
+Prerequisites: Node.js 22.13+ and the declared `pnpm@11.19.0`.
+Run stage zero first, substituting `windows` or `linux` for `macos` on those hosts.
+If dependencies are missing, follow [checkout preparation](docs/WORKER_CHECKOUT_PREPARATION.md)
+and obtain any required install/download authority; do not treat setup as platform qualification.
 
 ```bash
-pnpm install
+node scripts/qualification/platform-key-store-stage-zero.mjs --platform macos
 pnpm check
 pnpm test
 pnpm db:verify
@@ -52,7 +63,8 @@ pnpm dev
 
 The UI uses synthetic fixtures by default. Open `http://localhost:3000`.
 
-For a future PostgreSQL deployment, copy `.env.example` to `.env.local` and provide a private `DATABASE_URL`. Do not commit secrets.
+Production configuration is a later scoped VPS/PostgreSQL/authentication step, not an instruction to connect
+this fixture preview to a live database. Do not commit secrets or configure a public database endpoint.
 
 ## Verification commands
 

@@ -2,9 +2,45 @@
 
 **Updated:** 2026-09-04
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
-**Authority:** Detailed acceptance remains in `CR3_BUILD_PLAN.md`; this file is the current summary.
+**Authority:** Current delivery order is `CONTROL_ROOM_COMPLETION_PROGRAM.md`; integration direction is
+`CR14A_INTEGRATION_DIRECTION.md` / ADR-202. `CR3_BUILD_PLAN.md` and detailed reviews preserve historical
+component acceptance. This file reports current product readiness and the next block.
 
 ## Current position
+
+**CR14A — private-beta rebaseline is in progress on Astra Xhigh.** The owner accepted the reassessment and
+resumed repository building after the LIVE-500 merge/pause. This is not permission to activate a listener,
+read credentials, invoke an agent/provider, provision a database, start a service or deploy.
+
+### What the owner can actually use
+
+The audited application baseline is merged `17d8a14499d2bdd517bb3b632e3f2501bb4cee88`.
+The repository is a tested component foundation plus a runnable **repository-fake local pilot**, not an
+operational multi-machine private beta. Native lifecycle evidence from past scoped tests is not live UI wiring.
+
+| Owner outcome | Current operational truth | Remaining delivery |
+|---|---|---|
+| General project creation and lifecycle | Local Idea-promoted projects only; no general live catalog/create flow | CR14B |
+| Everyday private login and VPS app | 15-minute loopback code; default production build still Sites/Worker-oriented | CR14B |
+| Real task -> agent -> progress -> result -> review in the website | Components/contracts exist; mounted live dispatch/review absent | CR14C |
+| Mac/PC/VPS Hermes and Codex fleet | Host-specific evidence and disabled/inert seams; no mounted live roster/dispatch | CR14D |
+| Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
+| Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
+| Live ABS news -> agent work | Synthetic stories and local draft editor; no mounted collection/dispatch | CR14F |
+| Private PostgreSQL, backup/recovery and rolling updates | Repository contracts/simulations, no accepted deployed fleet | CR14B + CR14G |
+
+CR14A selects a thin supported Hermes native-run interface and an explicit VPS Node application target.
+It leaves the old native-listener and qualification paths disabled, preserves existing security invariants,
+and separates setup prerequisites from evidence produced by a real rehearsal. The first four substantial
+worker packets are local **drafts**, not claims or dispatched work; see `CR14A_WORKER_BATCH_CONTRACT.md`.
+The current program maps R01-R16 to complete user journeys and names the architect integration tasks.
+
+### Historical component acceptance ledger
+
+The entries and narratives below retain their original scope and chronology. Terms such as complete,
+integration ready, awaiting merge, or owner hold are historical component dispositions, not current GitHub
+state or live-feature claims. Recheck GitHub before acting; use the current program rather than a historical
+ready queue. Never turn negative/native-blocked evidence into a pass when adopting the new connection direction.
 
 | Milestone | Status | Evidence |
 |---|---|---|
@@ -1551,18 +1587,24 @@ Wave `CR5C9H-CAL-1` is closed by owner direction with all four report PRs unmerg
 
 The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `b523d9f6237b7d4161b70cf7524a8f683b683ac4` and integration branch `integration/cr5d-synthetic-executor-1`. It contains five independent T1 production slices: the deterministic synthetic executor, the text artifact/claim-bound evidence builder, the artifact evidence card, the synthetic lifecycle timeline, and the worker operation request panel. All are effect-free code plus tests, require independent-route verification, and may proceed in parallel without asserting that the unresolved CR-5C.9H macOS gate passed. Promotion to `main` remains a Codex integration and security decision.
 
-`docs/CONTROL_ROOM_COMPLETION_PROGRAM.md` records the complete CR-5D through CR-10 dependency graph. Codex keeps the ready frontier stocked and reviews/integrates results in batches. Workers claim directly from GitHub, may hold several independent jobs within the route limit, and continue after submission without waiting for owner relay or per-job review. Only real product work is published.
+`docs/CONTROL_ROOM_COMPLETION_PROGRAM.md` now records the CR14 private-daily-use program; the original
+CR5D-CR10 program is archived. Wave `CR14-PRIVATE-UI-1` contains four local draft implementation packets
+for project creation/catalog UI, connection onboarding, result/revision review and ABS digest selection.
+They are not published or claimable until the shared contract/base and integration target are available and
+Codex validates/publishes them as ready. Existing route concurrency and submit-then-continue semantics remain.
+Only real product work is published; ordinary work does not require calibration-only jobs.
 
 ## Next block
 
 ```text
-Block: paused after CR13A-LIVE-500 integration
-Set model: none
-Set reasoning effort: none
-Why: the owner directed completion and merge of existing work only, with no new work started.
-Expected output: none until a new block is explicitly authorized.
-Owner action: request the next build block when ready.
-Stop before: every new build block or implementation.
+Block: CR14A private-beta architecture and delivery rebaseline
+Set model: Astra
+Set reasoning effort: xhigh
+Why: the owner accepted the reassessment and resumed repository building.
+Expected output: current requirements/phase program, supported-interface direction, honest status and validated draft worker batches.
+Owner action: none for this effect-free repository block.
+Next after acceptance: CR14B B-RUNTIME + B-AUTH + B-PROJECT-API, Astra xhigh.
+Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
 ```
 
 ## Update rule

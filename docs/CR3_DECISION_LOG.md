@@ -4845,3 +4845,59 @@ and 0 Low. Preserve `docs/reviews/CR13A_LIVE_500_INDEPENDENT_REVIEW.md` with SHA
 **Reevaluate:** Before any real owner prompt or UI, credential/biometric/Keychain/authenticator access, factor verifier,
 trusted-time or nonce source, body constructor, sealer or signer, trust resolver, registration/nonce store, PostgreSQL
 operation, capsule, provider/source, process, native, runtime, or deployment implementation.
+
+## ADR-202 — Rebaseline delivery around private daily use and supported native interfaces
+
+**Date:** 2026-09-04. **Owner direction:** accepted the Astra reassessment and instructed Codex to implement it.
+
+**Decision:** `CONTROL_ROOM_COMPLETION_PROGRAM.md` is the current requirements/dependency/model program.
+Archive the former CR5D-CR10 completion sequence without changing its evidence. Distinguish designed,
+component-tested, connected-local, live-validated and daily-use-accepted results. The next complete journey is
+private login -> ordinary project -> one real admitted task -> progress/result -> review, followed by the wider
+fleet, live Idea Lab/ABS, and unattended update/recovery acceptance. Optional specialist/public packaging work
+does not gate that first useful private workflow.
+
+Select an explicit VPS Node runtime with one private Hostinger PostgreSQL primary; preserve the existing Sites
+preview as a separate build profile. Use Cloudflare Access with a configured MFA-capable identity provider and
+server-side identity/project authorization, not a new in-app password vault or unverified forwarded headers.
+Normal remembered browser sessions and consequential effect approval are separate policies. No login proves
+owner presence for a native operation. Public coming-soon and private-app origins have separate access/cookies;
+an alternate workplace address is permitted only through an approved access arrangement, never filter evasion.
+
+Prefer the supported Hermes native run/status/events/stop/idempotency interface as the next adapter boundary.
+Release source `29112bef099274229cadff79cdff7bf7b99c4b77` is interface evidence only, not a new accepted runtime pin.
+The current accepted-runtime lists, historical qualification attempts and old dormant/native-listener code remain
+unchanged. Stop extending the CR13A custom-listener sequence as the default critical path; C-ADAPTER must compare
+specific required capabilities and produce a separately reviewed replacement before any runtime wiring.
+No plaintext-network exception, unrestricted RPC, core Hermes patch or live permission is introduced here.
+
+**Retained invariants:** one global write/claim authority per job class; owner-set node ceiling intersected with
+the signed lease and typed executor; project/profile/attempt isolation; separate provider/machine/human identities;
+pre-effect claims and honest ambiguity; no automatic retry after possible external dispatch; no exactly-once promise;
+separate strong approval for approval-required effects; explicit same-UID/administrator threat exclusions; private
+database and credential custody; no public agent endpoint. GitHub remains bootstrap coordination until a deliberate
+per-job-class cutover. Local Hermes state and peer messages are not a second global scheduler.
+
+**Delivery changes:** real-task-based T0/T1 admission replaces obsolete calibration graduation text. Ordinary code
+uses bounded repairs and can proceed after another job is submitted; controlled/native operations retain their
+own attempt limits. Prepare four non-overlapping ordinary implementation packets as drafts, without claiming
+unpublished work is ready. Draft structural validation is separate from claimable validation, and the issue
+renderer must refuse non-ready capsules. Codex still owns every architecture/security/migration/integration decision.
+
+**Rehearsal correction:** B-DB-PREP must produce an explicit successor preparation/rehearsal packet distinguishing
+inputs available before preparation, preparation observations, and evidence produced by rehearsal. It must not
+require its own future success as a prerequisite. Existing AUTO-100/110 runtime contracts stay disabled/unmodified;
+no readiness blocker is cleared by this planning correction.
+
+**Reuse:** adapt focused MIT-licensed patterns/modules from Control Center, Hermes WebUI and Hermes Desktop after
+pin/license checks; use restricted-license Hermes Studio as workflow inspiration only absent separate licensing.
+Detailed source evidence and caveats are in `CR14A_UPSTREAM_REUSE.md`; no upstream implementation is copied here.
+
+**Evidence required:** source-backed requirements/current-state audit; coherent phase/dependency and owner-effect
+boundaries; non-overlapping complete draft packets; draft/ready/render/intake regression tests; no runtime/host
+effects; proportionate independent review of this architecture/coordination change. The acceptance record must
+state tests actually run and must not import an old full-suite or native result as new evidence.
+
+**Reevaluate:** in B-RUNTIME/B-AUTH/B-PROJECT-API and C-ADAPTER before selecting an installed runtime, wiring a
+transport or identity verifier, changing a contract/manifest, configuring a host, or issuing a live owner packet.
+Reference: `CR14A_INTEGRATION_DIRECTION.md`. This ADR changes direction, not the authority of dormant code.

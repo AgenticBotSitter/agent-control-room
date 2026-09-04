@@ -50,7 +50,7 @@ function argumentMatchesRepoPath(argument, declaredPath) {
   return normalized === declaredPath || normalized.endsWith(`/${declaredPath}`);
 }
 
-function validateCapsule(capsule) {
+function validateCapsule(capsule, { draft = false } = {}) {
   const errors = [];
   add(errors, capsule?.schema === CAPSULE_SCHEMA, "capsule_schema_invalid");
   add(errors, ID.test(capsule?.capsuleId ?? ""), "capsule_id_invalid");
@@ -58,7 +58,7 @@ function validateCapsule(capsule) {
   add(errors, typeof capsule?.block === "string" && capsule.block.length > 0, "block_missing");
   add(errors, typeof capsule?.summary === "string" && capsule.summary.length > 0 && capsule.summary.length <= 100, "summary_invalid");
   add(errors, ["any", "macos", "windows", "linux"].includes(capsule?.platform), "platform_invalid");
-  add(errors, capsule?.status === "ready", "capsule_not_claimable");
+  add(errors, capsule?.status === (draft ? "draft" : "ready"), draft ? "capsule_not_draft" : "capsule_not_claimable");
   add(errors, ["standard-work", "platform-validation", "controlled-effect", "independent-review"].includes(capsule?.mode), "mode_invalid");
   add(errors, ["T0-mechanical", "T1-bounded-implementation", "T2-integration-candidate", "T3-platform-validation"].includes(capsule?.taskClass), "task_class_not_delegable");
   add(errors, ["low", "medium", "high", "critical"].includes(capsule?.risk), "risk_invalid");
@@ -183,14 +183,16 @@ function main() {
   let args;
   try {
     args = parseArgs(process.argv.slice(2));
-    if (args.mode === "capsule") {
+    if (args.mode === "capsule" || args.mode === "capsule-draft") {
       if (!args.capsule) throw new Error("capsule mode requires --capsule");
       const capsule = readJson(args.capsule);
-      const errors = validateCapsule(capsule);
+      const draft = args.mode === "capsule-draft";
+      const errors = validateCapsule(capsule, { draft });
       const report = {
-        schema: "control-room.agent-build-capsule-validation/v2",
+        schema: draft ? "control-room.agent-build-capsule-draft-validation/v2" : "control-room.agent-build-capsule-validation/v2",
         ok: errors.length === 0,
-        disposition: errors.length === 0 ? "claimable" : "draft-or-invalid",
+        disposition: errors.length === 0 ? (draft ? "valid-draft-not-claimable" : "claimable") : "draft-or-invalid",
+        ...(draft ? { claimable: false } : {}),
         capsuleId: capsule.capsuleId ?? null,
         waveId: capsule.waveId ?? null,
         errors: [...new Set(errors)].sort()

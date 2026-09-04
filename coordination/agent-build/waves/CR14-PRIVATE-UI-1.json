@@ -1,0 +1,15 @@
+{
+  "schema": "control-room.agent-build-wave/v2",
+  "waveId": "CR14-PRIVATE-UI-1",
+  "block": "CR14-PRIVATE-BETA",
+  "status": "draft",
+  "baseCommit": "17d8a14499d2bdd517bb3b632e3f2501bb4cee88",
+  "integrationBranch": "integration/cr14-private-ui-1",
+  "capsules": [
+    "coordination/agent-build/capsules/CR14B-PROJECT-UI-001.json",
+    "coordination/agent-build/capsules/CR14B-CONNECTION-UI-001.json",
+    "coordination/agent-build/capsules/CR14C-REVIEW-UI-001.json",
+    "coordination/agent-build/capsules/CR14F-NEWS-CORE-001.json"
+  ],
+  "ownerEffectAuthority": "none"
+}
