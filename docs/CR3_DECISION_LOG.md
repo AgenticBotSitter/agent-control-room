@@ -3821,3 +3821,36 @@ verification; and a different independent zero-repair review.
 **Reevaluate:** Before importing, retrieving, or invoking LIVE-220; using native or live persistence/adapter ports;
 creating, observing, transferring, or closing a real resource; issuing or spending live authority; clearing a blocker;
 assembling a candidate; making a physical attempt; wiring runtime use; contacting a provider; or deploying.
+
+**Accepted evidence:** Exact product `71e4c737b6e681fe24d730decc3497d196cf441c` passed 10/10 dedicated,
+255/255 CR13A, the complete lifecycle, five build phases, 4/4 rendered pages, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A seventh different reviewer closed M-001 through M-006 and the
+companion constructor surface with 0 High/Medium/Low. All hostile and ambient behavior was zero; every real effect and
+authority remained zero or false. Accepted report SHA-256:
+`1d552ac7d580d6996b5192139dee85beb4f15e1058cf2c19719e9424f82f00f8`.
+
+## ADR-176 — Freeze native factory retrieval separately from native invocation
+
+**Decision:** CR13A-LIVE-250 will specify a private, same-module, one-use bridge between accepted LIVE-240 evidence and
+the quarantined LIVE-220 factory. The contract may describe retrieval but cannot implement, expose, or exercise the
+real factory or make a native effect reachable.
+
+**Why:** LIVE-240 proves the composition order with inert ports, while LIVE-220 keeps the native factory unreachable in
+a module-private WeakMap. Joining those boundaries directly would simultaneously create capability reachability and a
+physical effect path. A separate retrieval contract makes the exact prerequisite evidence, one-use consumption,
+failure/ambiguity semantics, non-export rules, and restart behavior reviewable first.
+
+**Alternatives rejected:** export the factory; add a public getter; accept a caller-supplied factory or capability;
+retrieve before durable binding, claim, spends, or uncertainty marker; return or serialize the factory; test retrieval
+by invoking it; combine retrieval, invocation, adapter transfer, runtime wiring, qualification, or deployment; or treat
+repository evidence as native authority.
+
+**Evidence required:** exact accepted LIVE-220 and LIVE-240 product/review binding; same-module privacy; one retrieval
+ceiling; prerequisite and marker order; no-return/non-serialization; definite pre-retrieval failure and terminal
+post-retrieval ambiguity; no retry after uncertainty or restart; hostile input and ambient replacement non-execution;
+no new effect import or runtime consumer; exact zero-effect and false-authority truth; full producer verification; and a
+different independent zero-repair review.
+
+**Reevaluate:** Before implementing a bridge, making the factory reachable inside composition, retrieving or invoking
+it, adding live persistence or adapter ports, creating a native resource, observing a locator, wiring runtime use,
+assembling a qualification candidate, making a physical attempt, contacting a provider, or deploying.
