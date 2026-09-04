@@ -3659,3 +3659,38 @@ with 0 High/Medium/Low and every forbidden effect and authority at zero or false
 backend composition, selecting/binding/listening/closing, installing handlers, issuing/spending a live handoff,
 persisting native state, clearing a blocker, assembling a candidate, making an owner-attended attempt, wiring runtime
 use, contacting a provider, or deploying.
+
+## ADR-171 — Freeze the native retained-resource issuer contract before implementing it
+
+**Decision:** CR13A-LIVE-200 defines a frozen, fake-only contract for the future module-private issuer that will create,
+retain, and transfer one native IPv4 loopback listener to the accepted LIVE-190 adapter. It binds the exact candidate,
+attempt, epoch, owner window, predecessor evidence, target runtime, tunnel peer, host-key digest, locator and custody
+spends, durable markers, failure classes, cleanup, recovery, and safe evidence. The repository result remains entirely
+negative: no issuer, resource, locator, spend, driver call, effect, blocker clearance, or authority exists.
+
+**Why:** LIVE-190 proves safe acceptance after a resource exists, but it intentionally has no resource issuer. Creating
+that issuer introduces the first-effect ordering, continuous custody, durable ambiguity, and cleanup obligations that
+cannot be safely inferred from adapter behavior. Freezing those obligations as exact inert data keeps the architecture
+reviewable before native code can act.
+
+**Alternatives rejected:** implement the issuer immediately; let the caller provide a server, port, descriptor, handle,
+or callback; export a structural capability; bind before durable spend; discover identity after listen; release custody
+before exact adapter acceptance; treat timeout as definite failure; retry an uncertain listen or handoff; claim cleanup
+without independent zero-resource evidence; or combine issuer implementation, runtime wiring, and physical qualification.
+
+**Evidence required:** exact accepted LIVE-190 product/review binding; complete frozen binding, proof, state, failure,
+and marker sets; strict provenance and digest parsing; hostile input and ambient replacement non-execution; public
+privacy; no network import or runtime consumer; exact zero-effect and false-authority truth; full producer verification;
+and a different independent zero-repair review.
+
+**Accepted evidence:** Exact product `9e3cb2afdcd3008dcdac94d113db991f34e49175` passed 9/9 dedicated, 196/196
+connection, 212/212 CR13A, the complete lifecycle, all five build phases, 4/4 rendered pages, migrations 0001-0036/119
+tables, TypeScript, lint, stage zero, and whitespace. A different independent reviewer passed all twelve fixed commands
+and groups with 0 High/Medium/Low. All hostile and ambient replacement inputs executed zero behavior; every forbidden
+effect and authority remained zero or false. Accepted report SHA-256:
+`82caf0b6ffc0a66661448a9780d0557221faa179f43956d6b2f691a7a1404185`.
+
+**Reevaluate:** Before importing a runtime network module, creating or receiving a native server, selecting or consuming
+a locator/port, writing a live spend or checkpoint, calling the accepted adapter or physical driver, attempting
+bind/listen/close, clearing a blocker, assembling a candidate, performing an owner-attended attempt, wiring runtime use,
+contacting a provider, or deploying.
