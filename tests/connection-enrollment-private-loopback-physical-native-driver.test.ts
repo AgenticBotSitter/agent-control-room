@@ -360,9 +360,11 @@ test("CR13A-LIVE-120 exposes no native constructor, bind issuer, locator, or pro
   assert.equal(status.networkIoEventsObserved, 0);
 });
 
-test("CR13A-LIVE-120 allowlists one isolated node:net server module with no runtime consumer", async () => {
+test("CR13A allowlists only the isolated node:net server modules with no runtime consumer", async () => {
   const implementationPath = resolve(
     "src/connection-registry/v1/private-loopback-physical-native-driver.ts");
+  const retainedIssuerImplementationPath = resolve(
+    "src/connection-registry/v1/private-loopback-native-retained-resource-issuer-implementation.ts");
   const implementationSource = await readFile(implementationPath, "utf8");
   assert.match(implementationSource, /from "node:net"/);
   assert.match(implementationSource, /createServer as createNodeNetServerV1/);
@@ -408,7 +410,7 @@ test("CR13A-LIVE-120 allowlists one isolated node:net server module with no runt
     if (/from ["']node:net["']/.test(withoutTypeOnlyNetImport)) runtimeNetImporters.push(file);
     if (/^import\s+type[^\n]*from ["']node:net["'];/m.test(source)) typeOnlyNetImporters.push(file);
   }
-  assert.deepEqual(runtimeNetImporters, [implementationPath]);
+  assert.deepEqual(runtimeNetImporters.sort(), [implementationPath, retainedIssuerImplementationPath].sort());
   assert.deepEqual(typeOnlyNetImporters, [
     resolve("src/connection-registry/v1/private-loopback-native-retained-resource-adapter.ts"),
   ]);
@@ -424,7 +426,7 @@ test("CR13A-LIVE-120 allowlists one isolated node:net server module with no runt
       assert.doesNotMatch(source, /private-loopback-physical-native-driver/);
     }
   }
-  assert.deepEqual(nativeServerAuthorityFiles, [implementationPath]);
+  assert.deepEqual(nativeServerAuthorityFiles.sort(), [implementationPath, retainedIssuerImplementationPath].sort());
   const barrel = await readFile(resolve("src/connection-registry/v1/index.ts"), "utf8");
   const localPilot = await readFile(resolve("src/local-pilot/v1/runtime.ts"), "utf8");
   assert.doesNotMatch(barrel, /physical-native-driver/);
