@@ -3430,3 +3430,35 @@ physical-driver imports or listener/IPC/native/network/external effects. Preserv
 **Reevaluate:** Before implementing a private provider, candidate assembler, owner-spend path, native harness,
 physical attempt, evidence acceptance registry, runtime consumer, SSH/credential path, production contact, or
 deployment.
+
+## ADR-165 — Define target-runtime proof without exposing target identity
+
+**Decision:** CR13A-LIVE-140 freezes a privacy-preserving target-runtime attestation contract before any host observer
+exists. The repository may expose one exact policy singleton and one explicitly non-production `repository_fake`
+result. The fake describes intended macOS/Node 22 policy and required future private claims while fixing every host
+observation, signer/clock/nonce/epoch/runtime/driver/candidate/attempt binding, real evidence, blocker clearance,
+authority grant, and native/external-effect count to false or zero.
+
+A future real attestation must privately bind platform/architecture, exact runtime and executable content, boot and
+process epochs, exact accepted harness/driver, candidate, attempt, fresh nonce, trusted time, signer, and independent
+checkpoint. Public evidence may contain no raw host/user/path/process/network/credential/native value and no unkeyed
+digest of a low-entropy identifier. Any safe acceptance reference must be fresh-attempt-derived inside the separately
+accepted signer/verifier boundary and non-correlatable across unrelated attempts.
+
+**Why:** A platform string, source commit, or repository test cannot prove which runtime will execute a physical
+qualification. Conversely, publishing a hardware UUID, serial, host name, path, PID, address, or guessable digest would
+turn qualification evidence into a tracking or secret-leak channel. Freezing the minimum private claims and maximum
+public truth before implementing a provider prevents both false qualification and identity leakage.
+
+**Alternatives rejected:** Read `process`, `node:os`, system profiler, environment, executable paths, or machine IDs in
+the repository fake; accept caller-supplied identity claims; expose stable hashed host identifiers; let the platform
+observer self-sign or self-verify; reuse an earlier nonce or boot/session proof; let a valid target attestation clear
+locator, port, peer, host-key, owner, physical-proof, or activation blockers; or treat supported policy as observed
+truth.
+
+**Evidence:** `docs/CR13A_LIVE_140_TARGET_RUNTIME_ATTESTATION_BOUNDARY.md` freezes the repository-only boundary on
+stacked base `e620b7bc24760a8f8f0034db6cda3d60e74763a8`. No host observation, runtime input, provider, signer, clock, nonce,
+native import, listener/network action, or external effect is added by the architecture commit.
+
+**Reevaluate:** Before any platform/native observer, signer, clock, nonce, verifier, acceptance store, checkpoint,
+candidate, owner window, physical attempt, runtime consumer, SSH/credential path, production contact, or deployment.

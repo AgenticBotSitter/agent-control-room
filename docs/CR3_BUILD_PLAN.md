@@ -1504,7 +1504,8 @@ did not construct or import the native driver and clear none of the twelve block
 
 ## CR13A-LIVE-140 — target-runtime attestation boundary
 
-Status: next architecture block after owner-controlled LIVE-130 integration. Use Sol xhigh.
+Status: architecture contract frozen on a stacked branch pending owner-controlled LIVE-130 integration. Use Sol xhigh.
+See `CR13A_LIVE_140_TARGET_RUNTIME_ATTESTATION_BOUNDARY.md` and ADR-165.
 
 LIVE-140 must define, implement with repository fakes, and independently review a privacy-preserving target-runtime
 attestation port. It may describe the minimum stable claims needed to bind a future qualification candidate to one
@@ -1516,3 +1517,9 @@ Architecture and ADR come first. The effect-free implementation must use exact p
 claims, explicit expiry/replay/epoch boundaries, no production-shaped proof issuer, no clock/callback/executable input,
 zero authority grants, and runtime non-wiring. A future real attestor, host observation, candidate assembly, owner
 window, native qualification, and activation each remain separate blocks.
+
+The frozen contract selects the intended macOS/Node 22 private-loopback host class, both supported Mac architecture
+classes, single-boot/process/candidate/attempt binding, a 60-second future ceiling, exact required private claim names,
+and a strict public privacy boundary. It explicitly rejects raw or unsalted host identifiers. This block implements
+only one exact policy singleton and one `repository_fake` singleton with every real observation, proof, blocker-clearance,
+authority, and effect field false or zero.
