@@ -2303,3 +2303,23 @@ without hostile execution. Static tests require one safe barrel consumer and no 
 protected key, PostgreSQL/PGlite, checkpoint, timer, listener, network, or runtime path. Status reports 58 zero actuals,
 eight false grants, and no blocker clearance. Product verification and a different independent report-only review are
 passed before integration. Acceptance grants no protected implementation or native execution authority.
+
+## CR13A-LIVE-470 — production capsule and owner-native execution authorization architecture
+
+Status: independently accepted for architecture-only integration after remediation. Use Sol xhigh for the next inert
+contract block.
+
+LIVE-470 fixes the production capsule as a private lexical graph inside the accepted LIVE-440 source-owning module;
+its runner's only arguments are exact sealed owner-native and broker invocation envelopes. It accepts no database,
+key, source, provider, signer, checkpoint, clock, nonce, callback, configuration, or generic dependency. On a later
+authorized entry it must authenticate the owner-root-pinned, independently anchored trust registry and deployment
+manifest, resolve exact accepted components, preflight all five providers and after-exit cleanup, materialize signed
+reservation intents, and stop at one atomic owner-consumption/exact-product-attempt closure.
+
+The complete owner body binds every product/review/key/scope/time/operation/cleanup identity. Exact append-only
+PostgreSQL tables and independently protected composite owner-attempt anchoring defeat whole-database rollback.
+Uniqueness deliberately excludes authorization/candidate/attempt relabeling from the product-pair key. One fixed
+parent/child IPC flow leaves cleanup and finalization in the parent after child exit. Any consumption uncertainty burns
+the pair; recovery may close evidence but never resume. Providers and protected pipeline components must be accepted
+before dormant capsule assembly; the source owner is last. Architecture work performs zero protected or external
+effects. See `docs/CR13A_LIVE_470_PRODUCTION_CAPSULE_OWNER_NATIVE_AUTHORIZATION_DESIGN.md`.

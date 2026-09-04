@@ -155,6 +155,7 @@
 | CR13A-LIVE-440 same-module source-invocation/raw-handoff implementation design | Architecture remediated; dormant implementation waits for accepted private pipeline and native execution remains owner-gated | Exact source-owner seam and raw domains, module-minted deterministic fault seam, distinct signer/checkpoint/high-water, authenticated future evidence, and zero current effects |
 | CR13A-LIVE-450 private observation-to-attestation pipeline design | Independently accepted for architecture-only integration | 3 High/6 Medium/0 Low remediated to 0/0/0; separate owner-native authority and exact-product attempt ceiling; production-only capsule; five ordered provider lanes; 36 attestation stages; exact PostgreSQL/high-water split-commit recovery; pre-reserved after-exit cleanup; zero current effects |
 | CR13A-LIVE-460 inert private observation-to-attestation pipeline contract | Independently accepted; ordinary integration ready | Product `2cab7df...`, tree `676cc41...`; 0 High/Medium/Low; 11/11 focused, 461/461 CR13A, full lifecycle pass, 5/5 build, 4/4 render, 38 migrations/124 tables; 58 zero actuals/eight false grants; no capsule/source/provider/key/database/native/runtime path |
+| CR13A-LIVE-470 production capsule and owner-native authorization architecture | Independently accepted for architecture-only integration | First review 5 High/4 Medium/0 Low, all remediated; different re-review 0/0/0; same-module capsule, rooted/anchored trust, exact owner/schema/rollback/IPC boundaries; zero current effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -229,8 +230,16 @@ contains all 14 ordered claims, five provider lanes, 36 attestation stages, nine
 six after-exit cleanup facts, ten split-commit recovery cases, and six separately authorized successors. Exact-
 singleton parsers reject copies, accessors, symbols, and proxies without executing hostile behavior. The product
 reports 58 zero actuals and eight false grants and imports no source/provider, constructs no capsule, reads no key or
-host value, opens no database/network path, and performs no native or external effect. Independent product review is
-is accepted for ordinary integration only; every protected implementation and native authority remains absent.
+host value, opens no database/network path, and performs no native or external effect. The product is accepted for
+ordinary integration only; every protected implementation and native authority remains absent.
+
+CR13A-LIVE-470 independently accepts the next protected implementation topology without implementing it. The production capsule is
+a private lexical graph inside the accepted LIVE-440 source-owning module; its runner accepts only the two sealed
+owner/invocation envelopes. An out-of-band owner-root pin, independently anchored trust registry/manifest, strict owner
+body and operation budget, exact key lifecycle/PostgreSQL schema, and independent composite owner-attempt rollback
+anchor prevent substitution, whole-database rollback, reuse, or relabeling. One parent creates one child for stages
+1-31; parent-side cleanup/finalization complete stages 32-35 and a different reviewer handles stage 36. Uncertainty
+burns the product pair and can never resume. Documentation performs zero protected or external effects.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1459,12 +1468,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-470 — production capsule and owner-native execution authorization architecture
+Block: CR13A-LIVE-480 — inert owner-native authorization contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-460 now freezes the machine-checked pipeline vocabulary. Before protected code can exist, the exact non-exporting construction topology, owner-native authorization body/store, product-pair attempt uniqueness, preflight order, failure states, and deterministic fake seam must be designed together so callers can never assemble capabilities or widen authority.
-Expected output: one repository-only normative design and ADR for the production capsule plus owner-native authorization/exact-product-attempt boundary, with exact module seams, state machine, schemas, writer ceilings, failure/recovery mapping, and zero current effects; different independent architecture review required.
-Owner action: none for architecture-only documentation. Any implementation, key/provider/database access, source modification/invocation, native attempt, runtime wiring, or deployment remains separately gated.
+Why: LIVE-470 is accepted at 0 High/Medium/Low. The next safe slice makes only its owner-envelope vocabulary and hostile parser machine-checkable before any issuer, store, key, database, anchor, capsule, process, or native behavior can exist.
+Expected output: exact singleton body/envelope, reservation-intent, operation-budget, terminal-outcome, status/authority, zero-use contracts and hostile deterministic tests; full relevant verification and different independent review.
+Owner action: none for this inert repository-only block. Any issuer/store/migration/key/manifest/trust/anchor/context/capsule/provider/source/IPC/process/native/runtime/deployment work remains separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
