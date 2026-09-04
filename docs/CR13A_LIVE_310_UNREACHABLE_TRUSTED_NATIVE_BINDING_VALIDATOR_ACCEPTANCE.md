@@ -29,7 +29,7 @@ corrected snapshot with 0 High, 0 Medium, and 0 Low.
 ## Verification
 
 Producer verification passed macOS stage zero, TypeScript, lint, 12/12 focused tests, 318/318 CR13A tests, the complete
-769/392/392 lifecycle, all five production build phases, 4/4 rendered routes, migrations 0001-0036/119 PostgreSQL
+769/421/392 lifecycle, all five production build phases, 4/4 rendered routes, migrations 0001-0036/119 PostgreSQL
 tables, whitespace, and clean status.
 
 The final different report-only reviewer passed all twelve inspection groups and fourteen fixed commands exactly once.

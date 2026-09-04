@@ -4066,7 +4066,7 @@ authority covers unreachable repository source and ordinary integration only; it
 process reads, observer use, attestation, physical qualification, or external effects.
 
 **Accepted evidence:** Corrected integration product `d95738bf79f9f12f6986f28b8f7548b661f0587a` passed 12/12
-dedicated, 318/318 CR13A, the complete 769/392/392 lifecycle, five build phases, 4/4 rendered routes, migrations
+dedicated, 318/318 CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations
 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. The first two rejected reviews remain
 preserved. A third different reviewer closed M-001, M-002, and L-001 and ran all fourteen commands once with
 0 High/Medium/Low and zero validator, descriptor, process, observer, native, network, or external effects. Accepted
