@@ -1,15 +1,15 @@
 # CR13A-LIVE-310 independent remediation re-review packet
 
-**Review type:** fresh different independent, report-only, zero-repair  
-**Required model:** `gpt-5.6-sol`  
-**Required reasoning effort:** `xhigh`  
-**Remediated product:** `2ef8fdc23f2e175708721b3728b5a9e3ccd73b24`  
-**Remediated product tree:** `df23da87346662b64bc41d6f04e18de2d34a5b9f`  
-**Remediation parent / preserved-review commit:** `3572843c68e41d928c699cb790ec7b3835320880`  
-**Design parent:** `3cc72d778606a199552a55adf84f66f1f7d92256`  
-**Rejected product:** `3dd9969db7344e07f503dc8769d44a0d2bd5b43e`  
-**Rejected product tree:** `4a6c27a3c2ad07f7817f4c043da1b69943499b5e`  
-**First packet SHA-256:** `c49244dbe2da2ab79ae7adeabd2e800ea569cad94fe2fe5f02118c9f76347734`  
+**Review type:** fresh different independent, report-only, zero-repair
+**Required model:** `gpt-5.6-sol`
+**Required reasoning effort:** `xhigh`
+**Remediated product:** `2ef8fdc23f2e175708721b3728b5a9e3ccd73b24`
+**Remediated product tree:** `df23da87346662b64bc41d6f04e18de2d34a5b9f`
+**Remediation parent / preserved-review commit:** `3572843c68e41d928c699cb790ec7b3835320880`
+**Design parent:** `3cc72d778606a199552a55adf84f66f1f7d92256`
+**Rejected product:** `3dd9969db7344e07f503dc8769d44a0d2bd5b43e`
+**Rejected product tree:** `4a6c27a3c2ad07f7817f4c043da1b69943499b5e`
+**First packet SHA-256:** `c49244dbe2da2ab79ae7adeabd2e800ea569cad94fe2fe5f02118c9f76347734`
 **Preserved rejection SHA-256:** `ced234c33a36bd248d1647ed5e2180804b39b718a8047cba0f4ddfa000f40465`
 
 ## Authority and stop boundary

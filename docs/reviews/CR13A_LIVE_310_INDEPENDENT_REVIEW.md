@@ -1,11 +1,11 @@
 # CR13A-LIVE-310 independent review
 
-**Disposition:** REJECT pending remediation and a fresh different independent re-review  
-**Review type:** different independent, report-only, zero-repair  
-**Model/effort:** `gpt-5.6-sol`, `xhigh`  
-**Product:** `3dd9969db7344e07f503dc8769d44a0d2bd5b43e`  
-**Product tree:** `4a6c27a3c2ad07f7817f4c043da1b69943499b5e`  
-**Design parent:** `3cc72d778606a199552a55adf84f66f1f7d92256`  
+**Disposition:** REJECT pending remediation and a fresh different independent re-review
+**Review type:** different independent, report-only, zero-repair
+**Model/effort:** `gpt-5.6-sol`, `xhigh`
+**Product:** `3dd9969db7344e07f503dc8769d44a0d2bd5b43e`
+**Product tree:** `4a6c27a3c2ad07f7817f4c043da1b69943499b5e`
+**Design parent:** `3cc72d778606a199552a55adf84f66f1f7d92256`
 **Packet SHA-256:** `c49244dbe2da2ab79ae7adeabd2e800ea569cad94fe2fe5f02118c9f76347734`
 
 ## Findings
