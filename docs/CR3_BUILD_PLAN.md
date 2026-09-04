@@ -2134,8 +2134,8 @@ provider/production/external effects. Preserve `docs/reviews/CR13A_LIVE_390_INDE
 
 ## CR13A-LIVE-400 — private fresh-spend/recheck composition implementation
 
-Status: architecture frozen for repository implementation on independently accepted LIVE-390 product `34640c7...`;
-use Sol xhigh.
+Status: exact product `ccce7c84ebfbf955f05fb7b150c1ccf9b80535b3` complete with producer verification;
+different independent review pending. Use Sol xhigh.
 
 LIVE-400 may add one non-barrel-exported repository factory that constructs the exact accepted invocation-
 authorization store from a database client and three protected keys, then returns one frozen runner. Each runner entry
@@ -2147,3 +2147,10 @@ Unknown spend state, replay, mutation, expiry, or recheck failure is terminal be
 No source import/lookup/invocation, native read, observation, attestation, candidate, owner window, runtime consumer,
 network, provider, production database, deployment, or external effect is permitted. Local PGlite spend/recheck
 verification is allowed. See `docs/CR13A_LIVE_400_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_IMPLEMENTATION.md`.
+
+Producer verification passed 12/12 dedicated tests, 415/415 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0038/124 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. The implementation constructs the exact store inside its factory, captures the accepted spend/recheck
+methods, returns neither private receipt, publishes only five coarse terminal outcomes, has 23 static zero actuals and
+eight false grants, is absent from the barrel, and has no source/native/runtime consumer. Independent review remains
+required; see `docs/reviews/CR13A_LIVE_400_INDEPENDENT_REVIEW_PACKET.md`.

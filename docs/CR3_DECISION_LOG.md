@@ -4406,3 +4406,10 @@ failure as terminal prevents retry from manufacturing authority.
 has no barrel/runtime consumer and cannot reach LIVE-330 or any source/native/provider/production path. A later block
 must separately freeze and review the source lookup boundary. See
 `docs/CR13A_LIVE_400_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_IMPLEMENTATION.md`.
+
+**Producer evidence:** Exact product `ccce7c84ebfbf955f05fb7b150c1ccf9b80535b3` passed 12/12 focused, 415/415 CR13A,
+the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables, TypeScript, lint,
+macOS stage zero, whitespace, and clean status. Replay, concurrency, recheck expiry, commit-return uncertainty,
+database failure, mid-flight mutation, and hostile inputs all stop before lookup. Both receipts remain lexical and
+unreturned; the module is absent from the barrel and has no source/native/runtime consumer. This is producer evidence
+only; different independent review is pending.
