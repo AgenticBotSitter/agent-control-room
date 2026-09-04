@@ -1850,3 +1850,25 @@ assemble a qualification candidate, implement or call a real provider, create an
 locator, create/listen/inspect/transfer/close a resource, write live persistence, perform a physical attempt, wire an
 app/API/worker/Idea Lab/Hermes/startup consumer, contact a provider, clear a blocker, or deploy. Immutable producer
 evidence and a different independent report-only zero-repair review are required before ordinary integration.
+
+Accepted product `c1743b7f7b5c8362cec3d33b149e3f51c5e5fda6` passed 10/10 dedicated, 286/286 CR13A,
+the complete 769/392/392 lifecycle, all five build phases, 4/4 rendered routes, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. The original procedural rejection is preserved. A different fresh
+reviewer passed all twelve inspection groups and fourteen corrected commands once with 0 High/Medium/Low and zero
+external effects. Accepted rereview SHA-256:
+`bd8281cf4e0336eba7f55de2b8cde9e39e9305860a2a8287e3dcf74af52d7853`.
+
+## CR13A-LIVE-290 — unreachable native target-runtime observer
+
+Status: architecture frozen; source implementation begins only after accepted LIVE-280 integration. Use Sol xhigh.
+
+LIVE-290 may implement one real no-input native observer source in a dedicated module outside the safe barrel. It may
+capture the minimum `node:os` operations and process-field reads needed for a later private target-runtime attestation,
+create one frozen observer, and store it once in a private WeakMap with no lookup operation. Public module evidence may
+state only implementation presence and zero use/effects.
+
+The block must not invoke the observer; read host, process, environment, path, clock, locator, credential, or provider
+values; return, log, serialize, persist, digest, sign, or expose raw observation; implement nonce/replay/candidate/owner
+composition; retrieve the native shell; open a listener; wire any production consumer; clear the target-runtime blocker;
+contact Hermes/provider; or deploy. Immutable producer evidence and a different independent report-only zero-repair
+review are required before ordinary integration.

@@ -136,24 +136,26 @@
 | CR13A-LIVE-250 private one-use native-factory retrieval bridge contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `9b855d4...`; 12/12 commands, 8/8 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; no exported retrieval callable and zero real retrieval/invocation/effects |
 | CR13A-LIVE-260 private same-module native-composition shell contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `01bfa65...`; 12/12 commands, 8/8 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 20 zero actual totals and eight false authority grants |
 | CR13A-LIVE-270 unreachable native-composition shell implementation | Independently accepted; ordinary owner-controlled integration of unreachable source ready | Product `5e5384b...`; 12/12 fixed review commands, 33/33 focused review tests, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero shell retrieval/native/listener/network effects |
-| CR13A-LIVE-280 private physical-qualification candidate contract | Architecture frozen; effect-free implementation begins after LIVE-270 integration | Exact component and blocker ledger, one-attempt ceilings, no assembler, owner window, native invocation, listener, provider, or runtime wiring |
+| CR13A-LIVE-280 private physical-qualification candidate contract | Independently accepted; ordinary integration of inert contract ready | Product `c1743b7...`; corrected rereview 14/14 commands, 10/10 focused, 286/286 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; original procedural rejection preserved |
+| CR13A-LIVE-290 unreachable native target-runtime observer | Architecture frozen; implementation begins after LIVE-280 integration | Real observer source stored privately with zero lookups/invocations/host reads; no attestation, signer, candidate, blocker clearance, or runtime wiring |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-270 exact product `5e5384b1c7b3806a62672018843aa318b0e75728` is independently accepted. The
-same-module private shell and bridge exist but remain unreachable, uninvoked, and runtime-unwired. Producer gates passed
-33/33 dedicated tests, 276/276 CR13A tests, the complete registered lifecycle, 5/5 build phases, 4/4 rendered routes,
-36 migrations/119 tables, typecheck, lint, stage zero, whitespace, and clean status. A different reviewer ran the fixed
-12-command sequence once with 0 High/Medium/Low. Review SHA-256:
-`96edcc2c9c65ea38b3da1adec7c092fdf056e544f02856705e93ce0f19d79609`. No shell retrieval, factory invocation,
-native resource, locator, listener, persistence, network, protected read, blocker clearance, or authority occurred.
+CR13A-LIVE-280 exact product `c1743b7f7b5c8362cec3d33b149e3f51c5e5fda6` is independently accepted. It
+freezes 15 future real components, 10 separate stages, 14 blockers, 21 one-use ceilings, 31 zero actual totals, and
+eight false authority grants. Producer gates passed 10/10 dedicated, 286/286 CR13A, the complete 769/392/392 lifecycle,
+5/5 build phases, 4/4 rendered routes, 36 migrations/119 tables, typecheck, lint, stage zero, whitespace, and clean
+status. The first procedural rejection is preserved. A different reviewer passed the corrected 14-command sequence
+once with 0 High/Medium/Low. Accepted rereview SHA-256:
+`bd8281cf4e0336eba7f55de2b8cde9e39e9305860a2a8287e3dcf74af52d7853`. No provider, candidate, owner window,
+native action, listener, persistence, network, blocker clearance, or authority occurred.
 
-Next block: CR13A-LIVE-280, the private physical-qualification candidate contract. It will compile the accepted source
-chain, exact future real components, fourteen remaining blockers, one-attempt ceilings, sanitation, and no-retry rules
-into one inert repository record. It must not assemble a candidate, retrieve the shell, invoke the factory, create a
-resource, select a locator, contact Hermes/provider, consume owner authorization, perform a physical attempt, wire
-runtime use, or deploy. Use `gpt-5.6-sol` at `xhigh` effort.
+Next block: CR13A-LIVE-290, the unreachable native target-runtime observer. It will add real private observer source
+outside the safe barrel, capture only the minimum OS/runtime/process operations, store one frozen observer with zero
+lookup or invocation paths, and publish only safe zero-use evidence. It must not read this Mac, expose raw host values,
+create an attestation, retrieve the native shell, contact Hermes/provider, perform a physical attempt, wire runtime use,
+or deploy. Use `gpt-5.6-sol` at `xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1382,12 +1384,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-280 — implement the private physical-qualification candidate contract
+Block: CR13A-LIVE-290 — implement the unreachable native target-runtime observer
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-270 is independently accepted; the next risk is defining the complete candidate and every missing real prerequisite before any code can retrieve the shell or perform a native action.
-Expected output: exact inert component, blocker, stage, ceiling, provenance, sanitation, and authority records; hostile zero-execution tests; full verification; and independent review.
-Owner action: none for repository implementation and ordinary merges. Any real provider, candidate assembly, shell retrieval, native invocation, or physical qualification requires a new separately scoped decision or owner-attended authorization.
+Why: LIVE-280 is independently accepted and identifies target-runtime attestation as the first missing real prerequisite; the next risk is adding the minimum native observer source without making it callable or exposing host identity.
+Expected output: one private frozen observer stored with no retrieval operation, safe zero-use status, static and hostile proof of zero host reads, full verification, and independent review.
+Owner action: none for unreachable repository source and ordinary merges. Observer invocation, host/process/path reads, attestation, candidate assembly, native listener activity, or physical qualification remain separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
