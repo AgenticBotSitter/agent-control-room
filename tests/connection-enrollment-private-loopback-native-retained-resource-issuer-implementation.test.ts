@@ -42,10 +42,12 @@ void {
   assert.deepEqual([
     status.actualHostObservations, status.actualPortSelections, status.actualPortReservations,
     status.actualNativeBackendConstructions, status.actualNativeResourcesCreated,
-    status.actualNativeResourcesRetained, status.actualListenerAttempts, status.actualCloseAttempts,
+    status.actualNativeResourcesRetained, status.actualPrivateShellEntries, status.actualPrivateBridgeConsumptions,
+    status.actualPrivateFactoryLookups, status.actualPrivateFactoryReceipts, status.actualPrivateFactoryInvocations,
+    status.actualListenerAttempts, status.actualCloseAttempts,
     status.actualHandoffCapabilitiesIssued, status.actualHandoffCapabilitiesSpent, status.actualDriverAcceptCalls,
     status.actualPersistenceWrites, status.actualTimerCreations, status.actualNetworkIoEvents, status.protectedValuesRead,
-  ], new Array(15).fill(0));
+  ], new Array(20).fill(0));
   assert.equal(status.externalEffectOccurred, false);
 }
 
@@ -202,7 +204,7 @@ test("CR13A-LIVE-220 exports no server, locator, resource, handle, or authority"
     /127\.0\.0\.1|localhost|"(?:address|port|interface|socket|server|listener|resource|handle|fileDescriptor|capability|locator)"\s*:|\/Users\/|credentialMaterial|ownerIdentity/i);
 });
 
-test("CR13A-LIVE-220 contains the native factory only in private quarantine", async () => {
+test("CR13A-LIVE-220/270 contains the native factory and shell only in private quarantine", async () => {
   const source = await readFile(implementationPath, "utf8");
   assert.match(source, /from "node:net"/);
   assert.match(source, /createServer as createNodeNetServerV1/);
@@ -214,7 +216,10 @@ test("CR13A-LIVE-220 contains the native factory only in private quarantine", as
   assert.match(source, /const literalIpv4LoopbackV1 = "127\.0\.0\.1"/);
   assert.match(source, /const quarantinedNativeFactoriesV1 = new WeakMap/);
   assert.match(source, /weakMapSetV1, quarantinedNativeFactoriesV1/);
-  assert.doesNotMatch(source, /weakMapGetV1, quarantinedNativeFactoriesV1/);
+  assert.match(source, /weakMapGetV1, quarantinedNativeFactoriesV1/);
+  assert.match(source, /const quarantinedNativeCompositionShellsV1 = new WeakMap/);
+  assert.match(source, /weakMapSetV1, quarantinedNativeCompositionShellsV1/);
+  assert.doesNotMatch(source, /weakMapGetV1, quarantinedNativeCompositionShellsV1/);
   const publicConstruction = source.slice(source.indexOf(
     "export function createConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativeV1",
   ));
