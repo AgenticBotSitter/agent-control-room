@@ -52,4 +52,3 @@ rejects the product. The reviewer may not repair or retry it.
 Even a clean review permits ordinary owner-controlled integration only. It does not add a real native issuer or
 adapter, receive or touch a server, change the physical driver's backend, clear the handoff/custody gap, assemble a
 candidate, make a physical attempt, wire runtime use, contact a provider, or grant production authority.
-
