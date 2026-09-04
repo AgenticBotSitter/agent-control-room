@@ -157,6 +157,7 @@
 | CR13A-LIVE-460 inert private observation-to-attestation pipeline contract | Independently accepted; ordinary integration ready | Product `2cab7df...`, tree `676cc41...`; 0 High/Medium/Low; 11/11 focused, 461/461 CR13A, full lifecycle pass, 5/5 build, 4/4 render, 38 migrations/124 tables; 58 zero actuals/eight false grants; no capsule/source/provider/key/database/native/runtime path |
 | CR13A-LIVE-470 production capsule and owner-native authorization architecture | Independently accepted for architecture-only integration | First review 5 High/4 Medium/0 Low, all remediated; different re-review 0/0/0; same-module capsule, rooted/anchored trust, exact owner/schema/rollback/IPC boundaries; zero current effects |
 | CR13A-LIVE-480 inert owner-native authorization contract | Independently accepted after all 2 High/2 Medium findings were remediated; ordinary inert integration ready | Product `6d510d6...`, tree `ac8655e...`; 64 body fields plus 42 exact component product/tree/review bindings, 28 closed key bindings, one-per-provider ceilings; 12/12 focused, 473/473 CR13A, 0/0/0 |
+| CR13A-LIVE-490 inert trust, manifest, key-lifecycle, and rollback-anchor contract | Producer verified; independent review required before integration | Exact out-of-band owner-root pin/rotation, 28-role key registry, signed registry/manifest chains, five independent CAS anchors, closed split-commit recovery; 13/13 focused plus 473/473 CR13A; zero protected operations |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -262,6 +263,22 @@ re-review accepted exact product `6d510d6f1b80a98c00c16fcf2b55837afc1cea87`, tre
 reviewer independently repeated the focused suite, CR13A suite, TypeScript, targeted lint, stage zero, and diff gate.
 Ordinary integration is ready; every live or protected successor remains absent. See
 `docs/CR13A_LIVE_480_ACCEPTANCE.md`.
+
+CR13A-LIVE-490 implements the next inert security boundary. One exact frozen singleton binds the independently
+accepted LIVE-480 product and evidence, reuses its exact 42-component and 28-key-role schemas, and freezes the
+out-of-band owner-root pin and dual-signature rotation shapes, the complete per-role key lifecycle, canonical signed
+trust-registry and deployment-manifest chains, five independently keyed rollback anchors, and eight closed
+split-commit recovery outcomes. Rotation overlap is explicit and limited to 300 seconds; a role may have two active
+revisions only inside that declared overlap and exactly one outside it. Compromise never triggers automatic root
+replacement, and recovery may only reissue the byte-identical stored CAS request.
+
+The product remains repository-only and inert. It creates or reads no key, registry, manifest, anchor, database,
+clock, filesystem, environment, host, credential, source, provider, process, network, or native value; exposes no
+signer, resolver, store, migration, CAS adapter, or dependency factory; and grants no authority. Its status publishes
+44 zero actual totals and eight false grants. Dedicated tests pass 13/13, the existing CR13A suite passes 473/473,
+the complete 769/421/392 lifecycle exits zero, all five build phases and 4/4 rendered routes pass, and migrations
+0001-0038 verify 124 tables. TypeScript, full lint, macOS stage zero, and whitespace validation pass. A different
+independent zero-repair review remains required before the block may be integrated or advance the active frontier.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release

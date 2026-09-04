@@ -2355,7 +2355,7 @@ independent zero-repair re-review accepted exact product `6d510d6f1b80a98c00c16f
 
 ## CR13A-LIVE-490 — inert owner-root, key-role, trust-registry, manifest, and anchor contract
 
-Status: next. Use Sol xhigh.
+Status: implemented and producer-prevalidated; independent review pending. Use Sol xhigh.
 
 LIVE-490 is the next dependency-ordered repository-only slice from LIVE-470. It will freeze the out-of-band owner-root
 pin and recovery/rotation vocabulary; exact key-entry fields, states, use separation, overlap rules, and historical
@@ -2369,3 +2369,15 @@ native state. It exposes no signer, resolver, reader, writer, store, migration, 
 dependency-injection hook, runtime consumer, or recovery effect. Exact singleton parsers, independently repeated
 ordered fixtures, hostile-value non-execution, full transitive import inertia, full producer verification, and a
 different independent zero-repair review are required before ordinary integration.
+
+Implemented product: `src/connection-registry/v1/private-loopback-trust-manifest-anchor-contract.ts` plus its safe
+barrel export and exact producer test. The contract binds accepted LIVE-480 identities, the inherited 42-component
+product schema and 28-role key schema, three owner-root signature scopes, dual-signed normal root rotation, a maximum
+300-second declared key overlap, canonical registry/manifest chains, five distinct anchor streams, and the closed
+eight-case split-commit recovery matrix. It exposes vocabulary and singleton parsers only. All current protected and
+external-effect counts remain zero; no signer, verifier, key, registry, manifest, anchor, store, migration, runtime,
+or deployment implementation exists.
+
+Producer verification passes the 13/13 focused suite, the 473/473 existing CR13A suite, the complete
+769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-0038 with
+124 tables, macOS stage zero, and whitespace validation. Independent review is still mandatory.
