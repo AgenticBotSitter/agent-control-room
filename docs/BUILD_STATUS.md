@@ -170,7 +170,7 @@ getter, exported bridge, or caller assertion. The accepted LIVE-330 source stora
 consolidated behind one private module boundary before an implementation may perform at most one lookup. The current
 block remains inert: repository contract, zero-use status, hostile tests, full verification, and independent review are
 in progress. No database call, source lookup/invocation, protected native read, runtime consumer, production contact,
-network, provider, or external effect is authorized.
+network, provider, or external effect is authorized. The contract must stop before source lookup.
 
 Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
 remains unreachable with no native reads and no lookup.
