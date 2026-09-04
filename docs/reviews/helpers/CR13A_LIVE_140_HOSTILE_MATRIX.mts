@@ -130,8 +130,12 @@ try {
   Reflect.apply = (() => { ambientReplacementExecutions += 1; throw new Error("raw reflect sentinel"); }) as typeof Reflect.apply;
   String.prototype.slice = (() => { ambientReplacementExecutions += 1; return "raw slice sentinel"; }) as typeof String.prototype.slice;
   WeakMap.prototype.get = (function () { ambientReplacementExecutions += 1; return undefined; }) as typeof WeakMap.prototype.get;
-  WeakMap.prototype.set = (function () { ambientReplacementExecutions += 1; return this; }) as typeof WeakMap.prototype.set;
-  WeakSet.prototype.add = (function () { ambientReplacementExecutions += 1; return this; }) as typeof WeakSet.prototype.add;
+  WeakMap.prototype.set = (function (this: WeakMap<object, unknown>) {
+    ambientReplacementExecutions += 1; return this;
+  }) as typeof WeakMap.prototype.set;
+  WeakSet.prototype.add = (function (this: WeakSet<object>) {
+    ambientReplacementExecutions += 1; return this;
+  }) as typeof WeakSet.prototype.add;
   WeakSet.prototype.has = (function () { ambientReplacementExecutions += 1; return false; }) as typeof WeakSet.prototype.has;
   ambientReplacementAttempts += 8;
   parsedContractAfterReplacement = parseContract(contract);
