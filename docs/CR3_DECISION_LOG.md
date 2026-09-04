@@ -4542,3 +4542,10 @@ deploying.
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_430_PRIVATE_SINGLE_SOURCE_INVOCATION_HANDOFF_CONTRACT.md`. Current authority covers only inert
 repository contract work and deterministic tests; it does not authorize source invocation or a protected native read.
+
+**Accepted evidence:** Exact product `a1c3230d4589ce72248038e722ccd4fd8600e9ee` passed producer verification and
+a fresh different report-only zero-repair review. All twelve inspection groups and fourteen fixed commands passed once
+with 0 High/Medium/Low; 11/11 focused, 450/450 CR13A, 769/421/392 producer lifecycle, 5/5 build, 4/4 render, 38
+migrations/124 local PGlite tables, 44 zero actuals, eight false grants, zero source calls/native reads/raw
+observations/private handoffs/effects, and exact cleanup. Accepted review SHA-256:
+`354e84ee68e1c1a202b738e0879070d6d449a268bbf001104eda4bdb246d0d0b`.

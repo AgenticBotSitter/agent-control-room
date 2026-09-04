@@ -151,7 +151,7 @@
 | CR13A-LIVE-400 private fresh-spend/recheck composition | Independently accepted; ordinary integration of unwired composition ready | Product `ccce7c8...`; 14/14 commands, 12/12 focused, 415/415 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; receiptless and stopped before source lookup |
 | CR13A-LIVE-410 private same-module atomic source-lookup bridge contract | Independently accepted; ordinary integration of inert contract ready | Product `e4d58ff...`; 14/14 commands, 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 32 zero actuals and eight false grants |
 | CR13A-LIVE-420 private same-module atomic source-lookup composition | Independently accepted; ordinary integration of unwired lookup ready | Product `c128781...`; 14/14 commands, 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; one guarded lookup and zero source invocation/native reads |
-| CR13A-LIVE-430 private single source-invocation/raw-observation handoff contract | Inert contract implemented; independent review pending | Exact LIVE-340/LIVE-420 binding; 19 rules, 13 stages, 12 blockers, 44 zero actuals, eight false grants, and zero current invocation/native reads |
+| CR13A-LIVE-430 private single source-invocation/raw-observation handoff contract | Independently accepted; ordinary integration of inert contract ready | Product `a1c3230...`; 14/14 commands, 11/11 focused, 450/450 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 44 zero actuals, eight false grants, and zero source calls/native reads |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -194,12 +194,13 @@ Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native impo
 now privately retrievable only through the guarded LIVE-420 flow and remains frozen, unexported, and uninvoked with
 zero native reads.
 
-CR13A-LIVE-430 architecture and inert repository contract are complete. The contract requires the future source call to be the
+CR13A-LIVE-430 exact product `a1c3230d4589ce72248038e722ccd4fd8600e9ee` is independently accepted. The contract requires the future source call to be the
 single synchronous no-argument step immediately after LIVE-420's exact private lookup in the same unbroken lexical
 flow. The raw observation must remain exact, private, unexported, unhashed, unlogged, unpersisted, and directly handed
-to a separately gated same-module attestation stage. Focused verification passes 11/11; full producer verification and
-independent review are in progress. All 44 current actual totals, eight authority grants, source invocations, native
-reads, raw observations, attestations, runtime consumers, provider/network calls, and production effects remain zero.
+to a separately gated same-module attestation stage. Producer and independent gates passed with 0 High/Medium/Low,
+11/11 focused, 450/450 CR13A, 769/421/392 lifecycle, 5/5 build, 4/4 render, and 38 migrations/124 tables. All 44
+current actual totals, eight authority grants, source invocations, native reads, raw observations, attestations, runtime
+consumers, provider/network calls, and production effects remain zero.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1428,12 +1429,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-430 — inert private single-invocation contract verification and independent review
+Block: CR13A-LIVE-440 — same-module source-invocation/raw-observation handoff implementation design
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: The LIVE-430 inert contract and focused tests are implemented. The remaining gate is to freeze the exact product, reproduce all deterministic checks, and obtain a different zero-repair review before ordinary integration.
-Expected output: clean full lifecycle, build/render/migration evidence, immutable product and packet, 0 High/Medium/Low independent findings, and zero source invocation/native read/raw observation/effects.
-Owner action: none for an inert repository contract, static tests, independent review, and ordinary merges. Actual source invocation, the first protected native read, provider/production contact, or physical qualification remains separately gated and requires a later explicit execution boundary.
+Why: LIVE-430 is independently accepted. The next safe deliverable is a repository-only design that fixes the exact code seam, validation order, private raw-data custody, terminal outcomes, test separation, and independent review requirements before any protected native read.
+Expected output: one normative LIVE-440 design and ADR binding exact accepted LIVE-420/LIVE-430 evidence, with no source-owner modification, source call, native read, raw observation, runtime wiring, or external effect.
+Owner action: none for architecture-only documentation. Before implementation or any test actually calls the source or reads protected native values, obtain explicit owner authority for that execution boundary.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

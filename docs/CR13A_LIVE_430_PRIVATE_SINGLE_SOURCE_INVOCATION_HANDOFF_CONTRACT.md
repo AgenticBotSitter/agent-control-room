@@ -1,6 +1,6 @@
 # CR13A-LIVE-430 — Private Single Source-Invocation and Raw-Observation Handoff Contract
 
-**Status:** architecture frozen; inert contract implementation pending
+**Status:** exact inert contract independently accepted for ordinary integration
 **Accepted LIVE-340 product:** `3108a8759863c4692ade2d5532e88cd28f259779`
 **Accepted LIVE-340 review SHA-256:**
 `bbe5b2bc027ad0d71838ab1784ed1081750ffb96eba9ae1b26fd162b6a9234af`
@@ -116,6 +116,13 @@ import or runtime consumer; full producer verification; and a different independ
 Acceptance permits ordinary integration of the inert contract only. It grants no source invocation, protected native
 read, raw observation, attestation, signing, persistence, candidate, owner approval, listener, physical qualification,
 runtime activation, provider, production database, deployment, blocker clearance, or production authority.
+
+Exact product `a1c3230d4589ce72248038e722ccd4fd8600e9ee` passed producer verification and a different
+independent report-only review with 0 High/Medium/Low findings, all twelve inspection groups, all fourteen fixed
+commands, 11/11 focused tests, 450/450 CR13A tests, 5/5 build phases, 4/4 rendered routes, 38 migrations/124 local
+PGlite tables, 44 zero actuals, eight false grants, zero source calls/native reads/raw observations/private handoffs/
+effects, and exact disposable cleanup. Preserve `docs/reviews/CR13A_LIVE_430_INDEPENDENT_REVIEW.md`; SHA-256
+`354e84ee68e1c1a202b738e0879070d6d449a268bbf001104eda4bdb246d0d0b`.
 
 ## Reevaluate
 
