@@ -4626,3 +4626,35 @@ contact, or deployment.
 
 **Architecture evidence:** Independently accepted after remediation from 3 High/6 Medium/0 Low to 0/0/0 and frozen in
 `docs/CR13A_LIVE_450_PRIVATE_OBSERVATION_ATTESTATION_PIPELINE_DESIGN.md`. Current authority covers documentation only.
+
+## ADR-197 — Represent the private attestation pipeline first as an exact inert contract
+
+**Decision:** LIVE-460 implements only frozen public contract and status records for the accepted LIVE-450
+architecture. The singleton enumerates 14 claims, five providers, 36 attestation stages, nine durable states, 11
+outcomes, six cleanup facts, ten recovery cases, six later successors, 30 rules, exact ceilings, implementation flags,
+58 zero actuals, and eight false grants. It is exported only from the safe connection-registry barrel.
+
+**Why:** Before source-owner, provider, signer, persistence, high-water, or cleanup code exists, the repository needs
+one machine-checked vocabulary that makes stage collapse, missing claims, authority widening, retry, weak recovery, or
+premature acceptance visible to ordinary tests. An exact singleton prevents caller-built records from masquerading as
+accepted policy.
+
+**Alternatives rejected:** implement the production capsule while defining the contract; accept caller-created or
+structurally equivalent records; export generic builders; combine provider or successor stages; omit recovery cases;
+claim PGlite as production durability; import the native source/provider or database merely for type reuse; expose a
+callable that could reach protected behavior; report nonzero implementation/use before it exists.
+
+**Evidence required:** exact LIVE-450 product/design/review binding; frozen exact arrays and records; hostile parser and
+ambient-intrinsic tests; single safe barrel consumer; static absence of native source/provider, capsule, key, database,
+checkpoint, timer, listener, network, and runtime paths; 58 zero actuals/eight false grants; full non-native producer
+matrix; and a different independent zero-repair review.
+
+**Reevaluate:** Before production-capsule construction, provider implementation, source-owner modification, signer or
+key access, PostgreSQL/high-water/cleanup implementation, native qualification, runtime wiring, production contact, or
+deployment.
+
+**Implementation:** `src/connection-registry/v1/private-loopback-observation-attestation-pipeline-contract.ts` with
+focused tests in `tests/connection-enrollment-private-loopback-observation-attestation-pipeline-contract.test.ts`.
+Exact product `2cab7dff3a2ca277f4b4d766a2cd02779e0f505d`, tree
+`676cc414327a2acf714b96a149aea43348d48049`, is independently accepted with 0 High/Medium/Low for ordinary inert
+integration only.

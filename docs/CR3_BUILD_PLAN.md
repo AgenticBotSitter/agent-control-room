@@ -2284,3 +2284,22 @@ high-entropy attestor-process session, running harness identity, or running phys
 five explicit separately reviewed provider blockers. Architecture work performs zero source calls, protected reads,
 time/nonce/key access, database/checkpoint activity, network, or external effects. See
 `docs/CR13A_LIVE_450_PRIVATE_OBSERVATION_ATTESTATION_PIPELINE_DESIGN.md`.
+
+## CR13A-LIVE-460 — inert private observation-to-attestation pipeline contract
+
+Status: independently accepted for ordinary integration. Product
+`2cab7dff3a2ca277f4b4d766a2cd02779e0f505d`, tree `676cc414327a2acf714b96a149aea43348d48049`;
+0 High/Medium/Low. Use Sol xhigh.
+
+LIVE-460 converts only the accepted LIVE-450 public architecture into a frozen inert contract and status singleton.
+It binds the exact architecture product/design/review and enumerates all 14 claims, five one-use provider classes, 36
+attestation stages, nine durable states, 11 sanitized outcomes, six required cleanup facts, ten split-commit recovery
+cases, six separately authorized successors, and 30 controlling rules. It freezes the one-product-attempt ceiling,
+PostgreSQL/high-water separation, module capsule, privacy/key, cleanup, and no-retry requirements without implementing
+any of them.
+
+Exact-singleton parsers accept only the module-owned frozen records and reject copies, accessors, symbols, and proxies
+without hostile execution. Static tests require one safe barrel consumer and no native source/provider, capsule,
+protected key, PostgreSQL/PGlite, checkpoint, timer, listener, network, or runtime path. Status reports 58 zero actuals,
+eight false grants, and no blocker clearance. Product verification and a different independent report-only review are
+passed before integration. Acceptance grants no protected implementation or native execution authority.
