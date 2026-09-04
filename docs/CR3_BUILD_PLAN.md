@@ -2355,8 +2355,8 @@ independent zero-repair re-review accepted exact product `6d510d6f1b80a98c00c16f
 
 ## CR13A-LIVE-490 — inert owner-root, key-role, trust-registry, manifest, and anchor contract
 
-Status: first independent review rejected 3 High/2 Medium; remediated product is producer-prevalidated and awaits a
-different independent re-review. Use Sol xhigh.
+Status: independently accepted after remediation from 3 High/2 Medium to 0/0/0. Ordinary integration of the inert
+contract is ready.
 
 LIVE-490 is the next dependency-ordered repository-only slice from LIVE-470. It will freeze the out-of-band owner-root
 pin and recovery/rotation vocabulary; exact key-entry fields, states, use separation, overlap rules, and historical
@@ -2389,3 +2389,26 @@ adds exact signed per-role overlap declarations with monotonic/non-reactivation 
 its required adapter product, writer key, stream, destination, and distinct custody domain; closes CAS settlements and
 deadline/head invariants; and expands the transitive audit across imports, re-exports, legacy loaders, exact exports,
 top-level calls, and constructors. No implementation or effect surface was added.
+
+A different independent reviewer accepted exact product `dc313b1f2ff5982fe0ffa3b505db36025036601f`, tree
+`de7b73195fdbc4eb08097e2da7eb7cd97e4f48a3`, with 0 High, 0 Medium, and 0 Low. The reviewer independently passed
+15/15 focused tests, 15/15 plus 473/473 through the CR13A command, TypeScript, full lint, 5/5 build phases, 4/4
+rendered routes, migrations 0001-0038 with 124 tables, macOS stage zero, and the whitespace gate. See
+`docs/reviews/CR13A_LIVE_490_INDEPENDENT_REVIEW.md` and `docs/CR13A_LIVE_490_ACCEPTANCE.md`.
+
+## CR13A-LIVE-500 — inert owner-present issuer and strong-factor evidence contract
+
+Status: next. Use Sol xhigh.
+
+LIVE-500 is the next dependency-ordered repository-only slice from LIVE-470. It will freeze the exact input evidence,
+product and policy bindings, owner-presence ceremony, strong-factor evidence classes, trusted-time and nonce intent,
+issuance decision states, refusal outcomes, lifetime ceilings, and sealed-output boundary required for a future
+owner-present issuer. The issuer contract must bind the accepted LIVE-480 authorization body and LIVE-490 rooted
+trust/manifest contract without reading either from a runtime-controlled locator.
+
+The product remains inert vocabulary and zero-use status. It must not prompt the owner, inspect a credential or
+biometric, access Keychain or another secret store, create a nonce, read a clock, resolve a root/registry/manifest,
+construct or seal an authorization, sign or verify, register anything, call PostgreSQL, create a process or timer,
+contact a provider/source/network, or wire a UI/API/runtime. Exact singleton parsing, independent ordered fixtures,
+hostile-value non-execution, complete transitive import/export/call inertia, full producer verification, and a
+different independent zero-repair review are required before ordinary integration.

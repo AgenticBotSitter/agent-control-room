@@ -4765,14 +4765,18 @@ closed split-commit recovery; singleton-only hostile parsing; captured-intrinsic
 graph with AST effect rejection; safe consumer audit; 44 zero actuals and eight false grants; full producer gates;
 and a different independent zero-repair review.
 
-**Current evidence:** The inert product and 15-test focused suite are implemented. Focused tests, 473 existing CR13A
+**Accepted evidence:** The inert product and 15-test focused suite are implemented. Focused tests, 473 existing CR13A
 tests, the complete 769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations
 0001-0038 with 124 tables, macOS stage zero, and whitespace validation pass. No key, signer, verifier, registry,
 manifest, anchor, store, production database, native, runtime, or deployment effect occurred. Independent review and
-final acceptance evidence are pending. The first independent review rejected the original revision with 3 High and
+final producer gates pass. The first independent review rejected the original revision with 3 High and
 2 Medium findings: circular/ambiguous signing, undeclared overlap and key rollback, unbound anchor custody, open CAS
-settlements, and an incomplete graph/export audit. All five are remediated without adding a protected implementation;
-a different independent re-review is required.
+settlements, and an incomplete graph/export audit. All five were remediated without adding a protected
+implementation. A different independent reviewer accepted exact product
+`dc313b1f2ff5982fe0ffa3b505db36025036601f`, tree
+`de7b73195fdbc4eb08097e2da7eb7cd97e4f48a3`, with 0 High, 0 Medium, and 0 Low. Review SHA-256 is
+`56b03b7941971c50867553dc26c65a74cb9e4e291ba1a2543f5a9ac2708b2eb7`; acceptance SHA-256 is
+`2307475e02a176465c158cbe93b4a8c8a2b39ec6f3bb74cfba2281441a484f9d`.
 
 **Reevaluate:** Before any owner-present issuer, key creation/access, registry or manifest parser/resolver, anchor or
 PostgreSQL store, recovery effect, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.
