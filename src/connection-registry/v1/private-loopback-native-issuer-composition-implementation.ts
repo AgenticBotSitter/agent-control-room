@@ -406,7 +406,7 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1
     grantsLeaseAuthority: false as const,
     grantsExecutionAuthority: false as const,
   };
-  const status = objectFreezeV1(reflectApplyV1(objectSetPrototypeOfV1, Object,
+  const status = objectFreezeV1(reflectApplyV1(objectSetPrototypeOfV1, undefined,
     [{ ...material, statusDigest: statusDigestV1 }, null]) as
       ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1);
   reflectApplyV1(weakSetAddV1, statusRecordsV1, [status]);

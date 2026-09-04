@@ -205,53 +205,64 @@ test("CR13A-LIVE-240 binds status and rejects hostile values without behavior", 
 });
 
 test("CR13A-LIVE-240 freezes surfaces and resists ambient replacement", async () => {
-  const originals = [Object.freeze, Object.isFrozen, Object.defineProperties, WeakSet.prototype.has,
+  const objectConstructor = Object;
+  const objectDefineProperty = objectConstructor.defineProperty;
+  const originals = [objectConstructor.freeze, objectConstructor.isFrozen, objectConstructor.defineProperties,
+    WeakSet.prototype.has,
     WeakMap.prototype.get, Reflect.apply, Array.prototype.includes, Array.prototype.slice,
-    Array.prototype.push, Object.keys, JSON.stringify, Object.setPrototypeOf] as const;
-  const originalInheritedThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
+    Array.prototype.push, objectConstructor.keys, JSON.stringify, objectConstructor.setPrototypeOf] as const;
+  const originalInheritedThen = objectConstructor.getOwnPropertyDescriptor(objectConstructor.prototype, "then");
+  const originalGlobalObject = objectConstructor.getOwnPropertyDescriptor(globalThis, "Object");
   const composition = createConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionFakeV1("transferred_then_closed");
   const executions = new Array(12).fill(0);
   let inheritedThenExecutions = 0;
+  let ambientGlobalObjectReads = 0;
   let settledStatus: object | undefined;
   try {
-    Object.defineProperty(Object.prototype, "then", {
+    objectDefineProperty(objectConstructor.prototype, "then", {
       configurable: true,
       get() { inheritedThenExecutions += 1; throw new Error("raw inherited thenable ambient"); },
     });
-    Object.freeze = <T>(value: T): Readonly<T> => { executions[0] += 1; return value; };
-    Object.isFrozen = () => { executions[1] += 1; return false; };
-    Object.defineProperties = (value) => { executions[2] += 1; return value; };
+    objectConstructor.freeze = <T>(value: T): Readonly<T> => { executions[0] += 1; return value; };
+    objectConstructor.isFrozen = () => { executions[1] += 1; return false; };
+    objectConstructor.defineProperties = (value) => { executions[2] += 1; return value; };
     WeakSet.prototype.has = function () { executions[3] += 1; return false; };
     WeakMap.prototype.get = function () { executions[4] += 1; return undefined; };
     Reflect.apply = () => { executions[5] += 1; throw new Error("raw composition ambient"); };
     Array.prototype.includes = () => { executions[6] += 1; return false; };
     Array.prototype.slice = () => { executions[7] += 1; return []; };
     Array.prototype.push = () => { executions[8] += 1; return 0; };
-    Object.keys = () => { executions[9] += 1; return []; };
+    objectConstructor.keys = () => { executions[9] += 1; return []; };
     JSON.stringify = () => { executions[10] += 1; return "raw ambient"; };
-    Object.setPrototypeOf = <T extends object>(value: T): T => { executions[11] += 1; return value; };
+    objectConstructor.setPrototypeOf = <T extends object>(value: T): T => { executions[11] += 1; return value; };
+    objectDefineProperty(globalThis, "Object", {
+      configurable: true,
+      get() { ambientGlobalObjectReads += 1; return objectConstructor; },
+    });
     assert.equal(parseConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1(
       connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1),
     connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1);
     settledStatus = await composition.run();
   } finally {
-    Object.freeze = originals[0];
-    Object.isFrozen = originals[1];
-    Object.defineProperties = originals[2];
+    objectConstructor.freeze = originals[0];
+    objectConstructor.isFrozen = originals[1];
+    objectConstructor.defineProperties = originals[2];
     WeakSet.prototype.has = originals[3];
     WeakMap.prototype.get = originals[4];
     Reflect.apply = originals[5];
     Array.prototype.includes = originals[6];
     Array.prototype.slice = originals[7];
     Array.prototype.push = originals[8];
-    Object.keys = originals[9];
+    objectConstructor.keys = originals[9];
     JSON.stringify = originals[10];
-    Object.setPrototypeOf = originals[11];
-    if (originalInheritedThen) Object.defineProperty(Object.prototype, "then", originalInheritedThen);
-    else delete (Object.prototype as { then?: unknown }).then;
+    objectConstructor.setPrototypeOf = originals[11];
+    if (originalGlobalObject) objectDefineProperty(globalThis, "Object", originalGlobalObject);
+    if (originalInheritedThen) objectDefineProperty(objectConstructor.prototype, "then", originalInheritedThen);
+    else delete (objectConstructor.prototype as { then?: unknown }).then;
   }
   assert.deepEqual(executions, new Array(12).fill(0));
   assert.equal(inheritedThenExecutions, 0);
+  assert.equal(ambientGlobalObjectReads, 0);
   assert.ok(settledStatus);
   assert.equal(Object.getPrototypeOf(settledStatus), null);
   assert.equal(Object.isFrozen(composition), true);
