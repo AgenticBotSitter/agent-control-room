@@ -4462,3 +4462,9 @@ CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered route
 TypeScript, lint, macOS stage zero, whitespace, and clean status. It publishes 32 zero actuals and eight false grants,
 has only the safe barrel as a source consumer, and adds no accepted-implementation/database/native/runtime/effect
 import. This producer evidence remains separate from the pending independent reruns.
+
+**Accepted evidence:** A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once
+with 0 High/Medium/Low; 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, exact cleanup,
+32 zero actuals, eight false grants, and zero source/native/listener/network/provider/production/external effects.
+Preserve `docs/reviews/CR13A_LIVE_410_INDEPENDENT_REVIEW.md`; SHA-256
+`c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`.

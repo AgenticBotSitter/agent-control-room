@@ -149,7 +149,7 @@
 | CR13A-LIVE-380 post-transaction database-time recheck | Independently accepted; ordinary integration ready | Product `1b79bbc...`; 14/14 commands, 42/42 focused, 392/392 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; read-only and source-free |
 | CR13A-LIVE-390 private fresh-spend/recheck composition contract | Independently accepted; ordinary integration of inert contract ready | Product `34640c7...`; 14/14 commands, 11/11 focused, 403/403 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 28 zero actuals and eight false grants |
 | CR13A-LIVE-400 private fresh-spend/recheck composition | Independently accepted; ordinary integration of unwired composition ready | Product `ccce7c8...`; 14/14 commands, 12/12 focused, 415/415 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; receiptless and stopped before source lookup |
-| CR13A-LIVE-410 private same-module atomic source-lookup bridge contract | Exact inert product frozen; independent review pending | Product `e4d58ff...`; 11/11 focused, 426/426 CR13A, 769/421/392 lifecycle, 5/5 build, 4/4 render, 38 migrations/124 tables; 32 zero actuals and eight false grants |
+| CR13A-LIVE-410 private same-module atomic source-lookup bridge contract | Independently accepted; ordinary integration of inert contract ready | Product `e4d58ff...`; 14/14 commands, 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 32 zero actuals and eight false grants |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -165,15 +165,17 @@ passed all twelve groups and fourteen commands once with 0 High/Medium/Low, inde
 415/415 CR13A tests, verified build/render/migrations, and removed its exact disposable root. Accepted review SHA-256:
 `fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`.
 
-CR13A-LIVE-410 exact inert product `e4d58ff35a44e66454cae8e778b31362902dab6b` is frozen. Its future lookup authority
-is the unbroken private flow after the exact fresh
+CR13A-LIVE-410 exact inert product `e4d58ff35a44e66454cae8e778b31362902dab6b` is independently accepted. Its
+future lookup authority is the unbroken private flow after the exact fresh
 spend and successful immediate recheck, never LIVE-400's public success result, a receipt, boolean, digest, callback,
 getter, exported bridge, or caller assertion. The accepted LIVE-330 source storage and final LIVE-400 decision must be
 consolidated behind one private module boundary before an implementation may perform at most one lookup. The current
 block remains inert: 11/11 focused, 426/426 CR13A, the complete 769/421/392 lifecycle, 5/5 build, 4/4 render, and 38
-migrations/124 tables pass. The product publishes 32 zero actuals and eight false grants. Independent review is
-pending. No database call, source lookup/invocation, protected native read, runtime consumer, production contact,
-network, provider, or external effect is authorized. The contract must stop before source lookup.
+migrations/124 tables pass. The product publishes 32 zero actuals and eight false grants. A fresh different reviewer
+passed all twelve groups and fourteen commands once with 0 High/Medium/Low and verified exact cleanup. Accepted review
+SHA-256: `c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`. No database call,
+source lookup/invocation, protected native read, runtime consumer, production contact, network, provider, or external
+effect is authorized. The contract must stop before source lookup.
 
 Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
 remains unreachable with no native reads and no lookup.
@@ -1405,12 +1407,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-410 — private same-module atomic source-lookup bridge contract
+Block: CR13A-LIVE-420 — private same-module atomic source-lookup bridge implementation design
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-400 is independently accepted and safely reaches the final stop before lookup. The next missing prerequisite is an inert contract that binds one exact private success state to one future same-module LIVE-330 source lookup without exposing a receipt or lookup capability.
-Expected output: one separately frozen source-lookup bridge contract, exact private provenance and one-use semantics, terminal failure and no-retry rules, zero-use status, hostile tests, full verification, and independent review.
-Owner action: none for inert repository design, local tests, independent review, and ordinary merges. Any executable lookup, native read, production contact, or physical qualification remains separately gated.
+Why: LIVE-410 is independently accepted and fixes the authority boundary. The next prerequisite is a separately frozen design for consolidating the accepted spend/recheck decision with the accepted source storage so one private lookup can occur without exporting a capability.
+Expected output: exact consolidation and one-lookup implementation design, unchanged public-result non-authority, direct private handoff and terminal failure rules, full hostile acceptance plan, and an explicit stop before source invocation.
+Owner action: none for repository design, local synthetic PGlite tests, independent review, and ordinary merges. Actual source invocation, protected native read, production contact, or physical qualification remains separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
