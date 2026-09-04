@@ -4695,3 +4695,47 @@ deployment implementation.
 only. The first audit's 5 High and 4 Medium findings were remediated; a different report-only re-review accepted the
 final architecture with 0 High, 0 Medium, and 0 Low. Review and acceptance are preserved in
 `docs/reviews/CR13A_LIVE_470_ARCHITECTURE_REVIEW.md` and `docs/CR13A_LIVE_470_ARCHITECTURE_ACCEPTANCE.md`.
+
+## ADR-199 — Make owner-native authorization vocabulary inert before any issuer or store
+
+**Decision:** Implement LIVE-470's owner-native body, envelope, reservation-intent, provider-scope, cleanup/effect,
+closed-public-field, operation-budget, state/outcome, key-role, time, and authority vocabulary as one exact frozen
+repository singleton with an exact zero-use status. Each of 42 ordered component roles requires an explicit product
+commit, product tree, and independent-review digest; each of 28 ordered key roles requires a complete closed key
+binding. Provider reservation and invocation budgets carry both aggregate-five and per-ordered-lane-one ceilings.
+Parsers accept only module-created canonical singleton identities and reject behavioral substitutes.
+
+**Why:** Later issuer, registration, anchor, capsule, and native blocks need one reviewable vocabulary, but a body
+schema must not accidentally become an authorization issuer, validator, capability carrier, or dependency-injection
+surface. Freezing only names, ceilings, rules, and honest absence makes contract drift detectable without adding a
+protected execution path.
+
+**Alternatives rejected:** parse caller-created owner envelopes now; include sample credentials or signed bodies;
+create an issuer or key adapter with the contract; accept arbitrary dictionaries, callbacks, reservation objects, or
+generic dependencies; report future ceilings as current use; expose a runtime/API/UI consumer; clear the target-
+runtime blocker from repository evidence.
+
+**Evidence required:** exact LIVE-470 commit/tree/design/review/acceptance binding; complete immutable vocabulary and
+independently repeated expected fixtures; exact nested product/key binding shapes and cardinalities; aggregate and
+per-provider ceilings; uniqueness/deep-freeze assertions; singleton-only parsers; hostile accessor/proxy/symbol
+non-execution; captured intrinsic resistance; one safe barrel consumer; exact transitive leaf-import graph plus
+AST alias/effect rejection; no issuer/store/key/database/anchor/capsule/provider/source/IPC/process/native/runtime
+operation; 59 zero actuals; eight false grants; relevant tests/check/lint; and a different independent zero-repair
+review.
+
+**First independent review:** The initial candidate was rejected with 2 High, 2 Medium, and 0 Low. H-001 found that
+digest-only component names did not prove product/tree/review binding for every component and issuer. H-002 found that
+aggregate provider budgets did not enforce one operation per exact provider lane. M-001 found count-only assertions
+for most vocabularies. M-002 found that the source-only string scan neither followed transitive imports nor caught
+internal aliases. The remediation replaces every ambiguous shape, adds exact ordered fixtures and uniqueness/deep-
+freeze checks, splits the reusable canonical digest into an import-inert leaf, and audits the full transitive graph.
+
+**Accepted evidence:** Different independent re-review accepted exact product
+`6d510d6f1b80a98c00c16fcf2b55837afc1cea87`, tree `ac8655e1240d25bea9150ae9678f6ad5df56593c`,
+with 0 High, 0 Medium, and 0 Low. Focused tests pass 12/12, CR13A passes 473/473, the complete lifecycle exits 0, all
+five build phases and 4/4 rendered routes pass, and migrations 0001-0038 verify 124 tables. TypeScript, full lint,
+macOS stage zero, and whitespace validation pass. All 59 actuals remain zero and all eight grants remain false. See
+`docs/reviews/CR13A_LIVE_480_INDEPENDENT_REVIEW.md` and `docs/CR13A_LIVE_480_ACCEPTANCE.md`.
+
+**Reevaluate:** Before any owner-present issuer, sealed body parser, registration/nonce store, key/trust/manifest,
+independent anchor, reservation, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.
