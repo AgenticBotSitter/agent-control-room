@@ -152,6 +152,7 @@
 | CR13A-LIVE-410 private same-module atomic source-lookup bridge contract | Independently accepted; ordinary integration of inert contract ready | Product `e4d58ff...`; 14/14 commands, 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 32 zero actuals and eight false grants |
 | CR13A-LIVE-420 private same-module atomic source-lookup composition | Independently accepted; ordinary integration of unwired lookup ready | Product `c128781...`; 14/14 commands, 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; one guarded lookup and zero source invocation/native reads |
 | CR13A-LIVE-430 private single source-invocation/raw-observation handoff contract | Independently accepted; ordinary integration of inert contract ready | Product `a1c3230...`; 14/14 commands, 11/11 focused, 450/450 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 44 zero actuals, eight false grants, and zero source calls/native reads |
+| CR13A-LIVE-440 same-module source-invocation/raw-handoff implementation design | Architecture remediated; dormant implementation waits for accepted private pipeline and native execution remains owner-gated | Exact source-owner seam and raw domains, module-minted deterministic fault seam, distinct signer/checkpoint/high-water, authenticated future evidence, and zero current effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -201,6 +202,15 @@ to a separately gated same-module attestation stage. Producer and independent ga
 11/11 focused, 450/450 CR13A, 769/421/392 lifecycle, 5/5 build, 4/4 render, and 38 migrations/124 tables. All 44
 current actual totals, eight authority grants, source invocations, native reads, raw observations, attestations, runtime
 consumers, provider/network calls, and production effects remain zero.
+
+CR13A-LIVE-440 architecture is remediated after two independent audits. It fixes the only acceptable implementation seam
+after LIVE-420's spend, recheck, lookup, and identity checks; freezes exact raw descriptors and value domains; requires
+distinct accepted private context/intake/signature/checkpoint/high-water stages; dynamically tests post-call failures
+only through module-minted safe synthetic records; and keeps the real source out of ordinary and independent reruns.
+Dormant code and real execution authorities are separate. Source/raw application references must be released before
+the first post-call await; later protected-stage failures map to one exact terminal non-accepting public outcome. Any
+later native evidence must be authenticated by the exact signer/checkpoint/high-water chain, not a file digest. The
+design changes no source code and performs zero effects.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1429,12 +1439,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-440 — same-module source-invocation/raw-observation handoff implementation design
+Block: CR13A-LIVE-450 — private observation-to-attestation intake contract design
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-430 is independently accepted. The next safe deliverable is a repository-only design that fixes the exact code seam, validation order, private raw-data custody, terminal outcomes, test separation, and independent review requirements before any protected native read.
-Expected output: one normative LIVE-440 design and ADR binding exact accepted LIVE-420/LIVE-430 evidence, with no source-owner modification, source call, native read, raw observation, runtime wiring, or external effect.
-Owner action: none for architecture-only documentation. Before implementation or any test actually calls the source or reads protected native values, obtain explicit owner authority for that execution boundary.
+Why: LIVE-440 shows the source cannot safely be invoked until a complete trusted private pipeline exists. The next repository-only block must specify exact context preparation, synchronous raw transfer, lineage, trusted time, nonce, signature, durable replay checkpoint, independent high-water, failure, privacy, and evidence boundaries without handling real host data.
+Expected output: one inert normative pipeline contract design and ADR binding exact accepted LIVE-430/LIVE-440 evidence, preserving distinct stage results, authenticated evidence, strict no-export/no-retry rules, and zero source/native/database/runtime/external effects.
+Owner action: none for architecture-only documentation. Implementation, signer/key access, persistence rehearsal, or any source invocation/native read remains separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

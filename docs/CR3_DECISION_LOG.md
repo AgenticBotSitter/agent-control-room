@@ -4549,3 +4549,41 @@ with 0 High/Medium/Low; 11/11 focused, 450/450 CR13A, 769/421/392 producer lifec
 migrations/124 local PGlite tables, 44 zero actuals, eight false grants, zero source calls/native reads/raw
 observations/private handoffs/effects, and exact cleanup. Accepted review SHA-256:
 `354e84ee68e1c1a202b738e0879070d6d449a268bbf001104eda4bdb246d0d0b`.
+
+## ADR-195 — Require a private attestation intake before the first native source invocation
+
+**Decision:** Freeze LIVE-440 as architecture only. The eventual invocation must be inserted at the single exact seam
+inside LIVE-420's source-owning lexical flow and may run only after independently accepted private context, synchronous
+intake, signature, durable checkpoint, and independent high-water stages exist. Ordinary tests and independent review
+remain non-native and exercise post-call logic only through a module-minted synthetic state-machine seam. Dormant code
+may be integrated without native qualification; a later fresh owner packet controls the one real source attempt.
+
+**Why:** Invoking the accepted source creates sensitive host material immediately. Calling it before a trusted private
+destination exists would either discard ambiguous raw data, expose it to a test or caller, or force a retryable gap
+between read and custody. Injecting a fake source into the production runner would no longer prove the exact private
+identity path, while omitting a module-owned synthetic state machine would leave terminal post-call branches untested.
+Separating dormant implementation review from one later authenticated owner run preserves repeatable CI and prevents
+routine host identity reads.
+
+**Alternatives rejected:** invoke and discard; return raw data to a caller; export a callback or continuation; inject
+a fake or caller-supplied source; leave post-call negative branches static-only; gate invocation with an environment
+flag; let every unit/CI run read its host; persist or hash raw state before a destination exists; accept an unsigned or
+digest-only owner report; collapse signature, checkpoint, or high-water stages; treat a public LIVE-420 result as
+authority; combine source invocation with runtime wiring, provider contact, deployment, or activation; retry after
+uncertainty.
+
+**Evidence required:** exact LIVE-420/LIVE-430 binding; exact insertion seam; fixed one-call, descriptor/value
+validation, synchronous transfer, distinct signer/checkpoint/high-water, application-reference release, terminal
+failure, no-retry, module-minted deterministic seam, authenticated owner envelope, cleanup, and independent-review
+rules; raw/source release before the first post-call `await`; an exact non-accepting public mapping for protected-
+pipeline failure or uncertainty; explicit accepted-pipeline prerequisite; and zero source-owner modification, source
+invocation, native read, raw observation, database activity, runtime wiring, or external effect in the design block.
+
+**Reevaluate:** After the complete private attestation pipeline is independently accepted and before writing dormant
+source-owner code. Reevaluate again under a fresh exact-product owner packet before executing any source call,
+performing qualification, handling real raw native material, wiring runtime use, contacting a provider or production
+database, or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_440_SAME_MODULE_SOURCE_INVOCATION_IMPLEMENTATION_DESIGN.md`. Current authority covers documentation
+only and grants no native execution or production authority.
