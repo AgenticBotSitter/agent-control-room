@@ -1464,3 +1464,55 @@ physical listener/socket/port attempts, network observations, and external effec
 accepted report at `docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
 `420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. Ordinary owner-controlled integration is
 ready. Physical qualification and runtime activation remain separate, blocked stages.
+
+Owner-approved PR #241 merged exact accepted branch head `6f86881879d4c42bc21294eff559200aae0b439f` to `main` as
+`19a87163c9210730140ec0d769c2effa6bbb5e1b`. This integration does not issue a capability or admission, construct the
+native backend, open a listener/socket/port, wire runtime activation, use SSH or credentials, contact a provider or
+production system, or deploy.
+
+## CR13A-LIVE-130 — physical qualification prerequisite boundary
+
+Status: exact effect-free implementation `339c2e8a61e7c2ac0a40fc6f51711a512badbf6c` is independently accepted and
+ready for ordinary owner-controlled integration. See
+`CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_BOUNDARY.md`,
+`CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_ACCEPTANCE.md`, and ADR-164. Use Sol xhigh.
+
+LIVE-130 must create one exact frozen readiness record that distinguishes independently accepted source from physical
+qualification. It binds the exact LIVE-120 integration/remediation/review evidence, lists twelve missing private
+prerequisites in fixed order, keeps every physical/effect count and authority grant false, and cannot assemble a
+candidate or accept caller-supplied proof. The module imports no native driver or effectful subsystem and may expose
+only safe status projection through the connection-registry barrel.
+
+Completion requires strict exact provenance, hostile copy/accessor/symbol/Proxy and decoration tests, public
+sanitation, static non-wiring, relevant and full repository gates, one immutable review packet, and a different
+zero-repair reviewer with no High, Medium, or Low finding. Acceptance permits owner-controlled integration only; all
+private providers, owner authorization, native qualification, and runtime activation remain later separate blocks.
+
+The exact product passes 24/24 focused readiness tests, 131/131 connection tests, 148/148 CR13A tests, the complete
+registered lifecycle, production build with 4/4 rendered routes, and migrations 0001-0036/119 tables through the
+listener-free fallback. Its immutable review packet is
+`docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md`. Its first run preserved one denied reviewer-side IPC
+attempt and Medium packet contradiction `CR13A-LIVE-130-PACKET-M-001`; it is not acceptance evidence. The corrected
+packet `docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` forbids `tsx` CLI probes and all broader
+driver-importing test scripts, and instead requires the nine readiness tests plus listener-free static/build/migration
+checks and hostile probes from a second different reviewer. The corrected review accepted the exact product with 0
+High, 0 Medium, and 0 Low findings; 30 hostile attempts executed zero replacements, and all listener/IPC/native/network
+and external-effect counts were zero. Preserve
+`docs/reviews/CR13A_LIVE_130_PROTOCOL_REMEDIATION_REREVIEW.md`; SHA-256
+`02fa96a370615a331d8ccfadaa5d9de1d2ed420eafbce60014d2b394b1283290`. These producer results and review corrections
+did not construct or import the native driver and clear none of the twelve blockers.
+
+## CR13A-LIVE-140 — target-runtime attestation boundary
+
+Status: next architecture block after owner-controlled LIVE-130 integration. Use Sol xhigh.
+
+LIVE-140 must define, implement with repository fakes, and independently review a privacy-preserving target-runtime
+attestation port. It may describe the minimum stable claims needed to bind a future qualification candidate to one
+runtime class and boot/session epoch, but it may not inspect this Mac, accept raw caller identity, read environment or
+system profiles, collect host/user/path/PID/network/credential values, invoke a platform API, sign production evidence,
+or clear `target_runtime_attestation_missing`.
+
+Architecture and ADR come first. The effect-free implementation must use exact private provenance, fixed sanitized
+claims, explicit expiry/replay/epoch boundaries, no production-shaped proof issuer, no clock/callback/executable input,
+zero authority grants, and runtime non-wiring. A future real attestor, host observation, candidate assembly, owner
+window, native qualification, and activation each remain separate blocks.

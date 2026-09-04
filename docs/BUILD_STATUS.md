@@ -120,7 +120,8 @@
 | CR13A-LIVE-090 listener-session admission composition | Independently accepted and integrated on `main` through PR #238 | Fourth different reviewer closed M-001/M-002/M-003; owner-approved merge `65ea851...`; post-merge CI run `33785601437` passed; no listener/network effect |
 | CR13A-LIVE-100 default-disabled native-listener adapter contract | Independently accepted and integrated on `main` through PR #239 | Third reviewer closed M-001/L-003 and reconfirmed L-001/L-002; merge `d1d2b87...`; post-merge CI `33796044403` passed; no listener/network effect |
 | CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
-| CR13A-LIVE-120 unwired physical native driver | Exact remediation `5a57934...` independently accepted; owner-controlled integration pending | Different reviewer closed all four High and five Medium findings with no new finding; 34/34 focused and 139/139 CR13A tests; zero native/listener/network effects |
+| CR13A-LIVE-120 unwired physical native driver | Independently accepted and integrated on `main` through PR #241 | Different reviewer closed all four High and five Medium findings; owner-approved merge `19a8716...`; post-merge CI `33818001699` passed; zero native/listener/network effects |
+| CR13A-LIVE-130 physical qualification prerequisite boundary | Independently accepted; ordinary owner-controlled integration ready | Product `339c2e8...`; rejected first protocol preserved; corrected second review 0 High/Medium/Low, 9/9 readiness, 4/4 render, 119 tables, 30 hostile attempts/0 executions, and zero listener/IPC/native/network/effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1271,6 +1272,38 @@ The accepted report is `docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_RERE
 ready. Physical construction, capability/admission issuance, listener activation, qualification, SSH, credentials,
 Hermes/provider contact, production use, deployment, DNS, and hosting remain unauthorized.
 
+CR13A-LIVE-130 exact product `339c2e8a61e7c2ac0a40fc6f51711a512badbf6c` now records that accepted source and
+physical qualification are different stages. Its module-private singleton binds the exact LIVE-120 integration,
+remediation, tree, rejected target, and preserved review hashes while keeping all twelve private prerequisites
+missing. Candidate assembly, owner authorization, qualification, independent physical-evidence acceptance, runtime
+activation, every native/effect count, retry, and every authority grant remain false. The only source consumer is the
+safe connection-registry barrel; the module imports no physical driver or effectful subsystem.
+
+Producer verification passed stage zero, TypeScript, lint, 24/24 dedicated readiness tests, 131/131 connection tests,
+148/148 CR13A tests, the complete registered test lifecycle, production build with 4/4 rendered routes, migrations
+0001-0036/119 tables through the listener-free fallback, and whitespace. The immutable independent packet is
+`docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW_PACKET.md`.
+
+The first independent run is rejected/invalid and preserved at
+`docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW.md`; SHA-256
+`3cb87af1ad725c86ad09a3deb1f0ea98dadb3caffaf381f917d768b7cbf2e15d`. Its reviewer made one `tsx --version` call;
+the sandbox denied the attempted IPC listener before bind. It also found Medium packet defect
+`CR13A-LIVE-130-PACKET-M-001`: the no-physical-driver-import rule contradicted broader required scripts that import
+the predecessor driver test. No successful listener, physical-driver import, network I/O, external contact, or
+product mutation occurred, but the run cannot be acceptance evidence.
+
+The corrected packet `docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` leaves product `339c2e8...`
+unchanged, forbids `tsx` CLI/version probes and all broader driver-importing tests, and requires a second different
+reviewer to run only the nine readiness tests plus listener-free static/build/migration gates and hostile probes. That
+review is accepted with 0 High, 0 Medium, and 0 Low findings. All eleven allowlisted commands passed once; 9/9
+readiness tests, 4/4 rendered pages, and migrations 0001-0036/119 tables passed. Thirty hostile replacement attempts
+executed zero replacements. Physical-driver imports, native constructions, capabilities, admissions, candidates,
+owner spends, physical listener/socket/port attempts, reviewer IPC attempts, network observations, and external
+effects were all zero. Preserve
+`docs/reviews/CR13A_LIVE_130_PROTOCOL_REMEDIATION_REREVIEW.md`; SHA-256
+`02fa96a370615a331d8ccfadaa5d9de1d2ed420eafbce60014d2b394b1283290`. Ordinary owner-controlled integration is
+ready; all twelve physical blockers remain.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1286,12 +1319,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-120-INTEGRATION — publish the independently accepted unwired driver, require clean CI, and await exact owner merge approval
+Block: CR13A-LIVE-140 — freeze the target-runtime attestation boundary without collecting host identity
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the exact remediation and independent acceptance are complete; integration now needs an auditable branch, pull request, and green repository CI without widening authority.
-Expected output: one PR targeting `main` with exact accepted report SHA-256 `420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`, clean required checks, and no native effect.
-Owner action: give exact approval to merge the numbered PR after CI passes. A physical attempt remains a later, separately owner-attended decision.
+Why: LIVE-130 now exposes the twelve real blockers; the first dependency is a privacy-preserving contract that can later bind one exact target runtime without exposing raw host, user, path, process, credential, or network identity.
+Expected output: architecture/ADR first, then one effect-free exact-branded attestation request/result contract and repository fake, hostile tests, immutable review packet, and independent disposition; real host observation remains absent.
+Owner action: none for architecture, effect-free implementation, fake tests, and review. Any real target-runtime observation remains a later owner-attended, separately authorized action.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
