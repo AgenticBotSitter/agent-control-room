@@ -135,26 +135,25 @@
 | CR13A-LIVE-240 unreachable private issuer composition implementation | Independently accepted after security hardening; ordinary owner-controlled integration of unreachable code ready | Product `71e4c73...`; seventh reviewer closed M-001 through M-006, 12/12 commands, 10/10 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero native/listener/network/persistence effects |
 | CR13A-LIVE-250 private one-use native-factory retrieval bridge contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `9b855d4...`; 12/12 commands, 8/8 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; no exported retrieval callable and zero real retrieval/invocation/effects |
 | CR13A-LIVE-260 private same-module native-composition shell contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `01bfa65...`; 12/12 commands, 8/8 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 20 zero actual totals and eight false authority grants |
-| CR13A-LIVE-270 unreachable native-composition shell implementation | Architecture frozen; implementation begins after LIVE-260 integration | Same-module non-exported/no-input shell and one-use bridge, no invocation, consumer, listener, locator, native effect, or runtime wiring |
+| CR13A-LIVE-270 unreachable native-composition shell implementation | Independently accepted; ordinary owner-controlled integration of unreachable source ready | Product `5e5384b...`; 12/12 fixed review commands, 33/33 focused review tests, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero shell retrieval/native/listener/network effects |
+| CR13A-LIVE-280 private physical-qualification candidate contract | Architecture frozen; effect-free implementation begins after LIVE-270 integration | Exact component and blocker ledger, one-attempt ceilings, no assembler, owner window, native invocation, listener, provider, or runtime wiring |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-260 exact product `01bfa6540cc83dc6099564e4fc9043be4cafddc6` is independently accepted. The
-contract freezes the same-module private call graph, separates factory retrieval/receipt/invocation/resource truth,
-preserves continuous exact-object custody, and makes ambiguity and restart non-retryable. Producer gates passed 8/8
-dedicated, 271/271 CR13A, 769/769 pretests, 392/392 core, 392/392 posttests, 5/5 build phases, 4/4 rendered routes,
+CR13A-LIVE-270 exact product `5e5384b1c7b3806a62672018843aa318b0e75728` is independently accepted. The
+same-module private shell and bridge exist but remain unreachable, uninvoked, and runtime-unwired. Producer gates passed
+33/33 dedicated tests, 276/276 CR13A tests, the complete registered lifecycle, 5/5 build phases, 4/4 rendered routes,
 36 migrations/119 tables, typecheck, lint, stage zero, whitespace, and clean status. A different reviewer ran the fixed
 12-command sequence once with 0 High/Medium/Low. Review SHA-256:
-`41c55ae9437f8951e18f919ec1569bbebe1f795cafeaade51a41826fc3d0f9f1`. No shell/bridge implementation,
-factory retrieval/invocation, native resource, locator, listener, persistence, network, protected read, or authority
-occurred.
+`96edcc2c9c65ea38b3da1adec7c092fdf056e544f02856705e93ce0f19d79609`. No shell retrieval, factory invocation,
+native resource, locator, listener, persistence, network, protected read, blocker clearance, or authority occurred.
 
-Next block: CR13A-LIVE-270, the unreachable same-module native-composition shell implementation. It may add only a
-non-exported no-input shell and one-use bridge inside the existing LIVE-220 native module, with zero invocations and no
-runtime consumer. It must not run native methods, create/listen/inspect/close a server, expose a locator or factory,
-write persistence, wire runtime use, contact Hermes/provider, deploy, or make a physical attempt. Use `gpt-5.6-sol` at
-`xhigh` effort.
+Next block: CR13A-LIVE-280, the private physical-qualification candidate contract. It will compile the accepted source
+chain, exact future real components, fourteen remaining blockers, one-attempt ceilings, sanitation, and no-retry rules
+into one inert repository record. It must not assemble a candidate, retrieve the shell, invoke the factory, create a
+resource, select a locator, contact Hermes/provider, consume owner authorization, perform a physical attempt, wire
+runtime use, or deploy. Use `gpt-5.6-sol` at `xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1383,12 +1382,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-270 — implement the unreachable same-module native-composition shell
+Block: CR13A-LIVE-280 — implement the private physical-qualification candidate contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-260 is independently accepted; the next risk is proving that the shell and retrieval bridge can exist only inside LIVE-220 factory custody without becoming exported, invoked, or wired.
-Expected output: exact same-module private shell and one-use bridge implementation, static and hostile evidence of zero use/effects, full verification, and independent review.
-Owner action: the current build instruction permits repository implementation and ordinary merges only. A native invocation or physical qualification still requires a new exact owner-attended authorization.
+Why: LIVE-270 is independently accepted; the next risk is defining the complete candidate and every missing real prerequisite before any code can retrieve the shell or perform a native action.
+Expected output: exact inert component, blocker, stage, ceiling, provenance, sanitation, and authority records; hostile zero-execution tests; full verification; and independent review.
+Owner action: none for repository implementation and ordinary merges. Any real provider, candidate assembly, shell retrieval, native invocation, or physical qualification requires a new separately scoped decision or owner-attended authorization.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

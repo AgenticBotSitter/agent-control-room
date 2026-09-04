@@ -3931,3 +3931,41 @@ deploying.
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_270_UNREACHABLE_NATIVE_COMPOSITION_SHELL_IMPLEMENTATION.md`. Repository implementation is authorized
 by the current owner build instruction; native invocation and physical qualification are not.
+
+**Accepted evidence:** Exact product `5e5384b1c7b3806a62672018843aa318b0e75728` passed 33/33 dedicated
+review tests, 276/276 CR13A tests, the complete registered lifecycle, five build phases, 4/4 rendered routes, migrations
+0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A different report-only reviewer ran all
+twelve fixed commands once with 0 High/Medium/Low. All shell retrieval, native, listener, locator, persistence, network,
+and protected-value totals remained zero. Accepted report SHA-256:
+`96edcc2c9c65ea38b3da1adec7c092fdf056e544f02856705e93ce0f19d79609`.
+
+## ADR-179 — Freeze the whole physical candidate before implementing any real prerequisite
+
+**Decision:** CR13A-LIVE-280 will compile the accepted native source chain, every required real private component,
+fourteen remaining blockers, the later physical call ceilings, and the authority boundary into one exact inert
+repository contract. It will not create a provider, assembler, candidate, owner window, shell retrieval path, native
+effect, runtime consumer, or blocker clearance.
+
+**Why:** LIVE-270 completes private source reachability, but the project still lacks real target attestation, locator and
+port custody, signer, durable ledger, independent checkpoint and observer, tunnel-peer and host-key proof, and a private
+assembler. Freezing their complete relationship now prevents a future physical packet from quietly substituting a fake,
+omitting a prerequisite, widening authority, or collapsing owner authorization, execution, review, and activation.
+
+**Alternatives rejected:** invoke the dormant shell as the next test; treat repository fakes as real providers; expose a
+public assembler or shell capability; let a caller assert readiness; clear blockers from public hashes; combine provider
+implementation, candidate assembly, owner spend, physical qualification, and activation; or permit retry after an
+uncertain native marker.
+
+**Evidence required:** exact accepted LIVE-270 product and review binding; fixed component, blocker, stage, and ceiling
+sets; strict exact provenance; safe immutable records and errors; hostile and ambient zero execution; no native import
+or runtime consumer; all effect totals zero; all authority grants false; full producer verification; and a different
+independent report-only zero-repair review.
+
+**Reevaluate:** Before implementing a real private provider or durable store; importing the native issuer; retrieving
+the private shell; creating a candidate assembler or owner window; invoking a native primitive; opening or observing a
+resource; writing persistence; performing a physical attempt; accepting qualification evidence; wiring runtime use;
+contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_280_PRIVATE_PHYSICAL_QUALIFICATION_CANDIDATE_CONTRACT.md`. The current owner instruction authorizes
+repository implementation and ordinary merges only; it does not authorize a physical attempt or any external effect.

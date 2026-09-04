@@ -1829,3 +1829,24 @@ resource; observe or expose a locator; accept caller data or callbacks; import L
 live persistence; call an adapter or driver; wire app/API/worker/Idea Lab/Hermes/startup use; assemble a candidate;
 perform a physical attempt; contact a provider; clear a blocker; or deploy. Immutable producer evidence and a different
 independent report-only zero-repair review are required before ordinary integration.
+
+Accepted product `5e5384b1c7b3806a62672018843aa318b0e75728` passed 33/33 dedicated review tests, 276/276
+CR13A tests, the complete registered lifecycle, all five build phases, 4/4 rendered routes, migrations 0001-0036/119
+tables, TypeScript, lint, macOS stage zero, and whitespace. A different report-only reviewer ran all twelve fixed
+commands once with 0 High/Medium/Low, zero shell retrieval, and zero native/listener/network effects. Accepted report
+SHA-256: `96edcc2c9c65ea38b3da1adec7c092fdf056e544f02856705e93ce0f19d79609`.
+
+## CR13A-LIVE-280 — private physical-qualification candidate contract
+
+Status: architecture frozen; effect-free implementation begins only after accepted LIVE-270 integration. Use Sol
+xhigh.
+
+LIVE-280 freezes one inert repository contract that binds the accepted LIVE-270 source, exact future real component
+classes, fourteen remaining blockers, ten non-collapsible stages, one-attempt ceilings, sanitation, private provenance,
+and no-retry-after-uncertainty rules. It may export only exact frozen safe contract and status records plus parsers.
+
+The block must not import the native driver or issuer, retrieve the private shell, invoke a factory or native primitive,
+assemble a qualification candidate, implement or call a real provider, create an owner window, select or observe a
+locator, create/listen/inspect/transfer/close a resource, write live persistence, perform a physical attempt, wire an
+app/API/worker/Idea Lab/Hermes/startup consumer, contact a provider, clear a blocker, or deploy. Immutable producer
+evidence and a different independent report-only zero-repair review are required before ordinary integration.
