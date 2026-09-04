@@ -1,5 +1,4 @@
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
-import { isHostProxyV1 } from "../../security/host-value";
 
 const objectFreezeV1 = Object.freeze;
 const objectIsFrozenV1 = Object.isFrozen;
@@ -11,9 +10,9 @@ const weakMapSetV1 = WeakMap.prototype.set;
 const weakSetAddV1 = WeakSet.prototype.add;
 const weakSetHasV1 = WeakSet.prototype.has;
 const arrayIncludesV1 = Array.prototype.includes;
-const arrayFillV1 = Array.prototype.fill;
+const arraySliceV1 = Array.prototype.slice;
+const arrayPushV1 = Array.prototype.push;
 const promiseConstructorV1 = Promise;
-const promiseResolveV1 = Promise.resolve;
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_IMPLEMENTATION_V1 =
   "control-room-connection-enrollment-private-loopback-native-issuer-composition-implementation/v1" as const;
@@ -40,10 +39,20 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_ST
   "closed_verified",
 ] as const);
 
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_HISTORY_EVENTS_V1 = objectFreezeV1([
+  "bindings_verified", "expiry_verified", "attempt_claimed", "pre_effect_rejected", "locator_authority_spent",
+  "custody_authority_spent", "effect_uncertainty_marked", "factory_retrieved", "native_settlement_ambiguous",
+  "fake_resource_created", "listener_settled", "private_locator_observed", "adapter_offered", "adapter_rejected",
+  "adapter_acceptance_uncertain", "adapter_accepted", "ownership_transferred", "close_attempted", "cleanup_failed",
+  "cleanup_closed_verified", "independent_absence_observed", "cleanup_observed_absent", "tombstoned", "checkpointed",
+] as const);
+
 export type ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionScenarioV1 =
   typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_SCENARIOS_V1[number];
 export type ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionStateV1 =
   typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_STATES_V1[number];
+export type ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionHistoryEventV1 =
+  typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_HISTORY_EVENTS_V1[number];
 
 export type ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1 = Readonly<{
   implementationVersion: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_IMPLEMENTATION_V1;
@@ -53,7 +62,11 @@ export type ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementa
   scenarioSet: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_SCENARIOS_V1;
   stateSet: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_STATES_V1;
   executionClass: "repository_owned_inert_ports";
+  bindingValidationMode: "exact_live230_identity_before_claim";
+  expiryValidationMode: "repository_owned_simulated_unexpired_before_claim";
   maximumRuns: 1;
+  maximumBindingChecks: 1;
+  maximumExpiryChecks: 1;
   maximumClaims: 1;
   maximumLocatorSpends: 1;
   maximumCustodySpends: 1;
@@ -99,6 +112,8 @@ export type ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementa
   custodyOwner: "none" | "issuer" | "adapter" | "unresolved";
   cleanupOutcome: "not_required" | "closed_verified" | "failed" | "observed_absent_after_failure";
   runCalls: number;
+  bindingCheckCalls: number;
+  expiryCheckCalls: number;
   claimCalls: number;
   locatorSpendCalls: number;
   custodySpendCalls: number;
@@ -114,6 +129,9 @@ export type ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementa
   tombstoneCalls: number;
   checkpointCalls: number;
   transitionCount: number;
+  history: readonly ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionHistoryEventV1[];
+  bindingsVerifiedSimulated: boolean;
+  expiryVerifiedSimulated: boolean;
   attemptClaimedSimulated: boolean;
   locatorAuthoritySpentSimulated: boolean;
   custodyAuthoritySpentSimulated: boolean;
@@ -199,8 +217,12 @@ type CompositionStateV1 = {
   counts: number[];
   transitionCount: number;
   flags: boolean[];
+  history: readonly ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionHistoryEventV1[];
   fakeResource?: object;
-  runPromise?: Promise<ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1>;
+  runStarted: boolean;
+  runPromise: Promise<ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1>;
+  resolveRun: (value: ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1) => void;
+  rejectRun: (reason: ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationErrorV1) => void;
 };
 
 const implementationRecordsV1 = new WeakSet<object>();
@@ -222,10 +244,6 @@ function safePublicRecordV1(value: unknown): void {
   catch { failV1("integrity_failed"); }
 }
 
-function settledV1<T>(value: T): Promise<T> {
-  return reflectApplyV1(promiseResolveV1, promiseConstructorV1, [value]) as Promise<T>;
-}
-
 const implementationSeedV1 = sha256Digest({
   live230ProductCommit: "3974f165f106cb0fe616b2f0e91a18e45b1b4c2d",
   acceptedLive230ReviewSha256: "eb6957f2f577b77ce7c68fb2f8e92e80004a987e3fa83ba1bdee993f6f59d58a",
@@ -242,7 +260,11 @@ const implementationMaterialV1 = {
   scenarioSet: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_SCENARIOS_V1,
   stateSet: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_STATES_V1,
   executionClass: "repository_owned_inert_ports" as const,
+  bindingValidationMode: "exact_live230_identity_before_claim" as const,
+  expiryValidationMode: "repository_owned_simulated_unexpired_before_claim" as const,
   maximumRuns: 1 as const,
+  maximumBindingChecks: 1 as const,
+  maximumExpiryChecks: 1 as const,
   maximumClaims: 1 as const,
   maximumLocatorSpends: 1 as const,
   maximumCustodySpends: 1 as const,
@@ -288,8 +310,13 @@ reflectApplyV1(weakMapSetV1, implementationDigestsV1,
   [connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1,
     connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1.implementationDigest]);
 
+const statusDigestV1 = sha256Digest({
+  implementationDigest: connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1.implementationDigest,
+  evidenceClass: "repository_fake_branded_status",
+});
+
 function readStateV1(composition: unknown): CompositionStateV1 {
-  if (composition === null || typeof composition !== "object" || isHostProxyV1(composition)
+  if (composition === null || typeof composition !== "object"
     || reflectApplyV1(weakSetHasV1, compositionsV1, [composition]) !== true) failV1("invalid_composition");
   const state = reflectApplyV1(weakMapGetV1, compositionStatesV1, [composition]) as CompositionStateV1 | undefined;
   if (!state) failV1("integrity_failed");
@@ -298,14 +325,6 @@ function readStateV1(composition: unknown): CompositionStateV1 {
 
 function statusV1(composition: object, state: CompositionStateV1):
 ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1 {
-  const [runCalls, claimCalls, locatorSpendCalls, custodySpendCalls, effectMarkerCalls, factoryRetrievalCalls,
-    fakeResourceCreateCalls, listenerSettlementCalls, locatorObservationCalls, adapterAcceptCalls,
-    ownershipTransferCalls, closeCalls, independentObservationCalls, tombstoneCalls, checkpointCalls] = state.counts;
-  const [attemptClaimedSimulated, locatorAuthoritySpentSimulated, custodyAuthoritySpentSimulated,
-    effectUncertaintyMarkedSimulated, fakeResourceCreatedSimulated, fakeResourceRetainedSimulated,
-    privateLocatorObservedSimulated, exactResourceIdentityVerifiedSimulated, continuousCustodyVerifiedSimulated,
-    adapterAcceptedSimulated, ownershipTransferredSimulated, terminalCloseSimulated,
-    independentZeroResourceObservationSimulated, tombstonedSimulated, checkpointedSimulated] = state.flags;
   const material = {
     statusVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_IMPLEMENTATION_STATUS_V1,
     implementationReference: connectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1
@@ -317,15 +336,42 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1
     state: state.state,
     custodyOwner: state.custodyOwner,
     cleanupOutcome: state.cleanupOutcome,
-    runCalls, claimCalls, locatorSpendCalls, custodySpendCalls, effectMarkerCalls, factoryRetrievalCalls,
-    fakeResourceCreateCalls, listenerSettlementCalls, locatorObservationCalls, adapterAcceptCalls,
-    ownershipTransferCalls, closeCalls, independentObservationCalls, tombstoneCalls, checkpointCalls,
+    runCalls: state.counts[0] ?? 0,
+    bindingCheckCalls: state.counts[1] ?? 0,
+    expiryCheckCalls: state.counts[2] ?? 0,
+    claimCalls: state.counts[3] ?? 0,
+    locatorSpendCalls: state.counts[4] ?? 0,
+    custodySpendCalls: state.counts[5] ?? 0,
+    effectMarkerCalls: state.counts[6] ?? 0,
+    factoryRetrievalCalls: state.counts[7] ?? 0,
+    fakeResourceCreateCalls: state.counts[8] ?? 0,
+    listenerSettlementCalls: state.counts[9] ?? 0,
+    locatorObservationCalls: state.counts[10] ?? 0,
+    adapterAcceptCalls: state.counts[11] ?? 0,
+    ownershipTransferCalls: state.counts[12] ?? 0,
+    closeCalls: state.counts[13] ?? 0,
+    independentObservationCalls: state.counts[14] ?? 0,
+    tombstoneCalls: state.counts[15] ?? 0,
+    checkpointCalls: state.counts[16] ?? 0,
     transitionCount: state.transitionCount,
-    attemptClaimedSimulated, locatorAuthoritySpentSimulated, custodyAuthoritySpentSimulated,
-    effectUncertaintyMarkedSimulated, fakeResourceCreatedSimulated, fakeResourceRetainedSimulated,
-    privateLocatorObservedSimulated, exactResourceIdentityVerifiedSimulated, continuousCustodyVerifiedSimulated,
-    adapterAcceptedSimulated, ownershipTransferredSimulated, terminalCloseSimulated,
-    independentZeroResourceObservationSimulated, tombstonedSimulated, checkpointedSimulated,
+    history: state.history,
+    bindingsVerifiedSimulated: state.flags[0] ?? false,
+    expiryVerifiedSimulated: state.flags[1] ?? false,
+    attemptClaimedSimulated: state.flags[2] ?? false,
+    locatorAuthoritySpentSimulated: state.flags[3] ?? false,
+    custodyAuthoritySpentSimulated: state.flags[4] ?? false,
+    effectUncertaintyMarkedSimulated: state.flags[5] ?? false,
+    fakeResourceCreatedSimulated: state.flags[6] ?? false,
+    fakeResourceRetainedSimulated: state.flags[7] ?? false,
+    privateLocatorObservedSimulated: state.flags[8] ?? false,
+    exactResourceIdentityVerifiedSimulated: state.flags[9] ?? false,
+    continuousCustodyVerifiedSimulated: state.flags[10] ?? false,
+    adapterAcceptedSimulated: state.flags[11] ?? false,
+    ownershipTransferredSimulated: state.flags[12] ?? false,
+    terminalCloseSimulated: state.flags[13] ?? false,
+    independentZeroResourceObservationSimulated: state.flags[14] ?? false,
+    tombstonedSimulated: state.flags[15] ?? false,
+    checkpointedSimulated: state.flags[16] ?? false,
     replacementResourceCreatedSimulated: false as const,
     actualHostObservations: 0 as const,
     actualPortSelections: 0 as const,
@@ -359,7 +405,7 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1
     grantsLeaseAuthority: false as const,
     grantsExecutionAuthority: false as const,
   };
-  const status = objectFreezeV1({ ...material, statusDigest: sha256Digest(material) });
+  const status = objectFreezeV1({ ...material, statusDigest: statusDigestV1 });
   reflectApplyV1(weakSetAddV1, statusRecordsV1, [status]);
   reflectApplyV1(weakMapSetV1, statusCompositionsV1, [status, composition]);
   reflectApplyV1(weakMapSetV1, statusDigestsV1, [status, status.statusDigest]);
@@ -368,21 +414,29 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1
 
 function incrementV1(state: CompositionStateV1, index: number): void {
   state.counts[index] = (state.counts[index] ?? 0) + 1;
-  state.transitionCount += 1;
+}
+
+function appendHistoryV1(
+  state: CompositionStateV1,
+  event: ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionHistoryEventV1,
+): void {
+  const next = reflectApplyV1(arraySliceV1, state.history, [0]) as
+    ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionHistoryEventV1[];
+  reflectApplyV1(arrayPushV1, next, [event]);
+  state.history = objectFreezeV1(next);
+  state.transitionCount = next.length;
 }
 
 function finishV1(state: CompositionStateV1): void {
-  state.counts[12] = 1;
-  state.flags[12] = true;
-  state.transitionCount += 1;
-  state.counts[13] = 1;
-  state.flags[13] = true;
-  state.transitionCount += 1;
-  state.counts[14] = 1;
-  state.flags[14] = true;
-  state.transitionCount += 1;
+  incrementV1(state, 14); state.flags[14] = true; appendHistoryV1(state, "independent_absence_observed");
+  if (state.cleanupOutcome === "failed") {
+    state.cleanupOutcome = "observed_absent_after_failure";
+    appendHistoryV1(state, "cleanup_observed_absent");
+  }
+  incrementV1(state, 15); state.flags[15] = true; appendHistoryV1(state, "tombstoned");
+  incrementV1(state, 16); state.flags[16] = true; appendHistoryV1(state, "checkpointed");
   state.fakeResource = undefined;
-  state.flags[5] = false;
+  state.flags[7] = false;
   state.custodyOwner = "none";
   state.state = "closed_verified";
 }
@@ -390,17 +444,21 @@ function finishV1(state: CompositionStateV1): void {
 function executeV1(composition: object, state: CompositionStateV1):
 ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1 {
   incrementV1(state, 0);
-  incrementV1(state, 1);
+  incrementV1(state, 1); state.flags[0] = true; appendHistoryV1(state, "bindings_verified");
+  incrementV1(state, 2); state.flags[1] = true; appendHistoryV1(state, "expiry_verified");
+  incrementV1(state, 3);
   if (state.scenario === "rejected_before_effect_marker") {
+    appendHistoryV1(state, "pre_effect_rejected");
     state.state = "failed_before_effect";
     return statusV1(composition, state);
   }
-  state.flags[0] = true;
-  incrementV1(state, 2); state.flags[1] = true;
-  incrementV1(state, 3); state.flags[2] = true;
-  incrementV1(state, 4); state.flags[3] = true;
-  incrementV1(state, 5);
+  state.flags[2] = true; appendHistoryV1(state, "attempt_claimed");
+  incrementV1(state, 4); state.flags[3] = true; appendHistoryV1(state, "locator_authority_spent");
+  incrementV1(state, 5); state.flags[4] = true; appendHistoryV1(state, "custody_authority_spent");
+  incrementV1(state, 6); state.flags[5] = true; appendHistoryV1(state, "effect_uncertainty_marked");
+  incrementV1(state, 7); appendHistoryV1(state, "factory_retrieved");
   if (state.scenario === "ambiguous_after_effect_marker") {
+    appendHistoryV1(state, "native_settlement_ambiguous");
     state.state = "ambiguous_after_effect";
     state.custodyOwner = "unresolved";
     return statusV1(composition, state);
@@ -409,49 +467,54 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1
   const fakeResource = objectFreezeV1({});
   reflectApplyV1(weakSetAddV1, fakeResourcesV1, [fakeResource]);
   state.fakeResource = fakeResource;
-  incrementV1(state, 6); state.flags[4] = true; state.flags[5] = true;
+  incrementV1(state, 8); state.flags[6] = true; state.flags[7] = true;
+  appendHistoryV1(state, "fake_resource_created");
   state.custodyOwner = "issuer";
-  incrementV1(state, 7); state.flags[8] = true;
-  incrementV1(state, 8); state.flags[6] = true;
-  incrementV1(state, 9);
+  incrementV1(state, 9); state.flags[10] = true; appendHistoryV1(state, "listener_settled");
+  incrementV1(state, 10); state.flags[8] = true; appendHistoryV1(state, "private_locator_observed");
+  incrementV1(state, 11); appendHistoryV1(state, "adapter_offered");
   if (reflectApplyV1(weakSetHasV1, fakeResourcesV1, [state.fakeResource]) !== true
     || state.fakeResource !== fakeResource) failV1("integrity_failed");
-  state.flags[7] = true;
-  state.flags[8] = true;
+  state.flags[9] = true;
+  state.flags[10] = true;
 
   if (state.scenario === "adapter_acceptance_uncertain") {
+    appendHistoryV1(state, "adapter_acceptance_uncertain");
     state.state = "owner_unresolved";
     state.custodyOwner = "unresolved";
     return statusV1(composition, state);
   }
 
   if (state.scenario === "adapter_rejected_issuer_closes") {
+    appendHistoryV1(state, "adapter_rejected");
     state.state = "issuer_retained";
   } else {
-    state.flags[9] = true;
-    incrementV1(state, 10);
-    state.flags[10] = true;
+    state.flags[11] = true;
+    appendHistoryV1(state, "adapter_accepted");
+    incrementV1(state, 12);
+    state.flags[12] = true;
+    appendHistoryV1(state, "ownership_transferred");
     state.custodyOwner = "adapter";
     state.state = "transferred";
   }
 
-  incrementV1(state, 11);
+  incrementV1(state, 13); appendHistoryV1(state, "close_attempted");
   if (state.scenario === "cleanup_failed_then_observed_absent") {
     state.cleanupOutcome = "failed";
     state.state = "cleanup_failed";
-    state.transitionCount += 1;
-    state.cleanupOutcome = "observed_absent_after_failure";
+    appendHistoryV1(state, "cleanup_failed");
   } else {
     state.cleanupOutcome = "closed_verified";
+    appendHistoryV1(state, "cleanup_closed_verified");
   }
-  state.flags[11] = true;
+  state.flags[13] = true;
   finishV1(state);
   return statusV1(composition, state);
 }
 
 export function parseConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1(value: unknown):
 ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1 {
-  if (value === null || typeof value !== "object" || isHostProxyV1(value)
+  if (value === null || typeof value !== "object"
     || reflectApplyV1(weakSetHasV1, implementationRecordsV1, [value]) !== true || !objectIsFrozenV1(value)) {
     failV1("invalid_implementation");
   }
@@ -468,7 +531,7 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationV1 {
 
 export function parseConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1(value: unknown):
 ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1 {
-  if (value === null || typeof value !== "object" || isHostProxyV1(value)
+  if (value === null || typeof value !== "object"
     || reflectApplyV1(weakSetHasV1, statusRecordsV1, [value]) !== true || !objectIsFrozenV1(value)) {
     failV1("invalid_status");
   }
@@ -494,20 +557,49 @@ ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionFakeV1 {
     CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_ISSUER_COMPOSITION_SCENARIOS_V1, [scenario])) {
     failV1("invalid_scenario");
   }
+  let resolveRunV1!: (value: ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1) => void;
+  let rejectRunV1!: (reason: ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationErrorV1) => void;
+  const runPromise = new promiseConstructorV1<
+  ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1>((resolve, reject) => {
+    resolveRunV1 = resolve;
+    rejectRunV1 = reject;
+  });
   const state: CompositionStateV1 = {
     scenario: scenario as ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionScenarioV1,
     state: "created",
     custodyOwner: "none",
     cleanupOutcome: "not_required",
-    counts: reflectApplyV1(arrayFillV1, new Array<number>(15), [0]),
+    counts: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     transitionCount: 0,
-    flags: reflectApplyV1(arrayFillV1, new Array<boolean>(15), [false]),
+    flags: [false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+      false, false, false],
+    history: objectFreezeV1([]),
+    runStarted: false,
+    runPromise,
+    resolveRun: resolveRunV1,
+    rejectRun: rejectRunV1,
   };
   const composition = {} as ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionFakeV1;
   const run = function run(this: unknown):
   Promise<ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationStatusV1> {
     const current = readStateV1(this);
-    if (!current.runPromise) current.runPromise = settledV1(executeV1(composition, current));
+    if (!current.runStarted) {
+      current.runStarted = true;
+      try {
+        current.resolveRun(executeV1(composition, current));
+      } catch {
+        if (current.flags[5]) {
+          current.state = "ambiguous_after_effect";
+          current.custodyOwner = current.fakeResource ? "issuer" : "unresolved";
+          appendHistoryV1(current, "native_settlement_ambiguous");
+        } else {
+          current.state = "failed_before_effect";
+          appendHistoryV1(current, "pre_effect_rejected");
+        }
+        current.rejectRun(new ConnectionEnrollmentPrivateLoopbackNativeIssuerCompositionImplementationErrorV1(
+          "integrity_failed"));
+      }
+    }
     return current.runPromise;
   };
   const status = function status(this: unknown):
