@@ -28,3 +28,4 @@ export * from "./private-loopback-one-use-native-observation-invocation-contract
 export * from "./private-loopback-invocation-authorization-store";
 export * from "./private-loopback-fresh-spend-recheck-composition-contract";
 export * from "./private-loopback-atomic-source-lookup-bridge-contract";
+export * from "./private-loopback-single-source-invocation-handoff-contract";

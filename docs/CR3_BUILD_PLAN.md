@@ -2216,3 +2216,33 @@ High/Medium/Low; 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrati
 guarded lookup, zero source invocation/native reads/listener/network/provider/production/external effects, and no
 barrel/runtime consumer. Preserve `docs/reviews/CR13A_LIVE_420_INDEPENDENT_REVIEW.md`; SHA-256
 `6b472475d1e8d8bb9193b1b1df133316b8a939fbdec8c52e1e5b63bfd2308119`.
+
+## CR13A-LIVE-430 — private single source-invocation and raw-observation handoff contract
+
+Status: exact product `a1c3230d4589ce72248038e722ccd4fd8600e9ee` independently accepted; ordinary integration
+of the inert contract ready. Use Sol xhigh.
+
+LIVE-430 may add one repository-only contract binding the exact accepted LIVE-340 one-use invocation contract and
+LIVE-420 guarded private lookup composition. The future implementation must insert exactly one synchronous no-argument
+call of the exact module-minted source directly into LIVE-420's unbroken private lexical flow. No public LIVE-420
+result, receipt, identity, digest, boolean, callback, continuation, or caller assertion can authorize invocation.
+
+The future raw observation remains lexical in the source-owning module, is validated as exact frozen own data, and may
+move only by direct same-module handoff to a separately gated attestation binding before a public result is created.
+It cannot be returned, exported, logged, serialized, hashed, persisted, cached, scheduled, diagnosed, or accepted from
+a caller. Every source throw, invalid/partial observation, uncertainty, or unavailable handoff after committed spend is
+terminal without retry, replacement, refund, fallback, second lookup, or second invocation. The current block remains
+inert with zero source invocation, native read, observation, attestation, persistence, runtime, provider, network, or
+production effects. See `docs/CR13A_LIVE_430_PRIVATE_SINGLE_SOURCE_INVOCATION_HANDOFF_CONTRACT.md`.
+
+**Producer evidence:** Exact product `a1c3230d4589ce72248038e722ccd4fd8600e9ee` passed 11/11 focused tests,
+450/450 CR13A tests, the complete 769/421/392 lifecycle, 5/5 build phases, 4/4 rendered routes, migrations
+0001-0038/124 local PGlite tables, TypeScript, lint, macOS stage zero, whitespace, and clean product status. It
+publishes 44 zero actuals and eight false grants and adds no observation-source/native/effect implementation or
+runtime consumer.
+
+**Accepted evidence:** A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once
+with 0 High/Medium/Low; 11/11 focused, 450/450 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 44 zero
+actuals, eight false grants, zero source calls/native reads/raw observations/private handoffs/effects, and exact
+cleanup. Preserve `docs/reviews/CR13A_LIVE_430_INDEPENDENT_REVIEW.md`; SHA-256
+`354e84ee68e1c1a202b738e0879070d6d449a268bbf001104eda4bdb246d0d0b`.
