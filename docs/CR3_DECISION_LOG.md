@@ -3761,3 +3761,31 @@ rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, a
 passed all twelve fixed commands and review groups with 0 High/Medium/Low. The private factory is stored once, never
 retrieved or exported, and every forbidden effect and authority remains zero or false. Accepted report SHA-256:
 `4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30`.
+
+## ADR-174 — Freeze private issuer composition before factory retrieval
+
+**Decision:** CR13A-LIVE-230 defines an inert exact contract for the future private composition of accepted LIVE-200
+bindings, LIVE-210 one-use state control, the LIVE-220 quarantined factory, and LIVE-190 same-server adapter. It fixes
+durable claim/spend/uncertainty ordering, one-use ceilings, continuous custody, exact-object transfer, ambiguity,
+cleanup, no-reopen recovery, and safe evidence. It does not import or consume LIVE-220 and cannot retrieve its factory.
+
+**Why:** LIVE-220 proves that native implementation can exist without becoming reachable. Making it reachable would join
+four independent security boundaries at once: durable permission, native effects, exclusive resource custody, and
+adapter ownership. Freezing the composition first prevents an implementation from silently changing order, accepting a
+caller-supplied capability, guessing ownership after uncertainty, or inventing a retry path.
+
+**Alternatives rejected:** export the factory; add a public or structural factory getter; let the caller inject native
+methods, a server, adapter, port, locator, signer, clock, or persistence client; create before durable claim/spends;
+observe the locator before uncertainty marking; transfer by numeric port; release custody before exact adapter
+acceptance; retry on timeout/restart; recover by reopening; treat cleanup failure as success; combine composition,
+physical qualification, runtime wiring, and activation; or let repository evidence clear a live blocker.
+
+**Evidence required:** exact accepted LIVE-220 product/review binding; complete frozen bindings, markers, ordering,
+ceilings, failures, custody transitions, cleanup, recovery, and safe-evidence policy; strict provenance; hostile input and
+ambient replacement non-execution; no native/effect import, LIVE-220 source consumer, runtime wiring, or live operation;
+exact zero-effect and false-authority truth; full producer verification; and a different independent zero-repair review.
+
+**Reevaluate:** Before importing or consuming LIVE-220, retrieving or invoking its private factory, creating/retaining/
+inspecting/transferring/closing a native server, observing a locator, issuing or spending live authority, writing a live
+checkpoint, calling LIVE-190 or the physical driver, assembling a candidate, making an owner-attended attempt, wiring
+runtime use, contacting a provider, or deploying.
