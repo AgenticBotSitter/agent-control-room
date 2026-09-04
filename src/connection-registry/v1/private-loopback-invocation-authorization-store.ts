@@ -11,6 +11,7 @@ import {
 } from "../../security/host-value";
 
 const objectFreezeV1 = Object.freeze;
+const objectHasOwnPropertyV1 = Object.prototype.hasOwnProperty;
 const reflectApplyV1 = Reflect.apply;
 const arrayPushV1 = Array.prototype.push;
 const regexpExecV1 = RegExp.prototype.exec;
@@ -41,6 +42,8 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_REG
   "control-room-connection-enrollment-private-loopback-invocation-authorization-registration/v1" as const;
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_VALIDATION_V1 =
   "control-room-connection-enrollment-private-loopback-invocation-authorization-validation/v1" as const;
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_CONSUMPTION_V1 =
+  "control-room-connection-enrollment-private-loopback-invocation-authorization-consumption/v1" as const;
 
 export type ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1 = Readonly<{
   contractVersion: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_BODY_V1;
@@ -124,13 +127,39 @@ export type ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationValidation
   validationDigest: string;
 }>;
 
+export type ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptionV1 = Readonly<{
+  consumptionVersion: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_CONSUMPTION_V1;
+  consumptionReference: string;
+  authorizationIdDigest: string;
+  nonceDigest: string;
+  bodyDigest: string;
+  consumedAt: string;
+  state: "consumed_pending_post_transaction_time_recheck" | "already_consumed_terminal";
+  freshConsumption: boolean;
+  exactReplayReturnsNoAuthority: true;
+  postTransactionTimeRechecked: false;
+  sourceLookupPerformed: false;
+  sourceInvocationPerformed: false;
+  nativeReadPerformed: false;
+  grantsApproval: false;
+  grantsQualificationAuthority: false;
+  grantsCandidateAuthority: false;
+  grantsActivationAuthority: false;
+  grantsNetworkAuthority: false;
+  grantsCommandAuthority: false;
+  grantsLeaseAuthority: false;
+  grantsExecutionAuthority: false;
+  consumptionDigest: string;
+}>;
+
 export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1 extends Error {
   readonly safeCode: "invalid_input" | "authentication_failed" | "replay_conflict" | "authorization_unavailable"
-    | "not_yet_valid" | "expired" | "integrity_failed";
+    | "consumption_unavailable" | "not_yet_valid" | "expired" | "terminal_ambiguity" | "integrity_failed";
 
   constructor(code: unknown) {
     const safeCode = code === "invalid_input" || code === "authentication_failed" || code === "replay_conflict"
       || code === "authorization_unavailable" || code === "not_yet_valid" || code === "expired"
+      || code === "consumption_unavailable" || code === "terminal_ambiguity"
       || code === "integrity_failed" ? code : "integrity_failed";
     super(safeCode);
     this.safeCode = safeCode;
@@ -172,6 +201,25 @@ interface NonceRowV1 {
 interface VerifiedAuthorizationV1 {
   row: AuthorizationRowV1;
   body: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1;
+}
+
+interface ConsumptionHeadRowV1 {
+  tenant_id: string;
+  last_sequence: number | string;
+  last_record_digest: string;
+  head_auth_tag: string;
+}
+
+interface ConsumptionRowV1 {
+  tenant_id: string;
+  sequence: number | string;
+  authorization_id_digest: string;
+  nonce_digest: string;
+  body_digest: string;
+  consumed_at: string;
+  previous_record_digest: string | null;
+  record_digest: string;
+  record_auth_tag: string;
 }
 
 const storeErrorPrototypeV1 = ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1.prototype;
@@ -350,6 +398,28 @@ function headMaterialV1(row: Omit<HeadRowV1, "head_auth_tag">) {
     lastSequence: numberConstructorV1(row.last_sequence), lastRecordDigest: row.last_record_digest };
 }
 
+function consumptionRecordMaterialV1(row: Omit<ConsumptionRowV1, "record_digest" | "record_auth_tag">) {
+  return {
+    kind: "private_native_observation_invocation_authorization_consumption",
+    tenantId: row.tenant_id,
+    sequence: numberConstructorV1(row.sequence),
+    authorizationIdDigest: row.authorization_id_digest,
+    nonceDigest: row.nonce_digest,
+    bodyDigest: row.body_digest,
+    consumedAt: row.consumed_at,
+    previousRecordDigest: row.previous_record_digest,
+  };
+}
+
+function consumptionHeadMaterialV1(row: Omit<ConsumptionHeadRowV1, "head_auth_tag">) {
+  return {
+    kind: "private_native_observation_invocation_authorization_consumption_head",
+    tenantId: row.tenant_id,
+    lastSequence: numberConstructorV1(row.last_sequence),
+    lastRecordDigest: row.last_record_digest,
+  };
+}
+
 function buildRegistrationV1(body: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1,
   bodyDigest: string): ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationRegistrationV1 {
   const material = {
@@ -415,22 +485,63 @@ function buildValidationV1(body: ConnectionEnrollmentPrivateLoopbackInvocationAu
   return receipt;
 }
 
+function buildConsumptionV1(body: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1,
+  bodyDigest: string, consumedAt: string, freshConsumption: boolean):
+ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptionV1 {
+  const material = {
+    consumptionVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_CONSUMPTION_V1,
+    consumptionReference: `authorization-consumption:${reflectApplyV1(stringSliceV1, bodyDigest, [7, 31]) as string}`,
+    authorizationIdDigest: authorizationIdDigestV1(body),
+    nonceDigest: body.nonceDigest,
+    bodyDigest,
+    consumedAt,
+    state: freshConsumption ? "consumed_pending_post_transaction_time_recheck" as const
+      : "already_consumed_terminal" as const,
+    freshConsumption,
+    exactReplayReturnsNoAuthority: true as const,
+    postTransactionTimeRechecked: false as const,
+    sourceLookupPerformed: false as const,
+    sourceInvocationPerformed: false as const,
+    nativeReadPerformed: false as const,
+    grantsApproval: false as const,
+    grantsQualificationAuthority: false as const,
+    grantsCandidateAuthority: false as const,
+    grantsActivationAuthority: false as const,
+    grantsNetworkAuthority: false as const,
+    grantsCommandAuthority: false as const,
+    grantsLeaseAuthority: false as const,
+    grantsExecutionAuthority: false as const,
+  };
+  const receipt = objectFreezeV1({ ...material, consumptionDigest: sha256Digest(material) });
+  try { assertNoSecretMaterial(receipt, "native observation authorization consumption"); }
+  catch { failV1("integrity_failed"); }
+  return receipt;
+}
+
 export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
   readonly #transaction: DatabaseClient["transaction"];
   readonly #authorizationKey: Uint8Array;
   readonly #authorizationKeyIdDigest: string;
   readonly #stateKey: Uint8Array;
+  readonly #consumptionStateKey?: Uint8Array;
 
   constructor(database: DatabaseClient, keysValue: unknown) {
     const transaction = dataMethodV1(database, "transaction") as DatabaseClient["transaction"] | undefined;
     const keys = exactHostDataSnapshotV1(keysValue,
-      ["authorizationKey", "authorizationKeyIdDigest", "stateKey"]);
+      ["authorizationKey", "authorizationKeyIdDigest", "stateKey"], ["consumptionStateKey"]);
+    const consumptionStateKeyPresent = !!keys
+      && reflectApplyV1(objectHasOwnPropertyV1, keys, ["consumptionStateKey"]) === true;
     const authorizationKey = keys ? exactHostUint8ArrayV1(keys.authorizationKey, 32) : undefined;
     const stateKey = keys ? exactHostUint8ArrayV1(keys.stateKey, 32) : undefined;
+    const consumptionStateKey = !consumptionStateKeyPresent ? undefined
+      : exactHostUint8ArrayV1(keys.consumptionStateKey, 32);
     if (!database || typeof database !== "object" || isHostProxyV1(database) || !transaction
       || !authorizationKey || !validDigestV1(keys?.authorizationKeyIdDigest) || !stateKey
       || authorizationKey.byteLength !== 32 || stateKey.byteLength !== 32
-      || sameKeyMaterialV1(authorizationKey, stateKey)) {
+      || sameKeyMaterialV1(authorizationKey, stateKey)
+      || (consumptionStateKeyPresent && (!consumptionStateKey
+        || consumptionStateKey.byteLength !== 32 || sameKeyMaterialV1(authorizationKey, consumptionStateKey)
+        || sameKeyMaterialV1(stateKey, consumptionStateKey)))) {
       failV1("invalid_input");
     }
     this.#transaction = ((callback) => reflectApplyV1(transaction, database, [callback])) as
@@ -438,6 +549,7 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
     this.#authorizationKey = authorizationKey.copy();
     this.#authorizationKeyIdDigest = keys.authorizationKeyIdDigest;
     this.#stateKey = stateKey.copy();
+    this.#consumptionStateKey = consumptionStateKey?.copy();
     objectFreezeV1(this);
   }
 
@@ -570,6 +682,84 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
       reflectApplyV1(arrayPushV1, matchedAuthorizationDigests, [match.row.authorization_id_digest]);
     }
     return { head: { ...head, last_sequence: lastSequence }, authorizations };
+  }
+
+  #consumptionRecordTag(key: Uint8Array, row: Omit<ConsumptionRowV1, "record_auth_tag">): string {
+    const { record_digest: recordDigest, ...withoutDigest } = row;
+    return hmacSha256Tag(key, { ...consumptionRecordMaterialV1(withoutDigest), recordDigest });
+  }
+
+  #consumptionHeadTag(key: Uint8Array, row: Omit<ConsumptionHeadRowV1, "head_auth_tag">): string {
+    return hmacSha256Tag(key, consumptionHeadMaterialV1(row));
+  }
+
+  #verifyConsumptionRow(value: unknown, tenantId: string, expectedSequence: number,
+    expectedPreviousDigest: string | null, key: Uint8Array): ConsumptionRowV1 {
+    const captured = exactHostDataSnapshotV1(value, ["tenant_id", "sequence", "authorization_id_digest",
+      "nonce_digest", "body_digest", "consumed_at", "previous_record_digest", "record_digest", "record_auth_tag"]);
+    if (!captured) failV1("integrity_failed");
+    const row = captured as unknown as ConsumptionRowV1, sequence = exactSequenceV1(row.sequence);
+    if (sequence === undefined || !validIdV1(row.tenant_id) || !validDigestV1(row.authorization_id_digest)
+      || !validDigestV1(row.nonce_digest) || !validDigestV1(row.body_digest)
+      || exactInstantMillisecondsV1(row.consumed_at) === undefined
+      || (row.previous_record_digest !== null && !validDigestV1(row.previous_record_digest))
+      || !validDigestV1(row.record_digest) || !validAuthTagV1(row.record_auth_tag)) failV1("integrity_failed");
+    const withoutTags: Omit<ConsumptionRowV1, "record_digest" | "record_auth_tag"> = {
+      tenant_id: row.tenant_id,
+      sequence,
+      authorization_id_digest: row.authorization_id_digest,
+      nonce_digest: row.nonce_digest,
+      body_digest: row.body_digest,
+      consumed_at: row.consumed_at,
+      previous_record_digest: row.previous_record_digest,
+    };
+    if (row.tenant_id !== tenantId || sequence !== expectedSequence
+      || row.previous_record_digest !== expectedPreviousDigest
+      || row.record_digest !== sha256Digest(consumptionRecordMaterialV1(withoutTags))
+      || !sameTextV1(row.record_auth_tag,
+        this.#consumptionRecordTag(key, { ...withoutTags, record_digest: row.record_digest }))) {
+      failV1("integrity_failed");
+    }
+    return { ...row, sequence };
+  }
+
+  async #verifiedConsumptionStream(session: DatabaseSession, tenantId: string, key: Uint8Array): Promise<{
+    head?: ConsumptionHeadRowV1;
+    consumptions: ConsumptionRowV1[];
+  }> {
+    const headRows = await safeQueryV1<ConsumptionHeadRowV1>(session, `SELECT tenant_id,last_sequence,
+      last_record_digest,head_auth_tag FROM control_native_observation_authorization_consumption_heads
+      WHERE tenant_id=$1 FOR UPDATE`, [tenantId], 1);
+    const rawConsumptions = await safeQueryV1<ConsumptionRowV1>(session, `SELECT tenant_id,sequence,
+      authorization_id_digest,nonce_digest,body_digest,
+      to_char(consumed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS consumed_at,
+      previous_record_digest,record_digest,record_auth_tag
+      FROM control_native_observation_authorization_consumptions WHERE tenant_id=$1 ORDER BY sequence FOR UPDATE`,
+    [tenantId]);
+    if (!headRows.length) {
+      if (rawConsumptions.length) failV1("integrity_failed");
+      return { consumptions: [] };
+    }
+    if (headRows.length !== 1) failV1("integrity_failed");
+    const captured = exactHostDataSnapshotV1(headRows[0],
+      ["tenant_id", "last_sequence", "last_record_digest", "head_auth_tag"]);
+    if (!captured) failV1("integrity_failed");
+    const head = captured as unknown as ConsumptionHeadRowV1, lastSequence = exactSequenceV1(head.last_sequence);
+    if (lastSequence === undefined || !validIdV1(head.tenant_id) || !validDigestV1(head.last_record_digest)
+      || !validAuthTagV1(head.head_auth_tag)) failV1("integrity_failed");
+    const consumptions: ConsumptionRowV1[] = [];
+    let previous: string | null = null;
+    for (let index = 0; index < rawConsumptions.length; index += 1) {
+      const verified = this.#verifyConsumptionRow(rawConsumptions[index], tenantId, index + 1, previous, key);
+      reflectApplyV1(arrayPushV1, consumptions, [verified]);
+      previous = verified.record_digest;
+    }
+    if (head.tenant_id !== tenantId || lastSequence !== consumptions.length || head.last_record_digest !== previous
+      || !sameTextV1(head.head_auth_tag, this.#consumptionHeadTag(key,
+        { tenant_id: tenantId, last_sequence: lastSequence, last_record_digest: head.last_record_digest }))) {
+      failV1("integrity_failed");
+    }
+    return { head: { ...head, last_sequence: lastSequence }, consumptions };
   }
 
   async register(value: unknown): Promise<ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationRegistrationV1> {
@@ -706,15 +896,119 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
       failV1("integrity_failed");
     }
   }
+
+  async consumeForInvocation(value: unknown):
+  Promise<ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptionV1> {
+    const consumptionKey = this.#consumptionStateKey;
+    if (!consumptionKey) failV1("consumption_unavailable");
+    const envelope = parseEnvelopeV1(value, this.#authorizationKey, this.#authorizationKeyIdDigest), body = envelope.body;
+    let transactionPrepared = false;
+    try {
+      return await this.#transaction(async (session) => {
+        const tenants = await safeQueryV1(session, `SELECT id FROM tenants WHERE id=$1 FOR UPDATE`, [body.tenantId], 1);
+        const tenant = tenants.length === 1 ? exactHostDataSnapshotV1(tenants[0], ["id"]) : undefined;
+        if (!tenant || tenant.id !== body.tenantId) failV1("authorization_unavailable");
+        const stream = await this.#verifiedStream(session, body.tenantId), authorizationIdDigest = authorizationIdDigestV1(body);
+        let identityMatch: VerifiedAuthorizationV1 | undefined, nonceMatch: VerifiedAuthorizationV1 | undefined;
+        for (let index = 0; index < stream.authorizations.length; index += 1) {
+          const existing = stream.authorizations[index]!;
+          if (existing.row.authorization_id_digest === authorizationIdDigest) {
+            if (identityMatch) failV1("integrity_failed");
+            identityMatch = existing;
+          }
+          if (existing.row.nonce_digest === body.nonceDigest) {
+            if (nonceMatch) failV1("integrity_failed");
+            nonceMatch = existing;
+          }
+        }
+        if (!identityMatch && !nonceMatch) failV1("authorization_unavailable");
+        if (!identityMatch || !nonceMatch || identityMatch !== nonceMatch
+          || identityMatch.row.body_digest !== envelope.bodyDigest
+          || !sameTextV1(identityMatch.row.authorization_auth_tag, envelope.authorizationAuthTag)) {
+          failV1("replay_conflict");
+        }
+        const consumptionStream = await this.#verifiedConsumptionStream(session, body.tenantId, consumptionKey);
+        let consumedIdentity: ConsumptionRowV1 | undefined, consumedNonce: ConsumptionRowV1 | undefined;
+        for (let index = 0; index < consumptionStream.consumptions.length; index += 1) {
+          const existing = consumptionStream.consumptions[index]!;
+          if (existing.authorization_id_digest === authorizationIdDigest) consumedIdentity = existing;
+          if (existing.nonce_digest === body.nonceDigest) consumedNonce = existing;
+        }
+        if (consumedIdentity || consumedNonce) {
+          if (!consumedIdentity || !consumedNonce || consumedIdentity !== consumedNonce
+            || consumedIdentity.body_digest !== envelope.bodyDigest) failV1("replay_conflict");
+          const receipt = buildConsumptionV1(identityMatch.body, identityMatch.row.body_digest,
+            consumedIdentity.consumed_at, false);
+          transactionPrepared = true;
+          return receipt;
+        }
+        const timeRows = await safeQueryV1<{ trusted_now: string }>(session, `SELECT
+          to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS trusted_now`, [], 1);
+        const timeRow = timeRows.length === 1 ? exactHostDataSnapshotV1(timeRows[0], ["trusted_now"]) : undefined;
+        const trustedNow = timeRow ? exactInstantMillisecondsV1(timeRow.trusted_now) : undefined;
+        if (trustedNow === undefined) failV1("integrity_failed");
+        const notBefore = exactInstantMillisecondsV1(identityMatch.body.notBefore);
+        const expires = exactInstantMillisecondsV1(identityMatch.body.expiresAt);
+        if (notBefore === undefined || expires === undefined) failV1("integrity_failed");
+        if (trustedNow < notBefore) failV1("not_yet_valid");
+        if (trustedNow >= expires) failV1("expired");
+        const consumedAt = reflectApplyV1(dateToISOStringV1, new dateConstructorV1(trustedNow), []) as string;
+        const sequence = consumptionStream.consumptions.length + 1;
+        if (sequence > 10_000) failV1("integrity_failed");
+        const rowBase: Omit<ConsumptionRowV1, "record_digest" | "record_auth_tag"> = {
+          tenant_id: body.tenantId,
+          sequence,
+          authorization_id_digest: authorizationIdDigest,
+          nonce_digest: body.nonceDigest,
+          body_digest: envelope.bodyDigest,
+          consumed_at: consumedAt,
+          previous_record_digest: consumptionStream.head?.last_record_digest ?? null,
+        };
+        const recordDigest = sha256Digest(consumptionRecordMaterialV1(rowBase));
+        const recordAuthTag = this.#consumptionRecordTag(consumptionKey, { ...rowBase, record_digest: recordDigest });
+        const inserted = await safeQueryV1(session, `INSERT INTO
+          control_native_observation_authorization_consumptions(tenant_id,sequence,authorization_id_digest,
+          nonce_digest,body_digest,consumed_at,previous_record_digest,record_digest,record_auth_tag)
+          VALUES($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9) RETURNING tenant_id`, [body.tenantId, sequence,
+          authorizationIdDigest, body.nonceDigest, envelope.bodyDigest, consumedAt, rowBase.previous_record_digest,
+          recordDigest, recordAuthTag], 1);
+        const insertedRow = inserted.length === 1 ? exactHostDataSnapshotV1(inserted[0], ["tenant_id"]) : undefined;
+        if (!insertedRow || insertedRow.tenant_id !== body.tenantId) failV1("integrity_failed");
+        const nextHead = { tenant_id: body.tenantId, last_sequence: sequence, last_record_digest: recordDigest };
+        const headTag = this.#consumptionHeadTag(consumptionKey, nextHead);
+        const headResult = consumptionStream.head
+          ? await safeQueryV1(session, `UPDATE control_native_observation_authorization_consumption_heads
+            SET last_sequence=$1,last_record_digest=$2,head_auth_tag=$3 WHERE tenant_id=$4 RETURNING tenant_id`,
+          [sequence, recordDigest, headTag, body.tenantId], 1)
+          : await safeQueryV1(session, `INSERT INTO control_native_observation_authorization_consumption_heads
+            (tenant_id,last_sequence,last_record_digest,head_auth_tag) VALUES($1,$2,$3,$4) RETURNING tenant_id`,
+          [body.tenantId, sequence, recordDigest, headTag], 1);
+        const headStored = headResult.length === 1 ? exactHostDataSnapshotV1(headResult[0], ["tenant_id"]) : undefined;
+        if (!headStored || headStored.tenant_id !== body.tenantId) failV1("integrity_failed");
+        const receipt = buildConsumptionV1(identityMatch.body, identityMatch.row.body_digest, consumedAt, true);
+        transactionPrepared = true;
+        return receipt;
+      });
+    } catch (error) {
+      if (transactionPrepared) failV1("terminal_ambiguity");
+      const code = exactHostErrorCodeV1(error, storeErrorPrototypeV1, "safeCode");
+      if (code === "invalid_input" || code === "authentication_failed" || code === "replay_conflict"
+        || code === "authorization_unavailable" || code === "consumption_unavailable"
+        || code === "not_yet_valid" || code === "expired" || code === "integrity_failed") failV1(code);
+      failV1("terminal_ambiguity");
+    }
+  }
 }
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_STORE_DISABLED_V1 = objectFreezeV1({
   state: "disabled_pending_protected_keys_and_database" as const,
   readOnlyValidationImplemented: true as const,
+  atomicConsumptionImplemented: true as const,
   trustedDatabaseTimeRequired: true as const,
   productionDatabaseConfigured: false as const,
   authorizationKeyConfigured: false as const,
   stateKeyConfigured: false as const,
+  consumptionStateKeyConfigured: false as const,
   productionIssuerImplemented: false as const,
   authorizationValidations: 0 as const,
   databaseClockReads: 0 as const,
@@ -741,5 +1035,6 @@ objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreEr
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.register);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.validateForConsumption);
+objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.consumeForInvocation);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1);
