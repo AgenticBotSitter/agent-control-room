@@ -219,7 +219,10 @@ test("CR13A-LIVE-260 publishes no shell or bridge callable and remains native-fr
     const sourceText = await readFile(file, "utf8");
     if (sourceText.includes("private-loopback-native-composition-shell-contract")) consumers.push(file);
   }
-  assert.deepEqual(consumers, [resolve(root, "src/connection-registry/v1/index.ts")]);
+  assert.deepEqual(consumers.sort(), [
+    resolve(root, "src/connection-registry/v1/index.ts"),
+    resolve(root, "src/connection-registry/v1/private-loopback-native-retained-resource-issuer-implementation.ts"),
+  ].sort());
   const contract = connectionEnrollmentPrivateLoopbackNativeCompositionShellContractV1;
   for (const key of ["callerDependencyAccepted", "publicShellOrBridgeExportAllowed",
     "factoryReturnSerializationLoggingOrDigestAllowed", "resourceOrLocatorExportAllowed", "shellImplemented",

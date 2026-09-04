@@ -226,7 +226,10 @@ test("CR13A-LIVE-250 publishes no retrieval callable and remains native-free and
     const text = await readFile(file, "utf8");
     if (text.includes("private-loopback-native-factory-retrieval-bridge-contract")) consumers.push(file);
   }
-  assert.deepEqual(consumers, [resolve(root, "src/connection-registry/v1/index.ts")]);
+  assert.deepEqual(consumers.sort(), [
+    resolve(root, "src/connection-registry/v1/index.ts"),
+    resolve(root, "src/connection-registry/v1/private-loopback-native-retained-resource-issuer-implementation.ts"),
+  ].sort());
 
   const contract = connectionEnrollmentPrivateLoopbackNativeFactoryRetrievalBridgeContractV1;
   for (const key of [

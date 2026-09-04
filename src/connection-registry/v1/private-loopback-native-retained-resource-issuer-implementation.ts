@@ -5,6 +5,14 @@ import {
 } from "node:net";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { exactHostDataSnapshotV1, isHostProxyV1 } from "../../security/host-value";
+import {
+  connectionEnrollmentPrivateLoopbackNativeFactoryRetrievalBridgeContractV1,
+  parseConnectionEnrollmentPrivateLoopbackNativeFactoryRetrievalBridgeContractV1,
+} from "./private-loopback-native-factory-retrieval-bridge-contract";
+import {
+  connectionEnrollmentPrivateLoopbackNativeCompositionShellContractV1,
+  parseConnectionEnrollmentPrivateLoopbackNativeCompositionShellContractV1,
+} from "./private-loopback-native-composition-shell-contract";
 
 const objectFreezeV1 = Object.freeze;
 const objectIsFrozenV1 = Object.isFrozen;
@@ -45,6 +53,14 @@ export type ConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativ
   implementationReference: string;
   live210ProductCommit: "c4cac41561214117161c9764604f5dc06ecd63b6";
   acceptedLive210ReviewSha256: "c25e22dfa2c8601b23547a8a6f32b68d78da23458a696cd9461678ce084ec2c7";
+  live220ProductCommit: "2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9";
+  acceptedLive220ReviewSha256: "4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30";
+  live240ProductCommit: "71e4c737b6e681fe24d730decc3497d196cf441c";
+  acceptedLive240ReviewSha256: "1d552ac7d580d6996b5192139dee85beb4f15e1058cf2c19719e9424f82f00f8";
+  live250ProductCommit: "9b855d4193837fdf6d0d0fce1dcfd65a94cce49f";
+  acceptedLive250ReviewSha256: "2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6";
+  live260ProductCommit: "01bfa6540cc83dc6099564e4fc9043be4cafddc6";
+  acceptedLive260ReviewSha256: "41c55ae9437f8951e18f919ec1569bbebe1f795cafeaade51a41826fc3d0f9f1";
   serverModule: "node:net";
   bindHostPolicy: "literal_ipv4_loopback_only";
   portSelectionPolicy: "kernel_assigned_private_unobserved";
@@ -56,6 +72,11 @@ export type ConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativ
   nativeImplementationPresent: true;
   nativeFactoryExported: false;
   nativeFactoryReachable: false;
+  privateFactoryLexicallyReachable: true;
+  privateRetrievalBridgeImplemented: true;
+  privateCompositionShellImplemented: true;
+  privateShellExported: false;
+  privateShellRuntimeReachable: false;
   callerNativeInputAccepted: false;
   locatorInspectionImplemented: false;
   retainedServerTransferImplemented: false;
@@ -69,6 +90,11 @@ export type ConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativ
   candidateEligible: false;
   activationEligible: false;
   actualNativeBackendConstructions: 0;
+  actualPrivateShellEntries: 0;
+  actualPrivateBridgeConsumptions: 0;
+  actualPrivateFactoryLookups: 0;
+  actualPrivateFactoryReceipts: 0;
+  actualPrivateFactoryInvocations: 0;
   actualListenerAttempts: 0;
   actualCloseAttempts: 0;
   actualNetworkIoEvents: 0;
@@ -95,6 +121,11 @@ export type ConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativ
   nativeImplementationPresent: true;
   nativeFactoryExported: false;
   nativeFactoryReachable: false;
+  privateFactoryLexicallyReachable: true;
+  privateRetrievalBridgeImplemented: true;
+  privateCompositionShellImplemented: true;
+  privateShellExported: false;
+  privateShellRuntimeReachable: false;
   nativeInvocationAllowed: false;
   nativeAttemptState: "not_attempted";
   locatorState: "not_selected_or_observed";
@@ -112,6 +143,11 @@ export type ConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativ
   actualPortSelections: 0;
   actualPortReservations: 0;
   actualNativeBackendConstructions: 0;
+  actualPrivateShellEntries: 0;
+  actualPrivateBridgeConsumptions: 0;
+  actualPrivateFactoryLookups: 0;
+  actualPrivateFactoryReceipts: 0;
+  actualPrivateFactoryInvocations: 0;
   actualNativeResourcesCreated: 0;
   actualNativeResourcesRetained: 0;
   actualListenerAttempts: 0;
@@ -159,12 +195,17 @@ type PrivateNativeIssuerOutcomeV1 = Readonly<{
   closeRetainedServer?: () => Promise<PrivateNativeCloseOutcomeV1>;
 }>;
 type PrivateNativeIssuerFactoryV1 = () => Promise<PrivateNativeIssuerOutcomeV1>;
+type PrivateNativeCompositionShellOutcomeV1 = PrivateNativeIssuerOutcomeV1 | Readonly<{
+  outcome: "private_prerequisite_rejected";
+}>;
+type PrivateNativeCompositionShellV1 = () => Promise<PrivateNativeCompositionShellOutcomeV1>;
 
 const implementationRecordsV1 = new WeakSet<object>();
 const implementationDigestsV1 = new WeakMap<object, string>();
 const statusRecordsV1 = new WeakSet<object>();
 const statusDigestsV1 = new WeakMap<object, string>();
 const quarantinedNativeFactoriesV1 = new WeakMap<object, PrivateNativeIssuerFactoryV1>();
+const quarantinedNativeCompositionShellsV1 = new WeakMap<object, PrivateNativeCompositionShellV1>();
 
 function failV1(code: ConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativeErrorV1["safeCode"]):
 never {
@@ -248,9 +289,55 @@ function createQuarantinedNativeIssuerV1(): Promise<PrivateNativeIssuerOutcomeV1
   });
 }
 
+/*
+ * LIVE-270 gives this shell lexical access to the exact quarantined factory without giving any exported or runtime
+ * path access to the shell. The shell is created once and placed in a second private WeakMap that has no retrieval
+ * operation. Tests inspect source and public zero-use evidence only; invoking this function would be a native effect
+ * and remains outside this block.
+ */
+function createQuarantinedNativeCompositionShellV1(): PrivateNativeCompositionShellV1 {
+  let shellConsumedV1 = false;
+  let bridgeConsumedV1 = false;
+  const privateNativeCompositionShellV1 = (): Promise<PrivateNativeCompositionShellOutcomeV1> => {
+    if (shellConsumedV1) return settledV1(objectFreezeV1({ outcome: "private_prerequisite_rejected" as const }));
+    shellConsumedV1 = true;
+    try {
+      if (parseConnectionEnrollmentPrivateLoopbackNativeFactoryRetrievalBridgeContractV1(
+        connectionEnrollmentPrivateLoopbackNativeFactoryRetrievalBridgeContractV1,
+      ) !== connectionEnrollmentPrivateLoopbackNativeFactoryRetrievalBridgeContractV1
+        || parseConnectionEnrollmentPrivateLoopbackNativeCompositionShellContractV1(
+          connectionEnrollmentPrivateLoopbackNativeCompositionShellContractV1,
+        ) !== connectionEnrollmentPrivateLoopbackNativeCompositionShellContractV1) {
+        return settledV1(objectFreezeV1({ outcome: "private_prerequisite_rejected" as const }));
+      }
+    } catch {
+      return settledV1(objectFreezeV1({ outcome: "private_prerequisite_rejected" as const }));
+    }
+    if (bridgeConsumedV1) return settledV1(objectFreezeV1({ outcome: "private_prerequisite_rejected" as const }));
+    bridgeConsumedV1 = true;
+    const nativeFactoryV1 = reflectApplyV1(weakMapGetV1, quarantinedNativeFactoriesV1,
+      [connectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativeImplementationV1]) as
+      PrivateNativeIssuerFactoryV1 | undefined;
+    if (!nativeFactoryV1) {
+      return settledV1(objectFreezeV1({ outcome: "private_prerequisite_rejected" as const }));
+    }
+    const factoryReceiptV1 = nativeFactoryV1;
+    return reflectApplyV1(factoryReceiptV1, undefined, []) as Promise<PrivateNativeIssuerOutcomeV1>;
+  };
+  return objectFreezeV1(privateNativeCompositionShellV1);
+}
+
 const implementationSeedV1 = sha256Digest({
   live210ProductCommit: "c4cac41561214117161c9764604f5dc06ecd63b6",
   acceptedLive210ReviewSha256: "c25e22dfa2c8601b23547a8a6f32b68d78da23458a696cd9461678ce084ec2c7",
+  live220ProductCommit: "2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9",
+  acceptedLive220ReviewSha256: "4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30",
+  live240ProductCommit: "71e4c737b6e681fe24d730decc3497d196cf441c",
+  acceptedLive240ReviewSha256: "1d552ac7d580d6996b5192139dee85beb4f15e1058cf2c19719e9424f82f00f8",
+  live250ProductCommit: "9b855d4193837fdf6d0d0fce1dcfd65a94cce49f",
+  acceptedLive250ReviewSha256: "2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6",
+  live260ProductCommit: "01bfa6540cc83dc6099564e4fc9043be4cafddc6",
+  acceptedLive260ReviewSha256: "41c55ae9437f8951e18f919ec1569bbebe1f795cafeaade51a41826fc3d0f9f1",
   serverModule: "node:net",
   bindHostPolicy: "literal_ipv4_loopback_only",
   capturedPrimitives: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_RETAINED_RESOURCE_ISSUER_CAPTURED_PRIMITIVES_V1,
@@ -263,6 +350,14 @@ const implementationMaterialV1 = {
     implementationSeedV1, [7, 31])}`,
   live210ProductCommit: "c4cac41561214117161c9764604f5dc06ecd63b6" as const,
   acceptedLive210ReviewSha256: "c25e22dfa2c8601b23547a8a6f32b68d78da23458a696cd9461678ce084ec2c7" as const,
+  live220ProductCommit: "2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9" as const,
+  acceptedLive220ReviewSha256: "4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30" as const,
+  live240ProductCommit: "71e4c737b6e681fe24d730decc3497d196cf441c" as const,
+  acceptedLive240ReviewSha256: "1d552ac7d580d6996b5192139dee85beb4f15e1058cf2c19719e9424f82f00f8" as const,
+  live250ProductCommit: "9b855d4193837fdf6d0d0fce1dcfd65a94cce49f" as const,
+  acceptedLive250ReviewSha256: "2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6" as const,
+  live260ProductCommit: "01bfa6540cc83dc6099564e4fc9043be4cafddc6" as const,
+  acceptedLive260ReviewSha256: "41c55ae9437f8951e18f919ec1569bbebe1f795cafeaade51a41826fc3d0f9f1" as const,
   serverModule: "node:net" as const,
   bindHostPolicy: "literal_ipv4_loopback_only" as const,
   portSelectionPolicy: "kernel_assigned_private_unobserved" as const,
@@ -274,6 +369,11 @@ const implementationMaterialV1 = {
   nativeImplementationPresent: true as const,
   nativeFactoryExported: false as const,
   nativeFactoryReachable: false as const,
+  privateFactoryLexicallyReachable: true as const,
+  privateRetrievalBridgeImplemented: true as const,
+  privateCompositionShellImplemented: true as const,
+  privateShellExported: false as const,
+  privateShellRuntimeReachable: false as const,
   callerNativeInputAccepted: false as const,
   locatorInspectionImplemented: false as const,
   retainedServerTransferImplemented: false as const,
@@ -287,6 +387,11 @@ const implementationMaterialV1 = {
   candidateEligible: false as const,
   activationEligible: false as const,
   actualNativeBackendConstructions: 0 as const,
+  actualPrivateShellEntries: 0 as const,
+  actualPrivateBridgeConsumptions: 0 as const,
+  actualPrivateFactoryLookups: 0 as const,
+  actualPrivateFactoryReceipts: 0 as const,
+  actualPrivateFactoryInvocations: 0 as const,
   actualListenerAttempts: 0 as const,
   actualCloseAttempts: 0 as const,
   actualNetworkIoEvents: 0 as const,
@@ -315,6 +420,9 @@ reflectApplyV1(weakMapSetV1, implementationDigestsV1,
 reflectApplyV1(weakMapSetV1, quarantinedNativeFactoriesV1,
   [connectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativeImplementationV1,
     objectFreezeV1(createQuarantinedNativeIssuerV1)]);
+reflectApplyV1(weakMapSetV1, quarantinedNativeCompositionShellsV1,
+  [connectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativeImplementationV1,
+    createQuarantinedNativeCompositionShellV1()]);
 
 const statusMaterialV1 = {
   statusVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_RETAINED_RESOURCE_ISSUER_NATIVE_STATUS_V1,
@@ -326,6 +434,11 @@ const statusMaterialV1 = {
   nativeImplementationPresent: true as const,
   nativeFactoryExported: false as const,
   nativeFactoryReachable: false as const,
+  privateFactoryLexicallyReachable: true as const,
+  privateRetrievalBridgeImplemented: true as const,
+  privateCompositionShellImplemented: true as const,
+  privateShellExported: false as const,
+  privateShellRuntimeReachable: false as const,
   nativeInvocationAllowed: false as const,
   nativeAttemptState: "not_attempted" as const,
   locatorState: "not_selected_or_observed" as const,
@@ -343,6 +456,11 @@ const statusMaterialV1 = {
   actualPortSelections: 0 as const,
   actualPortReservations: 0 as const,
   actualNativeBackendConstructions: 0 as const,
+  actualPrivateShellEntries: 0 as const,
+  actualPrivateBridgeConsumptions: 0 as const,
+  actualPrivateFactoryLookups: 0 as const,
+  actualPrivateFactoryReceipts: 0 as const,
+  actualPrivateFactoryInvocations: 0 as const,
   actualNativeResourcesCreated: 0 as const,
   actualNativeResourcesRetained: 0 as const,
   actualListenerAttempts: 0 as const,
@@ -386,13 +504,20 @@ export function parseConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIs
   const record = value as ConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativeImplementationV1;
   const captured = exactHostDataSnapshotV1(record, [
     "implementationVersion", "implementationReference", "live210ProductCommit", "acceptedLive210ReviewSha256",
+    "live220ProductCommit", "acceptedLive220ReviewSha256",
+    "live240ProductCommit", "acceptedLive240ReviewSha256", "live250ProductCommit", "acceptedLive250ReviewSha256",
+    "live260ProductCommit", "acceptedLive260ReviewSha256",
     "serverModule", "bindHostPolicy", "portSelectionPolicy", "capturedPrimitiveSet",
     "maximumNativeServerConstructions", "maximumListenerAttempts", "maximumCloses",
-    "nativeImplementationPresent", "nativeFactoryExported", "nativeFactoryReachable", "callerNativeInputAccepted",
+    "nativeImplementationPresent", "nativeFactoryExported", "nativeFactoryReachable",
+    "privateFactoryLexicallyReachable", "privateRetrievalBridgeImplemented", "privateCompositionShellImplemented",
+    "privateShellExported", "privateShellRuntimeReachable", "callerNativeInputAccepted",
     "locatorInspectionImplemented", "retainedServerTransferImplemented", "liveClaimOrSpendImplemented",
     "livePersistenceImplemented", "nativeInvocationAllowed", "repositoryNonExecutionOnly", "runtimeWired",
     "physicalQualificationAccepted", "clearsCustodyOrHandoffBlocker", "candidateEligible", "activationEligible",
-    "actualNativeBackendConstructions", "actualListenerAttempts", "actualCloseAttempts", "actualNetworkIoEvents",
+    "actualNativeBackendConstructions", "actualPrivateShellEntries", "actualPrivateBridgeConsumptions",
+    "actualPrivateFactoryLookups", "actualPrivateFactoryReceipts", "actualPrivateFactoryInvocations",
+    "actualListenerAttempts", "actualCloseAttempts", "actualNetworkIoEvents",
     "externalEffectOccurred", "requiresIndependentReview", "requiresFreshOwnerAuthorizationForPhysicalAttempt",
     "status", "grantsApproval", "grantsQualificationAuthority", "grantsCandidateAuthority",
     "grantsActivationAuthority", "grantsNetworkAuthority", "grantsCommandAuthority", "grantsLeaseAuthority",
@@ -404,6 +529,8 @@ export function parseConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIs
     || record.capturedPrimitiveSet !==
       CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_NATIVE_RETAINED_RESOURCE_ISSUER_CAPTURED_PRIMITIVES_V1
     || !record.nativeImplementationPresent || record.nativeFactoryExported || record.nativeFactoryReachable
+    || !record.privateFactoryLexicallyReachable || !record.privateRetrievalBridgeImplemented
+    || !record.privateCompositionShellImplemented || record.privateShellExported || record.privateShellRuntimeReachable
     || record.callerNativeInputAccepted || record.locatorInspectionImplemented
     || record.retainedServerTransferImplemented || record.liveClaimOrSpendImplemented
     || record.livePersistenceImplemented || record.nativeInvocationAllowed || !record.repositoryNonExecutionOnly
@@ -423,11 +550,15 @@ export function parseConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIs
   const record = value as ConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativeStatusV1;
   const captured = exactHostDataSnapshotV1(record, [
     "statusVersion", "implementationReference", "implementationDigest", "evidenceClass",
-    "nativeImplementationPresent", "nativeFactoryExported", "nativeFactoryReachable", "nativeInvocationAllowed",
+    "nativeImplementationPresent", "nativeFactoryExported", "nativeFactoryReachable",
+    "privateFactoryLexicallyReachable", "privateRetrievalBridgeImplemented", "privateCompositionShellImplemented",
+    "privateShellExported", "privateShellRuntimeReachable", "nativeInvocationAllowed",
     "nativeAttemptState", "locatorState", "retainedResourceState", "handoffState", "cleanupState",
     "liveClaimOrSpendImplemented", "livePersistenceImplemented", "runtimeWired", "physicalQualificationAccepted",
     "clearsCustodyOrHandoffBlocker", "candidateEligible", "activationEligible", "actualHostObservations",
     "actualPortSelections", "actualPortReservations", "actualNativeBackendConstructions",
+    "actualPrivateShellEntries", "actualPrivateBridgeConsumptions", "actualPrivateFactoryLookups",
+    "actualPrivateFactoryReceipts", "actualPrivateFactoryInvocations",
     "actualNativeResourcesCreated", "actualNativeResourcesRetained", "actualListenerAttempts",
     "actualCloseAttempts", "actualHandoffCapabilitiesIssued", "actualHandoffCapabilitiesSpent",
     "actualDriverAcceptCalls", "actualPersistenceWrites", "actualTimerCreations", "actualNetworkIoEvents",
@@ -443,7 +574,10 @@ export function parseConnectionEnrollmentPrivateLoopbackNativeRetainedResourceIs
     || record.implementationDigest !==
       connectionEnrollmentPrivateLoopbackNativeRetainedResourceIssuerNativeImplementationV1.implementationDigest
     || record.evidenceClass !== "repository_static_non_execution" || record.nativeFactoryExported
-    || record.nativeFactoryReachable || record.nativeInvocationAllowed || record.nativeAttemptState !== "not_attempted"
+    || record.nativeFactoryReachable || !record.privateFactoryLexicallyReachable
+    || !record.privateRetrievalBridgeImplemented || !record.privateCompositionShellImplemented
+    || record.privateShellExported || record.privateShellRuntimeReachable || record.nativeInvocationAllowed
+    || record.nativeAttemptState !== "not_attempted"
     || record.runtimeWired || record.physicalQualificationAccepted || record.clearsCustodyOrHandoffBlocker
     || record.candidateEligible || record.activationEligible || record.externalEffectOccurred) failV1("integrity_failed");
   safePublicRecordV1(record);
