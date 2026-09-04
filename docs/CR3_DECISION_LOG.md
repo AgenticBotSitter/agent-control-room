@@ -4064,3 +4064,41 @@ native listener activity; contacting a provider; or deploying.
 **Architecture evidence:** Frozen in `docs/CR13A_LIVE_310_UNREACHABLE_TRUSTED_NATIVE_BINDING_VALIDATOR.md`. Current
 authority covers unreachable repository source and ordinary integration only; it does not authorize validation,
 process reads, observer use, attestation, physical qualification, or external effects.
+
+**Accepted evidence:** Corrected integration product `d95738bf79f9f12f6986f28b8f7548b661f0587a` passed 12/12
+dedicated, 318/318 CR13A, the complete 769/392/392 lifecycle, five build phases, 4/4 rendered routes, migrations
+0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. The first two rejected reviews remain
+preserved. A third different reviewer closed M-001, M-002, and L-001 and ran all fourteen commands once with
+0 High/Medium/Low and zero validator, descriptor, process, observer, native, network, or external effects. Accepted
+report SHA-256: `db3c721a2ad20b9f533202bc48275df6617035d30eb27df52900d8f97dbdb20e`.
+
+## ADR-183 — Require atomic same-module validation and native observation
+
+**Decision:** CR13A-LIVE-320 will freeze an inert contract requiring a later implementation to consolidate the
+accepted LIVE-290 observation operations and LIVE-310 binding validation inside one private, no-input, synchronous
+routine. It must consume the already validated process descriptor values rather than re-read namespace properties and
+must not export or import either currently quarantined callable.
+
+**Why:** The independently accepted observer and validator are intentionally unreachable in separate modules. Joining
+them through an export, getter, callback, or capability would weaken their privacy boundary. Separating descriptor
+validation from a later property read would also leave a time-of-check/time-of-use seam. One same-module synchronous
+routine can preserve source custody and make validation plus value consumption one indivisible future operation.
+
+**Alternatives rejected:** export either private callable; add a cross-module private-map lookup; pass a process or OS
+object from a caller; accept descriptors or expected values as input; validate then read namespace properties again;
+fall back to ambient `globalThis.process`; add a callback, promise, timer, retry, or replacement binding; implement or
+invoke the routine in the contract block; combine raw observation with signing, replay, candidate assembly, owner
+authorization, physical qualification, activation, or deployment.
+
+**Evidence required:** exact accepted LIVE-290 and LIVE-310 product/review bindings; complete atomic-composition rules,
+stage order, blockers, privacy, and terminal-failure semantics; strict singleton provenance; no native import or runtime
+consumer; hostile and ambient zero execution; all actual totals zero; all grants false; full producer verification; and
+a different independent report-only zero-repair review.
+
+**Reevaluate:** Before modifying either native source; implementing, retrieving, or invoking the consolidated routine;
+inspecting a descriptor; reading process/OS/host/path data; creating a raw observation or attestation; adding clock,
+nonce, signer, replay, candidate, owner, native-listener, provider, runtime, or deployment behavior.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_320_PRIVATE_ATOMIC_NATIVE_OBSERVATION_COMPOSITION_CONTRACT.md`. Current authority covers only the inert
+repository contract and ordinary integration; it does not authorize native-source composition or any native read.

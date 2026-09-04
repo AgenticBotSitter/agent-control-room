@@ -1907,7 +1907,8 @@ observation, network, persistence, provider, or external effects. Preserve
 
 ## CR13A-LIVE-310 — unreachable trusted native-binding validator
 
-Status: architecture frozen; source implementation begins only after accepted LIVE-300 integration. Use Sol xhigh.
+Status: corrected exact product `d95738bf79f9f12f6986f28b8f7548b661f0587a` independently accepted after a
+third different review. Use Sol xhigh.
 
 LIVE-310 may statically import one `node:process` module namespace, define one private frozen no-input descriptor
 validator, and store it once in a private WeakMap with no lookup. Property access and descriptor inspection may exist
@@ -1918,3 +1919,30 @@ LIVE-290; return a native binding; create an observation, attestation, nonce, re
 candidate; retrieve the native shell; open a listener; wire runtime use; clear a blocker; contact Hermes/provider;
 perform a physical attempt; or deploy. Immutable producer evidence and a different independent report-only zero-repair
 review are required before ordinary integration.
+
+Producer verification passed 12/12 dedicated tests, 318/318 CR13A tests, the complete 769/392/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. The first review's two Medium findings and first re-review's one Low finding remain preserved. A third
+different reviewer closed M-001, M-002, and L-001 and passed all twelve groups and fourteen commands exactly once with
+0 High/Medium/Low and zero validator, descriptor, process, observer, native, network, or external effects. Preserve
+`docs/reviews/CR13A_LIVE_310_INDEPENDENT_SECOND_REREVIEW.md`; SHA-256
+`db3c721a2ad20b9f533202bc48275df6617035d30eb27df52900d8f97dbdb20e`.
+
+## CR13A-LIVE-320 — private atomic native-observation composition contract
+
+Status: architecture frozen; effect-free contract implementation begins only after accepted LIVE-310 integration. Use
+Sol xhigh.
+
+LIVE-320 may freeze one inert exact contract for the future same-module composition of LIVE-290 observation operations
+and LIVE-310 binding validation. The future routine must remain private, no-input, synchronous, and unreachable; validate
+the exact four process namespace data descriptors; consume only those already validated descriptor values; call only
+the statically selected minimum OS operations; and return at most one private frozen raw observation. Validation and
+consumption cannot be separated by a callback, `await`, timer, caller input, second namespace read, or exported
+capability.
+
+The block must not import or modify LIVE-290/LIVE-310; import `node:process`, `node:os`, or another native/effect module;
+implement, retrieve, or invoke the future composition; inspect a descriptor; read a process, OS, host, path,
+environment, clock, credential, locator, or provider value; create a raw observation or attestation; implement a signer,
+nonce, replay checkpoint, candidate, owner window, or persistence port; retrieve the native shell; open a listener;
+wire runtime use; clear a blocker; contact a provider; perform a physical attempt; or deploy. Immutable producer
+evidence and a different independent report-only zero-repair review are required before ordinary integration.
