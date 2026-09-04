@@ -131,23 +131,23 @@
 | CR13A-LIVE-200 private native retained-resource issuer contract | Independently accepted; ordinary owner-controlled integration ready | Product `9e3cb2a...`; 12/12 commands and groups, 9/9 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; exact private issuer obligations frozen; zero native/listener/network/persistence effects |
 | CR13A-LIVE-210 unwired private native issuer state machine | Independently accepted; ordinary owner-controlled integration ready | Product `c4cac41...`; 12/12 commands and groups, 11/11 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; five scenarios and nine states prove one-use ordering; zero native/listener/network/persistence effects |
 | CR13A-LIVE-220 unwired native issuer implementation boundary | Independently accepted; ordinary owner-controlled integration of unreachable code ready | Product `2e9a2cb...`; 12/12 commands/groups, 27/27 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; factory private and never retrieved; zero native/listener/network/persistence effects |
+| CR13A-LIVE-230 private native issuer composition contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `3974f16...`; 12/12 commands/groups, 10/10 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; exact ordering and custody contract; zero native/listener/network/persistence effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-220 is independently accepted at exact product `2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9`.
-Its isolated `node:net` issuer code captures five exact primitives and one bounded create/listen/close implementation,
-but the private factory is stored once and never retrieved or exported. A different reviewer passed all twelve commands
-and groups with 0 High/Medium/Low, 27/27 focused tests, five build phases, four rendered routes, and 119 tables. Every
-native/listener/network/persistence effect remains zero. Preserve
-`docs/reviews/CR13A_LIVE_220_INDEPENDENT_REVIEW.md`; SHA-256
-`4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30`.
+CR13A-LIVE-230 is independently accepted at exact product `3974f165f106cb0fe616b2f0e91a18e45b1b4c2d`.
+It freezes the exact durable claim/spend/uncertainty order, seven one-use ceilings, continuous exact-resource custody,
+atomic adapter transfer, ambiguity, cleanup, and no-reopen recovery without importing or consuming LIVE-220. A
+different reviewer passed all twelve commands and groups with 0 High/Medium/Low, 10/10 focused tests, five build phases,
+four rendered routes, and 119 tables. Every native/listener/network/persistence effect remains zero. Preserve
+`docs/reviews/CR13A_LIVE_230_INDEPENDENT_REVIEW.md`; SHA-256
+`eb6957f2f577b77ce7c68fb2f8e92e80004a987e3fa83ba1bdee993f6f59d58a`.
 
-Next block: CR13A-LIVE-230, the private native issuer composition contract. It may freeze how the accepted LIVE-200
-bindings, LIVE-210 one-use state machine, and LIVE-220 private factory will eventually meet after durable claim and
-effect-marker spends. It must remain repository-only: do not retrieve or invoke the factory, observe a locator, create
-or close a server, call the adapter/driver, clear a blocker, wire runtime use, or make a physical attempt. Use
-`gpt-5.6-sol` at `xhigh` effort.
+Next block: CR13A-LIVE-240, the unreachable private issuer composition implementation. It may implement the accepted
+ordering with injected inert ports and opaque fake resources, but must not import or retrieve LIVE-220, import
+`node:net`, call a real adapter or persistence client, observe a real locator, create or close a real server, clear a
+blocker, wire runtime use, or make a physical attempt. Use `gpt-5.6-sol` at `xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release

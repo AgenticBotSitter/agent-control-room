@@ -3761,3 +3761,63 @@ rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, a
 passed all twelve fixed commands and review groups with 0 High/Medium/Low. The private factory is stored once, never
 retrieved or exported, and every forbidden effect and authority remains zero or false. Accepted report SHA-256:
 `4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30`.
+
+## ADR-174 — Freeze private issuer composition before factory retrieval
+
+**Decision:** CR13A-LIVE-230 defines an inert exact contract for the future private composition of accepted LIVE-200
+bindings, LIVE-210 one-use state control, the LIVE-220 quarantined factory, and LIVE-190 same-server adapter. It fixes
+durable claim/spend/uncertainty ordering, one-use ceilings, continuous custody, exact-object transfer, ambiguity,
+cleanup, no-reopen recovery, and safe evidence. It does not import or consume LIVE-220 and cannot retrieve its factory.
+
+**Why:** LIVE-220 proves that native implementation can exist without becoming reachable. Making it reachable would join
+four independent security boundaries at once: durable permission, native effects, exclusive resource custody, and
+adapter ownership. Freezing the composition first prevents an implementation from silently changing order, accepting a
+caller-supplied capability, guessing ownership after uncertainty, or inventing a retry path.
+
+**Alternatives rejected:** export the factory; add a public or structural factory getter; let the caller inject native
+methods, a server, adapter, port, locator, signer, clock, or persistence client; create before durable claim/spends;
+observe the locator before uncertainty marking; transfer by numeric port; release custody before exact adapter
+acceptance; retry on timeout/restart; recover by reopening; treat cleanup failure as success; combine composition,
+physical qualification, runtime wiring, and activation; or let repository evidence clear a live blocker.
+
+**Evidence required:** exact accepted LIVE-220 product/review binding; complete frozen bindings, markers, ordering,
+ceilings, failures, custody transitions, cleanup, recovery, and safe-evidence policy; strict provenance; hostile input and
+ambient replacement non-execution; no native/effect import, LIVE-220 source consumer, runtime wiring, or live operation;
+exact zero-effect and false-authority truth; full producer verification; and a different independent zero-repair review.
+
+**Reevaluate:** Before importing or consuming LIVE-220, retrieving or invoking its private factory, creating/retaining/
+inspecting/transferring/closing a native server, observing a locator, issuing or spending live authority, writing a live
+checkpoint, calling LIVE-190 or the physical driver, assembling a candidate, making an owner-attended attempt, wiring
+runtime use, contacting a provider, or deploying.
+
+**Accepted evidence:** Exact product `3974f165f106cb0fe616b2f0e91a18e45b1b4c2d` passed 10/10 dedicated,
+245/245 CR13A, the complete lifecycle, five build phases, 4/4 rendered pages, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A different reviewer passed all twelve fixed commands and review
+groups with 0 High/Medium/Low. All hostile and ambient behavior executions were zero; every real effect and authority
+remained zero or false. Accepted report SHA-256:
+`eb6957f2f577b77ce7c68fb2f8e92e80004a987e3fa83ba1bdee993f6f59d58a`.
+
+## ADR-175 — Implement composition ordering without connecting native effects
+
+**Decision:** CR13A-LIVE-240 may implement the accepted LIVE-230 order as a private, unreachable stateful composition
+whose only dependencies are repository-owned inert test ports and opaque fake resources. The real LIVE-220 factory,
+native modules, persistence, adapter, and runtime remain disconnected.
+
+**Why:** LIVE-230 freezes the sequence but does not yet demonstrate that concurrency, one-use ceilings, exact-object
+custody, transfer, ambiguity, cleanup ownership, and no-reopen recovery can coexist in executable code. Proving those
+properties with opaque fakes isolates state-machine defects before any native effect becomes reachable.
+
+**Alternatives rejected:** retrieve LIVE-220 now; use a real loopback server as a fake; import `node:net`; expose an
+injectable production factory; accept caller resources, locators, callbacks, clocks, signers, or persistence clients;
+wire a runtime consumer; collapse durable markers into in-memory truth; guess custody after adapter uncertainty; retry,
+rebind, substitute, or reopen after failure; or combine implementation with physical qualification or deployment.
+
+**Evidence required:** exact accepted LIVE-230 product/review binding; complete executable ordering and one-use
+ceilings; opaque exact-resource custody; atomic adapter transfer; all definite, ambiguous, rejection, uncertainty, and
+cleanup paths; serialized concurrent calls; hostile input and ambient replacement non-execution; no native/effect/
+LIVE-220/LIVE-190 import or runtime consumer; exact zero real-effect and false-authority truth; full producer
+verification; and a different independent zero-repair review.
+
+**Reevaluate:** Before importing, retrieving, or invoking LIVE-220; using native or live persistence/adapter ports;
+creating, observing, transferring, or closing a real resource; issuing or spending live authority; clearing a blocker;
+assembling a candidate; making a physical attempt; wiring runtime use; contacting a provider; or deploying.
