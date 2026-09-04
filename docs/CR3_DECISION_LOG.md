@@ -4381,4 +4381,10 @@ native read, or external effect.
 **Producer evidence:** Exact product `34640c7c6a3c63b781aa848f687ae1c23e7c2dee` passed 11/11 focused, 403/403 CR13A,
 the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables, TypeScript, lint,
 macOS stage zero, whitespace, and clean status. It publishes 28 zero actuals and eight false grants with no executable
-composition or downstream consumer. This is producer evidence only; different independent review is pending.
+composition or downstream consumer. This producer evidence was kept separate from the later independent reruns.
+
+**Accepted evidence:** A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once
+with 0 High/Medium/Low; 11/11 focused tests; 403/403 CR13A tests; 5/5 build phases; 4/4 rendered routes; and migrations
+0001-0038/124 tables. All 28 product actuals remained zero, all eight grants remained false, and exact disposable
+cleanup was verified. Preserve `docs/reviews/CR13A_LIVE_390_INDEPENDENT_REVIEW.md`; SHA-256
+`c41370441890e64ef53c76c65a8990119520f550cea093e59aa71d7a4926e586`.

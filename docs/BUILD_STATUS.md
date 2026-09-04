@@ -137,7 +137,7 @@
 | CR13A-LIVE-260 private same-module native-composition shell contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `01bfa65...`; 12/12 commands, 8/8 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 20 zero actual totals and eight false authority grants |
 | CR13A-LIVE-270 unreachable native-composition shell implementation | Independently accepted; ordinary owner-controlled integration of unreachable source ready | Product `5e5384b...`; 12/12 fixed review commands, 33/33 focused review tests, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero shell retrieval/native/listener/network effects |
 | CR13A-LIVE-280 private physical-qualification candidate contract | Independently accepted; ordinary integration of inert contract ready | Product `c1743b7...`; corrected rereview 14/14 commands, 10/10 focused, 286/286 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; original procedural rejection preserved |
-| CR13A-LIVE-290 unreachable native target-runtime observer | Independently accepted; ordinary integration of unreachable source ready | Product `3d09b2b...`; 14/14 commands, 10/10 focused, 296/296 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero lookups/invocations/host reads |
+| CR13A-LIVE-290 unreachable native target-runtime observer | Late independent review rejected it as a future trusted source; historical unreachable evidence retained and superseded by accepted LIVE-330 | Late review found one Medium ambient-global `process` binding; zero invocation/effects; LIVE-330 instead statically captures `node:process` and remains the only accepted future source |
 | CR13A-LIVE-300 private target-runtime observation trust contract | Independently accepted; ordinary integration of inert contract ready | Product `aca7b98...`; 14/14 commands, 10/10 focused, 306/306 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 32 zero actuals and eight false grants |
 | CR13A-LIVE-310 unreachable trusted native-binding validator | Independently accepted after one code-remediation pass and one report-format correction; ordinary integration of unreachable source ready | Corrected product `d95738b...`; third reviewer closed M-001/M-002/L-001, passed 14/14 commands, 12/12 focused, 318/318 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero native/descriptor/process/external effects |
 | CR13A-LIVE-320 private atomic native-observation composition contract | Independently accepted; ordinary integration of the inert contract ready | Product `0c90641...`; 14/14 commands, 10/10 focused, 328/328 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 13 rules, 15 stages, 14 blockers, and zero native/host/external effects |
@@ -147,22 +147,26 @@
 | CR13A-LIVE-360 trusted database-time and lineage validation | Independently accepted after one bounded hostile-row repair; ordinary integration ready | Corrected product `6028bad...`; 14/14 commands, 23/23 focused, 373/373 CR13A, 5/5 build, 4/4 render, 122 tables, 0 residual High/Medium/Low; original Medium preserved; zero consumption/source/native/external effects |
 | CR13A-LIVE-370 atomic invocation-authorization consumption | Independently accepted; ordinary integration ready | Product `6f908cc...`; 14/14 commands, 34/34 focused, 384/384 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; one-use spend remains source-free |
 | CR13A-LIVE-380 post-transaction database-time recheck | Independently accepted; ordinary integration ready | Product `1b79bbc...`; 14/14 commands, 42/42 focused, 392/392 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; read-only and source-free |
-| CR13A-LIVE-390 private fresh-spend/recheck composition contract | Product complete with producer verification; different independent review pending | Product `34640c7...`; 11/11 focused, 403/403 CR13A, 769/421/392 lifecycle, 5/5 build, 4/4 render, 38 migrations/124 tables; 28 zero actuals and eight false grants; no executable composition or effect |
+| CR13A-LIVE-390 private fresh-spend/recheck composition contract | Independently accepted; ordinary integration of inert contract ready | Product `34640c7...`; 14/14 commands, 11/11 focused, 403/403 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 28 zero actuals and eight false grants |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-390 product `34640c7c6a3c63b781aa848f687ae1c23e7c2dee` is complete with producer verification.
+CR13A-LIVE-390 product `34640c7c6a3c63b781aa848f687ae1c23e7c2dee` is independently accepted.
 It freezes one private future control flow that must obtain its own fresh LIVE-370 spend, immediately pass the same
 sealed authorization and exact receipt through LIVE-380, keep both receipts private, and stop before source lookup.
 The exact product passed 11/11 focused tests, 403/403 CR13A tests, the complete 769/421/392 lifecycle, 5/5 build phases,
 4/4 rendered routes, and 38 migrations/124 tables. It publishes 28 zero actuals and eight false grants. No executable
 composition, authorization/database call, source lookup/invocation, protected native read, production contact,
-network, provider, or external effect exists.
+network, provider, or external effect exists. A fresh different reviewer passed all twelve groups and fourteen commands
+once with 0 High/Medium/Low, independently reran 11/11 focused and 403/403 CR13A tests, verified the build/render/
+migration gates, and removed the exact disposable root. Accepted review SHA-256:
+`c41370441890e64ef53c76c65a8990119520f550cea093e59aa71d7a4926e586`.
 
-Next gate: a different independent report-only zero-repair review of exact LIVE-390 product `34640c7...`. Use
-`gpt-5.6-sol` at `xhigh` effort. The immutable packet is
-`docs/reviews/CR13A_LIVE_390_INDEPENDENT_REVIEW_PACKET.md`. Ordinary integration remains blocked until acceptance.
+Next block: CR13A-LIVE-400, private fresh-spend/recheck composition implementation. It may compose the exact accepted
+LIVE-370 spend and LIVE-380 recheck behind one non-exported factory-owned path, retain both receipts only in private
+custody, return only a sanitized non-authorizing outcome, and stop before source lookup. Use `gpt-5.6-sol` at `xhigh`
+effort. Architecture must be frozen before executable code is added.
 
 Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
 remains unreachable with no native reads and no lookup.
@@ -1394,12 +1398,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-390-Q — different independent review of the private fresh-spend/recheck contract
+Block: CR13A-LIVE-400 — private fresh-spend/recheck composition implementation
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: exact product 34640c7 is producer-complete, but the security contract requires a different reviewer to attack singleton provenance, same-flow freshness, terminal failure, and the stop-before-lookup boundary before integration.
-Expected output: one immutable report-only disposition against the exact product/tree/parent, all twelve review groups and fourteen commands run once, findings split High/Medium/Low, verified disposable cleanup, and zero repair or effect.
-Owner action: authorize a different independent reviewer when ready. No production database contact, source lookup/invocation, native read, or physical attempt is permitted by this review.
+Why: LIVE-390 is independently accepted and fixes the private same-flow ordering. The next missing prerequisite is the unreachable implementation that composes one fresh spend and immediate recheck without exporting either receipt or crossing the source boundary.
+Expected output: a separately frozen design, one private factory-owned composition entry, exact fresh-spend/recheck ordering, sanitized terminal outcomes, hostile concurrency/uncertainty/custody tests, full verification, and independent review.
+Owner action: none for repository design, local PGlite tests, independent review, and ordinary merges. Production database contact, source lookup/invocation, native reads, and physical qualification remain separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
