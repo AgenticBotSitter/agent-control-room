@@ -1548,7 +1548,8 @@ the target-runtime blocker remains missing.
 
 ## CR13A-LIVE-150 — private locator broker boundary
 
-Status: next effect-free architecture and implementation block. Use Sol xhigh.
+Status: exact product `f089f896073fcc5aab24616a17fac592eba5146b` independently accepted on a stacked branch;
+ordinary owner-controlled integration ready. Use Sol xhigh.
 
 LIVE-150 must freeze one opaque, one-use private locator-broker boundary before any literal loopback address or port is
 selected. It may implement exact repository contracts, a non-production fake, strict provenance parsers, hostile
@@ -1559,3 +1560,21 @@ The fake must retain `private_locator_broker_missing` and `exclusive_port_custod
 selection/native/network/effect count at zero, grant no authority, and remain structurally impossible to relabel as a
 real private locator. Architecture, product verification, and a different independent review are required before
 ordinary owner-controlled integration.
+
+Producer verification passes 9/9 dedicated, 149/149 connection, 166/166 CR13A, the complete lifecycle, 5/5 build
+phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different
+reviewer passed all twelve exact commands and twelve hostile groups with 0 High/Medium/Low. Sixteen direct hostile
+cases and four ambient replacements executed zero behavior; every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_150_INDEPENDENT_REVIEW.md`; SHA-256
+`e7047c506fad1f969563d3bb1ae31df28083761b2470bc322a91c4aa733abd67`. No locator, port, reservation, capability,
+blocker clearance, or runtime authority exists.
+
+## CR13A-LIVE-160 — exclusive port custody boundary
+
+Status: next effect-free architecture and implementation block. Use Sol xhigh.
+
+LIVE-160 must define an operating-system-backed exclusive port reservation/custody port before any selection or
+reservation occurs. The repository block may add only an exact policy, non-production fake, strict parser, hostile
+tests, and safe status projection. It must expose no literal port/address or reservation handle, perform no
+interface/DNS/port/socket/listener/timer operation, issue no locator capability, clear no blocker, and wire no runtime
+consumer. A later real provider and its physical reservation attempt remain separate owner-attended work.

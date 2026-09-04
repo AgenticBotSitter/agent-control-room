@@ -3460,8 +3460,8 @@ truth.
 stacked base `e620b7bc24760a8f8f0034db6cda3d60e74763a8`. Exact product
 `6e716bd77c26ad7f70343ddd687dff990f5db12f` passes 9/9 focused, 140/140 connection, 157/157 CR13A, complete lifecycle,
 build/render, and migration verification. No host observation, runtime input, provider, signer, clock, nonce, native
-import, listener/network action, or external effect occurred. The first review under
-`docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`. Its first reviewer passed the eleven fixed gates but the
+import, listener/network action, or external effect occurred. The first review ran under
+`docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`; its reviewer passed the eleven fixed gates but the
 out-of-tree hostile probe could not resolve bare `tsx` and stopped before product import. Preserve the protocol-
 incomplete report at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
 `6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. A corrected review ran under
@@ -3476,3 +3476,42 @@ accepted; no real attestation or blocker clearance occurred.
 
 **Reevaluate:** Before any platform/native observer, signer, clock, nonce, verifier, acceptance store, checkpoint,
 candidate, owner window, physical attempt, runtime consumer, SSH/credential path, production contact, or deployment.
+
+## ADR-166 — Keep private locator custody opaque and separate from port custody
+
+**Decision:** CR13A-LIVE-150 freezes an effect-free private locator-broker contract before any address or port observer
+exists. The repository may expose one exact policy singleton and one `repository_fake` result. It may describe a future
+private IPv4-loopback/TCP locator capability, its one-target/candidate/attempt/epoch/reservation scope, 30-second
+maximum lifetime, one-spend ceiling, terminal tombstone rule, and required private bindings. It may not observe,
+select, reserve, issue, spend, publish, serialize, or wire any locator or capability.
+
+The public boundary contains no literal address or port. `private_locator_broker_missing` and
+`exclusive_port_custody_missing` remain separate blockers: a future accepted broker may clear only the first, and an
+accepted reservation/custody proof cannot itself issue a broker capability or listener authority.
+
+**Why:** A locator is both sensitive operational data and a capability precursor. Returning address/port data through
+ordinary APIs, logs, evidence, job results, or UI would let unrelated authority reconstruct the physical endpoint.
+Combining locator selection, exclusive port custody, capability issuance, and driver spend would also make it
+impossible to prove single ownership, single use, or cleanup under failure and uncertainty.
+
+**Alternatives rejected:** publish loopback address/port because it is local; accept caller-selected ports; use a
+serializable UUID/digest as the capability; let repository tests mint production-shaped capabilities; combine broker
+and exclusive reservation acceptance; let a valid locator imply listener, admission, owner, qualification, command,
+or activation authority; permit automatic retry after an ambiguous spend; or let the runtime/UI/worker call the fake.
+
+**Evidence required:** exact contract and fake with module-private provenance; deterministic policy, privacy,
+substitution, ambient-intrinsic, sanitation, non-wiring, no-issuer, and zero-effect tests; full producer gates; and a
+different independent zero-repair review. No host or network effect belongs in this block.
+
+**Accepted evidence:** Exact product `f089f896073fcc5aab24616a17fac592eba5146b` passes 9/9 dedicated, 149/149
+connection, 166/166 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer passed twelve fixed commands
+and all twelve hostile groups with 0 High/Medium/Low; 16 direct hostile cases and four ambient replacements executed
+zero hostile behavior, and every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_150_INDEPENDENT_REVIEW.md`; SHA-256
+`e7047c506fad1f969563d3bb1ae31df28083761b2470bc322a91c4aa733abd67`. Acceptance is effect-free and clears no
+blocker.
+
+**Reevaluate:** Before any address/interface observation, DNS resolution, port selection/reservation, capability
+issuance/spend, ledger/checkpoint write, resource observer, driver handoff, candidate, physical attempt, SSH/credential
+operation, production contact, or deployment.
