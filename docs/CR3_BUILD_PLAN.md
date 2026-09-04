@@ -1571,10 +1571,34 @@ blocker clearance, or runtime authority exists.
 
 ## CR13A-LIVE-160 — exclusive port custody boundary
 
-Status: next effect-free architecture and implementation block. Use Sol xhigh.
+Status: exact product `97d46c74e413d21c1f81c9704b9eb0b66447be5c` independently accepted on a stacked branch;
+ordinary owner-controlled integration ready. Use Sol xhigh.
 
 LIVE-160 must define an operating-system-backed exclusive port reservation/custody port before any selection or
 reservation occurs. The repository block may add only an exact policy, non-production fake, strict parser, hostile
 tests, and safe status projection. It must expose no literal port/address or reservation handle, perform no
 interface/DNS/port/socket/listener/timer operation, issue no locator capability, clear no blocker, and wire no runtime
 consumer. A later real provider and its physical reservation attempt remain separate owner-attended work.
+
+Producer verification passes 8/8 dedicated, 157/157 connection, 174/174 CR13A, the complete lifecycle, 5/5 build
+phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different
+reviewer passed all twelve fixed commands and review groups with 0 High/Medium/Low. Fifteen direct hostile cases and
+four ambient replacements executed zero behavior; every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_160_INDEPENDENT_REVIEW.md`; SHA-256
+`0a0837acbd36ba9292e8b3f37b57d4900290aa03c54c3c13c73413aebd8345a6`. The accepted result honestly retains the
+driver-handoff gap and clears no blocker.
+
+## CR13A-LIVE-170 — physical-driver retained-resource handoff boundary
+
+Status: next effect-free architecture and implementation block. Use Sol xhigh.
+
+LIVE-170 must freeze the exact one-use handoff seam by which a future private custody provider transfers the same
+already-retained operating-system resource into the physical driver. It may add only the contract, strict provenance
+and parser boundaries, a non-production fake, hostile tests, and safe status projection. It must not create, bind,
+listen on, inspect, close, duplicate, serialize, or expose a native resource; select or publish an address/port; import
+or call a native backend; wire a runtime consumer; clear either locator/custody blocker; or authorize a physical attempt.
+
+The handoff must be atomic and single-use, preserve resource identity and continuous custody, reject raw numbers and
+caller-built handles, define terminal cleanup under failure or uncertainty, and make retry/rebind/reopen impossible.
+Only after immutable producer evidence and a different independent zero-repair review may a later owner-attended block
+implement or exercise the native side.

@@ -11,3 +11,4 @@ export * from "./private-loopback-native-driver-contract";
 export * from "./private-loopback-physical-qualification-readiness";
 export * from "./private-loopback-target-runtime-attestation";
 export * from "./private-loopback-private-locator-broker";
+export * from "./private-loopback-exclusive-port-custody";
