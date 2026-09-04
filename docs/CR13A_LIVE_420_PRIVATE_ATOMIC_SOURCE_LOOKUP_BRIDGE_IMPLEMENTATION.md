@@ -71,9 +71,10 @@ The result may report only:
 - `terminal_source_lookup_failed`; or
 - `completed_lookup_and_stopped_before_invocation`.
 
-Only the last outcome reports one lookup. Every result is terminal and non-authorizing. A result may report coarse
-spend state, fixed spend/recheck/lookup counts, successful database-time recheck truth, and fixed false invocation,
-native-read, observation, effect, and grant fields. It exposes no authorization, receipt, map, key, source, callable,
+Only the final two post-recheck outcomes report one lookup call; only the last reports that the exact private source
+was successfully retrieved. Every result is terminal and non-authorizing. A result may report coarse spend state,
+fixed spend/recheck/lookup counts, successful database-time recheck truth, and fixed false invocation, native-read,
+observation, effect, and grant fields. It exposes no authorization, receipt, map, key, source, callable,
 descriptor, process, path, host, database row, timestamp, locator, credential, raw code, diagnostic, or stack.
 
 A known pre-spend rejection establishes no spend. Commit uncertainty remains unknown-or-spent. Already-spent evidence,
