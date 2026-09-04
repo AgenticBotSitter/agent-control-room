@@ -1,6 +1,6 @@
 # CR13A-LIVE-240 unreachable native issuer composition implementation
 
-**Status:** architecture frozen; implementation pending
+**Status:** exact product `71e4c737b6e681fe24d730decc3497d196cf441c` independently accepted for ordinary integration
 **Model/effort:** `gpt-5.6-sol`, `xhigh`
 **Accepted LIVE-230 product:** `3974f165f106cb0fe616b2f0e91a18e45b1b4c2d`
 **Accepted LIVE-230 review SHA-256:**
@@ -79,3 +79,8 @@ report-only zero-repair review with no High, Medium, or Low finding.
 Acceptance permits ordinary integration of this exact unreachable fake-tested composition only. Connecting the real
 factory, adapter, persistence, locator, runtime, qualification path, or production environment requires another
 separately frozen and reviewed block and fresh exact authority for any physical attempt.
+
+Accepted product `71e4c737b6e681fe24d730decc3497d196cf441c` passed the complete producer gate. A seventh
+different report-only reviewer closed M-001 through M-006 and the companion constructor surface with 0 High, 0 Medium,
+and 0 Low findings. Preserve `docs/reviews/CR13A_LIVE_240_INDEPENDENT_SIXTH_REREVIEW.md`; SHA-256
+`1d552ac7d580d6996b5192139dee85beb4f15e1058cf2c19719e9424f82f00f8`.

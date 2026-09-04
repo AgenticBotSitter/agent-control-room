@@ -132,22 +132,22 @@
 | CR13A-LIVE-210 unwired private native issuer state machine | Independently accepted; ordinary owner-controlled integration ready | Product `c4cac41...`; 12/12 commands and groups, 11/11 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; five scenarios and nine states prove one-use ordering; zero native/listener/network/persistence effects |
 | CR13A-LIVE-220 unwired native issuer implementation boundary | Independently accepted; ordinary owner-controlled integration of unreachable code ready | Product `2e9a2cb...`; 12/12 commands/groups, 27/27 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; factory private and never retrieved; zero native/listener/network/persistence effects |
 | CR13A-LIVE-230 private native issuer composition contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `3974f16...`; 12/12 commands/groups, 10/10 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; exact ordering and custody contract; zero native/listener/network/persistence effects |
+| CR13A-LIVE-240 unreachable private issuer composition implementation | Independently accepted after security hardening; ordinary owner-controlled integration of unreachable code ready | Product `71e4c73...`; seventh reviewer closed M-001 through M-006, 12/12 commands, 10/10 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero native/listener/network/persistence effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-230 is independently accepted at exact product `3974f165f106cb0fe616b2f0e91a18e45b1b4c2d`.
-It freezes the exact durable claim/spend/uncertainty order, seven one-use ceilings, continuous exact-resource custody,
-atomic adapter transfer, ambiguity, cleanup, and no-reopen recovery without importing or consuming LIVE-220. A
-different reviewer passed all twelve commands and groups with 0 High/Medium/Low, 10/10 focused tests, five build phases,
-four rendered routes, and 119 tables. Every native/listener/network/persistence effect remains zero. Preserve
-`docs/reviews/CR13A_LIVE_230_INDEPENDENT_REVIEW.md`; SHA-256
-`eb6957f2f577b77ce7c68fb2f8e92e80004a987e3fa83ba1bdee993f6f59d58a`.
+CR13A-LIVE-240 is independently accepted at exact product `71e4c737b6e681fe24d730decc3497d196cf441c`.
+It proves the exact one-use ordering, immutable histories, same-resource custody, ambiguity, cleanup, and no-reopen
+recovery in unreachable fake-only code. The seventh different reviewer closed M-001 through M-006 with 0
+High/Medium/Low, 10/10 focused tests, five build phases, four rendered routes, and 119 tables. Every native/listener/
+network/persistence effect remains zero. Preserve `docs/reviews/CR13A_LIVE_240_INDEPENDENT_SIXTH_REREVIEW.md`;
+SHA-256 `1d552ac7d580d6996b5192139dee85beb4f15e1058cf2c19719e9424f82f00f8`.
 
-Next block: CR13A-LIVE-240, the unreachable private issuer composition implementation. It may implement the accepted
-ordering with injected inert ports and opaque fake resources, but must not import or retrieve LIVE-220, import
-`node:net`, call a real adapter or persistence client, observe a real locator, create or close a real server, clear a
-blocker, wire runtime use, or make a physical attempt. Use `gpt-5.6-sol` at `xhigh` effort.
+Next block: CR13A-LIVE-250, the private one-use native-factory retrieval bridge contract. It may freeze the exact
+same-module bridge by which accepted LIVE-240 evidence could later consume the quarantined LIVE-220 factory once, but
+must not expose, retrieve, invoke, or test the real factory; import a new native module; wire runtime use; open a
+listener; observe a locator; or make a physical attempt. Use `gpt-5.6-sol` at `xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1376,12 +1376,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-160 — freeze and implement the effect-free exclusive port custody boundary
+Block: CR13A-LIVE-250 — freeze the private one-use native-factory retrieval bridge contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-150 is independently accepted; exclusive operating-system port reservation and custody remains a separate blocker that must be specified before any real broker capability can exist.
-Expected output: frozen exclusive-custody architecture, exact repository fake and parser, deterministic hostile tests, no port/address/reservation disclosure, no reservation or socket operation, runtime non-wiring, full verification, and independent review.
-Owner action: none for architecture, effect-free implementation, fake tests, and review. Any real port reservation remains a later owner-attended, separately authorized action.
+Why: LIVE-240 is independently accepted; the real LIVE-220 factory is still sealed in a private WeakMap with no safe retrieval path, so retrieval must be specified separately before any native composition can exist.
+Expected output: exact one-use same-module bridge contract, prerequisite and marker order, non-export rules, failure/ambiguity semantics, fake-only evidence, full verification, and independent review with zero native effects.
+Owner action: none for the contract, fake evidence, and review. Real factory retrieval or invocation remains a later owner-attended, separately authorized action.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

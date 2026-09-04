@@ -1748,7 +1748,8 @@ Preserve `docs/reviews/CR13A_LIVE_230_INDEPENDENT_REVIEW.md`; SHA-256
 
 ## CR13A-LIVE-240 — unreachable private issuer composition implementation
 
-Status: next isolated implementation block. Use Sol xhigh.
+Status: exact product `71e4c737b6e681fe24d730decc3497d196cf441c` independently accepted; ordinary integration
+ready. Use Sol xhigh.
 
 LIVE-240 may implement the accepted LIVE-230 ordering as one private, unreachable composition with injected inert
 ports and opaque fake resources. It must prove durable claim/spend/uncertainty order, single factory retrieval, exact
@@ -1760,3 +1761,26 @@ server; observe, select, reserve, consume, or expose a locator; issue or spend l
 call LIVE-190 or the physical driver; wire an app, API, worker, Idea Lab, Hermes, startup, or production consumer; clear
 a blocker; assemble a candidate; contact a provider; deploy; or make a physical attempt. Immutable producer evidence
 and a different independent zero-repair review are required before ordinary integration.
+
+Producer verification passes 10/10 dedicated, 255/255 CR13A, the complete lifecycle, all five build phases, 4/4
+rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A seventh different
+reviewer closed M-001 through M-006 and the companion constructor surface with 0 High/Medium/Low. Every native,
+listener, network, persistence, protected-read, wiring, blocker, and authority value remains zero or false. Preserve
+`docs/reviews/CR13A_LIVE_240_INDEPENDENT_SIXTH_REREVIEW.md`; SHA-256
+`1d552ac7d580d6996b5192139dee85beb4f15e1058cf2c19719e9424f82f00f8`.
+
+## CR13A-LIVE-250 — private one-use native-factory retrieval bridge contract
+
+Status: next isolated contract block. Use Sol xhigh.
+
+LIVE-250 may freeze the exact same-module, non-exported bridge by which accepted LIVE-240 prerequisite and durable
+marker evidence could later permit one retrieval of the quarantined LIVE-220 factory. It must define exact product and
+review binding, consumption order, one-use identity, non-serialization, failure before retrieval, ambiguity after
+retrieval, and restart behavior without implementing or exercising the bridge.
+
+The block must not expose, retrieve, return, invoke, copy, serialize, or test the real factory; modify its captured
+native primitives; import a new native/effect module; create, listen on, inspect, transfer, or close a real server;
+observe or expose a locator; issue or spend live authority; write live persistence; call LIVE-190 or the physical
+driver; wire an app, API, worker, Idea Lab, Hermes, startup, or production consumer; clear a blocker; make a physical
+attempt; contact a provider; or deploy. Immutable fake evidence and a different independent zero-repair review are
+required before ordinary integration.
