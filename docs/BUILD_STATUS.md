@@ -163,6 +163,9 @@ source lookup/invocation, native reads, production PostgreSQL, listener, provide
 
 LIVE-350 performs no source lookup, invocation, or native read.
 
+Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
+remains unreachable with no native reads and no lookup.
+
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
 ancestry and 60-commit distance, twelve trusted source hashes, clean runtime paths, lifecycle/replay/control compatibility,
