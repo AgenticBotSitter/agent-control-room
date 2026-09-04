@@ -122,7 +122,7 @@
 | CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
 | CR13A-LIVE-120 unwired physical native driver | Independently accepted and integrated on `main` through PR #241 | Different reviewer closed all four High and five Medium findings; owner-approved merge `19a8716...`; post-merge CI `33818001699` passed; zero native/listener/network effects |
 | CR13A-LIVE-130 physical qualification prerequisite boundary | Independently accepted; ordinary owner-controlled integration ready | Product `339c2e8...`; rejected first protocol preserved; corrected second review 0 High/Medium/Low, 9/9 readiness, 4/4 render, 119 tables, 30 hostile attempts/0 executions, and zero listener/IPC/native/network/effects |
-| CR13A-LIVE-140 target-runtime attestation boundary | Architecture frozen on stacked branch; effect-free implementation next | Intended macOS/Node 22 policy plus private claim/privacy rules; repository fake only; no real host observation, blocker clearance, native import, or effect |
+| CR13A-LIVE-140 target-runtime attestation boundary | Exact implementation candidate verified; independent zero-repair review pending | Product `6e716bd...`; 9/9 focused, 140/140 connections, 157/157 CR13A, complete lifecycle/build/migrations pass; fake only, no host observation, blocker clearance, native import, or effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1320,11 +1320,11 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-140 — implement and independently review the effect-free target-runtime policy and repository fake
+Block: CR13A-LIVE-140 — independently review exact target-runtime policy/fake product `6e716bd...`
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: the architecture now freezes how a future proof binds one runtime without leaking identity; the repository needs exact policy/fake objects and hostile evidence before any real platform provider can be considered.
-Expected output: one exact frozen policy contract, one clearly non-production repository-fake result, strict parsers, hostile tests, full producer gates, immutable readiness-only review packet, and independent disposition; real host observation remains absent.
+Why: producer implementation and verification are complete; a different reviewer must independently attack provenance, privacy, fake-to-real promotion, and non-wiring before integration.
+Expected output: one immutable report with complete twelve-group coverage, 0 High/Medium/Low findings for acceptance, nine readiness tests, and zero host/listener/IPC/native/network/effect counts.
 Owner action: none for architecture, effect-free implementation, fake tests, and review. Any real target-runtime observation remains a later owner-attended, separately authorized action.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```

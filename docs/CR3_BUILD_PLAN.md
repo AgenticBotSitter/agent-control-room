@@ -1504,7 +1504,8 @@ did not construct or import the native driver and clear none of the twelve block
 
 ## CR13A-LIVE-140 — target-runtime attestation boundary
 
-Status: architecture contract frozen on a stacked branch pending owner-controlled LIVE-130 integration. Use Sol xhigh.
+Status: exact implementation candidate `6e716bd77c26ad7f70343ddd687dff990f5db12f` is producer-verified on a stacked
+branch; different independent zero-repair review is pending. Use Sol xhigh.
 See `CR13A_LIVE_140_TARGET_RUNTIME_ATTESTATION_BOUNDARY.md` and ADR-165.
 
 LIVE-140 must define, implement with repository fakes, and independently review a privacy-preserving target-runtime
@@ -1523,3 +1524,8 @@ classes, single-boot/process/candidate/attempt binding, a 60-second future ceili
 and a strict public privacy boundary. It explicitly rejects raw or unsalted host identifiers. This block implements
 only one exact policy singleton and one `repository_fake` singleton with every real observation, proof, blocker-clearance,
 authority, and effect field false or zero.
+
+The exact product passes 9/9 dedicated tests, 140/140 connection tests, 157/157 CR13A tests, the complete lifecycle,
+production build with 4/4 rendered routes, and migrations 0001-0036/119 tables. The readiness-only independent packet
+is `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`. It forbids broad driver-importing tests, `tsx` CLI/version
+probes, host observation, and every native/external effect.
