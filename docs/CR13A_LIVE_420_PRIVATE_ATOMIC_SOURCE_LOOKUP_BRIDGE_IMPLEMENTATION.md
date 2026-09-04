@@ -1,6 +1,6 @@
 # CR13A-LIVE-420 — Private Same-Module Atomic Source-Lookup Bridge Implementation
 
-**Status:** architecture frozen; implementation and independent review pending
+**Status:** exact implementation independently accepted for ordinary integration
 **Accepted LIVE-410 product:** `e4d58ff35a44e66454cae8e778b31362902dab6b`
 **Accepted LIVE-410 review SHA-256:**
 `c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`
