@@ -4142,3 +4142,40 @@ the listener shell; performing a physical attempt; wiring runtime use; contactin
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_330_UNREACHABLE_ATOMIC_NATIVE_OBSERVATION_SOURCE_CONSOLIDATION.md`. Current authority covers only
 unreachable repository source and ordinary integration; it does not authorize a descriptor or host read.
+
+**Accepted evidence:** Exact product `06be655d188c45902c015f85225673dfc31c445d` passed 11/11 dedicated, 339/339
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, exact three-path scope, verified disposable cleanup, and zero lookup/invocation,
+descriptor, process, OS, host, network, provider, or external effects. Accepted report SHA-256:
+`da2c7529b8a5e023b706df8e6ab912e2096c2742edfda0e74758991721031f85`.
+
+## ADR-185 — Spend one exact authorization before native source lookup
+
+**Decision:** CR13A-LIVE-340 will freeze an inert contract requiring a future same-module source lookup and invocation
+to be preceded by one exact authenticated authorization, fresh nonce, trusted broker time, replay validation, and
+atomic consumption. The authorization must bind the accepted source, full target/candidate/attempt lineage, and only
+`observe_target_runtime_once`. Uncertainty at or after commit is terminal and permits no lookup, invocation, or retry.
+
+**Why:** LIVE-330 contains real native-observation logic, so adding its first lookup would cross from static source into
+an actual host read. A one-use boundary must be reviewable before that happens. Consumption before lookup prevents one
+authorization from reaching the source twice; terminal ambiguity prevents a crash or uncertain commit from being
+interpreted as permission to try again.
+
+**Alternatives rejected:** export the source or map; pass a callable or native binding from a caller; retrieve before
+consumption; use caller time; omit nonce, replay, candidate, or attempt binding; retry after uncertainty; publish the
+raw observation; or combine retrieval with attestation, candidate assembly, owner authorization, physical
+qualification, activation, provider contact, or deployment.
+
+**Evidence required:** accepted LIVE-330 product/review binding; complete exact identity, time, nonce, operation,
+consumption, replay, uncertainty, custody, privacy, stage, blocker, and outcome semantics; strict immutable safe
+provenance; no LIVE-330/native import or runtime consumer; hostile and ambient zero execution; all actual totals zero;
+all grants false; full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before importing or modifying LIVE-330; creating an authorization store, key, token, nonce, clock,
+checkpoint, spend, bridge, lookup, or invocation; reading or using native material; creating an attestation or
+candidate; authorizing/performing a physical attempt; wiring runtime use; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_340_PRIVATE_ONE_USE_NATIVE_OBSERVATION_INVOCATION_CONTRACT.md`. Current authority covers only the inert
+contract and ordinary integration; it does not authorize retrieval, invocation, or a host read.
