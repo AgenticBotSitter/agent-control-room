@@ -3584,3 +3584,40 @@ and every forbidden-effect count remained zero. Preserve
 **Reevaluate:** Before changing the physical driver's native port, creating a custody provider or resource capability,
 importing a native backend, selecting/binding/listening/closing, issuing or spending a handoff, writing a live ledger or
 checkpoint, assembling a candidate, making a physical attempt, wiring runtime use, or deploying.
+
+## ADR-169 — Prove retained-resource handoff ordering with an unwired repository port first
+
+**Decision:** CR13A-LIVE-180 implements a repository-only, module-private, single-use driver-port state machine before
+any native driver seam changes. A privately branded non-production resource fake proves continuous identity, atomic
+acceptance, serialized settlement, one spend, mandatory cleanup, stable terminal replay, and no retry/rebind/reopen.
+Public results contain only fixed state and counts; the fake resource never crosses the module boundary.
+
+**Why:** The LIVE-170 contract identifies the correct ownership boundary, but a contract alone does not prove that
+concurrency, pre-acceptance rejection, post-acceptance uncertainty, cleanup failure, and recovery can be represented
+without losing identity or accidentally enabling a second handoff. Proving those rules without `node:net` keeps logic
+defects separate from a later native attempt.
+
+**Alternatives rejected:** modify the accepted LIVE-120 driver in place; pass a number or public handle; let tests inject
+caller-built resources; call a real listener for proof; combine port selection, custody, handoff, driver start, and
+qualification; retry an uncertain handoff; let close overtake settlement; recover by reopening; or let fake success clear
+the real custody blocker.
+
+**Evidence required:** exact implementation/status provenance, frozen driver and callable surfaces, hostile sequencing
+and concurrency scenarios, retained-resource identity and single-spend assertions, safe errors, public privacy,
+non-wiring and import checks, exact zero real-effect counts, full producer verification, and a different independent
+zero-repair review.
+
+**Accepted evidence:** Exact product `052afc3b4a61f1c6f1957a567f5305f3a2c5bca0` passes 10/10 dedicated, 176/176
+connection, 192/192 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. The first review passed every product command but
+invalidated itself with one extra wrong-commit inspection; preserve it with SHA-256
+`8e7dc95989a493bcbdec514751d5a5912da7be9794faa01d44f79253285a1568`. A second different reviewer passed all twelve
+fixed commands and groups with 0 High/Medium/Low. Twelve hostile attempts and six ambient replacements executed zero
+behavior; every forbidden effect and authority remained zero or false. Preserve
+`docs/reviews/CR13A_LIVE_180_INDEPENDENT_REREVIEW.md`; SHA-256
+`05c4d57ad9f247916102acdc090c071b22a9b7a9623d1984779caf41d8acfd76`. Acceptance is effect-free and clears no
+blocker.
+
+**Reevaluate:** Before any native backend import or call, physical-driver modification, real resource/capability issuer,
+address or port selection, bind/listen/connect/close, live persistence, resource observation, qualification candidate,
+owner-attended physical attempt, runtime wiring, provider contact, or deployment.

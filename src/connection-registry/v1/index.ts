@@ -13,3 +13,4 @@ export * from "./private-loopback-target-runtime-attestation";
 export * from "./private-loopback-private-locator-broker";
 export * from "./private-loopback-exclusive-port-custody";
 export * from "./private-loopback-retained-resource-handoff";
+export * from "./private-loopback-retained-resource-driver-port";
