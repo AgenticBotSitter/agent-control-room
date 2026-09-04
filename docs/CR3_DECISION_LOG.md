@@ -4655,3 +4655,6 @@ deployment.
 
 **Implementation:** `src/connection-registry/v1/private-loopback-observation-attestation-pipeline-contract.ts` with
 focused tests in `tests/connection-enrollment-private-loopback-observation-attestation-pipeline-contract.test.ts`.
+Exact product `2cab7dff3a2ca277f4b4d766a2cd02779e0f505d`, tree
+`676cc414327a2acf714b96a149aea43348d48049`, is independently accepted with 0 High/Medium/Low for ordinary inert
+integration only.
