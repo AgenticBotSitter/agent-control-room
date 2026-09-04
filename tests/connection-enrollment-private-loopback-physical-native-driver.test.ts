@@ -400,12 +400,18 @@ test("CR13A-LIVE-120 allowlists one isolated node:net server module with no runt
   assert.doesNotMatch(nativeBackendSource, /tunnelPeerAuthenticated|hostKeyCustodyProven|platformSignerTrustAccepted/);
 
   const connectionRegistryFiles = await sourceFiles(resolve("src/connection-registry/v1"));
-  const netImporters: string[] = [];
+  const runtimeNetImporters: string[] = [];
+  const typeOnlyNetImporters: string[] = [];
   for (const file of connectionRegistryFiles) {
     const source = await readFile(file, "utf8");
-    if (/from ["']node:net["']/.test(source)) netImporters.push(file);
+    const withoutTypeOnlyNetImport = source.replace(/^import\s+type[^\n]*from ["']node:net["'];\n?/gm, "");
+    if (/from ["']node:net["']/.test(withoutTypeOnlyNetImport)) runtimeNetImporters.push(file);
+    if (/^import\s+type[^\n]*from ["']node:net["'];/m.test(source)) typeOnlyNetImporters.push(file);
   }
-  assert.deepEqual(netImporters, [implementationPath]);
+  assert.deepEqual(runtimeNetImporters, [implementationPath]);
+  assert.deepEqual(typeOnlyNetImporters, [
+    resolve("src/connection-registry/v1/private-loopback-native-retained-resource-adapter.ts"),
+  ]);
 
   const allSourceFiles = await sourceFiles(resolve("src"));
   const nativeServerAuthorityFiles: string[] = [];
