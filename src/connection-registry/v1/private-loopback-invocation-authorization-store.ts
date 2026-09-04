@@ -30,6 +30,7 @@ const idPatternV1 = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/;
 const digestPatternV1 = /^sha256:[a-f0-9]{64}$/;
 const authTagPatternV1 = /^hmac-sha256:[a-f0-9]{64}$/;
 const commitPatternV1 = /^[a-f0-9]{40}$/;
+const sequencePatternV1 = /^(?:0|[1-9][0-9]{0,4})$/;
 const maximumAuthorizationLifetimeMillisecondsV1 = 60_000;
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_BODY_V1 =
@@ -217,6 +218,18 @@ function validIdV1(value: unknown): value is string {
 
 function validDigestV1(value: unknown): value is string {
   return typeof value === "string" && reflectApplyV1(regexpExecV1, digestPatternV1, [value]) !== null;
+}
+
+function validAuthTagV1(value: unknown): value is string {
+  return typeof value === "string" && reflectApplyV1(regexpExecV1, authTagPatternV1, [value]) !== null;
+}
+
+function exactSequenceV1(value: unknown): number | undefined {
+  if (typeof value === "number") return numberIsSafeIntegerV1(value) && value >= 0 && value <= 10_000
+    ? value : undefined;
+  if (typeof value !== "string" || reflectApplyV1(regexpExecV1, sequencePatternV1, [value]) === null) return undefined;
+  const sequence = numberConstructorV1(value);
+  return numberIsSafeIntegerV1(sequence) && sequence >= 0 && sequence <= 10_000 ? sequence : undefined;
 }
 
 function parseBodyV1(value: unknown): ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1 {
@@ -448,7 +461,12 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
       "nonce_digest", "body_digest", "authorization_auth_tag", "previous_record_digest", "record_digest",
       "record_auth_tag", "body"]);
     if (!captured) failV1("integrity_failed");
-    const row = captured as unknown as AuthorizationRowV1, sequence = numberConstructorV1(row.sequence);
+    const row = captured as unknown as AuthorizationRowV1, sequence = exactSequenceV1(row.sequence);
+    if (sequence === undefined || !validIdV1(row.tenant_id) || !validDigestV1(row.authorization_id_digest)
+      || !validDigestV1(row.nonce_digest) || !validDigestV1(row.body_digest)
+      || !validAuthTagV1(row.authorization_auth_tag)
+      || (row.previous_record_digest !== null && !validDigestV1(row.previous_record_digest))
+      || !validDigestV1(row.record_digest) || !validAuthTagV1(row.record_auth_tag)) failV1("integrity_failed");
     let body: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1;
     try { body = parseBodyV1(row.body); }
     catch { failV1("integrity_failed"); }
@@ -465,7 +483,6 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
       || row.previous_record_digest !== expectedPreviousDigest || body.tenantId !== tenantId
       || row.authorization_id_digest !== authorizationIdDigestV1(body) || row.nonce_digest !== body.nonceDigest
       || row.body_digest !== sha256Digest(body)
-      || reflectApplyV1(regexpExecV1, authTagPatternV1, [row.authorization_auth_tag]) === null
       || !sameTextV1(row.authorization_auth_tag,
         hmacSha256Tag(this.#authorizationKey, authorizationTagMaterialV1(body, row.body_digest)))
       || row.record_digest !== sha256Digest(recordMaterialV1(withoutTags))
@@ -480,6 +497,11 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
       "body_digest", "reservation_digest", "reservation_auth_tag"]);
     if (!captured) failV1("integrity_failed");
     const row = captured as unknown as NonceRowV1;
+    if (!validIdV1(row.tenant_id) || !validDigestV1(row.nonce_digest)
+      || !validDigestV1(row.authorization_id_digest) || !validDigestV1(row.body_digest)
+      || !validDigestV1(row.reservation_digest) || !validAuthTagV1(row.reservation_auth_tag)) {
+      failV1("integrity_failed");
+    }
     const withoutTags = { tenant_id: row.tenant_id, nonce_digest: row.nonce_digest,
       authorization_id_digest: row.authorization_id_digest, body_digest: row.body_digest };
     if (row.tenant_id !== authorization.row.tenant_id || row.nonce_digest !== authorization.row.nonce_digest
@@ -512,7 +534,9 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
     const headCaptured = exactHostDataSnapshotV1(headRows[0],
       ["tenant_id", "last_sequence", "last_record_digest", "head_auth_tag"]);
     if (!headCaptured) failV1("integrity_failed");
-    const head = headCaptured as unknown as HeadRowV1, lastSequence = numberConstructorV1(head.last_sequence);
+    const head = headCaptured as unknown as HeadRowV1, lastSequence = exactSequenceV1(head.last_sequence);
+    if (lastSequence === undefined || !validIdV1(head.tenant_id) || !validDigestV1(head.last_record_digest)
+      || !validAuthTagV1(head.head_auth_tag)) failV1("integrity_failed");
     let previous: string | null = null;
     const authorizations: VerifiedAuthorizationV1[] = [];
     for (let index = 0; index < rawAuthorizations.length; index += 1) {
@@ -520,7 +544,7 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
       reflectApplyV1(arrayPushV1, authorizations, [verified]);
       previous = verified.row.record_digest;
     }
-    if (head.tenant_id !== tenantId || !numberIsSafeIntegerV1(lastSequence)
+    if (head.tenant_id !== tenantId
       || lastSequence !== authorizations.length || head.last_record_digest !== previous
       || !sameTextV1(head.head_auth_tag,
         this.#headTag({ tenant_id: tenantId, last_sequence: lastSequence, last_record_digest: head.last_record_digest }))) {

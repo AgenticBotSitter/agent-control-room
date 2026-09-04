@@ -100,6 +100,25 @@ function withTrustedDatabaseTime(db: DatabaseClient, value: string | readonly st
   };
 }
 
+function withMutatedDatabaseRow(db: DatabaseClient, table: string, field: string, value: unknown): DatabaseClient {
+  const query = async <T>(session: Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0],
+    statement: string, params: unknown[] = []) => {
+    const result = await session.query<T>(statement, params);
+    if (!statement.includes(`FROM ${table}`) || !statement.includes("SELECT")) return result;
+    return { rows: result.rows.map((row) => ({ ...(row as Record<string, unknown>), [field]: value })) as T[] };
+  };
+  return {
+    query: db.query.bind(db),
+    transaction: (callback) => db.transaction((session) => callback(Object.freeze({
+      query: <T>(statement: string, params: unknown[] = []) => query<T>(session, statement, params),
+    }))),
+    transactionWithPreCommitCheck: (callback, check) => db.transactionWithPreCommitCheck((session) =>
+      callback(Object.freeze({
+        query: <T>(statement: string, params: unknown[] = []) => query<T>(session, statement, params),
+      })), check),
+  };
+}
+
 function expectCode(code: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1["safeCode"]):
 (error: unknown) => boolean {
   return (error) => error instanceof ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1
@@ -449,6 +468,54 @@ test("CR13A-LIVE-360 rejects tampered state before reading database time", async
       { authorizationKey, authorizationKeyIdDigest, stateKey });
     await assert.rejects(validator.validateForConsumption(value), expectCode("integrity_failed"));
     assert.equal(clockReads, 0);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 rejects behavioral authorization-row scalars before coercion or comparison", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    let executions = 0;
+    const coercive = { valueOf() { executions += 1; return 1; },
+      [Symbol.toPrimitive]() { executions += 1; return 1; } };
+    const lengthAccessor = Object.defineProperty({}, "length", {
+      get() { executions += 1; return 71; }, enumerable: true,
+    });
+    for (const [field, hostile] of [["sequence", coercive], ["authorization_auth_tag", lengthAccessor],
+      ["record_auth_tag", lengthAccessor]] as const) {
+      const hostileDb = withMutatedDatabaseRow(db, "control_native_observation_authorizations", field, hostile);
+      const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(hostileDb,
+        { authorizationKey, authorizationKeyIdDigest, stateKey });
+      await assert.rejects(validator.validateForConsumption(value), expectCode("integrity_failed"));
+    }
+    assert.equal(executions, 0);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 rejects behavioral head and nonce scalars before coercion or comparison", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    let executions = 0;
+    const coercive = { valueOf() { executions += 1; return 1; },
+      [Symbol.toPrimitive]() { executions += 1; return 1; } };
+    const lengthAccessor = Object.defineProperty({}, "length", {
+      get() { executions += 1; return 71; }, enumerable: true,
+    });
+    const cases = [
+      ["control_native_observation_authorization_heads", "last_sequence", coercive],
+      ["control_native_observation_authorization_heads", "head_auth_tag", lengthAccessor],
+      ["control_native_observation_authorization_nonces", "reservation_auth_tag", lengthAccessor],
+    ] as const;
+    for (const [table, field, hostile] of cases) {
+      const hostileDb = withMutatedDatabaseRow(db, table, field, hostile);
+      const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(hostileDb,
+        { authorizationKey, authorizationKeyIdDigest, stateKey });
+      await assert.rejects(validator.validateForConsumption(value), expectCode("integrity_failed"));
+    }
+    assert.equal(executions, 0);
   } finally { await raw.close(); }
 });
 
