@@ -26,3 +26,4 @@ export * from "./private-loopback-target-runtime-observation-trust-contract";
 export * from "./private-loopback-atomic-native-observation-composition-contract";
 export * from "./private-loopback-one-use-native-observation-invocation-contract";
 export * from "./private-loopback-invocation-authorization-store";
+export * from "./private-loopback-fresh-spend-recheck-composition-contract";
