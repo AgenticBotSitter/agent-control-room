@@ -2021,3 +2021,28 @@ read or expose native material; create an observation/attestation/candidate/owne
 application/runtime/provider use; connect to production PostgreSQL; deploy; or claim PGlite as production evidence.
 Immutable producer evidence and a different independent report-only zero-repair review are required before ordinary
 integration.
+
+Producer verification passed 14/14 dedicated tests, 364/364 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0037/122 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. The first independent review's one Medium key-separation finding is preserved. Corrected product
+`053c4d02003e0223438e26aecea851253d05a60b` rejects identical authorization/state key bytes before database work. A
+second different reviewer passed all ten groups and fourteen commands exactly once with 0 residual High/Medium/Low and
+zero consumption, source lookup/invocation, native, network, production-database, provider, or external effects.
+Preserve `docs/reviews/CR13A_LIVE_350_INDEPENDENT_REREVIEW.md`; SHA-256
+`ffea24f4ed6e7d62ffb7a06caf2446471582eff6780351af88136b9aba3c3324`.
+
+## CR13A-LIVE-360 — trusted database-time and lineage validation
+
+Status: architecture frozen; read-only repository implementation may proceed on accepted corrected LIVE-350. Use Sol
+xhigh.
+
+LIVE-360 may extend the authorization store with one exact read-only pre-consumption validator. Inside one transaction,
+it must authenticate the complete stream/head and digest-only nonce reservation, require an exact sealed authorization
+and full lineage match, then read `clock_timestamp()` from the same database session. It passes only at or after
+not-before and strictly before expiry and returns immutable sanitized `validated_unconsumed` evidence.
+
+The block must not add a migration; accept caller time/callables; issue, consume, revoke, update, delete, or list an
+authorization; import/modify/retrieve/invoke LIVE-330; inspect a descriptor; read/expose protected native material;
+create an observation/attestation/candidate/owner authorization; open a listener; wire application/runtime/provider
+use; contact production PostgreSQL; deploy; or treat validation evidence as a spend or execution capability. Immutable
+producer evidence and a different independent report-only zero-repair review are required before ordinary integration.

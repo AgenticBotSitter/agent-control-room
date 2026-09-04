@@ -4217,3 +4217,44 @@ physical qualification, runtime wiring, provider contact, or deployment.
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_350_AUTHENTICATED_INVOCATION_AUTHORIZATION_STORE.md`. Current authority covers repository implementation,
 local PGlite proof, and ordinary integration only; it does not authorize production database contact or invocation.
+
+**Accepted evidence:** Corrected product `053c4d02003e0223438e26aecea851253d05a60b` passed 14/14 dedicated, 364/364
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0037/122 tables,
+TypeScript, lint, macOS stage zero, and whitespace. The original report preserved one Medium key-separation finding. A
+bounded two-path repair rejects byte-identical authorization/state keys through captured host byte readers before any
+database work. A second different reviewer passed all ten groups and fourteen commands once with 0 residual
+High/Medium/Low, verified cleanup, and zero consumption/source/native/network/provider/external effects. Accepted
+re-review SHA-256: `ffea24f4ed6e7d62ffb7a06caf2446471582eff6780351af88136b9aba3c3324`.
+
+## ADR-187 — Validate stored lineage and database time without spending authority
+
+**Decision:** CR13A-LIVE-360 will add one exact read-only pre-consumption validator to the authenticated authorization
+store. It reauthenticates the sealed envelope, full stream/head, and digest-only nonce reservation in one database
+transaction, then reads `clock_timestamp()` from that same session. It passes only when every stored lineage value
+matches and database time is at or after not-before and strictly before expiry. The sanitized receipt remains
+`validated_unconsumed` and cannot substitute for a later atomic spend.
+
+**Why:** LIVE-350 now establishes durable authenticated identity and replay reservation, but an authorization must not
+be spendable merely because it exists. The final exact lineage and current-window decision must be independently
+reviewable before the consumption write and native-source boundary are introduced. Database-session time avoids caller
+clock authority and aligns the future decision with the single PostgreSQL write authority.
+
+**Alternatives rejected:** trust caller timestamps, `Date.now`, headers, receipt time, or a generic callback; validate
+without authenticating the complete stored stream and nonce; accept an inclusive expiry; turn validation into
+consumption; return a bearer capability; add source lookup/invocation or protected native reads; contact production
+PostgreSQL; or combine this boundary with attestation, candidate, physical qualification, provider, or deployment.
+
+**Evidence required:** exact accepted LIVE-350 product/re-review binding; complete stored identity/nonce/lineage
+authentication; same-session database time after state verification; exact time-window edges; immutable sanitized
+non-authorizing receipt; missing/conflict/tamper/deletion/time/database-failure rejection; hostile-input safety; no
+migration or downstream/native consumer; full producer verification; and a different independent report-only
+zero-repair review.
+
+**Reevaluate:** Before adding consumption, durable spent state, post-transaction recheck, source lookup/invocation,
+protected native read, raw observation handoff, attestation, candidate assembly, owner authorization, physical attempt,
+runtime activation, provider contact, production database configuration, or deployment.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_360_TRUSTED_DATABASE_TIME_AND_LINEAGE_VALIDATION.md`. Current authority covers read-only repository
+validation and local PGlite proof only; it does not authorize consumption, invocation, protected native reads, or
+production database contact.
