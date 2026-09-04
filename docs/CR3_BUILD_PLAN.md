@@ -2323,3 +2323,30 @@ parent/child IPC flow leaves cleanup and finalization in the parent after child 
 the pair; recovery may close evidence but never resume. Providers and protected pipeline components must be accepted
 before dormant capsule assembly; the source owner is last. Architecture work performs zero protected or external
 effects. See `docs/CR13A_LIVE_470_PRODUCTION_CAPSULE_OWNER_NATIVE_AUTHORIZATION_DESIGN.md`.
+
+## CR13A-LIVE-480 — inert owner-native authorization contract
+
+Status: first independent review rejected 2 High/2 Medium; all four are remediated and different re-review is pending.
+Use Sol xhigh.
+
+LIVE-480 makes only LIVE-470's owner-native authorization vocabulary machine-checkable. The frozen singleton directly
+binds the accepted LIVE-470 commit/tree and final evidence; enumerates the closed canonical body and envelope fields,
+reservation intents, ordered provider scopes, cleanup facts, allowed/prohibited effect classes, closed public terminal
+fields, operation budgets, states/outcomes, key roles, time windows, and rules; and rejects non-canonical copies or
+behavioral values without executing them.
+
+The remediated body replaces ambiguous per-component digests with one exact ordered 42-role schema. Every item has
+exactly a component role, product commit, product tree, and independent-review SHA-256. A second exact ordered schema
+binds all 28 key roles to key ID digest, algorithm, fingerprint, revision, lifecycle interval/status, and trust-registry
+entry digest. Provider reservations and invocations retain aggregate maximum five but now also carry maximum one for
+each of the five exact ordered provider lanes. Duplicate roles, operations, and provider lanes are forbidden.
+
+The companion status truthfully reports 59 zero actuals, eight false grants, and absent issuer, store, key, trust,
+manifest, anchor, reservation, capsule, provider, source, IPC/process, native, and runtime paths. The only production
+consumer is the safe connection-registry barrel. TypeScript and focused lint pass, and no protected or external effect
+occurs. The first independent review found two
+High and two Medium defects: incomplete nested binding shapes, missing per-provider ceilings, count-only vocabulary
+tests, and no transitive import audit. All four are remediated; focused tests now pass 12/12 and CR13A passes 473/473.
+The test fixture independently repeats every ordered vocabulary and operation tuple, checks uniqueness and deep
+freezing, and walks the exact four-file production dependency graph with AST-based alias/effect detection. A different
+independent zero-repair re-review is required before ordinary integration.

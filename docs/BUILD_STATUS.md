@@ -156,6 +156,7 @@
 | CR13A-LIVE-450 private observation-to-attestation pipeline design | Independently accepted for architecture-only integration | 3 High/6 Medium/0 Low remediated to 0/0/0; separate owner-native authority and exact-product attempt ceiling; production-only capsule; five ordered provider lanes; 36 attestation stages; exact PostgreSQL/high-water split-commit recovery; pre-reserved after-exit cleanup; zero current effects |
 | CR13A-LIVE-460 inert private observation-to-attestation pipeline contract | Independently accepted; ordinary integration ready | Product `2cab7df...`, tree `676cc41...`; 0 High/Medium/Low; 11/11 focused, 461/461 CR13A, full lifecycle pass, 5/5 build, 4/4 render, 38 migrations/124 tables; 58 zero actuals/eight false grants; no capsule/source/provider/key/database/native/runtime path |
 | CR13A-LIVE-470 production capsule and owner-native authorization architecture | Independently accepted for architecture-only integration | First review 5 High/4 Medium/0 Low, all remediated; different re-review 0/0/0; same-module capsule, rooted/anchored trust, exact owner/schema/rollback/IPC boundaries; zero current effects |
+| CR13A-LIVE-480 inert owner-native authorization contract | First independent review rejected 2 High/2 Medium; all four remediated and different re-review pending | Exact LIVE-470 binding; 64 body fields plus 42 exact component product/tree/review bindings, 28 closed key bindings, and one-per-provider ceilings; 12/12 focused and 473/473 CR13A; 59 zero actuals/eight false grants |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -240,6 +241,22 @@ body and operation budget, exact key lifecycle/PostgreSQL schema, and independen
 anchor prevent substitution, whole-database rollback, reuse, or relabeling. One parent creates one child for stages
 1-31; parent-side cleanup/finalization complete stages 32-35 and a different reviewer handles stage 36. Uncertainty
 burns the product pair and can never resume. Documentation performs zero protected or external effects.
+
+CR13A-LIVE-480 implements only the public inert owner-native authorization vocabulary. One exact frozen singleton
+binds the accepted LIVE-470 product/tree/design/review/acceptance and enumerates 64 canonical body fields, a nested
+42-role component schema requiring product commit, product tree, and independent review for every component, a nested
+28-role key schema, nine envelope fields, two reservation intents, five provider subject scopes, six cleanup facts,
+49 operation ceilings, eight authorization states, 11 terminal outcomes, 12 allowed and 18 prohibited effect classes,
+28 closed public fields, five time ceilings, and 37 controlling rules. Provider reservations and invocations are each
+limited to one per exact ordered provider lane and five aggregate. Exact
+singleton parsers reject copies, accessors, symbols, and proxies without executing hostile behavior. The status reports
+59 zero actuals and eight false grants. It creates no owner envelope or authorization and has no issuer, store, key,
+manifest, trust, anchor, database, capsule, provider, source, IPC, process, native, or runtime path.
+The first independent review rejected the original candidate with two High and two Medium findings: incomplete
+product/key binding shapes, aggregate-only provider ceilings, count-only vocabulary assertions, and a direct-file-only
+import audit. All four are remediated. The new graph gate follows every production import through exact leaf modules,
+rejects effectful modules and internally aliased effect calls, and prevents drift into the broader security barrel.
+Focused tests pass 12/12, combined CR13A passes 473/473, TypeScript and focused lint pass; different re-review remains.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1468,12 +1485,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-480 — inert owner-native authorization contract
+Block: CR13A-LIVE-480 — inert owner-native authorization contract independent review
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-470 is accepted at 0 High/Medium/Low. The next safe slice makes only its owner-envelope vocabulary and hostile parser machine-checkable before any issuer, store, key, database, anchor, capsule, process, or native behavior can exist.
-Expected output: exact singleton body/envelope, reservation-intent, operation-budget, terminal-outcome, status/authority, zero-use contracts and hostile deterministic tests; full relevant verification and different independent review.
-Owner action: none for this inert repository-only block. Any issuer/store/migration/key/manifest/trust/anchor/context/capsule/provider/source/IPC/process/native/runtime/deployment work remains separately gated.
+Why: The first review's 2 High/2 Medium findings are remediated. A different report-only reviewer must confirm the exact nested product/key bindings, provider-lane ceilings, independent full-vocabulary fixtures, transitive import inertia, honest zero-use status, and no authority expansion.
+Expected output: exact product/test hashes, 0 High/Medium/Low findings or explicit remediation, immutable review/acceptance records, and no protected or external effect.
+Owner action: none. Any issuer/store/migration/key/manifest/trust/anchor/context/capsule/provider/source/IPC/process/native/runtime/deployment work remains separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
