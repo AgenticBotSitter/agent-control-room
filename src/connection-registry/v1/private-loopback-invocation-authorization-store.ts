@@ -44,6 +44,8 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_VAL
   "control-room-connection-enrollment-private-loopback-invocation-authorization-validation/v1" as const;
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_CONSUMPTION_V1 =
   "control-room-connection-enrollment-private-loopback-invocation-authorization-consumption/v1" as const;
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_RECHECK_V1 =
+  "control-room-connection-enrollment-private-loopback-invocation-authorization-recheck/v1" as const;
 
 export type ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1 = Readonly<{
   contractVersion: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_BODY_V1;
@@ -150,6 +152,32 @@ export type ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptio
   grantsLeaseAuthority: false;
   grantsExecutionAuthority: false;
   consumptionDigest: string;
+}>;
+
+export type ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationRecheckV1 = Readonly<{
+  recheckVersion: typeof CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_RECHECK_V1;
+  recheckReference: string;
+  authorizationIdDigest: string;
+  nonceDigest: string;
+  bodyDigest: string;
+  consumedAt: string;
+  recheckedAt: string;
+  state: "consumed_and_post_transaction_time_rechecked";
+  consumptionStateAuthenticated: true;
+  postTransactionTimeRechecked: true;
+  exactReplayReturnsNoAuthority: true;
+  sourceLookupPerformed: false;
+  sourceInvocationPerformed: false;
+  nativeReadPerformed: false;
+  grantsApproval: false;
+  grantsQualificationAuthority: false;
+  grantsCandidateAuthority: false;
+  grantsActivationAuthority: false;
+  grantsNetworkAuthority: false;
+  grantsCommandAuthority: false;
+  grantsLeaseAuthority: false;
+  grantsExecutionAuthority: false;
+  recheckDigest: string;
 }>;
 
 export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1 extends Error {
@@ -514,6 +542,72 @@ ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptionV1 {
   };
   const receipt = objectFreezeV1({ ...material, consumptionDigest: sha256Digest(material) });
   try { assertNoSecretMaterial(receipt, "native observation authorization consumption"); }
+  catch { failV1("integrity_failed"); }
+  return receipt;
+}
+
+function parseFreshConsumptionV1(value: unknown,
+  body: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1, bodyDigest: string):
+ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationConsumptionV1 {
+  const captured = exactHostDataSnapshotV1(value, [
+    "consumptionVersion", "consumptionReference", "authorizationIdDigest", "nonceDigest", "bodyDigest",
+    "consumedAt", "state", "freshConsumption", "exactReplayReturnsNoAuthority", "postTransactionTimeRechecked",
+    "sourceLookupPerformed", "sourceInvocationPerformed", "nativeReadPerformed", "grantsApproval",
+    "grantsQualificationAuthority", "grantsCandidateAuthority", "grantsActivationAuthority", "grantsNetworkAuthority",
+    "grantsCommandAuthority", "grantsLeaseAuthority", "grantsExecutionAuthority", "consumptionDigest",
+  ]);
+  if (!captured || typeof captured.consumptionReference !== "string"
+    || !validDigestV1(captured.authorizationIdDigest) || !validDigestV1(captured.nonceDigest)
+    || !validDigestV1(captured.bodyDigest) || typeof captured.consumedAt !== "string"
+    || exactInstantMillisecondsV1(captured.consumedAt) === undefined
+    || !validDigestV1(captured.consumptionDigest)) failV1("invalid_input");
+  const expected = buildConsumptionV1(body, bodyDigest, captured.consumedAt, true);
+  if (captured.consumptionVersion !== expected.consumptionVersion
+    || !sameTextV1(captured.consumptionReference, expected.consumptionReference)
+    || !sameTextV1(captured.authorizationIdDigest, expected.authorizationIdDigest)
+    || !sameTextV1(captured.nonceDigest, expected.nonceDigest)
+    || !sameTextV1(captured.bodyDigest, expected.bodyDigest)
+    || captured.consumedAt !== expected.consumedAt || captured.state !== expected.state
+    || captured.freshConsumption !== true || captured.exactReplayReturnsNoAuthority !== true
+    || captured.postTransactionTimeRechecked !== false || captured.sourceLookupPerformed !== false
+    || captured.sourceInvocationPerformed !== false || captured.nativeReadPerformed !== false
+    || captured.grantsApproval !== false || captured.grantsQualificationAuthority !== false
+    || captured.grantsCandidateAuthority !== false || captured.grantsActivationAuthority !== false
+    || captured.grantsNetworkAuthority !== false || captured.grantsCommandAuthority !== false
+    || captured.grantsLeaseAuthority !== false || captured.grantsExecutionAuthority !== false
+    || !sameTextV1(captured.consumptionDigest, expected.consumptionDigest)) failV1("replay_conflict");
+  return expected;
+}
+
+function buildRecheckV1(body: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationBodyV1,
+  bodyDigest: string, consumedAt: string, recheckedAt: string):
+ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationRecheckV1 {
+  const material = {
+    recheckVersion: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_RECHECK_V1,
+    recheckReference: `authorization-recheck:${reflectApplyV1(stringSliceV1, bodyDigest, [7, 31]) as string}`,
+    authorizationIdDigest: authorizationIdDigestV1(body),
+    nonceDigest: body.nonceDigest,
+    bodyDigest,
+    consumedAt,
+    recheckedAt,
+    state: "consumed_and_post_transaction_time_rechecked" as const,
+    consumptionStateAuthenticated: true as const,
+    postTransactionTimeRechecked: true as const,
+    exactReplayReturnsNoAuthority: true as const,
+    sourceLookupPerformed: false as const,
+    sourceInvocationPerformed: false as const,
+    nativeReadPerformed: false as const,
+    grantsApproval: false as const,
+    grantsQualificationAuthority: false as const,
+    grantsCandidateAuthority: false as const,
+    grantsActivationAuthority: false as const,
+    grantsNetworkAuthority: false as const,
+    grantsCommandAuthority: false as const,
+    grantsLeaseAuthority: false as const,
+    grantsExecutionAuthority: false as const,
+  };
+  const receipt = objectFreezeV1({ ...material, recheckDigest: sha256Digest(material) });
+  try { assertNoSecretMaterial(receipt, "native observation authorization post-transaction recheck"); }
   catch { failV1("integrity_failed"); }
   return receipt;
 }
@@ -998,12 +1092,84 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
       failV1("terminal_ambiguity");
     }
   }
+
+  async recheckAfterConsumption(value: unknown, consumptionValue: unknown):
+  Promise<ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationRecheckV1> {
+    const consumptionKey = this.#consumptionStateKey;
+    if (!consumptionKey) failV1("consumption_unavailable");
+    const envelope = parseEnvelopeV1(value, this.#authorizationKey, this.#authorizationKeyIdDigest), body = envelope.body;
+    const consumption = parseFreshConsumptionV1(consumptionValue, body, envelope.bodyDigest);
+    try {
+      return await this.#transaction(async (session) => {
+        const tenants = await safeQueryV1(session, `SELECT id FROM tenants WHERE id=$1 FOR UPDATE`, [body.tenantId], 1);
+        const tenant = tenants.length === 1 ? exactHostDataSnapshotV1(tenants[0], ["id"]) : undefined;
+        if (!tenant || tenant.id !== body.tenantId) failV1("authorization_unavailable");
+        const stream = await this.#verifiedStream(session, body.tenantId);
+        const authorizationIdDigest = authorizationIdDigestV1(body);
+        let identityMatch: VerifiedAuthorizationV1 | undefined, nonceMatch: VerifiedAuthorizationV1 | undefined;
+        for (let index = 0; index < stream.authorizations.length; index += 1) {
+          const existing = stream.authorizations[index]!;
+          if (existing.row.authorization_id_digest === authorizationIdDigest) {
+            if (identityMatch) failV1("integrity_failed");
+            identityMatch = existing;
+          }
+          if (existing.row.nonce_digest === body.nonceDigest) {
+            if (nonceMatch) failV1("integrity_failed");
+            nonceMatch = existing;
+          }
+        }
+        if (!identityMatch && !nonceMatch) failV1("authorization_unavailable");
+        if (!identityMatch || !nonceMatch || identityMatch !== nonceMatch
+          || identityMatch.row.body_digest !== envelope.bodyDigest
+          || !sameTextV1(identityMatch.row.authorization_auth_tag, envelope.authorizationAuthTag)) {
+          failV1("replay_conflict");
+        }
+        const consumptionStream = await this.#verifiedConsumptionStream(session, body.tenantId, consumptionKey);
+        let consumedIdentity: ConsumptionRowV1 | undefined, consumedNonce: ConsumptionRowV1 | undefined;
+        for (let index = 0; index < consumptionStream.consumptions.length; index += 1) {
+          const existing = consumptionStream.consumptions[index]!;
+          if (existing.authorization_id_digest === authorizationIdDigest) {
+            if (consumedIdentity) failV1("integrity_failed");
+            consumedIdentity = existing;
+          }
+          if (existing.nonce_digest === body.nonceDigest) {
+            if (consumedNonce) failV1("integrity_failed");
+            consumedNonce = existing;
+          }
+        }
+        if (!consumedIdentity && !consumedNonce) failV1("consumption_unavailable");
+        if (!consumedIdentity || !consumedNonce || consumedIdentity !== consumedNonce
+          || consumedIdentity.body_digest !== envelope.bodyDigest
+          || consumedIdentity.consumed_at !== consumption.consumedAt) failV1("replay_conflict");
+        const timeRows = await safeQueryV1<{ trusted_now: string }>(session, `SELECT
+          to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS trusted_now`, [], 1);
+        const timeRow = timeRows.length === 1 ? exactHostDataSnapshotV1(timeRows[0], ["trusted_now"]) : undefined;
+        const trustedNow = timeRow ? exactInstantMillisecondsV1(timeRow.trusted_now) : undefined;
+        const consumedAt = exactInstantMillisecondsV1(consumedIdentity.consumed_at);
+        const notBefore = exactInstantMillisecondsV1(identityMatch.body.notBefore);
+        const expires = exactInstantMillisecondsV1(identityMatch.body.expiresAt);
+        if (trustedNow === undefined || consumedAt === undefined || notBefore === undefined || expires === undefined
+          || trustedNow < consumedAt || trustedNow < notBefore) failV1("integrity_failed");
+        if (trustedNow >= expires) failV1("expired");
+        const recheckedAt = reflectApplyV1(dateToISOStringV1, new dateConstructorV1(trustedNow), []) as string;
+        return buildRecheckV1(identityMatch.body, identityMatch.row.body_digest,
+          consumedIdentity.consumed_at, recheckedAt);
+      });
+    } catch (error) {
+      const code = exactHostErrorCodeV1(error, storeErrorPrototypeV1, "safeCode");
+      if (code === "invalid_input" || code === "authentication_failed" || code === "replay_conflict"
+        || code === "authorization_unavailable" || code === "consumption_unavailable" || code === "expired"
+        || code === "integrity_failed") failV1(code);
+      failV1("integrity_failed");
+    }
+  }
 }
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_STORE_DISABLED_V1 = objectFreezeV1({
   state: "disabled_pending_protected_keys_and_database" as const,
   readOnlyValidationImplemented: true as const,
   atomicConsumptionImplemented: true as const,
+  postTransactionTimeRecheckImplemented: true as const,
   trustedDatabaseTimeRequired: true as const,
   productionDatabaseConfigured: false as const,
   authorizationKeyConfigured: false as const,
@@ -1036,5 +1202,6 @@ objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreEr
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.register);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.validateForConsumption);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.consumeForInvocation);
+objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype.recheckAfterConsumption);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype);
 objectFreezeV1(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1);

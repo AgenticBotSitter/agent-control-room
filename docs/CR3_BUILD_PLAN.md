@@ -2096,3 +2096,20 @@ import/modify/retrieve/invoke LIVE-330; look up a source; inspect descriptors; r
 create an observation/attestation/candidate/owner authorization; open a listener; wire application/runtime/provider
 use; contact production PostgreSQL; deploy; or treat the fresh or rechecked receipt as a bearer capability. Immutable
 producer evidence and a different independent report-only zero-repair review are required before ordinary integration.
+
+Producer verification passed 42/42 dedicated tests, 392/392 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0038/124 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. Product `1b79bbc75dfe74ce0777bcc33cbcc801054113f0` was accepted by a fresh different reviewer
+after all twelve groups and fourteen commands passed once with 0 High/Medium/Low, verified cleanup, and zero new spend,
+source/native/listener/production-database/network/provider/external effects. Preserve
+`docs/reviews/CR13A_LIVE_380_INDEPENDENT_REVIEW.md`; SHA-256
+`4a5f60f8ca2ad08ee04f1603773279aef97558edfa27acda1604592f8ae610bd`.
+
+## CR13A-LIVE-390 — private fresh-spend/recheck composition contract
+
+Status: contract architecture next on accepted LIVE-380. Use Sol xhigh.
+
+LIVE-390 will freeze an inert private contract requiring one control flow to obtain its own fresh LIVE-370 spend,
+complete LIVE-380's post-transaction database-time recheck, preserve terminal failure and no-retry semantics, and stop
+before the first source lookup. It must not add executable composition, import/retrieve/invoke LIVE-330, read protected
+native material, wire runtime use, contact production PostgreSQL, or add any external effect.
