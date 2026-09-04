@@ -1633,7 +1633,8 @@ block is required for any real native attempt.
 
 ## CR13A-LIVE-190 — unwired native retained-resource adapter boundary
 
-Status: next effect-free implementation block. Use Sol xhigh.
+Status: exact remediated product `d59c02792e49a79a291e3f9109fc43f2fd22fbd8` independently accepted; ordinary
+owner-controlled integration ready. Use Sol xhigh.
 
 LIVE-190 may define the module-private adapter seam by which the accepted physical driver can later consume the same
 already-retained native server instead of selecting a numeric port and binding a replacement. The block may add exact
@@ -1646,3 +1647,26 @@ port; export a native handle/capability/factory; issue or spend a live handoff; 
 Hermes, startup, or production consumer; clear locator/custody/qualification blockers; assemble a candidate; or make a
 physical attempt. Immutable producer evidence and a different independent zero-repair review are required before
 ordinary integration.
+
+Producer verification passes 11/11 dedicated, 26/26 focused native-boundary, 187/187 connection, 203/203 CR13A, the
+complete lifecycle, 5/5 build phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero,
+and whitespace. The first reviewer preserved one Low trailing-blank-line rejection and stopped correctly. A different
+rereviewer passed all twelve fixed commands and groups with 0 High/Medium/Low; hostile and ambient replacement inputs
+executed zero behavior; every forbidden effect and authority remained zero or false. Preserve
+`docs/reviews/CR13A_LIVE_190_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256
+`29be3e4ba7075397a764d57161bbff953993e6d2d815a4cc9ac353f475ab224a`.
+
+## CR13A-LIVE-200 — private native retained-resource issuer contract
+
+Status: next effect-free implementation block. Use Sol xhigh.
+
+LIVE-200 may freeze the module-private issuer contract that will later create and retain one native server and transfer
+that exact resource through the accepted LIVE-170 handoff, LIVE-180 driver port, and LIVE-190 adapter. Repository work
+must remain fake-only and may define strict private candidate, attempt, epoch, owner-window, custody, locator-capability,
+target-runtime, tunnel-peer, host-key, deadline, spend, checkpoint, failure, cleanup, and safe-evidence bindings.
+
+The block must not create, bind, listen on, inspect, transfer, or close a real server; select, reserve, reveal, or consume
+a real address or port; import or call a runtime native backend; issue or spend live authority; read protected values;
+wire an application, API, worker, Idea Lab, Hermes, startup, or production consumer; assemble a live qualification
+candidate; make a physical attempt; contact a provider; or deploy. Immutable producer evidence and a different
+independent zero-repair review are required before ordinary integration.

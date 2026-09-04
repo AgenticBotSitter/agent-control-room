@@ -3621,3 +3621,41 @@ blocker.
 **Reevaluate:** Before any native backend import or call, physical-driver modification, real resource/capability issuer,
 address or port selection, bind/listen/connect/close, live persistence, resource observation, qualification candidate,
 owner-attended physical attempt, runtime wiring, provider contact, or deployment.
+
+## ADR-170 — Put retained-server acceptance behind one private native adapter
+
+**Decision:** CR13A-LIVE-190 defines a module-private, non-serializable, exact-identity, one-use adapter seam for the
+accepted physical driver to receive an already-retained native server. The repository implementation remains fake-only:
+it freezes the requirements and proves acceptance, settlement, cleanup, ambiguity, and recovery ordering without a real
+server or native issuer. A type-only server reference is allowed inside the isolated module but must erase at runtime.
+
+The future real issuer must live inside the same private module, retain the server and every candidate/attempt/epoch,
+owner, custody, locator, target-runtime, tunnel-peer, host-key, deadline, spend, and checkpoint binding, and make the
+resource available only to the one accepted driver adapter. Public code receives neither the server nor a usable handle.
+
+**Why:** The accepted LIVE-120 physical path still consumes a port number and creates a new server, which cannot
+preserve LIVE-160 custody or satisfy LIVE-170's same-resource handoff. A public interface, serializable capability, or
+cross-module caller-built wrapper would recreate the substitution and selection-to-bind races. Freezing the native
+adapter seam before adding an issuer separates state-machine and privacy defects from real resource effects.
+
+**Alternatives rejected:** pass the numeric port; export a `Server`; pass a file descriptor; use a digest as resource
+identity; accept a structural wrapper; expose an issuer callback; modify and exercise the physical backend in this
+block; let a fake clear the custody gap; install handlers during repository tests; permit retry/rebind/reopen; or combine
+issuer, adapter, qualification candidate, owner spend, physical attempt, and activation.
+
+**Evidence required:** exact accepted LIVE-180/review binding; private fake-resource and adapter provenance; frozen
+surfaces; strict state, promise, receiver, substitution, construction, ambient, privacy, non-import, non-wiring, and
+zero-effect tests; full producer verification; and a different independent zero-repair review. No real native object or
+effect belongs in this block.
+
+**Accepted evidence:** Exact remediated product `d59c02792e49a79a291e3f9109fc43f2fd22fbd8` passed 11/11 dedicated,
+26/26 focused native-boundary, 187/187 connection, 203/203 CR13A, the complete lifecycle, all five build phases, 4/4
+rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. The original Low
+formatting rejection remains preserved. A different independent rereviewer passed all twelve fixed commands and groups
+with 0 High/Medium/Low and every forbidden effect and authority at zero or false. Accepted report SHA-256:
+`29be3e4ba7075397a764d57161bbff953993e6d2d815a4cc9ac353f475ab224a`.
+
+**Reevaluate:** Before adding the native issuer, retaining or inspecting a real server, changing the physical driver's
+backend composition, selecting/binding/listening/closing, installing handlers, issuing/spending a live handoff,
+persisting native state, clearing a blocker, assembling a candidate, making an owner-attended attempt, wiring runtime
+use, contacting a provider, or deploying.
