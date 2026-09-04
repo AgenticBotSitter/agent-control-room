@@ -4739,3 +4739,44 @@ macOS stage zero, and whitespace validation pass. All 59 actuals remain zero and
 
 **Reevaluate:** Before any owner-present issuer, sealed body parser, registration/nonce store, key/trust/manifest,
 independent anchor, reservation, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.
+
+## ADR-200 — Freeze rooted trust and independent rollback anchors before protected implementation
+
+**Decision:** Represent LIVE-470's production trust boundary first as one inert exact singleton. Pin one owner root
+out of band, keep its signing material offline, and restrict it to trust-registry genesis/revision and dual-signed
+normal root rotation. Reuse LIVE-480's exact 42 component-product and 28 key-role binding schemas. Permit two active
+revisions for one role only during an explicit overlap no longer than 300 seconds and one otherwise. Make the trust
+registry and deployment manifest canonical signed chains. Protect their heads plus composite owner-attempt,
+attestation, and cleanup heads with five distinct authenticated monotonic CAS anchors and distinct writer roles.
+
+**Why:** A valid signature alone does not prove that a registry, manifest, database, or attempt head is current.
+Whole-database rollback, key substitution, role reuse, and ambiguous split commits require an independent monotonic
+fact outside PostgreSQL. Freezing the closed identities and recovery matrix before adding keys or stores makes later
+authority auditable without accidentally manufacturing current authority.
+
+**Alternatives rejected:** let PostgreSQL pin its own owner root; accept a root from environment or runtime; use one
+shared anchor or writer key; allow an anchor to store business state; infer key overlap; automatically recover a
+compromised root; reconstruct or resign a CAS request after uncertainty; treat a still-valid old signature as current
+after an authenticated anchor advance.
+
+**Evidence required:** exact LIVE-480 commit/tree/review/acceptance binding; complete independently repeated ordered
+fixtures; the inherited exact product/key schemas; explicit root recovery and overlap rules; five distinct anchors;
+closed split-commit recovery; singleton-only hostile parsing; captured-intrinsic resistance; exact transitive import
+graph with AST effect rejection; safe consumer audit; 44 zero actuals and eight false grants; full producer gates;
+and a different independent zero-repair review.
+
+**Accepted evidence:** The inert product and 15-test focused suite are implemented. Focused tests, 473 existing CR13A
+tests, the complete 769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations
+0001-0038 with 124 tables, macOS stage zero, and whitespace validation pass. No key, signer, verifier, registry,
+manifest, anchor, store, production database, native, runtime, or deployment effect occurred. Independent review and
+final producer gates pass. The first independent review rejected the original revision with 3 High and
+2 Medium findings: circular/ambiguous signing, undeclared overlap and key rollback, unbound anchor custody, open CAS
+settlements, and an incomplete graph/export audit. All five were remediated without adding a protected
+implementation. A different independent reviewer accepted exact product
+`dc313b1f2ff5982fe0ffa3b505db36025036601f`, tree
+`de7b73195fdbc4eb08097e2da7eb7cd97e4f48a3`, with 0 High, 0 Medium, and 0 Low. Review SHA-256 is
+`56b03b7941971c50867553dc26c65a74cb9e4e291ba1a2543f5a9ac2708b2eb7`; acceptance SHA-256 is
+`2307475e02a176465c158cbe93b4a8c8a2b39ec6f3bb74cfba2281441a484f9d`.
+
+**Reevaluate:** Before any owner-present issuer, key creation/access, registry or manifest parser/resolver, anchor or
+PostgreSQL store, recovery effect, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.

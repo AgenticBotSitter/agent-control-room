@@ -157,6 +157,7 @@
 | CR13A-LIVE-460 inert private observation-to-attestation pipeline contract | Independently accepted; ordinary integration ready | Product `2cab7df...`, tree `676cc41...`; 0 High/Medium/Low; 11/11 focused, 461/461 CR13A, full lifecycle pass, 5/5 build, 4/4 render, 38 migrations/124 tables; 58 zero actuals/eight false grants; no capsule/source/provider/key/database/native/runtime path |
 | CR13A-LIVE-470 production capsule and owner-native authorization architecture | Independently accepted for architecture-only integration | First review 5 High/4 Medium/0 Low, all remediated; different re-review 0/0/0; same-module capsule, rooted/anchored trust, exact owner/schema/rollback/IPC boundaries; zero current effects |
 | CR13A-LIVE-480 inert owner-native authorization contract | Independently accepted after all 2 High/2 Medium findings were remediated; ordinary inert integration ready | Product `6d510d6...`, tree `ac8655e...`; 64 body fields plus 42 exact component product/tree/review bindings, 28 closed key bindings, one-per-provider ceilings; 12/12 focused, 473/473 CR13A, 0/0/0 |
+| CR13A-LIVE-490 inert trust, manifest, key-lifecycle, and rollback-anchor contract | Independently accepted after 3 High/2 Medium were remediated; ordinary inert integration ready | Product `dc313b1...`, tree `de7b731...`; exact signature-free rotation body/dual envelope, 28-role signed overlap schema, closed registry/manifest signatures, five exact independent anchor bindings, closed CAS receipts/recovery, exact graph/export/call audit; 15/15 focused plus 473/473 CR13A; 0/0/0 |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -262,6 +263,38 @@ re-review accepted exact product `6d510d6f1b80a98c00c16fcf2b55837afc1cea87`, tre
 reviewer independently repeated the focused suite, CR13A suite, TypeScript, targeted lint, stage zero, and diff gate.
 Ordinary integration is ready; every live or protected successor remains absent. See
 `docs/CR13A_LIVE_480_ACCEPTANCE.md`.
+
+CR13A-LIVE-490 implements the next inert security boundary. One exact frozen singleton binds the independently
+accepted LIVE-480 product and evidence, reuses its exact 42-component and 28-key-role schemas, and freezes the
+out-of-band owner-root pin and dual-signature rotation shapes, the complete per-role key lifecycle, canonical signed
+trust-registry and deployment-manifest chains, five independently keyed rollback anchors, and eight closed
+split-commit recovery outcomes. Rotation overlap is explicit and limited to 300 seconds; a role may have two active
+revisions only inside that declared overlap and exactly one outside it. Compromise never triggers automatic root
+replacement, and recovery may only reissue the byte-identical stored CAS request.
+
+The product remains repository-only and inert. It creates or reads no key, registry, manifest, anchor, database,
+clock, filesystem, environment, host, credential, source, provider, process, network, or native value; exposes no
+signer, resolver, store, migration, CAS adapter, or dependency factory; and grants no authority. Its status publishes
+44 zero actual totals and eight false grants. Dedicated tests pass 15/15, the existing CR13A suite passes 473/473,
+the complete 769/421/392 lifecycle exits zero, all five build phases and 4/4 rendered routes pass, and migrations
+0001-0038 verify 124 tables. TypeScript, full lint, macOS stage zero, and whitespace validation pass. A different
+independent zero-repair reviewer accepted the remediated product, so ordinary inert integration is ready and the
+active frontier advances to LIVE-500.
+
+The first independent review rejected the original product with 3 High and 2 Medium findings. H-001 found a circular
+root-rotation signature shape and ambiguous registry signer participation. H-002 found that the claimed key overlap
+had no signed declaration or rollback rule. H-003 found five anchor names without exact adapter, writer-key,
+destination, stream, and custody bindings. M-001 found an open receipt settlement field. M-002 found that the graph
+test missed re-exports/loaders and did not freeze exports or top-level calls. The remediation splits canonical bodies
+from signatures, fixes exact artifact signer sets, adds a signed manifest-bound overlap declaration, maps all five
+anchor custody domains, closes receipt outcomes/invariants, and audits every resolved module dependency, export,
+top-level call, and constructor. A different independent reviewer accepted exact product
+`dc313b1f2ff5982fe0ffa3b505db36025036601f`, tree
+`de7b73195fdbc4eb08097e2da7eb7cd97e4f48a3`, with 0 High, 0 Medium, and 0 Low. Preserve
+`docs/reviews/CR13A_LIVE_490_INDEPENDENT_REVIEW.md` with SHA-256
+`56b03b7941971c50867553dc26c65a74cb9e4e291ba1a2543f5a9ac2708b2eb7` and
+`docs/CR13A_LIVE_490_ACCEPTANCE.md` with SHA-256
+`2307475e02a176465c158cbe93b4a8c8a2b39ec6f3bb74cfba2281441a484f9d`.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1490,13 +1523,13 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-490 — inert owner-root, key-role, trust-registry, manifest, and anchor contract
+Block: CR13A-LIVE-500 — inert owner-present issuer and strong-factor evidence contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-480 is independently accepted. The next dependency-ordered slice makes the out-of-band owner-root pin, key lifecycle, signed trust-registry and deployment-manifest bodies, and five independent anchor identities exact before any key, signer, store, read, or write can exist.
-Expected output: exact frozen singleton vocabularies and zero-use status for root provenance/recovery, key entries/rotation, manifest/trust chains, product/key bindings, anchor heads/CAS identities, hostile parsing, import inertia, and different independent review.
-Owner action: none for this inert repository-only contract. Owner-present issuer, store/migration, real key creation/access, protected trust/manifest/anchor reads or writes, PostgreSQL, capsule/provider/source/native/runtime/deployment work remain separately gated.
-Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
+Why: LIVE-490 is independently accepted. The next dependency-ordered slice makes owner presence, strong-factor evidence, trusted-time and nonce intent, issuer decisions, refusals, and the sealed-output boundary exact before any real owner interaction, credential access, nonce, clock, key, or signing operation can exist.
+Expected output: exact frozen singleton vocabularies and zero-use status for accepted-product evidence, owner-presence ceremony, strong-factor classes, trust preflight, nonce/time intent, issuance decisions, refusal outcomes, lifetime ceilings, sealed output, hostile parsing, transitive inertia, and different independent review.
+Owner action: none for this inert repository-only contract. Real owner prompts, Keychain/biometric/credential access, nonce or clock reads, signing, authorization registration, PostgreSQL, capsule/provider/source/native/runtime/deployment work remain separately gated.
+Stop before: any owner prompt or credential read, Keychain or biometric access, nonce generation or clock read, body construction, sealing or signing, real issuer/resolver/store, registration, database/anchor/native/runtime/deployment work, live Hermes/provider contact, or any unapproved external effect.
 ```
 
 ## Update rule
