@@ -3515,3 +3515,30 @@ blocker.
 **Reevaluate:** Before any address/interface observation, DNS resolution, port selection/reservation, capability
 issuance/spend, ledger/checkpoint write, resource observer, driver handoff, candidate, physical attempt, SSH/credential
 operation, production contact, or deployment.
+
+## ADR-167 — Exclusive port custody requires continuous native-resource ownership
+
+**Decision:** CR13A-LIVE-160 defines exclusive port custody as continuous ownership and one-use transfer of the same
+retained operating-system listener/reservation resource. A numeric port, prior successful bind, closed probe socket,
+availability check, timestamp, or digest is never custody. Selection must be operating-system-controlled, the resource
+must remain open and exclusively held, and failure or uncertainty requires terminal close, independent zero-resource
+observation, and durable tombstoning without retry.
+
+The accepted LIVE-120 driver currently consumes a private number and creates/binds a new server. It has no accepted
+same-resource handoff port, so `driverReservationHandoffGapPresent` must remain true and the exclusive-custody blocker
+cannot clear until a separate driver-handoff block is accepted.
+
+**Why:** Selecting or probing a free port and closing the probe creates a race in which another process can acquire it
+before the driver binds. Calling the later driver bind `exclusive: true` prevents certain sharing modes at bind time but
+does not prove continuous broker custody or identity continuity from selection through handoff.
+
+**Alternatives rejected:** check availability then close; pass only a port number; treat a successful earlier bind as
+proof; enable address/port reuse; let the broker and driver independently bind; publish the locator for coordination;
+let a fake or digest clear custody; modify the accepted driver inside this boundary; or retry/rebind after uncertainty.
+
+**Evidence required:** exact frozen policy and fake recording the compatibility gap, strict private provenance,
+privacy and hostile tests, runtime non-wiring, complete producer gates, and a different independent zero-repair review.
+No native resource may be created in this block.
+
+**Reevaluate:** Before any driver API change, native reservation provider, `node:net` import, bind/listen/port operation,
+retained handle, capability handoff, ledger/checkpoint write, resource observer, physical attempt, or runtime wiring.
