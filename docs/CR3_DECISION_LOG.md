@@ -4587,3 +4587,42 @@ database, or deploying.
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_440_SAME_MODULE_SOURCE_INVOCATION_IMPLEMENTATION_DESIGN.md`. Current authority covers documentation
 only and grants no native execution or production authority.
+
+## ADR-196 — Build a complete private attestation pipeline before any native source call
+
+**Decision:** LIVE-450 freezes a separate owner-native authorization, exact-product one-attempt ceiling,
+production-only module capsule, five ordered supplementary-provider lanes, and 36 attestation stages from exact
+product/policy pins through private context, both one-use spends, one source call, exact raw validation, synchronous
+domain-separated keyed transformations, immediate reference release, complete canonical signature, authoritative
+PostgreSQL pending/final appends, non-authoritative independent high-water CAS, exact split-commit recovery, after-exit
+cleanup, final acceptance, and report-only review. Candidate assembly, physical qualification, and activation remain
+separate successors. The eight-value source cannot prove running executable content, exact boot session, high-entropy
+attestor process session, running harness, or running driver identity; five distinct private providers are mandatory.
+
+**Why:** Creating raw host state before trusted custody, signing, replay protection, and recovery exist would leave an
+unreviewable gap. Treating platform strings, PIDs, paths, uptime arithmetic, a checkout, or a public digest as the
+missing claims would turn weak or attacker-controlled hints into identity. PostgreSQL must remain the one global write
+authority, while a narrow protected high-water digest anchor prevents whole-database rollback without becoming a
+second coordinator.
+
+**Alternatives rejected:** call and discard; use one native authorization for repository and execution; reuse an exact
+product pair after a diagnostic; let callers inject source/provider/key/database/checkpoint dependencies; store raw
+values; use unkeyed or stable host digests; reuse the signature
+key as privacy, owner, TLS, node-channel, or cleanup key; infer boot identity from uptime alone; infer executable
+identity from a path; infer process epoch from PID; infer harness/driver build from a working tree; collapse signature,
+ledger, high-water, verifier, or cleanup observer; let PGlite qualify production; let high-water schedule or coordinate;
+retry after split commit or uncertainty; accept a report/file digest as authenticated native evidence.
+
+**Evidence required:** exact predecessor binding; separate owner-native authority; exact-product attempt ceiling;
+production capsule; five provider lanes; 36 attestation stages and separate successors; complete canonical envelope;
+pairwise-distinct pre-resolved keys and exact privacy domains; trusted time/nonce; append-only PostgreSQL states and
+writer ceilings; independent non-authoritative high-water with exact pending/CAS recovery; terminal mapping; pre-
+reserved after-exit cleanup observer; direct-module fake-only deterministic verification; zero current effects; and a
+different independent report-only architecture review.
+
+**Reevaluate:** Before inert contract implementation, supplementary provider work, protected key or signer access,
+persistence, source-owner modification, real source invocation, native evidence, runtime wiring, provider/production
+contact, or deployment.
+
+**Architecture evidence:** Independently accepted after remediation from 3 High/6 Medium/0 Low to 0/0/0 and frozen in
+`docs/CR13A_LIVE_450_PRIVATE_OBSERVATION_ATTESTATION_PIPELINE_DESIGN.md`. Current authority covers documentation only.

@@ -2265,3 +2265,22 @@ pipeline exists may a later fresh owner packet permit one native attempt whose r
 checkpoint, and independent high-water continuity. Architecture-only work performs zero source calls, native reads,
 raw observations, database activity, or external effects. See
 `docs/CR13A_LIVE_440_SAME_MODULE_SOURCE_INVOCATION_IMPLEMENTATION_DESIGN.md`.
+
+## CR13A-LIVE-450 — private observation-to-attestation pipeline design
+
+Status: independently accepted for architecture-only integration after remediation from 3 High/6 Medium/0 Low to
+0/0/0. Use Sol xhigh.
+
+LIVE-450 binds accepted LIVE-140 target policy, LIVE-430 invocation contract, and LIVE-440 implementation design into
+a separate one-use owner-native authorization, exact-product one-attempt ceiling, production-only construction
+capsule, five ordered supplementary-provider lanes, and 36 non-collapsible private attestation stages. The stages keep
+context reservation, both authorization spends, one source call, raw validation and keyed intake, raw/key release,
+provider calls, canonical sealing/signing/verification, PostgreSQL pending appends, independent high-water CAS,
+explicit split-commit reconciliation, after-exit cleanup, final acceptance, and report-only review distinct. Candidate
+assembly, physical qualification, and activation remain separately authorized successors.
+
+The eight-value native source cannot alone prove running executable-content identity, exact boot session,
+high-entropy attestor-process session, running harness identity, or running physical-driver identity. Those remain
+five explicit separately reviewed provider blockers. Architecture work performs zero source calls, protected reads,
+time/nonce/key access, database/checkpoint activity, network, or external effects. See
+`docs/CR13A_LIVE_450_PRIVATE_OBSERVATION_ATTESTATION_PIPELINE_DESIGN.md`.
