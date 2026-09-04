@@ -3789,3 +3789,35 @@ exact zero-effect and false-authority truth; full producer verification; and a d
 inspecting/transferring/closing a native server, observing a locator, issuing or spending live authority, writing a live
 checkpoint, calling LIVE-190 or the physical driver, assembling a candidate, making an owner-attended attempt, wiring
 runtime use, contacting a provider, or deploying.
+
+**Accepted evidence:** Exact product `3974f165f106cb0fe616b2f0e91a18e45b1b4c2d` passed 10/10 dedicated,
+245/245 CR13A, the complete lifecycle, five build phases, 4/4 rendered pages, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A different reviewer passed all twelve fixed commands and review
+groups with 0 High/Medium/Low. All hostile and ambient behavior executions were zero; every real effect and authority
+remained zero or false. Accepted report SHA-256:
+`eb6957f2f577b77ce7c68fb2f8e92e80004a987e3fa83ba1bdee993f6f59d58a`.
+
+## ADR-175 — Implement composition ordering without connecting native effects
+
+**Decision:** CR13A-LIVE-240 may implement the accepted LIVE-230 order as a private, unreachable stateful composition
+whose only dependencies are repository-owned inert test ports and opaque fake resources. The real LIVE-220 factory,
+native modules, persistence, adapter, and runtime remain disconnected.
+
+**Why:** LIVE-230 freezes the sequence but does not yet demonstrate that concurrency, one-use ceilings, exact-object
+custody, transfer, ambiguity, cleanup ownership, and no-reopen recovery can coexist in executable code. Proving those
+properties with opaque fakes isolates state-machine defects before any native effect becomes reachable.
+
+**Alternatives rejected:** retrieve LIVE-220 now; use a real loopback server as a fake; import `node:net`; expose an
+injectable production factory; accept caller resources, locators, callbacks, clocks, signers, or persistence clients;
+wire a runtime consumer; collapse durable markers into in-memory truth; guess custody after adapter uncertainty; retry,
+rebind, substitute, or reopen after failure; or combine implementation with physical qualification or deployment.
+
+**Evidence required:** exact accepted LIVE-230 product/review binding; complete executable ordering and one-use
+ceilings; opaque exact-resource custody; atomic adapter transfer; all definite, ambiguous, rejection, uncertainty, and
+cleanup paths; serialized concurrent calls; hostile input and ambient replacement non-execution; no native/effect/
+LIVE-220/LIVE-190 import or runtime consumer; exact zero real-effect and false-authority truth; full producer
+verification; and a different independent zero-repair review.
+
+**Reevaluate:** Before importing, retrieving, or invoking LIVE-220; using native or live persistence/adapter ports;
+creating, observing, transferring, or closing a real resource; issuing or spending live authority; clearing a blocker;
+assembling a candidate; making a physical attempt; wiring runtime use; contacting a provider; or deploying.

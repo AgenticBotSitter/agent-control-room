@@ -1,6 +1,6 @@
 # CR13A-LIVE-230 private native issuer composition contract
 
-**Status:** repository-only architecture frozen; implementation pending
+**Status:** exact repository-only product independently accepted; ordinary integration ready
 **Model/effort:** `gpt-5.6-sol`, `xhigh`
 **Stacked LIVE-220 base:** `26d43bdf098e67163cc8d0b419ebc3ea8c2b7227`
 **Accepted LIVE-220 product:** `2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9`

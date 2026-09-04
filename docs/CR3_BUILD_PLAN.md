@@ -1725,7 +1725,8 @@ network, persistence, protected-read, wiring, effect, blocker, and authority val
 
 ## CR13A-LIVE-230 — private native issuer composition contract
 
-Status: next repository-only contract block. Use Sol xhigh.
+Status: exact product `3974f165f106cb0fe616b2f0e91a18e45b1b4c2d` independently accepted; ordinary integration
+ready. Use Sol xhigh.
 
 LIVE-230 may freeze the exact private composition by which accepted LIVE-200 binding/spend evidence and the LIVE-210
 one-use state machine could later unlock the LIVE-220 private native factory and hand the same retained server to the
@@ -1737,3 +1738,25 @@ observe, select, reserve, consume, or expose a locator; issue or spend live auth
 adapter or physical driver; wire an app, API, worker, Idea Lab, Hermes, startup, or production consumer; clear a blocker;
 assemble a candidate; contact a provider; deploy; or make a physical attempt. Immutable producer evidence and a
 different independent zero-repair review are required before ordinary integration.
+
+Producer verification passes 10/10 dedicated, 245/245 CR13A, the complete lifecycle, all five build phases, 4/4
+rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A different
+reviewer passed all twelve commands and review groups with 0 High/Medium/Low. Hostile, ambient replacement,
+extra-argument, and callback executions remained zero; every real effect and authority remained zero or false.
+Preserve `docs/reviews/CR13A_LIVE_230_INDEPENDENT_REVIEW.md`; SHA-256
+`eb6957f2f577b77ce7c68fb2f8e92e80004a987e3fa83ba1bdee993f6f59d58a`.
+
+## CR13A-LIVE-240 — unreachable private issuer composition implementation
+
+Status: next isolated implementation block. Use Sol xhigh.
+
+LIVE-240 may implement the accepted LIVE-230 ordering as one private, unreachable composition with injected inert
+ports and opaque fake resources. It must prove durable claim/spend/uncertainty order, single factory retrieval, exact
+resource custody, atomic same-object adapter transfer, cleanup ownership, ambiguity, and no-reopen recovery without
+importing LIVE-220, `node:net`, a real persistence client, or any production adapter.
+
+The block must not retrieve or invoke the real private factory; create, listen on, inspect, transfer, or close a real
+server; observe, select, reserve, consume, or expose a locator; issue or spend live authority; write live persistence;
+call LIVE-190 or the physical driver; wire an app, API, worker, Idea Lab, Hermes, startup, or production consumer; clear
+a blocker; assemble a candidate; contact a provider; deploy; or make a physical attempt. Immutable producer evidence
+and a different independent zero-repair review are required before ordinary integration.
