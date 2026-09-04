@@ -2246,3 +2246,22 @@ with 0 High/Medium/Low; 11/11 focused, 450/450 CR13A, 5/5 build, 4/4 render, 38 
 actuals, eight false grants, zero source calls/native reads/raw observations/private handoffs/effects, and exact
 cleanup. Preserve `docs/reviews/CR13A_LIVE_430_INDEPENDENT_REVIEW.md`; SHA-256
 `354e84ee68e1c1a202b738e0879070d6d449a268bbf001104eda4bdb246d0d0b`.
+
+## CR13A-LIVE-440 — same-module source-invocation and raw-handoff implementation design
+
+Status: architecture remediated; dormant implementation blocked pending an independently accepted private attestation
+pipeline; native execution remains separately owner-gated. Use Sol xhigh.
+
+LIVE-440 fixes the only permitted implementation seam inside the LIVE-420 source-owning module after exact spend,
+immediate recheck, private lookup, and source identity verification. The future implementation may use one captured
+synchronous no-receiver/no-argument call, exact descriptor/value raw validation, direct same-module synchronous intake,
+immediate pre-`await` source/raw reference release, distinct signature/checkpoint/high-water stages, an exact terminal
+pipeline-failure outcome, and sanitized terminal output.
+
+Ordinary tests must stop before real-source invocation. A module-owned deterministic seam mints only fixed safe
+synthetic records and exercises post-call validation and stage failures without accepting a source or raw caller input.
+Dormant code may be accepted on non-native producer and independent review evidence. Only after the full protected
+pipeline exists may a later fresh owner packet permit one native attempt whose result is authenticated by exact signer,
+checkpoint, and independent high-water continuity. Architecture-only work performs zero source calls, native reads,
+raw observations, database activity, or external effects. See
+`docs/CR13A_LIVE_440_SAME_MODULE_SOURCE_INVOCATION_IMPLEMENTATION_DESIGN.md`.
