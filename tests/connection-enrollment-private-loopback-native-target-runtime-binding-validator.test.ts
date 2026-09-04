@@ -109,7 +109,7 @@ test("CR13A-LIVE-310 confines descriptor inspection and process-property names t
   assert.ok(start > 0 && end > start);
   const before = source.slice(0, start);
   const body = source.slice(start, end);
-  assert.doesNotMatch(before, /objectGetOwnPropertyDescriptorV1, Object/);
+  assert.doesNotMatch(before, /objectGetOwnPropertyDescriptorV1, objectConstructorV1/);
   for (const token of ["objectGetOwnPropertyDescriptorV1", "nativeProcessNamespaceV1, \"version\"",
     "nativeProcessNamespaceV1, \"execPath\"", "nativeProcessNamespaceV1, \"pid\"",
     "nativeProcessNamespaceV1, \"ppid\""]) assert.equal(body.includes(token), true, token);
@@ -215,6 +215,18 @@ test("CR13A-LIVE-310 parsers use captured intrinsics after ambient replacement",
   }
   assert.deepEqual(executions, new Array(5).fill(0));
   assert.equal(globalObjectReads, 0);
+});
+
+test("CR13A-LIVE-310 future validator body captures Object and Array intrinsics", async () => {
+  const source = await readFile(modulePath, "utf8");
+  const start = source.indexOf("function createQuarantinedNativeTargetRuntimeBindingValidatorV1");
+  const end = source.indexOf("const implementationSeedV1", start);
+  const body = source.slice(start, end);
+  assert.match(source, /const arraySomeV1 = Array\.prototype\.some;/);
+  assert.match(source, /const objectConstructorV1 = Object;/);
+  assert.equal((body.match(/objectGetOwnPropertyDescriptorV1, objectConstructorV1/g) ?? []).length, 4);
+  assert.match(body, /reflectApplyV1\(arraySomeV1, exactDescriptorsV1/);
+  assert.doesNotMatch(body, /exactDescriptorsV1\.some|objectGetOwnPropertyDescriptorV1, Object/);
 });
 
 test("CR13A-LIVE-310 public records contain no observed runtime or host material", () => {

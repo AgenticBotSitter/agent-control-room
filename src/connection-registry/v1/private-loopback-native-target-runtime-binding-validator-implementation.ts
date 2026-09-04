@@ -2,6 +2,8 @@ import * as nativeProcessNamespaceV1 from "node:process";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { exactHostDataSnapshotV1, isHostProxyV1 } from "../../security/host-value";
 
+const arraySomeV1 = Array.prototype.some;
+const objectConstructorV1 = Object;
 const objectFreezeV1 = Object.freeze;
 const objectGetOwnPropertyDescriptorV1 = Object.getOwnPropertyDescriptor;
 const objectIsFrozenV1 = Object.isFrozen;
@@ -165,17 +167,18 @@ function safePublicRecordV1(value: unknown): void {
 function createQuarantinedNativeTargetRuntimeBindingValidatorV1():
 PrivateNativeTargetRuntimeBindingValidatorV1 {
   const privateNativeTargetRuntimeBindingValidatorV1 = (): PrivateNativeTargetRuntimeBindingValidationV1 => {
-    const versionDescriptorV1 = reflectApplyV1(objectGetOwnPropertyDescriptorV1, Object,
+    const versionDescriptorV1 = reflectApplyV1(objectGetOwnPropertyDescriptorV1, objectConstructorV1,
       [nativeProcessNamespaceV1, "version"]) as PropertyDescriptor | undefined;
-    const execPathDescriptorV1 = reflectApplyV1(objectGetOwnPropertyDescriptorV1, Object,
+    const execPathDescriptorV1 = reflectApplyV1(objectGetOwnPropertyDescriptorV1, objectConstructorV1,
       [nativeProcessNamespaceV1, "execPath"]) as PropertyDescriptor | undefined;
-    const pidDescriptorV1 = reflectApplyV1(objectGetOwnPropertyDescriptorV1, Object,
+    const pidDescriptorV1 = reflectApplyV1(objectGetOwnPropertyDescriptorV1, objectConstructorV1,
       [nativeProcessNamespaceV1, "pid"]) as PropertyDescriptor | undefined;
-    const ppidDescriptorV1 = reflectApplyV1(objectGetOwnPropertyDescriptorV1, Object,
+    const ppidDescriptorV1 = reflectApplyV1(objectGetOwnPropertyDescriptorV1, objectConstructorV1,
       [nativeProcessNamespaceV1, "ppid"]) as PropertyDescriptor | undefined;
     const exactDescriptorsV1 = [versionDescriptorV1, execPathDescriptorV1, pidDescriptorV1, ppidDescriptorV1];
-    if (exactDescriptorsV1.some((descriptor) => descriptor === undefined || descriptor.get !== undefined
-      || descriptor.set !== undefined || descriptor.enumerable !== true || descriptor.configurable !== false)) {
+    if (reflectApplyV1(arraySomeV1, exactDescriptorsV1,
+      [(descriptor: PropertyDescriptor | undefined) => descriptor === undefined || descriptor.get !== undefined
+        || descriptor.set !== undefined || descriptor.enumerable !== true || descriptor.configurable !== false])) {
       failV1("integrity_failed");
     }
     if (typeof versionDescriptorV1?.value !== "string" || typeof execPathDescriptorV1?.value !== "string"
