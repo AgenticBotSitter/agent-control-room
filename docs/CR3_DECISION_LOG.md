@@ -3460,13 +3460,19 @@ truth.
 stacked base `e620b7bc24760a8f8f0034db6cda3d60e74763a8`. Exact product
 `6e716bd77c26ad7f70343ddd687dff990f5db12f` passes 9/9 focused, 140/140 connection, 157/157 CR13A, complete lifecycle,
 build/render, and migration verification. No host observation, runtime input, provider, signer, clock, nonce, native
-import, listener/network action, or external effect occurred. Independent review remains pending under
+import, listener/network action, or external effect occurred. The first review under
 `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`. Its first reviewer passed the eleven fixed gates but the
 out-of-tree hostile probe could not resolve bare `tsx` and stopped before product import. Preserve the protocol-
 incomplete report at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
-`6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. A corrected review remains pending under
+`6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. A corrected review ran under
 `docs/reviews/CR13A_LIVE_140_REVIEW_PROTOCOL_REMEDIATION_PACKET.md`; it changes only the hostile launcher to an
-architect-prevalidated explicit local loader and leaves the exact product unchanged.
+architect-prevalidated explicit local loader and leaves the exact product unchanged. Later report-only reviews
+preserved a guessed-path stop, a `.ts` module-format stop, and an issuer-name false positive without product mutation.
+The final exact-helper packet passed under a fifth different reviewer: 16/16 fixed commands, all twelve hostile groups,
+63 hostile and eight replacement attempts with zero executions, 0 High/Medium/Low, and every forbidden-effect count
+zero. Preserve `docs/reviews/CR13A_LIVE_140_FINAL_INDEPENDENT_REVIEW.md`; SHA-256
+`483ab05695b5cecaa6fe02ca4cc63b2e640733ac42270e2a435364c6be0ea6d8`. Ordinary owner-controlled integration is
+accepted; no real attestation or blocker clearance occurred.
 
 **Reevaluate:** Before any platform/native observer, signer, clock, nonce, verifier, acceptance store, checkpoint,
 candidate, owner window, physical attempt, runtime consumer, SSH/credential path, production contact, or deployment.

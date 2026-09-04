@@ -1504,8 +1504,8 @@ did not construct or import the native driver and clear none of the twelve block
 
 ## CR13A-LIVE-140 — target-runtime attestation boundary
 
-Status: exact product `6e716bd77c26ad7f70343ddd687dff990f5db12f` is producer-verified on a stacked
-branch; first review is protocol-incomplete and corrected second review is pending. Use Sol xhigh.
+Status: exact product `6e716bd77c26ad7f70343ddd687dff990f5db12f` is independently accepted on a stacked
+branch and ready for ordinary owner-controlled integration. Use Sol xhigh.
 See `CR13A_LIVE_140_TARGET_RUNTIME_ATTESTATION_BOUNDARY.md` and ADR-165.
 
 LIVE-140 must define, implement with repository fakes, and independently review a privacy-preserving target-runtime
@@ -1536,3 +1536,26 @@ report at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
 `6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. The corrected packet
 `docs/reviews/CR13A_LIVE_140_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` pins the prevalidated explicit loader
 `./node_modules/tsx/dist/loader.mjs` for one new reviewer's single out-of-tree invocation; product remains unchanged.
+
+Later report-only reviews preserved a guessed-path stop, a `.ts` module-format stop, and a redundant issuer-check false
+positive without changing the product. The final packet binds committed hostile helper SHA-256
+`ded101e5d21d78efe5aeceb0ea647bb22469b3430ffb45a06126bd5c1556d60b`. A fifth different reviewer passed all 16
+exact commands, all twelve hostile groups, 63 hostile attempts and eight replacement attempts with zero executions,
+and every forbidden-effect count at zero. Preserve
+`docs/reviews/CR13A_LIVE_140_FINAL_INDEPENDENT_REVIEW.md`; SHA-256
+`483ab05695b5cecaa6fe02ca4cc63b2e640733ac42270e2a435364c6be0ea6d8`. This accepts only effect-free integration;
+the target-runtime blocker remains missing.
+
+## CR13A-LIVE-150 — private locator broker boundary
+
+Status: next effect-free architecture and implementation block. Use Sol xhigh.
+
+LIVE-150 must freeze one opaque, one-use private locator-broker boundary before any literal loopback address or port is
+selected. It may implement exact repository contracts, a non-production fake, strict provenance parsers, hostile
+tests, and status projection only. It must not read or select a host address, enumerate interfaces, reserve a port,
+construct a socket/listener, issue or spend a capability, expose a locator, contact a provider, or wire runtime use.
+
+The fake must retain `private_locator_broker_missing` and `exclusive_port_custody_missing`, keep every issuance/spend/
+selection/native/network/effect count at zero, grant no authority, and remain structurally impossible to relabel as a
+real private locator. Architecture, product verification, and a different independent review are required before
+ordinary owner-controlled integration.

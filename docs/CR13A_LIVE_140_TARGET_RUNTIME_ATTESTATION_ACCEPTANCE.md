@@ -1,6 +1,6 @@
 # CR13A-LIVE-140 target-runtime attestation boundary
 
-**Status:** exact effect-free implementation verified; first review protocol-incomplete; corrected independent review pending
+**Status:** independently accepted; ordinary owner-controlled integration ready
 **Product target:** `6e716bd77c26ad7f70343ddd687dff990f5db12f`
 **Product tree:** `4010bdaa5fd90f486d7ccad6185a2116dd9345af`
 **Design parent:** `154231858828603d167c12371863bc0562f2e795`
@@ -70,13 +70,29 @@ stop rule, so hostile coverage remained incomplete. Preserve that rejected repor
 `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
 `6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. It establishes no product finding or pass.
 
-The corrected packet at `docs/reviews/CR13A_LIVE_140_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` changes only the probe
-launcher to the architect-prevalidated explicit local loader
-`node --import ./node_modules/tsx/dist/loader.mjs <probe>`. A second different report-only, zero-repair reviewer must
-now complete all twelve groups. Any High, Medium, or Low finding or nonzero listener/IPC/native/network/effect count
-rejects the target.
+Three later runs honestly preserved additional review-harness stops: one guessed nonexistent source path, one `.ts`
+CommonJS/top-level-await transformation failure, and one redundant case-insensitive issuer-name false positive after
+groups 1-10 passed. None changed the product or found a product defect. Their reports are preserved at:
 
-This document does not claim independent acceptance while that review is pending.
+- `docs/reviews/CR13A_LIVE_140_PROTOCOL_REMEDIATION_REREVIEW.md`, SHA-256
+  `223b445ed7246acbad0f721ffd49985be813b06879f2b5f57bc4ddec9a766437`;
+- `docs/reviews/CR13A_LIVE_140_EXACT_COMMAND_INDEPENDENT_REVIEW.md`, SHA-256
+  `76b40b30c5b5ada79d4374a2eb2a8c3a65886700f1e255a5b0291824b034d5ad`; and
+- `docs/reviews/CR13A_LIVE_140_MODULE_SAFE_INDEPENDENT_REVIEW.md`, SHA-256
+  `b5dc003a0a4b4c3d6ca7095dae680143a85ef196ca71b8c1dfd735237642fff3`.
+
+The final packet `docs/reviews/CR13A_LIVE_140_FINAL_INDEPENDENT_REVIEW_PACKET.md`, SHA-256
+`4129bb1d21b268bf02b3ef01145ec14df4d16ab5c43479409191830fad5870fc`, binds a committed, architect-prevalidated
+helper at SHA-256 `ded101e5d21d78efe5aeceb0ea647bb22469b3430ffb45a06126bd5c1556d60b`. A fifth different reviewer ran all
+16 exact commands once. TypeScript, lint, 9/9 dedicated tests, 5/5 build phases, 4/4 rendered pages, 119 tables, all
+twelve hostile groups, and final clean status passed. Sixty-three hostile attempts and eight ambient replacement
+attempts executed zero hostile behavior. Every protected-value, host-observation, physical-driver, native, capability,
+admission, candidate, owner-spend, physical-listener, IPC-listener, socket, port, network, and external-effect count
+was zero. P-001 through P-004 are closed with 0 High, 0 Medium, and 0 Low findings.
+
+Preserve the accepted report at `docs/reviews/CR13A_LIVE_140_FINAL_INDEPENDENT_REVIEW.md`; SHA-256
+`483ab05695b5cecaa6fe02ca4cc63b2e640733ac42270e2a435364c6be0ea6d8`. Acceptance permits ordinary
+owner-controlled integration only and does not clear the runtime-attestation blocker or grant live authority.
 
 ## Honest limits
 
