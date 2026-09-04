@@ -3683,6 +3683,13 @@ and marker sets; strict provenance and digest parsing; hostile input and ambient
 privacy; no network import or runtime consumer; exact zero-effect and false-authority truth; full producer verification;
 and a different independent zero-repair review.
 
+**Accepted evidence:** Exact product `9e3cb2afdcd3008dcdac94d113db991f34e49175` passed 9/9 dedicated, 196/196
+connection, 212/212 CR13A, the complete lifecycle, all five build phases, 4/4 rendered pages, migrations 0001-0036/119
+tables, TypeScript, lint, stage zero, and whitespace. A different independent reviewer passed all twelve fixed commands
+and groups with 0 High/Medium/Low. All hostile and ambient replacement inputs executed zero behavior; every forbidden
+effect and authority remained zero or false. Accepted report SHA-256:
+`82caf0b6ffc0a66661448a9780d0557221faa179f43956d6b2f691a7a1404185`.
+
 **Reevaluate:** Before importing a runtime network module, creating or receiving a native server, selecting or consuming
 a locator/port, writing a live spend or checkpoint, calling the accepted adapter or physical driver, attempting
 bind/listen/close, clearing a blocker, assembling a candidate, performing an owner-attended attempt, wiring runtime use,

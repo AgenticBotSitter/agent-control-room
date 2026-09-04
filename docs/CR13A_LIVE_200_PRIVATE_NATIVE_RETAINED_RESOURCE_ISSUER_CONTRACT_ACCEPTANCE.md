@@ -1,6 +1,6 @@
 # CR13A-LIVE-200 private native retained-resource issuer contract acceptance
 
-**Status:** immutable product awaiting different independent zero-repair review
+**Status:** independently accepted for ordinary owner-controlled integration
 **Product target/tree:** `9e3cb2afdcd3008dcdac94d113db991f34e49175` /
 `6d737cc013b8f55e008f08a6f7e03fe1f43ffc6c`
 **Design parent:** `32f2fd73dce0e0faecc2cd3de899a6c07a46daa9`
@@ -8,6 +8,8 @@
 **Accepted LIVE-190 product:** `d59c02792e49a79a291e3f9109fc43f2fd22fbd8`
 **Accepted LIVE-190 rereview SHA-256:**
 `29be3e4ba7075397a764d57161bbff953993e6d2d815a4cc9ac353f475ab224a`
+**Accepted LIVE-200 review SHA-256:**
+`82caf0b6ffc0a66661448a9780d0557221faa179f43956d6b2f691a7a1404185`
 **Model/effort:** `gpt-5.6-sol`, `xhigh`
 
 ## Outcome
@@ -37,12 +39,12 @@ Every actual host observation, port selection/reservation, native-resource creat
 driver accept, backend construction, listener/IPC/socket/timer attempt, network event, protected-value read, persistence
 write, runtime wiring, external effect, and authority grant remained zero or false.
 
-## Independent review requirement and limits
+## Independent review and limits
 
-A different report-only reviewer must execute
-`docs/reviews/CR13A_LIVE_200_INDEPENDENT_REVIEW_PACKET.md` against the exact immutable product in a fresh local-only
-detached clone. Any failure, uncertainty, finding, behavior execution, forbidden effect, dirty status, or cleanup doubt
-rejects the product. The reviewer may not repair or retry it.
+A different report-only reviewer executed all twelve fixed commands once against the exact immutable product in a fresh
+local-only detached clone. All commands and twelve review groups passed with 0 High, 0 Medium, and 0 Low findings. The
+checkout was clean before and after verification, and the disposable root was removed with exact absence verified.
+Preserve `docs/reviews/CR13A_LIVE_200_INDEPENDENT_REVIEW.md` unchanged.
 
 Even a clean review permits ordinary integration only. It does not add an issuer or server, clear a blocker, create a
 qualification candidate, permit a physical attempt, wire runtime use, contact a provider, or grant production authority.

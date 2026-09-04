@@ -1658,7 +1658,8 @@ executed zero behavior; every forbidden effect and authority remained zero or fa
 
 ## CR13A-LIVE-200 — private native retained-resource issuer contract
 
-Status: next effect-free implementation block. Use Sol xhigh.
+Status: exact product `9e3cb2afdcd3008dcdac94d113db991f34e49175` independently accepted; ordinary owner-controlled
+integration ready. Use Sol xhigh.
 
 LIVE-200 may freeze the module-private issuer contract that will later create and retain one native server and transfer
 that exact resource through the accepted LIVE-170 handoff, LIVE-180 driver port, and LIVE-190 adapter. Repository work
@@ -1670,3 +1671,24 @@ a real address or port; import or call a runtime native backend; issue or spend 
 wire an application, API, worker, Idea Lab, Hermes, startup, or production consumer; assemble a live qualification
 candidate; make a physical attempt; contact a provider; or deploy. Immutable producer evidence and a different
 independent zero-repair review are required before ordinary integration.
+
+Producer verification passes 9/9 dedicated, 196/196 connection, 212/212 CR13A, the complete lifecycle, 5/5 build
+phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different
+reviewer passed all twelve commands and groups with 0 High/Medium/Low. Five hostile parser attempts, nine callable-
+shadowing attempts, and four ambient replacements executed zero behavior; every forbidden effect and authority remained
+zero or false. Preserve `docs/reviews/CR13A_LIVE_200_INDEPENDENT_REVIEW.md`; SHA-256
+`82caf0b6ffc0a66661448a9780d0557221faa179f43956d6b2f691a7a1404185`.
+
+## CR13A-LIVE-210 — unwired private native issuer state machine
+
+Status: next effect-free implementation block. Use Sol xhigh.
+
+LIVE-210 may implement a repository-only fake state machine behind the accepted LIVE-200 contract. It must model one
+private attempt from verified/claimed pre-effect state through uncertainty, fake resource retention, exact fake adapter
+acceptance, ownership transfer, mandatory cleanup, cleanup failure, and no-reopen recovery. It must serialize operations,
+preserve promise identity, distinguish definite failure from post-marker ambiguity, and expose only safe negative truth.
+
+The block must not import a runtime network module; create, receive, inspect, transfer, or close a real server; select or
+reveal an address or port; issue or spend live authority; write live persistence; call the accepted native adapter or
+physical driver; wire any runtime consumer; assemble a candidate; make a physical attempt; contact a provider; or deploy.
+Immutable producer evidence and a different independent zero-repair review remain required.
