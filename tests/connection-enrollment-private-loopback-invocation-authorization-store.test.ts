@@ -213,6 +213,9 @@ test("CR13A-LIVE-350 rejects Proxy, accessor, Symbol, and widened keys without b
     await assert.rejects(store.register(Symbol("authorization")), expectCode("invalid_input"));
     assert.throws(() => new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(db,
       { authorizationKey: new Uint8Array(31), authorizationKeyIdDigest, stateKey }), expectCode("invalid_input"));
+    assert.throws(() => new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(db,
+      { authorizationKey, authorizationKeyIdDigest, stateKey: new Uint8Array(authorizationKey) }),
+    expectCode("invalid_input"));
     assert.equal(executions, 0);
   } finally { await raw.close(); }
 });

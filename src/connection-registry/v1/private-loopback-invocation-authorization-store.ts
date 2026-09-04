@@ -159,6 +159,16 @@ function sameTextV1(left: string, right: string): boolean {
   return mismatch === 0;
 }
 
+function sameKeyMaterialV1(left: Readonly<{ byteLength: number; byteAt(index: number): number | undefined }>,
+  right: Readonly<{ byteLength: number; byteAt(index: number): number | undefined }>): boolean {
+  let mismatch = left.byteLength ^ right.byteLength;
+  const maximum = left.byteLength > right.byteLength ? left.byteLength : right.byteLength;
+  for (let index = 0; index < maximum; index += 1) {
+    mismatch |= (left.byteAt(index) ?? 0) ^ (right.byteAt(index) ?? 0);
+  }
+  return mismatch === 0;
+}
+
 function exactInstantMillisecondsV1(value: unknown): number | undefined {
   if (typeof value !== "string") return undefined;
   const milliseconds = dateParseV1(value);
@@ -344,7 +354,8 @@ export class ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1 {
     const stateKey = keys ? exactHostUint8ArrayV1(keys.stateKey, 32) : undefined;
     if (!database || typeof database !== "object" || isHostProxyV1(database) || !transaction
       || !authorizationKey || !validDigestV1(keys?.authorizationKeyIdDigest) || !stateKey
-      || authorizationKey.byteLength !== 32 || stateKey.byteLength !== 32) {
+      || authorizationKey.byteLength !== 32 || stateKey.byteLength !== 32
+      || sameKeyMaterialV1(authorizationKey, stateKey)) {
       failV1("invalid_input");
     }
     this.#transaction = ((callback) => reflectApplyV1(transaction, database, [callback])) as
