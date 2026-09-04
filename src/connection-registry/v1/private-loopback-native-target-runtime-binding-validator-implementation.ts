@@ -2,6 +2,8 @@ import * as nativeProcessNamespaceV1 from "node:process";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { exactHostDataSnapshotV1, isHostProxyV1 } from "../../security/host-value";
 
+const arrayFilterV1 = Array.prototype.filter;
+const arrayMapV1 = Array.prototype.map;
 const arraySomeV1 = Array.prototype.some;
 const objectConstructorV1 = Object;
 const objectFreezeV1 = Object.freeze;
@@ -10,6 +12,7 @@ const objectIsFrozenV1 = Object.isFrozen;
 const objectEntriesV1 = Object.entries;
 const reflectApplyV1 = Reflect.apply;
 const stringSliceV1 = String.prototype.slice;
+const stringStartsWithV1 = String.prototype.startsWith;
 const weakMapGetV1 = WeakMap.prototype.get;
 const weakMapSetV1 = WeakMap.prototype.set;
 const weakSetAddV1 = WeakSet.prototype.add;
@@ -178,7 +181,8 @@ PrivateNativeTargetRuntimeBindingValidatorV1 {
     const exactDescriptorsV1 = [versionDescriptorV1, execPathDescriptorV1, pidDescriptorV1, ppidDescriptorV1];
     if (reflectApplyV1(arraySomeV1, exactDescriptorsV1,
       [(descriptor: PropertyDescriptor | undefined) => descriptor === undefined || descriptor.get !== undefined
-        || descriptor.set !== undefined || descriptor.enumerable !== true || descriptor.configurable !== false])) {
+        || descriptor.set !== undefined || descriptor.writable !== true || descriptor.enumerable !== true
+        || descriptor.configurable !== false])) {
       failV1("integrity_failed");
     }
     if (typeof versionDescriptorV1?.value !== "string" || typeof execPathDescriptorV1?.value !== "string"
@@ -383,12 +387,20 @@ export function parseConnectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindi
   const digest = reflectApplyV1(weakMapGetV1, statusDigestsV1, [record]) as string | undefined;
   const entries = captured
     ? reflectApplyV1(objectEntriesV1, undefined, [captured]) as Array<[string, unknown]> : [];
-  const actualValues = entries.filter(([key]) => key.startsWith("actual")).map(([, entry]) => entry);
-  const grantValues = entries.filter(([key]) => key.startsWith("grants")).map(([, entry]) => entry);
+  const actualEntries = reflectApplyV1(arrayFilterV1, entries,
+    [([key]: [string, unknown]) => reflectApplyV1(stringStartsWithV1, key, ["actual"])]) as
+      Array<[string, unknown]>;
+  const grantEntries = reflectApplyV1(arrayFilterV1, entries,
+    [([key]: [string, unknown]) => reflectApplyV1(stringStartsWithV1, key, ["grants"])]) as
+      Array<[string, unknown]>;
+  const actualValues = reflectApplyV1(arrayMapV1, actualEntries,
+    [([, entry]: [string, unknown]) => entry]) as unknown[];
+  const grantValues = reflectApplyV1(arrayMapV1, grantEntries,
+    [([, entry]: [string, unknown]) => entry]) as unknown[];
   if (!captured || digest !== record.statusDigest
     || record !== connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorStatusV1
-    || actualValues.length !== 24 || actualValues.some((entry) => entry !== 0)
-    || grantValues.length !== 8 || grantValues.some((entry) => entry !== false)
+    || actualValues.length !== 24 || reflectApplyV1(arraySomeV1, actualValues, [(entry: unknown) => entry !== 0])
+    || grantValues.length !== 8 || reflectApplyV1(arraySomeV1, grantValues, [(entry: unknown) => entry !== false])
     || record.externalEffectOccurred || record.targetRuntimeBlockerCleared || record.physicalQualificationAccepted
     || record.runtimeWired || record.candidateEligible || record.activationEligible) failV1("integrity_failed");
   safePublicRecordV1(record);

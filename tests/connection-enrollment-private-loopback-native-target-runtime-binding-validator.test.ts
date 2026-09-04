@@ -189,31 +189,46 @@ test("CR13A-LIVE-310 parsers use captured intrinsics after ambient replacement",
   const originalWeakSetHas = WeakSet.prototype.has;
   const originalWeakMapGet = WeakMap.prototype.get;
   const originalReflectApply = Reflect.apply;
-  const executions = new Array(5).fill(0);
+  const originalArrayFilter = Array.prototype.filter;
+  const originalArrayMap = Array.prototype.map;
+  const originalArraySome = Array.prototype.some;
+  const originalStringStartsWith = String.prototype.startsWith;
+  const executions = new Array(9).fill(0);
   let globalObjectReads = 0;
+  let parsedImplementation: unknown;
+  let parsedStatus: unknown;
   try {
     objectConstructor.freeze = <T>(value: T): Readonly<T> => { executions[0] += 1; return value; };
     objectConstructor.isFrozen = () => { executions[1] += 1; return false; };
     WeakSet.prototype.has = function () { executions[2] += 1; return false; };
     WeakMap.prototype.get = function () { executions[3] += 1; return undefined; };
     Reflect.apply = () => { executions[4] += 1; throw new Error("raw validator ambient"); };
+    Array.prototype.filter = function () { executions[5] += 1; throw new Error("raw validator ambient"); };
+    Array.prototype.map = function () { executions[6] += 1; throw new Error("raw validator ambient"); };
+    Array.prototype.some = function () { executions[7] += 1; throw new Error("raw validator ambient"); };
+    String.prototype.startsWith = function () { executions[8] += 1; throw new Error("raw validator ambient"); };
     defineProperty(globalThis, "Object", { configurable: true,
       get() { globalObjectReads += 1; return objectConstructor; } });
-    assert.equal(parseConnectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorImplementationV1(
-      connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorImplementationV1),
-    connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorImplementationV1);
-    assert.equal(parseConnectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorStatusV1(
-      connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorStatusV1),
-    connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorStatusV1);
+    parsedImplementation = parseConnectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorImplementationV1(
+      connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorImplementationV1);
+    parsedStatus = parseConnectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorStatusV1(
+      connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorStatusV1);
   } finally {
     objectConstructor.freeze = originalFreeze;
     objectConstructor.isFrozen = originalIsFrozen;
     WeakSet.prototype.has = originalWeakSetHas;
     WeakMap.prototype.get = originalWeakMapGet;
     Reflect.apply = originalReflectApply;
+    Array.prototype.filter = originalArrayFilter;
+    Array.prototype.map = originalArrayMap;
+    Array.prototype.some = originalArraySome;
+    String.prototype.startsWith = originalStringStartsWith;
     if (originalGlobalObject) defineProperty(globalThis, "Object", originalGlobalObject);
   }
-  assert.deepEqual(executions, new Array(5).fill(0));
+  assert.equal(parsedImplementation,
+    connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorImplementationV1);
+  assert.equal(parsedStatus, connectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorStatusV1);
+  assert.deepEqual(executions, new Array(9).fill(0));
   assert.equal(globalObjectReads, 0);
 });
 
@@ -226,7 +241,25 @@ test("CR13A-LIVE-310 future validator body captures Object and Array intrinsics"
   assert.match(source, /const objectConstructorV1 = Object;/);
   assert.equal((body.match(/objectGetOwnPropertyDescriptorV1, objectConstructorV1/g) ?? []).length, 4);
   assert.match(body, /reflectApplyV1\(arraySomeV1, exactDescriptorsV1/);
+  assert.match(body, /descriptor\.writable !== true/);
   assert.doesNotMatch(body, /exactDescriptorsV1\.some|objectGetOwnPropertyDescriptorV1, Object/);
+});
+
+test("CR13A-LIVE-310 status parser dispatches only captured collection and prefix methods", async () => {
+  const source = await readFile(modulePath, "utf8");
+  const start = source.indexOf(
+    "export function parseConnectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorStatusV1");
+  const end = source.indexOf("objectFreezeV1(ConnectionEnrollmentPrivateLoopbackNativeTargetRuntimeBindingValidatorErrorV1.prototype)",
+    start);
+  const body = source.slice(start, end);
+  for (const capture of ["const arrayFilterV1 = Array.prototype.filter;", "const arrayMapV1 = Array.prototype.map;",
+    "const arraySomeV1 = Array.prototype.some;", "const stringStartsWithV1 = String.prototype.startsWith;"]) {
+    assert.equal(source.includes(capture), true, capture);
+  }
+  for (const callable of ["arrayFilterV1", "arrayMapV1", "arraySomeV1", "stringStartsWithV1"]) {
+    assert.equal(body.includes(`reflectApplyV1(${callable}`), true, callable);
+  }
+  assert.doesNotMatch(body, /\.(?:filter|map|some|startsWith)\(/);
 });
 
 test("CR13A-LIVE-310 public records contain no observed runtime or host material", () => {
