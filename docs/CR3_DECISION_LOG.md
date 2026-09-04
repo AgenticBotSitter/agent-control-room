@@ -4780,3 +4780,50 @@ implementation. A different independent reviewer accepted exact product
 
 **Reevaluate:** Before any owner-present issuer, key creation/access, registry or manifest parser/resolver, anchor or
 PostgreSQL store, recovery effect, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.
+
+## ADR-201 — Freeze owner-presence and strong-factor issuance before any credential or signing effect
+
+**Decision:** Represent the future owner-present issuer first as one inert exact singleton bound to the independently
+accepted LIVE-480 owner-authorization and LIVE-490 rooted-trust products, trees, reviews, and acceptance evidence. A
+future issuer may accept only a module-minted exact request after current trust preflight, present that exact scope on
+the target host, and observe separate owner-presence and strong-factor evidence bound to one challenge. The policy may
+select exactly one of platform phishing-resistant user verification, roaming-hardware phishing-resistant user
+verification, or password-manager TOTP with separate owner presence. TOTP is explicitly non-phishing-resistant; login
+state, a UI click, or conversational approval is never strong-factor evidence and no factor fallback is allowed.
+
+After at most one factor verification, the future issuer must recheck the owner root, registry, manifest, both
+anchors, exact products, key, scope, and policy. Only then may it obtain a fresh nonce with at least 256 bits of
+entropy and private PostgreSQL transaction time, construct the exact LIVE-480 body internally, seal it once, and
+return one private sealed-but-unregistered envelope. The owner ceremony and authorization each last at most 300
+seconds. Separate authenticated registration and nonce reservation remain mandatory. Any uncertainty after factor
+verification or sealing is terminal and cannot retry or resume.
+
+**Why:** A login session, owner-facing button, conversational instruction, or signed-looking envelope does not prove
+that the owner was present for the exact native scope or that current rooted trust authorized the issuer and sealing
+key. Freezing the evidence, ordering, lifetime, downgrade, privacy, and uncertainty boundaries before a prompt,
+credential read, nonce, clock, body, key, or signature operation makes the future implementation reviewable without
+creating an authorization path now.
+
+**Alternatives rejected:** accept caller-constructed requests or bodies; treat the Control Room login or chat approval
+as the strong factor; silently downgrade a phishing-resistant policy to TOTP; call TOTP phishing-resistant; retain a
+raw TOTP code, credential, biometric, assertion, or owner identity; generate the authorization nonce before factor
+verification; trust local wall-clock time; skip the final manifest/anchor recheck; return an unsigned body or key;
+treat issuance as registration or native authority; retry after an uncertain verifier or sealing outcome; expose a
+dependency-taking issuer factory with the contract.
+
+**Evidence required:** exact LIVE-480 and LIVE-490 product/tree/review/acceptance binding; independently repeated
+ordered request, ceremony, factor, trust-preflight, time/nonce, stage, state, decision, refusal, output, prohibited-
+effect, and rule fixtures; explicit TOTP assurance truth; singleton-only hostile parsing; captured-intrinsic
+resistance; exact transitive import graph and effect rejection; safe consumer audit; 39 zero actuals and eight false
+grants; full producer gates; and a different independent zero-repair review.
+
+**Current evidence:** The inert product and 14-test focused suite are implemented. The combined LIVE-490/LIVE-500
+preflight passes 29/29, the existing CR13A suite passes 473/473, the complete 769/421/392 lifecycle passes, and
+TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-0038 with 124 tables, macOS stage zero,
+and whitespace validation pass. No prompt, credential, biometric, Keychain, factor call, time, nonce, body, seal,
+signature, trust read, database, registration, process, network, native, runtime, or deployment effect occurred.
+Independent review and final acceptance evidence are pending.
+
+**Reevaluate:** Before any real owner prompt or UI, credential/biometric/Keychain/authenticator access, factor verifier,
+trusted-time or nonce source, body constructor, sealer or signer, trust resolver, registration/nonce store, PostgreSQL
+operation, capsule, provider/source, process, native, runtime, or deployment implementation.
