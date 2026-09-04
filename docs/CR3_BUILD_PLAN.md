@@ -1590,7 +1590,8 @@ driver-handoff gap and clears no blocker.
 
 ## CR13A-LIVE-170 — physical-driver retained-resource handoff boundary
 
-Status: next effect-free architecture and implementation block. Use Sol xhigh.
+Status: exact product `7e76e1980541075f9a1fa45479d20f06a823ef29` independently accepted on a stacked branch;
+ordinary owner-controlled integration ready. Use Sol xhigh.
 
 LIVE-170 must freeze the exact one-use handoff seam by which a future private custody provider transfers the same
 already-retained operating-system resource into the physical driver. It may add only the contract, strict provenance
@@ -1602,3 +1603,23 @@ The handoff must be atomic and single-use, preserve resource identity and contin
 caller-built handles, define terminal cleanup under failure or uncertainty, and make retry/rebind/reopen impossible.
 Only after immutable producer evidence and a different independent zero-repair review may a later owner-attended block
 implement or exercise the native side.
+
+Producer verification passes 8/8 dedicated, 165/165 connection, 182/182 CR13A, the complete lifecycle, 5/5 build
+phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different
+reviewer passed all twelve commands and groups with 0 High/Medium/Low. Fifteen direct hostile cases and four ambient
+replacements executed zero behavior; every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_170_INDEPENDENT_REVIEW.md`; SHA-256
+`3581dcf33774e730614346d57594738236acf0932fa581214af7931af67c1381`. The driver handoff and custody blockers remain.
+
+## CR13A-LIVE-180 — unwired retained-resource driver port
+
+Status: next effect-free implementation block. Use Sol xhigh.
+
+LIVE-180 may implement a module-private one-use acceptance and cleanup state machine that can later receive the exact
+retained resource described by LIVE-170. Repository fakes must prove identity continuity, one acceptance, serialized
+settlement, terminal ambiguity, mandatory cleanup, and no replacement bind or retry. No real resource may be created,
+bound, listened on, inspected, transferred, or closed; no address/port/handle may escape; and no runtime consumer,
+qualification candidate, physical attempt, blocker clearance, or activation authority may exist.
+
+The immutable implementation requires full producer verification and a different independent zero-repair review before
+ordinary integration. A later separately authorized owner-attended block is required for any real native attempt.
