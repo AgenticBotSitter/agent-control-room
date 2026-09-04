@@ -4004,3 +4004,34 @@ retrieving the native shell; performing listener/native activity; contacting a p
 **Architecture evidence:** Frozen in `docs/CR13A_LIVE_290_UNREACHABLE_NATIVE_TARGET_RUNTIME_OBSERVER.md`. The owner
 instruction authorizes repository source implementation and ordinary merges only; it does not authorize an observer
 invocation, host read, physical attempt, or external effect.
+
+## ADR-181 — Freeze the target-runtime trust boundary before observer retrieval
+
+**Decision:** CR13A-LIVE-300 will define a strict inert contract that rejects ambient `globalThis.process`, caller
+objects, accessors, proxies, dynamic input-selected imports, mutable callbacks, copied status, and caller readiness as
+sources of trusted runtime evidence. It will keep trusted-binding capture, descriptor validation, observer retrieval,
+raw observation, attestation, replay commit, candidate assembly, owner authorization, and physical attempt as separate
+future stages.
+
+**Why:** LIVE-290 safely introduced unreachable source, but its direct process-field reads would become a trust boundary
+the moment lookup or invocation existed. Freezing the boundary first makes evidence forgery, hostile getter execution,
+privacy leakage, replay, and collapsed authority reviewable without reading this Mac or exposing the observer.
+
+**Alternatives rejected:** treat the unreachable observer as already trusted for invocation; trust
+`globalThis.process`; accept caller-supplied process or OS objects; validate by reading accessor-backed values; combine
+lookup, observation, signing, candidate assembly, and physical attempt; expose hashed host values as safe public data;
+or clear target-runtime readiness from contract conformance alone.
+
+**Evidence required:** exact accepted LIVE-290 product/review binding; complete frozen trust rules and stage ordering;
+strict safe parsing; zero imports of the observer or native modules; hostile copies/accessors/proxies/extras executing
+zero behavior; all actual totals zero; all grants false; full producer verification; and a different independent
+report-only zero-repair review.
+
+**Reevaluate:** Before implementing private trusted-binding capture or descriptor checks; adding an observer lookup;
+invoking the observer; reading or signing host data; issuing a nonce or replay checkpoint; assembling a candidate or
+owner window; performing native listener activity; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_300_PRIVATE_TARGET_RUNTIME_OBSERVATION_TRUST_CONTRACT.md`. Current authority covers the inert repository
+contract and ordinary integration only; it does not authorize any host read, observer use, attestation, physical
+attempt, or external effect.

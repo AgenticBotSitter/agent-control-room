@@ -1860,7 +1860,8 @@ external effects. Accepted rereview SHA-256:
 
 ## CR13A-LIVE-290 — unreachable native target-runtime observer
 
-Status: architecture frozen; source implementation begins only after accepted LIVE-280 integration. Use Sol xhigh.
+Status: exact product `3d09b2b9287b1174a3e7ebe931bc2860a5ce2bba` independently accepted; ordinary integration
+of unreachable source ready. Use Sol xhigh.
 
 LIVE-290 may implement one real no-input native observer source in a dedicated module outside the safe barrel. It may
 capture the minimum `node:os` operations and process-field reads needed for a later private target-runtime attestation,
@@ -1872,3 +1873,27 @@ values; return, log, serialize, persist, digest, sign, or expose raw observation
 composition; retrieve the native shell; open a listener; wire any production consumer; clear the target-runtime blocker;
 contact Hermes/provider; or deploy. Immutable producer evidence and a different independent report-only zero-repair
 review are required before ordinary integration.
+
+Producer verification passed 10/10 dedicated, 296/296 CR13A, the complete 769/392/392 lifecycle, all five build
+phases, 4/4 rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A
+different report-only reviewer ran all fourteen commands once with 0 High/Medium/Low, zero observer lookup or
+invocation, zero host/process/path reads, zero hostile execution, and zero external effects. The review preserves a
+mandatory future boundary against ambient process replacement, getters, and proxies before any observer use. Preserve
+`docs/reviews/CR13A_LIVE_290_INDEPENDENT_REVIEW.md`; SHA-256
+`df2f3fb2fd414d595f020395dfc69fde2857c413e82d8d206383e66c6555c9b6`.
+
+## CR13A-LIVE-300 — private target-runtime observation trust contract
+
+Status: architecture frozen; inert contract implementation begins only after accepted LIVE-290 integration. Use Sol
+xhigh.
+
+LIVE-300 may implement a strict safe contract fixing the future fail-closed boundary for trusted native sources,
+descriptor validation, one private raw observation, observation-versus-attestation separation, one-use and uncertainty
+rules, non-collapsible stages, replay binding, and public sanitation. It may export only frozen safe records and strict
+parsers.
+
+The block must not import, retrieve, or invoke LIVE-290; import `node:os` or `node:process`; read host, process,
+environment, path, clock, nonce, credential, locator, or provider values; implement trusted binding capture; create,
+digest, sign, persist, or expose an observation; retrieve the native shell; open a listener; wire a runtime consumer;
+clear a blocker; contact Hermes/provider; perform a physical attempt; or deploy. Immutable producer evidence and a
+different independent report-only zero-repair review are required before ordinary integration.
