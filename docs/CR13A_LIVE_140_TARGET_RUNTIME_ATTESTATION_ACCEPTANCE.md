@@ -1,6 +1,6 @@
 # CR13A-LIVE-140 target-runtime attestation boundary
 
-**Status:** exact effect-free implementation candidate verified; independent zero-repair review pending
+**Status:** exact effect-free implementation verified; first review protocol-incomplete; corrected independent review pending
 **Product target:** `6e716bd77c26ad7f70343ddd687dff990f5db12f`
 **Product tree:** `4010bdaa5fd90f486d7ccad6185a2116dd9345af`
 **Design parent:** `154231858828603d167c12371863bc0562f2e795`
@@ -63,10 +63,18 @@ No native, listener, IPC, network, host-observation, protected-value, or externa
 
 ## Review gate
 
-The immutable packet at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md` requires a different report-only,
-zero-repair reviewer to inspect the exact product. Dynamic review is limited to the new nine-test file plus fixed
-listener-free build/migration checks; broader suites that import the predecessor physical-driver module are forbidden.
-Any High, Medium, or Low finding or nonzero listener/IPC/native/network/effect count rejects the target.
+The first immutable packet at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`; SHA-256
+`755db2dec6ad8dfd57455129c25dd4d4b113aa603fd797d33891a82f614cc99f`, passed all eleven fixed gates but its
+out-of-tree hostile probe could not resolve bare `tsx` before importing the product. The reviewer obeyed the no-retry
+stop rule, so hostile coverage remained incomplete. Preserve that rejected report at
+`docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
+`6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. It establishes no product finding or pass.
+
+The corrected packet at `docs/reviews/CR13A_LIVE_140_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` changes only the probe
+launcher to the architect-prevalidated explicit local loader
+`node --import ./node_modules/tsx/dist/loader.mjs <probe>`. A second different report-only, zero-repair reviewer must
+now complete all twelve groups. Any High, Medium, or Low finding or nonzero listener/IPC/native/network/effect count
+rejects the target.
 
 This document does not claim independent acceptance while that review is pending.
 

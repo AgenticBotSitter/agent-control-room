@@ -3461,7 +3461,12 @@ stacked base `e620b7bc24760a8f8f0034db6cda3d60e74763a8`. Exact product
 `6e716bd77c26ad7f70343ddd687dff990f5db12f` passes 9/9 focused, 140/140 connection, 157/157 CR13A, complete lifecycle,
 build/render, and migration verification. No host observation, runtime input, provider, signer, clock, nonce, native
 import, listener/network action, or external effect occurred. Independent review remains pending under
-`docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`.
+`docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`. Its first reviewer passed the eleven fixed gates but the
+out-of-tree hostile probe could not resolve bare `tsx` and stopped before product import. Preserve the protocol-
+incomplete report at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
+`6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. A corrected review remains pending under
+`docs/reviews/CR13A_LIVE_140_REVIEW_PROTOCOL_REMEDIATION_PACKET.md`; it changes only the hostile launcher to an
+architect-prevalidated explicit local loader and leaves the exact product unchanged.
 
 **Reevaluate:** Before any platform/native observer, signer, clock, nonce, verifier, acceptance store, checkpoint,
 candidate, owner window, physical attempt, runtime consumer, SSH/credential path, production contact, or deployment.

@@ -1504,8 +1504,8 @@ did not construct or import the native driver and clear none of the twelve block
 
 ## CR13A-LIVE-140 — target-runtime attestation boundary
 
-Status: exact implementation candidate `6e716bd77c26ad7f70343ddd687dff990f5db12f` is producer-verified on a stacked
-branch; different independent zero-repair review is pending. Use Sol xhigh.
+Status: exact product `6e716bd77c26ad7f70343ddd687dff990f5db12f` is producer-verified on a stacked
+branch; first review is protocol-incomplete and corrected second review is pending. Use Sol xhigh.
 See `CR13A_LIVE_140_TARGET_RUNTIME_ATTESTATION_BOUNDARY.md` and ADR-165.
 
 LIVE-140 must define, implement with repository fakes, and independently review a privacy-preserving target-runtime
@@ -1529,3 +1529,10 @@ The exact product passes 9/9 dedicated tests, 140/140 connection tests, 157/157 
 production build with 4/4 rendered routes, and migrations 0001-0036/119 tables. The readiness-only independent packet
 is `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`. It forbids broad driver-importing tests, `tsx` CLI/version
 probes, host observation, and every native/external effect.
+
+The first reviewer passed all eleven fixed gates but bare `--import tsx` from its out-of-tree hostile entrypoint could
+not resolve the package and exited before product import. It correctly stopped without retry. Preserve the rejected
+report at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
+`6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. The corrected packet
+`docs/reviews/CR13A_LIVE_140_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` pins the prevalidated explicit loader
+`./node_modules/tsx/dist/loader.mjs` for one new reviewer's single out-of-tree invocation; product remains unchanged.
