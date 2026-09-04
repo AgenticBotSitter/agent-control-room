@@ -2072,3 +2072,27 @@ recheck; import/modify/retrieve/invoke LIVE-330; inspect descriptors; read/expos
 observation/attestation/candidate/owner authorization; open a listener; wire application/runtime/provider use; contact
 production PostgreSQL; deploy; or treat consumption evidence as source authority. Immutable producer evidence and a
 different independent report-only zero-repair review are required before ordinary integration.
+
+Producer verification passed 34/34 dedicated tests, 384/384 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0038/124 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. Product `6f908ccd1f65f48a5d874fa0da96afe301d8decf` was accepted by a fresh different reviewer
+after all twelve groups and fourteen commands passed exactly once with 0 High/Medium/Low, verified disposable cleanup,
+and zero source lookup/invocation, native, listener, production-database, network, provider, or external effects.
+Preserve `docs/reviews/CR13A_LIVE_370_INDEPENDENT_REVIEW.md`; SHA-256
+`c1b22f9b8012328f4709c608c4a53292be279f47070aec6136ab40293618f490`.
+
+## CR13A-LIVE-380 — post-transaction database-time recheck
+
+Status: architecture frozen; read-only repository implementation may proceed on accepted LIVE-370. Use Sol xhigh.
+
+LIVE-380 may extend the authorization store with one exact `recheckAfterConsumption` method. It accepts only the exact
+sealed authorization and exact fresh LIVE-370 receipt, then opens a new transaction, reauthenticates the complete
+registration/nonce/consumption state, requires the exact stored spend, and only then reads `clock_timestamp()` again.
+Database time cannot regress before the consumption time and must remain at or after not-before and strictly before
+expiry. Success is immutable sanitized `consumed_and_post_transaction_time_rechecked` evidence with no authority.
+
+The block must not add a migration or new spend; issue/revoke/list/refund authorizations; accept caller time/callables;
+import/modify/retrieve/invoke LIVE-330; look up a source; inspect descriptors; read/expose protected native material;
+create an observation/attestation/candidate/owner authorization; open a listener; wire application/runtime/provider
+use; contact production PostgreSQL; deploy; or treat the fresh or rechecked receipt as a bearer capability. Immutable
+producer evidence and a different independent report-only zero-repair review are required before ordinary integration.

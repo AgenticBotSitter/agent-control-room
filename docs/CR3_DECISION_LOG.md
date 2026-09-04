@@ -4300,3 +4300,42 @@ provider contact, production database configuration, or deployment.
 `docs/CR13A_LIVE_370_ATOMIC_INVOCATION_AUTHORIZATION_CONSUMPTION.md`. Current authority covers repository consumption
 state and local PGlite proof only; it does not authorize source lookup/invocation, protected native reads, or production
 database contact.
+
+**Accepted evidence:** Product `6f908ccd1f65f48a5d874fa0da96afe301d8decf` passed 34/34 dedicated, 384/384
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0038/124 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, verified cleanup, and zero source/native/listener/production-database/network/
+provider/external effects. Accepted review SHA-256:
+`c1b22f9b8012328f4709c608c4a53292be279f47070aec6136ab40293618f490`.
+
+## ADR-189 — Recheck trusted database time after the atomic spend
+
+**Decision:** CR13A-LIVE-380 will add one exact read-only post-consumption recheck. It accepts the original sealed
+authorization and exact fresh LIVE-370 receipt, opens a new transaction after the spend returned, reauthenticates the
+complete registration/nonce/consumption state, requires the exact stored consumption, then reads same-session
+`clock_timestamp()` again. The clock cannot precede consumed-at and must remain strictly before expiry. Success is
+sanitized `consumed_and_post_transaction_time_rechecked` evidence and grants no source authority.
+
+**Why:** An in-transaction time decision cannot prove the authorization remains current after commit. A separately
+reviewed second database-time boundary makes expiry between spend and future lookup explicit. Reauthenticating durable
+state prevents a caller receipt or process memory from becoming authority, while preserving the spent fact when the
+recheck fails.
+
+**Alternatives rejected:** reuse the pre-commit clock; trust caller, process, header, timer, or receipt time; accept an
+already-consumed terminal receipt as fresh; skip registration or consumption-chain authentication; refund or replace an
+expired spend; return a bearer capability; look up/invoke the source during recheck; contact production PostgreSQL; or
+combine this read with protected native observation, provider, physical qualification, or deployment.
+
+**Evidence required:** exact accepted LIVE-370 product/review binding; hostile-safe fresh-receipt parsing; complete
+registration/nonce/consumption reauthentication in a new transaction; exact stored-spend binding; monotonic consumed-at
+and inclusive not-before/exclusive expiry decisions; malformed/regressed/expired/database-failure rejection; restart,
+replay, tamper, deletion, and ordering evidence; immutable sanitized non-authorizing receipt; no migration or source/
+native/runtime consumer; full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before adding private spend/recheck composition, source bridge/lookup/invocation, protected native read,
+observation handoff, attestation, candidate assembly, owner authorization, physical attempt, runtime activation,
+provider contact, production database configuration, or deployment.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_380_POST_TRANSACTION_DATABASE_TIME_RECHECK.md`. Current authority
+covers repository-only read validation and local PGlite proof; it does not authorize a source lookup, protected native
+read, or production database contact.
