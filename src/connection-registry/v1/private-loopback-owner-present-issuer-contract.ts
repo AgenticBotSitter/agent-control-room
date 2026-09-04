@@ -25,6 +25,44 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_CONTRAC
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STATUS_V1 =
   "control-room-connection-enrollment-private-loopback-owner-present-issuer-status/v1" as const;
 
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_FIELDS_V1 = objectFreezeV1([
+  "role",
+  "product_commit",
+  "product_tree",
+  "independent_review_sha256",
+  "key_role",
+  "key_id_digest",
+  "key_fingerprint",
+  "key_revision",
+  "trust_registry_entry_digest",
+  "owner_present_issuer_product_binding_digest",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_ROLES_V1 = objectFreezeV1([
+  "owner_presence_challenge_minter",
+  "strong_factor_verifier",
+  "owner_issuer_attempt_and_replay_guard_store",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_KEY_ROLES_V1 = objectFreezeV1([
+  "owner_presence_challenge_state",
+  "strong_factor_evidence_verification",
+  "owner_issuer_attempt_and_replay_guard_state",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1 = objectFreezeV1({
+  fields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_FIELDS_V1,
+  orderedRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_ROLES_V1,
+  orderedKeyRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_KEY_ROLES_V1,
+  exactCardinality: 3 as const,
+  everyProductCommitTreeReviewAndKeyBindingRequired: true as const,
+  everyBindingSelectedByCurrentSignedManifestAndTrustRegistry: true as const,
+  everyBindingTransitivelyOwnedByOwnerPresentIssuerProductReview: true as const,
+  pairwiseDistinctProductsAndKeysRequired: true as const,
+  callerSuppliedBindingAllowed: false as const,
+  extraFieldsAllowed: false as const,
+});
+
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_FIELDS_V1 = objectFreezeV1([
   "request_schema_version",
   "request_id_digest",
@@ -41,6 +79,8 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST
   "operation_id",
   "candidate_proposal_id_digest",
   "attempt_id_digest",
+  "source_owner_product_binding_digest",
+  "runner_product_binding_digest",
   "deployment_manifest_id_digest",
   "deployment_manifest_digest",
   "deployment_manifest_sequence",
@@ -54,13 +94,14 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST
   "owner_policy_revision",
   "strong_factor_policy_revision",
   "required_strong_factor_evidence_class",
+  "ordered_issuer_dependency_bindings",
   "requested_authorization_lifetime_seconds",
   "owner_facing_scope_summary_digest",
 ] as const);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_SCHEMA_V1 = objectFreezeV1({
   fields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_FIELDS_V1,
-  source: "module_minted_after_current_manifest_and_trust_preflight" as const,
+  source: "module_minted_before_attempt_reservation_and_current_manifest_and_trust_preflight" as const,
   callerConstructible: false as const,
   arbitraryOptionsAllowed: false as const,
   callbacksAllowed: false as const,
@@ -80,7 +121,10 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENCE_CEREMONY_FIEL
   "owner_presence_channel",
   "owner_facing_scope_summary_digest",
   "challenge_digest",
+  "ceremony_started_at",
+  "ceremony_expires_at",
   "challenge_issued_at",
+  "challenge_not_before",
   "challenge_expires_at",
   "owner_presence_confirmation_digest",
   "owner_presence_confirmed_at",
@@ -131,6 +175,11 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_EVIDENCE_FIELD
   "verifier_product_commit",
   "verifier_product_tree",
   "verifier_independent_review_sha256",
+  "verifier_key_role",
+  "verifier_key_id_digest",
+  "verifier_key_fingerprint",
+  "verifier_key_revision",
+  "verifier_trust_registry_entry_digest",
   "strong_factor_policy_revision",
   "evidence_class",
   "challenge_digest",
@@ -139,6 +188,7 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_EVIDENCE_FIELD
   "verification_assertion_digest",
   "verification_issued_at",
   "verification_expires_at",
+  "verification_observed_at",
   "replay_guard_digest",
   "user_verification_performed",
   "owner_presence_performed",
@@ -172,10 +222,39 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_FIELDS_V1 = 
   "manifest_anchor_head_digest",
   "owner_present_issuer_product_binding_digest",
   "owner_authorization_sealing_key_binding_digest",
+  "ordered_issuer_dependency_bindings_digest",
   "owner_policy_revision",
   "strong_factor_policy_revision",
   "required_strong_factor_evidence_class",
   "preflight_result",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_FIELDS_V1 = objectFreezeV1([
+  "recheck_schema_version",
+  "request_id_digest",
+  "attempt_marker_digest",
+  "ceremony_id_digest",
+  "challenge_digest",
+  "owner_presence_confirmation_digest",
+  "strong_factor_evidence_digest",
+  "ordered_issuer_dependency_bindings_digest",
+  "owner_root_pin_product_digest",
+  "trust_registry_id_digest",
+  "trust_registry_sequence",
+  "trust_registry_digest",
+  "trust_registry_anchor_revision",
+  "trust_registry_anchor_head_digest",
+  "deployment_manifest_id_digest",
+  "deployment_manifest_sequence",
+  "deployment_manifest_digest",
+  "manifest_anchor_revision",
+  "manifest_anchor_head_digest",
+  "owner_present_issuer_product_binding_digest",
+  "owner_authorization_sealing_key_binding_digest",
+  "owner_policy_revision",
+  "strong_factor_policy_revision",
+  "rechecked_at",
+  "recheck_result",
 ] as const);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_RESULTS_V1 = objectFreezeV1([
@@ -189,10 +268,111 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_RESULTS_V1 =
   "terminal_ambiguous",
 ] as const);
 
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_RESULTS_V1 = objectFreezeV1([
+  "all_initial_bindings_still_current_for_exact_evidence",
+  "trust_manifest_anchor_or_dependency_changed",
+  "scope_policy_or_evidence_mismatch",
+  "ceremony_challenge_or_factor_expired",
+  "trusted_time_rollback_or_skew",
+  "terminal_ambiguous",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_FIELDS_V1 = objectFreezeV1([
+  "challenge_schema_version",
+  "challenge_id_digest",
+  "request_id_digest",
+  "attempt_marker_digest",
+  "tenant_id_digest",
+  "node_id_digest",
+  "source_owner_product_binding_digest",
+  "runner_product_binding_digest",
+  "attempt_id_digest",
+  "owner_facing_scope_summary_digest",
+  "challenge_minter_binding_digest",
+  "challenge_minter_key_binding_digest",
+  "replay_guard_store_binding_digest",
+  "challenge_domain",
+  "challenge_random_digest",
+  "minimum_entropy_bits",
+  "issued_at",
+  "not_before",
+  "expires_at",
+  "single_use_reservation_id_digest",
+  "single_use_reservation_record_digest",
+  "challenge_body_digest",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_DOMAINS_V1 = objectFreezeV1([
+  "control_room_owner_present_native_authorization_challenge_v1",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_FIELDS_V1 = objectFreezeV1([
+  "marker_schema_version",
+  "tenant_id_digest",
+  "node_id_digest",
+  "source_owner_product_binding_digest",
+  "runner_product_binding_digest",
+  "attempt_id_digest",
+  "request_id_digest",
+  "ceremony_id_digest_or_zero",
+  "challenge_reservation_digest_or_zero",
+  "factor_effect_marker_digest_or_zero",
+  "sealing_effect_marker_digest_or_zero",
+  "state",
+  "prior_record_digest",
+  "record_digest",
+  "state_authentication_tag",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_STATES_V1 = objectFreezeV1([
+  "request_reserved",
+  "challenge_reserved_attempt_burned",
+  "factor_verification_started",
+  "factor_verified",
+  "sealing_started",
+  "issued_unregistered",
+  "terminal_refused_before_challenge",
+  "terminal_closed_after_challenge",
+  "terminal_ambiguous",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_CHRONOLOGY_INVARIANTS_V1 = objectFreezeV1([
+  "attempt_marker_commits_before_initial_preflight_or_any_owner_or_factor_effect",
+  "initial_preflight_accepts_before_challenge_minting",
+  "challenge_reservation_commits_before_challenge_display_or_factor_verification",
+  "ceremony_started_at_is_not_after_challenge_issued_at",
+  "challenge_issued_at_is_not_after_challenge_not_before",
+  "challenge_not_before_is_not_after_owner_presence_confirmed_at",
+  "owner_presence_confirmed_at_is_not_after_factor_verification_issued_at",
+  "factor_verification_issued_at_is_not_after_verification_observed_at",
+  "verification_observed_at_is_not_after_final_trust_rechecked_at",
+  "final_trust_rechecked_at_is_not_after_nonce_and_body_time",
+  "nonce_and_body_time_is_not_after_immediate_pre_seal_time",
+  "every_acceptance_time_is_at_or_after_its_inclusive_not_before",
+  "every_acceptance_time_is_strictly_before_challenge_factor_ceremony_and_authorization_expiry",
+  "no_evidence_timestamp_may_be_future_dated_beyond_five_second_skew",
+  "trusted_time_is_read_at_challenge_factor_acceptance_final_recheck_nonce_body_and_pre_seal_boundaries",
+  "any_time_unavailability_rollback_skew_expiry_or_uncertainty_is_terminal",
+] as const);
+
+export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_UNIQUENESS_RULES_V1 = objectFreezeV1([
+  "one_request_id_maps_to_one_tenant_node_source_runner_attempt_tuple",
+  "one_attempt_tuple_maps_to_exactly_one_request_and_one_ceremony",
+  "one_challenge_reservation_one_factor_call_and_one_seal_maximum_per_attempt_tuple",
+  "challenge_reservation_durably_burns_the_attempt_tuple_before_owner_display",
+  "success_or_any_post_marker_uncertainty_permanently_burns_the_attempt_tuple",
+  "known_pre_challenge_refusal_closes_the_attempt_tuple_without_authorization",
+  "any_owner_authorized_restart_requires_new_request_attempt_ceremony_challenge_and_nonce",
+  "source_owner_or_runner_relabeling_cannot_reopen_an_attempt_tuple",
+  "exact_replay_returns_inert_terminal_truth_and_never_reexecutes_an_effect",
+] as const);
+
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_NONCE_INTENT_FIELDS_V1 = objectFreezeV1([
   "intent_schema_version",
   "ceremony_id_digest",
   "request_id_digest",
+  "attempt_marker_digest",
+  "final_trust_recheck_digest",
   "trusted_time_authority_class",
   "authorization_nonce_domain",
   "minimum_nonce_entropy_bits",
@@ -209,8 +389,9 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_AUTHORITIES_V1 
 ] as const);
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STAGES_V1 = objectFreezeV1([
+  "attempt_scope_reserved",
   "accepted_product_and_policy_preflight",
-  "owner_presence_challenge_prepared",
+  "trusted_challenge_minted_and_reserved",
   "owner_presence_confirmation_observed",
   "strong_factor_verification_observed",
   "current_trust_rechecked",
@@ -222,6 +403,7 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STAGES_
 
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STATES_V1 = objectFreezeV1([
   "inert_contract_only",
+  "attempt_scope_reservation_pending",
   "preflight_pending",
   "owner_presence_pending",
   "strong_factor_pending",
@@ -243,6 +425,7 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_DECISIO
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REFUSALS_V1 = objectFreezeV1([
   "accepted_predecessor_evidence_mismatch",
   "request_not_module_minted",
+  "request_or_attempt_tuple_already_reserved_or_burned",
   "request_scope_or_policy_mismatch",
   "trust_manifest_or_anchor_not_current",
   "issuer_product_or_sealing_key_not_current",
@@ -280,7 +463,8 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_REFUSAL_OUTPUT
   "output_schema_version",
   "decision",
   "safe_refusal_code",
-  "owner_action_may_start_new_ceremony",
+  "request_and_attempt_tuple_terminally_closed",
+  "owner_action_may_start_new_attempt_ceremony",
   "authorization_created",
   "authorization_registered",
   "output_digest",
@@ -316,20 +500,30 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_PROHIBI
 export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_RULES_V1 = objectFreezeV1([
   "bind_exact_accepted_live_480_product_tree_review_and_acceptance",
   "bind_exact_accepted_live_490_product_tree_review_and_acceptance",
-  "accept_only_module_minted_request_identity_after_current_manifest_and_trust_preflight",
-  "bind_request_to_exact_tenant_project_connection_node_deployment_policy_operation_candidate_and_attempt_scope",
+  "require_separately_accepted_manifest_and_registry_extension_for_all_three_issuer_dependency_roles_and_keys_before_protected_implementation",
+  "bind_each_challenge_minter_factor_verifier_and_replay_guard_product_tree_review_and_key_to_current_signed_manifest_and_registry",
+  "require_pairwise_distinct_dependency_products_and_keys_transitively_owned_by_the_owner_present_issuer_review",
+  "accept_only_module_minted_request_identity_before_attempt_reservation_and_current_manifest_and_trust_preflight",
+  "bind_request_to_exact_tenant_project_connection_node_source_owner_runner_deployment_policy_operation_candidate_and_attempt_scope",
   "bind_request_to_current_manifest_registry_and_both_current_anchor_heads",
   "bind_owner_present_issuer_and_owner_authorization_sealing_key_to_current_manifest_and_registry",
+  "persist_one_authenticated_attempt_marker_before_initial_preflight_or_any_owner_factor_sealing_or_network_effect",
+  "reject_every_reused_request_or_tenant_node_source_owner_runner_attempt_tuple",
+  "mint_one_domain_separated_256_bit_minimum_entropy_challenge_after_preflight_using_private_postgresql_transaction_time",
+  "durably_reserve_the_challenge_and_burn_the_attempt_tuple_before_owner_display_or_factor_verification",
   "present_one_exact_owner_facing_scope_summary_on_the_target_host",
   "require_separate_owner_presence_and_strong_factor_evidence_for_the_same_exact_challenge",
   "permit_only_one_policy_selected_strong_factor_class_without_fallback_or_downgrade",
   "mark_totp_class_non_phishing_resistant_and_require_separate_owner_presence",
   "never_treat_login_session_ui_click_or_conversational_approval_as_strong_factor_evidence",
   "never_retain_log_return_or_publicly_project_raw_credential_biometric_code_owner_identity_or_assertion",
-  "bind_factor_evidence_to_exact_verifier_product_policy_class_ceremony_request_challenge_and_replay_guard",
-  "perform_at_most_one_strong_factor_verification_for_one_ceremony",
+  "bind_factor_evidence_to_exact_rooted_verifier_product_tree_review_key_policy_class_ceremony_request_challenge_and_replay_guard",
+  "independently_verify_factor_evidence_with_the_current_rooted_verifier_key_for_the_exact_scope",
+  "perform_at_most_one_strong_factor_verification_for_one_request_attempt_tuple",
   "reject_stale_revoked_replayed_mismatched_or_ambiguous_factor_evidence",
-  "recheck_current_root_registry_manifest_anchors_products_keys_scope_and_policy_after_factor_verification",
+  "recheck_current_root_registry_manifest_anchors_all_dependency_products_and_keys_scope_policy_challenge_and_factor_evidence_after_factor_verification",
+  "enforce_the_exact_declared_chronology_using_fresh_private_postgresql_time_at_each_security_boundary",
+  "reject_future_dated_expired_out_of_order_rollback_skewed_or_time_uncertain_evidence_as_terminal",
   "obtain_fresh_256_bit_minimum_authorization_nonce_only_after_factor_verification",
   "use_only_private_postgresql_transaction_time_for_issuer_security_decisions",
   "bind_inclusive_not_before_exclusive_expiry_and_maximum_300_second_authorization_lifetime",
@@ -339,7 +533,9 @@ export const CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_RULES_V
   "require_separate_authenticated_registration_and_nonce_reservation_before_capsule_use",
   "never_treat_issuance_as_registration_consumption_qualification_candidate_activation_or_execution",
   "make_every_post_verifier_or_post_sealing_uncertainty_terminal_without_retry_or_resume",
-  "allow_a_new_ceremony_only_after_proven_pre_effect_refusal_with_new_request_challenge_and_nonce",
+  "permanently_burn_the_request_and_attempt_tuple_after_challenge_reservation_success_or_any_post_marker_uncertainty",
+  "close_every_known_pre_challenge_refusal_and_require_new_request_attempt_ceremony_challenge_and_nonce_for_restart",
+  "make_exact_replay_return_only_inert_terminal_truth_without_reexecuting_any_effect",
   "perform_no_import_time_or_contract_construction_host_or_protected_read",
   "keep_complete_transitive_production_import_graph_inert",
   "export_no_issuer_verifier_prompt_clock_nonce_sealer_resolver_store_or_dependency_factory",
@@ -383,11 +579,17 @@ const contractSeedV1 = sha256Digest({
   acceptedLive480AcceptanceSha256: "5f549c3f05ce77cd5a536e9b711a4e7a1c5bddde7ee8d75fd68474fe6578ab46",
   acceptedLive490ReviewSha256: "56b03b7941971c50867553dc26c65a74cb9e4e291ba1a2543f5a9ac2708b2eb7",
   acceptedLive490AcceptanceSha256: "2307475e02a176465c158cbe93b4a8c8a2b39ec6f3bb74cfba2281441a484f9d",
+  issuerDependencyBindingSchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1,
   requestSchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_SCHEMA_V1,
   ceremonyFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENCE_CEREMONY_FIELDS_V1,
   strongFactorClasses: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_CLASSES_V1,
   strongFactorEvidenceFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_EVIDENCE_FIELDS_V1,
   trustPreflightFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_FIELDS_V1,
+  finalTrustRecheckFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_FIELDS_V1,
+  ownerChallengeFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_FIELDS_V1,
+  issuerAttemptMarkerFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_FIELDS_V1,
+  chronologyInvariants: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_CHRONOLOGY_INVARIANTS_V1,
+  uniquenessRules: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_UNIQUENESS_RULES_V1,
   timeNonceIntentFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_NONCE_INTENT_FIELDS_V1,
   stages: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STAGES_V1,
   decisions: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_DECISIONS_V1,
@@ -412,6 +614,10 @@ const contractMaterialV1 = {
     CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_BODY_FIELDS_V1,
   acceptedOwnerAuthorizationEnvelopeFields:
     CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_NATIVE_AUTHORIZATION_ENVELOPE_FIELDS_V1,
+  issuerDependencyBindingFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_FIELDS_V1,
+  issuerDependencyRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_ROLES_V1,
+  issuerDependencyKeyRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_KEY_ROLES_V1,
+  issuerDependencyBindingSchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1,
   requestFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_FIELDS_V1,
   requestSchema: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_SCHEMA_V1,
   ceremonyFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENCE_CEREMONY_FIELDS_V1,
@@ -422,6 +628,14 @@ const contractMaterialV1 = {
   strongFactorResults: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_RESULTS_V1,
   trustPreflightFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_FIELDS_V1,
   trustPreflightResults: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_RESULTS_V1,
+  finalTrustRecheckFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_FIELDS_V1,
+  finalTrustRecheckResults: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_RESULTS_V1,
+  ownerChallengeFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_FIELDS_V1,
+  ownerChallengeDomains: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_DOMAINS_V1,
+  issuerAttemptMarkerFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_FIELDS_V1,
+  issuerAttemptMarkerStates: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_STATES_V1,
+  chronologyInvariants: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_CHRONOLOGY_INVARIANTS_V1,
+  uniquenessRules: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_UNIQUENESS_RULES_V1,
   trustedTimeNonceIntentFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_NONCE_INTENT_FIELDS_V1,
   trustedTimeAuthorities: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_AUTHORITIES_V1,
   stages: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STAGES_V1,
@@ -432,12 +646,16 @@ const contractMaterialV1 = {
   refusalOutputFields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_REFUSAL_OUTPUT_FIELDS_V1,
   prohibitedEffects: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_PROHIBITED_EFFECTS_V1,
   rules: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_RULES_V1,
+  minimumChallengeEntropyBits: 256 as const,
   minimumAuthorizationNonceEntropyBits: 256 as const,
+  maximumTrustedTimeReadsPerCeremony: 5 as const,
   maximumClockSkewSeconds: 5 as const,
   maximumChallengeLifetimeSeconds: 120 as const,
   maximumStrongFactorEvidenceLifetimeSeconds: 120 as const,
   maximumCeremonyLifetimeSeconds: 300 as const,
   maximumAuthorizationLifetimeSeconds: 300 as const,
+  maximumCurrentAttemptMarkers: 0 as const,
+  maximumCurrentChallengeReservations: 0 as const,
   maximumCurrentCeremonies: 0 as const,
   maximumCurrentStrongFactorVerifications: 0 as const,
   maximumCurrentAuthorizationsIssued: 0 as const,
@@ -447,6 +665,8 @@ const contractMaterialV1 = {
   freshNonceRequired: true as const,
   trustedTimeRequired: true as const,
   separateRegistrationRequired: true as const,
+  trustManifestIssuerDependencyExtensionRequired: true as const,
+  durableAttemptBurnRequired: true as const,
   transitiveImportInertiaRequired: true as const,
   callerConstructibleRequestAllowed: false as const,
   loginSessionAsStrongFactorAllowed: false as const,
@@ -485,8 +705,11 @@ reflectApplyV1(weakMapSetV1, contractDigestsV1, [connectionEnrollmentPrivateLoop
   connectionEnrollmentPrivateLoopbackOwnerPresentIssuerContractV1.contractDigest]);
 
 const zeroActualsV1 = {
+  actualAttemptMarkerWrites: 0 as const,
   actualRequestsAccepted: 0 as const,
   actualTrustPreflights: 0 as const,
+  actualChallengesGenerated: 0 as const,
+  actualChallengeReservations: 0 as const,
   actualOwnerPrompts: 0 as const,
   actualOwnerPresenceConfirmations: 0 as const,
   actualStrongFactorCalls: 0 as const,
@@ -572,16 +795,22 @@ const contractKeysV1 = objectFreezeV1([
   "acceptedLive480ReviewSha256", "acceptedLive480AcceptanceSha256", "live490ProductCommit", "live490ProductTree",
   "acceptedLive490ReviewSha256", "acceptedLive490AcceptanceSha256", "acceptedOwnerAuthorizationContract",
   "acceptedTrustManifestAnchorContract", "acceptedOwnerAuthorizationBodyFields",
-  "acceptedOwnerAuthorizationEnvelopeFields", "requestFields", "requestSchema", "ceremonyFields",
+  "acceptedOwnerAuthorizationEnvelopeFields", "issuerDependencyBindingFields", "issuerDependencyRoles",
+  "issuerDependencyKeyRoles", "issuerDependencyBindingSchema", "requestFields", "requestSchema", "ceremonyFields",
   "ownerPresenceChannels", "ownerPresenceResults", "strongFactorClasses", "strongFactorEvidenceFields",
-  "strongFactorResults", "trustPreflightFields", "trustPreflightResults", "trustedTimeNonceIntentFields",
+  "strongFactorResults", "trustPreflightFields", "trustPreflightResults", "finalTrustRecheckFields",
+  "finalTrustRecheckResults", "ownerChallengeFields", "ownerChallengeDomains", "issuerAttemptMarkerFields",
+  "issuerAttemptMarkerStates", "chronologyInvariants", "uniquenessRules", "trustedTimeNonceIntentFields",
   "trustedTimeAuthorities", "stages", "states", "decisions", "refusals", "issuedOutputFields",
-  "refusalOutputFields", "prohibitedEffects", "rules", "minimumAuthorizationNonceEntropyBits",
+  "refusalOutputFields", "prohibitedEffects", "rules", "minimumChallengeEntropyBits",
+  "minimumAuthorizationNonceEntropyBits", "maximumTrustedTimeReadsPerCeremony",
   "maximumClockSkewSeconds", "maximumChallengeLifetimeSeconds", "maximumStrongFactorEvidenceLifetimeSeconds",
-  "maximumCeremonyLifetimeSeconds", "maximumAuthorizationLifetimeSeconds", "maximumCurrentCeremonies",
+  "maximumCeremonyLifetimeSeconds", "maximumAuthorizationLifetimeSeconds", "maximumCurrentAttemptMarkers",
+  "maximumCurrentChallengeReservations", "maximumCurrentCeremonies",
   "maximumCurrentStrongFactorVerifications", "maximumCurrentAuthorizationsIssued", "ownerPresenceRequired",
   "strongFactorRequired", "finalTrustRecheckRequired", "freshNonceRequired", "trustedTimeRequired",
-  "separateRegistrationRequired", "transitiveImportInertiaRequired", "callerConstructibleRequestAllowed",
+  "separateRegistrationRequired", "trustManifestIssuerDependencyExtensionRequired", "durableAttemptBurnRequired",
+  "transitiveImportInertiaRequired", "callerConstructibleRequestAllowed",
   "loginSessionAsStrongFactorAllowed", "conversationalApprovalAsStrongFactorAllowed",
   "factorFallbackOrDowngradeAllowed", "rawCredentialOrOwnerIdentityRetentionAllowed",
   "retryAfterUncertaintyAllowed", "issuanceGrantsNativeAuthority", "issuerImplemented",
@@ -595,7 +824,8 @@ const contractKeysV1 = objectFreezeV1([
 const statusKeysV1 = objectFreezeV1([
   "statusVersion", "contractReference", "contractDigest", "evidenceClass", "contractState", "issuerState",
   "ownerPresenceState", "strongFactorState", "timeNonceState", "sealingState", "registrationState",
-  "runtimeState", "actualRequestsAccepted", "actualTrustPreflights", "actualOwnerPrompts",
+  "runtimeState", "actualAttemptMarkerWrites", "actualRequestsAccepted", "actualTrustPreflights",
+  "actualChallengesGenerated", "actualChallengeReservations", "actualOwnerPrompts",
   "actualOwnerPresenceConfirmations", "actualStrongFactorCalls", "actualStrongFactorEvidenceRecords",
   "actualCredentialsOrOwnerIdentitiesRead", "actualBiometricOrAuthenticatorReads",
   "actualKeychainOrCredentialStoreReads", "actualTrustedTimeReads", "actualClockReads", "actualNoncesGenerated",
@@ -625,7 +855,8 @@ export function parseConnectionEnrollmentPrivateLoopbackOwnerPresentIssuerContra
   const digest = reflectApplyV1(weakMapGetV1, contractDigestsV1, [record]) as string | undefined;
   const requiredTrue = [record.ownerPresenceRequired, record.strongFactorRequired,
     record.finalTrustRecheckRequired, record.freshNonceRequired, record.trustedTimeRequired,
-    record.separateRegistrationRequired, record.transitiveImportInertiaRequired, record.repositoryContractOnly];
+    record.separateRegistrationRequired, record.trustManifestIssuerDependencyExtensionRequired,
+    record.durableAttemptBurnRequired, record.transitiveImportInertiaRequired, record.repositoryContractOnly];
   const requiredFalse = [record.callerConstructibleRequestAllowed, record.loginSessionAsStrongFactorAllowed,
     record.conversationalApprovalAsStrongFactorAllowed, record.factorFallbackOrDowngradeAllowed,
     record.rawCredentialOrOwnerIdentityRetentionAllowed, record.retryAfterUncertaintyAllowed,
@@ -644,13 +875,17 @@ export function parseConnectionEnrollmentPrivateLoopbackOwnerPresentIssuerContra
     || record.live480ProductCommit !== "6d510d6f1b80a98c00c16fcf2b55837afc1cea87"
     || record.live490ProductCommit !== "dc313b1f2ff5982fe0ffa3b505db36025036601f"
     || record.requestSchema !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_SCHEMA_V1
-    || record.minimumAuthorizationNonceEntropyBits !== 256 || record.maximumClockSkewSeconds !== 5
+    || record.issuerDependencyBindingSchema !==
+      CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1
+    || record.minimumChallengeEntropyBits !== 256 || record.minimumAuthorizationNonceEntropyBits !== 256
+    || record.maximumTrustedTimeReadsPerCeremony !== 5 || record.maximumClockSkewSeconds !== 5
     || record.maximumChallengeLifetimeSeconds !== 120
     || record.maximumStrongFactorEvidenceLifetimeSeconds !== 120
     || record.maximumCeremonyLifetimeSeconds !== 300 || record.maximumAuthorizationLifetimeSeconds !== 300
+    || record.maximumCurrentAttemptMarkers !== 0 || record.maximumCurrentChallengeReservations !== 0
     || record.maximumCurrentCeremonies !== 0 || record.maximumCurrentStrongFactorVerifications !== 0
     || record.maximumCurrentAuthorizationsIssued !== 0
-    || requiredTrue.length !== 8 || reflectApplyV1(arraySomeV1, requiredTrue, [(entry: boolean) => entry !== true])
+    || requiredTrue.length !== 10 || reflectApplyV1(arraySomeV1, requiredTrue, [(entry: boolean) => entry !== true])
     || requiredFalse.length !== 22 || reflectApplyV1(arraySomeV1, requiredFalse, [(entry: boolean) => entry !== false])) {
     failV1("integrity_failed");
   }
@@ -668,7 +903,8 @@ export function parseConnectionEnrollmentPrivateLoopbackOwnerPresentIssuerStatus
   const record = value as ConnectionEnrollmentPrivateLoopbackOwnerPresentIssuerStatusV1;
   const captured = exactHostDataSnapshotV1(record, statusKeysV1);
   const digest = reflectApplyV1(weakMapGetV1, statusDigestsV1, [record]) as string | undefined;
-  const actuals = [record.actualRequestsAccepted, record.actualTrustPreflights, record.actualOwnerPrompts,
+  const actuals = [record.actualAttemptMarkerWrites, record.actualRequestsAccepted, record.actualTrustPreflights,
+    record.actualChallengesGenerated, record.actualChallengeReservations, record.actualOwnerPrompts,
     record.actualOwnerPresenceConfirmations, record.actualStrongFactorCalls, record.actualStrongFactorEvidenceRecords,
     record.actualCredentialsOrOwnerIdentitiesRead, record.actualBiometricOrAuthenticatorReads,
     record.actualKeychainOrCredentialStoreReads, record.actualTrustedTimeReads, record.actualClockReads,
@@ -689,7 +925,7 @@ export function parseConnectionEnrollmentPrivateLoopbackOwnerPresentIssuerStatus
     || record !== connectionEnrollmentPrivateLoopbackOwnerPresentIssuerStatusV1
     || record.statusVersion !== CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STATUS_V1
     || record.contractDigest !== connectionEnrollmentPrivateLoopbackOwnerPresentIssuerContractV1.contractDigest
-    || actuals.length !== 39 || reflectApplyV1(arraySomeV1, actuals, [(entry: number) => entry !== 0])
+    || actuals.length !== 42 || reflectApplyV1(arraySomeV1, actuals, [(entry: number) => entry !== 0])
     || grants.length !== 8 || reflectApplyV1(arraySomeV1, grants, [(entry: boolean) => entry !== false])
     || record.externalEffectOccurred !== false || record.targetRuntimeBlockerCleared !== false
     || record.physicalQualificationAccepted !== false || record.candidateEligible !== false

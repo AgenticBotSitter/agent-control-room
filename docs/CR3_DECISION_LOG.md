@@ -4791,12 +4791,23 @@ select exactly one of platform phishing-resistant user verification, roaming-har
 verification, or password-manager TOTP with separate owner presence. TOTP is explicitly non-phishing-resistant; login
 state, a UI click, or conversational approval is never strong-factor evidence and no factor fallback is allowed.
 
-After at most one factor verification, the future issuer must recheck the owner root, registry, manifest, both
-anchors, exact products, key, scope, and policy. Only then may it obtain a fresh nonce with at least 256 bits of
+Before any owner display or factor work, the future issuer must durably reserve and burn one exact request/attempt
+tuple, complete rooted preflight, mint and reserve one domain-separated challenge with at least 256 bits of entropy,
+and bind its pairwise-distinct challenge-minter, factor-verifier, and replay-guard products and keys through a current
+signed manifest and trust registry. Those dependency roles require a separately accepted manifest/registry extension
+before protected implementation.
+
+After at most one factor verification for that tuple, the future issuer must recheck the owner root, registry,
+manifest, both anchors, every dependency product and key, exact evidence, scope, and policy. The ceremony follows one
+closed chronology using fresh private PostgreSQL time at challenge creation, factor acceptance, final recheck,
+nonce/body construction, and immediately before sealing; future-dated, expired, reordered, rolled-back, skewed, or
+uncertain time is terminal. Only then may it obtain a fresh nonce with at least 256 bits of
 entropy and private PostgreSQL transaction time, construct the exact LIVE-480 body internally, seal it once, and
 return one private sealed-but-unregistered envelope. The owner ceremony and authorization each last at most 300
 seconds. Separate authenticated registration and nonce reservation remain mandatory. Any uncertainty after factor
-verification or sealing is terminal and cannot retry or resume.
+verification or sealing is terminal and cannot retry or resume. Challenge reservation, success, or post-marker
+uncertainty permanently burns the request/attempt tuple; even a proven pre-challenge refusal requires a new request,
+attempt, ceremony, challenge, and nonce.
 
 **Why:** A login session, owner-facing button, conversational instruction, or signed-looking envelope does not prove
 that the owner was present for the exact native scope or that current rooted trust authorized the issuer and sealing
@@ -4814,7 +4825,7 @@ dependency-taking issuer factory with the contract.
 **Evidence required:** exact LIVE-480 and LIVE-490 product/tree/review/acceptance binding; independently repeated
 ordered request, ceremony, factor, trust-preflight, time/nonce, stage, state, decision, refusal, output, prohibited-
 effect, and rule fixtures; explicit TOTP assurance truth; singleton-only hostile parsing; captured-intrinsic
-resistance; exact transitive import graph and effect rejection; safe consumer audit; 39 zero actuals and eight false
+resistance; exact transitive import graph and effect rejection; safe consumer audit; 42 zero actuals and eight false
 grants; full producer gates; and a different independent zero-repair review.
 
 **Current evidence:** The inert product and 14-test focused suite are implemented. The combined LIVE-490/LIVE-500
@@ -4822,7 +4833,9 @@ preflight passes 29/29, the existing CR13A suite passes 473/473, the complete 76
 TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-0038 with 124 tables, macOS stage zero,
 and whitespace validation pass. No prompt, credential, biometric, Keychain, factor call, time, nonce, body, seal,
 signature, trust read, database, registration, process, network, native, runtime, or deployment effect occurred.
-Independent review and final acceptance evidence are pending.
+The first independent review rejected 2 High and 1 Medium findings covering unrooted dependency authority, incomplete
+time chronology, and reusable attempt scope. Those findings are remediated in the inert contract; a different
+independent zero-repair re-review and final acceptance evidence are pending.
 
 **Reevaluate:** Before any real owner prompt or UI, credential/biometric/Keychain/authenticator access, factor verifier,
 trusted-time or nonce source, body constructor, sealer or signer, trust resolver, registration/nonce store, PostgreSQL

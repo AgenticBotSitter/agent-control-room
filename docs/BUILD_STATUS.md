@@ -158,7 +158,7 @@
 | CR13A-LIVE-470 production capsule and owner-native authorization architecture | Independently accepted for architecture-only integration | First review 5 High/4 Medium/0 Low, all remediated; different re-review 0/0/0; same-module capsule, rooted/anchored trust, exact owner/schema/rollback/IPC boundaries; zero current effects |
 | CR13A-LIVE-480 inert owner-native authorization contract | Independently accepted after all 2 High/2 Medium findings were remediated; ordinary inert integration ready | Product `6d510d6...`, tree `ac8655e...`; 64 body fields plus 42 exact component product/tree/review bindings, 28 closed key bindings, one-per-provider ceilings; 12/12 focused, 473/473 CR13A, 0/0/0 |
 | CR13A-LIVE-490 inert trust, manifest, key-lifecycle, and rollback-anchor contract | Independently accepted after 3 High/2 Medium were remediated; ordinary inert integration ready | Product `dc313b1...`, tree `de7b731...`; exact signature-free rotation body/dual envelope, 28-role signed overlap schema, closed registry/manifest signatures, five exact independent anchor bindings, closed CAS receipts/recovery, exact graph/export/call audit; 15/15 focused plus 473/473 CR13A; 0/0/0 |
-| CR13A-LIVE-500 inert owner-present issuer and strong-factor evidence contract | Producer verified; independent review required before integration | Exact module-minted request, target-host owner presence, three honest factor classes, final rooted-trust recheck, 256-bit nonce intent, private PostgreSQL time, 300-second authorization ceiling, sealed-unregistered output; 14/14 focused plus 473/473 CR13A; 39 zero actuals/eight false grants |
+| CR13A-LIVE-500 inert owner-present issuer and strong-factor evidence contract | First review rejected 2 High/1 Medium; remediated product awaits different zero-repair re-review | Exact rooted challenge/verifier/replay dependencies, 256-bit reserved challenge, closed chronology, durable one-use request/attempt tuple, honest factor classes, final rooted-trust recheck, sealed-unregistered output; 14/14 focused; 42 zero actuals/eight false grants |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -303,16 +303,26 @@ request, target-host owner presence, three policy-selected strong-factor classes
 fresh 256-bit nonce intent, private PostgreSQL transaction time, a 300-second authorization ceiling, closed refusal
 and ambiguity outcomes, and one private sealed-but-unregistered output. Password-manager TOTP is explicitly marked
 non-phishing-resistant and requires separate owner presence; login state, a UI click, or conversational approval is
-never factor evidence.
+never factor evidence. The first independent review rejected the original product with 2 High and 1 Medium findings:
+the challenge minter, factor verifier, and replay guard were not rooted to exact trusted products and keys; timestamp
+ceilings lacked mandatory chronology and fresh trusted-time checks; and the one-use boundary did not durably prevent
+new ceremonies for the same request/attempt tuple.
+
+The remediated contract requires a separately accepted signed-manifest/registry extension before any protected
+implementation may select the three pairwise-distinct dependency products and keys. It fixes a domain-separated
+256-bit minimum-entropy issuer challenge, durable reservation and attempt burn before owner display or factor work,
+exact verifier-key evidence, five named fresh PostgreSQL-time boundaries, closed timestamp ordering, terminal
+rollback/skew/expiry/uncertainty, and one request, ceremony, challenge, factor call, and seal per exact tenant/node/
+source-owner/runner/attempt tuple. Every restart requires a new request and attempt identity.
 
 The LIVE-500 product remains repository-only and inert. It cannot prompt, read a credential, biometric, Keychain,
 clock, nonce, database, trust registry, manifest, anchor, filesystem, environment, host, source, provider, process,
 network, or native value. It cannot construct or seal an authorization, verify a factor, register or consume an
-authorization, or grant approval or execution authority. Its status reports 39 zero actuals and eight false grants.
+authorization, or grant approval or execution authority. Its status reports 42 zero actuals and eight false grants.
 The focused suite passes 14/14, the combined LIVE-490/LIVE-500 preflight passes 29/29, the existing CR13A suite passes
 473/473, and the complete 769/421/392 lifecycle exits zero. TypeScript, full lint, 5/5 build phases, 4/4 rendered
 routes, migrations 0001-0038 with 124 tables, macOS stage zero, and whitespace validation pass. A different
-independent zero-repair review is required before integration or advancing the frontier.
+different independent zero-repair re-review is required before integration or advancing the frontier.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release

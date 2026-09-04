@@ -6,6 +6,18 @@ import test from "node:test";
 import ts from "typescript";
 
 import {
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_RESULTS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_STATES_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_CHRONOLOGY_INVARIANTS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_FIELDS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_KEY_ROLES_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_ROLES_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_UNIQUENESS_RULES_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_DOMAINS_V1,
+  CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_FIELDS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENCE_CEREMONY_FIELDS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENCE_CHANNELS_V1,
   CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENCE_RESULTS_V1,
@@ -92,22 +104,38 @@ test("CR13A-LIVE-500 binds exact accepted LIVE-480 and LIVE-490 products and evi
 
 test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
   const fixtures: Array<[readonly string[], string[]]> = [
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_FIELDS_V1, [
+      "role", "product_commit", "product_tree", "independent_review_sha256", "key_role", "key_id_digest",
+      "key_fingerprint", "key_revision", "trust_registry_entry_digest",
+      "owner_present_issuer_product_binding_digest",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_ROLES_V1, [
+      "owner_presence_challenge_minter", "strong_factor_verifier",
+      "owner_issuer_attempt_and_replay_guard_store",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_KEY_ROLES_V1, [
+      "owner_presence_challenge_state", "strong_factor_evidence_verification",
+      "owner_issuer_attempt_and_replay_guard_state",
+    ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_FIELDS_V1, [
       "request_schema_version", "request_id_digest", "accepted_owner_authorization_contract_digest",
       "accepted_trust_manifest_anchor_contract_digest", "tenant_id_digest", "project_id_digest",
       "connection_id_digest", "node_id_digest", "target_platform_family", "target_runtime_family",
       "deployment_id_digest", "policy_id_digest", "operation_id", "candidate_proposal_id_digest",
-      "attempt_id_digest", "deployment_manifest_id_digest", "deployment_manifest_digest",
+      "attempt_id_digest", "source_owner_product_binding_digest", "runner_product_binding_digest",
+      "deployment_manifest_id_digest", "deployment_manifest_digest",
       "deployment_manifest_sequence", "trust_registry_id_digest", "trust_registry_digest",
       "trust_registry_sequence", "manifest_anchor_revision", "manifest_anchor_head_digest",
       "trust_registry_anchor_revision", "trust_registry_anchor_head_digest", "owner_policy_revision",
       "strong_factor_policy_revision", "required_strong_factor_evidence_class",
+      "ordered_issuer_dependency_bindings",
       "requested_authorization_lifetime_seconds", "owner_facing_scope_summary_digest",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENCE_CEREMONY_FIELDS_V1, [
       "ceremony_schema_version", "ceremony_id_digest", "request_id_digest", "issuer_product_commit",
       "issuer_product_tree", "issuer_independent_review_sha256", "owner_presence_channel",
-      "owner_facing_scope_summary_digest", "challenge_digest", "challenge_issued_at", "challenge_expires_at",
+      "owner_facing_scope_summary_digest", "challenge_digest", "ceremony_started_at", "ceremony_expires_at",
+      "challenge_issued_at", "challenge_not_before", "challenge_expires_at",
       "owner_presence_confirmation_digest", "owner_presence_confirmed_at", "owner_policy_revision",
       "strong_factor_policy_revision", "required_strong_factor_evidence_class", "ceremony_result",
     ]],
@@ -118,9 +146,11 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_EVIDENCE_FIELDS_V1, [
       "evidence_schema_version", "evidence_id_digest", "ceremony_id_digest", "request_id_digest",
       "verifier_product_commit", "verifier_product_tree", "verifier_independent_review_sha256",
+      "verifier_key_role", "verifier_key_id_digest", "verifier_key_fingerprint", "verifier_key_revision",
+      "verifier_trust_registry_entry_digest",
       "strong_factor_policy_revision", "evidence_class", "challenge_digest",
       "owner_presence_confirmation_digest", "credential_reference_digest", "verification_assertion_digest",
-      "verification_issued_at", "verification_expires_at", "replay_guard_digest",
+      "verification_issued_at", "verification_expires_at", "verification_observed_at", "replay_guard_digest",
       "user_verification_performed", "owner_presence_performed", "phishing_resistant", "hardware_protected",
       "verification_result",
     ]],
@@ -132,7 +162,8 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
       "trust_registry_anchor_revision", "trust_registry_anchor_head_digest", "deployment_manifest_id_digest",
       "deployment_manifest_sequence", "deployment_manifest_digest", "manifest_anchor_revision",
       "manifest_anchor_head_digest", "owner_present_issuer_product_binding_digest",
-      "owner_authorization_sealing_key_binding_digest", "owner_policy_revision",
+      "owner_authorization_sealing_key_binding_digest", "ordered_issuer_dependency_bindings_digest",
+      "owner_policy_revision",
       "strong_factor_policy_revision", "required_strong_factor_evidence_class", "preflight_result",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_RESULTS_V1, [
@@ -140,8 +171,76 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
       "anchor_mismatch_or_rollback", "product_or_key_binding_invalid", "scope_or_policy_mismatch",
       "expired_revoked_or_not_yet_valid", "terminal_ambiguous",
     ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_FIELDS_V1, [
+      "recheck_schema_version", "request_id_digest", "attempt_marker_digest", "ceremony_id_digest",
+      "challenge_digest", "owner_presence_confirmation_digest", "strong_factor_evidence_digest",
+      "ordered_issuer_dependency_bindings_digest", "owner_root_pin_product_digest", "trust_registry_id_digest",
+      "trust_registry_sequence", "trust_registry_digest", "trust_registry_anchor_revision",
+      "trust_registry_anchor_head_digest", "deployment_manifest_id_digest", "deployment_manifest_sequence",
+      "deployment_manifest_digest", "manifest_anchor_revision", "manifest_anchor_head_digest",
+      "owner_present_issuer_product_binding_digest", "owner_authorization_sealing_key_binding_digest",
+      "owner_policy_revision", "strong_factor_policy_revision", "rechecked_at", "recheck_result",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_RESULTS_V1, [
+      "all_initial_bindings_still_current_for_exact_evidence", "trust_manifest_anchor_or_dependency_changed",
+      "scope_policy_or_evidence_mismatch", "ceremony_challenge_or_factor_expired",
+      "trusted_time_rollback_or_skew", "terminal_ambiguous",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_FIELDS_V1, [
+      "challenge_schema_version", "challenge_id_digest", "request_id_digest", "attempt_marker_digest",
+      "tenant_id_digest", "node_id_digest", "source_owner_product_binding_digest",
+      "runner_product_binding_digest", "attempt_id_digest", "owner_facing_scope_summary_digest",
+      "challenge_minter_binding_digest", "challenge_minter_key_binding_digest",
+      "replay_guard_store_binding_digest", "challenge_domain", "challenge_random_digest",
+      "minimum_entropy_bits", "issued_at", "not_before", "expires_at", "single_use_reservation_id_digest",
+      "single_use_reservation_record_digest", "challenge_body_digest",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_DOMAINS_V1,
+      ["control_room_owner_present_native_authorization_challenge_v1"]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_FIELDS_V1, [
+      "marker_schema_version", "tenant_id_digest", "node_id_digest", "source_owner_product_binding_digest",
+      "runner_product_binding_digest", "attempt_id_digest", "request_id_digest", "ceremony_id_digest_or_zero",
+      "challenge_reservation_digest_or_zero", "factor_effect_marker_digest_or_zero",
+      "sealing_effect_marker_digest_or_zero", "state", "prior_record_digest", "record_digest",
+      "state_authentication_tag",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_STATES_V1, [
+      "request_reserved", "challenge_reserved_attempt_burned", "factor_verification_started", "factor_verified",
+      "sealing_started", "issued_unregistered", "terminal_refused_before_challenge",
+      "terminal_closed_after_challenge", "terminal_ambiguous",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_CHRONOLOGY_INVARIANTS_V1, [
+      "attempt_marker_commits_before_initial_preflight_or_any_owner_or_factor_effect",
+      "initial_preflight_accepts_before_challenge_minting",
+      "challenge_reservation_commits_before_challenge_display_or_factor_verification",
+      "ceremony_started_at_is_not_after_challenge_issued_at",
+      "challenge_issued_at_is_not_after_challenge_not_before",
+      "challenge_not_before_is_not_after_owner_presence_confirmed_at",
+      "owner_presence_confirmed_at_is_not_after_factor_verification_issued_at",
+      "factor_verification_issued_at_is_not_after_verification_observed_at",
+      "verification_observed_at_is_not_after_final_trust_rechecked_at",
+      "final_trust_rechecked_at_is_not_after_nonce_and_body_time",
+      "nonce_and_body_time_is_not_after_immediate_pre_seal_time",
+      "every_acceptance_time_is_at_or_after_its_inclusive_not_before",
+      "every_acceptance_time_is_strictly_before_challenge_factor_ceremony_and_authorization_expiry",
+      "no_evidence_timestamp_may_be_future_dated_beyond_five_second_skew",
+      "trusted_time_is_read_at_challenge_factor_acceptance_final_recheck_nonce_body_and_pre_seal_boundaries",
+      "any_time_unavailability_rollback_skew_expiry_or_uncertainty_is_terminal",
+    ]],
+    [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_UNIQUENESS_RULES_V1, [
+      "one_request_id_maps_to_one_tenant_node_source_runner_attempt_tuple",
+      "one_attempt_tuple_maps_to_exactly_one_request_and_one_ceremony",
+      "one_challenge_reservation_one_factor_call_and_one_seal_maximum_per_attempt_tuple",
+      "challenge_reservation_durably_burns_the_attempt_tuple_before_owner_display",
+      "success_or_any_post_marker_uncertainty_permanently_burns_the_attempt_tuple",
+      "known_pre_challenge_refusal_closes_the_attempt_tuple_without_authorization",
+      "any_owner_authorized_restart_requires_new_request_attempt_ceremony_challenge_and_nonce",
+      "source_owner_or_runner_relabeling_cannot_reopen_an_attempt_tuple",
+      "exact_replay_returns_inert_terminal_truth_and_never_reexecutes_an_effect",
+    ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_NONCE_INTENT_FIELDS_V1, [
-      "intent_schema_version", "ceremony_id_digest", "request_id_digest", "trusted_time_authority_class",
+      "intent_schema_version", "ceremony_id_digest", "request_id_digest", "attempt_marker_digest",
+      "final_trust_recheck_digest", "trusted_time_authority_class",
       "authorization_nonce_domain", "minimum_nonce_entropy_bits", "nonce_uniqueness_scope",
       "maximum_clock_skew_seconds", "maximum_authorization_lifetime_seconds",
       "manifest_and_trust_recheck_required_before_body_construction",
@@ -150,13 +249,13 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_AUTHORITIES_V1,
       ["private_postgresql_transaction_time"]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STAGES_V1, [
-      "accepted_product_and_policy_preflight", "owner_presence_challenge_prepared",
+      "attempt_scope_reserved", "accepted_product_and_policy_preflight", "trusted_challenge_minted_and_reserved",
       "owner_presence_confirmation_observed", "strong_factor_verification_observed", "current_trust_rechecked",
       "fresh_authorization_nonce_and_trusted_time_observed", "canonical_owner_body_constructed",
       "owner_authorization_sealed", "private_unregistered_output_delivered",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STATES_V1, [
-      "inert_contract_only", "preflight_pending", "owner_presence_pending", "strong_factor_pending",
+      "inert_contract_only", "attempt_scope_reservation_pending", "preflight_pending", "owner_presence_pending", "strong_factor_pending",
       "trust_recheck_pending", "time_nonce_pending", "body_construction_pending", "sealing_pending",
       "issued_unregistered", "terminal_refused", "terminal_ambiguous",
     ]],
@@ -166,6 +265,7 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REFUSALS_V1, [
       "accepted_predecessor_evidence_mismatch", "request_not_module_minted",
+      "request_or_attempt_tuple_already_reserved_or_burned",
       "request_scope_or_policy_mismatch", "trust_manifest_or_anchor_not_current",
       "issuer_product_or_sealing_key_not_current", "unsupported_or_downgraded_strong_factor_class",
       "owner_presence_not_confirmed_for_exact_request", "owner_declined_cancelled_or_timed_out",
@@ -182,7 +282,8 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
       "registration_required", "output_digest",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_REFUSAL_OUTPUT_FIELDS_V1, [
-      "output_schema_version", "decision", "safe_refusal_code", "owner_action_may_start_new_ceremony",
+      "output_schema_version", "decision", "safe_refusal_code", "request_and_attempt_tuple_terminally_closed",
+      "owner_action_may_start_new_attempt_ceremony",
       "authorization_created", "authorization_registered", "output_digest",
     ]],
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_PROHIBITED_EFFECTS_V1, [
@@ -203,20 +304,30 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
     [CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_RULES_V1, [
       "bind_exact_accepted_live_480_product_tree_review_and_acceptance",
       "bind_exact_accepted_live_490_product_tree_review_and_acceptance",
-      "accept_only_module_minted_request_identity_after_current_manifest_and_trust_preflight",
-      "bind_request_to_exact_tenant_project_connection_node_deployment_policy_operation_candidate_and_attempt_scope",
+      "require_separately_accepted_manifest_and_registry_extension_for_all_three_issuer_dependency_roles_and_keys_before_protected_implementation",
+      "bind_each_challenge_minter_factor_verifier_and_replay_guard_product_tree_review_and_key_to_current_signed_manifest_and_registry",
+      "require_pairwise_distinct_dependency_products_and_keys_transitively_owned_by_the_owner_present_issuer_review",
+      "accept_only_module_minted_request_identity_before_attempt_reservation_and_current_manifest_and_trust_preflight",
+      "bind_request_to_exact_tenant_project_connection_node_source_owner_runner_deployment_policy_operation_candidate_and_attempt_scope",
       "bind_request_to_current_manifest_registry_and_both_current_anchor_heads",
       "bind_owner_present_issuer_and_owner_authorization_sealing_key_to_current_manifest_and_registry",
+      "persist_one_authenticated_attempt_marker_before_initial_preflight_or_any_owner_factor_sealing_or_network_effect",
+      "reject_every_reused_request_or_tenant_node_source_owner_runner_attempt_tuple",
+      "mint_one_domain_separated_256_bit_minimum_entropy_challenge_after_preflight_using_private_postgresql_transaction_time",
+      "durably_reserve_the_challenge_and_burn_the_attempt_tuple_before_owner_display_or_factor_verification",
       "present_one_exact_owner_facing_scope_summary_on_the_target_host",
       "require_separate_owner_presence_and_strong_factor_evidence_for_the_same_exact_challenge",
       "permit_only_one_policy_selected_strong_factor_class_without_fallback_or_downgrade",
       "mark_totp_class_non_phishing_resistant_and_require_separate_owner_presence",
       "never_treat_login_session_ui_click_or_conversational_approval_as_strong_factor_evidence",
       "never_retain_log_return_or_publicly_project_raw_credential_biometric_code_owner_identity_or_assertion",
-      "bind_factor_evidence_to_exact_verifier_product_policy_class_ceremony_request_challenge_and_replay_guard",
-      "perform_at_most_one_strong_factor_verification_for_one_ceremony",
+      "bind_factor_evidence_to_exact_rooted_verifier_product_tree_review_key_policy_class_ceremony_request_challenge_and_replay_guard",
+      "independently_verify_factor_evidence_with_the_current_rooted_verifier_key_for_the_exact_scope",
+      "perform_at_most_one_strong_factor_verification_for_one_request_attempt_tuple",
       "reject_stale_revoked_replayed_mismatched_or_ambiguous_factor_evidence",
-      "recheck_current_root_registry_manifest_anchors_products_keys_scope_and_policy_after_factor_verification",
+      "recheck_current_root_registry_manifest_anchors_all_dependency_products_and_keys_scope_policy_challenge_and_factor_evidence_after_factor_verification",
+      "enforce_the_exact_declared_chronology_using_fresh_private_postgresql_time_at_each_security_boundary",
+      "reject_future_dated_expired_out_of_order_rollback_skewed_or_time_uncertain_evidence_as_terminal",
       "obtain_fresh_256_bit_minimum_authorization_nonce_only_after_factor_verification",
       "use_only_private_postgresql_transaction_time_for_issuer_security_decisions",
       "bind_inclusive_not_before_exclusive_expiry_and_maximum_300_second_authorization_lifetime",
@@ -226,7 +337,9 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
       "require_separate_authenticated_registration_and_nonce_reservation_before_capsule_use",
       "never_treat_issuance_as_registration_consumption_qualification_candidate_activation_or_execution",
       "make_every_post_verifier_or_post_sealing_uncertainty_terminal_without_retry_or_resume",
-      "allow_a_new_ceremony_only_after_proven_pre_effect_refusal_with_new_request_challenge_and_nonce",
+      "permanently_burn_the_request_and_attempt_tuple_after_challenge_reservation_success_or_any_post_marker_uncertainty",
+      "close_every_known_pre_challenge_refusal_and_require_new_request_attempt_ceremony_challenge_and_nonce_for_restart",
+      "make_exact_replay_return_only_inert_terminal_truth_without_reexecuting_any_effect",
       "perform_no_import_time_or_contract_construction_host_or_protected_read",
       "keep_complete_transitive_production_import_graph_inert",
       "export_no_issuer_verifier_prompt_clock_nonce_sealer_resolver_store_or_dependency_factory",
@@ -238,6 +351,19 @@ test("CR13A-LIVE-500 freezes every exact ordered issuer vocabulary", () => {
     assert.equal(Object.isFrozen(actual), true);
     assert.equal(new Set(actual).size, actual.length);
   }
+  assert.deepEqual(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1, {
+    fields: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_FIELDS_V1,
+    orderedRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_ROLES_V1,
+    orderedKeyRoles: CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_KEY_ROLES_V1,
+    exactCardinality: 3,
+    everyProductCommitTreeReviewAndKeyBindingRequired: true,
+    everyBindingSelectedByCurrentSignedManifestAndTrustRegistry: true,
+    everyBindingTransitivelyOwnedByOwnerPresentIssuerProductReview: true,
+    pairwiseDistinctProductsAndKeysRequired: true,
+    callerSuppliedBindingAllowed: false,
+    extraFieldsAllowed: false,
+  });
+  assert.equal(Object.isFrozen(CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1), true);
 });
 
 test("CR13A-LIVE-500 makes strong-factor assurance explicit without hiding TOTP limitations", () => {
@@ -263,7 +389,9 @@ test("CR13A-LIVE-500 makes strong-factor assurance explicit without hiding TOTP 
 
 test("CR13A-LIVE-500 fixes nonce, trusted-time, lifetime, and registration boundaries", () => {
   const contract = connectionEnrollmentPrivateLoopbackOwnerPresentIssuerContractV1;
+  assert.equal(contract.minimumChallengeEntropyBits, 256);
   assert.equal(contract.minimumAuthorizationNonceEntropyBits, 256);
+  assert.equal(contract.maximumTrustedTimeReadsPerCeremony, 5);
   assert.equal(contract.maximumClockSkewSeconds, 5);
   assert.equal(contract.maximumChallengeLifetimeSeconds, 120);
   assert.equal(contract.maximumStrongFactorEvidenceLifetimeSeconds, 120);
@@ -278,7 +406,8 @@ test("CR13A-LIVE-500 fixes nonce, trusted-time, lifetime, and registration bound
 
 test("CR13A-LIVE-500 closes caller input, outputs, refusals, and uncertainty", () => {
   const contract = connectionEnrollmentPrivateLoopbackOwnerPresentIssuerContractV1;
-  assert.equal(contract.requestSchema.source, "module_minted_after_current_manifest_and_trust_preflight");
+  assert.equal(contract.requestSchema.source,
+    "module_minted_before_attempt_reservation_and_current_manifest_and_trust_preflight");
   assert.equal(contract.requestSchema.callerConstructible, false);
   assert.equal(contract.requestSchema.rawAuthorizationBodyAllowed, false);
   assert.equal(contract.requestSchema.rawCredentialOrOwnerIdentityAllowed, false);
@@ -293,7 +422,8 @@ test("CR13A-LIVE-500 requires protection while implementing and granting nothing
   const contract = connectionEnrollmentPrivateLoopbackOwnerPresentIssuerContractV1;
   const requiredTrue = [contract.ownerPresenceRequired, contract.strongFactorRequired,
     contract.finalTrustRecheckRequired, contract.freshNonceRequired, contract.trustedTimeRequired,
-    contract.separateRegistrationRequired, contract.transitiveImportInertiaRequired, contract.repositoryContractOnly];
+    contract.separateRegistrationRequired, contract.trustManifestIssuerDependencyExtensionRequired,
+    contract.durableAttemptBurnRequired, contract.transitiveImportInertiaRequired, contract.repositoryContractOnly];
   const requiredFalse = [contract.callerConstructibleRequestAllowed, contract.loginSessionAsStrongFactorAllowed,
     contract.conversationalApprovalAsStrongFactorAllowed, contract.factorFallbackOrDowngradeAllowed,
     contract.rawCredentialOrOwnerIdentityRetentionAllowed, contract.retryAfterUncertaintyAllowed,
@@ -303,18 +433,18 @@ test("CR13A-LIVE-500 requires protection while implementing and granting nothing
     contract.grantsApproval, contract.grantsQualificationAuthority, contract.grantsCandidateAuthority,
     contract.grantsActivationAuthority, contract.grantsNetworkAuthority, contract.grantsCommandAuthority,
     contract.grantsLeaseAuthority, contract.grantsExecutionAuthority];
-  assert.deepEqual(requiredTrue, new Array(8).fill(true));
+  assert.deepEqual(requiredTrue, new Array(10).fill(true));
   assert.deepEqual(requiredFalse, new Array(22).fill(false));
   assert.equal(contract.prohibitedEffects.length, 24);
-  assert.equal(contract.rules.length, 30);
+  assert.equal(contract.rules.length, 42);
 });
 
-test("CR13A-LIVE-500 publishes 39 zero actuals and eight false authority grants", () => {
+test("CR13A-LIVE-500 publishes 42 zero actuals and eight false authority grants", () => {
   const status = connectionEnrollmentPrivateLoopbackOwnerPresentIssuerStatusV1;
   assert.equal(parseConnectionEnrollmentPrivateLoopbackOwnerPresentIssuerStatusV1(status), status);
   const actuals = Object.entries(status).filter(([key]) => key.startsWith("actual"));
   const grants = Object.entries(status).filter(([key]) => key.startsWith("grants"));
-  assert.equal(actuals.length, 39);
+  assert.equal(actuals.length, 42);
   assert.equal(actuals.every(([, value]) => value === 0), true);
   assert.equal(grants.length, 8);
   assert.equal(grants.every(([, value]) => value === false), true);
@@ -360,13 +490,21 @@ test("CR13A-LIVE-500 rejects policy, assurance, lifetime, and predecessor substi
   const substitutions: Record<string, unknown>[] = [
     { live490ProductCommit: "0".repeat(40) },
     { maximumAuthorizationLifetimeSeconds: 301 },
+    { minimumChallengeEntropyBits: 128 },
     { minimumAuthorizationNonceEntropyBits: 128 },
+    { maximumTrustedTimeReadsPerCeremony: 4 },
     { loginSessionAsStrongFactorAllowed: true },
     { factorFallbackOrDowngradeAllowed: true },
     { retryAfterUncertaintyAllowed: true },
+    { trustManifestIssuerDependencyExtensionRequired: false },
+    { durableAttemptBurnRequired: false },
     { issuerImplemented: true },
     { requestSchema: Object.freeze({ ...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_SCHEMA_V1,
       callerConstructible: true }) },
+    { issuerDependencyBindingSchema: Object.freeze({
+      ...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1,
+      callerSuppliedBindingAllowed: true,
+    }) },
     { strongFactorClasses: Object.freeze([...CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_CLASSES_V1,
       Object.freeze({ evidenceClass: "sms", phishingResistant: false, hardwareProtectedRequired: false,
         separateOwnerPresenceRequired: false })]) },
@@ -383,6 +521,8 @@ test("CR13A-LIVE-500 freezes records, nested policy, parsers, and safe errors", 
     connectionEnrollmentPrivateLoopbackOwnerPresentIssuerStatusV1,
     CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_SCHEMA_V1,
     CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_SCHEMA_V1.fields,
+    CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1,
+    CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1.fields,
     CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_CLASSES_V1,
     ConnectionEnrollmentPrivateLoopbackOwnerPresentIssuerErrorV1,
     ConnectionEnrollmentPrivateLoopbackOwnerPresentIssuerErrorV1.prototype,
@@ -536,6 +676,10 @@ test("CR13A-LIVE-500 transitive production import graph is exact and effect-iner
   assert.deepEqual(exportedNames, [
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_CONTRACT_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STATUS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_FIELDS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_ROLES_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_KEY_ROLES_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_DEPENDENCY_BINDING_SCHEMA_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_FIELDS_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_REQUEST_SCHEMA_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENCE_CEREMONY_FIELDS_V1",
@@ -545,7 +689,15 @@ test("CR13A-LIVE-500 transitive production import graph is exact and effect-iner
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_EVIDENCE_FIELDS_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_STRONG_FACTOR_RESULTS_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_FIELDS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_FIELDS_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUST_PREFLIGHT_RESULTS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_FINAL_TRUST_RECHECK_RESULTS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_FIELDS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_CHALLENGE_DOMAINS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_FIELDS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_ATTEMPT_MARKER_STATES_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_CHRONOLOGY_INVARIANTS_V1",
+    "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_ISSUER_UNIQUENESS_RULES_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_NONCE_INTENT_FIELDS_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_TRUSTED_TIME_AUTHORITIES_V1",
     "CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_OWNER_PRESENT_ISSUER_STAGES_V1",
