@@ -4658,3 +4658,40 @@ focused tests in `tests/connection-enrollment-private-loopback-observation-attes
 Exact product `2cab7dff3a2ca277f4b4d766a2cd02779e0f505d`, tree
 `676cc414327a2acf714b96a149aea43348d48049`, is independently accepted with 0 High/Medium/Low for ordinary inert
 integration only.
+
+## ADR-198 — Make owner spend and exact-product attempt closure one atomic prerequisite
+
+**Decision:** Before any native source/provider work, one same-module lexical production capsule must authenticate an
+owner-root-pinned and independently anchored trust registry/manifest, resolve every dependency internally, preflight
+all five providers/cleanup, materialize signed reservation intents, and atomically consume a separate owner-native
+authorization together with the exact source-owner/runner product-pair attempt. An independently protected composite
+owner-attempt anchor covers every owner-store head. The product-pair key excludes candidate, attempt, and authorization
+relabels.
+
+**Why:** A broker invocation authorization does not prove owner consent to native host reads. A product-attempt row
+written separately from owner consumption could fail between commits and leave the same binary pair reusable.
+Caller-supplied dependencies or a generic service locator could substitute a source, provider, key, signer, database,
+or checkpoint after review. PostgreSQL-only attempt state could be rolled back as a whole. One closed lexical capsule,
+one atomic transaction, and one independent monotonic composite anchor remove those authority gaps.
+
+**Alternatives rejected:** treat repository acceptance or broker authorization as owner-native authority; let a
+diagnostic product run again under a new attempt ID; accept dependency injection into the production root; use a
+dynamic provider registry; allow owner-consumption and product-attempt rows to commit separately; resume after commit
+uncertainty; reconstruct a private receipt during recovery; let reconciliation write or call protected behavior; make
+a signed but rolled-back manifest current; use PGlite as production evidence.
+
+**Evidence required:** exact LIVE-440/450/460 binding; same-module source/capsule topology; out-of-band trust root;
+independently anchored registry, manifest, and all-owner-head composite; complete owner body/operation ceilings;
+pairwise-distinct key lifecycle; exact append-only PostgreSQL schema/grants; atomic consumption/product closure;
+post-transaction recheck; non-resuming uncertainty matrix; fixed parent/child/cleanup/finalizer IPC ownership; closed
+public schema; transitive import inertia; fake/production separation; zero current effects; and a different independent
+report-only architecture review.
+
+**Reevaluate:** Before every owner contract/store, capsule, provider, key, database, source-owner, native, runtime, or
+deployment implementation.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_470_PRODUCTION_CAPSULE_OWNER_NATIVE_AUTHORIZATION_DESIGN.md`. Current authority covers documentation
+only. The first audit's 5 High and 4 Medium findings were remediated; a different report-only re-review accepted the
+final architecture with 0 High, 0 Medium, and 0 Low. Review and acceptance are preserved in
+`docs/reviews/CR13A_LIVE_470_ARCHITECTURE_REVIEW.md` and `docs/CR13A_LIVE_470_ARCHITECTURE_ACCEPTANCE.md`.
