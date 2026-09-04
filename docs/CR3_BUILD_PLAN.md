@@ -1956,7 +1956,8 @@ network, provider, or external effects. Preserve `docs/reviews/CR13A_LIVE_320_IN
 
 ## CR13A-LIVE-330 — unreachable atomic native-observation source consolidation
 
-Status: architecture frozen; stacked repository implementation may proceed only on accepted LIVE-320. Use Sol xhigh.
+Status: exact product `06be655d188c45902c015f85225673dfc31c445d` independently accepted; ordinary integration
+of the unreachable source ready. Use Sol xhigh.
 
 LIVE-330 may add one dedicated private module with one statically selected `node:process` namespace and the exact
 `node:os` platform, architecture, release, and uptime callables. One frozen no-input synchronous function may contain
@@ -1969,3 +1970,27 @@ module initialization or tests; export/retrieve/invoke the function; inspect a d
 serialize, persist, sign, or use an observation; implement clock, nonce, replay, candidate, owner, listener, runtime,
 provider, or deployment behavior; clear a blocker; perform a physical attempt; or touch production state. Immutable
 producer evidence and a different independent report-only zero-repair review are required before ordinary integration.
+
+Producer verification passed 11/11 dedicated tests, 339/339 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. A fresh different reviewer passed all twelve groups and fourteen commands exactly once with
+0 High/Medium/Low, exact three-path scope, verified disposable cleanup, and zero source lookup/invocation, descriptor,
+process, OS, host, network, provider, or external effects. Preserve
+`docs/reviews/CR13A_LIVE_330_INDEPENDENT_REVIEW.md`; SHA-256
+`da2c7529b8a5e023b706df8e6ab912e2096c2742edfda0e74758991721031f85`.
+
+## CR13A-LIVE-340 — private one-use native-observation invocation contract
+
+Status: architecture frozen; effect-free contract implementation may proceed on accepted LIVE-330. Use Sol xhigh.
+
+LIVE-340 may freeze one inert exact contract for a future authenticated one-use authorization to retrieve and invoke
+the LIVE-330 source inside the same private module. The contract must bind implementation identity, tenant/project/
+connection/node/candidate/attempt lineage, platform/runtime, one operation, fresh nonce, trusted time, atomic
+pre-lookup consumption, replay, post-transaction time recheck, terminal ambiguity, and raw-value privacy. It may export
+only immutable safe contract/status records, fixed rule/stage/blocker/outcome arrays, strict parsers, and safe errors.
+
+The block must not import or modify LIVE-330 or any native/effect module; create an authorization store, key, token,
+clock, nonce, checkpoint, spend, bridge, lookup, or invocation; inspect a descriptor; read or use native values; create
+an observation or attestation; persist anything; implement candidate/owner/listener/runtime/provider/deployment
+behavior; clear a blocker; perform a physical attempt; or touch production state. Immutable producer evidence and a
+different independent report-only zero-repair review are required before ordinary integration.

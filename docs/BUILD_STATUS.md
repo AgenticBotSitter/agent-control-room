@@ -141,24 +141,24 @@
 | CR13A-LIVE-300 private target-runtime observation trust contract | Independently accepted; ordinary integration of inert contract ready | Product `aca7b98...`; 14/14 commands, 10/10 focused, 306/306 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 32 zero actuals and eight false grants |
 | CR13A-LIVE-310 unreachable trusted native-binding validator | Independently accepted after one code-remediation pass and one report-format correction; ordinary integration of unreachable source ready | Corrected product `d95738b...`; third reviewer closed M-001/M-002/L-001, passed 14/14 commands, 12/12 focused, 318/318 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero native/descriptor/process/external effects |
 | CR13A-LIVE-320 private atomic native-observation composition contract | Independently accepted; ordinary integration of the inert contract ready | Product `0c90641...`; 14/14 commands, 10/10 focused, 328/328 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 13 rules, 15 stages, 14 blockers, and zero native/host/external effects |
-| CR13A-LIVE-330 unreachable atomic native-observation source consolidation | Architecture frozen; stacked repository implementation in progress | One private same-module source may capture exact process/OS bindings and validate/consume descriptor values atomically, but remains stored with no lookup or invocation and performs zero native reads |
+| CR13A-LIVE-330 unreachable atomic native-observation source consolidation | Independently accepted; ordinary integration of exact unreachable source ready | Product `06be655...`; 14/14 commands, 11/11 focused, 339/339 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; private source stored once with zero lookup/invocation/native reads |
+| CR13A-LIVE-340 private one-use native-observation invocation contract | Architecture frozen; inert contract implementation next | Future retrieval requires exact authenticated one-use lineage/time/operation binding and atomic pre-lookup spend; LIVE-340 performs no lookup, invocation, native read, or persistence |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-320 product `0c906419652adceb5e771637ae269b52fd1c77cd` is independently accepted. The contract fixes
-one private same-module synchronous validation-and-consumption boundary, 13 rules, 15 stages, 14 blockers, 32 zero
-actual totals, and eight false grants. A fresh reviewer passed all twelve groups and fourteen commands once with
-0 High/Medium/Low, 10/10 focused tests, 328/328 CR13A tests, 5/5 build phases, 4/4 rendered routes, and 119 tables.
-Zero native imports, source changes, lookups, invocations, descriptor/process/OS/host reads, or external effects
-occurred. Accepted review SHA-256:
-`da7d247d874d543877c18215ae9e8fbbba7ba838065fe6a9d410772e776799d6`.
+CR13A-LIVE-330 product `06be655d188c45902c015f85225673dfc31c445d` is independently accepted. One private frozen
+no-input synchronous function contains exact descriptor validation, direct descriptor-value consumption, OS result
+validation, and private observation construction. It is stored once with no lookup, export, invocation, or production
+consumer. A fresh reviewer passed all twelve groups and fourteen commands once with 0 High/Medium/Low, 11/11 focused
+tests, 339/339 CR13A tests, 5/5 build phases, 4/4 rendered routes, and 119 tables. Zero descriptor/process/OS/host
+reads, source lookups/invocations, or external effects occurred. Accepted review SHA-256:
+`da2c7529b8a5e023b706df8e6ab912e2096c2742edfda0e74758991721031f85`.
 
-Next block: CR13A-LIVE-330, unreachable atomic native-observation source consolidation. It may add one dedicated
-private source that statically captures the exact process namespace and minimum OS callables and places validation,
-direct descriptor-value consumption, and observation construction in one synchronous no-input function. The function
-must remain stored with no lookup, export, invocation, or consumer, so module initialization and tests read no native
-value. Use `gpt-5.6-sol` at `xhigh` effort.
+Next block: CR13A-LIVE-340, the private one-use native-observation invocation contract. It will freeze exact identity,
+lineage, trusted-time, nonce, operation, replay, atomic-spend, uncertainty, same-module custody, and raw-value privacy
+rules before any retrieval bridge exists. LIVE-340 is inert and must add no lookup, invocation, native read,
+authorization store, token, persistence, listener, provider, or deployment effect. Use `gpt-5.6-sol` at `xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1387,12 +1387,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-330 — implement unreachable atomic native-observation source consolidation
+Block: CR13A-LIVE-340 — implement private one-use native-observation invocation contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-320 is independently accepted and now fixes the atomic composition rules. The next block adds the real consolidated source while keeping it structurally unreachable so the native trust boundary can be reviewed before the first read.
-Expected output: one private frozen no-input synchronous source stored once with no lookup, exact descriptor validation and direct value consumption in one body, strict sanitized zero-use evidence, hostile static proof, full verification, and independent review.
-Owner action: none for unreachable repository source and ordinary merges. Lookup/invocation, descriptor/process/OS/host reads, raw observation use, attestation, or physical qualification remain separately gated.
+Why: LIVE-330 is independently accepted and contains the real source, but it remains unreachable. The next contract must make one-use authorization consumption, replay protection, uncertainty, and same-module custody explicit before any source lookup can be implemented.
+Expected output: one inert exact contract for a future authenticated one-use invocation authorization, atomic pre-lookup spend, terminal ambiguity after uncertain commit, exact stage/blocker/outcome rules, sanitized zero-use evidence, hostile tests, full verification, and independent review.
+Owner action: none for the inert repository contract and ordinary merges. Authorization-store implementation, lookup/invocation, descriptor/process/OS/host reads, observation use, attestation, or physical qualification remain separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
