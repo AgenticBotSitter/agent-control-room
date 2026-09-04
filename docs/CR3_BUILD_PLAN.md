@@ -1504,7 +1504,9 @@ did not construct or import the native driver and clear none of the twelve block
 
 ## CR13A-LIVE-140 — target-runtime attestation boundary
 
-Status: next architecture block after owner-controlled LIVE-130 integration. Use Sol xhigh.
+Status: exact product `6e716bd77c26ad7f70343ddd687dff990f5db12f` is independently accepted on a stacked
+branch and ready for ordinary owner-controlled integration. Use Sol xhigh.
+See `CR13A_LIVE_140_TARGET_RUNTIME_ATTESTATION_BOUNDARY.md` and ADR-165.
 
 LIVE-140 must define, implement with repository fakes, and independently review a privacy-preserving target-runtime
 attestation port. It may describe the minimum stable claims needed to bind a future qualification candidate to one
@@ -1516,3 +1518,44 @@ Architecture and ADR come first. The effect-free implementation must use exact p
 claims, explicit expiry/replay/epoch boundaries, no production-shaped proof issuer, no clock/callback/executable input,
 zero authority grants, and runtime non-wiring. A future real attestor, host observation, candidate assembly, owner
 window, native qualification, and activation each remain separate blocks.
+
+The frozen contract selects the intended macOS/Node 22 private-loopback host class, both supported Mac architecture
+classes, single-boot/process/candidate/attempt binding, a 60-second future ceiling, exact required private claim names,
+and a strict public privacy boundary. It explicitly rejects raw or unsalted host identifiers. This block implements
+only one exact policy singleton and one `repository_fake` singleton with every real observation, proof, blocker-clearance,
+authority, and effect field false or zero.
+
+The exact product passes 9/9 dedicated tests, 140/140 connection tests, 157/157 CR13A tests, the complete lifecycle,
+production build with 4/4 rendered routes, and migrations 0001-0036/119 tables. The readiness-only independent packet
+is `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`. It forbids broad driver-importing tests, `tsx` CLI/version
+probes, host observation, and every native/external effect.
+
+The first reviewer passed all eleven fixed gates but bare `--import tsx` from its out-of-tree hostile entrypoint could
+not resolve the package and exited before product import. It correctly stopped without retry. Preserve the rejected
+report at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
+`6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. The corrected packet
+`docs/reviews/CR13A_LIVE_140_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` pins the prevalidated explicit loader
+`./node_modules/tsx/dist/loader.mjs` for one new reviewer's single out-of-tree invocation; product remains unchanged.
+
+Later report-only reviews preserved a guessed-path stop, a `.ts` module-format stop, and a redundant issuer-check false
+positive without changing the product. The final packet binds committed hostile helper SHA-256
+`ded101e5d21d78efe5aeceb0ea647bb22469b3430ffb45a06126bd5c1556d60b`. A fifth different reviewer passed all 16
+exact commands, all twelve hostile groups, 63 hostile attempts and eight replacement attempts with zero executions,
+and every forbidden-effect count at zero. Preserve
+`docs/reviews/CR13A_LIVE_140_FINAL_INDEPENDENT_REVIEW.md`; SHA-256
+`483ab05695b5cecaa6fe02ca4cc63b2e640733ac42270e2a435364c6be0ea6d8`. This accepts only effect-free integration;
+the target-runtime blocker remains missing.
+
+## CR13A-LIVE-150 — private locator broker boundary
+
+Status: next effect-free architecture and implementation block. Use Sol xhigh.
+
+LIVE-150 must freeze one opaque, one-use private locator-broker boundary before any literal loopback address or port is
+selected. It may implement exact repository contracts, a non-production fake, strict provenance parsers, hostile
+tests, and status projection only. It must not read or select a host address, enumerate interfaces, reserve a port,
+construct a socket/listener, issue or spend a capability, expose a locator, contact a provider, or wire runtime use.
+
+The fake must retain `private_locator_broker_missing` and `exclusive_port_custody_missing`, keep every issuance/spend/
+selection/native/network/effect count at zero, grant no authority, and remain structurally impossible to relabel as a
+real private locator. Architecture, product verification, and a different independent review are required before
+ordinary owner-controlled integration.

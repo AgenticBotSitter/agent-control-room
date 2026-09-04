@@ -122,6 +122,7 @@
 | CR13A-LIVE-110 native-driver and activation-evidence contract | Independently accepted and integrated on `main` through PR #240 | Different reviewer closed M-001/M-002; merge `1ee5409...`; post-merge CI `33804402020` passed; no native implementation, listener, or network effect |
 | CR13A-LIVE-120 unwired physical native driver | Independently accepted and integrated on `main` through PR #241 | Different reviewer closed all four High and five Medium findings; owner-approved merge `19a8716...`; post-merge CI `33818001699` passed; zero native/listener/network effects |
 | CR13A-LIVE-130 physical qualification prerequisite boundary | Independently accepted; ordinary owner-controlled integration ready | Product `339c2e8...`; rejected first protocol preserved; corrected second review 0 High/Medium/Low, 9/9 readiness, 4/4 render, 119 tables, 30 hostile attempts/0 executions, and zero listener/IPC/native/network/effects |
+| CR13A-LIVE-140 target-runtime attestation boundary | Independently accepted; ordinary owner-controlled integration ready | Product `6e716bd...` unchanged; fifth different reviewer passed 16/16 exact commands and all 12 groups; 63 hostile and 8 replacement attempts executed zero behavior; 0 High/Medium/Low and zero host/listener/IPC/native/network/effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -1304,6 +1305,26 @@ effects were all zero. Preserve
 `02fa96a370615a331d8ccfadaa5d9de1d2ed420eafbce60014d2b394b1283290`. Ordinary owner-controlled integration is
 ready; all twelve physical blockers remain.
 
+CR13A-LIVE-140 exact product `6e716bd77c26ad7f70343ddd687dff990f5db12f` now freezes the intended macOS/Node
+target-runtime policy and one exact non-production repository fake without observing this Mac. It fixes two supported
+architecture classes, fourteen required private claims, a future 60-second maximum lifetime, strict privacy rules,
+false blocker/authority truth, and zero host/native/listener/IPC/socket/port/network/effect counts. The only source
+consumer is the safe connection-registry barrel.
+
+Producer verification passed 9/9 dedicated tests, 140/140 connection tests, 157/157 CR13A tests, the complete lifecycle,
+5/5 build phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace.
+Four independent runs then preserved honest review-harness failures without finding a product defect or changing the
+product. The final packet binds a committed, typechecked, linted, architect-prevalidated hostile helper instead of
+allowing reviewer-generated executable content.
+
+A fifth different reviewer passed all 16 exact commands and all twelve hostile groups. Sixty-three hostile attempts
+and eight ambient replacement attempts executed zero behavior. All protected-value, host-observation, physical-driver,
+native, capability, admission, candidate, owner-spend, physical-listener, IPC-listener, socket, port, network, and
+external-effect counts were zero. P-001 through P-004 closed with 0 High, 0 Medium, and 0 Low findings. Preserve
+`docs/reviews/CR13A_LIVE_140_FINAL_INDEPENDENT_REVIEW.md`; SHA-256
+`483ab05695b5cecaa6fe02ca4cc63b2e640733ac42270e2a435364c6be0ea6d8`. Ordinary owner-controlled integration is
+ready; `target_runtime_attestation_missing` remains true and no live authority exists.
+
 ## Parallel build lane
 
 The owner accepted Agent Build System V2 on 2026-08-25. The private GitHub repository remains the temporary coordination plane, but legacy open issues are inventory rather than a claimable queue. New delegated work requires a Codex-authored frozen wave and `ready` task capsule. A globally serialized issue-command controller atomically claims eligible platform-labelled jobbers, enforces route concurrency, returns only untouched work to ready, moves attempted failures to Codex triage, and releases capacity on submission so agents can continue without waiting for review. Worker results target `integration/<block>`, pass automated intake, receive independent verification where required, and are promoted by Codex into one block pull request. Direct-to-main, self-assigned, stale, overlapping, or manifest-free worker results are quarantined before semantic review.
@@ -1319,12 +1340,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-140 — freeze the target-runtime attestation boundary without collecting host identity
+Block: CR13A-LIVE-150 — freeze and implement the effect-free private locator broker boundary
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-130 now exposes the twelve real blockers; the first dependency is a privacy-preserving contract that can later bind one exact target runtime without exposing raw host, user, path, process, credential, or network identity.
-Expected output: architecture/ADR first, then one effect-free exact-branded attestation request/result contract and repository fake, hostile tests, immutable review packet, and independent disposition; real host observation remains absent.
-Owner action: none for architecture, effect-free implementation, fake tests, and review. Any real target-runtime observation remains a later owner-attended, separately authorized action.
+Why: LIVE-140 is independently accepted; the next unresolved prerequisite is private locator custody, but repository work must define its opaque one-use boundary before any address or port can be selected.
+Expected output: frozen locator-broker architecture, exact repository fake and strict parser, deterministic hostile tests, no raw locator disclosure, no capability issuance/spend, no port selection, runtime non-wiring, full verification, and independent review.
+Owner action: none for architecture, effect-free implementation, fake tests, and review. Any real locator or exclusive-port reservation remains a later owner-attended, separately authorized action.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
