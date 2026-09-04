@@ -3969,3 +3969,38 @@ contacting a provider; or deploying.
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_280_PRIVATE_PHYSICAL_QUALIFICATION_CANDIDATE_CONTRACT.md`. The current owner instruction authorizes
 repository implementation and ordinary merges only; it does not authorize a physical attempt or any external effect.
+
+**Accepted evidence:** Exact product `c1743b7f7b5c8362cec3d33b149e3f51c5e5fda6` passed 10/10 dedicated,
+286/286 CR13A, the complete 769/392/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0036/119
+tables, TypeScript, lint, macOS stage zero, and whitespace. The first review's procedural rejection is preserved. A
+different fresh reviewer passed the corrected fourteen-command protocol once with 0 High/Medium/Low and zero effects.
+Accepted rereview SHA-256: `bd8281cf4e0336eba7f55de2b8cde9e39e9305860a2a8287e3dcf74af52d7853`.
+
+## ADR-180 — Add real native observation source without making observation reachable
+
+**Decision:** CR13A-LIVE-290 may implement one private no-input target-runtime observer in a dedicated native module,
+capture only the minimum OS/runtime/process operations, and store the observer once in a module-private WeakMap with no
+lookup. The safe barrel does not import the module. Public evidence remains fixed, sanitized, and zero-use.
+
+**Why:** LIVE-280 identifies real target-runtime attestation as the first missing component. A real attestation still
+requires a trusted clock, nonce, signer, candidate/attempt binding, and replay checkpoint. Adding the lowest native
+observer while it remains unreachable lets its privacy and import boundary be reviewed separately from the first host
+read and from authority-bearing attestation composition.
+
+**Alternatives rejected:** use the LIVE-140 repository fake as real evidence; invoke native observation in tests;
+export an observer/getter/callback/capability; read host values during module initialization; expose or hash raw host
+identity in public evidence; import the observer from the safe barrel or runtime; or combine observer source,
+attestation, candidate assembly, owner approval, physical attempt, and activation.
+
+**Evidence required:** exact accepted LIVE-280 product/review binding; one private frozen stored observer; no private-map
+lookup; zero initialization and test invocation; minimum captured native set; no forbidden host fields or effect module;
+no production consumer; strict safe provenance; hostile and ambient zero execution; all observation/effect totals zero;
+all grants false; full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before adding a private-map lookup or bridge; invoking the observer; reading or signing host material;
+adding nonce/clock/replay state; importing the observer from production code; assembling a candidate or owner window;
+retrieving the native shell; performing listener/native activity; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_290_UNREACHABLE_NATIVE_TARGET_RUNTIME_OBSERVER.md`. The owner
+instruction authorizes repository source implementation and ordinary merges only; it does not authorize an observer
+invocation, host read, physical attempt, or external effect.
