@@ -1771,7 +1771,8 @@ listener, network, persistence, protected-read, wiring, blocker, and authority v
 
 ## CR13A-LIVE-250 — private one-use native-factory retrieval bridge contract
 
-Status: next isolated contract block. Use Sol xhigh.
+Status: exact product `9b855d4193837fdf6d0d0fce1dcfd65a94cce49f` independently accepted; ordinary integration
+ready. Use Sol xhigh.
 
 LIVE-250 may freeze the exact same-module, non-exported bridge by which accepted LIVE-240 prerequisite and durable
 marker evidence could later permit one retrieval of the quarantined LIVE-220 factory. It must define exact product and
@@ -1784,3 +1785,24 @@ observe or expose a locator; issue or spend live authority; write live persisten
 driver; wire an app, API, worker, Idea Lab, Hermes, startup, or production consumer; clear a blocker; make a physical
 attempt; contact a provider; or deploy. Immutable fake evidence and a different independent zero-repair review are
 required before ordinary integration.
+
+Producer verification passed 8/8 dedicated, 263/263 CR13A, the complete lifecycle, all five build phases, 4/4
+rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A different
+report-only reviewer ran all twelve commands exactly once with 0 High/Medium/Low and zero real effects. Preserve
+`docs/reviews/CR13A_LIVE_250_INDEPENDENT_REVIEW.md`; SHA-256
+`2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6`.
+
+## CR13A-LIVE-260 — private same-module native-composition shell contract
+
+Status: next isolated contract block. Use Sol xhigh.
+
+LIVE-260 may freeze an inert contract for the future private native-composition shell that must live in the same source
+module as LIVE-220 factory custody. It must define the exact internal call graph, exact accepted LIVE-250 binding,
+module-owned identities, no-input/non-export rules, consumption and invocation separation, continuous custody,
+failure/ambiguity semantics, restart reconciliation, safe evidence, and all remaining blockers.
+
+The block must not modify or import LIVE-220/LIVE-240; implement or exercise the bridge or shell; expose, retrieve,
+return, invoke, serialize, or test the real factory; import a new native/effect module; create, listen on, inspect,
+transfer, or close a real resource; observe or expose a locator; issue or spend live authority; write live persistence;
+wire runtime use; clear a blocker; assemble a candidate; make a physical attempt; contact a provider; or deploy.
+Immutable repository evidence and a different independent zero-repair review are required before ordinary integration.
