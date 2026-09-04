@@ -4339,3 +4339,10 @@ provider contact, production database configuration, or deployment.
 **Architecture evidence:** Frozen in `docs/CR13A_LIVE_380_POST_TRANSACTION_DATABASE_TIME_RECHECK.md`. Current authority
 covers repository-only read validation and local PGlite proof; it does not authorize a source lookup, protected native
 read, or production database contact.
+
+**Accepted evidence:** Product `1b79bbc75dfe74ce0777bcc33cbcc801054113f0` passed 42/42 dedicated, 392/392
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0038/124 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, verified cleanup, and zero new-spend/source/native/listener/production-database/
+network/provider/external effects. Accepted review SHA-256:
+`4a5f60f8ca2ad08ee04f1603773279aef97558edfa27acda1604592f8ae610bd`.
