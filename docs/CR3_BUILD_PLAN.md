@@ -2158,3 +2158,21 @@ twelve groups and fourteen commands once with 0 High/Medium/Low, 12/12 focused, 
 38 migrations/124 tables, exact cleanup, zero receipt exposure, and zero source/native/listener/network/provider/
 production/external effects. Preserve `docs/reviews/CR13A_LIVE_400_INDEPENDENT_REVIEW.md`; SHA-256
 `fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`.
+
+## CR13A-LIVE-410 — private same-module atomic source-lookup bridge contract
+
+Status: architecture frozen; inert repository contract, verification, and independent review in progress. Use Sol
+xhigh.
+
+LIVE-410 may freeze one inert contract binding the exact accepted LIVE-330 unreachable atomic source and exact
+accepted LIVE-400 private spend/recheck composition. A future bridge may look up the source at most once only from its
+own exact private post-recheck branch inside one consolidated same-module lexical path. Public LIVE-400 outcomes,
+receipts, booleans, digests, callbacks, getters, exported bridge functions, and caller assertions are evidence only and
+never source authority. The contract must keep current lookup/invocation/database/native/effect totals zero and stop
+before any executable source retrieval.
+
+The eventual implementation must resolve the current lexical separation through a separately reviewed private
+consolidation, never by exporting the LIVE-330 map/source or a LIVE-400 success capability. Missing source, lookup
+uncertainty, substitution, or any failure after committed spend is terminal without retry, replacement, refund,
+fallback, or a second lookup. See
+`docs/CR13A_LIVE_410_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_CONTRACT.md`.

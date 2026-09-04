@@ -164,10 +164,13 @@ passed all twelve groups and fourteen commands once with 0 High/Medium/Low, inde
 415/415 CR13A tests, verified build/render/migrations, and removed its exact disposable root. Accepted review SHA-256:
 `fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`.
 
-Next block: CR13A-LIVE-410, private same-module atomic source-lookup bridge contract. Use `gpt-5.6-sol` at `xhigh`
-effort. It may freeze the exact one-use private success state required for the first lookup of the accepted LIVE-330
-source, but it must remain inert: no implementation lookup, source invocation, protected native read, observation,
-runtime consumer, production contact, network, provider, or external effect. Architecture must be frozen first.
+CR13A-LIVE-410 architecture is frozen. Its future lookup authority is the unbroken private flow after the exact fresh
+spend and successful immediate recheck, never LIVE-400's public success result, a receipt, boolean, digest, callback,
+getter, exported bridge, or caller assertion. The accepted LIVE-330 source storage and final LIVE-400 decision must be
+consolidated behind one private module boundary before an implementation may perform at most one lookup. The current
+block remains inert: repository contract, zero-use status, hostile tests, full verification, and independent review are
+in progress. No database call, source lookup/invocation, protected native read, runtime consumer, production contact,
+network, provider, or external effect is authorized.
 
 Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
 remains unreachable with no native reads and no lookup.

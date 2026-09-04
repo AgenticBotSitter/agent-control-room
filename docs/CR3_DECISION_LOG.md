@@ -4420,3 +4420,39 @@ with 0 High/Medium/Low; 12/12 focused tests; 415/415 CR13A tests; 5/5 build phas
 23 zero static actuals, eight false grants, no source/native/runtime consumer or receipt exposure, and exact disposable
 cleanup. Preserve `docs/reviews/CR13A_LIVE_400_INDEPENDENT_REVIEW.md`; SHA-256
 `fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`.
+
+## ADR-192 — Source lookup requires private control-flow provenance, not a public success object
+
+**Decision:** CR13A-LIVE-410 will freeze an inert contract for the first future lookup of the accepted LIVE-330 atomic
+source. The lookup may occur at most once only as the immediate next private stage after the future consolidated flow's
+own exact LIVE-400 fresh spend and successful post-transaction recheck. The source storage and final success branch
+must share one private module boundary. No source, map, key, getter, callback, exported bridge, receipt, token, or
+success value may cross a module export to connect them.
+
+**Why:** LIVE-400's public `completed_and_stopped_before_lookup` value is deliberately sanitized evidence. Treating it,
+its identity, or a receipt as lookup authority would create a replayable bearer capability and undo the lexical
+custody established by LIVE-390 and LIVE-400. LIVE-330's private `WeakMap` is similarly safe because it has no lookup;
+exporting a retrieval seam would undo that boundary. The authority must therefore be the unbroken private call path,
+not data a caller can retain, copy, reconstruct, or replay.
+
+**Alternatives rejected:** call LIVE-400 publicly and branch on its result; accept or parse a success result; accept a
+spend/recheck receipt; export a LIVE-330 lookup/getter/map/key/source; export a LIVE-400 continuation or callback;
+authorize by boolean, object identity, digest, nonce, database row, or implementation identifier; retry, replace,
+refund, unconsume, fall back, or perform a second lookup after uncertainty/failure; or combine the inert contract with
+source modification/lookup/invocation, protected native reads, provider contact, physical qualification, or deployment.
+
+**Evidence required:** exact accepted LIVE-330 and LIVE-400 product/review binding; fixed same-module and unbroken
+private-flow rules; explicit public-result non-authority; at-most-one future lookup and direct private invocation
+handoff; terminal failure/no-retry semantics; strict immutable singleton provenance; hostile and ambient zero
+execution; all actual totals zero; all grants false; full producer verification; and a different independent
+report-only zero-repair review.
+
+**Reevaluate:** Before importing or modifying LIVE-330 or LIVE-400; consolidating their private internals; constructing
+the authorization store; adding a private success state, lookup, retrieval, or invocation; reading protected native
+material; creating an observation, attestation, checkpoint, candidate, or owner window; performing a physical attempt;
+wiring runtime use; contacting a provider or production database; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_410_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_CONTRACT.md`. Current authority covers only inert repository
+contract work and deterministic tests; it does not authorize a database call, source lookup, native read, or external
+effect.
