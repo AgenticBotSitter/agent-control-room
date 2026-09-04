@@ -198,14 +198,16 @@ test("CR13A-LIVE-390 source contains no executable composition, store, database,
   assert.doesNotMatch(source, /function (?:consume|recheck|retrieve|lookup|invoke)/);
 });
 
-test("CR13A-LIVE-390 has only the safe barrel as a production consumer", async () => {
+test("CR13A-LIVE-390 has only the safe barrel and separately gated LIVE-400 consumer", async () => {
   const consumers: string[] = [];
   const barrel = resolve(root, "src/connection-registry/v1/index.ts");
+  const live400 = resolve(root,
+    "src/connection-registry/v1/private-loopback-fresh-spend-recheck-composition.ts");
   for (const file of await sourceFiles(resolve(root, "src"))) {
     if (file === modulePath) continue;
     if ((await readFile(file, "utf8")).includes(moduleName)) consumers.push(file);
   }
-  assert.deepEqual(consumers, [barrel]);
+  assert.deepEqual(consumers, [barrel, live400]);
 });
 
 test("CR13A-LIVE-390 public evidence contains no authorization, receipt, database, or native material", () => {

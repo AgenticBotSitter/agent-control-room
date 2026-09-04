@@ -2131,3 +2131,30 @@ native, provider, network, or external effect. A fresh different reviewer passed
 commands exactly once with 0 High/Medium/Low, verified cleanup, and zero product/source/native/listener/network/
 provider/production/external effects. Preserve `docs/reviews/CR13A_LIVE_390_INDEPENDENT_REVIEW.md`; SHA-256
 `c41370441890e64ef53c76c65a8990119520f550cea093e59aa71d7a4926e586`.
+
+## CR13A-LIVE-400 — private fresh-spend/recheck composition implementation
+
+Status: exact product `ccce7c84ebfbf955f05fb7b150c1ccf9b80535b3` independently accepted; ordinary integration
+of the unwired private composition ready. Use Sol xhigh.
+
+LIVE-400 may add one non-barrel-exported repository factory that constructs the exact accepted invocation-
+authorization store from a database client and three protected keys, then returns one frozen runner. Each runner entry
+accepts only the sealed authorization, performs one LIVE-370 spend, privately passes the exact fresh receipt and same
+sealed value through one LIVE-380 recheck, returns neither receipt, and emits only a frozen coarse terminal result.
+Unknown spend state, replay, mutation, expiry, or recheck failure is terminal before lookup. Success is
+`completed_and_stopped_before_lookup`, not a capability.
+
+No source import/lookup/invocation, native read, observation, attestation, candidate, owner window, runtime consumer,
+network, provider, production database, deployment, or external effect is permitted. Local PGlite spend/recheck
+verification is allowed. See `docs/CR13A_LIVE_400_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_IMPLEMENTATION.md`.
+
+Producer verification passed 12/12 dedicated tests, 415/415 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0038/124 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. The implementation constructs the exact store inside its factory, captures the accepted spend/recheck
+methods, returns neither private receipt, publishes only five coarse terminal outcomes, has 23 static zero actuals and
+eight false grants, is absent from the barrel, and has no source/native/runtime consumer. The immutable review packet
+is `docs/reviews/CR13A_LIVE_400_INDEPENDENT_REVIEW_PACKET.md`. A fresh different reviewer then passed all
+twelve groups and fourteen commands once with 0 High/Medium/Low, 12/12 focused, 415/415 CR13A, 5/5 build, 4/4 render,
+38 migrations/124 tables, exact cleanup, zero receipt exposure, and zero source/native/listener/network/provider/
+production/external effects. Preserve `docs/reviews/CR13A_LIVE_400_INDEPENDENT_REVIEW.md`; SHA-256
+`fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`.

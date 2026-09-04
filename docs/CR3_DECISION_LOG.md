@@ -4388,3 +4388,35 @@ with 0 High/Medium/Low; 11/11 focused tests; 403/403 CR13A tests; 5/5 build phas
 0001-0038/124 tables. All 28 product actuals remained zero, all eight grants remained false, and exact disposable
 cleanup was verified. Preserve `docs/reviews/CR13A_LIVE_390_INDEPENDENT_REVIEW.md`; SHA-256
 `c41370441890e64ef53c76c65a8990119520f550cea093e59aa71d7a4926e586`.
+
+### ADR-191: keep the first executable spend/recheck composition private, receiptless, and stopped before source lookup
+
+**Decision:** CR13A-LIVE-400 may construct the accepted invocation-authorization store inside one repository-owned,
+non-barrel-exported factory. Its frozen runner accepts only a sealed authorization. A nested lexical flow performs at
+most one LIVE-370 spend and, only for its own fresh result, one immediate LIVE-380 recheck using the same sealed value
+and exact receipt object. Neither receipt is accepted from or returned to the caller. Every branch returns a coarse,
+frozen, non-authorizing terminal result and stops before source lookup.
+
+**Reason:** public composition of receipts would allow replay or substitution at the final authorization boundary.
+Private lexical custody binds the two accepted database operations while preserving a separately reviewable stop
+before any native source becomes reachable. Treating unknown commit state, already-spent evidence, and all post-spend
+failure as terminal prevents retry from manufacturing authority.
+
+**Consequence:** repository and local PGlite execution may spend and recheck synthetic authorizations, but the module
+has no barrel/runtime consumer and cannot reach LIVE-330 or any source/native/provider/production path. A later block
+must separately freeze and review the source lookup boundary. See
+`docs/CR13A_LIVE_400_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_IMPLEMENTATION.md`.
+
+**Producer evidence:** Exact product `ccce7c84ebfbf955f05fb7b150c1ccf9b80535b3` passed 12/12 focused, 415/415 CR13A,
+the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables, TypeScript, lint,
+macOS stage zero, whitespace, and clean status. Replay, concurrency, recheck expiry, commit-return uncertainty,
+database failure, mid-flight mutation, and hostile inputs all stop before lookup. Both receipts remain lexical and
+unreturned; the module is absent from the barrel and has no source/native/runtime consumer. This producer evidence is
+kept separate from the later independent reruns.
+
+**Accepted evidence:** A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once
+with 0 High/Medium/Low; 12/12 focused tests; 415/415 CR13A tests; 5/5 build phases; 4/4 rendered routes; and migrations
+0001-0038/124 tables. The reviewer verified exact private receipt custody, terminal replay/ambiguity/failure handling,
+23 zero static actuals, eight false grants, no source/native/runtime consumer or receipt exposure, and exact disposable
+cleanup. Preserve `docs/reviews/CR13A_LIVE_400_INDEPENDENT_REVIEW.md`; SHA-256
+`fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`.
