@@ -1,12 +1,14 @@
 # CR13A-LIVE-190 unwired native retained-resource adapter acceptance
 
-**Status:** review rejection preserved; remediated product awaiting a different independent zero-repair rereview
+**Status:** independently accepted for ordinary owner-controlled integration
 **Remediated product/tree:** `d59c02792e49a79a291e3f9109fc43f2fd22fbd8` /
 `3ca66db368df428a1e4f7659daa5075209a897da`
 **Rejected product/tree:** `7d45aae9db4c4012e2be3a072a85f7f4279f4874` /
 `cd771b3b090e02a370a6ee2555c2377cf8f2e030`
 **Rejected review SHA-256:**
 `38469875fe9d2f2495be318d82de80becc2066adf502a1efbba160be51cb9973`
+**Accepted remediation rereview SHA-256:**
+`29be3e4ba7075397a764d57161bbff953993e6d2d815a4cc9ac353f475ab224a`
 **Design parent:** `b5f9675e8a6a1007a7fcb04875a384eeb59d8e69`
 **Stacked LIVE-180 base:** `5225f0a57ee661d4a865a5ea91148afc6ede4273`
 **Accepted LIVE-180 product:** `052afc3b4a61f1c6f1957a567f5305f3a2c5bca0`
@@ -50,12 +52,12 @@ Every actual host observation, port selection/reservation, native-server receipt
 handoff issue/spend, driver accept, native-backend construction, listener/IPC/socket/timer attempt, network observation,
 protected read, runtime wiring, external effect, and authority grant remained zero or false.
 
-## Independent review requirement and limits
+## Independent review and limits
 
-A different report-only reviewer must execute
-`docs/reviews/CR13A_LIVE_190_REMEDIATION_REREVIEW_PACKET.md` against the exact immutable remediated product in a fresh
-local-only detached clone. Any failure, uncertainty, finding, behavior execution, forbidden effect, dirty status, or
-cleanup doubt rejects the product. The reviewer may not repair or retry it.
+A different report-only reviewer executed all twelve fixed commands once against the exact immutable remediated product
+in a fresh local-only detached clone. All commands and twelve review groups passed with 0 High, 0 Medium, and 0 Low
+findings. The checkout was clean before and after verification, and the disposable root was removed with exact absence
+verified. Preserve `docs/reviews/CR13A_LIVE_190_REMEDIATION_INDEPENDENT_REREVIEW.md` unchanged.
 
 Even a clean review permits ordinary owner-controlled integration only. It does not add a real native issuer or
 adapter, receive or touch a server, change the physical driver's backend, clear the handoff/custody gap, assemble a

@@ -3648,6 +3648,13 @@ surfaces; strict state, promise, receiver, substitution, construction, ambient, 
 zero-effect tests; full producer verification; and a different independent zero-repair review. No real native object or
 effect belongs in this block.
 
+**Accepted evidence:** Exact remediated product `d59c02792e49a79a291e3f9109fc43f2fd22fbd8` passed 11/11 dedicated,
+26/26 focused native-boundary, 187/187 connection, 203/203 CR13A, the complete lifecycle, all five build phases, 4/4
+rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. The original Low
+formatting rejection remains preserved. A different independent rereviewer passed all twelve fixed commands and groups
+with 0 High/Medium/Low and every forbidden effect and authority at zero or false. Accepted report SHA-256:
+`29be3e4ba7075397a764d57161bbff953993e6d2d815a4cc9ac353f475ab224a`.
+
 **Reevaluate:** Before adding the native issuer, retaining or inspecting a real server, changing the physical driver's
 backend composition, selecting/binding/listening/closing, installing handlers, issuing/spending a live handoff,
 persisting native state, clearing a blocker, assembling a candidate, making an owner-attended attempt, wiring runtime
