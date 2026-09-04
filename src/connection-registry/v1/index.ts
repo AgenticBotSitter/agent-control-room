@@ -19,3 +19,4 @@ export * from "./private-loopback-native-retained-resource-issuer-contract";
 export * from "./private-loopback-native-retained-resource-issuer-state-machine";
 export * from "./private-loopback-native-retained-resource-issuer-composition-contract";
 export * from "./private-loopback-native-issuer-composition-implementation";
+export * from "./private-loopback-native-factory-retrieval-bridge-contract";
