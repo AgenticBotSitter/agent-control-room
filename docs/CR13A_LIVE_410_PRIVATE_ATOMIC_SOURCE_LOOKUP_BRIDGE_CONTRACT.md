@@ -1,14 +1,14 @@
 # CR13A-LIVE-410 — Private Same-Module Atomic Source-Lookup Bridge Contract
 
-**Status:** architecture frozen; inert repository implementation and independent review pending  
-**Accepted LIVE-330 product:** `06be655d188c45902c015f85225673dfc31c445d`  
+**Status:** exact inert product frozen; independent review pending
+**Accepted LIVE-330 product:** `06be655d188c45902c015f85225673dfc31c445d`
 **Accepted LIVE-330 review SHA-256:**
-`da2c7529b8a5e023b706df8e6ab912e2096c2742edfda0e74758991721031f85`  
-**Accepted LIVE-400 product:** `ccce7c84ebfbf955f05fb7b150c1ccf9b80535b3`  
+`da2c7529b8a5e023b706df8e6ab912e2096c2742edfda0e74758991721031f85`
+**Accepted LIVE-400 product:** `ccce7c84ebfbf955f05fb7b150c1ccf9b80535b3`
 **Accepted LIVE-400 review SHA-256:**
-`fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`  
-**Required model:** `gpt-5.6-sol`  
-**Required reasoning effort:** `xhigh`  
+`fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`
+**Required model:** `gpt-5.6-sol`
+**Required reasoning effort:** `xhigh`
 **Effect boundary:** inert contract, deterministic tests, and sanitized zero-use evidence only; no authorization-store
 construction, database transaction, success-state creation, source import/modification/lookup/invocation, protected
 native read, observation, attestation, persistence, listener, network, provider, deployment, DNS, hosting, or

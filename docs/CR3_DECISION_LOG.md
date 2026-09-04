@@ -4456,3 +4456,9 @@ wiring runtime use; contacting a provider or production database; or deploying.
 `docs/CR13A_LIVE_410_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_CONTRACT.md`. Current authority covers only inert repository
 contract work and deterministic tests; it does not authorize a database call, source lookup, native read, or external
 effect.
+
+**Producer evidence:** Exact product `e4d58ff35a44e66454cae8e778b31362902dab6b` passed 11/11 focused, 426/426
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables,
+TypeScript, lint, macOS stage zero, whitespace, and clean status. It publishes 32 zero actuals and eight false grants,
+has only the safe barrel as a source consumer, and adds no accepted-implementation/database/native/runtime/effect
+import. This producer evidence remains separate from the pending independent reruns.

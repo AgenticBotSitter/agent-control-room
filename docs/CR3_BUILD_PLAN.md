@@ -2161,7 +2161,7 @@ production/external effects. Preserve `docs/reviews/CR13A_LIVE_400_INDEPENDENT_R
 
 ## CR13A-LIVE-410 — private same-module atomic source-lookup bridge contract
 
-Status: architecture frozen; inert repository contract, verification, and independent review in progress. Use Sol
+Status: exact product `e4d58ff35a44e66454cae8e778b31362902dab6b` frozen; independent review pending. Use Sol
 xhigh.
 
 LIVE-410 may freeze one inert contract binding the exact accepted LIVE-330 unreachable atomic source and exact
@@ -2176,3 +2176,9 @@ consolidation, never by exporting the LIVE-330 map/source or a LIVE-400 success 
 uncertainty, substitution, or any failure after committed spend is terminal without retry, replacement, refund,
 fallback, or a second lookup. See
 `docs/CR13A_LIVE_410_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_CONTRACT.md`.
+
+Producer verification passed 11/11 dedicated tests, 426/426 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0038/124 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean product status. The contract publishes 32 zero actuals and eight false grants, has only the safe barrel as a
+source consumer, and imports neither accepted implementation, database, native, provider, network, nor runtime code.
+The immutable review packet is `docs/reviews/CR13A_LIVE_410_INDEPENDENT_REVIEW_PACKET.md`.
