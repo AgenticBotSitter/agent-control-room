@@ -1930,8 +1930,8 @@ different reviewer closed M-001, M-002, and L-001 and passed all twelve groups a
 
 ## CR13A-LIVE-320 — private atomic native-observation composition contract
 
-Status: architecture frozen; effect-free contract implementation begins only after accepted LIVE-310 integration. Use
-Sol xhigh.
+Status: exact product `0c906419652adceb5e771637ae269b52fd1c77cd` independently accepted; ordinary integration
+of the inert contract ready. Use Sol xhigh.
 
 LIVE-320 may freeze one inert exact contract for the future same-module composition of LIVE-290 observation operations
 and LIVE-310 binding validation. The future routine must remain private, no-input, synchronous, and unreachable; validate
@@ -1946,3 +1946,26 @@ environment, clock, credential, locator, or provider value; create a raw observa
 nonce, replay checkpoint, candidate, owner window, or persistence port; retrieve the native shell; open a listener;
 wire runtime use; clear a blocker; contact a provider; perform a physical attempt; or deploy. Immutable producer
 evidence and a different independent report-only zero-repair review are required before ordinary integration.
+
+Producer verification passed 10/10 dedicated tests, 328/328 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. A fresh different reviewer passed all twelve groups and fourteen commands exactly once with
+0 High/Medium/Low, exact four-path scope, verified disposable cleanup, and zero native, descriptor, process, OS, host,
+network, provider, or external effects. Preserve `docs/reviews/CR13A_LIVE_320_INDEPENDENT_REVIEW.md`; SHA-256
+`da7d247d874d543877c18215ae9e8fbbba7ba838065fe6a9d410772e776799d6`.
+
+## CR13A-LIVE-330 — unreachable atomic native-observation source consolidation
+
+Status: architecture frozen; stacked repository implementation may proceed only on accepted LIVE-320. Use Sol xhigh.
+
+LIVE-330 may add one dedicated private module with one statically selected `node:process` namespace and the exact
+`node:os` platform, architecture, release, and uptime callables. One frozen no-input synchronous function may contain
+the exact descriptor validation, direct descriptor-value consumption, OS result validation, and private frozen
+observation construction required by LIVE-320. It must be stored exactly once in a module-private WeakMap with no
+lookup, export, invocation, or consumer.
+
+The block must not import or modify the historical LIVE-290/LIVE-310 private modules; read any native value during
+module initialization or tests; export/retrieve/invoke the function; inspect a descriptor; expose, digest, log,
+serialize, persist, sign, or use an observation; implement clock, nonce, replay, candidate, owner, listener, runtime,
+provider, or deployment behavior; clear a blocker; perform a physical attempt; or touch production state. Immutable
+producer evidence and a different independent report-only zero-repair review are required before ordinary integration.

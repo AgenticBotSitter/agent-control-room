@@ -4102,3 +4102,43 @@ nonce, signer, replay, candidate, owner, native-listener, provider, runtime, or 
 **Architecture evidence:** Frozen in
 `docs/CR13A_LIVE_320_PRIVATE_ATOMIC_NATIVE_OBSERVATION_COMPOSITION_CONTRACT.md`. Current authority covers only the inert
 repository contract and ordinary integration; it does not authorize native-source composition or any native read.
+
+**Accepted evidence:** Exact product `0c906419652adceb5e771637ae269b52fd1c77cd` passed 10/10 dedicated, 328/328
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, exact four-path scope, verified disposable cleanup, and zero native, descriptor,
+process, OS, host, network, provider, or external effects. Accepted report SHA-256:
+`da7d247d874d543877c18215ae9e8fbbba7ba838065fe6a9d410772e776799d6`.
+
+## ADR-184 — Consolidate native observation source without making it reachable
+
+**Decision:** CR13A-LIVE-330 may implement one private, frozen, no-input, synchronous function in a new dedicated
+module. It may statically capture one `node:process` namespace and the minimum `node:os` callables, validate the four
+exact own process descriptors, consume their descriptor values directly, validate the four OS results, and construct
+one private frozen raw observation in the same function body. The function is stored once in a module-private WeakMap
+with no lookup, export, invocation, or consumer.
+
+**Why:** LIVE-320 independently accepted the atomic trust boundary, while the historical observer and validator remain
+separate and intentionally unreachable. Implementing the final source in one new quarantined module avoids weakening
+either historical custody boundary and makes the full validation and time-of-check/time-of-use behavior reviewable
+before any native value is actually read.
+
+**Alternatives rejected:** export or import either historical private callable; connect their private maps; pass a
+process or OS binding from a caller; validate descriptors in one call and re-read properties later; invoke the source
+in tests; expose a lookup, getter, callback, token, or capability; return public native material; or combine source
+implementation with retrieval, invocation, attestation, replay, candidate assembly, owner authorization, physical
+qualification, activation, provider contact, or deployment.
+
+**Evidence required:** accepted LIVE-320 product/review binding; exact native import ceiling; one private frozen stored
+function; descriptor validation and direct consumption in the same synchronous body; zero private-map lookups and
+runtime consumers; zero module-load and test native reads; strict immutable safe evidence; hostile and ambient zero
+execution; all actual totals zero; all grants false; full producer verification; and a different independent
+report-only zero-repair review.
+
+**Reevaluate:** Before adding a private-map lookup, bridge, token, callback, retrieval, or invocation; reading or using
+native material; creating an attestation, signature, clock/nonce/replay record, candidate, or owner window; retrieving
+the listener shell; performing a physical attempt; wiring runtime use; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_330_UNREACHABLE_ATOMIC_NATIVE_OBSERVATION_SOURCE_CONSOLIDATION.md`. Current authority covers only
+unreachable repository source and ordinary integration; it does not authorize a descriptor or host read.
