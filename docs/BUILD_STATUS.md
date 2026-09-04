@@ -134,16 +134,16 @@
 | CR13A-LIVE-230 private native issuer composition contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `3974f16...`; 12/12 commands/groups, 10/10 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; exact ordering and custody contract; zero native/listener/network/persistence effects |
 | CR13A-LIVE-240 unreachable private issuer composition implementation | Independently accepted after security hardening; ordinary owner-controlled integration of unreachable code ready | Product `71e4c73...`; seventh reviewer closed M-001 through M-006, 12/12 commands, 10/10 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; zero native/listener/network/persistence effects |
 | CR13A-LIVE-250 private one-use native-factory retrieval bridge contract | Independently accepted; ordinary owner-controlled integration of inert repository-only code ready | Product `9b855d4...`; 12/12 commands, 8/8 focused review, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; no exported retrieval callable and zero real retrieval/invocation/effects |
+| CR13A-LIVE-260 private same-module native-composition shell contract | Architecture frozen; repository-only contract implementation and independent review in progress | Co-located no-input/non-export shell, retrieval/invocation separation, exact-object custody, restart reconciliation, zero real retrieval/invocation/effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-250 is independently accepted at exact product `9b855d4193837fdf6d0d0fce1dcfd65a94cce49f`. A different
-report-only reviewer passed all twelve commands with 0 High/Medium/Low, 8/8 focused tests, five build phases, four
-rendered routes, and 119 tables. The contract exposes no retrieval callable and all real retrieval, native, persistence,
-network, protected-read, wiring, eligibility, blocker, and authority values remain zero or false. Preserve
-`docs/reviews/CR13A_LIVE_250_INDEPENDENT_REVIEW.md`; SHA-256
-`2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6`.
+CR13A-LIVE-260 is active on the independently accepted LIVE-250 integration tip. Its architecture freezes the exact
+same-module private call graph needed to keep the factory sealed while separating retrieval from invocation and
+preserving continuous resource custody, ambiguity, cleanup, and no-reopen restart truth. This block implements only
+immutable repository contract evidence. LIVE-220/LIVE-240 changes, shell/bridge implementation, real factory access,
+native effects, runtime wiring, and physical qualification remain forbidden.
 
 Next block: CR13A-LIVE-260, the private same-module native-composition shell contract. It may freeze the exact internal
 call graph that will co-locate future native composition with LIVE-220 factory custody, but must not modify LIVE-220 or

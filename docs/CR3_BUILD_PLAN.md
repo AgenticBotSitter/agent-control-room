@@ -1794,7 +1794,8 @@ report-only reviewer ran all twelve commands exactly once with 0 High/Medium/Low
 
 ## CR13A-LIVE-260 — private same-module native-composition shell contract
 
-Status: next isolated contract block. Use Sol xhigh.
+Status: architecture frozen on the independently accepted LIVE-250 integration tip; repository-only contract
+implementation and independent review in progress. Use Sol xhigh.
 
 LIVE-260 may freeze an inert contract for the future private native-composition shell that must live in the same source
 module as LIVE-220 factory custody. It must define the exact internal call graph, exact accepted LIVE-250 binding,

@@ -3890,3 +3890,7 @@ full producer verification; and a different independent report-only zero-repair 
 **Reevaluate:** Before modifying LIVE-220/LIVE-240; implementing the shell or bridge; retrieving or invoking the
 factory; creating, observing, transferring, or closing a resource; wiring runtime use; making a physical attempt;
 contacting a provider; clearing a blocker; or deploying.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_260_PRIVATE_NATIVE_COMPOSITION_SHELL_CONTRACT.md` on the accepted
+LIVE-250 integration tip. The contract-only implementation may publish immutable safe evidence and hostile
+zero-execution tests; it may not implement or exercise the shell, bridge, factory, or native path.
