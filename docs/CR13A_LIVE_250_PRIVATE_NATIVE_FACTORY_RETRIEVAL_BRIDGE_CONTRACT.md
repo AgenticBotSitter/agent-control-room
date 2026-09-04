@@ -1,6 +1,6 @@
 # CR13A-LIVE-250 private native-factory retrieval bridge contract
 
-**Status:** architecture frozen; repository-only contract implementation pending independent review
+**Status:** exact product `9b855d4193837fdf6d0d0fce1dcfd65a94cce49f` independently accepted for ordinary integration
 **Model/effort:** `gpt-5.6-sol`, `xhigh`
 **Accepted LIVE-220 product:** `2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9`
 **Accepted LIVE-220 review SHA-256:**
@@ -80,3 +80,7 @@ Medium, or Low finding.
 Acceptance permits ordinary integration of an inert repository contract only. Implementing the private bridge, making
 the factory reachable inside composition, retrieving or invoking it, creating a native resource, observing a locator,
 wiring runtime use, or making a physical qualification attempt requires a later separately frozen and reviewed block.
+
+The different report-only reviewer accepted the exact product with 0 High, 0 Medium, and 0 Low findings after all
+twelve fixed commands passed. Preserve `docs/reviews/CR13A_LIVE_250_INDEPENDENT_REVIEW.md`; SHA-256
+`2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6`.

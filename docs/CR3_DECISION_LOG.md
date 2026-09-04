@@ -3858,3 +3858,35 @@ assembling a qualification candidate, making a physical attempt, contacting a pr
 **Architecture evidence:** Frozen from exact merged base `bd1acec22c9b1e7bfa06f302ec665a854bc3048b` in
 `docs/CR13A_LIVE_250_PRIVATE_NATIVE_FACTORY_RETRIEVAL_BRIDGE_CONTRACT.md`. The contract-only implementation may publish
 immutable safe evidence and hostile zero-execution tests; it may not implement or exercise the bridge.
+
+**Accepted evidence:** Exact product `9b855d4193837fdf6d0d0fce1dcfd65a94cce49f` passed the full producer gate. A
+different report-only reviewer ran all twelve fixed commands exactly once with 0 High/Medium/Low, 8/8 focused tests,
+five build phases, 4/4 rendered pages, migrations 0001-0036/119 tables, zero hostile or ambient execution, zero real
+effects, and false authority. Accepted report SHA-256:
+`2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6`.
+
+## ADR-177 — Co-locate future native composition with private factory custody
+
+**Decision:** CR13A-LIVE-260 will freeze a repository-only contract for a future native-composition shell in the same
+source module that owns LIVE-220's private factory WeakMap. The contract cannot implement the shell or bridge, modify
+LIVE-220/LIVE-240, retrieve or invoke the factory, or make a native effect reachable.
+
+**Why:** LIVE-250 correctly forbids exporting or returning the factory. A future consumer in a separate module would
+require either an exported capability or a caller-supplied callback, both of which break that boundary. Co-location
+keeps lookup, direct handoff, native composition, and custody inside one private lexical scope while allowing their
+order and failure truth to be reviewed before implementation.
+
+**Alternatives rejected:** export a getter or factory; return a capability; accept a caller callback, implementation,
+composition, permit, adapter, or persistence client; dynamically import the native module; move the private factory to
+public state; let the fake LIVE-240 implementation consume native authority; combine contract, bridge implementation,
+invocation, runtime wiring, qualification, or deployment in one block; or test the shell by retrieving the real factory.
+
+**Evidence required:** exact accepted LIVE-250 product/review binding; same-source-module call graph; no-input and
+non-export rules; bridge consumption separated from factory invocation; one-use ceilings; exact-object custody;
+definite pre-lookup failure and post-lookup ambiguity; restart reconciliation without retrieval; no new effect import or
+runtime consumer; safe immutable evidence; hostile and ambient zero execution; exact zero-effect/false-authority truth;
+full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before modifying LIVE-220/LIVE-240; implementing the shell or bridge; retrieving or invoking the
+factory; creating, observing, transferring, or closing a resource; wiring runtime use; making a physical attempt;
+contacting a provider; clearing a blocker; or deploying.
