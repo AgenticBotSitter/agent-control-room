@@ -2046,3 +2046,29 @@ authorization; import/modify/retrieve/invoke LIVE-330; inspect a descriptor; rea
 create an observation/attestation/candidate/owner authorization; open a listener; wire application/runtime/provider
 use; contact production PostgreSQL; deploy; or treat validation evidence as a spend or execution capability. Immutable
 producer evidence and a different independent report-only zero-repair review are required before ordinary integration.
+
+Producer verification passed 23/23 dedicated tests, 373/373 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0037/122 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. The first independent review's one Medium hostile-row coercion finding is preserved. Corrected product
+`6028badb6db6b0455e9bed02c45751ea81517fa4` validates every stored scalar before coercion, hashing, regex use, length
+access, or comparison. A second different reviewer passed all ten groups and fourteen commands exactly once with 0
+residual High/Medium/Low and zero consumption, source lookup/invocation, protected native, production-database,
+network, provider, or external effects. Preserve `docs/reviews/CR13A_LIVE_360_INDEPENDENT_REREVIEW.md`; SHA-256
+`2dbf2c395ba8a95c41898cba05309551ca4e7be8e2b04e706f1fed1b7828cd47`.
+
+## CR13A-LIVE-370 — atomic invocation-authorization consumption
+
+Status: architecture frozen; PostgreSQL-compatible repository implementation may proceed on accepted corrected
+LIVE-360. Use Sol xhigh.
+
+LIVE-370 may add migration 0038 with one authenticated append-only consumption stream/head and extend the store with
+one exact `consumeForInvocation` method. A third byte-distinct protected key authenticates consumption state. The spend
+transaction must repeat full registration/nonce/lineage and same-session database-time verification immediately before
+one unique durable insert. Success reports only `consumed_pending_post_transaction_time_recheck`; exact replay or
+commit uncertainty cannot reach the source.
+
+The block must not issue/revoke/list authorizations; accept caller time/callables; perform the post-transaction time
+recheck; import/modify/retrieve/invoke LIVE-330; inspect descriptors; read/expose protected native material; create an
+observation/attestation/candidate/owner authorization; open a listener; wire application/runtime/provider use; contact
+production PostgreSQL; deploy; or treat consumption evidence as source authority. Immutable producer evidence and a
+different independent report-only zero-repair review are required before ordinary integration.

@@ -144,27 +144,29 @@
 | CR13A-LIVE-330 unreachable atomic native-observation source consolidation | Independently accepted; ordinary integration of exact unreachable source ready | Product `06be655...`; 14/14 commands, 11/11 focused, 339/339 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; private source stored once with zero lookup/invocation/native reads |
 | CR13A-LIVE-340 private one-use native-observation invocation contract | Independently accepted; ordinary integration of inert contract ready | Product `3108a87...`; 14/14 commands, 11/11 focused, 350/350 CR13A, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; 39 zero actuals and zero authorization/native/external effects |
 | CR13A-LIVE-350 authenticated invocation-authorization store | Independently accepted after one bounded key-separation repair; ordinary integration ready | Corrected product `053c4d0...`; 14/14 commands, 14/14 focused, 364/364 CR13A, 5/5 build, 4/4 render, 122 tables, 0 residual High/Medium/Low; original Medium preserved; zero consumption/source/native/external effects |
-| CR13A-LIVE-360 trusted database-time and lineage validation | Architecture frozen; repository implementation next | Exact authenticated read-only preflight using same-session database time; no consumption, source lookup/invocation, native read, or production database contact |
+| CR13A-LIVE-360 trusted database-time and lineage validation | Independently accepted after one bounded hostile-row repair; ordinary integration ready | Corrected product `6028bad...`; 14/14 commands, 23/23 focused, 373/373 CR13A, 5/5 build, 4/4 render, 122 tables, 0 residual High/Medium/Low; original Medium preserved; zero consumption/source/native/external effects |
+| CR13A-LIVE-370 atomic invocation-authorization consumption | Architecture frozen; repository implementation next | Authenticated append-only one-use spend with terminal ambiguity and no source lookup/invocation, native read, or production database contact |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-350 corrected product `053c4d02003e0223438e26aecea851253d05a60b` is independently accepted. It adds
-one authenticated append-only authorization registry, a digest-only nonce replay reservation, and exact inert replay.
-The first reviewer found one Medium key-separation defect despite all commands passing; that rejection is preserved.
-The corrected product rejects identical authorization/state key bytes before any database work. A second different
-reviewer passed all ten groups and fourteen commands once with 0 residual High/Medium/Low, 14/14 focused tests, 364/364
-CR13A tests, 5/5 build phases, 4/4 rendered routes, and 122 tables. The complete 769/421/392 lifecycle also passes.
-Zero issuance, consumption, revocation, source lookup/invocation, native read, production database contact, network,
-provider, or external effects occurred. Accepted re-review SHA-256:
-`ffea24f4ed6e7d62ffb7a06caf2446471582eff6780351af88136b9aba3c3324`.
+CR13A-LIVE-360 corrected product `6028badb6db6b0455e9bed02c45751ea81517fa4` is independently accepted. It adds
+one exact read-only pre-consumption validator that reauthenticates the full stored authorization and nonce lineage before
+reading current time from the same PostgreSQL-compatible session. The first reviewer found one Medium hostile-row
+coercion flaw despite all commands passing; that rejection is preserved. The corrected product validates every stored
+scalar before coercion, hashing, pattern use, or comparison, and hostile `valueOf`, `Symbol.toPrimitive`, and `length`
+accessors execute zero times. A second different reviewer passed all ten groups and fourteen commands once with 0
+residual High/Medium/Low, 23/23 focused tests, 373/373 CR13A tests, 5/5 build phases, 4/4 rendered routes, and 122 tables.
+The complete 769/421/392 lifecycle also passes. Zero consumption, source lookup/invocation, protected native read,
+production database contact, network, provider, or external effects occurred. Accepted re-review SHA-256:
+`2dbf2c395ba8a95c41898cba05309551ca4e7be8e2b04e706f1fed1b7828cd47`.
 
-Next block: CR13A-LIVE-360, the exact final pre-consumption trusted database-time and lineage validation. It will add
-one read-only authenticated preflight using time from the same PostgreSQL-compatible database session while keeping
-consumption, source lookup/invocation, protected native reads, production PostgreSQL, listener, provider, and
-deployment behavior absent. Use `gpt-5.6-sol` at `xhigh` effort.
+Next block: CR13A-LIVE-370, atomic invocation-authorization consumption. It will add one authenticated append-only
+one-use spend ledger and repeat the full trusted-time/lineage decision inside the spend transaction while keeping the
+post-transaction time recheck, source lookup/invocation, protected native reads, production PostgreSQL, listener,
+provider, and deployment behavior absent. Use `gpt-5.6-sol` at `xhigh` effort.
 
-LIVE-360 performs no authorization consumption, source lookup/invocation, or protected native read.
+LIVE-370 performs no source lookup/invocation or protected native read.
 
 Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
 remains unreachable with no native reads and no lookup.
@@ -1396,12 +1398,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-360 — implement trusted database-time and exact lineage validation
+Block: CR13A-LIVE-370 — implement atomic one-use invocation-authorization consumption
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-350 independently accepted durable authenticated registration and replay reservation. The next missing prerequisite is one final read-only proof that the exact stored lineage is currently within its authorization window before a later block can spend it atomically.
-Expected output: one exact authenticated preflight, complete stream/nonce and lineage revalidation, same-session database trusted time, inclusive not-before/exclusive expiry handling, sanitized non-authorizing evidence, hostile and failure tests, full verification, and independent review.
-Owner action: none for repository implementation, PGlite tests, independent review, and ordinary merges. Production database contact, consumption, lookup/invocation, native reads, and physical qualification remain separately gated.
+Why: LIVE-360 independently accepted exact stored lineage and database-time validation. The next missing prerequisite is an atomic durable one-use spend before any private source can ever be looked up.
+Expected output: migration 0038, authenticated append-only consumption/head state, a third byte-distinct key, exact in-transaction revalidation, concurrency/restart/ambiguity/tamper evidence, sanitized spent-without-authority receipts, full verification, and independent review.
+Owner action: none for repository implementation, PGlite tests, independent review, and ordinary merges. Production database contact, post-transaction time recheck, lookup/invocation, native reads, and physical qualification remain separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

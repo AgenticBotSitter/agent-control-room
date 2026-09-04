@@ -4258,3 +4258,45 @@ runtime activation, provider contact, production database configuration, or depl
 `docs/CR13A_LIVE_360_TRUSTED_DATABASE_TIME_AND_LINEAGE_VALIDATION.md`. Current authority covers read-only repository
 validation and local PGlite proof only; it does not authorize consumption, invocation, protected native reads, or
 production database contact.
+
+**Accepted evidence:** Corrected product `6028badb6db6b0455e9bed02c45751ea81517fa4` passed 23/23 dedicated, 373/373
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0037/122 tables,
+TypeScript, lint, macOS stage zero, and whitespace. The original report preserved one Medium hostile-row coercion
+finding. A bounded two-path repair proves all authorization/head/nonce scalars are exact primitives before conversion,
+hashing, regex evaluation, length access, or comparison. A second different reviewer passed all ten groups and fourteen
+commands once with 0 residual High/Medium/Low, verified cleanup, and zero consumption/source/native/network/provider/
+external effects. Accepted re-review SHA-256:
+`2dbf2c395ba8a95c41898cba05309551ca4e7be8e2b04e706f1fed1b7828cd47`.
+
+## ADR-188 — Spend authorization atomically without reaching the source
+
+**Decision:** CR13A-LIVE-370 will add an authenticated append-only consumption ledger/head and one exact atomic spend
+method. The transaction repeats complete registration/nonce/lineage authentication and same-session database-time
+validation immediately before inserting one unique consumption. A third key, byte-distinct from authorization and
+registration keys, authenticates consumption state. Success remains `consumed_pending_post_transaction_time_recheck`;
+it cannot look up or invoke the native source.
+
+**Why:** LIVE-360 proves current validity but does not prevent two callers from passing preflight. PostgreSQL uniqueness
+and one transaction are required to serialize the one-use decision before any future private lookup exists. Keeping the
+post-transaction time check and native boundary separate prevents a successful spend or ambiguous commit from being
+mistaken for permission to read host state.
+
+**Alternatives rejected:** update the authorization row in place; keep spend state only in process memory; reuse either
+existing key; consume before full state/time validation; retry after commit uncertainty; treat exact replay as fresh
+authority; look up/invoke the source in the spend method; contact production PostgreSQL; or combine consumption with
+attestation, physical qualification, provider, or deployment.
+
+**Evidence required:** exact accepted LIVE-360 product/re-review binding; migration 0038 authenticated append-only state;
+three byte-distinct keys; complete pre-insert registration/nonce/consumption-chain verification; exact database-time
+edges; atomic one-use concurrency; restart, replay, tamper, partial failure, and terminal-ambiguity handling; hostile
+input/row safety; sanitized non-authorizing evidence; no source/native/runtime consumer; full producer verification;
+and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before adding post-transaction time recheck, source bridge/lookup/invocation, protected native read,
+observation handoff, attestation, candidate assembly, owner authorization, physical attempt, runtime activation,
+provider contact, production database configuration, or deployment.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_370_ATOMIC_INVOCATION_AUTHORIZATION_CONSUMPTION.md`. Current authority covers repository consumption
+state and local PGlite proof only; it does not authorize source lookup/invocation, protected native reads, or production
+database contact.
