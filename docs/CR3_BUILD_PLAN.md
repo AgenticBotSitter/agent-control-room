@@ -1681,7 +1681,8 @@ zero or false. Preserve `docs/reviews/CR13A_LIVE_200_INDEPENDENT_REVIEW.md`; SHA
 
 ## CR13A-LIVE-210 — unwired private native issuer state machine
 
-Status: next effect-free implementation block. Use Sol xhigh.
+Status: exact product `c4cac41561214117161c9764604f5dc06ecd63b6` independently accepted; ordinary owner-controlled
+integration ready. Use Sol xhigh.
 
 LIVE-210 may implement a repository-only fake state machine behind the accepted LIVE-200 contract. It must model one
 private attempt from verified/claimed pre-effect state through uncertainty, fake resource retention, exact fake adapter
@@ -1692,3 +1693,23 @@ The block must not import a runtime network module; create, receive, inspect, tr
 reveal an address or port; issue or spend live authority; write live persistence; call the accepted native adapter or
 physical driver; wire any runtime consumer; assemble a candidate; make a physical attempt; contact a provider; or deploy.
 Immutable producer evidence and a different independent zero-repair review remain required.
+
+Producer verification passes 11/11 dedicated, 207/207 connection, 223/223 CR13A, the complete lifecycle, all five
+build phases, 4/4 rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A
+different reviewer passed all twelve commands and groups with 0 High/Medium/Low. Eleven hostile/misuse assertions and
+six ambient replacements executed zero behavior; every real effect and authority remained zero or false. Preserve
+`docs/reviews/CR13A_LIVE_210_INDEPENDENT_REVIEW.md`; SHA-256
+`c25e22dfa2c8601b23547a8a6f32b68d78da23458a696cd9461678ce084ec2c7`.
+
+## CR13A-LIVE-220 — unwired native issuer implementation boundary
+
+Status: next isolated native-code block. Use Sol xhigh.
+
+LIVE-220 may define one isolated native issuer backend behind the accepted LIVE-210 state machine and test it only with
+injected fake outcomes. It must retain the exact one-attempt, one-resource, same-object custody, transfer, ambiguity,
+cleanup, and no-reopen rules. The native backend must remain unreachable from every application and production runtime.
+
+The block must not execute a real create/bind/listen/inspect/close operation; select, reserve, consume, or expose a real
+port or locator; write live persistence; install handlers; wire an API, worker, Idea Lab, Hermes, startup, or production
+consumer; clear a blocker; assemble a live candidate; contact a provider; deploy; or make a physical attempt. Any later
+physical attempt requires a separately frozen packet and fresh exact owner-attended authorization.

@@ -129,22 +129,23 @@
 | CR13A-LIVE-180 unwired retained-resource driver port | Independently accepted; ordinary owner-controlled integration ready | Product `052afc3...`; second different reviewer passed 12/12 commands and groups, 10/10 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; first procedural rejection preserved; zero native/listener/network effects |
 | CR13A-LIVE-190 unwired native retained-resource adapter | Independently accepted after one formatting remediation; ordinary owner-controlled integration ready | Product `d59c027...`; different rereviewer passed 12/12 commands and groups, 26/26 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; original Low rejection preserved; zero native/listener/network effects |
 | CR13A-LIVE-200 private native retained-resource issuer contract | Independently accepted; ordinary owner-controlled integration ready | Product `9e3cb2a...`; 12/12 commands and groups, 9/9 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; exact private issuer obligations frozen; zero native/listener/network/persistence effects |
+| CR13A-LIVE-210 unwired private native issuer state machine | Independently accepted; ordinary owner-controlled integration ready | Product `c4cac41...`; 12/12 commands and groups, 11/11 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; five scenarios and nine states prove one-use ordering; zero native/listener/network/persistence effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-200 is independently accepted at exact product `9e3cb2afdcd3008dcdac94d113db991f34e49175`.
-It freezes fifteen private bindings, thirteen durable markers, four failure classes, fourteen proofs, and exact one-use
-ceilings for the future issuer. The repository result remains entirely negative: no issuer, server, locator, spend,
-custody, handoff, persistence, blocker clearance, effect, or authority. A different reviewer passed all twelve commands
-and groups with 0 High/Medium/Low, 9/9 focused tests, five build phases, four rendered routes, and 119 tables. Preserve
-`docs/reviews/CR13A_LIVE_200_INDEPENDENT_REVIEW.md`; SHA-256
-`82caf0b6ffc0a66661448a9780d0557221faa179f43956d6b2f691a7a1404185`.
+CR13A-LIVE-210 is independently accepted at exact product `c4cac41561214117161c9764604f5dc06ecd63b6`.
+Its fake-only issuer state machine proves five scenarios, nine states, exact promise replay, one-use counters, continuous
+simulated custody, exact fake-adapter transfer, mandatory cleanup, and no-reopen recovery. A different reviewer passed
+all twelve commands and groups with 0 High/Medium/Low, 11/11 focused tests, five build phases, four rendered routes, and
+119 tables. Every real native/listener/network/persistence effect remained zero. Preserve
+`docs/reviews/CR13A_LIVE_210_INDEPENDENT_REVIEW.md`; SHA-256
+`c25e22dfa2c8601b23547a8a6f32b68d78da23458a696cd9461678ce084ec2c7`.
 
-Next block: CR13A-LIVE-210, an unwired repository-only private issuer state machine. It may fake-test one attempt from
-pre-effect claim through uncertainty, retained custody, exact adapter acceptance, cleanup failure, and no-reopen
-recovery. It must not import a network runtime, create or receive a real server, select a port, write live persistence,
-wire runtime use, perform a physical attempt, contact a provider, or grant authority. Use `gpt-5.6-sol` at `xhigh` effort.
+Next block: CR13A-LIVE-220, the unwired native issuer implementation boundary. It may define one isolated native backend
+behind the accepted state machine and fake-test all injected outcomes, but it must remain runtime-unwired and must not
+perform a real listen, allocate or expose a port, contact a provider, clear a blocker, or make a physical attempt. Use
+`gpt-5.6-sol` at `xhigh` effort. Any real native attempt still requires a new exact owner-attended authorization.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
