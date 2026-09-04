@@ -318,4 +318,3 @@ test("CR13A-LIVE-190 type-only native reference erases at runtime and remains un
   }
   assert.deepEqual(consumers, [resolve(root, "src/connection-registry/v1/index.ts")]);
 });
-
