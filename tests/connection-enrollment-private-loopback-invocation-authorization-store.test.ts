@@ -80,6 +80,45 @@ function envelope(value = body(), key = authorizationKey) {
   };
 }
 
+function withTrustedDatabaseTime(db: DatabaseClient, value: string | readonly string[] | Error): DatabaseClient {
+  const query = async <T>(session: Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0],
+    statement: string, params: unknown[] = []) => {
+    if (!statement.includes("clock_timestamp()")) return session.query<T>(statement, params);
+    if (value instanceof Error) throw value;
+    const values = typeof value === "string" ? [value] : value;
+    return { rows: values.map((trusted_now) => ({ trusted_now })) as T[] };
+  };
+  return {
+    query: db.query.bind(db),
+    transaction: (callback) => db.transaction((session) => callback(Object.freeze({
+      query: <T>(statement: string, params: unknown[] = []) => query<T>(session, statement, params),
+    }))),
+    transactionWithPreCommitCheck: (callback, check) => db.transactionWithPreCommitCheck((session) =>
+      callback(Object.freeze({
+        query: <T>(statement: string, params: unknown[] = []) => query<T>(session, statement, params),
+      })), check),
+  };
+}
+
+function withMutatedDatabaseRow(db: DatabaseClient, table: string, field: string, value: unknown): DatabaseClient {
+  const query = async <T>(session: Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0],
+    statement: string, params: unknown[] = []) => {
+    const result = await session.query<T>(statement, params);
+    if (!statement.includes(`FROM ${table}`) || !statement.includes("SELECT")) return result;
+    return { rows: result.rows.map((row) => ({ ...(row as Record<string, unknown>), [field]: value })) as T[] };
+  };
+  return {
+    query: db.query.bind(db),
+    transaction: (callback) => db.transaction((session) => callback(Object.freeze({
+      query: <T>(statement: string, params: unknown[] = []) => query<T>(session, statement, params),
+    }))),
+    transactionWithPreCommitCheck: (callback, check) => db.transactionWithPreCommitCheck((session) =>
+      callback(Object.freeze({
+        query: <T>(statement: string, params: unknown[] = []) => query<T>(session, statement, params),
+      })), check),
+  };
+}
+
 function expectCode(code: ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1["safeCode"]):
 (error: unknown) => boolean {
   return (error) => error instanceof ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreErrorV1
@@ -306,16 +345,194 @@ test("CR13A-LIVE-350 append-only guards reject authorization and nonce mutation"
   } finally { await raw.close(); }
 });
 
-test("CR13A-LIVE-350 has no issuer, consumer, lookup, native source, or runtime wiring", async () => {
+test("CR13A-LIVE-360 binds the accepted corrected LIVE-350 product and re-review", async () => {
+  const architecture = await readFile(resolve(root,
+    "docs/CR13A_LIVE_360_TRUSTED_DATABASE_TIME_AND_LINEAGE_VALIDATION.md"), "utf8");
+  const review = await readFile(resolve(root, "docs/reviews/CR13A_LIVE_350_INDEPENDENT_REREVIEW.md"));
+  assert.equal(createHash("sha256").update(review).digest("hex"),
+    "ffea24f4ed6e7d62ffb7a06caf2446471582eff6780351af88136b9aba3c3324");
+  assert.match(architecture, /053c4d02003e0223438e26aecea851253d05a60b/);
+  assert.match(architecture, /ffea24f4ed6e7d62ffb7a06caf2446471582eff6780351af88136b9aba3c3324/);
+  assert.match(architecture, /clock_timestamp\(\)/);
+  assert.match(architecture, /read-only preflight|read-only validation/i);
+});
+
+test("CR13A-LIVE-360 validates exact stored lineage with same-session database time and no writes", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(
+      withTrustedDatabaseTime(db, "2026-09-04T15:00:10.000Z"),
+      { authorizationKey, authorizationKeyIdDigest, stateKey });
+    const first = await validator.validateForConsumption(value);
+    assert.deepEqual(await validator.validateForConsumption(value), first);
+    assert.equal(first.validatedAt, "2026-09-04T15:00:10.000Z");
+    assert.equal(first.state, "validated_unconsumed");
+    assert.equal(first.authenticatedLineageValidated, true);
+    assert.equal(first.replayReservationValidated, true);
+    assert.equal(first.currentWindowValidated, true);
+    assert.equal(first.authorizationConsumed, false);
+    assert.equal(Object.isFrozen(first), true);
+    assert.deepEqual(Object.entries(first).filter(([key]) => key.startsWith("grants")).map(([, entry]) => entry),
+      new Array(8).fill(false));
+    const counts = await raw.query<{ authorizations: number; nonces: number; heads: number }>(`SELECT
+      (SELECT count(*)::int FROM control_native_observation_authorizations) AS authorizations,
+      (SELECT count(*)::int FROM control_native_observation_authorization_nonces) AS nonces,
+      (SELECT count(*)::int FROM control_native_observation_authorization_heads) AS heads`);
+    assert.deepEqual(counts.rows[0], { authorizations: 1, nonces: 1, heads: 1 });
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 reads canonical current time from an actual local PGlite session", async () => {
+  const { raw, store } = await setup();
+  try {
+    const baseline = Date.now();
+    const value = envelope(body({
+      issuedAt: new Date(baseline - 10_000).toISOString(),
+      notBefore: new Date(baseline - 5_000).toISOString(),
+      expiresAt: new Date(baseline + 40_000).toISOString(),
+    }));
+    await store.register(value);
+    const receipt = await store.validateForConsumption(value);
+    assert.ok(Date.parse(receipt.validatedAt) >= baseline - 1_000);
+    assert.ok(Date.parse(receipt.validatedAt) < baseline + 40_000);
+    assert.equal(receipt.currentWindowValidated, true);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 enforces inclusive not-before and exclusive expiry", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    const validateAt = (trustedNow: string) => new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(
+      withTrustedDatabaseTime(db, trustedNow), { authorizationKey, authorizationKeyIdDigest, stateKey })
+      .validateForConsumption(value);
+    await assert.rejects(validateAt("2026-09-04T15:00:00.999Z"), expectCode("not_yet_valid"));
+    assert.equal((await validateAt(notBefore)).currentWindowValidated, true);
+    assert.equal((await validateAt("2026-09-04T15:00:44.999Z")).currentWindowValidated, true);
+    await assert.rejects(validateAt(expiresAt), expectCode("expired"));
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 distinguishes unavailable identity from authenticated replay conflict", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(
+      withTrustedDatabaseTime(db, "2026-09-04T15:00:10.000Z"),
+      { authorizationKey, authorizationKeyIdDigest, stateKey });
+    await assert.rejects(validator.validateForConsumption(envelope()), expectCode("authorization_unavailable"));
+    await store.register(envelope());
+    await assert.rejects(validator.validateForConsumption(envelope(body({
+      nonceDigest: digest("native-observation-nonce-changed"),
+    }))), expectCode("replay_conflict"));
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 rejects missing, duplicate, noncanonical, and failed database time", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    const validateWith = (trustedNow: string | readonly string[] | Error) =>
+      new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(withTrustedDatabaseTime(db, trustedNow),
+        { authorizationKey, authorizationKeyIdDigest, stateKey }).validateForConsumption(value);
+    await assert.rejects(validateWith([]), expectCode("integrity_failed"));
+    await assert.rejects(validateWith([notBefore, notBefore]), expectCode("integrity_failed"));
+    await assert.rejects(validateWith("2026-09-04 15:00:01+00"), expectCode("integrity_failed"));
+    await assert.rejects(validateWith(new Error("raw database clock failure")), expectCode("integrity_failed"));
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 rejects tampered state before reading database time", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    await raw.query(`UPDATE control_native_observation_authorization_heads SET head_auth_tag=$1 WHERE tenant_id=$2`,
+      [hmacSha256Tag(stateKey, { wrong: true }), tenantId]);
+    let clockReads = 0;
+    const guarded: DatabaseClient = {
+      query: db.query.bind(db),
+      transaction: (callback) => db.transaction((session) => callback(Object.freeze({
+        query: <T>(statement: string, params: unknown[] = []) => {
+          if (statement.includes("clock_timestamp()")) clockReads += 1;
+          return statement.includes("clock_timestamp()")
+            ? Promise.resolve({ rows: [{ trusted_now: notBefore }] as T[] }) : session.query<T>(statement, params);
+        },
+      }))),
+      transactionWithPreCommitCheck: db.transactionWithPreCommitCheck.bind(db),
+    };
+    const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(guarded,
+      { authorizationKey, authorizationKeyIdDigest, stateKey });
+    await assert.rejects(validator.validateForConsumption(value), expectCode("integrity_failed"));
+    assert.equal(clockReads, 0);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 rejects behavioral authorization-row scalars before coercion or comparison", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    let executions = 0;
+    const coercive = { valueOf() { executions += 1; return 1; },
+      [Symbol.toPrimitive]() { executions += 1; return 1; } };
+    const lengthAccessor = Object.defineProperty({}, "length", {
+      get() { executions += 1; return 71; }, enumerable: true,
+    });
+    for (const [field, hostile] of [["sequence", coercive], ["authorization_auth_tag", lengthAccessor],
+      ["record_auth_tag", lengthAccessor]] as const) {
+      const hostileDb = withMutatedDatabaseRow(db, "control_native_observation_authorizations", field, hostile);
+      const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(hostileDb,
+        { authorizationKey, authorizationKeyIdDigest, stateKey });
+      await assert.rejects(validator.validateForConsumption(value), expectCode("integrity_failed"));
+    }
+    assert.equal(executions, 0);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-360 rejects behavioral head and nonce scalars before coercion or comparison", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    let executions = 0;
+    const coercive = { valueOf() { executions += 1; return 1; },
+      [Symbol.toPrimitive]() { executions += 1; return 1; } };
+    const lengthAccessor = Object.defineProperty({}, "length", {
+      get() { executions += 1; return 71; }, enumerable: true,
+    });
+    const cases = [
+      ["control_native_observation_authorization_heads", "last_sequence", coercive],
+      ["control_native_observation_authorization_heads", "head_auth_tag", lengthAccessor],
+      ["control_native_observation_authorization_nonces", "reservation_auth_tag", lengthAccessor],
+    ] as const;
+    for (const [table, field, hostile] of cases) {
+      const hostileDb = withMutatedDatabaseRow(db, table, field, hostile);
+      const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(hostileDb,
+        { authorizationKey, authorizationKeyIdDigest, stateKey });
+      await assert.rejects(validator.validateForConsumption(value), expectCode("integrity_failed"));
+    }
+    assert.equal(executions, 0);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-350/360 has no issuer, consumer, native source, or runtime wiring", async () => {
   const source = await readFile(modulePath, "utf8");
   assert.doesNotMatch(source, /from "node:|import "node:|unreachable-atomic-native-observation-source/);
   assert.doesNotMatch(source, /\.consume\(|sourceLookups: [1-9]|sourceInvocations: [1-9]|nativeReads: [1-9]/);
   assert.deepEqual(Object.getOwnPropertyNames(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype),
-    ["constructor", "register"]);
+    ["constructor", "register", "validateForConsumption"]);
   const status = CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_STORE_DISABLED_V1;
   assert.equal(Object.isFrozen(status), true);
+  assert.equal(status.readOnlyValidationImplemented, true);
+  assert.equal(status.trustedDatabaseTimeRequired, true);
   assert.equal(status.productionDatabaseConfigured, false);
   assert.equal(status.productionIssuerImplemented, false);
+  assert.equal(status.authorizationValidations, 0);
+  assert.equal(status.databaseClockReads, 0);
   assert.equal(status.authorizationConsumptions, 0);
   assert.equal(status.sourceLookups, 0);
   assert.equal(status.sourceInvocations, 0);
