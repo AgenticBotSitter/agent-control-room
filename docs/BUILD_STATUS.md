@@ -154,6 +154,7 @@
 | CR13A-LIVE-430 private single source-invocation/raw-observation handoff contract | Independently accepted; ordinary integration of inert contract ready | Product `a1c3230...`; 14/14 commands, 11/11 focused, 450/450 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; 44 zero actuals, eight false grants, and zero source calls/native reads |
 | CR13A-LIVE-440 same-module source-invocation/raw-handoff implementation design | Architecture remediated; dormant implementation waits for accepted private pipeline and native execution remains owner-gated | Exact source-owner seam and raw domains, module-minted deterministic fault seam, distinct signer/checkpoint/high-water, authenticated future evidence, and zero current effects |
 | CR13A-LIVE-450 private observation-to-attestation pipeline design | Independently accepted for architecture-only integration | 3 High/6 Medium/0 Low remediated to 0/0/0; separate owner-native authority and exact-product attempt ceiling; production-only capsule; five ordered provider lanes; 36 attestation stages; exact PostgreSQL/high-water split-commit recovery; pre-reserved after-exit cleanup; zero current effects |
+| CR13A-LIVE-460 inert private observation-to-attestation pipeline contract | Implemented locally; product verification and independent review pending | Exact LIVE-450 binding; 14 claims, five providers, 36 stages, nine durable states, 11 outcomes, six cleanup facts, ten recovery cases, six later successors; 58 zero actuals/eight false grants; no capsule/source/provider/key/database/native/runtime path |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -220,6 +221,14 @@ separate private provider lanes. The design now preserves a separate one-use own
 product attempt ceiling, a production-only module capsule, 36 attestation stages, a complete signed canonical
 envelope, exact PostgreSQL/high-water pending/CAS recovery, and pre-reserved after-exit cleanup. Documentation work
 performs zero source/native/key/database/network/production/external effects.
+
+CR13A-LIVE-460 implements the accepted LIVE-450 policy as one inert frozen singleton contract and status record. It
+contains all 14 ordered claims, five provider lanes, 36 attestation stages, nine durable states, 11 public outcomes,
+six after-exit cleanup facts, ten split-commit recovery cases, and six separately authorized successors. Exact-
+singleton parsers reject copies, accessors, symbols, and proxies without executing hostile behavior. The product
+reports 58 zero actuals and eight false grants and imports no source/provider, constructs no capsule, reads no key or
+host value, opens no database/network path, and performs no native or external effect. Independent product review is
+still required.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
@@ -1448,12 +1457,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-460 — inert private attestation pipeline contract implementation
+Block: CR13A-LIVE-460 — inert private attestation pipeline product verification and independent review
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-450 now fixes the complete private pipeline architecture. The next safe repository block turns only its frozen public policy, stage/state/outcome, claim, parser, and zero-use boundaries into an inert contract without constructing the production capsule or touching any protected dependency.
-Expected output: one exact inert contract plus hostile parser tests and static zero-effect evidence for all 36 stages, 14 claims, five provider lanes, durable states, recovery outcomes, cleanup requirements, authority ceilings, and separate later successors; independent product review required before integration.
-Owner action: none. Contract work is repository-only and non-native. Provider implementation, source-owner modification, signer/key access, persistence/high-water work, native qualification, runtime wiring, or deployment remains separately gated.
+Why: The inert LIVE-460 contract and focused hostile tests now exist. The exact immutable product must run the full non-native producer matrix and receive a different independent zero-repair review before integration.
+Expected output: one product commit and tree, complete non-native command evidence, exact zero-use static inspection, 0 High/Medium/Low independent findings or remediation, and immutable review/acceptance records.
+Owner action: none. Verification is repository-only and non-native. Provider implementation, source-owner modification, signer/key access, persistence/high-water work, native qualification, runtime wiring, or deployment remains separately gated.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 
