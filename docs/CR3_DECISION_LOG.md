@@ -3728,3 +3728,29 @@ effect and authority remained zero or false. Accepted report SHA-256:
 writing a live spend/checkpoint, calling LIVE-190 or the physical driver, selecting/binding/listening/closing, clearing a
 blocker, assembling a candidate, making an owner-attended physical attempt, wiring runtime use, contacting a provider,
 or deploying.
+
+## ADR-173 — Isolate the first native issuer implementation behind an unreachable boundary
+
+**Decision:** CR13A-LIVE-220 may add one isolated runtime `node:net` importer containing the future native issuer, but
+the real factory and all native objects remain private and unreachable. The only exported construction path fails closed
+before a native call. Tests inspect and fake-test the surrounding contract without monkey-patching or invoking native
+primitives. No runtime consumer, candidate, attempt, or blocker clearance exists.
+
+**Why:** LIVE-210 proves issuer ordering without native behavior. The next implementation risk is whether the required
+native primitives can be confined to one module without exposing server identity or letting callers supply address,
+port, options, callbacks, objects, or mutable ambient methods. Keeping the code unreachable separates isolation review
+from the first real resource effect.
+
+**Alternatives rejected:** call a temporary loopback listener in tests; monkey-patch `node:net`; export an injectable
+native backend; accept caller server/options/callback values; export the real issuer factory before composition; let the
+physical driver bind from a port; resolve native methods at call time; install timers or process handlers; treat timeout
+as definite failure; or combine implementation, wiring, qualification, and activation.
+
+**Evidence required:** exact accepted LIVE-210 product/review binding; one allowlisted native importer; captured native
+primitive inventory; fail-closed exported path; no caller native input; no runtime consumer or native test invocation;
+strict provenance, privacy, mutation, and ambient tests; exact zero-effect and false-authority truth; full producer
+verification; and a different independent zero-repair review.
+
+**Reevaluate:** Before making the private factory reachable, providing a real locator/custody spend, writing a live
+checkpoint, invoking any native primitive, calling LIVE-190 or the physical driver, assembling a candidate, performing
+an owner-attended attempt, wiring runtime use, contacting a provider, or deploying.
