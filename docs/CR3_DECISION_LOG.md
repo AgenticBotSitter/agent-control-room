@@ -4834,8 +4834,13 @@ TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-00
 and whitespace validation pass. No prompt, credential, biometric, Keychain, factor call, time, nonce, body, seal,
 signature, trust read, database, registration, process, network, native, runtime, or deployment effect occurred.
 The first independent review rejected 2 High and 1 Medium findings covering unrooted dependency authority, incomplete
-time chronology, and reusable attempt scope. Those findings are remediated in the inert contract; a different
-independent zero-repair re-review and final acceptance evidence are pending.
+time chronology, and reusable attempt scope. Those findings are remediated in exact product
+`2689c10e9964b3ec936253a776ef470e01948e44`, tree
+`4c47d229b6d9fb60606eaa68ac0129cae5b62fb0`. A different independent reviewer accepted it with 0 High, 0 Medium,
+and 0 Low. Preserve `docs/reviews/CR13A_LIVE_500_INDEPENDENT_REVIEW.md` with SHA-256
+`23dbd1e6ff2bd69f1ef75168579b5b4af237680cdc248f23b98f7766534285df` and
+`docs/CR13A_LIVE_500_ACCEPTANCE.md` with SHA-256
+`288e60c896f67caf48954a36467327f64e480dff0660edd6addd50acb4d2d9f0`. No next block is started.
 
 **Reevaluate:** Before any real owner prompt or UI, credential/biometric/Keychain/authenticator access, factor verifier,
 trusted-time or nonce source, body constructor, sealer or signer, trust resolver, registration/nonce store, PostgreSQL

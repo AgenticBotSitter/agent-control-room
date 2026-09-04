@@ -2398,7 +2398,7 @@ rendered routes, migrations 0001-0038 with 124 tables, macOS stage zero, and the
 
 ## CR13A-LIVE-500 — inert owner-present issuer and strong-factor evidence contract
 
-Status: first review rejected 2 High/1 Medium; remediated product awaits different zero-repair re-review. Use Sol xhigh.
+Status: independently accepted for ordinary integration after remediation of 2 High/1 Medium. No next block started.
 
 LIVE-500 is the next dependency-ordered repository-only slice from LIVE-470. It will freeze the exact input evidence,
 product and policy bindings, owner-presence ceremony, strong-factor evidence classes, trusted-time and nonce intent,
@@ -2434,3 +2434,10 @@ Producer verification passes 14/14 focused tests, 29/29 combined LIVE-490/LIVE-5
 migrations 0001-0038 with 124 tables, macOS stage zero, and whitespace validation. The product exposes no issuer,
 prompt, verifier, clock, nonce, sealer, trust resolver, store, registration, database, process, native, network, or
 runtime path. All 42 actuals remain zero and all eight authority grants remain false.
+
+A different independent reviewer accepted exact product `2689c10e9964b3ec936253a776ef470e01948e44`, tree
+`4c47d229b6d9fb60606eaa68ac0129cae5b62fb0`, with 0 High, 0 Medium, and 0 Low. The reviewer independently passed
+14/14 focused tests, 29/29 combined LIVE-490/LIVE-500 preflight tests, 473/473 CR13A tests, the complete
+769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-0038 with 124
+tables, macOS stage zero, and the whitespace gate. See `docs/reviews/CR13A_LIVE_500_INDEPENDENT_REVIEW.md` and
+`docs/CR13A_LIVE_500_ACCEPTANCE.md`. Further build work is paused by owner direction after integration.
