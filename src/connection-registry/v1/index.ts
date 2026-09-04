@@ -21,3 +21,4 @@ export * from "./private-loopback-native-retained-resource-issuer-composition-co
 export * from "./private-loopback-native-issuer-composition-implementation";
 export * from "./private-loopback-native-factory-retrieval-bridge-contract";
 export * from "./private-loopback-native-composition-shell-contract";
+export * from "./private-loopback-physical-qualification-candidate-contract";
