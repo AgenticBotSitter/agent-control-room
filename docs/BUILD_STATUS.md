@@ -147,25 +147,22 @@
 | CR13A-LIVE-360 trusted database-time and lineage validation | Independently accepted after one bounded hostile-row repair; ordinary integration ready | Corrected product `6028bad...`; 14/14 commands, 23/23 focused, 373/373 CR13A, 5/5 build, 4/4 render, 122 tables, 0 residual High/Medium/Low; original Medium preserved; zero consumption/source/native/external effects |
 | CR13A-LIVE-370 atomic invocation-authorization consumption | Independently accepted; ordinary integration ready | Product `6f908cc...`; 14/14 commands, 34/34 focused, 384/384 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; one-use spend remains source-free |
 | CR13A-LIVE-380 post-transaction database-time recheck | Independently accepted; ordinary integration ready | Product `1b79bbc...`; 14/14 commands, 42/42 focused, 392/392 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, 0 High/Medium/Low; read-only and source-free |
-| CR13A-LIVE-390 private fresh-spend/recheck composition contract | Architecture frozen; repository implementation in progress | Future private flow must obtain its own fresh LIVE-370 spend, immediately complete LIVE-380 recheck, keep both receipts private, and stop before source lookup; no executable composition or external effect |
+| CR13A-LIVE-390 private fresh-spend/recheck composition contract | Product complete with producer verification; different independent review pending | Product `34640c7...`; 11/11 focused, 403/403 CR13A, 769/421/392 lifecycle, 5/5 build, 4/4 render, 38 migrations/124 tables; 28 zero actuals and eight false grants; no executable composition or effect |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
 
-CR13A-LIVE-380 product `1b79bbc75dfe74ce0777bcc33cbcc801054113f0` is independently accepted. It validates
-only the exact fresh LIVE-370 receipt before database access, reauthenticates the full registration, nonce, and committed
-consumption state in a new transaction, then reads database time again. Time cannot regress before consumed-at and must
-remain strictly before expiry. A different reviewer passed all twelve groups and fourteen commands once with 0
-High/Medium/Low, 42/42 focused tests, 392/392 CR13A tests, 5/5 build phases, 4/4 rendered routes, and 38 migrations/124
-tables. Producer evidence records the complete 769/421/392 lifecycle. Zero new spend, source lookup/invocation,
-protected native read, production database contact, network, provider, or external effects occurred. Accepted review
-SHA-256: `4a5f60f8ca2ad08ee04f1603773279aef97558edfa27acda1604592f8ae610bd`.
+CR13A-LIVE-390 product `34640c7c6a3c63b781aa848f687ae1c23e7c2dee` is complete with producer verification.
+It freezes one private future control flow that must obtain its own fresh LIVE-370 spend, immediately pass the same
+sealed authorization and exact receipt through LIVE-380, keep both receipts private, and stop before source lookup.
+The exact product passed 11/11 focused tests, 403/403 CR13A tests, the complete 769/421/392 lifecycle, 5/5 build phases,
+4/4 rendered routes, and 38 migrations/124 tables. It publishes 28 zero actuals and eight false grants. No executable
+composition, authorization/database call, source lookup/invocation, protected native read, production contact,
+network, provider, or external effect exists.
 
-Next block: CR13A-LIVE-390, private fresh-spend/recheck composition contract. It will freeze how one private control flow
-must obtain its own fresh spend, perform the post-transaction recheck, and stop immediately before source lookup. Use
-`gpt-5.6-sol` at `xhigh` effort.
-
-LIVE-390 remains a contract-only, source-free block with no protected native read.
+Next gate: a different independent report-only zero-repair review of exact LIVE-390 product `34640c7...`. Use
+`gpt-5.6-sol` at `xhigh` effort. The immutable packet is
+`docs/reviews/CR13A_LIVE_390_INDEPENDENT_REVIEW_PACKET.md`. Ordinary integration remains blocked until acceptance.
 
 Accepted boundary continuity remains explicit: CR13A-LIVE-320 has no native import and no lookup; CR13A-LIVE-330
 remains unreachable with no native reads and no lookup.
@@ -1397,12 +1394,12 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 ## Next block
 
 ```text
-Block: CR13A-LIVE-390 — freeze private fresh-spend/recheck composition contract
+Block: CR13A-LIVE-390-Q — different independent review of the private fresh-spend/recheck contract
 Set model: gpt-5.6-sol
 Set reasoning effort: xhigh
-Why: LIVE-380 independently accepted the post-commit clock decision. The next missing prerequisite is a private ordering contract that prevents either public receipt from being replayed as source authority.
-Expected output: an inert contract fixing fresh spend, second database-time recheck, terminal failure, same-control-flow custody, and the exact stop-before-lookup boundary, with hostile contract tests and independent review.
-Owner action: none for repository implementation, PGlite tests, independent review, and ordinary merges. Production database contact, source lookup/invocation, native reads, and physical qualification remain separately gated.
+Why: exact product 34640c7 is producer-complete, but the security contract requires a different reviewer to attack singleton provenance, same-flow freshness, terminal failure, and the stop-before-lookup boundary before integration.
+Expected output: one immutable report-only disposition against the exact product/tree/parent, all twelve review groups and fourteen commands run once, findings split High/Medium/Low, verified disposable cleanup, and zero repair or effect.
+Owner action: authorize a different independent reviewer when ready. No production database contact, source lookup/invocation, native read, or physical attempt is permitted by this review.
 Stop before: live Hermes/provider contact, credential retrieval or persistence, native process launch, unfiltered Bot Mode reads, production data or PostgreSQL/VPS contact, public hosting, deployment, DNS, Cloudflare, or any unapproved external effect.
 ```
 

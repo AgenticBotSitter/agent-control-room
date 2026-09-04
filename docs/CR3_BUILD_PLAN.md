@@ -2107,8 +2107,8 @@ source/native/listener/production-database/network/provider/external effects. Pr
 
 ## CR13A-LIVE-390 — private fresh-spend/recheck composition contract
 
-Status: architecture frozen; effect-free repository contract implementation may proceed on accepted LIVE-380. Use Sol
-xhigh.
+Status: exact product `34640c7c6a3c63b781aa848f687ae1c23e7c2dee` implemented with producer verification;
+different independent review pending. Use Sol xhigh.
 
 LIVE-390 may freeze one inert private contract requiring a future non-exported control flow to obtain its own fresh
 LIVE-370 spend, immediately complete LIVE-380's post-transaction database-time recheck with the same sealed
@@ -2122,3 +2122,10 @@ modify, retrieve, or invoke LIVE-330; inspect descriptors; read/expose protected
 attestation, checkpoint, candidate, owner authorization, listener, physical attempt, runtime/provider/deployment
 behavior; clear a blocker; or contact production state. Immutable producer evidence and a different independent
 report-only zero-repair review are required before ordinary integration.
+
+Producer verification passed 11/11 dedicated tests, 403/403 CR13A tests, the complete 769/421/392 lifecycle, all five
+build phases, 4/4 rendered routes, migrations 0001-0038/124 tables, TypeScript, lint, macOS stage zero, whitespace, and
+clean status. The product binds accepted LIVE-370 and LIVE-380 evidence, publishes 28 zero actuals and eight false
+grants, has only the safe barrel as a production consumer, and adds no executable composition, database, source,
+native, provider, network, or external effect. Independent review remains required; see
+`docs/reviews/CR13A_LIVE_390_INDEPENDENT_REVIEW_PACKET.md`.

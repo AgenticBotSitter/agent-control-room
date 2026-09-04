@@ -4377,3 +4377,8 @@ runtime use; contacting a provider or production database; or deploying.
 `docs/CR13A_LIVE_390_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_CONTRACT.md`. Current authority covers only an inert
 repository contract and deterministic tests; it does not authorize a spend, database call, source lookup, protected
 native read, or external effect.
+
+**Producer evidence:** Exact product `34640c7c6a3c63b781aa848f687ae1c23e7c2dee` passed 11/11 focused, 403/403 CR13A,
+the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables, TypeScript, lint,
+macOS stage zero, whitespace, and clean status. It publishes 28 zero actuals and eight false grants with no executable
+composition or downstream consumer. This is producer evidence only; different independent review is pending.
