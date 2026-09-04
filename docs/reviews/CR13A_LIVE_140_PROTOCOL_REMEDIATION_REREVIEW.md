@@ -1,8 +1,8 @@
 # CR13A-LIVE-140 corrected independent review report
 
-**Disposition:** `rejected` — reviewer protocol stopped before fixed gates  
-**Reviewer:** Codex independent reviewer `/root/cr13a_live140_protocol_rereview`  
-**Model/effort:** `gpt-5.6-sol`, `xhigh`  
+**Disposition:** `rejected` — reviewer protocol stopped before fixed gates
+**Reviewer:** Codex independent reviewer `/root/cr13a_live140_protocol_rereview`
+**Model/effort:** `gpt-5.6-sol`, `xhigh`
 **Role:** second different, report-only, zero-repair reviewer
 
 This run found no High, Medium, or Low product defect. It is rejected because a preliminary static-inspection command

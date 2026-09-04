@@ -1,15 +1,15 @@
 # CR13A-LIVE-140 second review-protocol remediation packet
 
-**Review mode:** third different independent report-only zero-repair review  
-**Immutable product target:** `6e716bd77c26ad7f70343ddd687dff990f5db12f`  
-**Product tree:** `4010bdaa5fd90f486d7ccad6185a2116dd9345af`  
-**Design parent:** `154231858828603d167c12371863bc0562f2e795`  
-**Original packet SHA-256:** `755db2dec6ad8dfd57455129c25dd4d4b113aa603fd797d33891a82f614cc99f`  
-**First incomplete report SHA-256:** `6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`  
-**First remediation packet SHA-256:** `2ea70e21a84c915f0ec49b8471abcd5104a8477bad077c0066abfffaa1c74360`  
-**Second incomplete report SHA-256:** `2b765051fe6395e7cfc30c9e955dcc0a717215e5b3091c3dfcc681c26368b102`  
-**Required model:** `gpt-5.6-sol`  
-**Required reasoning effort:** `xhigh`  
+**Review mode:** third different independent report-only zero-repair review
+**Immutable product target:** `6e716bd77c26ad7f70343ddd687dff990f5db12f`
+**Product tree:** `4010bdaa5fd90f486d7ccad6185a2116dd9345af`
+**Design parent:** `154231858828603d167c12371863bc0562f2e795`
+**Original packet SHA-256:** `755db2dec6ad8dfd57455129c25dd4d4b113aa603fd797d33891a82f614cc99f`
+**First incomplete report SHA-256:** `6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`
+**First remediation packet SHA-256:** `2ea70e21a84c915f0ec49b8471abcd5104a8477bad077c0066abfffaa1c74360`
+**Second incomplete report SHA-256:** `223b445ed7246acbad0f721ffd49985be813b06879f2b5f57bc4ddec9a766437`
+**Required model:** `gpt-5.6-sol`
+**Required reasoning effort:** `xhigh`
 **Host, native, listener, IPC-listener, or external effects permitted:** none
 
 ## Why this packet exists
