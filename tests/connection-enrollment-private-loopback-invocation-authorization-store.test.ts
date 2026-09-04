@@ -772,16 +772,198 @@ test("CR13A-LIVE-370 consumption survives a persistent PGlite process-boundary r
   }
 });
 
-test("CR13A-LIVE-350/360/370 has no issuer, source consumer, native source, or runtime wiring", async () => {
+test("CR13A-LIVE-380 binds the accepted LIVE-370 product and independent review", async () => {
+  const architecture = await readFile(resolve(root,
+    "docs/CR13A_LIVE_380_POST_TRANSACTION_DATABASE_TIME_RECHECK.md"), "utf8");
+  const review = await readFile(resolve(root, "docs/reviews/CR13A_LIVE_370_INDEPENDENT_REVIEW.md"));
+  assert.equal(createHash("sha256").update(review).digest("hex"),
+    "c1b22f9b8012328f4709c608c4a53292be279f47070aec6136ab40293618f490");
+  assert.match(architecture, /6f908ccd1f65f48a5d874fa0da96afe301d8decf/);
+  assert.match(architecture, /c1b22f9b8012328f4709c608c4a53292be279f47070aec6136ab40293618f490/);
+  assert.match(architecture, /new transaction opened only after the spend transaction returned/i);
+  assert.match(architecture, /result remains evidence, not a capability/i);
+});
+
+test("CR13A-LIVE-380 reauthenticates a committed spend and reads database time again without writes", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    const consumption = await consumptionStore(db).consumeForInvocation(value);
+    const receipt = await consumptionStore(db, "2026-09-04T15:00:20.000Z")
+      .recheckAfterConsumption(value, consumption);
+    assert.equal(receipt.state, "consumed_and_post_transaction_time_rechecked");
+    assert.equal(receipt.consumedAt, consumption.consumedAt);
+    assert.equal(receipt.recheckedAt, "2026-09-04T15:00:20.000Z");
+    assert.equal(receipt.consumptionStateAuthenticated, true);
+    assert.equal(receipt.postTransactionTimeRechecked, true);
+    assert.equal(receipt.exactReplayReturnsNoAuthority, true);
+    assert.equal(receipt.sourceLookupPerformed, false);
+    assert.equal(receipt.sourceInvocationPerformed, false);
+    assert.equal(receipt.nativeReadPerformed, false);
+    assert.equal(Object.isFrozen(receipt), true);
+    assert.deepEqual(Object.entries(receipt).filter(([key]) => key.startsWith("grants")).map(([, entry]) => entry),
+      new Array(8).fill(false));
+    const counts = await raw.query<{ consumptions: number; heads: number }>(`SELECT
+      (SELECT count(*)::int FROM control_native_observation_authorization_consumptions) AS consumptions,
+      (SELECT count(*)::int FROM control_native_observation_authorization_consumption_heads) AS heads`);
+    assert.deepEqual(counts.rows[0], { consumptions: 1, heads: 1 });
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-380 is read-only on exact replay and enforces monotonic exclusive-expiry time", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    const consumption = await consumptionStore(db).consumeForInvocation(value);
+    const recheckAt = (trustedNow: string) => consumptionStore(db, trustedNow)
+      .recheckAfterConsumption(value, consumption);
+    await assert.rejects(recheckAt("2026-09-04T15:00:09.999Z"), expectCode("integrity_failed"));
+    assert.equal((await recheckAt(consumption.consumedAt)).recheckedAt, consumption.consumedAt);
+    const first = await recheckAt("2026-09-04T15:00:44.999Z");
+    assert.deepEqual(await recheckAt("2026-09-04T15:00:44.999Z"), first);
+    await assert.rejects(recheckAt(expiresAt), expectCode("expired"));
+    const count = await raw.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM control_native_observation_authorization_consumptions");
+    assert.equal(count.rows[0]?.count, 1);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-380 rejects terminal replay and receipt drift before database access", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    const fresh = await consumptionStore(db).consumeForInvocation(value);
+    const terminal = await consumptionStore(db).consumeForInvocation(value);
+    let transactions = 0;
+    const guarded: DatabaseClient = {
+      query: db.query.bind(db),
+      transaction: async () => { transactions += 1; throw new Error("database must remain unread"); },
+      transactionWithPreCommitCheck: db.transactionWithPreCommitCheck.bind(db),
+    };
+    const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(guarded,
+      { authorizationKey, authorizationKeyIdDigest, stateKey, consumptionStateKey });
+    await assert.rejects(validator.recheckAfterConsumption(value, terminal), expectCode("replay_conflict"));
+    await assert.rejects(validator.recheckAfterConsumption(value,
+      { ...fresh, consumedAt: "2026-09-04T15:00:11.000Z" }), expectCode("replay_conflict"));
+    await assert.rejects(validator.recheckAfterConsumption(value, { ...fresh, extra: false }), expectCode("invalid_input"));
+    assert.equal(transactions, 0);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-380 rejects hostile receipt values without executing behavior", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    const fresh = await consumptionStore(db).consumeForInvocation(value);
+    let executions = 0;
+    const proxy = new Proxy({}, { ownKeys() { executions += 1; throw new Error("receipt proxy"); } });
+    const accessor = Object.defineProperty({ ...fresh }, "consumedAt", {
+      enumerable: true, get() { executions += 1; throw new Error("receipt accessor"); },
+    });
+    const validator = consumptionStore(db, "2026-09-04T15:00:20.000Z");
+    await assert.rejects(validator.recheckAfterConsumption(value, proxy), expectCode("invalid_input"));
+    await assert.rejects(validator.recheckAfterConsumption(value, accessor), expectCode("invalid_input"));
+    await assert.rejects(validator.recheckAfterConsumption(value, Symbol("receipt")), expectCode("invalid_input"));
+    assert.equal(executions, 0);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-380 authenticates all durable state before the second clock read", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const value = envelope();
+    await store.register(value);
+    const fresh = await consumptionStore(db).consumeForInvocation(value);
+    await raw.query(`UPDATE control_native_observation_authorization_consumption_heads SET head_auth_tag=$1
+      WHERE tenant_id=$2`, [hmacSha256Tag(consumptionStateKey, { wrong: true }), tenantId]);
+    let clockReads = 0;
+    const guarded: DatabaseClient = {
+      query: db.query.bind(db),
+      transaction: (callback) => db.transaction((session) => callback(Object.freeze({
+        query: <T>(statement: string, params: unknown[] = []) => {
+          if (statement.includes("clock_timestamp()")) clockReads += 1;
+          return statement.includes("clock_timestamp()")
+            ? Promise.resolve({ rows: [{ trusted_now: "2026-09-04T15:00:20.000Z" }] as T[] })
+            : session.query<T>(statement, params);
+        },
+      }))),
+      transactionWithPreCommitCheck: db.transactionWithPreCommitCheck.bind(db),
+    };
+    const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(guarded,
+      { authorizationKey, authorizationKeyIdDigest, stateKey, consumptionStateKey });
+    await assert.rejects(validator.recheckAfterConsumption(value, fresh), expectCode("integrity_failed"));
+    assert.equal(clockReads, 0);
+  } finally { await raw.close(); }
+});
+
+test("CR13A-LIVE-380 rejects malformed second database time and missing consumption", async () => {
+  const { raw, db, store } = await setup();
+  let emptyRaw: PGlite | undefined;
+  try {
+    const value = envelope();
+    await store.register(value);
+    const fabricatedFresh = await consumptionStore(db).consumeForInvocation(value);
+    for (const trustedNow of [[], [expiresAt, expiresAt], "2026-09-04 15:00:20+00",
+      new Error("raw database clock failure")] as const) {
+      const validator = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(
+        withTrustedDatabaseTime(db, trustedNow),
+        { authorizationKey, authorizationKeyIdDigest, stateKey, consumptionStateKey });
+      await assert.rejects(validator.recheckAfterConsumption(value, fabricatedFresh), expectCode("integrity_failed"));
+    }
+    emptyRaw = new PGlite();
+    await migrate(emptyRaw);
+    await emptyRaw.query("INSERT INTO tenants(id,display_name) VALUES($1,$2)", [tenantId, "Owner"]);
+    const emptyDb = adaptPglite(emptyRaw);
+    await new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(emptyDb,
+      { authorizationKey, authorizationKeyIdDigest, stateKey }).register(value);
+    await assert.rejects(consumptionStore(emptyDb, "2026-09-04T15:00:20.000Z")
+      .recheckAfterConsumption(value, fabricatedFresh), expectCode("consumption_unavailable"));
+  } finally {
+    if (emptyRaw) await emptyRaw.close();
+    await raw.close();
+  }
+});
+
+test("CR13A-LIVE-380 rechecks the exact committed spend after a persistent PGlite reopen", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cr13a-live380-restart-"));
+  const dataDirectory = join(directory, "pgdata");
+  let raw: PGlite | undefined;
+  try {
+    raw = new PGlite(dataDirectory);
+    await migrate(raw);
+    await raw.query("INSERT INTO tenants(id,display_name) VALUES($1,$2)", [tenantId, "Owner"]);
+    const db = adaptPglite(raw), value = envelope();
+    const registrar = new ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1(db,
+      { authorizationKey, authorizationKeyIdDigest, stateKey });
+    await registrar.register(value);
+    const fresh = await consumptionStore(db).consumeForInvocation(value);
+    await raw.close(); raw = undefined;
+    raw = new PGlite(dataDirectory);
+    const receipt = await consumptionStore(adaptPglite(raw), "2026-09-04T15:00:20.000Z")
+      .recheckAfterConsumption(value, fresh);
+    assert.equal(receipt.consumedAt, fresh.consumedAt);
+    assert.equal(receipt.recheckedAt, "2026-09-04T15:00:20.000Z");
+  } finally {
+    if (raw) await raw.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("CR13A-LIVE-350/360/370/380 has no issuer, source consumer, native source, or runtime wiring", async () => {
   const source = await readFile(modulePath, "utf8");
   assert.doesNotMatch(source, /from "node:|import "node:|unreachable-atomic-native-observation-source/);
   assert.doesNotMatch(source, /\.consume\(|sourceLookups: [1-9]|sourceInvocations: [1-9]|nativeReads: [1-9]/);
   assert.deepEqual(Object.getOwnPropertyNames(ConnectionEnrollmentPrivateLoopbackInvocationAuthorizationStoreV1.prototype),
-    ["constructor", "register", "validateForConsumption", "consumeForInvocation"]);
+    ["constructor", "register", "validateForConsumption", "consumeForInvocation", "recheckAfterConsumption"]);
   const status = CONNECTION_ENROLLMENT_PRIVATE_LOOPBACK_INVOCATION_AUTHORIZATION_STORE_DISABLED_V1;
   assert.equal(Object.isFrozen(status), true);
   assert.equal(status.readOnlyValidationImplemented, true);
   assert.equal(status.atomicConsumptionImplemented, true);
+  assert.equal(status.postTransactionTimeRecheckImplemented, true);
   assert.equal(status.trustedDatabaseTimeRequired, true);
   assert.equal(status.productionDatabaseConfigured, false);
   assert.equal(status.productionIssuerImplemented, false);
