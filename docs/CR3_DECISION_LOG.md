@@ -3419,8 +3419,13 @@ is owner-approved LIVE-120 merge `19a87163c9210730140ec0d769c2effa6bbb5e1b`; acc
 driver import, runtime consumer, capability issuer, listener/network action, or external effect. The first independent
 run is rejected/invalid and preserved at `docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW.md`: one reviewer-side
 `tsx --version` IPC-listener attempt was denied before bind, and the packet's no-driver-import rule contradicted its
-broader driver-importing test list. Corrected second review remains pending under
-`docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md`; the exact product remains unchanged.
+broader driver-importing test list. The corrected second review ran under
+`docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md`; the exact product remained unchanged. The second
+different reviewer accepted the corrected protocol with 0 High, 0 Medium, and 0 Low findings, all eleven commands once,
+9/9 readiness tests, 4/4 rendered pages, 119 tables, 30 hostile replacement attempts with zero executions, and zero
+physical-driver imports or listener/IPC/native/network/external effects. Preserve
+`docs/reviews/CR13A_LIVE_130_PROTOCOL_REMEDIATION_REREVIEW.md`; SHA-256
+`02fa96a370615a331d8ccfadaa5d9de1d2ed420eafbce60014d2b394b1283290`.
 
 **Reevaluate:** Before implementing a private provider, candidate assembler, owner-spend path, native harness,
 physical attempt, evidence acceptance registry, runtime consumer, SSH/credential path, production contact, or

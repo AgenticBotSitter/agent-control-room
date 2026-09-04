@@ -1472,8 +1472,8 @@ production system, or deploy.
 
 ## CR13A-LIVE-130 — physical qualification prerequisite boundary
 
-Status: exact effect-free implementation candidate `339c2e8a61e7c2ac0a40fc6f51711a512badbf6c` is producer-
-verified; the first review is rejected on protocol and a corrected second independent zero-repair review is pending. See
+Status: exact effect-free implementation `339c2e8a61e7c2ac0a40fc6f51711a512badbf6c` is independently accepted and
+ready for ordinary owner-controlled integration. See
 `CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_BOUNDARY.md`,
 `CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_ACCEPTANCE.md`, and ADR-164. Use Sol xhigh.
 
@@ -1495,5 +1495,24 @@ listener-free fallback. Its immutable review packet is
 attempt and Medium packet contradiction `CR13A-LIVE-130-PACKET-M-001`; it is not acceptance evidence. The corrected
 packet `docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` forbids `tsx` CLI probes and all broader
 driver-importing test scripts, and instead requires the nine readiness tests plus listener-free static/build/migration
-checks and hostile probes from a second different reviewer. These producer results and review corrections did not
-construct or import the native driver.
+checks and hostile probes from a second different reviewer. The corrected review accepted the exact product with 0
+High, 0 Medium, and 0 Low findings; 30 hostile attempts executed zero replacements, and all listener/IPC/native/network
+and external-effect counts were zero. Preserve
+`docs/reviews/CR13A_LIVE_130_PROTOCOL_REMEDIATION_REREVIEW.md`; SHA-256
+`02fa96a370615a331d8ccfadaa5d9de1d2ed420eafbce60014d2b394b1283290`. These producer results and review corrections
+did not construct or import the native driver and clear none of the twelve blockers.
+
+## CR13A-LIVE-140 — target-runtime attestation boundary
+
+Status: next architecture block after owner-controlled LIVE-130 integration. Use Sol xhigh.
+
+LIVE-140 must define, implement with repository fakes, and independently review a privacy-preserving target-runtime
+attestation port. It may describe the minimum stable claims needed to bind a future qualification candidate to one
+runtime class and boot/session epoch, but it may not inspect this Mac, accept raw caller identity, read environment or
+system profiles, collect host/user/path/PID/network/credential values, invoke a platform API, sign production evidence,
+or clear `target_runtime_attestation_missing`.
+
+Architecture and ADR come first. The effect-free implementation must use exact private provenance, fixed sanitized
+claims, explicit expiry/replay/epoch boundaries, no production-shaped proof issuer, no clock/callback/executable input,
+zero authority grants, and runtime non-wiring. A future real attestor, host observation, candidate assembly, owner
+window, native qualification, and activation each remain separate blocks.

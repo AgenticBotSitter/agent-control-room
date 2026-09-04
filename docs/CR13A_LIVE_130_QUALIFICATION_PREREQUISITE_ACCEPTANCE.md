@@ -1,6 +1,6 @@
 # CR13A-LIVE-130 physical qualification prerequisite readiness
 
-**Status:** exact implementation candidate verified; first review rejected on protocol; corrected independent review pending
+**Status:** exact implementation independently accepted; ordinary owner-controlled integration ready
 **Product target:** `339c2e8a61e7c2ac0a40fc6f51711a512badbf6c`
 **Product tree:** `06b57cdcec6f139a407d1475e3171ce3798ad64d`
 **Design parent:** `aa5284ba1bba34d1d24ece90cedfd1160c45b0b7`
@@ -72,14 +72,21 @@ physical-driver imports while requiring broader test scripts that transitively i
 negative report at `docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW.md`; SHA-256
 `3cb87af1ad725c86ad09a3deb1f0ea98dadb3caffaf381f917d768b7cbf2e15d`.
 
-The corrected immutable packet at `docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md` requires a
-second different independent, report-only, zero-repair reviewer. It permits only the nine-test readiness file and
-listener-free static/build/migration checks, explicitly forbids every broader script that imports the physical driver,
-and forbids `tsx` CLI or version probes. Any High, Medium, or Low finding or nonzero listener/IPC attempt rejects the
-run.
+The corrected immutable packet at `docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md`; SHA-256
+`8408b63ffe1b260ccae68264575f658a96bc189f3c540b155600d4fa964d5073`, required a second different independent,
+report-only, zero-repair reviewer. It permitted only the nine-test readiness file and listener-free
+static/build/migration checks, explicitly forbade every broader script that imports the physical driver, and forbade
+`tsx` CLI or version probes.
 
-This document does not claim independent acceptance while the corrected review is pending. A future accepted report may permit
-ordinary owner-controlled integration consideration only.
+The second reviewer accepted the exact product with 0 High, 0 Medium, and 0 Low findings. All eleven allowlisted
+commands passed once: stage zero, typecheck, lint, 9/9 readiness tests, production build, 4/4 rendered pages, and
+migrations 0001-0036/119 tables. Thirty hostile replacement attempts produced zero hostile executions. Physical-driver
+imports, native constructions, capabilities, admissions, candidates, owner spends, physical listener/socket/port
+attempts, reviewer IPC-listener attempts, network observations, and external effects were all zero. Preserve the
+accepted report at `docs/reviews/CR13A_LIVE_130_PROTOCOL_REMEDIATION_REREVIEW.md`; SHA-256
+`02fa96a370615a331d8ccfadaa5d9de1d2ed420eafbce60014d2b394b1283290`.
+
+This acceptance permits ordinary owner-controlled integration consideration only.
 
 ## Honest limits and next gate
 
