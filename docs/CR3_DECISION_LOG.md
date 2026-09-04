@@ -3573,6 +3573,14 @@ the physical driver in this effect-free block.
 hostile substitution and ambient-intrinsic tests, privacy and runtime non-wiring proof, zero native/effect counts, full
 producer verification, and a different independent zero-repair review. No native resource may exist in this block.
 
+**Accepted evidence:** Exact product `7e76e1980541075f9a1fa45479d20f06a823ef29` passes 8/8 dedicated, 165/165
+connection, 182/182 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer passed all twelve commands and
+review groups with 0 High/Medium/Low; fifteen direct hostile cases and four ambient replacements executed zero behavior,
+and every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_170_INDEPENDENT_REVIEW.md`; SHA-256
+`3581dcf33774e730614346d57594738236acf0932fa581214af7931af67c1381`. Acceptance is effect-free and clears no blocker.
+
 **Reevaluate:** Before changing the physical driver's native port, creating a custody provider or resource capability,
 importing a native backend, selecting/binding/listening/closing, issuing or spending a handoff, writing a live ledger or
 checkpoint, assembling a candidate, making a physical attempt, wiring runtime use, or deploying.

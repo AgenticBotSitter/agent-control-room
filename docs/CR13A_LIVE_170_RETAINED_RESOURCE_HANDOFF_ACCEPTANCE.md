@@ -1,6 +1,6 @@
 # CR13A-LIVE-170 retained-resource handoff acceptance
 
-**Status:** exact effect-free product verified; independent review pending
+**Status:** independently accepted; ordinary owner-controlled integration ready
 **Product target/tree:** `7e76e1980541075f9a1fa45479d20f06a823ef29` /
 `c432b862e86b3100d524073fcf4b37a9a9cf02cc`
 **Design parent:** `922ae645f265c88d04a6ed78fa7fefbc18ced4b7`
@@ -34,11 +34,13 @@ Every host observation, port selection/reservation, native-resource creation/ret
 native-backend construction, listener/IPC/socket/timer attempt, network observation, protected read, authority grant,
 runtime wiring, and external effect remained zero or false.
 
-## Pending review and limits
+## Independent review and limits
 
-A different report-only, zero-repair reviewer must run the immutable fixed-command packet, inspect provenance,
-privacy, callable, import, issuer, and consumer boundaries, report 0 High/Medium/Low, and reproduce all zero-effect
-counts. The product may not change during review.
+A different report-only, zero-repair reviewer passed all twelve fixed commands and review groups against the immutable
+product. The review found 0 High, 0 Medium, and 0 Low defects. Fifteen direct hostile cases and four ambient replacement
+attempts executed zero behavior, and every authority/effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_170_INDEPENDENT_REVIEW.md`; SHA-256
+`3581dcf33774e730614346d57594738236acf0932fa581214af7931af67c1381`.
 
 Even acceptance permits ordinary owner-controlled integration only. It does not modify or invoke the physical driver's
 native port, create a custody provider/resource, issue a handoff, clear a blocker, assemble a candidate, make a physical

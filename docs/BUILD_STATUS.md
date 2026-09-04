@@ -125,6 +125,7 @@
 | CR13A-LIVE-140 target-runtime attestation boundary | Independently accepted; ordinary owner-controlled integration ready | Product `6e716bd...` unchanged; fifth different reviewer passed 16/16 exact commands and all 12 groups; 63 hostile and 8 replacement attempts executed zero behavior; 0 High/Medium/Low and zero host/listener/IPC/native/network/effects |
 | CR13A-LIVE-150 private locator broker boundary | Independently accepted; ordinary owner-controlled integration ready | Product `f089f89...`; 12/12 commands and groups, 9/9 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; no locator/port/capability/native/network effect |
 | CR13A-LIVE-160 exclusive port custody boundary | Independently accepted; ordinary owner-controlled integration ready | Product `97d46c7...`; 12/12 commands and groups, 8/8 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; proves the accepted driver still lacks safe same-resource handoff; zero native/listener/network effects |
+| CR13A-LIVE-170 retained-resource handoff boundary | Independently accepted; ordinary owner-controlled integration ready | Product `7e76e19...`; 12/12 commands and groups, 8/8 focused, 5/5 build, 4/4 render, 119 tables, 0 High/Medium/Low; atomic private one-use same-resource transfer contract; zero native/listener/network effects |
 | CR-9 through CR-10 | Project-contract frontier unblocked; authenticated reads and every live/native/deployment rehearsal remain separately owner-controlled | `CONTROL_ROOM_COMPLETION_PROGRAM.md` |
 
 ## Active block
@@ -137,9 +138,17 @@ and review groups with 0 High/Medium/Low; fifteen hostile cases and four ambient
 and every forbidden effect remained zero. Preserve `docs/reviews/CR13A_LIVE_160_INDEPENDENT_REVIEW.md`; SHA-256
 `0a0837acbd36ba9292e8b3f37b57d4900290aa03c54c3c13c73413aebd8345a6`.
 
-Next block: CR13A-LIVE-170, an effect-free retained-resource handoff boundary for the physical driver. It must define
-the exact one-use API and failure semantics needed to transfer the already-held native resource without closing,
-reselecting, rebinding, retrying, exposing its locator, or wiring a live runtime. Use `gpt-5.6-sol` at `xhigh` effort.
+CR13A-LIVE-170 is independently accepted at exact product `7e76e1980541075f9a1fa45479d20f06a823ef29`.
+It freezes the safe handoff as an atomic, private, non-serializable, single-use transfer of the same retained resource.
+The independent reviewer passed all twelve commands and groups with 0 High/Medium/Low; fifteen hostile cases and four
+ambient replacements executed zero behavior, and every forbidden effect remained zero. Preserve
+`docs/reviews/CR13A_LIVE_170_INDEPENDENT_REVIEW.md`; SHA-256
+`3581dcf33774e730614346d57594738236acf0932fa581214af7931af67c1381`.
+
+Next block: CR13A-LIVE-180, an unwired retained-resource driver-port implementation. It may implement the module-private
+one-use acceptance and cleanup state machine with repository fakes, but it must not create, bind, listen on, inspect, or
+close a real resource; expose a locator/handle; wire runtime use; or perform a physical attempt. Use `gpt-5.6-sol` at
+`xhigh` effort.
 
 CR12B-IDEA-105 replaces the stale release-only Idea Lab pin with exact reviewed installed revision
 `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b`. The accepted no-effect evidence proves the official source, exact release
