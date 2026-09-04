@@ -23,3 +23,4 @@ export * from "./private-loopback-native-factory-retrieval-bridge-contract";
 export * from "./private-loopback-native-composition-shell-contract";
 export * from "./private-loopback-physical-qualification-candidate-contract";
 export * from "./private-loopback-target-runtime-observation-trust-contract";
+export * from "./private-loopback-atomic-native-observation-composition-contract";
