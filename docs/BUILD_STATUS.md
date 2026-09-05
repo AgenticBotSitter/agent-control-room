@@ -2036,6 +2036,20 @@ post-suite392, private compiled18, rendered4, both builds, TypeScript, full ESLi
 Published as [PR #318](https://github.com/MarvinAi5/control-room/pull/318), stacked on #317.
 Current-head GitHub CI remains required; no merge or runtime activation is claimed.
 
+## Server handshake and reconciled sessions
+
+Product `6e7124336416d9f7c3ec63cdd9ec79f33ce55e05` is independently reviewed with39 passing checks.
+The server session exchanges actual signed negotiation/reconciliation with the portable bridge using
+database-backed authentication in disposable tests. Its bounded single-process registry invalidates
+replacements, and timeout/clock/disconnect fences prevent stale readiness. See
+`CR14C_SERVER_NODE_SESSION_ACCEPTANCE.md` for the corrected shutdown race and remaining limits.
+No listener, deployment bootstrap, session renewal, durable task sender or receipt receiver is mounted.
+Connection evidence is not current key/lease/owner permission. Continue signed delivery integration on
+Astra Medium; no live host action is authorized by this repository acceptance.
+Final corrected-product verification passed CR14C466, preparation769, main1050 with two existing
+skips, post-suite392, private compiled18, rendered4, both builds, TypeScript, full ESLint and
+migrations0049/135 tables. Current-head GitHub CI remains required before integration.
+
 ## Next block
 
 ```text

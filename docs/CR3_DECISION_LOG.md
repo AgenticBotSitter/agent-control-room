@@ -5870,3 +5870,22 @@ Accepted product `03d1e66f7deaac00e8cfc8fac050f31541025c96`, tree
 `94254e56bf66d2dce26c72d17e2086fd247811a6`, passed41 independent checks. Two review findings and
 their corrections are retained in `CR14C_NATIVE_CHANNEL_ACCEPTANCE.md`. This does not prove liveness,
 activate delivery, or finish server-side session management and receipt persistence.
+
+## ADR-241 — authenticated bounded server session negotiation
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+The server's explicit supplied-resource session authenticates the exact configured node/key, negotiates
+features/frame size and sends verified server-signed acceptance/reconciliation. Ready channel evidence
+requires a genuine authenticated report covering that handshake, not a caller assertion. A bounded
+single-process registry replaces only an explicitly selected node session; old releases cannot remove
+the replacement. Untrusted peers must not select registry replacements before host authorization.
+
+Sessions expire with the original hello, capped at five minutes, and close on clock rollback, timeout,
+failure or uncertainty. Post-await state transitions must recheck closure so a late continuation cannot
+resurrect a disconnected session. This is connection evidence, not key/lease/owner execution authority.
+It does not mount a listener, load credentials, route ongoing traffic or dispatch work.
+
+Product `6e7124336416d9f7c3ec63cdd9ec79f33ce55e05`, tree
+`c0ee4930ff9684e9b493b488c4aad0bebecbe3c1`, passed39 independent review checks after a shutdown-race
+correction. See `CR14C_SERVER_NODE_SESSION_ACCEPTANCE.md`. Durable delivery and receipts remain next.
