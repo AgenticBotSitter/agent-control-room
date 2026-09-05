@@ -39,3 +39,6 @@ Final corrected-product verification exited zero: CR14C466, preparation769, main
 platform skips, post-suite392. Both builds,18 private compiled checks,four rendered-page checks,
 TypeScript, full ESLint, stage zero, whitespace and migrations0001–0049/135 tables passed.
 Only documentation changed after product acceptance and during this final verification.
+
+Published as [PR #319](https://github.com/MarvinAi5/control-room/pull/319), stacked on #318.
+Current-head GitHub CI remains required; no merge or deployment is claimed.

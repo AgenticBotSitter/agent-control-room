@@ -2049,6 +2049,8 @@ Astra Medium; no live host action is authorized by this repository acceptance.
 Final corrected-product verification passed CR14C466, preparation769, main1050 with two existing
 skips, post-suite392, private compiled18, rendered4, both builds, TypeScript, full ESLint and
 migrations0049/135 tables. Current-head GitHub CI remains required before integration.
+Published as [PR #319](https://github.com/MarvinAi5/control-room/pull/319), stacked on #318.
+No merge, runtime activation or deployment is claimed.
 
 ## Next block
 
