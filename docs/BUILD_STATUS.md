@@ -25,9 +25,12 @@ compiled/in-process integration evidence, not a running private beta or observed
 `e6fa438dbb2e71cb4435c6872051722171928d22`. The owner-only page/API reads existing verified enrollments and
 signal evidence under shared session revocation. It is not a live fleet or native-run adapter. Startup/role
 preparation design is recorded, not provisioned. See `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`.
-**Next: CR14B bounded startup/pool and database-role implementation**, using
+**CR14B bounded startup/pool and database-role implementation is in review**, using
 `gpt-6-astra` / `xhigh` (Astra Xhigh).
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
+The current repository block adds explicit PG17 same-host startup, effective-role/schema checks, bounded
+pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
+See `CR14B_PRIVATE_STARTUP_CONTRACT.md` and the still-draft `CR14B_SETUP_REHEARSAL_PACKET.md`.
 The combined CR14A/CR14B feature branch is published in [PR #280](https://github.com/MarvinAi5/control-room/pull/280)
 against `main`. Current GitHub checks are tracked on the PR; no merge is claimed.
 The private-application follow-up is [PR #281](https://github.com/MarvinAi5/control-room/pull/281), stacked
@@ -38,6 +41,7 @@ only after accepted review and current checks. #282 is not claimed merged or dep
 PR #282's exact head `98b6030` passed GitHub CI run `33939343152`. The connection-view follow-up is
 [PR #283](https://github.com/MarvinAi5/control-room/pull/283), stacked on #282; its own current-head checks
 remain required. No merge or deployment is claimed for this stack.
+PR #283's exact head `39afa0f` passed GitHub CI run `33940801704` (completed 2026-09-05 03:12:42 UTC).
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 

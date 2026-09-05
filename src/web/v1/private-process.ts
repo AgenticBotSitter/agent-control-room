@@ -17,6 +17,8 @@ export interface PrivateWebProcessOptions {
   /** Existing enrollment/signal keys, supplied privately. Absence is unavailable, not an empty roster. */
   connections?: WebConnectionKeys;
   clock?: () => number;
+  /** Tests may shorten the production drain ceiling; never extend it. */
+  drainMs?: number;
 }
 
 export function privateNotConfigured() {
@@ -29,6 +31,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
+  const drainMs = options.drainMs ?? 30_000;
+  if (!Number.isSafeInteger(drainMs) || drainMs < 1 || drainMs > 30_000) throw new Error("invalid_private_app_config");
   const keys = createAccessKeyCache({ ...options, clock });
   const service = new WebProjectService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey);
@@ -38,11 +42,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   let active = 0;
   let drained: (() => void) | undefined;
   let closePromise: Promise<void> | undefined;
+  let force!: () => void;
+  const forced = new Promise<Response>(resolve => { force = () => resolve(webFailure(new Error())); });
 
-  return {
-    async handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
-      if (closing) return webFailure(new Error());
-      active++;
+    async function dispatch(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
       try {
         requireSameOrigin(request, options.origin);
         const url = new URL(request.url);
@@ -99,15 +102,27 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         }
         return failure;
       }
+    }
+  return {
+    async handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
+      if (closing || active >= 64) return webFailure(new Error());
+      active++;
+      try { return await Promise.race([dispatch(request, render), forced]); }
       finally { active--; if (closing && active === 0) drained?.(); }
     },
     close(): Promise<void> {
       if (closePromise) return closePromise;
       closing = true;
       closePromise = (async () => {
-        // Do not close the pool under an admitted transaction or retry a possibly committed request.
-        if (active > 0) await new Promise<void>(resolve => { drained = resolve; });
-        keys.close(); await options.database.close();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let timedOut = false;
+        try {
+          if (active > 0) await Promise.race([new Promise<void>(resolve => { drained = resolve; }),
+            new Promise<void>(resolve => { timer = setTimeout(() => { timedOut = true; force(); resolve(); }, drainMs); })]);
+        } finally { clearTimeout(timer); keys.close(); }
+        // The bounded production pool terminates all remaining work. Never retry an uncertain write.
+        await options.database.close();
+        if (timedOut) throw new Error("private_app_drain_uncertain");
       })();
       return closePromise;
     },

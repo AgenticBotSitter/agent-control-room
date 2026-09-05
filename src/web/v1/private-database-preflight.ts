@@ -1,0 +1,109 @@
+import { createHash } from "node:crypto";
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import type { PrivatePostgresConfiguration } from "./private-postgres";
+
+// Generated from migrations 0001-0040 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "5710437d4d5bd5e0b60432993371b196f969ec5bc66fc695409ce89a2622393a";
+export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
+  "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
+  "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
+  "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts"] as const;
+const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
+  "control_web_project_commands", "audit_events", "control_audit_chain_heads"]);
+const updates: Record<string, readonly string[]> = {
+  control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
+  control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
+  projects: ["domain_state", "source_version", "normalized_state", "updated_at"],
+  control_manual_project_heads: ["lifecycle", "version", "updated_at"],
+  control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+};
+const fail = () => { throw new Error("private_database_preflight_failed"); };
+
+/** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
+ * Effective permissions are checked separately. Any migrated schema change needs a new reviewed digest.
+ */
+export async function readPrivateWebSchemaDigest(db: DatabaseSession) {
+  const result = await db.query<{ kind: string; name: string; definition: string }>(`
+    SELECT * FROM (SELECT 'column' AS kind, c.relname || '.' || a.attname AS name,
+      json_build_array(c.relkind,a.attnum,format_type(a.atttypid,a.atttypmod),a.attnotnull,
+        pg_get_expr(d.adbin,d.adrelid),a.attidentity,a.attgenerated,c.relrowsecurity,c.relforcerowsecurity)::text AS definition
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
+    LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
+    WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped AND c.relkind IN ('r','p','v','m','S','f')
+    UNION ALL SELECT 'constraint', c.relname || '.' || x.conname,
+      json_build_array(pg_get_constraintdef(x.oid),x.convalidated)::text
+    FROM pg_constraint x JOIN pg_class c ON c.oid=x.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
+    UNION ALL SELECT 'index', c.relname, pg_get_indexdef(c.oid)
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='i'
+    UNION ALL SELECT 'trigger', c.relname || '.' || t.tgname,
+      json_build_array(pg_get_triggerdef(t.oid),t.tgenabled)::text
+    FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND NOT t.tgisinternal
+    UNION ALL SELECT 'function', p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', pg_get_functiondef(p.oid)
+    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public') manifest
+    ORDER BY kind COLLATE "C", name COLLATE "C"`);
+  return createHash("sha256").update(JSON.stringify(result.rows)).digest("hex");
+}
+
+/** Read-only setup gate; never grants, migrates, creates an owner, or repairs a failed prerequisite. */
+export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
+  try {
+    await db.transaction(async tx => {
+      const settings = (await tx.query<{ valid: boolean; database_temp: boolean }>(`SELECT
+        current_user=session_user AND current_user=$1 AND current_database()=$2
+        AND current_setting('server_version_num')::integer BETWEEN 170000 AND 179999
+        AND current_setting('statement_timeout')='5s' AND current_setting('lock_timeout')='2s'
+        AND current_setting('transaction_timeout')='10s' AND current_setting('idle_in_transaction_session_timeout')='5s'
+        AND current_setting('search_path')='pg_catalog, public' AND current_setting('session_replication_role')='origin'
+        AND current_setting('transaction_read_only')='off' AND NOT pg_is_in_recovery()
+        AND NOT has_database_privilege(current_database(),'CREATE') AS valid,
+        has_database_privilege(current_database(),'TEMP') AS database_temp`, [config.username, config.database])).rows[0];
+      if (settings?.valid !== true || settings.database_temp !== false) fail();
+      const roles = (await tx.query<{ rolname: string; valid: boolean }>(`SELECT rolname,
+        NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) AND rolinherit
+        AND rolcanlogin=(rolname=current_user) AS valid FROM pg_roles WHERE pg_has_role(oid,'MEMBER') ORDER BY rolname`)).rows;
+      if (roles.length !== 2 || roles.some(r => !r.valid)
+        || !roles.some(r => r.rolname === config.username) || !roles.some(r => r.rolname === "control_room_private_web")) fail();
+      const unsafe = (await tx.query<{ unsafe: boolean }>(`SELECT
+        EXISTS(SELECT 1 FROM pg_auth_members WHERE pg_has_role(member,'MEMBER') AND admin_option)
+        OR has_database_privilege(current_database(),'CREATE WITH GRANT OPTION')
+        OR EXISTS(SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema'
+          AND (nspname<>'public' OR has_schema_privilege(oid,'CREATE') OR pg_has_role(nspowner,'MEMBER')))
+        OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
+          AND (pg_has_role(c.relowner,'MEMBER') OR c.relkind='S' AND
+            (has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE') OR has_sequence_privilege(c.oid,'USAGE'))))
+        OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
+          AND (has_function_privilege(p.oid,'EXECUTE') OR pg_has_role(p.proowner,'MEMBER') OR p.prosecdef))
+        OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
+          WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
+        OR NOT has_schema_privilege('public','USAGE') AS unsafe`)).rows[0];
+      if (unsafe?.unsafe !== false) fail();
+      const columns = (await tx.query<{ table_name: string; column_name: string; read: boolean; insert: boolean; update: boolean; extra: boolean }>(`
+        SELECT c.relname AS table_name,a.attname AS column_name,
+          has_column_privilege(c.oid,a.attnum,'SELECT') AS read,
+          has_column_privilege(c.oid,a.attnum,'INSERT') AS insert,
+          has_column_privilege(c.oid,a.attnum,'UPDATE') AS update,
+          has_column_privilege(c.oid,a.attnum,'REFERENCES')
+          OR has_column_privilege(c.oid,a.attnum,'SELECT WITH GRANT OPTION')
+          OR has_column_privilege(c.oid,a.attnum,'INSERT WITH GRANT OPTION')
+          OR has_column_privilege(c.oid,a.attnum,'UPDATE WITH GRANT OPTION')
+          OR has_column_privilege(c.oid,a.attnum,'REFERENCES WITH GRANT OPTION')
+          OR has_table_privilege(c.oid,'DELETE') OR has_table_privilege(c.oid,'TRUNCATE')
+          OR has_table_privilege(c.oid,'TRIGGER') AS extra
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
+        WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
+      const reads: ReadonlySet<string> = new Set(privateWebReadTables);
+      if (!columns.length || columns.some(c => c.extra || c.read !== reads.has(c.table_name)
+        || c.insert !== inserts.has(c.table_name) || c.update !== !!updates[c.table_name]?.includes(c.column_name))) fail();
+      if (await readPrivateWebSchemaDigest(tx) !== privateWebSchemaDigest) fail();
+      const binding = (await tx.query<{ valid: boolean }>(`SELECT EXISTS(SELECT 1 FROM workspaces w
+        JOIN control_identities i ON i.tenant_id=w.tenant_id JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
+        WHERE w.tenant_id=$1 AND w.id=$2 AND i.id=$3 AND i.auth_provider=$4 AND i.actor_type='human' AND i.state='active'
+        AND g.role_key='owner' AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$5)
+        AND g.project_ids @> '["*"]'::jsonb AND g.allowed_actions @> '["*"]'::jsonb AND NOT g.require_strong_factor) AS valid`,
+      [scope.tenantId, scope.workspaceId, scope.ownerIdentityId, scope.issuer, new Date(now).toISOString()])).rows[0];
+      if (binding?.valid !== true) fail();
+    });
+  } catch { fail(); }
+}

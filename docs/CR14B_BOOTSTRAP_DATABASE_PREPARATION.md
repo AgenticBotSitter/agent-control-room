@@ -1,6 +1,10 @@
 # CR14B — private startup and database preparation
 
-Date: 2026-09-04. **Design and scoped follow-on work, not an installed bootstrap or permission to execute it.**
+Date: 2026-09-04. **Original preparation design, retained as the implementation requirements.**
+The repository implementation is now described in `CR14B_PRIVATE_STARTUP_CONTRACT.md`; its tests and
+review, rather than this historical design, determine acceptance. The database TEMP simulator limitation
+and unimplemented listener/real-PG harness are explicit there. The draft execution specification is
+`CR14B_SETUP_REHEARSAL_PACKET.md`. Nothing here is permission to run setup or deployment.
 The app remains unconfigured by default. Preserve the single private Hostinger PostgreSQL primary decision;
 PGlite remains disposable development/testing and R2 remains artifacts/backups. No AWS RDS or public database.
 
