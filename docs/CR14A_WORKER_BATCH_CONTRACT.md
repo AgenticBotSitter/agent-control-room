@@ -62,6 +62,11 @@ Integration owner: B-WIRE for the real protected roster, D-FLEET for live readin
 
 ## CR14C-REVIEW-UI-001 — result and revision presentation
 
+**Retired draft as of CR14C owner-review acceptance:** Codex delivered protected result/review components
+and their authenticated controllers in `private-app/app/` before any worker claim. The accepted exact
+artifact/target contract supersedes this older presentation-only interface. Do not publish this draft or
+implement a duplicate component. See `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`; the historical brief follows.
+
 Files: `app/components/work-result-review.tsx`, `tests/work-result-review.test.tsx`.
 
 Export `WorkResultReview`. Props: `state` (`loading|ready|unavailable`); optional `result` record with `jobId`,

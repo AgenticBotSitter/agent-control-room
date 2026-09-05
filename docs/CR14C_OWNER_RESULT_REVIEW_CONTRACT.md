@@ -1,6 +1,7 @@
 # CR14C owner result review and revision requests
 
-Status: implementation candidate. Lead: Astra Xhigh. Repository work only; no live activation.
+Status: independently accepted; see `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. Lead: Astra Xhigh.
+Repository work only; no live activation.
 
 Connect explicit owner quality decisions to the existing Completion Gate. A command binds an existing
 canonical task, received artifact and exact existing document-review target/content fingerprint. The server

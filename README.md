@@ -24,8 +24,11 @@ HTTPS/progress and cancellation handling. Its durable signed progress path into 
 is also independently accepted. Private project Tasks pages now save canonical non-running proposals and show
 recorded attempts/progress, with independently reviewed save recovery and availability labels. Native result
 capture/readback and private file/recorded-review views are now independently accepted too. Physical upload,
-owner review commands and actual dispatch integration remain. This is not a deployed app or live fleet.
-See the [private result acceptance](docs/CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md),
+actual dispatch and planned result/revision submission integration remain. Owner quality acceptance and
+private change-request commands are now independently accepted, including exact-save recovery through
+failed task/result refreshes. This is not a deployed app or live fleet.
+See the [owner review acceptance](docs/CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md),
+[private result acceptance](docs/CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md),
 [private task acceptance](docs/CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md),
 [native progress acceptance](docs/CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md),
 [native-run adapter acceptance](docs/CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md),

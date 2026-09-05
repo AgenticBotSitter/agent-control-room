@@ -5,6 +5,11 @@ Persistent goal: follow the completion program, implement substantial blocks, te
 fix findings and publish private PRs. Preserve merge/live-effect approvals; no deployment, provisioning,
 live credentials or real-agent connection. If one lane needs live permission, continue other authorized code.
 
+**Window closed:** the owner was given a checkpoint after the eight-hour window. Seven accepted blocks
+were published as PRs #285–#291; the eighth owner-review block was not yet accepted. The owner then
+explicitly resumed repository work on Astra Xhigh. The follow-up below is post-window work, not an
+extension of the overnight authorization or a claim that the whole project is finished.
+
 ## Completed blocks
 
 ### CR14B private Node serving
@@ -97,8 +102,8 @@ live credentials or real-agent connection. If one lane needs live permission, co
 
 ## Next authorized repository work
 
-1. Continue C-WORK: owner review/revision-request commands, plus bounded executable
-   planning/admission/dispatch. The native adapter and task pages are accepted but no real agent is connected.
+1. Continue C-WORK: bounded executable planning/admission/dispatch and planned result/revision submission.
+   Owner review commands are now accepted in the post-window follow-up below. No real agent is connected.
    No real agent qualification tonight.
 2. B's live setup/pilot remains a separate gate; continue other settled UI/digest lanes if a particular live
    prerequisite blocks integration. Existing worker capsules remain undispatched drafts.
@@ -126,3 +131,21 @@ running beta; report concrete live blockers without converting simulator evidenc
 - Next read-ahead: web review writes must stage existing Completion Gate checkpoint changes until after
   the session/grant pre-commit checks; ordinary denial cannot advance the external anchor. Checkpoint/SQL
   ambiguity still fails closed. Do not invent an approval or native retry while integrating this command.
+
+## Post-window authorized continuation — owner result review
+
+- Accepted product `b0b419e9edb148748510e39e481183ae19b4be9b`, tree
+  `d3a0c489dd33b7deb8b86d788572676fbb54bf46`; branch `codex/cr14c-owner-result-review`, based on #291.
+- Explicit owner quality acceptance/change requests use the existing Completion Gate, current risk/grants,
+  exact artifact/target/profile binding and authenticated immutable SQL feedback/receipts.
+- Checkpoint writes stage until final session authority checks; ordinary pre-flush rollback does not advance
+  the external anchor, while post-flush uncertainty stays fail-closed. No automatic acceptance or revision run.
+- Initial Medium rejected at `60f3630`; first correction `ef3e8ac` rejected because an ancestor could still
+  unmount recovery state. Second correction accepted with 72 independent tests and no remaining findings.
+  Both failed task-detail and result reads now retain command state at the stable task-page owner.
+- Final checks: 159 focused, 769 pretests, 736 main passes/two existing Windows skips, 392 posttests;
+  both builds, eleven private/four Sites artifact tests, type/lint/whitespace and 130-table migrations.
+- No browser hydration, listener, real database, credentials, native agent/provider, deployment or merge.
+  Actual executable planning, target registration, physical transport and revision dispatch remain.
+- Retired the undispatched review-UI capsule to prevent duplicate work. Publication/current checks are
+  recorded in `BUILD_STATUS.md`; keep Astra Xhigh for the next integration block.

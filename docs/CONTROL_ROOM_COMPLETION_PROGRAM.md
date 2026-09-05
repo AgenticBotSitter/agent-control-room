@@ -6,16 +6,18 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — owner review/revision requests and remaining admission/dispatch integration.
+**Next block:** CR14C C-WORK — bounded executable planning/admission/dispatch and planned result submission.
+Owner quality acceptance and private change requests are independently accepted in
+`CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`; no revision dispatch or live activation is implied.
 Native result capture/readback and private file/recorded-review views are independently accepted in
 `CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md`. This connects checked artifact bytes and existing Completion
-Gate evidence in disposable tests; physical upload, review commands and live dispatch remain unfinished.
+Gate evidence in disposable tests; physical upload, planned target/revision submission and live dispatch remain unfinished.
 The private task workspace is independently accepted in `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`:
 protected project task pages save real non-running canonical proposals and show recorded attempts/native
-progress. Saving is not a live assignment; recorded review is not a connected owner command.
+progress. Saving is not a live assignment; owner commands are connected by the subsequent owner-review block.
 The evidence path is independently accepted in `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`: native
 snapshots reach exact canonical harness records through durable signed delivery in disposable tests.
-This does not complete dispatch, final artifact verification, owner review or live C-WORK acceptance.
+This evidence-only block does not itself complete dispatch, artifact verification, owner review or live C-WORK acceptance.
 The supported Hermes native-run adapter is independently accepted as an unwired component in
 `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`; no real agent is connected and full C-ADAPTER/live C exit remains gated.
 Repository disposable fixture/preparation handoff is accepted in `CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md`;
@@ -157,7 +159,7 @@ fixture-preparation entry is also accepted: empty-database/schema gate, one join
 one-use private handoff, with no native setup or service run. Continue unblocked C-ADAPTER/C-WORK code next.
 IdP/MFA, real PostgreSQL, physical listener/static/browser
 rehearsal and deployment retain their separate readiness/authority gates.
-The project UI packet is a retired non-claimable draft; the three remaining drafts are not dispatched.
+The project and review UI packets are retired non-claimable drafts; the two remaining drafts are not dispatched.
 
 ### CR14C/D — useful work first, then more machines
 
@@ -166,9 +168,12 @@ The project UI packet is a retired non-claimable draft; the three remaining draf
 - C-WORK: wire canonical project request -> job -> attempt -> node-local admission -> Hermes run ->
   normalized progress/result/artifact -> review. Keep cost estimates distinct from enforceable budgets.
   The private canonical proposal/task page and recorded native progress path are accepted repository blocks;
-  checked result content and recorded review reads are now accepted too; remaining work is bounded executable
-  planning/admission/dispatch, physical artifact transport and owner review/revision commands.
-- CR14C-REVIEW-UI-001: build the result/revision view under the frozen presentation contract.
+  checked result content and explicit owner quality/change-request commands are accepted too. Remaining work:
+  bounded executable planning/admission/dispatch, physical artifact transport and planned target/revision submission.
+  Bind the acceptance profile in trusted planning; never initialize a target on a UI read or broaden an inert
+  proposal envelope. Reuse real native evidence rather than synthetic execution-start events.
+- CR14C-REVIEW-UI-001: retired undispatched draft; the accepted private-app result/review implementation
+  supersedes the older presentation-only interface. Do not dispatch duplicate work.
 - C-REHEARSE: one scoped real useful task on one prepared host, plus reconnect and uncertainty handling.
   Do not wait for macOS-specific credential issues if another explicitly qualified route can do the task.
 - D-FLEET: add Mac, Windows and Linux host evidence separately; unsupported routes stay visibly unavailable.
@@ -259,10 +264,11 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **CR14B disposable PostgreSQL rehearsal tooling**, using
+block is **CR14C bounded executable planning/admission/dispatch and planned result submission**, using
 **Astra Xhigh (`gpt-6-astra`, `xhigh`)**. Shared project reads/pagination are accepted in
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.
-The connection read view, startup/role and private-serving code are accepted in their CR14B acceptance records. The next code
+The connection read view, startup/role, serving, rehearsal and fixture-preparation code are accepted in their
+CR14B acceptance records. Owner quality commands are accepted in `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. The next code
 block must not open a physical listener or connect/provision PostgreSQL without the separate scoped packet.
 Publish only the unimplemented prepared worker packets after their base
 and shared contract are available; no extra owner message is needed for ordinary already-scoped code work.

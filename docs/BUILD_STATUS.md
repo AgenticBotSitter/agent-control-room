@@ -54,7 +54,11 @@ proposals and show recorded attempts/progress with truthful uncertainty and avai
 `e5db1f436c7c3f9cf809fe5f2e3fbcf6122ae1a0`. Authenticated native result capture/readback connects canonical
 artifact metadata to protected file views and existing checkpoint-verified review history in disposable tests.
 See `CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md`. Physical upload, owner review commands and live dispatch remain.
-**Next: CR14C C-WORK owner review/revision requests and remaining admission/dispatch integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
+**CR14C owner quality review and private change requests are independently accepted** at
+`b0b419e9edb148748510e39e481183ae19b4be9b`. Exact-result commands use the existing Completion Gate;
+unfinished reviews survive failed task/result refreshes without retaining unauthorized display content.
+See `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. Planned review-target/revision submission and live dispatch remain.
+**Next: CR14C C-WORK bounded executable planning/admission/dispatch and planned result submission**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
@@ -93,18 +97,21 @@ The accepted private-task follow-up is [PR #290](https://github.com/MarvinAi5/co
 stacked on #289. Its exact head `be668c5` passed GitHub CI run `33956977824` at 09:20:35 UTC.
 The accepted private result/review follow-up is [PR #291](https://github.com/MarvinAi5/control-room/pull/291),
 stacked on #290 from `codex/cr14c-private-task-results`.
-Its own current-head CI remains required. This stack is not merged or deployed.
+Its exact head `2ca0e13` passed GitHub CI run `33959511624` at 10:19:14 UTC.
+The owner-review follow-up on `codex/cr14c-owner-result-review` is independently accepted locally;
+publication and its own current-head CI remain required. This stack is not merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
 
-Latest private-result checks: 129 focused, 769 pretests, 706 main passes/two existing Windows skips,
-392 posttests, ten private/four Sites artifact checks, both builds and type/lint/whitespace.
-Migrations 0001–0042 verified 129 tables. Independent re-review closed two Medium file-association/page-size findings.
+Latest owner-review checks: 159 focused, 769 pretests, 736 main passes/two existing Windows skips,
+392 posttests, eleven private/four Sites artifact checks, both builds and type/lint/whitespace.
+Migrations 0001–0043 verified 130 tables. Independent second re-review closed the Medium state-ownership
+finding with 72 passing tests. Both preceding negative dispositions are retained.
 The private project pages save real canonical proposals, show recorded task/agent evidence and read checked
-result content plus matching review history in tests. Physical upload, task dispatch and owner review commands
-remain unwired. Pool reopen is not process
+result content plus matching review history and explicit owner decisions in tests. Physical upload, task
+dispatch and planned review-target/revision submission remain unwired. Pool reopen is not process
 restart; client counts are not physical attempt/absence evidence; idle close cause remains unavailable.
 No real database, listener, credentials, native agent or deployment was used.
 
@@ -116,7 +123,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 |---|---|---|
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
-| Real task -> agent -> progress -> result -> review in the website | Private task pages save non-running proposals, read progress, checked files and recorded review in tests; physical upload, live dispatch and owner review commands absent | CR14C |
+| Real task -> agent -> progress -> result -> review in the website | Private task pages save non-running proposals, read progress/checked files and record owner quality decisions in tests; physical upload, live dispatch and planned result/revision submission remain | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Private view reads existing enrollments/signals; new native adapter is component-tested but unwired; no live fleet/dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
@@ -127,7 +134,8 @@ CR14A selects a thin supported Hermes native-run interface and an explicit VPS N
 It leaves the old native-listener and qualification paths disabled, preserves existing security invariants,
 and separates setup prerequisites from evidence produced by a real rehearsal. The first four substantial
 worker packets remain local **drafts**, not claims or dispatched work. The project UI draft is now retired
-because Codex implemented it before any claim; three other drafts remain. See `CR14A_WORKER_BATCH_CONTRACT.md`.
+because Codex implemented it before any claim. The review UI draft is now also retired after accepted
+private-app integration; two other drafts remain. See `CR14A_WORKER_BATCH_CONTRACT.md`.
 The current program maps R01-R16 to complete user journeys and names the architect integration tasks.
 
 CR14A verification: stage zero ready; 23/23 focused draft/queue/intake tests; the registered main test
@@ -175,6 +183,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C owner quality review | Independently accepted exact-result quality decisions and private change requests; no revision dispatch/live activation | `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`; `reviews/CR14C_OWNER_RESULT_REVIEW_REREVIEW.md` |
 | CR14C private task workspace | Independently accepted canonical proposals and recorded-progress pages; no live dispatch, artifact delivery or owner review | `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`; `reviews/CR14C_PRIVATE_TASK_WORKSPACE_REREVIEW.md` |
 | CR14C canonical native progress | Independently accepted durable signed evidence integration; no active dispatch or canonical task completion | `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`; `reviews/CR14C_CANONICAL_NATIVE_PROGRESS_REREVIEW.md` |
 | CR14C supported Hermes native-run adapter | Independently accepted unwired run journal/protocol/HTTPS/lifecycle code; no real agent or complete task integration | `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`; `reviews/CR14C_NATIVE_RUN_ADAPTER_REREVIEW.md` |

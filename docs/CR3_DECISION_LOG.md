@@ -5273,3 +5273,37 @@ and production storage/host acceptance remain distinct future work, not implied 
 corrective independent reviews. Final 129 focused, 769 pretests, 706 main passes/two existing skips,
 392 posttests, both builds, ten private/four Sites artifact checks, type/lint/whitespace and 129-table
 migrations passed. Independent re-review ran 67 tests. No live effects or merge occurred.
+
+## ADR-215 — Owner quality decisions bind exact results and survive read failures
+
+**Date:** 2026-09-05. **Owner direction:** continue repository building on Astra Xhigh.
+
+Connect explicit owner acceptance/change requests to the existing Completion Gate, under current private
+session/project/result-read/owner review grants and the conservative profile/job risk. Bind an existing
+artifact's verified bytes, document target and profile; derive the human actor server-side. Do not create
+profiles, targets, verification passes, execution permissions or native revision attempts from this command.
+Changed owner decisions cannot overwrite immutable actor/target reviews. Negative decisions add an actual
+finding and at most 4,096 UTF-8 bytes of private SQL feedback; audit records carry digests only.
+
+Stage checkpoint changes inside the serialized SQL transaction. Flush only after final authority checks
+and before commit; pre-flush denial/SQL failure cannot advance the external anchor. Post-flush uncertainty
+still fails closed. Never roll back or silently repair the external checkpoint to turn uncertainty into success.
+Migration 0043 adds append-only command receipts and explicit guarded quality-only SQL writes, advancing
+startup/preparation pins to 130 tables. No production database was changed.
+
+Keep browser recovery state in the stable route-keyed task-page owner, above both task-detail and result
+read gates. Denied content is cleared without losing uncertain command identity; detached saves finish in
+page memory. Only explicit owner checks resend the same command. Leaving/reloading the page still loses
+unsaved memory, not the canonical receipt, and the UI states this limit. Capacity must not silently evict
+unfinished reviews. Quality acceptance is not a claim that other checks passed or another agent started.
+
+**Evidence:** accepted product `b0b419e9edb148748510e39e481183ae19b4be9b`, tree
+`d3a0c489dd33b7deb8b86d788572676fbb54bf46`; `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. Initial Medium
+state-ownership rejection and first corrective rejection are retained. Second re-review accepted with
+72 passing tests and no remaining findings. Root final 159 focused, 769 pretests, 736 main passes/two existing
+skips, 392 posttests, both builds, eleven private/four Sites artifact checks, type/lint/whitespace and
+130-table migrations passed. No live effects or merge occurred.
+
+**Next:** trusted executable planning/profile binding, canonical admission/dispatch and checked result/
+revision submission. Existing UI/result components do not complete the live C-WORK journey. The retired
+undispatched review-UI capsule must not be published as duplicate work.
