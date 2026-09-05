@@ -170,6 +170,8 @@ export function createPreEffectMarker(input: {
   effectiveDeadline: string;
   markedAt: string;
 }): PreEffectMarkerV1 {
+  if (input.request.operationId === "harness.hermes.native.start" && input.request.payloadDigest === undefined)
+    throw new Error("Native pre-effect marker requires payload commitment");
   const markedAt = canonicalInstant(input.markedAt, "Marker time");
   if (input.claim.state !== "claimed") throw new Error("Only a claimed effect can receive its pre-effect marker");
   if (Date.parse(markedAt) >= Date.parse(input.claim.effectiveDeadline)) throw new Error("Expired authority cannot receive a pre-effect marker");
@@ -205,6 +207,8 @@ export function computePreEffectOperationDigest(operation: PreEffectOperationMat
 }
 
 export function validatePreEffectMarkerBinding(marker: PreEffectMarkerV1, claim: EffectClaimSnapshotV1): void {
+  if (marker.operation.operationId === "harness.hermes.native.start" && marker.operation.payloadDigest === undefined)
+    throw new Error("Native pre-effect marker requires payload commitment");
   exactKeys(marker,["schema","markerId","claimKey","requestDigest","operationDigest","operation","authorityDigest","effectiveDeadline","markedAt"],"Pre-effect marker");
   exactKeys(marker.operation,["tenantId","nodeId","projectId","jobId","attemptId","executorId","operationId","credentialRefs","target","risk","externalEffect","estimatedDurationSeconds",
     ...(marker.operation.estimatedCostUsd === undefined ? [] : ["estimatedCostUsd"]),

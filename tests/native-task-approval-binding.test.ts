@@ -91,7 +91,7 @@ test("real owner signature accepts only the exact native payload through the exi
   const accepted = evaluateLocalPolicy(evaluation, clock);
   assert.equal(accepted.accepted, true, JSON.stringify(accepted));
   assert.equal(evaluateLocalPolicy({ ...evaluation, request: p.request }, clock).accepted, false);
-  const unbound = { ...evaluation.request, payloadDigest: undefined };
+  const unbound = { ...evaluation.request }; delete unbound.payloadDigest;
   unbound.operationDigest = computeNormalizedOperationDigest(unbound);
   assert.equal(evaluateLocalPolicy({ ...evaluation, request: unbound }, clock).accepted, false);
   assert.equal(evaluateLocalPolicy({ ...evaluation, request: { ...evaluation.request, approval: signArtifact(approvalBody, otherKeys.privateKey) } }, clock).accepted, false);
@@ -117,6 +117,11 @@ test("durable pre-effect marker retains payload commitment and rejects tampering
   const marker = createPreEffectMarker({ markerId: "marker:native:test", claim: claimed.lookup.snapshot,
     request: p.request, authorityDigest: p.request.authorityDigest, effectiveDeadline: deadline, markedAt: at });
   assert.equal(marker.operation.payloadDigest, p.request.payloadDigest);
+  const unbound = { ...p.request }; delete unbound.payloadDigest;
+  assert.throws(() => createPreEffectMarker({ markerId: "marker:missing", claim: claimed.lookup.snapshot,
+    request: unbound, authorityDigest: p.request.authorityDigest, effectiveDeadline: deadline, markedAt: at }), /payload commitment/);
+  const unboundOperation = { ...marker.operation }; delete unboundOperation.payloadDigest;
+  assert.throws(() => store.commitPreEffectMarker({ ...marker, operation: unboundOperation }), /payload commitment/);
   assert.throws(() => store.commitPreEffectMarker({ ...marker, operation: { ...marker.operation, payloadDigest: sha256Digest("changed") } }));
   store.commitPreEffectMarker(marker);
   assert.equal(store.claim({ messageId: "message:native:duplicate", execution, claimedAt: at }).disposition, "in_progress");
