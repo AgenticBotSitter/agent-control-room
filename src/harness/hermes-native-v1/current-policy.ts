@@ -7,6 +7,7 @@ import type { SqliteEffectClaimStore } from "../../node-policy/v1/effect-claim-s
 import type { VerifiedLeaseAuthorityV1 } from "../../node-policy/v1/types";
 import { createNativeLeaseEvidence } from "./lease-evidence";
 import type { NativeCurrentPolicy } from "./start-authority";
+import { sha256Digest } from "../../security";
 
 /** Compose already-open verified stores for one exact task. No native key unlock/sign, setup,
  * listener or default pause/profile evidence. The enclosing start controller owns time/concurrency.
@@ -14,7 +15,7 @@ import type { NativeCurrentPolicy } from "./start-authority";
 export function createNativeCurrentPolicy(config: { request: unknown; executor: unknown; nodeClass: string;
   leaseMessageId: string; serverActorId: string; nodeSigningKeyReferenceId: string;
   parentAuthorities: VerifiedLeaseAuthorityV1["parentAuthorities"] }, deps: {
-  security: Pick<SqliteNodeSecurityStateRepository, "loadCeiling" | "resolveServerKey">;
+  security: Pick<SqliteNodeSecurityStateRepository, "loadCeiling" | "resolveServerKey" | "currentPolicyRevision">;
   approvals: PinnedApprovalTrustStore;
   journal: Pick<SqliteBridgeJournal, "acceptedCommand" | "attemptSummary" | "nodeControlState">;
   effects: Pick<SqliteEffectClaimStore, "countActive">;
@@ -34,10 +35,15 @@ export function createNativeCurrentPolicy(config: { request: unknown; executor: 
   const ceiling = deps.security.loadCeiling.bind(deps.security), keys = deps.keys.availability.bind(deps.keys),
     node = deps.journal.nodeControlState.bind(deps.journal), count = deps.effects.countActive.bind(deps.effects), paused = deps.localPaused.bind(deps);
   const approvals = deps.approvals;
+  const revision = deps.security.currentPolicyRevision.bind(deps.security);
+  const receipt = deps.journal.acceptedCommand.bind(deps.journal), attempt = deps.journal.attemptSummary.bind(deps.journal);
+  const messageId = config.leaseMessageId;
+  const stamp = () => sha256Digest({ revision: revision(), receipt: receipt(messageId), attempt: attempt(request.attemptId),
+    control: node(scope.nodeId) ?? null, active: count(scope.tenantId, scope.nodeId), paused: paused() });
   return async signal => {
     const check = () => { if (signal.aborted) throw new Error("native_current_policy_unavailable"); };
     try {
-      check();
+      check(); const before = stamp();
       const owner = signedNodeAuthorityCeilingSchema.parse(await ceiling()).body; check();
       if (owner.tenantId !== scope.tenantId || owner.nodeId !== scope.nodeId) throw new Error();
       const lease = await readLease(signal); check();
@@ -47,7 +53,9 @@ export function createNativeCurrentPolicy(config: { request: unknown; executor: 
       if (!approvalKey) throw new Error();
       const localPaused = paused(); if (typeof localPaused !== "boolean") throw new Error();
       const control = node(scope.nodeId), activeExternalEffects = count(scope.tenantId, scope.nodeId); check();
-      return { ceiling: owner, lease, executor: structuredClone(executor), keyAvailability, approvalKey,
+      const assertFresh = () => { approvals.assertAvailable(); if (stamp() !== before) throw new Error("native_current_policy_unavailable"); };
+      assertFresh();
+      return { assertFresh, ceiling: owner, lease, executor: structuredClone(executor), keyAvailability, approvalKey,
         activeExternalEffects, paused: localPaused || !control || control.nodeId !== scope.nodeId || control.state !== "active" };
     } catch { throw new Error("native_current_policy_unavailable"); }
   };

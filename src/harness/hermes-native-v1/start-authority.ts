@@ -12,7 +12,11 @@ import { bindingSchema, enrollmentSchema, startSchema, type NativeAuthority, typ
 import { verifyNativeTaskApprovalBinding } from "./task-approval-binding";
 
 /** activeExternalEffects includes this effect once its durable claim is executing/ambiguous. */
-export type NativeCurrentPolicy = Omit<LocalPolicyEvaluationInputV1, "request"> & { paused: boolean };
+export type NativeCurrentPolicy = Omit<LocalPolicyEvaluationInputV1, "request"> & {
+  paused: boolean;
+  /** Verified store compositions supply a synchronous fence across subsequent awaits. */
+  assertFresh?: () => void;
+};
 export type NativeStartAuthorityDependencies = {
   /** Trusted local resolvers: verified owner ceiling and signed lease provenance are mandatory upstream.
    * These are not browser callbacks, reported capability flags or self-issued qualification evidence. */
@@ -65,10 +69,12 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
       const deadline = Math.min(binding.deadline, enrollment.validUntil, time() + checkMs);
       const operation = (async () => {
         // Copy resolver output before another await; nobody can mutate an already-read decision input.
-        const policy = structuredClone(await readCurrent(controller.signal));
+        const { assertFresh, ...observed } = await readCurrent(controller.signal);
+        const policy = structuredClone(observed);
         if (controller.signal.aborted) return denied(); live(current);
         await profileCurrent(enrollment, time(), controller.signal);
         if (controller.signal.aborted || time() >= deadline) return denied(); live(current);
+        assertFresh?.();
         const now = time(), at = new Date(now).toISOString();
         if (policy.paused !== false) return denied();
         const existing = effects.load(binding.effectClaimKey);
@@ -84,7 +90,7 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
         if (binding.deadline > Math.min(Date.parse(policy.lease.expiresAt), Date.parse(policy.lease.authority.expiresAt),
           Date.parse(request.approval!.body.expiresAt), now + policy.ceiling.maxDurationSeconds * 1000,
           now + policy.lease.authority.maxDurationSeconds * 1000)) return denied();
-        return { policy, decision, now, at };
+        return { policy, decision, now, at, assertFresh };
       })();
       started = true;
       // Cancellation is advisory. An unresolved resolver retains its slot even after the caller
@@ -121,7 +127,7 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
     async check(operation: NativeOperation, current: NativeBinding) {
       try {
         if (!["capabilities", "start", "status", "events"].includes(operation)) return denied();
-        await currentPolicy(current); live(current);
+        const result = await currentPolicy(current); live(current); result.assertFresh?.();
         if (operation === "status" || operation === "events") { markedClaim(); return; }
         if (phase === "fresh") { if (effects.load(binding.effectClaimKey)) denied(); return; }
         if (phase !== "marked" || operation !== "start") return denied();
@@ -135,7 +141,7 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
       phase = "marking";
       let ownsClaim = false;
       try {
-        const { policy, decision, at } = await currentPolicy(current); live(current);
+        const { policy, decision, at, assertFresh } = await currentPolicy(current); live(current); assertFresh?.();
         if (effects.load(binding.effectClaimKey)) return denied();
         // Reuse identical admission evidence only; never reuse a prior execution or marked claim.
         const prior = admissions.find(identity, requestDigest, decision.ceilingDigest, decision.authorityDigest);

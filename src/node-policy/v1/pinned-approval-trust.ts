@@ -48,6 +48,8 @@ export class PinnedApprovalTrustStore implements ApprovalTrustStore {
     } catch { throw new ProtectedStoreError("invalid_configuration"); }
   }
   binding() { return Object.freeze({ tenantId: this.pins.tenantId, nodeId: this.pins.nodeId, nodeClass: this.pins.nodeClass }); }
+  /** Recheck immutable pin lifetime/disposal without an asynchronous trust read. */
+  assertAvailable(): void { this.time(); }
   private time() {
     const now = this.clock();
     if (this.closed || !Number.isSafeInteger(now) || now < 0 || now < this.highWater) fail();

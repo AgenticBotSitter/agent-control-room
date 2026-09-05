@@ -28,7 +28,7 @@ const signal = () => new AbortController().signal;
 
 test("current verified stores compose into actual native start with a fake transport", async t => {
   const f = await fixture("active"); t.after(f.close);
-  assert.deepEqual(await f.read(signal()), f.policy);
+  const { assertFresh, ...policy } = await f.read(signal()); assertFresh!(); assert.deepEqual(policy, f.policy);
   const controller = f.create({ readCurrent: f.read }); t.after(() => controller.close());
   assert.equal((await f.adapter(controller).start(f.prepared.start)).state, "queued");
   assert.equal((await f.read(signal())).activeExternalEffects, 1);
@@ -40,7 +40,7 @@ test("missing, draining and quarantined node state and local pause all deny star
     assert.equal((await f.read(signal())).paused, true);
     const controller = f.create({ readCurrent: f.read }); t.after(() => controller.close());
     await assert.rejects(controller.authority.check("start", f.prepared.binding));
-    await f.adapter(controller).start(f.prepared.start); assert.deepEqual(f.calls, []);
+    assert.equal((await f.adapter(controller).start(f.prepared.start)).state, "failed"); assert.deepEqual(f.calls, []);
   });
 });
 
@@ -62,9 +62,37 @@ test("wrong key reference and invalid pause evidence fail closed", async t => {
 test("abort during a store await prevents later source reads", async t => {
   const f = await fixture("active"); t.after(f.close); const abort = new AbortController(); let keyReads = 0;
   const read = createNativeCurrentPolicy(f.config, { ...f.deps, security: {
+    currentPolicyRevision: f.trust.currentPolicyRevision.bind(f.trust),
     resolveServerKey: f.trust.resolveServerKey.bind(f.trust), async loadCeiling() { abort.abort(); return f.trust.loadCeiling(); } },
     keys: { async availability() { keyReads++; return f.policy.keyAvailability; } } });
   await assert.rejects(read(abort.signal), /native_current_policy_unavailable/); assert.equal(keyReads, 0);
+});
+
+test("permission changes during availability resolution invalidate the entire snapshot", async t => {
+  for (const change of ["cancel", "revoke", "ceiling"] as const) await t.test(change, async t => {
+    const f = await fixture("active"); t.after(f.close);
+    const read = createNativeCurrentPolicy(f.config, { ...f.deps, keys: { async availability() {
+      if (change === "cancel") f.journal.upsertAttempt({ ...f.summary, state: "cancelled" }, f.at);
+      else if (change === "revoke") await f.revoke();
+      else await f.narrowCeiling();
+      return f.policy.keyAvailability;
+    } } });
+    const controller = f.create({ readCurrent: read }); t.after(() => controller.close());
+    assert.equal((await f.adapter(controller).start(f.prepared.start)).state, "failed");
+    assert.deepEqual(f.calls, []); assert.equal(f.admissions.count(), 0);
+  });
+});
+
+test("profile-await cancellation and owner-store closure are fenced before admission", async t => {
+  for (const change of ["cancel", "close"] as const) await t.test(change, async t => {
+    const f = await fixture("active"); t.after(f.close);
+    const controller = f.create({ readCurrent: f.read, async assertProfileCurrent() {
+      if (change === "cancel") f.journal.upsertAttempt({ ...f.summary, state: "cancelled" }, f.at);
+      else f.deps.approvals.close();
+    } }); t.after(() => controller.close());
+    assert.equal((await f.adapter(controller).start(f.prepared.start)).state, "failed");
+    assert.deepEqual(f.calls, []); assert.equal(f.admissions.count(), 0);
+  });
 });
 
 test("scope mismatch is rejected and caller configuration cannot change a created reader", async t => {

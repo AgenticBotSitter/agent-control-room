@@ -39,6 +39,11 @@ export async function nativeLeaseEvidenceFixture() {
   const read = createNativeLeaseEvidence(config, { journal, trust, clock: now });
   return { ...f, startConfig: f.config, trust, journal, path, at, grant, summary, config, read, accept,
     provisionCeiling: async () => trust.provisionInitialCeiling(signArtifact(f.policy.ceiling, root.privateKey)),
+    narrowCeiling: async () => {
+      const body = { ...f.policy.ceiling, version: 2, operationIds: [], bodyDigest: "" };
+      body.bodyDigest = computeArtifactBodyDigest(body);
+      await trust.adoptCeiling(signArtifact(body, root.privateKey));
+    },
     revoke: async () => {
       const replacement = generateKeyPairSync("ed25519");
       const next = { ...material, epoch: 2, keys: [{ ...material.keys[0], state: "revoked" as const },

@@ -198,6 +198,18 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     return "adopted";
   }
 
+  /** Synchronous freshness fence; never repairs a partially committed update. */
+  currentPolicyRevision(): string {
+    const ceiling = this.ceilingRow(), ceilingWater = this.ceilingHighWater();
+    const trust = this.trustRow(), trustWater = this.trustHighWater();
+    if (!ceiling || !trust || !ceilingWater || !trustWater) throw new ProtectedStoreError("missing");
+    if (ceilingWater.phase !== "committed" || trustWater.phase !== "committed"
+      || ceiling.version !== ceilingWater.sequence || ceiling.body_digest !== ceilingWater.body_digest
+      || trust.epoch !== trustWater.sequence || trust.body_digest !== trustWater.body_digest) throw new ProtectedStoreError("recovery_required");
+    this.verifyCeilingRow(ceiling); this.verifyTrustRow(trust);
+    return `${ceiling.version}:${ceiling.body_digest}:${trust.epoch}:${trust.body_digest}`;
+  }
+
   async loadCeiling(): Promise<SignedNodeAuthorityCeilingV1> {
     const row = this.ceilingRow();
     const water = this.ceilingHighWater();
