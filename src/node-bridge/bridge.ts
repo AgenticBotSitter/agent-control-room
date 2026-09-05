@@ -385,7 +385,11 @@ export class PortableNodeBridge {
     causationId?: string,
     trackAcknowledgement = true,
   ): Promise<"staged" | "duplicate" | "coalesced"> {
-    return this.serializeSend(() => this.sendBodyNow(type, body, essential, now, correlationId, causationId, trackAcknowledgement));
+    const generation = this.connectionGeneration;
+    return this.serializeSend(() => {
+      if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed while send was queued");
+      return this.sendBodyNow(type, body, essential, now, correlationId, causationId, trackAcknowledgement);
+    });
   }
 
   private async sendBodyNow<TType extends NodeMessageType>(

@@ -176,6 +176,47 @@ function keys() {
   return { privateKey: pair.privateKey, spki: pair.publicKey.export({ format: "der", type: "spki" }).toString("base64url") };
 }
 
+test("acknowledgements queued before reconnect never migrate to the replacement transport", async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let block = false;
+  const bridge = new PortableNodeBridge(
+    { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: [] }, journal,
+    { async sign(frame) {
+      if (block && frame.type === "protocol.ack") { block = false; entered(); await gate; }
+      return signNodeFrame(frame, nodeKeys.privateKey);
+    } },
+    new NodeProtocolAuthenticator(serverResolver(serverKeys.spki), journal, new FixedWindowProtocolRateLimiter(100, 60)),
+  );
+  try {
+    await bridge.open(new MemoryTransport(), { now: t1, transportIdentity: "tls:server" });
+    const connectionId = bridge.status().connectionId!;
+    const cancel = { jobId: "job:1", attemptId: "attempt:1", leaseId: "lease:1", leaseEpoch: 1, reasonCode: "owner_requested" as const };
+    await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 1, "connection.accepted", {
+      selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: [], maxFrameBytes: 65_536,
+      heartbeatIntervalSeconds: 30, serverTime: t1,
+    })), t1);
+    block = true;
+    const first = assert.rejects(bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 2, "job.cancel", cancel)), t1), /connection changed/);
+    await waiting;
+    const second = assert.rejects(bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, 3, "job.cancel", cancel)), t1), /while send was queued/);
+    // Let the authenticated second receipt enter the serialized queue behind the blocked signer.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await bridge.disconnected();
+    const replacement = new MemoryTransport();
+    const opened = bridge.open(replacement, { now: t1, transportIdentity: "tls:server" });
+    release();
+    await Promise.all([first, second, opened]);
+    assert.deepEqual(replacement.sent.map((frame) => frame.type), ["connection.hello"]);
+    assert.equal(bridge.status().state, "authenticating");
+  } finally { release(); await bridge.close(); journal.close(); }
+});
+
 class MemoryTransport implements BridgeTransport {
   readonly sent: SignedNodeFrame[] = [];
   closed = false;
