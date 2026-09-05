@@ -44,6 +44,8 @@ test("compiled private routes use the installed process, real disposable SQL, an
     assert.equal((await handler(request(legacy))).status, 404, legacy);
   const stream = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/events`));
   assert.match(await stream.text(), /project-snapshot/);
+  const session = await handler(request("/session")); assert.equal(session.status, 200);
+  assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
   for (const protectedPath of ["/projects", path, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);

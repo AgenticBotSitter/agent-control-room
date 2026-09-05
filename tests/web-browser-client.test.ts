@@ -30,3 +30,14 @@ test("logout must be confirmed before the browser is told to navigate to Access 
   await assert.rejects(client.logout(), /unavailable/); status = 204;
   assert.equal(await client.logout(), "/cdn-cgi/access/logout");
 });
+test("every browser API call requests an explicit expired-edge-session response", async () => {
+  const calls: RequestInit[] = [];
+  const client = createProjectBrowserClient((async (_, init) => {
+    calls.push(init!); return new Response(null, { status: 401 });
+  }) as typeof fetch);
+  for (const action of [() => client.list(), () => client.get("project:web"),
+    () => client.create({ title: "Work", summary: "" }), () => client.transition(project as never, "archived"), () => client.logout()])
+    await assert.rejects(action(), /authentication_required/);
+  assert.equal(calls.length, 5);
+  for (const init of calls) assert.equal(new Headers(init.headers).get("x-requested-with"), "XMLHttpRequest");
+});

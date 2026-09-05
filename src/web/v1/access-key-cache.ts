@@ -66,7 +66,10 @@ export function createAccessKeyCache(options: {
           if (closed || signal.aborted || now() >= trust.validUntilMs) throw new Error("access_keys_unavailable");
           cached = trust; return trust;
         } catch {
-          cached = undefined; retryAfter = started + 5000;
+          cached = undefined;
+          // An outage that consumes the full load deadline still gets a full post-failure backoff.
+          // If failure time cannot be measured, do not silently schedule another refresh.
+          try { retryAfter = now() + 5000; } catch { closed = true; }
           throw new Error("access_keys_unavailable");
         } finally { clearTimeout(timer); loading = undefined; controller = undefined; }
       })();

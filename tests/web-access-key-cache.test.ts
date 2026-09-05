@@ -29,6 +29,29 @@ test("a synchronous key-loader failure can recover after the fixed backoff", asy
   await assert.rejects(cache.get()); current += 5001;
   assert.equal((await cache.get()).issuer, trust.issuer); assert.equal(calls, 2); cache.close();
 });
+for (const timeout of [false, true]) {
+  test(`a ${timeout ? "timed out" : "delayed failed"} refresh has a full five-second post-failure backoff`, async () => {
+    let current = now; let calls = 0;
+    const cache = createAccessKeyCache({ ...trust, clock: () => current, timeoutMs: 10, loadKeys: async () => {
+      if (++calls > 1) return trust.keys;
+      current += 5000;
+      if (timeout) return new Promise(() => {});
+      throw new Error();
+    } });
+    await assert.rejects(cache.get());
+    current += 4999; await assert.rejects(cache.get()); assert.equal(calls, 1);
+    current++; assert.equal((await cache.get()).issuer, trust.issuer); assert.equal(calls, 2);
+    cache.close();
+  });
+}
+test("unmeasurable failure time closes key refresh rather than scheduling an immediate retry", async () => {
+  let current = now; let calls = 0;
+  const cache = createAccessKeyCache({ ...trust, clock: () => current, loadKeys: async () => {
+    calls++; current--; throw new Error();
+  } });
+  await assert.rejects(cache.get()); current = now + 6000;
+  await assert.rejects(cache.get()); assert.equal(calls, 1);
+});
 test("the configured issuer fixes the key URL and redirects or private key material are not accepted", async () => {
   const calls: { path: string; init: RequestInit | undefined }[] = [];
   let privateMaterial = false;

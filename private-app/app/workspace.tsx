@@ -69,18 +69,12 @@ export function PrivateProjectWorkspace({ projectId, section = "overview" }: { p
     catch (reason) { showError(reason); }
     finally { writeBusy.current = false; setPending(false); }
   }
-  async function logout() {
-    if (writeBusy.current) return;
-    writeBusy.current = true; generation.current++; setPending(true);
-    try { const path = await client.logout(); setProjects([]); setProject(undefined); window.location.assign(path); }
-    catch (reason) { showError(reason); writeBusy.current = false; setPending(false); }
-  }
   return <div className="private-shell">
     <header className="private-header"><a href="/projects" className="private-brand">Control Room</a>
-      <span>Private workspace</span><button type="button" onClick={() => { void logout(); }} disabled={pending}>Sign out</button></header>
+      <span>Private workspace</span><a href="/session">Session and sign out</a></header>
     <main id="private-main">
       {error && <div className="private-notice" role="alert"><p>{browserErrorMessage[error.code]}</p>
-        {error.code === "authentication_required" ? <a href="/cdn-cgi/access/logout">Sign in again</a>
+        {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
           : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved state</button>}</div>}
       {!projectId ? <>
         <div className="private-heading"><h1>Projects</h1><p>Open a project here or in its own browser tab.</p></div>

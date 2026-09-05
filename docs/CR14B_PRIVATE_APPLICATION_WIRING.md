@@ -30,7 +30,7 @@ issuer/audience/origin, identity/workspace scope and public-key loader, then own
   identity, session and permission checks govern every project operation. Ordinary login grants no strong
   factor or effect approval. Manual heads must also match the exact scope-derived manual adapter.
 - The process shares a public-key cache, with a maximum five-minute freshness period, a five-second loading
-  deadline and fixed five-second failure backoff. Refresh is demand-driven and single-flight, never caused
+  deadline and fixed five-second backoff measured from failure time. Refresh is demand-driven and single-flight, never caused
   by an unknown JWT key. Expired keys are not a fallback after failure. Key refresh does not shorten stored
   session lifetimes. The optional loader uses only the configured issuer's `/cdn-cgi/access/certs`, omits
   credentials, rejects redirects, and caps response bytes. Only injected test transport is exercised here.
@@ -42,6 +42,9 @@ issuer/audience/origin, identity/workspace scope and public-key loader, then own
   project permissions. Exact-session logout therefore remains accessible after permission or identity loss.
   The browser waits for durable local revocation before navigating to Access logout. Actual IdP logout and
   remembered-session behavior still require the configured edge/owner rehearsal.
+  Access logout ends sessions across Access applications, not only Control Room; the session page and recovery
+  links disclose this before navigation. Browser API calls send `X-Requested-With: XMLHttpRequest` so an expired
+  Access session can return 401 rather than an interactive AJAX redirect. No per-app Access logout is claimed.
 - `/api/v1/projects/{id}/events` returns **one finite current-project snapshot** and closes. It is not a
   replayable activity log, live job stream, or promise of indefinite authorization. Every new request checks
   current authority. Subsequent long-lived streams remain separate integration work with periodic rechecks.
@@ -87,4 +90,5 @@ requested/run. Build validation uses installed Vite directly without CLI upgrade
 
 Primary reference checked 2026-09-04:
 [Cloudflare Access assertion validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/).
+[Cloudflare session expiry and logout](https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/).
 Installed Vinext `appDir`, multi-entry build and middleware code were inspected locally. No upstream code was copied.

@@ -21,7 +21,7 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
   async function call(path: string, method = "GET", body?: string, key?: string): Promise<Response> {
     try {
       return await transport(path, { method, credentials: "same-origin", cache: "no-store", redirect: "error",
-        signal: AbortSignal.timeout(10_000), headers: { accept: "application/json",
+        signal: AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(body === undefined ? {} : { "content-type": "application/json" }), ...(key ? { "idempotency-key": key } : {}) },
         ...(body === undefined ? {} : { body }) });
     } catch { throw new BrowserRequestError(method === "GET" ? "unavailable" : "uncertain"); }
