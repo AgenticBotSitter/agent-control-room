@@ -102,6 +102,8 @@ The exact native task approval-binding component is independently accepted at
 It commits prompt/settings/enrollment/lease into owner-approved operation identity and durable markers,
 but is not a live approval issuer or dispatch path. Next implementation: node-side NativeAuthority
 composition, owner approval issuance/intake, signed dispatch and bounded revision submission.
+Published as [PR #300](https://github.com/MarvinAi5/control-room/pull/300), stacked on #299;
+current-head CI remains required. Neither PR is merged or deployed.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
