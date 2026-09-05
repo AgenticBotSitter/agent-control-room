@@ -16,7 +16,8 @@ at `2de0a4760fe1d5a0f2b39894e2e19ad897486d5f`. See `CR14B_FOUNDATION_ACCEPTANCE.
 The separate Node build, Access verifier, durable session checks and ordinary-project HTTP/SQL services
 are tested, but the website is not yet wired to them. CR14B's private-pilot exit is not complete.
 **Next: CR14B B-WIRE**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
-GitHub publication of the combined CR14A/CR14B feature branch is pending; no merge is claimed.
+The combined CR14A/CR14B feature branch is published in [PR #280](https://github.com/MarvinAi5/control-room/pull/280)
+against `main`. Current GitHub checks are tracked on the PR; no merge is claimed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
