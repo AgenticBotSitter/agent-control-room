@@ -22,6 +22,9 @@ owner approval trust/custody and actual handler/runtime composition remain uncon
 The immutable separate owner-public-pin ApprovalTrustStore implementation is now independently accepted
 in `CR14C_OWNER_APPROVAL_TRUST_ACCEPTANCE.md`. This supplies scoped public verification, not installed
 owner configuration, signing custody, authenticated rotation or runtime activation.
+Current-policy store composition and freshness fencing are independently accepted in
+`CR14C_NATIVE_CURRENT_POLICY_ACCEPTANCE.md`. Native profile/key evidence remains explicitly synthetic
+in tests; no handler, live agent or runtime registration is enabled by this component.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.

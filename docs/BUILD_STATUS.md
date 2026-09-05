@@ -152,6 +152,15 @@ Published as [PR #305](https://github.com/MarvinAi5/control-room/pull/305), stac
 Final main suite: 896 passed with two existing platform skips. Current-head GitHub CI remains required;
 this stack is not claimed merged, deployed or ready for live task execution.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
+Current-policy composition is independently accepted at `70a3fef23baf1ef680646f03ea52e47c148f81f1`, with
+56 passing review tests. Initial review found a stale-permission window, now
+remediated with synchronous state fences across awaits; see `CR14C_NATIVE_CURRENT_POLICY_ACCEPTANCE.md`.
+Final local verification: CR14C 334, preparation 769, main 913 with two existing platform skips,
+post-suite 392, compiled private tests 16 and rendered tests four passed; both builds, TypeScript,
+ESLint and migrations through 0046 passed. Next: profile/recovery sources, owner signing/intake,
+signed dispatch and revisions, Astra Medium. Live task execution remains disabled.
+PR #304 exact head `21ab559e8aaf13d429c5c3622fa9aa339c5388cf` passed CI `33984129093`
+at 2026-09-05 18:49:12 UTC. PR #305 was still running when checked. Neither is merged here.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
 See `CR14B_PRIVATE_STARTUP_CONTRACT.md` and the still-draft `CR14B_SETUP_REHEARSAL_PACKET.md`.

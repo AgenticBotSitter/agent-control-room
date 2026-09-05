@@ -5599,3 +5599,23 @@ test's timer while asserting ordering; nine serving tests passed and product acc
 
 **Next:** current policy/profile composition, owner signing/intake, signed dispatch and revisions,
 Astra Medium. No production effects, merge or runtime activation are authorized by this decision.
+
+## ADR-228 — fence composed native permission across asynchronous checks
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired component.
+
+Compose current signed ceiling, accepted lease, separate owner pins, explicit key availability,
+executor contract, node control, local pause and effect count from caller-owned resources. A verified
+synchronous state stamp invalidates the entire result if mutable authority changes during awaited
+source or profile checks. Recheck that stamp before the controller admits or authorizes work. Approval
+pin lifetime/disposal is part of the fence. Missing or partially committed security state fails closed.
+
+**Evidence:** accepted `70a3fef23baf1ef680646f03ea52e47c148f81f1`, tree
+`087be3d5fdf1e2938c30a63a1874213ba97eb263`; independent re-review passed 56 tests with no blocking
+findings. Initial review rejected a stale-permission window despite passing tests; the negative record
+is preserved in `CR14C_NATIVE_CURRENT_POLICY_ACCEPTANCE.md`.
+
+This is not a distributed transaction, physical stop guarantee, production profile resolver or runtime
+activation. The abstract legacy trusted-policy seam remains available; verified compositions must
+preserve the supplied fence. Owner signing/intake, profile/recovery source composition, signed dispatch
+and revisions remain next on Astra Medium. No live effects or merge authority are added.
