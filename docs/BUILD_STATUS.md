@@ -2137,6 +2137,7 @@ Independent progress/store review passed31; final suite passed CR14C551, prepara
 with two existing platform skips and post-suite392. Both builds, private18/rendered4, migrations0052/138,
 types and lint passed. See the batch record for corrected negative evidence and the specific missing
 verification/completion/revision production calls. No native task or deployment is claimed.
+Published as [PR #325](https://github.com/MarvinAi5/control-room/pull/325), stacked on #324; not merged.
 
 ```text
 Block: CR14C first-job runtime registration/completion, recovery, owner signing and revisions

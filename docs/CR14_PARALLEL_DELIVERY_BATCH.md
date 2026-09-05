@@ -9,6 +9,7 @@ Final test-fixture correction: `33bc7a421319c04aa962d3cdde45a57108107fed`, tree
 Final verification exited zero: CR14C551, preparation770, main1135 with two existing platform skips,
 post-suite392; both builds, private compiled18, rendered4, migrations0052/138 tables, TypeScript and
 ESLint. Draft-capsule retirement validation passed4. Current-head CI remains required before integration.
+Published as [PR #325](https://github.com/MarvinAi5/control-room/pull/325), stacked on #324. Not merged.
 
 The owner explicitly resumed building with Codex coordinating parallel internal subagents. This is
 not an external GitHub draft-capsule claim or authority to install the fleet. Separate local worktrees
