@@ -59,7 +59,8 @@ export default defineConfig(async ({ mode }) => {
     ...(nodeTarget ? { environments: {
       client: { build: { outDir: "dist-vps/client" } },
       rsc: { build: { rollupOptions: { input: { runtime: "src/web/v1/private-process.ts", bootstrap: "src/web/v1/private-startup.ts",
-        serving: "src/web/v1/private-serving.ts", rehearsal: "src/web/v1/private-database-rehearsal.ts" } } } },
+        serving: "src/web/v1/private-serving.ts", rehearsal: "src/web/v1/private-database-rehearsal.ts",
+        preparation: "src/web/v1/private-fixture-preparation.ts" } } } },
     } } : {}),
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
