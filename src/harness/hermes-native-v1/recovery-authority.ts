@@ -26,7 +26,7 @@ export type NativeRecoveryCurrent = {
 };
 export type NativeRecoveryDependencies = {
   readCurrent: (signal: AbortSignal) => Promise<NativeRecoveryCurrent>;
-  assertProfileCurrent: (enrollment: Readonly<NativeEnrollment>, now: number, signal: AbortSignal) => Promise<void>;
+  assertProfileCurrent: (enrollment: Readonly<NativeEnrollment>, now: number, signal: AbortSignal) => Promise<void | (() => void)>;
   journal: Pick<NativeRunJournal, "load">;
   effects: Pick<SqliteEffectClaimStore, "load">;
   executions: Pick<SqliteExecutionStateStore, "load">;
@@ -87,10 +87,10 @@ export function createNativeRecoveryAuthority(config: { enrollment: unknown; bin
           if (trust.credentialAvailable !== true || trust.recoveryAllowed !== true
             || trust.approvalKey.keyId !== body.approvalKeyId
             || !verifyArtifactSignature(permission, trust.approvalKey.publicKeySpki)) return unavailable();
-          await profile(enrollment, time(), controller.signal);
+          const profileFresh = await profile(enrollment, time(), controller.signal);
           if (controller.signal.aborted || time() >= deadline) return unavailable();
-          live(current); assertFresh?.(); durable();
-          return assertFresh;
+          live(current); profileFresh?.(); assertFresh?.(); durable();
+          return () => { profileFresh?.(); assertFresh?.(); };
         })();
         started = true; void work.then(() => { active--; }, () => { active--; });
         const assertFresh = await Promise.race([work, new Promise<never>((_, reject) => {

@@ -21,7 +21,7 @@ export type NativeStartAuthorityDependencies = {
   /** Trusted local resolvers: verified owner ceiling and signed lease provenance are mandatory upstream.
    * These are not browser callbacks, reported capability flags or self-issued qualification evidence. */
   readCurrent: (signal: AbortSignal) => Promise<NativeCurrentPolicy>;
-  assertProfileCurrent: (enrollment: Readonly<NativeEnrollment>, now: number, signal: AbortSignal) => Promise<void>;
+  assertProfileCurrent: (enrollment: Readonly<NativeEnrollment>, now: number, signal: AbortSignal) => Promise<void | (() => void)>;
   admissions: Pick<SqliteLocalAdmissionStore, "record" | "findEquivalent">;
   executions: Pick<SqliteExecutionStateStore, "create" | "load" | "apply">;
   effects: Pick<SqliteEffectClaimStore, "claim" | "load" | "commitPreEffectMarker" | "recover">;
@@ -72,9 +72,9 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
         const { assertFresh, ...observed } = await readCurrent(controller.signal);
         const policy = structuredClone(observed);
         if (controller.signal.aborted) return denied(); live(current);
-        await profileCurrent(enrollment, time(), controller.signal);
+        const profileFresh = await profileCurrent(enrollment, time(), controller.signal);
         if (controller.signal.aborted || time() >= deadline) return denied(); live(current);
-        assertFresh?.();
+        profileFresh?.(); assertFresh?.();
         const now = time(), at = new Date(now).toISOString();
         if (policy.paused !== false) return denied();
         const existing = effects.load(binding.effectClaimKey);
@@ -90,7 +90,7 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
         if (binding.deadline > Math.min(Date.parse(policy.lease.expiresAt), Date.parse(policy.lease.authority.expiresAt),
           Date.parse(request.approval!.body.expiresAt), now + policy.ceiling.maxDurationSeconds * 1000,
           now + policy.lease.authority.maxDurationSeconds * 1000)) return denied();
-        return { policy, decision, now, at, assertFresh };
+        return { policy, decision, now, at, assertFresh: () => { profileFresh?.(); assertFresh?.(); } };
       })();
       started = true;
       // Cancellation is advisory. An unresolved resolver retains its slot even after the caller

@@ -7,9 +7,10 @@ import { NODE_PROTOCOL_V1, signNodeFrame, type UnsignedNodeFrame } from "../../s
 import { PinnedOwnerTrust, SqliteNodeSecurityStateRepository, computeArtifactBodyDigest, signArtifact, signTrustBundleShrinkAuthorization } from "../../src/node-policy/v1";
 import { createNativeLeaseEvidence } from "../../src/harness/hermes-native-v1/lease-evidence";
 import { nativeStartAuthorityFixture } from "./native-start-authority";
+import type { NativeEnrollment } from "../../src/harness/hermes-native-v1/contracts";
 
-export async function nativeLeaseEvidenceFixture() {
-  const f = await nativeStartAuthorityFixture(), directory = await mkdtemp(join(tmpdir(), "cr-native-lease-"));
+export async function nativeLeaseEvidenceFixture(enrollment?: NativeEnrollment) {
+  const f = await nativeStartAuthorityFixture(undefined, enrollment), directory = await mkdtemp(join(tmpdir(), "cr-native-lease-"));
   const root = generateKeyPairSync("ed25519"), server = generateKeyPairSync("ed25519");
   const rootSpki = root.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
   const pin = { keyId: "owner-key:test", algorithm: "ed25519" as const, spki: rootSpki,

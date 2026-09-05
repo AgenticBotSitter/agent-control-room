@@ -7,12 +7,13 @@ import { prepareNativeTaskApproval } from "../../src/harness/hermes-native-v1/ta
 import { createNativeStartAuthority, type NativeStartAuthorityDependencies, type NativeCurrentPolicy } from "../../src/harness/hermes-native-v1/start-authority";
 import { HermesNativeRunAdapter } from "../../src/harness/hermes-native-v1/adapter";
 import { SqliteNativeRunJournal } from "../../src/harness/hermes-native-v1/run-journal";
-import type { NativeRunTransport } from "../../src/harness/hermes-native-v1/contracts";
+import type { NativeRunTransport, NativeEnrollment } from "../../src/harness/hermes-native-v1/contracts";
 import { computeArtifactBodyDigest, signArtifact, SqliteLocalAdmissionStore, SqliteExecutionStateStore, SqliteEffectClaimStore,
   type OwnerApprovalAttestationBodyV1 } from "../../src/node-policy/v1";
-import { enrollment, instant, capabilityBody, response, nativeRunId, statusBody } from "../hermes-native-fixture";
+import { enrollment as defaultEnrollment, instant, capabilityBody, response, nativeRunId, statusBody } from "../hermes-native-fixture";
 
-export async function nativeStartAuthorityFixture(otherCommandKey?: string) {
+export async function nativeStartAuthorityFixture(otherCommandKey?: string, configuredEnrollment?: NativeEnrollment) {
+  const enrollment = configuredEnrollment ?? defaultEnrollment;
   const f = await taskAssignmentFixture();
   let assigned: Awaited<ReturnType<typeof f.assign>>["receipt"];
   if (otherCommandKey) {
