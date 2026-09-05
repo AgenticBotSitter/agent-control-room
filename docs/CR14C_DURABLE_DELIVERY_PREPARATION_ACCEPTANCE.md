@@ -41,3 +41,6 @@ node --import tsx --test tests/native-delivery-preparation.test.ts tests/native-
 No credentials, native/provider call, listener, live database, deployment or merge. No HTTP/lifecycle
 mounting, negotiated channel, server signer, actual send or durable node acknowledgement is implemented
 in this block. Stored unsigned body is not delivery evidence or current execution permission.
+
+Published as [PR #317](https://github.com/MarvinAi5/control-room/pull/317), stacked on PR #316.
+Current-head GitHub checks remain required before dependency-order integration; no merge is claimed.

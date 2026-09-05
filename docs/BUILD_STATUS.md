@@ -2017,6 +2017,10 @@ transaction. Replay retains the original body; authenticated historical readback
 See `CR14C_DURABLE_DELIVERY_PREPARATION_ACCEPTANCE.md` for the corrected replay timestamp issue.
 Migration0049 requires135 tables with coordinator-only SELECT/INSERT and no web access. A stored body
 is unsigned and does not imply sending or agent acknowledgement; no sender or live execution is active.
+Published as [PR #317](https://github.com/MarvinAi5/control-room/pull/317), stacked on #316.
+Local verification passed CR14C457, preparation769, main1036 with two existing skips, post-suite392,
+private compiled18 and rendered4; both builds, TypeScript, full ESLint and migrations0049/135 tables
+passed. Current-head CI remains required; no merge or deployment is claimed.
 
 ## Next block
 
