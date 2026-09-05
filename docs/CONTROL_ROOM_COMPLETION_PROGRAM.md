@@ -6,8 +6,10 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — node execution handoff and lifecycle recovery,
-owner signing and revision submission, on Astra Medium.
+**Next block:** CR14C C-WORK — lifecycle recovery,
+owner signing and revision submission, on Astra Medium. Not started: owner requested a finish-up/status handoff.
+Stored input to existing native admission/run control is independently accepted in
+`CR14C_NATIVE_EXECUTION_HANDOFF_ACCEPTANCE.md`, with synthetic transport only. No live task acceptance.
 Verified two-pool startup and native task approval binding are independently accepted in their CR14C
 acceptance records. The start/live-read local authority composition is independently accepted in
 `CR14C_NATIVE_START_AUTHORITY_ACCEPTANCE.md`, including atomic effect capacity and bounded unresolved

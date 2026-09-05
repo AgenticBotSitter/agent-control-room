@@ -5965,3 +5965,19 @@ Product `6c1fe4aec56b20b62f0af71e8e80c532b6b28c47`, tree
 `196498fe564fed608582b0e00cd7e405e85d0d55`, passed 64 independent checks after correcting the reconnect
 race. No PostgreSQL migration, native adapter call, live connection, credentials or deployment is added.
 See `CR14C_NODE_NATIVE_INTAKE_ACCEPTANCE.md`.
+
+## ADR-246 — reverify stored delivery before existing native execution controls
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+A node-private supplied-resource factory re-verifies the exact saved server dispatch and separate
+owner approvals before exposing explicit start/poll/observe through existing native controllers.
+Preparation is bounded and neither reserves nor starts a run. Retain record, trust revision, owner,
+cancellation and monotonic time fences across local policy reads and wire authorization. Record valid
+clock observations before expiry rejection so rollback cannot revive the handle. Existing durable
+no-restart and ambiguity rules remain authoritative. Historical snapshots are not permission; closing
+is not physical stop and recovery remains separately authorized.
+
+Corrected product `34bfeff0d3c3954999ed53a4edf921570af3b342`, tree
+`9742d11534f3fa27083d69f33b01d5657408ae24`, passed 51 independent checks after M001 clock correction.
+No schema change or live effect. See `CR14C_NATIVE_EXECUTION_HANDOFF_ACCEPTANCE.md`.
