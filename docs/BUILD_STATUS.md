@@ -2121,7 +2121,8 @@ Preparation itself neither starts nor reserves a native run. Review corrected ex
 see `CR14C_NATIVE_EXECUTION_HANDOFF_ACCEPTANCE.md`. Runtime mounting, real policy/supervisor resources,
 owner signing custody, recovery, physical results and revision dispatch remain. No live activation.
 
-Owner requested finishing the current block and a build assessment; no subsequent block is started.
+Owner requested finishing that block and a build assessment; the subsequent parallel batch below was
+then explicitly authorized. Historical finish-up does not describe current work as paused.
 Final corrected-product checks passed CR14C 543, preparation 769, main 1,127 with two existing skips,
 post-suite 392, private compiled 18, rendered 4, both builds, migrations0052/138, TypeScript and ESLint.
 Current-head GitHub CI and dependency-order integration remain; no merge is claimed.
@@ -2129,8 +2130,16 @@ Published as [PR #324](https://github.com/MarvinAi5/control-room/pull/324), stac
 
 ## Next block
 
+The owner resumed internal parallel building. `CR14_PARALLEL_DELIVERY_BATCH.md` records the combined
+authenticated progress route, canonical task/result/review regression, ABS digest/store integration
+and three-host preparation guides. This is synthetic/disposable integration, not a deployed fleet.
+Independent progress/store review passed31; final suite passed CR14C551, preparation770, main1135
+with two existing platform skips and post-suite392. Both builds, private18/rendered4, migrations0052/138,
+types and lint passed. See the batch record for corrected negative evidence and the specific missing
+verification/completion/revision production calls. No native task or deployment is claimed.
+
 ```text
-Block: CR14C lifecycle recovery, owner signing and revisions (not started)
+Block: CR14C first-job runtime registration/completion, recovery, owner signing and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
 Why: Recorded input now reaches existing current local admission and effect-marker/run controllers in synthetic integration. Recovery, real resource composition and owner signing remain necessary before a live task can be accepted.

@@ -3,7 +3,7 @@
   "capsuleId": "CR14F-NEWS-CORE-001",
   "waveId": "CR14-PRIVATE-UI-1",
   "block": "CR14F",
-  "summary": "Build deterministic ABS news digest selection and diversity",
+  "summary": "Retired draft: deterministic ABS digest implemented by internal Codex batch",
   "platform": "any",
   "status": "draft",
   "mode": "standard-work",
@@ -87,6 +87,7 @@
     "maxCount": 0
   },
   "stopConditions": [
+    "Retired before an external worker claim: internal Codex parallel delivery implemented this contract. Do not publish or perform duplicate work; see docs/CR14_PARALLEL_DELIVERY_BATCH.md.",
     "Do not begin while this capsule is draft; it must be published as ready and the queue controller must record CLAIM ACCEPTED.",
     "Stop if the committed shared contract or integration base is unavailable, scope is ambiguous, or any path outside allowedPaths is needed.",
     "No installation, download, live provider/agent call, credential access, native qualification, persistent service, production database, deployment or external effect.",

@@ -90,6 +90,10 @@ Integration owner: C-WORK using existing review/revision authority, followed by 
 
 ## CR14F-NEWS-CORE-001 — useful daily digest selection
 
+**Retired external draft:** the owner authorized internal Codex parallel delivery on2026-09-05.
+Codex implemented and integrated this selector before any external accepted claim. Do not publish or
+claim duplicate work. See `CR14_PARALLEL_DELIVERY_BATCH.md`; the frozen contract is retained below.
+
 Files: `src/project-adapters/abs-news/v1/digest-selection.ts`, `tests/abs-news-digest-selection.test.ts`.
 
 Export `selectAbsNewsDigestV1(stories, options)` using existing `AbsNewsStoryV1` records. Inputs are readonly

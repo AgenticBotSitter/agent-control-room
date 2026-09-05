@@ -7,7 +7,9 @@
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
 **Next block:** CR14C C-WORK — lifecycle recovery,
-owner signing and revision submission, on Astra Medium. Not started: owner requested a finish-up/status handoff.
+owner signing and revision submission, on Astra Medium. Owner subsequently resumed internal parallel
+delivery; see `CR14_PARALLEL_DELIVERY_BATCH.md` for progress routing, lifecycle testing, ABS digest and
+host preparation documentation. No live task or deployment is accepted by that batch.
 Stored input to existing native admission/run control is independently accepted in
 `CR14C_NATIVE_EXECUTION_HANDOFF_ACCEPTANCE.md`, with synthetic transport only. No live task acceptance.
 Verified two-pool startup and native task approval binding are independently accepted in their CR14C

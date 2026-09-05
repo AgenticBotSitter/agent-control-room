@@ -5981,3 +5981,20 @@ is not physical stop and recovery remains separately authorized.
 Corrected product `34bfeff0d3c3954999ed53a4edf921570af3b342`, tree
 `9742d11534f3fa27083d69f33b01d5657408ae24`, passed 51 independent checks after M001 clock correction.
 No schema change or live effect. See `CR14C_NATIVE_EXECUTION_HANDOFF_ACCEPTANCE.md`.
+
+## ADR-247 — acknowledge exact delivered-task progress after canonical persistence
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+The existing reconciled server session can receive authenticated native snapshots after a recorded
+delivery when snapshot support was negotiated. Bind progress to the exact delivered task and16KiB
+maximum, and preserve session/frame validity through the database-owned precommit check. Sign the
+acknowledgement only after successful persistence. A lost reply may leave durable evidence without
+success confirmation; it never permits another execution. Existing canonical registration/lease/input
+and monotonic history checks remain authoritative. This is not session renewal or a live router.
+
+Root authored the protocol/store integration; separate internal subagents implemented settled ABS
+selection, host guides and lifecycle regressions. Independent review accepted the corrected product
+`673380625f537de0d893c0f736f3eeab6ea37ef8` with31 scoped tests. The precommit finding, later legacy
+test-fixture correction and remaining pending Completion Gate are recorded in
+`CR14_PARALLEL_DELIVERY_BATCH.md`. No live task completion, installation or deployment is inferred.
