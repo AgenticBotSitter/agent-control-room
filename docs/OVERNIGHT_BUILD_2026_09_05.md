@@ -49,7 +49,8 @@ live credentials or real-agent connection. If one lane needs live permission, co
 ### CR14C supported Hermes native-run adapter
 
 - Accepted runtime: `4b5fb69d8386cdf859ba22079aef3e7771f45f18`.
-- Branch `codex/cr14c-hermes-native-run-adapter`, stacked on #287; publication tracked in build status.
+- [PR #288](https://github.com/MarvinAi5/control-room/pull/288), branch `codex/cr14c-hermes-native-run-adapter`,
+  stacked on #287; current-head CI remains required. No merge or runtime activation.
 - Durable node-private run journal; pinned capability/session mapping; bounded outbound HTTPS and progress;
   exact-ID cancellation and status recovery. No core fork, personal profile cloning or application activation.
 - Initial two Medium timing findings corrected; independent re-review accepted with zero remaining findings.

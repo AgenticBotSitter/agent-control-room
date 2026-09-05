@@ -71,6 +71,8 @@ PR #286's exact head `78a6a98` passed GitHub CI run `33948058630` (completed 202
 The accepted preparation follow-up is [PR #287](https://github.com/MarvinAi5/control-room/pull/287), stacked
 on #286. Its current-head checks remain required; the stack is not merged or deployed.
 PR #287's exact head `dfc1f36` passed GitHub CI run `33949755377` (completed 2026-09-05 06:39:19 UTC).
+The accepted unwired native-run adapter is [PR #288](https://github.com/MarvinAi5/control-room/pull/288),
+stacked on #287. Its own current-head checks remain required. No merge, runtime activation or live connection is claimed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
