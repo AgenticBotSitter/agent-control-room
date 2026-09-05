@@ -1,6 +1,7 @@
 # CR14C — canonical task assignment and expiry
 
-Status: implementation candidate; independent review required. Base: PR #295.
+Status: independently accepted repository integration; production unconfigured. Base: PR #295.
+Evidence: `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.
 
 ## Scope
 
@@ -14,6 +15,8 @@ configured candidate labels/platforms and a stored reservation, not a promise of
 POST accepts only assign plus node/input digest, or expire plus input digest. Machine availability and
 owner authority are checked again inside the writer. The browser holds one exact uncertain change;
 reads/focus/reconnect cannot allocate, expire or retry. Failed reads hide reservation data and actions.
+Confirmed identity and known expiry survive out-of-order successful replies. Retained page-local
+receipt memory is not authorization and remains hidden without a current successful read.
 The ordinary web SQL pool remains restricted. Production startup explicitly rejects assignment
 configuration until separately implemented coordinator resource ownership is available.
 

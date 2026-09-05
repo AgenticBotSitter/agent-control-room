@@ -70,7 +70,12 @@ execution bundle and binds its fixed input/template/profile to result review in 
 `f1d1856a6a295f4dd6f9a5d70bffe0b21f396afe`. The task page and protected route connect saved proposals
 to a scoped optional planner, retain exact reconciliation and confirmed links, and preserve the restricted
 web SQL role. See `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Production planner composition is not configured.
-**Next: CR14C C-WORK coordinator composition, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
+**CR14C bounded task assignment and expiry are independently accepted** at
+`daf656633e2bbaafb1669080359f0ea76be778b0`. The protected task page can select a configured machine,
+record one real canonical attempt/lease, reconcile uncertain saves and expire elapsed reservations.
+See `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`. Assignment does not start an agent; production coordinator
+ownership and actual signed approval/admission/dispatch remain unconfigured.
+**Next: CR14C C-WORK coordinator resource ownership, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
@@ -1780,8 +1785,8 @@ Only real product work is published; ordinary work does not require calibration-
 Block: CR14C C-WORK coordinator composition and executable admission/approval/dispatch
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Protected task preparation and planned result submission are accepted; the trusted coordinator still needs bounded resource ownership and the actual current-node/admission/approval/lease path.
-Expected output: integrated coordinator and assignment path using existing canonical and local-policy services, followed by bounded revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Protected preparation, canonical assignment/expiry and planned result submission are accepted; the trusted coordinator still needs bounded resource ownership and actual signed approval/local admission/dispatch.
+Expected output: integrated coordinator ownership and executable admission path using existing canonical and local-policy services, followed by bounded revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

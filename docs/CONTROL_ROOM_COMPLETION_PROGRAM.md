@@ -6,7 +6,10 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — coordinator composition, executable admission/approval/dispatch and revision submission.
+**Next block:** CR14C C-WORK — coordinator resource ownership, executable admission/approval/dispatch and revision submission.
+Canonical task assignment/expiry and its protected machine-selection interface are independently accepted
+in `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`. This records reservations, not native starts or stop proof;
+production composition is still unconfigured.
 Protected task preparation is independently accepted in `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`;
 the optional page/API operation does not enable production planning or live execution. Initial planned
 result submission and owner-authorized execution planning are accepted in their separate CR14C records.
@@ -273,7 +276,8 @@ private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.
 block is **CR14C coordinator composition, executable admission/approval/dispatch and revision submission**, using
 **Astra Medium (`gpt-6-astra`, `medium`)**. Planned initial result submission and owner-authorized execution
 planning are accepted in their separate records; neither dispatches tasks or revisions. Protected page/API
-planning is now optionally mounted without changing web SQL privileges; production composition remains.
+planning and canonical assignment/expiry are now optionally mounted without changing web SQL privileges;
+production resource ownership and real signed admission/dispatch remain. See `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.
 See `CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md` and `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Shared project reads/pagination are accepted in
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.
 The connection read view, startup/role, serving, rehearsal and fixture-preparation code are accepted in their

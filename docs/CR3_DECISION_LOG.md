@@ -5387,3 +5387,25 @@ and unchanged 132-table migration verification. See `CR14C_TASK_PLANNING_INTERFA
 
 **Next:** coordinator ownership, executable admission/approval/dispatch and bounded revisions on Astra
 Medium. No physical service, provider, native credential access, deployment or merge is authorized here.
+
+## ADR-219 — Assign one prepared task without granting native execution authority
+
+**Date:** 2026-09-05. **Status:** independently accepted repository integration; production unconfigured.
+
+A scoped trusted coordinator joins immutable planning validation to existing canonical ready/claim
+transitions in one owner-authorized transaction. Fixed server routes select executor/probe/capacity
+and a bounded lease; current canonical node/key and fresh fleet reports inform allocation only.
+Reports never substitute for native qualification, signed leases, owner approval or local admission.
+
+Deterministic IDs and one-attempt reconciliation prevent repeat clicks, lost replies or expiry from
+allocating a second attempt. Explicit canonical expiry frees the reservation but is not native stop
+evidence. The browser preserves known reservation/expiry state across racing replies, while current
+protected reads gate display/actions. The ordinary web role gains no canonical write privilege.
+
+**Evidence:** product `daf656633e2bbaafb1669080359f0ea76be778b0`, tree
+`42d76aa2a6e5703471a96826a21a3c6c7f14c3b0`; independent re-review accepted with 37 passing tests
+and no remaining findings. Root's full lifecycle, both builds and artifact checks passed. Initial
+refresh and compiled logout failures/corrections are retained in `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.
+
+**Next:** coordinator resource ownership, signed approval/local admission/dispatch and bounded revisions
+on Astra Medium. No production pool, physical service, native/provider effect, deployment or merge.
