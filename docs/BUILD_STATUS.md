@@ -148,6 +148,9 @@ composition, owner signing/intake, signed dispatch and revisions on Astra Medium
 Final accepted test-only follow-up: `27aae81180f7bc7a549e7b6b2948407db81bfa68`. It fixes an existing
 shutdown ordering test's wall-clock race without changing production timeouts; independent review
 carried acceptance after all nine serving tests passed. The initial broad failure is retained in acceptance.
+Published as [PR #305](https://github.com/MarvinAi5/control-room/pull/305), stacked on #304.
+Final main suite: 896 passed with two existing platform skips. Current-head GitHub CI remains required;
+this stack is not claimed merged, deployed or ready for live task execution.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
