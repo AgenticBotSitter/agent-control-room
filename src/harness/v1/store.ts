@@ -112,7 +112,7 @@ export class HarnessRunStoreV1 {
     assertCurrent: () => void = () => {}): Promise<{ run: HarnessRunV1; replayed: boolean }> {
     const snapshot = nativeTaskSnapshotBodySchema.parse(input);
     assertNoSecretMaterial(snapshot, "native task snapshot");
-    return this.db.transaction(async tx => {
+    return this.db.transactionWithPreCommitCheck(async tx => {
       const row = (await tx.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [tenantId, snapshot.runId])).rows[0];
       if (!row) throw new Error("native task not registered");
       const run = verifiedRun(row, this.integrityKey), registration = run.nativeTask;
@@ -137,7 +137,7 @@ export class HarnessRunStoreV1 {
         payload: { category: "native_snapshot", snapshot } };
       const result = await this.appendWithin(tx, event, true);
       assertCurrent(); return result;
-    });
+    }, assertCurrent);
   }
 
   private async appendWithin(tx: DatabaseSession, event: HarnessRunEventV1, native = false): Promise<{ run: HarnessRunV1; replayed: boolean }> {
