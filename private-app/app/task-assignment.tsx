@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
-import { createTaskAssignmentBrowserClient, assignmentErrorMessage } from "../../src/web/v1/task-assignment-browser-client";
+import { createTaskAssignmentBrowserClient, assignmentErrorMessage, reconcileAssignmentReceipt } from "../../src/web/v1/task-assignment-browser-client";
 import type { TaskAssignmentOptions, TaskAssignmentReceipt } from "../../src/web/v1/task-assignment-wire";
 import type { TaskDetail } from "../../src/web/v1/task-wire";
 
@@ -37,9 +37,9 @@ export function PrivateTaskAssignment({ detail }: { detail?: TaskDetail }) {
   useEffect(() => {
     const current = ++generation.current; let live = true;
     if (detail) void client.options(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
-      if (live && current === generation.current) { setCheckedDetail(detail); setOptions(value); setReceipt(value.receipt ?? undefined);
+      if (live && current === generation.current) { setCheckedDetail(detail); setOptions(value); setReceipt(previous => reconcileAssignmentReceipt(previous, value.receipt));
         setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
-    }).catch(reason => { if (live && current === generation.current) { setCheckedDetail(detail); setOptions(undefined); setReceipt(undefined);
+    }).catch(reason => { if (live && current === generation.current) { setCheckedDetail(detail); setOptions(undefined);
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } });
     return () => { live = false; };
   }, [client, detail]);
@@ -49,11 +49,11 @@ export function PrivateTaskAssignment({ detail }: { detail?: TaskDetail }) {
     try {
       const value = retry ? await client.retrySave() : await client.change(detail.task.projectId, detail.task.jobId,
         { action, expectedInputDigest: detail.inputDigest, ...(action === "assign" ? { nodeId } : {}) });
-      if (alive.current) setReceipt(value);
+      if (alive.current) setReceipt(previous => reconcileAssignmentReceipt(previous, value));
     } catch (reason) {
       if (alive.current && current === generation.current) {
         const error = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); setError(error);
-        if (["authentication_required", "access_denied", "not_found"].includes(error.code)) { setOptions(undefined); setReceipt(undefined); }
+        if (["authentication_required", "access_denied", "not_found"].includes(error.code)) setOptions(undefined);
       }
     } finally { busy.current = false; if (alive.current) setPending(false); }
   }

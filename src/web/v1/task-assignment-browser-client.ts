@@ -1,6 +1,16 @@
 import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskAssignmentDraftSchema, taskAssignmentCommandSchema, taskAssignmentOptionsSchema } from "./task-assignment-wire";
+import type { TaskAssignmentReceipt } from "./task-assignment-wire";
+
+/** One immutable reservation per task: delayed replies cannot undo its known expiry. Not authorization. */
+export function reconcileAssignmentReceipt(previous: TaskAssignmentReceipt | undefined, incoming: TaskAssignmentReceipt | null): TaskAssignmentReceipt | undefined {
+  if (!incoming) return previous;
+  if (!previous || previous.projectId !== incoming.projectId || previous.jobId !== incoming.jobId
+    || previous.inputDigest !== incoming.inputDigest || previous.leaseId !== incoming.leaseId) return incoming;
+  if (previous.leaseState !== "active" && incoming.leaseState === "active") return previous;
+  return { ...incoming, leaseCurrent: previous.leaseCurrent && incoming.leaseCurrent };
+}
 
 export const assignmentErrorMessage: Record<BrowserFailureCode, string> = {
   authentication_required: "Sign in again to see this assignment.", access_denied: "Your current access does not allow assignment changes.",

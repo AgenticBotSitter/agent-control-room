@@ -26,7 +26,9 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
         catch { throw new WebAccessError("invalid_request"); }
         if (!catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success)
           throw new WebAccessError("invalid_request");
-        if (!options.assignment) { await options.service.authorize(identity, projectId); throw new Error("assignment_not_configured"); }
+        // Enforce shared revocation in the web composition too, before crossing an injected operation boundary.
+        await options.service.authorize(identity, projectId);
+        if (!options.assignment) throw new Error("assignment_not_configured");
         if (request.method === "GET") {
           const value = taskAssignmentOptionsSchema.parse(await options.assignment.options(identity, projectId, jobId));
           if (value.projectId !== projectId || value.jobId !== jobId) throw new Error("assignment_scope_mismatch");

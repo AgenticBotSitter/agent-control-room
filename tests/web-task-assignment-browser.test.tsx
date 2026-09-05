@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TaskAssignmentPanel, PrivateTaskAssignment } from "../private-app/app/task-assignment";
-import { createTaskAssignmentBrowserClient } from "../src/web/v1/task-assignment-browser-client";
+import { createTaskAssignmentBrowserClient, reconcileAssignmentReceipt } from "../src/web/v1/task-assignment-browser-client";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const receipt = { projectId: "project:test", jobId: "job:test", inputDigest: digest, nodeId: "node:test",
@@ -13,6 +13,20 @@ const options = { projectId: receipt.projectId, jobId: receipt.jobId, inputDiges
   candidates: [{ nodeId: receipt.nodeId, label: "Test machine <script>", platform: "linux" as const }], receipt: null,
   startsWork: false as const, candidateEvidence: "configured_routes_only" as const };
 const draft = { action: "assign", nodeId: receipt.nodeId, expectedInputDigest: digest };
+
+test("assignment receipt reconciliation survives delayed null reads and either expiry response ordering", () => {
+  const expired = { ...receipt, leaseState: "expired" as const, leaseCurrent: false };
+  assert.deepEqual(reconcileAssignmentReceipt(receipt, null), receipt);
+  assert.deepEqual(reconcileAssignmentReceipt(reconcileAssignmentReceipt(undefined, receipt), expired), expired);
+  assert.deepEqual(reconcileAssignmentReceipt(reconcileAssignmentReceipt(undefined, expired), receipt), expired);
+  assert.equal(reconcileAssignmentReceipt({ ...receipt, leaseCurrent: false }, receipt)?.leaseCurrent, false);
+  assert.equal(reconcileAssignmentReceipt(undefined, null), undefined);
+  const other = { ...receipt, jobId: "job:other", leaseId: "lease:other" };
+  assert.deepEqual(reconcileAssignmentReceipt(expired, other), other);
+  const hidden = renderToStaticMarkup(<TaskAssignmentPanel nodeId="" setNodeId={() => {}} pending={false}
+    uncertain={false} onChange={() => {}} onRetry={() => {}} />);
+  assert.doesNotMatch(hidden, /Recorded reservation|<button|<select/);
+});
 
 test("assignment options never write and commands send only exact bounded action/source/node data", async () => {
   const calls: RequestInit[] = [];
