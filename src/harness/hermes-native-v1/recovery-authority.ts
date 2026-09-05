@@ -14,7 +14,7 @@ export const nativeRecoveryPermissionBodySchema = z.object({
   nonce: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/), bodyDigest: digestSchema,
 }).strict();
 export type NativeRecoveryPermissionBody = z.infer<typeof nativeRecoveryPermissionBodySchema>;
-const permissionSchema = z.object({ body: nativeRecoveryPermissionBodySchema,
+export const nativeRecoveryPermissionSchema = z.object({ body: nativeRecoveryPermissionBodySchema,
   signatureAlgorithm: z.literal("Ed25519"), signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/) }).strict();
 export type NativeRecoveryCurrent = {
   approvalKey: { keyId: string; publicKeySpki: string };
@@ -39,7 +39,7 @@ const unavailable = (): never => { throw new Error("native_recovery_authority_un
  */
 export function createNativeRecoveryAuthority(config: { enrollment: unknown; binding: unknown; permission: unknown }, deps: NativeRecoveryDependencies) {
   const enrollment = Object.freeze(enrollmentSchema.parse(config.enrollment)), binding = bindingSchema.parse(config.binding);
-  const permission = permissionSchema.parse(config.permission), digest = sha256Digest(binding), body = permission.body;
+  const permission = nativeRecoveryPermissionSchema.parse(config.permission), digest = sha256Digest(binding), body = permission.body;
   if (binding.enrollmentDigest !== sha256Digest(enrollment) || binding.tenantId !== enrollment.tenantId
     || binding.nodeId !== enrollment.nodeId || body.bindingDigest !== digest || body.issuedAt >= binding.deadline
     || body.expiresAt <= body.issuedAt || body.expiresAt > Math.min(enrollment.validUntil, binding.deadline + 300_000)) unavailable();
