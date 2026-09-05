@@ -5552,3 +5552,25 @@ evidence and fake transport do not establish live owner custody, qualification o
 
 **Next:** real trusted sources, owner signing/intake, signed dispatch and revisions, Astra Medium.
 No provider, credential operation, deployment or merge is authorized by this decision.
+
+## ADR-226 — resolve native lease authority from accepted signed command evidence
+
+**Date:** 2026-09-05. **Status:** independently accepted inert reader.
+
+Resolve an initial grant through exact command/replay receipt matching, current owner-pinned server
+key verification and the current exact local attempt. A durable record alone does not prove a valid
+signature or continuing trust. Receipt must have been within envelope validity; continued use is then
+bounded by the actual lease/authority, without renewal or payload deadline edits. A terminal/superseded
+attempt, mismatched receipt or current signed key revocation denies further use.
+
+Reuse the existing bridge and anti-rollback trust stores. Do not create a new lease database or mount a
+handler implicitly. The trusted receiver must retain its command and attempt before using this reader;
+the normal policy evaluator still owns all remaining intersections and approval checks.
+
+**Evidence:** `bdc4d3fdc120ed16c1439698a79758335fd0f255`, tree
+`dc7252a9f82beec8a9b7c526b21d8e0242dc85dc`; independent review accepted with 56 passing tests and
+no findings. Real disposable owner-pinned trust and signed countersigned revocation are covered;
+native transport and owner keys remain synthetic. See `CR14C_NATIVE_LEASE_EVIDENCE_ACCEPTANCE.md`.
+
+**Next:** remaining current policy/owner approval sources, signing/intake, signed dispatch and revisions
+on Astra Medium. No live integration, credentials, provisioning, deployment or merge is authorized.

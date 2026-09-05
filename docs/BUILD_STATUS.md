@@ -127,6 +127,14 @@ bounded revisions on Astra Medium. Production composition and live acceptance re
 Published as [PR #303](https://github.com/MarvinAi5/control-room/pull/303), stacked on #302.
 Current-head CI remains required; no merge or deployment is claimed. #302's exact head `0f08240`
 was running CI `33982945820` at the last inspection, not yet verified complete.
+Refresh: #302 head `0f08240c5366ee745694a305b874e8ba4c1a70c0` passed that complete CI run at
+2026-09-05 18:22:03 UTC. Older cancelled runs remain non-passing.
+The native lease-evidence reader is independently accepted at
+`bdc4d3fdc120ed16c1439698a79758335fd0f255`; see `CR14C_NATIVE_LEASE_EVIDENCE_ACCEPTANCE.md`.
+It resolves exact signed grants from real durable bridge receipts and owner-pinned current server trust,
+including signed key revocation, in disposable tests. It does not activate a receiver or replace owner
+approval/profile evidence. Next: remaining current policy sources and owner signing/intake, signed
+dispatch and revisions on Astra Medium.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.

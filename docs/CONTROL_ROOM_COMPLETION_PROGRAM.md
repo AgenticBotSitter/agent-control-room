@@ -16,6 +16,9 @@ are not yet connected. Separately signed exact-run recovery composition is now a
 `CR14C_NATIVE_RECOVERY_AUTHORITY_ACCEPTANCE.md`, fake-tested without renewal or stop replay;
 real permission issuance and runtime sources remain unconfigured. These component acceptances do not
 complete live C-WORK.
+Initial native lease evidence from accepted signed commands and current owner-pinned server trust is
+independently accepted in `CR14C_NATIVE_LEASE_EVIDENCE_ACCEPTANCE.md`. Other current policy sources,
+owner approval trust/custody and actual handler/runtime composition remain unconfigured.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.
