@@ -224,6 +224,15 @@ evidence. Remaining: bounded lifecycle/owner intake interface, signing custody, 
 supervisor state and revisions. Continue repository implementation on Astra Medium; live C-WORK is incomplete.
 Published as [PR #311](https://github.com/MarvinAi5/control-room/pull/311), stacked on #310.
 Current-head CI remains required; no merge or deployment is claimed.
+Approval lifecycle and historical reconciliation are independently accepted at
+`47621299473802a593ecb85c4befddf59e3c02f9`, with 32 passing review tests and no blocking findings.
+Optional prepare/store/read operations share the coordinator's capacity, drain and uncertain-save
+protections. Current-owner readback returns only a scoped integrity-checked receipt, including after
+reservation expiry or project completion, without resubmission or execution permission. See
+`CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md`. HTTP/page/bootstrap mounting and signing/delivery remain;
+the new trusted port is not a working browser approval flow. Continue repository work on Astra Medium.
+Final local verification passed: CR14C402, preparation769, main981 with two existing platform skips,
+post-suite392, private compiled16, rendered4, both builds, TypeScript/full ESLint and migrations0047/133 tables.
 PR #309 exact head `b52a14c0f9c996afe68343880e798c7745979877` passed CI `33987001639`
 at 2026-09-05 19:42:43 UTC. #310 was still running when inspected; no merge is claimed.
 PR #306 exact head `4f32ef1891490b475282ddcbe575b69be6cae9e9` passed CI `33985592476`
@@ -374,6 +383,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C approval lifecycle/reconciliation | Independently accepted bounded trusted approval port and historical receipt readback; no HTTP/signer/dispatch | `CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md` |
 | CR14C canonical approval storage | Independently accepted immutable signed-packet evidence under current canonical/owner locks; no browser/signer/dispatch | `CR14C_CANONICAL_APPROVAL_STORAGE_ACCEPTANCE.md` |
 | CR14C canonical approval preparation | Independently accepted locked owner-authorized unsigned preparation; shared contracts preserve native isolation; no storage/signing/dispatch | `CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` |
 | CR14C task preparation interface | Independently accepted protected page/API and scoped planner operation; production composition and dispatch not enabled | `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`; `reviews/CR14C_TASK_PLANNING_INTERFACE_REVIEW.md` |
@@ -1943,10 +1953,10 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14C bounded approval intake interface, signed dispatch and revision submission
+Block: CR14C owner approval interface and startup mounting, signed dispatch and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Two-pool startup, native authority sources and canonical signed-packet storage are accepted. The remaining path must connect the owner interface and bounded coordinator lifecycle to delivery and node admission.
+Why: Two-pool startup, native authority sources, packet storage and bounded approval lifecycle/readback are accepted. The remaining path must connect the owner interface and configured startup to delivery and node admission.
 Expected output: bounded owner approval intake and signed dispatch using the existing node admission/marker controllers, then revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.

@@ -5732,3 +5732,23 @@ chronology, including initial TypeScript narrowing correction and final table-co
 **Remaining:** bounded lifecycle/owner intake interface, signer custody, signed dispatch and node receipt
 consumption, persistent supervisor state, revisions and live qualification. Astra Medium remains the
 current repository implementation setting. No route, runtime activation, native call or merge is implied.
+
+## ADR-234 — share coordinator lifecycle for approval operations and separate historical readback
+
+**Date:** 2026-09-05. **Status:** independently accepted repository integration.
+
+Optional trusted prepare/store/read operations share the existing coordinator's finite active limit,
+graceful drain, forced invalidation and uncertain-save handling. Snapshot packet data before scheduling.
+Do not open a new pool, introduce a second queue, retry on ambiguity or transfer ownership of independently
+supplied trust stores. Existing planning/assignment-only configurations remain unchanged.
+
+Readback checks current owner/session permission, the integrity-checked canonical plan/input and exact
+attempt's HMAC-protected evidence. Return only receipt digests/time/identifiers. Historical evidence may
+be read after work expiry, project completion or owner pin closure, but never substitutes for current
+execution permission. This gives a lost acknowledgement a read-only reconciliation path.
+
+**Evidence:** accepted `47621299473802a593ecb85c4befddf59e3c02f9`, tree
+`c3425e258862892ab85ed3bd020f3061465f946c`; independent review passed32 tests with no blocking findings.
+See `CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md` for observed verification. No HTTP/bootstrap mounting,
+signer, live database, provider or runtime activation is claimed. Owner interface/startup composition,
+signed dispatch, supervisor persistence and revisions remain on Astra Medium.

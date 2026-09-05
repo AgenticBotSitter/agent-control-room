@@ -46,6 +46,10 @@ The follow-up canonical packet store is independently accepted in
 current canonical locks with replay/conflict and commit-time fences. Migration0047 adds coordinator-only
 immutable evidence (133 tables), not consumable execution authority. Bounded lifecycle/browser intake,
 signing custody and actual dispatch remain; no live task has started.
+The optional bounded approval lifecycle and historical receipt readback are independently accepted in
+`CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md`. They reuse coordinator admission/drain guards and allow
+current owners to reconcile a saved packet after expiry or a lost reply without resubmission. HTTP/page
+and startup mounting, signing custody and dispatch remain; historical evidence cannot authorize work.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.
@@ -329,7 +333,8 @@ Actual signed admission/dispatch and real deployment configuration remain; no li
 Exact native payload/approval/effect binding is accepted in `CR14C_NATIVE_TASK_APPROVAL_BINDING_ACCEPTANCE.md`.
 Node-side NativeAuthority, current-policy checks, durable claim/marker ordering, paired signature intake
 and canonical unsigned preparation are now independently accepted. The immediate next code block is
-bounded lifecycle/owner intake and signed dispatch following accepted canonical packet persistence. Owner signing custody, durable
+owner HTTP/page intake and startup mounting, followed by signed dispatch. Bounded approval lifecycle
+and historical reconciliation are accepted. Owner signing custody, durable
 supervisor state and revision submission remain; no application import of the native adapter is permitted.
 See `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.
 See `CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md` and `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Shared project reads/pagination are accepted in
