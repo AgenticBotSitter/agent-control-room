@@ -40,7 +40,8 @@ that the operation remains active; escaped/late callbacks cannot issue more quer
 failed precommit rolls back before release. An uncertain timeout quarantines the **whole pool**, rejects
 admission, invalidates active operations, and calls postgres 3.4.7 `end({timeout:0})` once to terminate
 connections/queued work. It does not merely race a promise and keep the driver working. There is no retry
-or alternate host. A commit already sent may have committed: retain its command key and reconcile its
+or alternate host. Prepared statement caching is disabled to avoid the installed driver's automatic plan-cache
+retry; statements still use parameterized extended protocol. A commit already sent may have committed: retain its command key and reconcile its
 existing receipt explicitly. These are trusted application sessions, not a SQL sandbox for untrusted code.
 
 Readiness drops before shutdown. Admitted requests can drain; deadline expiry returns unavailable to remaining

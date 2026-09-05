@@ -21,23 +21,32 @@ export function privatePostgresOptions(input: PrivatePostgresConfiguration) {
   const config = validatePrivatePostgresConfiguration(input);
   return { host: config.host, port: config.port, database: config.database, username: config.username,
     password: config.password, ssl: false as const, max: 8, connect_timeout: 5, idle_timeout: 20,
-    max_lifetime: 1800, max_pipeline: 1, backoff: false as const, keep_alive: 60, prepare: true, debug: false as const,
+    max_lifetime: 1800, max_pipeline: 1, backoff: false as const, keep_alive: 60, prepare: false, debug: false as const,
     fetch_types: false, publications: "alltables", target_session_attrs: "primary" as const,
     onnotice: () => {}, connection: { application_name: "control-room-private-web", search_path: "pg_catalog, public",
       statement_timeout: 5000, lock_timeout: 2000, transaction_timeout: 10000,
       idle_in_transaction_session_timeout: 5000, timezone: "UTC" } };
 }
 
-/** Explicit effect boundary. Merely importing this module creates no client or connection. */
-export function createPrivatePostgresDatabase(config: PrivatePostgresConfiguration) {
-  const sql = postgres(privatePostgresOptions(config));
+export type PrivateSqlFactory = (options: ReturnType<typeof privatePostgresOptions>) => {
+  reserve(): Promise<{ unsafe(statement: string, params: never[], options: { prepare: boolean; simple: boolean }): PromiseLike<readonly unknown[]>;
+    release(): void }>;
+  end(options: { timeout: number }): Promise<void>;
+};
+/** Explicit effect boundary. Merely importing this module creates no client or connection.
+ * The factory seam is trusted server composition/test code, never request input.
+ */
+export function createPrivatePostgresDatabase(config: PrivatePostgresConfiguration,
+  createSql: PrivateSqlFactory = options => postgres(options)) {
+  const sql = createSql(privatePostgresOptions(config));
   const driver: PrivateDatabaseDriver = {
     async acquire() {
       try {
         const lease = await sql.reserve();
         return { async query<T>(statement: string, params: unknown[] = []) {
           try {
-            const queryOptions = { prepare: true, simple: false };
+            // Disable postgres.js's transparent prepared-plan retry. Still use parameterized extended protocol.
+            const queryOptions = { prepare: false, simple: false };
             const rows = await lease.unsafe(statement, params as never[], queryOptions);
             return { rows: rows as unknown as T[] };
           } catch { throw new PrivateDatabaseError("database_outcome_uncertain"); }

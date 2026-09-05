@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { boundPrivateDatabase, privateDatabaseLimits, type PrivateDatabaseLease } from "../src/web/v1/bounded-database";
-import { privatePostgresOptions } from "../src/web/v1/private-postgres";
+import { createPrivatePostgresDatabase, privatePostgresOptions } from "../src/web/v1/private-postgres";
 import { startupConfig } from "./helpers/web-startup";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
@@ -16,9 +16,26 @@ function fake(query: (statement: string) => Promise<{ rows: never[] }> = async (
 test("private options require explicit credentials and pin bounded PG17 same-host operation", () => {
   const options = privatePostgresOptions(startupConfig.database);
   assert.equal(options.max, 8); assert.equal(options.ssl, false);
+  assert.equal(options.prepare, false);
   assert.equal(options.connection.transaction_timeout, 10000); assert.equal(options.connection.lock_timeout, 2000);
   for (const patch of [{ password: "" }, { host: "localhost" }, { port: 0 }, { database: "" }, { username: "" }, { majorVersion: 16 }])
     assert.throws(() => privatePostgresOptions({ ...startupConfig.database, ...patch } as typeof startupConfig.database));
+});
+
+test("private postgres adapter uses one reserved session, extended parameters, no prepared retry and one zero-timeout end", async () => {
+  const seen: { statement: string; params: unknown[] }[] = []; let reserves = 0, releases = 0, ends = 0;
+  const pool = createPrivatePostgresDatabase(startupConfig.database, options => {
+    assert.equal(options.username, "web_test"); assert.equal(options.max_pipeline, 1);
+    assert.equal(options.prepare, false); assert.equal(options.connection.search_path, "pg_catalog, public");
+    return { reserve: async () => { reserves++; return { unsafe: async (statement, params, queryOptions) => {
+      assert.deepEqual(queryOptions, { prepare: false, simple: false }); seen.push({ statement, params });
+      return statement === "SELECT $1 AS value" ? [{ value: params[0] }] : [];
+    }, release: () => { releases++; } }; }, end: async value => { ends++; assert.deepEqual(value, { timeout: 0 }); } };
+  });
+  assert.equal(reserves, 0);
+  assert.deepEqual((await pool.client.transaction(tx => tx.query("SELECT $1 AS value", [42]))).rows, [{ value: 42 }]);
+  assert.deepEqual(seen.map(x => x.statement), ["BEGIN", "SELECT $1 AS value", "COMMIT"]);
+  assert.equal(reserves, 1); assert.equal(releases, 1); await pool.close(); await pool.close(); assert.equal(ends, 1);
 });
 test("commit follows the precommit check, rollback follows callback failure, escaped sessions cannot query", async () => {
   const f = fake(); const pool = boundPrivateDatabase(f.driver);
