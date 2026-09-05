@@ -98,8 +98,9 @@ stacked on #289. Its exact head `be668c5` passed GitHub CI run `33956977824` at 
 The accepted private result/review follow-up is [PR #291](https://github.com/MarvinAi5/control-room/pull/291),
 stacked on #290 from `codex/cr14c-private-task-results`.
 Its exact head `2ca0e13` passed GitHub CI run `33959511624` at 10:19:14 UTC.
-The owner-review follow-up on `codex/cr14c-owner-result-review` is independently accepted locally;
-publication and its own current-head CI remain required. This stack is not merged or deployed.
+The accepted owner-review follow-up is [PR #292](https://github.com/MarvinAi5/control-room/pull/292),
+stacked on #291 from `codex/cr14c-owner-result-review`. Its own current-head CI remains required.
+This stack is not merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 

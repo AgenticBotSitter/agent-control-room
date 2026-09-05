@@ -149,3 +149,5 @@ running beta; report concrete live blockers without converting simulator evidenc
   Actual executable planning, target registration, physical transport and revision dispatch remain.
 - Retired the undispatched review-UI capsule to prevent duplicate work. Publication/current checks are
   recorded in `BUILD_STATUS.md`; keep Astra Xhigh for the next integration block.
+- Published as [PR #292](https://github.com/MarvinAi5/control-room/pull/292), stacked on #291.
+  Its exact current-head checks remain required. This follow-up did not merge or deploy the stack.
