@@ -1,17 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { appendAuditWith } from "../../audit/audit-store";
 import { evaluatePolicy, type RoleGrant } from "../../security/policy";
 import { sha256Digest } from "../../security/digest";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 
-const text = (max: number, multiline = false) => z.string().trim().max(max).refine(value => ![...value].some(char =>
-  (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) && !(multiline && ["\n", "\r", "\t"].includes(char))));
-export const projectCreateSchema = z.object({ title: text(120).pipe(z.string().min(1)), summary: text(1000, true) }).strict();
-export const lifecycleSchema = z.enum(["active", "paused", "completed", "archived"]);
-export const projectTransitionSchema = z.object({ lifecycle: lifecycleSchema, expectedVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1) }).strict();
-export type WebProject = { projectId: string; title: string; summary: string; lifecycle: z.infer<typeof lifecycleSchema>; version: number; createdAt: string; updatedAt: string };
+import { projectCreateSchema, projectTransitionSchema, type WebProject } from "./project-wire";
+export { projectCreateSchema, projectTransitionSchema, lifecycleSchema, type WebProject } from "./project-wire";
 type Actor = { id: string; grants: RoleGrant[]; now: string };
 const iso = (value: string | Date) => new Date(value).toISOString();
 
@@ -76,18 +71,25 @@ export class WebProjectService {
       const rows = await tx.query<WebProject>(`SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
         h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt" FROM projects p
         JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
-        WHERE p.tenant_id=$1 AND p.workspace_id=$2 ORDER BY p.id LIMIT 201`, [this.scope.tenantId, this.scope.workspaceId]);
+        WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.adapter_id=$3 ORDER BY p.id LIMIT 201`,
+      [this.scope.tenantId, this.scope.workspaceId, this.manualAdapterId()]);
       // Do not silently present a partial catalog. Pagination is required before expanding this beta limit.
       if (rows.rows.length > 200) throw new WebAccessError("conflict");
       return rows.rows.map(row => ({ ...row, version: Number(row.version), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) }));
     });
   }
 
+  async authorizeCatalog(identity: VerifiedWebIdentity): Promise<void> {
+    await this.authorized(identity, "projects.read", undefined, async () => {});
+  }
+
+  private manualAdapterId() { return `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`; }
+
   async create(identity: VerifiedWebIdentity, value: unknown, key: string) {
     const parsed = projectCreateSchema.safeParse(value);
     if (!parsed.success) throw new WebAccessError("invalid_request");
     return this.command(identity, "projects.create", undefined, parsed.data, key, async (tx, actor) => {
-      const adapterId = `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`;
+      const adapterId = this.manualAdapterId();
       const workspace = await tx.query(`SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR SHARE`, [this.scope.tenantId, this.scope.workspaceId]);
       if (!workspace.rows.length) throw new WebAccessError("access_denied");
       await tx.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
@@ -110,7 +112,8 @@ export class WebProjectService {
       const row = (await tx.query<WebProject>(`SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
         h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt" FROM projects p
         JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
-        WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3`, [this.scope.tenantId, this.scope.workspaceId, projectId])).rows[0];
+        WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 AND p.adapter_id=$4`,
+      [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId()])).rows[0];
       if (!row) throw new WebAccessError("not_found");
       return { ...row, version: Number(row.version), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) };
     });
@@ -123,8 +126,8 @@ export class WebProjectService {
       const row = (await tx.query<WebProject>(`SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
         h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt" FROM projects p
         JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
-        WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 FOR UPDATE OF p,h`,
-      [this.scope.tenantId, this.scope.workspaceId, projectId])).rows[0];
+        WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 AND p.adapter_id=$4 FOR UPDATE OF p,h`,
+      [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId()])).rows[0];
       if (!row) throw new WebAccessError("not_found");
       const { lifecycle, expectedVersion } = parsed.data;
       if (Number(row.version) !== expectedVersion || row.lifecycle === lifecycle

@@ -3,7 +3,7 @@
   "capsuleId": "CR14B-PROJECT-UI-001",
   "waveId": "CR14-PRIVATE-UI-1",
   "block": "CR14B",
-  "summary": "Build the general project catalog and creation form",
+  "summary": "Retired draft: project catalog and creation form implemented by Codex B-WIRE",
   "platform": "any",
   "status": "draft",
   "mode": "standard-work",
@@ -89,6 +89,7 @@
     "maxCount": 0
   },
   "stopConditions": [
+    "Retired by CR14B B-WIRE: Codex implemented these exact files before any accepted worker claim. Do not publish this retained draft or perform duplicate work; see docs/CR14B_PRIVATE_APPLICATION_WIRING.md.",
     "Do not begin while this capsule is draft; it must be published as ready and the queue controller must record CLAIM ACCEPTED.",
     "Stop if the committed shared contract or integration base is unavailable, scope is ambiguous, or any path outside allowedPaths is needed.",
     "No installation, download, live provider/agent call, credential access, native qualification, persistent service, production database, deployment or external effect.",

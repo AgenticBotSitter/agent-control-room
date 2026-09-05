@@ -4,4 +4,4 @@ import { createBuilder } from "vite";
 process.env.CONTROL_ROOM_BUILD_TARGET = "vps-node";
 const builder = await createBuilder({ mode: "production", configFile: "vite.config.ts" });
 await builder.buildApp();
-console.log("VPS Node artifact compiled in dist-vps; private application wiring remains pending.");
+console.log("VPS Node artifact compiled in dist-vps; deployment bootstrap remains unconfigured.");

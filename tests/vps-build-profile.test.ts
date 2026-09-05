@@ -18,7 +18,10 @@ test("VPS build uses isolated artifacts and its all-route readiness guard cannot
   const config = readFileSync("vite.config.ts", "utf8");
   assert.match(config, /dist-vps\/server/); assert.match(config, /dist-vps\/client/);
   const guard = readFileSync("middleware.ts", "utf8");
-  assert.match(guard, /private_app_not_configured/); assert.match(guard, /status: 503/);
+  assert.match(guard, /handlePrivateWebRequest/);
+  assert.match(config, /appDir: "private-app"/);
+  const runtime = readFileSync("src/web/v1/private-process.ts", "utf8");
+  assert.match(runtime, /private_app_not_configured/); assert.match(runtime, /status: 503/);
   assert.doesNotMatch(guard, /matcher:/);
   assert.deepEqual(JSON.parse(readFileSync(".openai/hosting.json", "utf8")), { d1: null, r2: null });
 });

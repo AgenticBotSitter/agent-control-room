@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
 import test from "node:test";
 import handler from "../dist-vps/server/index.js";
+import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
+import { fixture, now, origin, trust, request } from "./helpers/web-foundation.ts";
 
 test("compiled Node entry protects pages, APIs and streams before application composition", async () => {
   assert.equal(typeof handler, "function");
@@ -16,4 +18,34 @@ test("Node client/SSR artifacts are separate from Sites metadata", () => {
   assert.equal(existsSync("dist-vps/server/ssr/index.js"), true);
   assert.ok(readdirSync("dist-vps/client/_next/static").length > 0);
   assert.equal(existsSync("dist-vps/.openai/hosting.json"), false);
+});
+
+test("compiled private routes use the installed process, real disposable SQL, and shared revocation", async t => {
+  const f = await fixture();
+  const app = installPrivateWebProcess({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
+    database: { client: f.client, close: () => f.db.close() }, clock: () => now, loadKeys: async () => trust.keys });
+  t.after(() => app.close());
+  assert.throws(() => installPrivateWebProcess({}), /already_configured/);
+  const created = await handler(request(undefined, "POST", { title: "Compiled project", summary: "From the actual built API" }));
+  assert.equal(created.status, 201); const { project } = await created.json();
+  const catalog = await handler(request("/projects")); assert.equal(catalog.status, 200);
+  const catalogHtml = await catalog.text();
+  assert.match(catalogHtml, /New project/); assert.match(catalogHtml, /Loading projects/);
+  assert.doesNotMatch(catalogHtml, /Lo-Fi Wayfarer|Content Blooms|ABS AI/);
+  const path = `/projects/${encodeURIComponent(project.projectId)}`;
+  const detail = await handler(request(`${path}/settings`)); assert.equal(detail.status, 200);
+  assert.match(await detail.text(), /Loading project/);
+  const read = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}`));
+  assert.equal((await read.json()).project.title, "Compiled project");
+  const archive = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/lifecycle`, "POST",
+    { lifecycle: "archived", expectedVersion: 1 }, "compiled-archive-0001"));
+  assert.equal(archive.status, 200);
+  for (const legacy of ["/ideas", "/api/v1/fixture-snapshot", "/api/v1/local-pilot/session", "/api/v1/connections"])
+    assert.equal((await handler(request(legacy))).status, 404, legacy);
+  const stream = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/events`));
+  assert.match(await stream.text(), /project-snapshot/);
+  assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
+  for (const protectedPath of ["/projects", path, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
+    assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
+  await app.close(); assert.equal((await handler(request("/projects"))).status, 503);
 });

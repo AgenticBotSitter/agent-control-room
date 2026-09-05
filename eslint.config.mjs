@@ -24,6 +24,12 @@ const eslintConfig = defineConfig([
   jsxA11y.flatConfigs.recommended,
   next.configs["core-web-vitals"],
   {
+    // Private navigation intentionally performs document requests through the common server gate.
+    // Access login/logout must likewise remain top-level navigation, not prefetch/router actions.
+    files: ["private-app/**/*.tsx"],
+    rules: { "@next/next/no-html-link-for-pages": "off" },
+  },
+  {
     languageOptions: {
       globals: {
         ...globals.browser,

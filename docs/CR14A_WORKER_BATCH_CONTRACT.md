@@ -21,6 +21,9 @@ click was tested by server rendering. Codex performs mounted browser acceptance 
 
 ## CR14B-PROJECT-UI-001 — project catalog and creation
 
+**Retired draft as of CR14B B-WIRE:** Codex implemented the exact components/tests during application
+integration before any worker claim. The contract below is retained for review; do not dispatch duplicate work.
+
 Files: `app/components/project-catalog.tsx`, `app/components/project-create-form.tsx`,
 `tests/project-catalog.test.tsx`, `tests/project-create-form.test.tsx`.
 

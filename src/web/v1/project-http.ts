@@ -1,24 +1,11 @@
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust } from "./access-verifier";
 import type { WebProjectService } from "./project-service";
+import { privateResponseHeaders as responseHeaders, readBoundedJson, webFailure } from "./http-common";
 
-const responseHeaders = { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow", "x-content-type-options": "nosniff" };
 async function readBody(request: Request): Promise<unknown> {
   if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
     throw new WebAccessError("invalid_request");
-  const reader = request.body.getReader();
-  const parts: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 8192) { await reader.cancel(); throw new WebAccessError("invalid_request"); }
-      parts.push(value);
-    }
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(parts)));
-  } catch { throw new WebAccessError("invalid_request"); }
-  finally { reader.releaseLock(); }
+  return readBoundedJson(request.body, 8192);
 }
 
 /** Full Web Request -> transaction -> response seam. Composition is explicit; never opens a database. */
@@ -60,9 +47,7 @@ export function createProjectHttpHandler(options: {
       }
       return Response.json({ error: "not_found" }, { status: 404, headers: responseHeaders });
     } catch (error) {
-      const code = error instanceof WebAccessError ? error.code : "service_unavailable";
-      const status = { authentication_required: 401, access_denied: 403, invalid_request: 400, conflict: 409, not_found: 404, service_unavailable: 503 }[code];
-      return Response.json({ error: code }, { status, headers: responseHeaders });
+      return webFailure(error);
     }
   };
 }

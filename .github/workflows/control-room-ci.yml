@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "integration/**"
+      - "codex/**"
   push:
     branches:
       - main
@@ -67,6 +68,9 @@ jobs:
 
       - name: Build and verify rendered routes
         run: pnpm test:build
+
+      - name: Build and verify private VPS application
+        run: pnpm test:build:vps
 
       - name: Verify database migrations
         run: pnpm db:verify
