@@ -114,11 +114,12 @@ test("durable pre-effect marker retains payload commitment and rejects tampering
   const execution = applyExecutionAuthorityEvent(admitted, { eventId: "event:native:start", kind: "start", occurredAt: at }).snapshot;
   const claimed = store.claim({ messageId: "message:native:test", execution, claimedAt: at });
   assert.equal(claimed.lookup.kind, "full"); if (claimed.lookup.kind !== "full") assert.fail();
-  const marker = createPreEffectMarker({ markerId: "marker:native:test", claim: claimed.lookup.snapshot,
+  const claim = claimed.lookup.snapshot;
+  const marker = createPreEffectMarker({ markerId: "marker:native:test", claim,
     request: p.request, authorityDigest: p.request.authorityDigest, effectiveDeadline: deadline, markedAt: at });
   assert.equal(marker.operation.payloadDigest, p.request.payloadDigest);
   const unbound = { ...p.request }; delete unbound.payloadDigest;
-  assert.throws(() => createPreEffectMarker({ markerId: "marker:missing", claim: claimed.lookup.snapshot,
+  assert.throws(() => createPreEffectMarker({ markerId: "marker:missing", claim,
     request: unbound, authorityDigest: p.request.authorityDigest, effectiveDeadline: deadline, markedAt: at }), /payload commitment/);
   const unboundOperation = { ...marker.operation }; delete unboundOperation.payloadDigest;
   assert.throws(() => store.commitPreEffectMarker({ ...marker, operation: unboundOperation }), /Pre-effect marker binding mismatch/);
