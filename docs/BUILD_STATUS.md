@@ -183,6 +183,16 @@ post-suite 392, private compiled tests 16 and rendered tests four; both builds, 
 and migrations through 0046 (132 tables) passed. No live task execution is enabled.
 Published as [PR #308](https://github.com/MarvinAi5/control-room/pull/308), stacked on #307.
 Current-head CI remains required; no merge or deployment is claimed.
+Paired native start/recovery approval intake is independently accepted at
+`ceb7951c92c651f6fe9d320ba3d3624e76ee75ba` with 51 passing review tests and no findings. It verifies
+both owner signatures against the exact prepared task without signing, recording admission or dispatching.
+See `CR14C_NATIVE_APPROVAL_INTAKE_ACCEPTANCE.md`. Owner signing/custody, authenticated intake routing and
+canonical persistence, durable supervisor state and signed dispatch remain next on Astra Medium.
+Local verification: CR14C 373, preparation 769, main 952 with two existing platform skips, post-suite 392,
+private compiled tests 16 and rendered tests four passed; both builds, TypeScript, full ESLint and
+migrations through 0046 (132 tables) passed. Live C-WORK remains incomplete.
+PR #306 exact head `4f32ef1891490b475282ddcbe575b69be6cae9e9` passed CI `33985592476`
+at 2026-09-05 19:19:47 UTC. PR #307 was still running when checked. No merge is claimed.
 PR #305 exact head `b3cb5ceee3529c2b11253ea196dbe99dceb0b566` passed CI `33984854964`
 at 2026-09-05 19:04:25 UTC. PR #306 was still running when checked. No merge is claimed.
 PR #304 exact head `21ab559e8aaf13d429c5c3622fa9aa339c5388cf` passed CI `33984129093`

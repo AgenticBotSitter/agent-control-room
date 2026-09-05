@@ -33,6 +33,10 @@ The native profile-evidence verifier is independently accepted in
 `CR14C_NATIVE_PROFILE_EVIDENCE_ACCEPTANCE.md`. It consumes owner-signed acceptance and current trusted
 supervisor state for an exact enrollment, with rollback/freshness fences in both controllers. It is not
 the physical qualification, evidence signer/intake or supervisor implementation; those remain required.
+Paired native task approval validation is independently accepted in
+`CR14C_NATIVE_APPROVAL_INTAKE_ACCEPTANCE.md`. It validates exact start and bounded recovery signatures,
+without signing or admitting work. Authenticated intake routing/canonical storage, owner signing custody,
+supervisor persistence and dispatch remain unimplemented; this is not a working approval UI.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.

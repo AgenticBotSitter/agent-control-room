@@ -5664,3 +5664,24 @@ findings. The initial expired-snapshot rollback finding is preserved in the acce
 An owner's signature establishes acceptance, not independently observed physical isolation. This module
 does not qualify a host, sign evidence, install profiles or implement the supervisor. These gates, owner
 signing/intake, local-state persistence, signed dispatch and revisions remain next on Astra Medium.
+
+## ADR-231 — require paired exact-task start and cleanup approvals at intake
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired verifier.
+
+Validate a strict packet containing existing owner-signed start and separate native recovery permissions
+against one trusted prepared enrollment/request/start. Require exact-node task/risk/operation binding,
+start approval through the unchanged prepared deadline and cleanup permission after work within the
+existing enrollment/five-minute ceiling. No class-wide substitution or automatic deadline adjustment.
+
+Resolve both keys through scoped owner-public-pin trust and fence the protected trust revision across
+asynchronous verification. Copy packet inputs and return a currentness check, without signing, persisting,
+admitting or dispatching. Revalidation is not effect replay; durable admission and stop-attempt semantics
+remain owned by existing controllers and journals. Canonical provenance/current policy remain mandatory.
+
+**Evidence:** accepted `ceb7951c92c651f6fe9d320ba3d3624e76ee75ba`, tree
+`0cc921e445b5256d636d76ed59a8950f95aa0a33`; independent review passed 51 tests with no findings.
+See `CR14C_NATIVE_APPROVAL_INTAKE_ACCEPTANCE.md` for test-authoring correction and full verification.
+
+**Next:** owner signing/custody, authenticated intake and canonical persistence, durable supervisor state,
+signed dispatch and revisions on Astra Medium. No live qualification, runtime activation or merge is added.
