@@ -1,6 +1,7 @@
 export * from "./action-catalog";
 export * from "./collection";
 export * from "./control-store";
+export * from "./digest-selection";
 export * from "./automation";
 export * from "./fixture";
 export * from "./ingestion";

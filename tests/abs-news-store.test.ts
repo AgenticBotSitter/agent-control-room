@@ -12,6 +12,7 @@ import {
   SqliteAbsNewsStoreV1,
   buildAbsNewsSyntheticWorkspaceV1,
   buildAbsNewsWorkOrderProposalV1,
+  selectAbsNewsDigestV1,
 } from "../src/project-adapters/abs-news/v1/index.ts";
 import { ProjectWorkspaceContractErrorV1 } from "../src/project-workspace/v1/index.ts";
 import { sha256Digest } from "../src/security/index.ts";
@@ -24,6 +25,23 @@ async function location() {
   const directory = await mkdtemp(join(tmpdir(), "abs-news-store-"));
   return { directory, path: join(directory, "store.sqlite") };
 }
+
+test("CR14F digest reads current verified store state without changing queues or history", async t => {
+  const store = new SqliteAbsNewsStoreV1(":memory:", scope, { integrityKey: key, mode: "create" });
+  t.after(() => store.close());
+  const fixture = buildAbsNewsSyntheticWorkspaceV1();
+  store.ingestStories(fixture.stories, t0);
+  const options = { nowMs: Date.parse(t0), windowHours: 168, limit: 10, maxPerSource: 10, minimumScore: 0 };
+  const before = store.listStories();
+  const selected = store.selectDigest(options);
+  assert.deepEqual(selected, selectAbsNewsDigestV1(before, options));
+  assert.ok(selected.selectedStoryIds.length > 0);
+  assert.deepEqual(store.listStories(), before);
+  const storyId = selected.selectedStoryIds[0]!;
+  store.changeQueue({ storyId, toQueue: "archive", changedByActorDigest: sha256Digest({ actor: "owner" }), changedAt: t1 });
+  assert.ok(!store.selectDigest(options).selectedStoryIds.includes(storyId));
+  assert.ok(store.selectDigest(options).deferredStoryIds.includes(storyId));
+});
 
 test("CR9D-ABS-010/020 fake ingestion atomically persists clustered stories and honest source status", async () => {
   const target = await location();

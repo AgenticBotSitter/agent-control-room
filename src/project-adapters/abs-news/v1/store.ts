@@ -13,6 +13,7 @@ import {
 import { absNewsQueueHistorySchemaV1 } from "./schemas";
 import { buildAbsNewsStoryV1, parseAbsNewsStoryV1 } from "./story";
 import { parseAbsNewsWorkOrderProposalV1 } from "./proposal";
+import { selectAbsNewsDigestV1, type AbsNewsDigestSelectionOptionsV1 } from "./digest-selection";
 import type { AbsNewsQueueHistoryV1, AbsNewsQueueV1, AbsNewsStoryV1, AbsNewsWorkOrderProposalV1 } from "./types";
 
 const STORE_VERSION = 1;
@@ -155,6 +156,11 @@ export class SqliteAbsNewsStoreV1 {
   }
 
   getStory(storyId: string): AbsNewsStoryV1 { this.verifyIntegrity(); return this.loadStory(storyId); }
+
+  /** Read-only selection over current integrity-checked stories, not a collector or new queue. */
+  selectDigest(options: AbsNewsDigestSelectionOptionsV1) {
+    return selectAbsNewsDigestV1(this.listStories(), options);
+  }
 
   listStories(filter: { queue?: AbsNewsQueueV1; verificationState?: "verified" | "review_only" } = {}): AbsNewsStoryV1[] {
     this.verifyIntegrity();
