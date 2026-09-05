@@ -80,7 +80,13 @@ ownership and actual signed approval/admission/dispatch remain unconfigured.
 drain and uncertain-save handling, composed with a separately restricted web connection. See
 `CR14C_TASK_COORDINATOR_LIFECYCLE_ACCEPTANCE.md`. The inert compiled factory does not yet verify
 production coordinator database privileges or mount itself into deployment startup.
-**Next: CR14C coordinator role/schema verification and production bootstrap mounting, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
+**CR14C exact coordinator database privilege gate is independently accepted** at
+`9e4c370353e513857f69dbe93aaa13f6983ff126`. Migration 0046 adds inert row-lock support and a
+coordinator-specific domain-transition outbox guard. A separate fixed-role preflight supports actual
+restricted-role planning/assignment/expiry without widening web writes. See
+`CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`. No database was provisioned or attached; production
+bootstrap mounting remains. Current setup requires migrations 0001–0046, still 132 tables.
+**Next: CR14C verified two-pool production bootstrap mounting, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
@@ -1792,11 +1798,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14C coordinator role/schema preflight and startup mounting, followed by executable admission/approval/dispatch
+Block: CR14C verified two-pool startup mounting, followed by executable admission/approval/dispatch
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Supplied-resource coordinator ownership is accepted; production needs the restricted coordinator role/schema gate and shared startup mounting before actual signed approval/local admission/dispatch.
-Expected output: verified coordinator bootstrap composition and executable admission path using existing canonical and local-policy services, followed by bounded revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Supplied-resource ownership and exact web/coordinator database gates are accepted; production still needs shared startup/page-handler mounting before actual signed approval/local admission/dispatch.
+Expected output: two separately verified, bounded pools mounted through the shared compiled application, then executable admission and bounded revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

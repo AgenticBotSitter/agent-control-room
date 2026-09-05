@@ -1,6 +1,8 @@
 # CR14C — coordinator database privilege gate
 
-Status: implementation candidate. Base: PR #297, `87f60511cb96516f5d5ab7c5159a82bb875953be`.
+Status: independently accepted repository/disposable integration; production unconfigured.
+Base: PR #297, `87f60511cb96516f5d5ab7c5159a82bb875953be`.
+Evidence: `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`.
 
 ## Scope
 

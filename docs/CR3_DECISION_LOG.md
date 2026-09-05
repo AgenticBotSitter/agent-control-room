@@ -5435,3 +5435,30 @@ reproduced P2 shutdown findings fixed, no remaining findings. See
 
 **Next:** coordinator role/schema verification and startup mounting, signed approval/local admission/
 dispatch and bounded revisions on Astra Medium. No live pool, listener, provider, deployment or merge.
+
+## ADR-221 — Verify a narrow coordinator SQL role separately from the private web role
+
+**Date:** 2026-09-05. **Status:** independently accepted repository/disposable integration.
+
+Use a dedicated NOLOGIN task-coordinator role and a separately provisioned login with exactly that
+membership. It can write canonical plans/attempts/leases/transitions and audit/session records, not
+identities, grants, node public-key validity, enrollment, fleet signals, approvals, effects or native
+runs. Existing canonical write rights are trusted application authority, not a tenant SQL sandbox.
+
+Migration 0046 adds constant-false coordinator lock columns where locking SELECTs need UPDATE
+privilege without authority-bearing changes. Its invoker-security outbox guard restricts coordinator
+inserts to pending domain transitions for supported canonical aggregates, not dispatch commands.
+The private web role's write privileges remain unchanged.
+
+The two public preflight wrappers select fixed internal profiles, sharing existing PG17/primary,
+membership/effective-permission, schema, deadline and active owner/workspace checks. No caller may
+supply a role or permission allowlist. The schema fingerprint now covers 0001–0046; preparation
+manifests require that range. Neither gate opens a database, migrates or repairs failed permissions.
+
+**Evidence:** `9e4c370353e513857f69dbe93aaa13f6983ff126`, tree
+`b941da0612941418f6762e373cc6f081008f9b69`; independent review accepted with 50 passing tests
+and no actionable findings. Real restricted-role operations and negative privileges are exercised
+in disposable PGlite, with only its existing TEMP metadata caveat. See `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`.
+
+**Next:** verified two-pool startup/shared-page mounting, signed approval/local admission/dispatch
+and bounded revisions on Astra Medium. No live database, credentials, provider, deployment or merge.
