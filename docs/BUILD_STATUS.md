@@ -119,20 +119,26 @@ stacked on #291 from `codex/cr14c-owner-result-review`. Its exact head `77db0d5`
 [PR #294](https://github.com/MarvinAi5/control-room/pull/294), stacked on #293 from
 `codex/cr14c-task-execution-planning`. Its own current-head GitHub checks remain required.
 This stack is not merged or deployed.
+PR #294's exact head `b635502` passed GitHub CI run `33971887681` at 2026-09-05 14:44:40 UTC.
+The accepted protected task preparation interface is [PR #295](https://github.com/MarvinAi5/control-room/pull/295),
+stacked on #294 from `codex/cr14c-task-planning-interface`. Its current-head GitHub checks remain required;
+no merge or deployment is claimed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
 
-Latest execution-planning checks: 183 focused, 769 pretests, 760 main passes/two existing Windows skips,
-392 posttests, eleven private/four Sites artifact checks, both builds and type/lint/whitespace.
-Migrations 0001–0045 verified 132 tables. Independent planning re-review accepted with 58 passing tests
-and no remaining findings. Initial timing finding and adapter-isolation regression are retained with corrections.
+Latest planning-interface checks: 191 focused, 769 pretests, 768 main passes/two existing Windows skips,
+392 posttests, twelve private/four Sites artifact checks, both builds and type/lint/whitespace.
+Migrations 0001–0045 verified 132 tables. Independent interface re-review accepted with 32 passing tests
+and no remaining findings. The refresh-link finding and correction are retained, as are the earlier
+planner timing finding and adapter-isolation regression.
 The private project pages save real canonical proposals, show recorded task/agent evidence and read checked
 result content plus matching review history and explicit owner decisions in tests. Planned initial target
 submission is connected through explicitly injected result ingestion. Owner-authorized planning creates a
-separate proposed execution job in tests; planner mounting, physical upload, actual task dispatch and
-revision submission remain unwired. Pool reopen is not process
+separate proposed execution job through the optional protected task-page/API operation in tests;
+production coordinator composition, physical upload, actual task dispatch and revision submission
+remain unwired. Pool reopen is not process
 restart; client counts are not physical attempt/absence evidence; idle close cause remains unavailable.
 No real database, listener, credentials, native agent or deployment was used.
 
