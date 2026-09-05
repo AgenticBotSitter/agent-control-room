@@ -5642,3 +5642,25 @@ Recovery remains status/stop only; no restart, renewal, settlement or automatic 
 
 **Remaining:** real local cleanup service, accepted current profile/credential qualification, owner
 signing/intake, signed dispatch and revisions on Astra Medium. No live connections, deployment or merge.
+
+## ADR-230 — bind native profile qualification acceptance to exact enrollment
+
+**Date:** 2026-09-05. **Status:** independently accepted corrected evidence consumer.
+
+The native profile-check port consumes a domain-separated owner-signed acceptance, not capability JSON
+or worker-certified flags. Bind every enrollment field except the acceptance's own digest; hash the full
+signed artifact into that digest. Require explicitly accepted isolation/deadline guarantees and an evidence
+reference. Resolve the signer using existing scoped owner public pins and current server-key separation.
+
+Current state comes from an explicit trusted synchronous supervisor service. Validate complete enrollment,
+profile-policy/qualification digests, active state, credential availability, observation/expiry and revision.
+Record structurally valid matching newer revisions even when freshness/state denies, so older live state
+cannot restore permission. Propagate synchronous freshness proof through both start/recovery controllers.
+
+**Evidence:** accepted `a61150325112af2736408245a9a163f8ee112a12`, tree
+`f4afd599e95fb500be80e2238befcd13449d93ea`; independent re-review passed 77 tests with no remaining
+findings. The initial expired-snapshot rollback finding is preserved in the acceptance record.
+
+An owner's signature establishes acceptance, not independently observed physical isolation. This module
+does not qualify a host, sign evidence, install profiles or implement the supervisor. These gates, owner
+signing/intake, local-state persistence, signed dispatch and revisions remain next on Astra Medium.

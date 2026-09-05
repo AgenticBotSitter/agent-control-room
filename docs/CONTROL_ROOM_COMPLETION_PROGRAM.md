@@ -29,6 +29,10 @@ Current recovery-policy composition is independently accepted in
 `CR14C_CURRENT_RECOVERY_POLICY_ACCEPTANCE.md`, joining scoped owner pins to explicit node-local
 cleanup/credential state with freshness fences. This does not implement the persistent local-state
 service, qualify credentials/profiles or activate recovery requests against a real agent.
+The native profile-evidence verifier is independently accepted in
+`CR14C_NATIVE_PROFILE_EVIDENCE_ACCEPTANCE.md`. It consumes owner-signed acceptance and current trusted
+supervisor state for an exact enrollment, with rollback/freshness fences in both controllers. It is not
+the physical qualification, evidence signer/intake or supervisor implementation; those remain required.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.

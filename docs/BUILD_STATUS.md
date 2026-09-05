@@ -172,6 +172,17 @@ Published as [PR #307](https://github.com/MarvinAi5/control-room/pull/307), stac
 Current-head CI remains required; no merge or runtime activation is claimed.
 Real local cleanup configuration, profile qualification, owner signing/intake, signed dispatch and
 revisions remain unconfigured. Continue repository work on Astra Medium; live task execution is disabled.
+The native profile-evidence verifier is independently accepted at
+`a61150325112af2736408245a9a163f8ee112a12` with 77 passing review tests. It verifies domain-separated
+owner acceptance against the exact enrollment and supervised profile state, preserving freshness through
+start/recovery checks. Initial review found an expired-snapshot rollback case; its correction and negative
+evidence are recorded in `CR14C_NATIVE_PROFILE_EVIDENCE_ACCEPTANCE.md`. Real qualification, owner signing
+and supervisor installation are still required; the verifier does not manufacture that evidence.
+Final local verification: CR14C 361, main 940 with two existing platform skips, preparation 769,
+post-suite 392, private compiled tests 16 and rendered tests four; both builds, TypeScript, full ESLint
+and migrations through 0046 (132 tables) passed. No live task execution is enabled.
+PR #305 exact head `b3cb5ceee3529c2b11253ea196dbe99dceb0b566` passed CI `33984854964`
+at 2026-09-05 19:04:25 UTC. PR #306 was still running when checked. No merge is claimed.
 PR #304 exact head `21ab559e8aaf13d429c5c3622fa9aa339c5388cf` passed CI `33984129093`
 at 2026-09-05 18:49:12 UTC. PR #305 was still running when checked. Neither is merged here.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
