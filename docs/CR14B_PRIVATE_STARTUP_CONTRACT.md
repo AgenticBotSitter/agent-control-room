@@ -79,9 +79,10 @@ Before installation, read-only preflight checks connection/database identity, PG
 session role, direct/inherited memberships, privilege flags, ownership, effective table/column/sequence/function
 rights, PUBLIC/default privileges, and the existing active owner/workspace binding. It compares a repository
 fingerprint of all public table columns, constraints, indexes, triggers and functions, including trigger enablement.
-The current fingerprint is derived from migrations 0001–0041, not a mutable database version marker. CR14C
+The current fingerprint is derived from migrations 0001–0042, not a mutable database version marker. CR14C
 adds read access to canonical task/attempt/harness evidence and insert-only, trigger-constrained task
-proposals/receipts. It grants no task transitions, attempts, leases, dispatch, effects or review authority. Extra/missing
+proposals/receipts, then read-only artifact receipts/manifests and verified review history with a lock-only column.
+It grants no task transitions, attempts, leases, dispatch, effects, artifact writes or review authority. Extra/missing
 permissions and schema drift fail closed. Migrators/DB administrators remain trusted; this is a startup snapshot,
 not continuous monitoring of administrator changes. New schema/role versions require reviewed compatibility.
 

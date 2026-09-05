@@ -1,6 +1,7 @@
 import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskCommandSchema, taskDetailSchema, taskDraftSchema, taskPageSchema, type TaskReceipt } from "./task-wire";
+import { taskResultsPageSchema, taskResultContentSchema } from "./task-result-wire";
 
 export const taskErrorMessage: Record<BrowserFailureCode, string> = {
   authentication_required: "Your session has ended. Sign in again to see your tasks.",
@@ -95,5 +96,26 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
     },
     // Explicit owner interaction only. Polling, reconnect and focus never invoke this method.
     retrySave: commit,
+    async results(projectId: string, jobId: string) {
+      try {
+        checkId(projectId); checkId(jobId);
+        const page = taskResultsPageSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/results`));
+        if (page.projectId !== projectId || page.jobId !== jobId || new Set(page.items.map(item => item.artifactId)).size !== page.items.length
+          || page.reviews.some(review => review.matchingArtifactIds.some(id => review.kind !== "document"
+            || !page.items.some(item => item.artifactId === id && item.contentHash === review.contentHash)))) throw new Error();
+        return page;
+      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+    },
+    async resultContent(projectId: string, jobId: string, artifactId: string) {
+      try {
+        checkId(projectId); checkId(jobId); checkId(artifactId);
+        const content = taskResultContentSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/results/${encodeURIComponent(artifactId)}`));
+        if (content.projectId !== projectId || content.jobId !== jobId || content.artifact.artifactId !== artifactId) throw new Error();
+        const bytes = new TextEncoder().encode(content.text);
+        const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
+        if (bytes.byteLength !== content.artifact.sizeBytes || `sha256:${hash}` !== content.artifact.contentHash) throw new Error();
+        return content;
+      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+    },
   };
 }

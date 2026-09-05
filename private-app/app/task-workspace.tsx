@@ -5,6 +5,7 @@ import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task
 import type { TaskDetail, TaskDraft, TaskPage, TaskReceipt } from "../../src/web/v1/task-wire";
 import { PrivateHeader } from "./private-header";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, taskUrl } from "./task-panels";
+import { PrivateTaskResults } from "./task-results";
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
   const [client] = useState(() => createTaskBrowserClient());
@@ -66,6 +67,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       {page.canPropose ? <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} uncertain={uncertain} onSave={() => { void save(); }} />
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
+    {detail && (detail.artifacts === "configured" || detail.review === "recorded") && <PrivateTaskResults key={`${projectId}:${detail.task.jobId}`} projectId={projectId} jobId={detail.task.jobId} />}
     {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Agent dispatch is not connected; no work starts from refresh or reconnect.</p>}
   </main></div>;
 }

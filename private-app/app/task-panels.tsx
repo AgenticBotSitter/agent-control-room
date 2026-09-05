@@ -54,7 +54,7 @@ function RunPanel({ run }: { run: TaskRun }) {
       <div><dt>Cost</dt><dd>Unavailable — no enforced dollar limit</dd></div></dl>
     {run.cancellation !== "not_requested" && <p className="private-note">Cancellation: {run.cancellation.replaceAll("_", " ")}. This view does not prove that every process or external action has stopped.</p>}
     {run.resultClaim && <div className="private-result-claim"><h4>Result reported by the agent</h4>
-      <p>{run.resultClaim.sizeBytes.toLocaleString()} bytes reported. The result content has not been transferred or independently verified here.</p>
+      <p>{run.resultClaim.sizeBytes.toLocaleString()} bytes reported. This fingerprint is a producer claim; received files and their checks are shown separately below.</p>
       <details><summary>Reported content fingerprint</summary><code>{run.resultClaim.contentHash}</code></details></div>}
     {!!run.timeline.length && <details><summary>Received progress ({run.timeline.length}{run.earlierObservationsOmitted ? " most recent" : ""})</summary>
       <ol className="private-timeline">{run.timeline.map(point => <li key={point.version}><span>{nativeLabel[point.state]}</span>
@@ -78,7 +78,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         {attempt.additionalRunsOmitted && <p>Only the 10 most recently created run records are shown.</p>}</section>)}
       {detail.earlierAttemptsOmitted && <p>Only the 10 most recent attempts are shown. Earlier history remains saved.</p>}
     </section>
-    <section className="private-panel"><h2>Result and review</h2><p>Result content, independent checks and owner review are not connected to this page yet.</p>
-      <p>Agent completion is not owner acceptance. This page cannot approve a result, start a revision, cancel work or authorize an external action.</p></section>
+    {detail.artifacts === "not_connected" && detail.review === "not_connected" && <section className="private-panel"><h2>Result and review</h2><p>Result content, independent checks and owner review are not connected to this page yet.</p>
+      <p>Agent completion is not owner acceptance. This page cannot approve a result, start a revision, cancel work or authorize an external action.</p></section>}
   </div>;
 }

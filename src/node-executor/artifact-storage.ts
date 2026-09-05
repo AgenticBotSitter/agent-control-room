@@ -6,6 +6,7 @@ import { isAbsolute, join, resolve } from "node:path";
 export interface ArtifactStorageWriteV1 {
   artifactId: string;
   bytes: Uint8Array;
+  signal?: AbortSignal;
 }
 
 export interface StoredArtifactV1 {
@@ -17,6 +18,11 @@ export interface StoredArtifactV1 {
 
 export interface ArtifactStoragePortV1 {
   put(input: ArtifactStorageWriteV1): Promise<StoredArtifactV1>;
+}
+
+/** Explicitly supplied private artifact storage. Never resolves a caller-provided URL or path. */
+export interface ArtifactReadPortV1 {
+  read(artifactId: string, signal?: AbortSignal): Promise<Uint8Array | undefined>;
 }
 
 export class ArtifactStorageError extends Error {
@@ -80,6 +86,7 @@ export class InMemoryArtifactStorage implements ArtifactStoragePortV1 {
   }
 
   async put(input: ArtifactStorageWriteV1): Promise<StoredArtifactV1> {
+    input.signal?.throwIfAborted();
     validateArtifactId(input.artifactId);
     if (!(input.bytes instanceof Uint8Array) || input.bytes.byteLength > 65_536) {
       throw new ArtifactStorageError("storage_invalid");
@@ -105,6 +112,12 @@ export class InMemoryArtifactStorage implements ArtifactStoragePortV1 {
   get(artifactId: string): Uint8Array | undefined {
     const bytes = this.artifacts.get(artifactId);
     return bytes ? Uint8Array.from(bytes) : undefined;
+  }
+
+  async read(artifactId: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    signal?.throwIfAborted();
+    validateArtifactId(artifactId);
+    return this.get(artifactId);
   }
 
   count(): number {
@@ -170,7 +183,42 @@ export class DisposableFilesystemArtifactStorage implements ArtifactStoragePortV
     return result;
   }
 
+  async read(artifactId: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    signal?.throwIfAborted();
+    validateArtifactId(artifactId);
+    await this.assertRootIdentity();
+    const path = join(this.root, storageName(artifactId));
+    let handle: FileHandle;
+    try { handle = await open(path, constants.O_RDONLY | noFollow | (constants.O_NONBLOCK ?? 0)); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") { await this.assertRootIdentity(); return undefined; }
+      throw new ArtifactStorageError("storage_ambiguous");
+    }
+    try {
+      const before = await handle.stat({ bigint: true });
+      if (!before.isFile() || before.nlink !== BigInt(1) || before.size > BigInt(65_536)
+        || process.platform !== "win32" && (Number(before.mode) & 0o077) !== 0) throw new Error();
+      // Fixed allocation and an extra byte detect growth without an unbounded readFile allocation.
+      const bytes = new Uint8Array(65_537); let length = 0;
+      while (length < bytes.byteLength) {
+        signal?.throwIfAborted();
+        const next = await handle.read(bytes, length, bytes.byteLength - length, length);
+        if (next.bytesRead === 0) break;
+        length += next.bytesRead;
+      }
+      const after = await handle.stat({ bigint: true }), current = await lstat(path, { bigint: true });
+      if (length !== Number(before.size) || length > 65_536 || after.size !== before.size
+        || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs || after.nlink !== BigInt(1)
+        || current.isSymbolicLink() || current.dev !== before.dev || current.ino !== before.ino) throw new Error();
+      await this.assertRootIdentity();
+      signal?.throwIfAborted();
+      return bytes.slice(0, length);
+    } catch { throw new ArtifactStorageError("storage_ambiguous"); }
+    finally { await handle.close(); }
+  }
+
   private async putExclusive(input: ArtifactStorageWriteV1): Promise<StoredArtifactV1> {
+    input.signal?.throwIfAborted();
     validateArtifactId(input.artifactId);
     if (!(input.bytes instanceof Uint8Array) || input.bytes.byteLength > 65_536) throw new ArtifactStorageError("storage_invalid");
     await this.assertRootIdentity();
@@ -209,6 +257,7 @@ export class DisposableFilesystemArtifactStorage implements ArtifactStoragePortV
           await pending.close();
         }
         try {
+          input.signal?.throwIfAborted();
           await link(pendingPath, targetPath);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;

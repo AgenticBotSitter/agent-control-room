@@ -209,7 +209,33 @@ export class CompletionGateStoreV1 {
   }
 
   async snapshot(tenantId:string,targetId:string):Promise<CompletionGateSnapshotV1>{
-    return this.db.transaction(async(tx)=>{await this.lockAndVerifyTenantState(tx,tenantId);const target=await this.requireTarget(tx,tenantId,targetId);const profile=await this.requireProfile(tx,tenantId,target.acceptanceProfileId);
+    return this.db.transaction(async(tx)=>{await this.lockAndVerifyTenantState(tx,tenantId);
+      return this.snapshotWith(tx,tenantId,await this.requireTarget(tx,tenantId,targetId));});
+  }
+
+  /** One checkpoint-verified read, serialized with writers. No checkpoint initialization or advancement. */
+  async inspectSubject(tenantId:string,projectId:string,subjectId:string){
+    return this.db.transaction(async(tx)=>{
+      await this.lockAndVerifyTenantState(tx,tenantId);
+      const rows=(await tx.query<CompletionRow>(`SELECT ${columns} FROM control_completion_gate_records
+        WHERE tenant_id=$1 AND project_id=$2 AND kind='target' AND subject_id=$3 ORDER BY occurred_at DESC,id DESC LIMIT 21`,
+      [tenantId,projectId,subjectId])).rows;
+      const targets=[];
+      for(const row of rows.slice(0,20)){
+        const target=this.verifiedRow(row) as CompletionReviewTargetV1;
+        const snapshot=await this.snapshotWith(tx,tenantId,target);
+        const reviews=await this.listByParent(tx,tenantId,projectId,"review",target.id) as CompletionReviewV1[];
+        const verifications=await this.listByParent(tx,tenantId,projectId,"verification",target.id) as CompletionVerificationV1[];
+        const findings=await this.listBySubject(tx,tenantId,projectId,"finding",target.id) as CompletionFindingV1[];
+        targets.push({snapshot,reviews:reviews.slice(-50),verifications:verifications.slice(-50),findings:findings.slice(-100),
+          additionalEvidenceOmitted:reviews.length>50||verifications.length>50||findings.length>100});
+      }
+      return{targets,additionalTargetsOmitted:rows.length>20};
+    });
+  }
+
+  private async snapshotWith(tx:DatabaseSession,tenantId:string,target:CompletionReviewTargetV1):Promise<CompletionGateSnapshotV1>{
+    const profile=await this.requireProfile(tx,tenantId,target.acceptanceProfileId);
     const reviews=(await this.listByParent(tx,tenantId,target.projectId,"review",target.id)) as CompletionReviewV1[];
     const verifications=(await this.listByParent(tx,tenantId,target.projectId,"verification",target.id)) as CompletionVerificationV1[];
     const findings=(await this.listBySubject(tx,tenantId,target.projectId,"finding",target.id)) as CompletionFindingV1[];
@@ -223,7 +249,7 @@ export class CompletionGateStoreV1 {
     else if(openFindings.length)status="changes_requested";else if(blocked)status="verification_blocked";
     else if(missing.length===0&&accepted.length>=profile.minimumIndependentReviews)status="ready";
     return{target,targetDigest:sha256Digest(target),status,acceptedReviewIds:accepted,missingVerificationScenarioIds:missing,
-      openFindingIds:openFindings,revisionNumber:target.revisionNumber,requiresSeparateApproval:true,grantsApproval:false,grantsExecutionAuthority:false};});
+      openFindingIds:openFindings,revisionNumber:target.revisionNumber,requiresSeparateApproval:true,grantsApproval:false,grantsExecutionAuthority:false};
   }
 
   async getRecord(tenantId:string,id:string,kind:CompletionGateRecordKindV1):Promise<CompletionGateRecordV1|undefined>{

@@ -58,4 +58,13 @@
 .private-timeline li { padding: .5rem 0; }
 .private-timeline time, .private-timeline li > span:last-child { display: block; font-size: .875rem; color: var(--muted); }
 .private-tabs { flex-wrap: wrap; }
+.private-task-results { display: grid; gap: 1.25rem; margin-top: 1.25rem; }
+.private-result-list, .private-review-list { list-style: none; padding: 0; display: grid; gap: 1rem; }
+.private-result-list > li, .private-review-list > li { border-top: 1px solid var(--border); padding: 1rem 0; overflow-wrap: anywhere; }
+.private-result-list button { margin-top: .75rem; }
+.private-task-results summary { cursor: pointer; min-height: 44px; padding-top: .7rem; }
+.private-task-results code { overflow-wrap: anywhere; }
+.private-result-content { margin-top: 1.5rem; border-top: 1px solid var(--border); }
+.private-result-content .private-actions { align-items: center; justify-content: space-between; }
+.private-result-content textarea { display: block; width: 100%; min-height: 20rem; resize: vertical; font: inherit; color: var(--text); padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
 @media (max-width: 800px) { .private-columns { grid-template-columns: 1fr; } .private-create { grid-row: 1; } .private-shell main { padding: 1.25rem; } .private-header { padding: 1rem; flex-wrap: wrap; } }

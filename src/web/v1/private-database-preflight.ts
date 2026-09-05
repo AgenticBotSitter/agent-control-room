@@ -2,19 +2,21 @@ import { createHash } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0041 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "8eaac37e2f4eb704e18df21a2b793edab66c8d23863b28d900da00acb9cb3045";
+// Generated from migrations 0001-0042 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "5525a74a6bee49d2be71ec6ead5327167279e1a6b26518d2a63a452ae5857d27";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
-  "control_jobs", "control_attempts", "control_harness_runs", "control_harness_run_events", "control_web_task_commands"] as const;
+  "control_jobs", "control_attempts", "control_harness_runs", "control_harness_run_events", "control_web_task_commands",
+  "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands"]);
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
+  control_completion_gate_integrity: ["web_lock"],
   projects: ["domain_state", "source_version", "normalized_state", "updated_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],

@@ -9,7 +9,7 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
       requireSameOrigin(request, options.origin);
       const identity = verify(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
-      const route = /^\/api\/v1\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);
+      const route = /^\/api\/v1\/projects\/([^/]+)\/tasks(?:\/([^/]+)(?:\/(results)(?:\/([^/]+))?)?)?$/.exec(url.pathname);
       if (!route) throw new WebAccessError("not_found");
       let projectId: string, jobId: string | undefined;
       try { projectId = decodeURIComponent(route[1]); jobId = route[2] ? decodeURIComponent(route[2]) : undefined; }
@@ -20,6 +20,11 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
         return Response.json(await options.service.list(identity, projectId, url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
       }
       if (url.search) throw new WebAccessError("invalid_request");
+      if (jobId && route[3] && request.method === "GET") {
+        let artifactId: string | undefined;
+        try { artifactId = route[4] ? decodeURIComponent(route[4]) : undefined; } catch { throw new WebAccessError("invalid_request"); }
+        return Response.json(await options.service.results(identity, projectId, jobId, artifactId), { headers: privateResponseHeaders });
+      }
       if (jobId && request.method === "GET")
         return Response.json(await options.service.detail(identity, projectId, jobId), { headers: privateResponseHeaders });
       if (!jobId && request.method === "POST") {

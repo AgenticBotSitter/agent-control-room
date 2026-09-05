@@ -6,7 +6,7 @@ import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
-import { WebTaskService } from "./task-service";
+import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { createTaskHttpHandler } from "./task-http";
 
 export interface PrivateWebProcessOptions {
@@ -19,7 +19,7 @@ export interface PrivateWebProcessOptions {
   /** Existing enrollment/signal keys, supplied privately. Absence is unavailable, not an empty roster. */
   connections?: WebConnectionKeys;
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
-  tasks?: { harnessIntegrityKey: Uint8Array };
+  tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
   clock?: () => number;
   /** Tests may shorten the production drain ceiling; never extend it. */
   drainMs?: number;
@@ -43,7 +43,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const connections = new WebConnectionService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
-    { harnessIntegrityKey: options.tasks?.harnessIntegrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
   let closing = false;
   let active = 0;
   let drained: (() => void) | undefined;

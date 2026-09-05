@@ -6,6 +6,10 @@ import { DOMAIN_CONTRACT_VERSION, requestRecordSchema, workflowRecordSchema, job
 import { appendAuditWith } from "../../audit/audit-store";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "../../security";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
+import { NativeResultStore, type NativeResultReadConfiguration, type NativeResultReceipt } from "../../artifacts/v1/native-results";
+import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
+import type { RollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
+import { taskResultMetadataSchema, taskResultsPageSchema, taskResultContentSchema, taskReviewEvidenceSchema } from "./task-result-wire";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
@@ -41,17 +45,41 @@ function validated(row: TaskRow, tenantId: string, projectId: string) {
   return { job, request, summary };
 }
 
+export interface WebTaskKeys {
+  harnessIntegrityKey?: Uint8Array;
+  ideaIntegrityKey?: Uint8Array;
+  results?: NativeResultReadConfiguration;
+  reviews?: { integrityKey: Uint8Array; checkpoints: RollbackCheckpointStoreV1 };
+}
+const resultMetadata = (receipt: NativeResultReceipt) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
+  attemptId: receipt.attemptId, runId: receipt.runId, contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes,
+  receivedAt: receipt.receivedAt, byteCheck: receipt.byteCheck, qualityAccepted: false });
+
 export class WebTaskService {
   private readonly authority: WebSessionAuthority;
   private readonly projects: WebProjectService;
   private readonly harnessKey?: Uint8Array;
+  private readonly resultStore?: NativeResultStore;
+  private readonly reviewConfig?: NonNullable<WebTaskKeys["reviews"]>;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    private readonly clock: () => number = Date.now, keys?: { harnessIntegrityKey?: Uint8Array; ideaIntegrityKey?: Uint8Array }) {
+    private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.projects = new WebProjectService(db, scope, clock, keys?.ideaIntegrityKey);
     if (keys?.harnessIntegrityKey !== undefined) {
       if (!(keys.harnessIntegrityKey instanceof Uint8Array) || keys.harnessIntegrityKey.length !== 32) throw new Error("task_key_invalid");
       this.harnessKey = new Uint8Array(keys.harnessIntegrityKey);
+    }
+    if (keys?.results) {
+      if (!this.harnessKey) throw new Error("task_key_invalid");
+      // The web service retains only the read capability, even when composition supplied a fuller store.
+      this.resultStore = new NativeResultStore(db, this.harnessKey, { ...keys.results,
+        storage: Object.freeze({ read: keys.results.storage.read.bind(keys.results.storage) }) });
+    }
+    if (keys?.reviews) {
+      if (!(keys.reviews.integrityKey instanceof Uint8Array) || keys.reviews.integrityKey.length !== 32) throw new Error("task_key_invalid");
+      this.reviewConfig = { integrityKey: Uint8Array.from(keys.reviews.integrityKey), checkpoints: Object.freeze({
+        read: keys.reviews.checkpoints.read.bind(keys.reviews.checkpoints), initialize: () => { throw new Error("review_read_only"); },
+        advance: () => { throw new Error("review_read_only"); } }) };
     }
   }
   private id(value: string) { if (!catalogProjectIdSchema.safeParse(value).success) throw new WebAccessError("invalid_request"); }
@@ -171,7 +199,46 @@ export class WebTaskService {
       }
       return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
         observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10,
-        progressSource: store ? "configured" : "not_configured", dispatch: "not_connected", artifacts: "not_connected", review: "not_connected" });
+        progressSource: store ? "configured" : "not_configured", dispatch: "not_connected",
+        artifacts: this.resultStore ? "configured" : "not_connected", review: this.reviewConfig ? "recorded" : "not_connected" });
+    });
+  }
+
+  async results(identity: VerifiedWebIdentity, projectId: string, jobId: string, artifactId?: string) {
+    this.id(projectId); this.id(jobId); if (artifactId !== undefined) this.id(artifactId);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); await this.projects.getViewInSession(tx, actor, projectId);
+      const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+      if (!row) throw new WebAccessError("not_found");
+      validated(row, this.scope.tenantId, projectId);
+      if (artifactId !== undefined) {
+        actor.require("tasks.results.read", projectId);
+        if (!this.resultStore) throw new Error("task_results_not_configured");
+        const content = await this.resultStore.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
+        if (!content) throw new WebAccessError("not_found");
+        return taskResultContentSchema.parse({ projectId, jobId, artifact: resultMetadata(content.receipt), text: content.text,
+          contentVerifiedAt: new Date(this.clock()).toISOString(), untrustedContent: true });
+      }
+      const result = this.resultStore ? await this.resultStore.list(tx, this.scope.tenantId, projectId, jobId)
+        : { receipts: [], additionalResultsOmitted: false };
+      const items = result.receipts.map(resultMetadata);
+      const review = this.reviewConfig ? await new CompletionGateStoreV1(joined(tx), this.reviewConfig.integrityKey,
+        this.reviewConfig.checkpoints).inspectSubject(this.scope.tenantId, projectId, jobId) : { targets: [], additionalTargetsOmitted: false };
+      const reviews = review.targets.map(({ snapshot, reviews, verifications, findings, additionalEvidenceOmitted }) => taskReviewEvidenceSchema.parse({
+        targetId: snapshot.target.id, kind: snapshot.target.kind, targetDigest: snapshot.targetDigest,
+        contentHash: snapshot.target.subjectDigest, revision: snapshot.revisionNumber, supersedesTargetId: snapshot.target.supersedesTargetId ?? null,
+        status: snapshot.status, matchingArtifactIds: snapshot.target.kind === "document" ? items.filter(item => item.contentHash === snapshot.target.subjectDigest)
+          .map(item => item.artifactId) : [], additionalEvidenceOmitted,
+        reviews: reviews.map(value => ({ id: value.id, decision: value.decision, authority: value.authority, reviewedAt: value.reviewedAt })),
+        verifications: verifications.map(value => ({ id: value.id, scenarioId: value.scenarioId, outcome: value.outcome, verifiedAt: value.verifiedAt })),
+        findings: findings.map(value => ({ id: value.id, code: value.code, severity: value.severity, statementDigest: value.statementDigest, raisedAt: value.raisedAt })),
+        missingVerificationScenarioIds: snapshot.missingVerificationScenarioIds, openFindingCount: snapshot.openFindingIds.length,
+        grantsApproval: false, grantsExecutionAuthority: false }));
+      return taskResultsPageSchema.parse({ projectId, jobId, observedAt: actor.now,
+        resultSource: this.resultStore ? "configured" : "not_configured", reviewSource: this.reviewConfig ? "configured" : "not_configured",
+        items, reviews, additionalResultsOmitted: result.additionalResultsOmitted, additionalTargetsOmitted: review.additionalTargetsOmitted,
+        canReadContent: !!this.resultStore && actor.can("tasks.results.read", projectId), reviewCommands: "not_connected" });
     });
   }
 }

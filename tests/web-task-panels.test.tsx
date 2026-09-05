@@ -30,7 +30,7 @@ test("completion, reported cancellation, unknown tokens and missing review are n
         timeline: [], earlierObservationsOmitted: false }] }], earlierAttemptsOmitted: false, progressSource: "configured",
     dispatch: "not_connected", artifacts: "not_connected", review: "not_connected" };
   const html = renderToStaticMarkup(<TaskDetailPanel detail={detail} />);
-  for (const phrase of [/Agent reports completion/, /not owner acceptance/, /not been transferred or independently verified/,
+  for (const phrase of [/Agent reports completion/, /not owner acceptance/, /fingerprint is a producer claim/,
     /Not a current live signal/, /Unknown/, /no enforced dollar limit/, /does not prove/]) assert.match(html, phrase);
   assert.doesNotMatch(html, /<button|<form|private synthetic result/);
 });

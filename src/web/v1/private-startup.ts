@@ -20,7 +20,9 @@ function validateConfiguration(input: PrivateStartupConfiguration) {
       maxSessionSeconds: input.maxSessionSeconds, loadKeys: input.loadKeys,
       database: validatePrivatePostgresConfiguration(input.database),
       ...(input.ideaProjects ? { ideaProjects: { integrityKey: key(input.ideaProjects.integrityKey) } } : {}),
-      ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey) } } : {}),
+      ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
+        ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),
+        ...(input.tasks.reviews ? { reviews: { ...input.tasks.reviews, integrityKey: key(input.tasks.reviews.integrityKey) } } : {}) } } : {}),
       ...(input.connections ? { connections: { registryIntegrityKey: key(input.connections.registryIntegrityKey),
         ...(input.connections.telemetryIntegrityKey ? { telemetryIntegrityKey: key(input.connections.telemetryIntegrityKey) } : {}) } } : {}),
     });

@@ -20,9 +20,11 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   audit_events, control_audit_chain_heads, control_project_lifecycle_events,
   control_connection_registry_heads, control_connection_enrollments,
   control_connection_authenticated_telemetry_receipts, control_requests, control_workflows, control_jobs,
-  control_attempts, control_harness_runs, control_harness_run_events, control_web_task_commands TO control_room_private_web;
+  control_attempts, control_harness_runs, control_harness_run_events, control_web_task_commands,
+  control_artifact_manifests, control_native_artifact_receipts, control_completion_gate_records,
+  control_completion_gate_integrity TO control_room_private_web;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
-  control_connection_registry_heads TO control_room_private_web;
+  control_connection_registry_heads, control_completion_gate_integrity TO control_room_private_web;
 GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual_project_heads,
   control_web_project_commands, audit_events, control_audit_chain_heads,
   control_requests, control_workflows, control_jobs, control_web_task_commands TO control_room_private_web;
