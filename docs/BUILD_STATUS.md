@@ -222,6 +222,8 @@ one-line inventory correction was separately re-reviewed/tested after initial bu
 Private-web SQL access is unchanged. Coordinator privileges add only SELECT/INSERT on immutable packet
 evidence. Remaining: bounded lifecycle/owner intake interface, signing custody, signed delivery, durable
 supervisor state and revisions. Continue repository implementation on Astra Medium; live C-WORK is incomplete.
+Published as [PR #311](https://github.com/MarvinAi5/control-room/pull/311), stacked on #310.
+Current-head CI remains required; no merge or deployment is claimed.
 PR #309 exact head `b52a14c0f9c996afe68343880e798c7745979877` passed CI `33987001639`
 at 2026-09-05 19:42:43 UTC. #310 was still running when inspected; no merge is claimed.
 PR #306 exact head `4f32ef1891490b475282ddcbe575b69be6cae9e9` passed CI `33985592476`

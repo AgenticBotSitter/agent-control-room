@@ -37,3 +37,5 @@ no other product code changed after the initial review.
 
 No production database, credentials, owner signing, listener, deployment or merge was used. Trusted method
 and SQL evidence storage are implemented; lifecycle/HTTP mounting, dispatch and live usage remain incomplete.
+Published as [PR #311](https://github.com/MarvinAi5/control-room/pull/311), targeting PR #310's branch.
+Current-head CI and dependency-order integration remain required; this is not a merge claim.
