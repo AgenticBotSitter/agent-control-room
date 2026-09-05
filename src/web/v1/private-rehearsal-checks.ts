@@ -4,7 +4,7 @@ import { RehearsalProbeError } from "./private-rehearsal-probe";
 
 export const rehearsalCheckNames = ["preflight", "unsuitable_scope_rejected", "synthetic_fixture", "project_commands",
   "catalog_and_connections", "protected_columns", "lock_serialization", "lock_timeout", "statement_timeout",
-  "transaction_timeout", "idle_transaction_timeout", "pool_capacity", "drain", "pool_reopen_receipts", "logout"] as const;
+  "transaction_timeout", "idle_session_absence", "pool_capacity", "drain", "pool_reopen_receipts", "logout"] as const;
 export type RehearsalCheck = typeof rehearsalCheckNames[number];
 export type CheckRecorder = (name: RehearsalCheck) => void;
 const requireTrue = (value: unknown) => { if (value !== true) throw new Error("rehearsal_check_failed"); };
@@ -87,9 +87,15 @@ export async function checkPostgresLimits(input: {
   await a.close(); record("transaction_timeout");
 
   await query(b, "BEGIN"); const idleBegan = now();
-  await sleep(5500); checkpoint();
-  requireTrue(now() - idleBegan >= 5000 && b.isClosed());
+  await sleep(4500); checkpoint(); requireTrue(!b.isClosed());
+  const idle = (await query<{ idle: boolean }>(observer,
+    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND datname=current_database() AND usename=current_user AND state='idle in transaction') AS idle", [bPid])).rows[0];
+  requireTrue(idle?.idle === true);
+  await sleep(1000); checkpoint();
+  requireTrue(now() - idleBegan >= 5000 && now() - idleBegan <= 7500 && b.isClosed());
   const absence = (await query<{ absent: boolean }>(observer,
     "SELECT NOT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND datname=current_database()) AS absent", [bPid])).rows[0];
-  requireTrue(absence?.absent === true); await b.close(); record("idle_transaction_timeout");
+  // postgres.js does not expose the cause of an idle ErrorResponse. This is observed absence,
+  // not proof of SQLSTATE 25P03; a disconnect in the same interval cannot be distinguished.
+  requireTrue(absence?.absent === true); await b.close(); record("idle_session_absence");
 }

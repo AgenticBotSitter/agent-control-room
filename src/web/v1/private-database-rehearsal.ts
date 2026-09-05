@@ -47,6 +47,7 @@ export interface RehearsalEvidence {
   checks: Record<RehearsalCheck, "not_exercised" | "observed">;
   manifest: z.infer<typeof manifestSchema> | null; schemaDigest: string;
   poolsCreated: number; probesCreated: number; poolsClosed: number; probesClosed: number;
+  physicalConnectionAttempts: "not_observed"; idleTimeoutCause: "unavailable_from_driver";
   databaseCleanup: "not_owned_by_runner"; realPostgresAccepted: false; privateBetaAccepted: false;
   physicalListener: "not_exercised"; processRestart: "not_exercised"; backupRestore: "not_exercised";
   driverFaultInjection: "separate_test_evidence";
@@ -69,6 +70,7 @@ function createRunner(dependencies: Dependencies, execution: RehearsalEvidence["
     const evidence: RehearsalEvidence = { contract: "cr14b-database-rehearsal/v1", execution, disposition: "setup_incomplete",
       checks: Object.fromEntries(rehearsalCheckNames.map(name => [name, "not_exercised"])) as RehearsalEvidence["checks"],
       manifest: null, schemaDigest: privateWebSchemaDigest, poolsCreated: 0, probesCreated: 0, poolsClosed: 0, probesClosed: 0,
+      physicalConnectionAttempts: "not_observed", idleTimeoutCause: "unavailable_from_driver",
       databaseCleanup: "not_owned_by_runner", realPostgresAccepted: false, privateBetaAccepted: false,
       physicalListener: "not_exercised", processRestart: "not_exercised", backupRestore: "not_exercised", driverFaultInjection: "separate_test_evidence" };
     if (attempted) return { ...evidence, disposition: "already_attempted" };
@@ -184,6 +186,8 @@ function createRunner(dependencies: Dependencies, execution: RehearsalEvidence["
       ensure(catalog.projects.length === 2 && catalog.projects.some(p => p.origin === "idea_lab") && catalog.nextCursor === null);
       const connections = await response("/api/v1/connections"); ensure(connections.status === 200);
       const connectionView = await connections.json(); ensure(connectionView.projection?.summary?.connectionCount === 1
+        && connectionView.projection?.summary?.currentSignalCount === 1
+        && connectionView.projection?.summary?.missingSignalCount === 0 && connectionView.projection?.summary?.staleSignalCount === 0
         && connectionView.projection?.summary?.livePanelEligibleCount === 0 && connectionView.telemetry === "configured");
       record("catalog_and_connections");
 

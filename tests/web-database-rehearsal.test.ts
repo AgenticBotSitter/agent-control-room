@@ -97,9 +97,32 @@ test("SQL journey creates and replays receipts, reads Idea/connections, drains, 
   assert.equal(pools, 2); assert.equal(closes, 2); assert.equal(result.poolsClosed, 2); assert.equal(result.probesClosed, 2);
   assert.equal(result.processRestart, "not_exercised"); assert.equal(result.backupRestore, "not_exercised");
   assert.equal(result.databaseCleanup, "not_owned_by_runner");
+  assert.equal(result.physicalConnectionAttempts, "not_observed"); assert.equal(result.idleTimeoutCause, "unavailable_from_driver");
+  assert.equal("idle_transaction_timeout" in result.checks, false);
   assert.equal(recorded.some(sql => /^\s*(DROP |CREATE DATABASE|ALTER ROLE|GRANT |DELETE )/i.test(sql)), false);
   assert.equal((await f.client.query<{ count: string }>("SELECT count(*)::text AS count FROM control_web_project_commands")).rows[0].count, "2");
   assert.equal((await runner.run(setup)).disposition, "already_attempted"); assert.equal(pools, 2);
+});
+
+test("a missing synthetic signal cannot pass the enrollment/signal fixture check", async t => {
+  const f = await limitedWebFixture(); t.after(() => f.pool.close()); const setup = input();
+  setup.packet.pgVersionNumber = Number((await f.client.query<{ version: string }>("SELECT current_setting('server_version_num') AS version")).rows[0].version);
+  let probes = 0;
+  const runner = createInjectedPrivateDatabaseRehearsal({ clock: () => now, monotonic: () => 0,
+    openProbe: () => { probes++; throw new Error("must not open"); },
+    openDatabase: () => boundPrivateDatabase({ acquire: async () => ({ release: () => {},
+      query: async <T>(sql: string, params: unknown[] = []) => {
+        if (sql.includes("FROM control_connection_authenticated_telemetry_receipts")) return { rows: [] as T[] };
+        const metadata = sql.includes("AS database_temp");
+        const result = await f.client.query<Record<string, unknown>>(sql, metadata ? [params[0], "template1"] : params);
+        if (metadata) result.rows = result.rows.map(row => ({ ...row, database_temp: false }));
+        return result as { rows: T[] };
+      },
+    }), terminate: async () => {} }),
+  });
+  const result = await runner.run(setup); assert.equal(result.disposition, "stopped");
+  assert.equal(result.checks.project_commands, "observed"); assert.equal(result.checks.catalog_and_connections, "not_exercised");
+  assert.equal(probes, 0); assert.equal(result.poolsCreated, 1); assert.equal(result.poolsClosed, 1);
 });
 
 test("rehearsal is not mounted into routes, production startup, listeners, environment or credential loaders", async () => {

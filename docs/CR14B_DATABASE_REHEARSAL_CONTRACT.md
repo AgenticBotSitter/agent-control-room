@@ -38,13 +38,17 @@ even for incomplete setup; create no second runner after uncertainty without a n
    This is an unsuitable-scope check, not evidence of every possible bad role/schema/host configuration.
 2. Verify the fixed synthetic fixture and exact PG17 patch before application writes. Create one ordinary
    project, replay its create key, pause it, read its current view and require exactly two command/audit effects.
-3. Read the shared Idea/ordinary catalog and synthetic enrollment projection. It must not claim a live panel.
+3. Read the shared Idea/ordinary catalog and synthetic enrollment projection. Require one current signal,
+   zero missing/stale signals and no claim of a live panel.
 4. In rollback-only probe transactions, fixed no-row updates to identity state, grant expiry, enrollment digest
    and session expiry must report PostgreSQL insufficient privilege. Unexpected success/error stops the run.
 5. Two original reserved sessions lock the same synthetic identity. Read-only `pg_stat_activity` observation
    must see the second waiting on a lock before releasing the first. Then observe the 2s lock and 5s statement
-   limits. Three separate 4s statements expose the 10s transaction-session limit; the final probe uses 5.5s idle
-   time and checks its original backend's absence. Closed probes cannot reserve replacement connections.
+   limits. Three separate 4s statements expose the 10s transaction-session limit; the final probe observes
+   the original backend still idle/open at 4.5s, then absent after at least 5s. The check is named
+   `idle_session_absence`: the driver does not expose the idle close cause, so SQLSTATE 25P03 remains
+   unverified. An unrelated disconnect in that interval cannot be distinguished. Closed probes cannot
+   reserve replacement connections.
 6. Hold eight bounded pool transactions behind a local latch, require the ninth operation to reject without
    queuing or damaging the pool, then release all eight. This is SQL-pool admission, not a claim about eight
    simultaneous HTTP writes or a stress/load test.
@@ -55,7 +59,8 @@ even for incomplete setup; create no second runner after uncertainty without a n
    command/audit counts, then close. No mutation is replayed after uncertainty or during reconciliation.
 
 PostgreSQL distinguishes statement cancellation, lock timeout, transaction-session timeout and idle-session
-termination; the runner does not treat them as interchangeable successes. Timing tolerances are fixed, bounded
+termination. The first three are checked by their specific SQLSTATE and elapsed time; idle disappearance
+is explicitly not an exact timeout-cause claim. Timing tolerances are fixed, bounded
 and may produce negative evidence on an overloaded host. Primary references:
 [PG17 connection defaults](https://www.postgresql.org/docs/17/runtime-config-client.html),
 [PG17 activity statistics](https://www.postgresql.org/docs/17/monitoring-stats.html).
@@ -66,7 +71,10 @@ The installed postgres.js 3.4.7 reservation/close behavior was inspected. It is 
 The runner closes only its own pools/probes, once per resource, including failure paths. No DB, role, service,
 data directory, backup or enrollment is deleted. The separately approved operator owns exact disposable
 database/role cleanup and final host/session absence verification. `poolsClosed`/`probesClosed` mean the owned
-client shutdown completed, **not independent observation of all server-side session absence**. Only the idle
+client shutdown completed, **not independent observation of all server-side session absence**. Created counts
+are owned client wrappers, not observed physical connection attempts. The installed driver's initial target-session
+selection can revisit an unsuitable endpoint before reservation. `physicalConnectionAttempts` remains
+`not_observed`; no command retry is added by the runner. Only the idle
 probe's backend absence is explicitly observed by this workload. Cleanup uncertainty prevents completion.
 
 Evidence contains fixed dispositions, check names, digests and resource counts, never row values, request

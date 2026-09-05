@@ -4,7 +4,7 @@ import type { DatabaseSession } from "../../src/persistence/database";
 
 /** Deterministic driver recording, not PostgreSQL concurrency/timing evidence. */
 export function recordedProbeFixture() {
-  let now = 0, locks = 0, txSleeps = 0, aClosed = false, bClosed = false;
+  let now = 0, locks = 0, txSleeps = 0, idleWait = 0, aClosed = false, bClosed = false;
   let releaseLock: (() => void) | undefined;
   const statements: string[] = [], observed: RehearsalCheck[] = [];
   const make = (slot: "a" | "b") => ({
@@ -30,7 +30,11 @@ export function recordedProbeFixture() {
     }) as DatabaseSession["query"],
   });
   return { a: make("a"), b: make("b"), statements, observed,
-    observer: { query: (async (sql: string) => ({ rows: sql.includes("AS absent") ? [{ absent: bClosed }] : [{ blocked: !!releaseLock }] })) as DatabaseSession["query"] },
-    timing: { now: () => now, sleep: async (ms: number) => { now += ms; if (ms === 5500) bClosed = true; } },
+    observer: { query: (async (sql: string) => ({ rows: sql.includes("AS absent") ? [{ absent: bClosed }]
+      : sql.includes("AS idle") ? [{ idle: !bClosed }] : [{ blocked: !!releaseLock }] })) as DatabaseSession["query"] },
+    timing: { now: () => now, sleep: async (ms: number) => { now += ms;
+      if (ms === 4500 || ms === 1000) idleWait += ms;
+      if (idleWait >= 5500) bClosed = true;
+    } },
   };
 }

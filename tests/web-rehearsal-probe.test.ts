@@ -81,7 +81,7 @@ test("permission checks are fixed no-row updates with rollback, and unexpected p
 test("fixed limit workload observes separate session lock wait, bounded timeouts and idle-session absence", async () => {
   const f = recordedProbeFixture();
   await checkPostgresLimits({ ...f, tenantId: "tenant:web", ownerIdentityId: "identity:web", checkpoint: () => {}, record: name => f.observed.push(name) });
-  assert.deepEqual(f.observed, ["lock_serialization", "lock_timeout", "statement_timeout", "transaction_timeout", "idle_transaction_timeout"]);
+  assert.deepEqual(f.observed, ["lock_serialization", "lock_timeout", "statement_timeout", "transaction_timeout", "idle_session_absence"]);
   assert.equal(f.statements.filter(s => s === "a:SELECT pg_sleep(4)").length, 3);
   assert.equal(f.statements.some(s => s === "b:SELECT pg_sleep(6)"), false);
   assert.equal(f.a.isClosed(), true); assert.equal(f.b.isClosed(), true);
@@ -92,4 +92,13 @@ test("cancellation fences subsequent limit checks and cannot be promoted to a pa
   await assert.rejects(checkPostgresLimits({ ...f, tenantId: "tenant:web", ownerIdentityId: "identity:web",
     checkpoint: () => { if (++checkpoints === 4) throw new Error("cancelled"); }, record: name => f.observed.push(name) }));
   assert.deepEqual(f.observed, []); assert.equal(f.statements.some(s => s.includes("FOR UPDATE")), false);
+});
+
+test("a prematurely closed idle probe fails rather than passing an idle-timeout observation", async () => {
+  const f = recordedProbeFixture(); const timing = { ...f.timing, sleep: async (ms: number) => {
+    await f.timing.sleep(ms); if (ms === 4500) f.b.isClosed = () => true;
+  } };
+  await assert.rejects(checkPostgresLimits({ ...f, timing, tenantId: "tenant:web", ownerIdentityId: "identity:web",
+    checkpoint: () => {}, record: name => f.observed.push(name) }));
+  assert.equal(f.observed.includes("idle_session_absence"), false);
 });
