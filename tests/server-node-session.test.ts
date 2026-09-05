@@ -138,3 +138,17 @@ test("bounded registry replaces only the same node and stale release cannot disc
     registry.release(reopened);
   } finally { registry.close(); await f.close(); }
 });
+
+test("disconnect between final handshake send and state transition cannot reopen the session", async () => {
+  const f = await fixture();
+  try {
+    const session = new ServerNodeSession(f.config, { ...f.ports, async send(raw) {
+      f.serverFrames.push(raw);
+      if (JSON.parse(raw).type === "node.reconciliation.request") queueMicrotask(() => queueMicrotask(() => session.disconnect()));
+    } });
+    await assert.rejects(session.acceptHello(f.hello), /no longer current/);
+    while (f.serverFrames.length) await f.bridge.receive(f.serverFrames.shift()!, at(1000));
+    assert.equal(session.nativeDeliveryChannel(), undefined);
+    for (const raw of f.nodeFrames) await assert.rejects(session.receive(raw), /not accepting reconciliation/);
+  } finally { await f.close(); }
+});

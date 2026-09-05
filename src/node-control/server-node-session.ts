@@ -97,6 +97,7 @@ export class ServerNodeSession {
     this.state = "negotiating";
     await this.bounded(async () => {
       const frame = await this.authenticate(raw);
+      this.now();
       if (frame.type !== "connection.hello" || frame.sequence !== 1 ||
           !frame.body.supportedProtocols.includes(NODE_PROTOCOL_V1)) throw new Error("Server node session requires a supported hello");
       this.connectionId = frame.connectionId;
@@ -112,6 +113,7 @@ export class ServerNodeSession {
       await this.send("node.reconciliation.request", {
         lastAcknowledgedNodeSequence: frame.sequence, requestedAttemptIds: [...frame.body.unresolvedAttemptIds],
       });
+      this.now();
       this.state = "reconciling";
     });
   }
@@ -120,6 +122,7 @@ export class ServerNodeSession {
     if (this.state !== "reconciling" && this.state !== "ready") throw new Error("Server node session is not accepting reconciliation");
     await this.bounded(async () => {
       const frame = await this.authenticate(raw);
+      this.now();
       if (frame.type === "protocol.ack") {
         if (frame.body.acknowledgedMessageIds.some((id) => !this.outboundIds.has(id)) ||
             frame.body.highestContiguousSequence > this.outboundSequence) throw new Error("Server node acknowledgement mismatch");
