@@ -75,7 +75,12 @@ web SQL role. See `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Production plan
 record one real canonical attempt/lease, reconcile uncertain saves and expire elapsed reservations.
 See `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`. Assignment does not start an agent; production coordinator
 ownership and actual signed approval/admission/dispatch remain unconfigured.
-**Next: CR14C C-WORK coordinator resource ownership, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
+**CR14C supplied-resource coordinator lifecycle is independently accepted** at
+`3a8274f00228653e0f67a883e7e088897aae627c`. Planning and assignment now share bounded admission,
+drain and uncertain-save handling, composed with a separately restricted web connection. See
+`CR14C_TASK_COORDINATOR_LIFECYCLE_ACCEPTANCE.md`. The inert compiled factory does not yet verify
+production coordinator database privileges or mount itself into deployment startup.
+**Next: CR14C coordinator role/schema verification and production bootstrap mounting, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
@@ -128,6 +133,11 @@ PR #294's exact head `b635502` passed GitHub CI run `33971887681` at 2026-09-05 
 The accepted protected task preparation interface is [PR #295](https://github.com/MarvinAi5/control-room/pull/295),
 stacked on #294 from `codex/cr14c-task-planning-interface`. Its current-head GitHub checks remain required;
 no merge or deployment is claimed.
+PR #295's exact head `0231d00` passed GitHub CI run `33974354132` at 2026-09-05 15:36:41 UTC.
+Canonical assignment/expiry is published in [PR #296](https://github.com/MarvinAi5/control-room/pull/296),
+stacked on #295. Its exact head `ecedfca` passed GitHub CI run `33977123890` at 2026-09-05 16:31:38 UTC.
+The accepted supplied-resource lifecycle is on `codex/cr14c-task-coordinator-lifecycle`, stacked on
+that branch. Current-head checks remain required for any subsequent PR; no merge is claimed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
@@ -1782,11 +1792,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14C C-WORK coordinator composition and executable admission/approval/dispatch
+Block: CR14C coordinator role/schema preflight and startup mounting, followed by executable admission/approval/dispatch
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Protected preparation, canonical assignment/expiry and planned result submission are accepted; the trusted coordinator still needs bounded resource ownership and actual signed approval/local admission/dispatch.
-Expected output: integrated coordinator ownership and executable admission path using existing canonical and local-policy services, followed by bounded revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Supplied-resource coordinator ownership is accepted; production needs the restricted coordinator role/schema gate and shared startup mounting before actual signed approval/local admission/dispatch.
+Expected output: verified coordinator bootstrap composition and executable admission path using existing canonical and local-policy services, followed by bounded revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

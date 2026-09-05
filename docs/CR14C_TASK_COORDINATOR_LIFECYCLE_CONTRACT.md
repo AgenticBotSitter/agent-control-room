@@ -1,6 +1,8 @@
 # CR14C — owned task coordinator lifecycle
 
-Status: implementation candidate. Base: PR #296, `ecedfcaf2b6ff132181adf6bedfb25193372a5ed`.
+Status: independently accepted supplied-resource integration; production unconfigured.
+Base: PR #296, `ecedfcaf2b6ff132181adf6bedfb25193372a5ed`.
+Evidence: `CR14C_TASK_COORDINATOR_LIFECYCLE_ACCEPTANCE.md`.
 
 ## Product scope
 
@@ -26,6 +28,8 @@ uncertainty, never retries or falsely reports native cancellation. Late transact
 issue more SQL or pass precommit through this wrapper. Already-sent COMMIT may have succeeded: the
 caller retains the exact command and reconciles through existing canonical/planning uniqueness after
 separate supervisor reconstruction. It must not create a new task in response to uncertainty.
+The drain timer is cancelled as soon as draining completes. A forced-drain flag separately fences
+late successful acknowledgements through cleanup without suppressing normally drained successes.
 
 Each transaction session is unusable after its callback returns. Successful completed operations do
 not accumulate unresolved global shutdown subscribers. Underlying database termination remains the

@@ -5409,3 +5409,29 @@ refresh and compiled logout failures/corrections are retained in `CR14C_TASK_ASS
 
 **Next:** coordinator resource ownership, signed approval/local admission/dispatch and bounded revisions
 on Astra Medium. No production pool, physical service, native/provider effect, deployment or merge.
+
+## ADR-220 — Own supplied coordinator resources without widening the web role
+
+**Date:** 2026-09-05. **Status:** independently accepted supplied-resource integration; production unconfigured.
+
+Planning and assignment share one coordinator lifecycle with at most eight active operations, no
+admission queue, a 30-second drain and a separate five-second pool-close ceiling. The lifecycle owns
+the supplied preverified bounded control-plane resource after successful construction. It exposes
+only scoped work operations, readiness and close; private database resources and keys stay internal.
+
+Guard queries and precommit after forced drain, retain exact-command uncertainty after a lost commit
+reply, and never retry automatically. Separate the forced-drain flag from normal close; cancel the
+drain timer before pool cleanup so a healthy shutdown cannot become falsely uncertain.
+
+The combined private task application owns a distinct restricted web resource and this coordinator,
+cleans both after transferred-resource construction failure and awaits both shutdown outcomes.
+Object inequality is not physical-pool attestation. The inert compiled factory cannot substitute for
+production coordinator role/schema verification or mount itself into the deployment bootstrap.
+
+**Evidence:** product `3a8274f00228653e0f67a883e7e088897aae627c`, tree
+`fbfa2c0ffe0d141a700ffce89a1e3984d47c17f9`; independent final review: 45 passing tests, both
+reproduced P2 shutdown findings fixed, no remaining findings. See
+`CR14C_TASK_COORDINATOR_LIFECYCLE_ACCEPTANCE.md` and its review record.
+
+**Next:** coordinator role/schema verification and startup mounting, signed approval/local admission/
+dispatch and bounded revisions on Astra Medium. No live pool, listener, provider, deployment or merge.
