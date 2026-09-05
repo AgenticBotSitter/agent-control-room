@@ -16,11 +16,104 @@ import {
   type UnsignedNodeFrame,
 } from "../src/node-protocol/v1/index.ts";
 import { buildArtifactLineageRecord, buildTextArtifactBundle } from "../src/node-executor/artifact-evidence.ts";
+import { NATIVE_DELIVERY_FEATURE } from "../src/harness/v1/native-delivery.ts";
 
 const t0 = "2026-08-22T18:00:00.000Z";
 const t1 = "2026-08-22T18:01:00.000Z";
 const t1Heartbeat = "2026-08-22T18:01:30.000Z";
 const t2 = "2026-08-22T18:02:00.000Z";
+
+test("native channel requires negotiated reconciliation and permanently fences disconnected generations", async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  const identity = { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: [NATIVE_DELIVERY_FEATURE] };
+  let nextConnection = false;
+  let messageId = 0;
+  const bridge = new PortableNodeBridge(identity, journal,
+    { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
+    new NodeProtocolAuthenticator(serverResolver(serverKeys.spki), journal, new FixedWindowProtocolRateLimiter(100, 60)),
+    () => { if (nextConnection) { nextConnection = false; return "reused-id"; } return `message-${++messageId}`; });
+  identity.nodeId = "node:mutated";
+  identity.features.length = 0;
+  let sequence = 0;
+  async function connect(enabledFeatures: string[]) {
+    const transport = new MemoryTransport();
+    nextConnection = true;
+    await bridge.open(transport, { now: t1, transportIdentity: "tls:server" });
+    assert.equal(bridge.nativeDeliveryChannel(), undefined);
+    const connectionId = bridge.status().connectionId!;
+    await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, ++sequence, "connection.accepted", {
+      selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures, maxFrameBytes: 65_536,
+      heartbeatIntervalSeconds: 30, serverTime: t1,
+    }, transport.sent[0].messageId)), t1);
+    assert.equal(bridge.nativeDeliveryChannel(), undefined);
+    await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, connectionId, ++sequence, "node.reconciliation.request", {
+      lastAcknowledgedNodeSequence: 0, requestedAttemptIds: [],
+    })), t1);
+    return transport;
+  }
+  try {
+    assert.equal(bridge.nativeDeliveryChannel(), undefined);
+    await connect([NATIVE_DELIVERY_FEATURE]);
+    const channel = bridge.nativeDeliveryChannel()!;
+    assert.equal(channel.nodeId, "node:mac-mini");
+    assert.equal(channel.maxFrameBytes, 65_536);
+    assert.equal(channel.grantsExecutionAuthority, false);
+    channel.assertCurrent();
+    bridge.status().enabledFeatures!.length = 0;
+    channel.assertCurrent();
+    await bridge.disconnected();
+    assert.equal(bridge.nativeDeliveryChannel(), undefined);
+    assert.throws(() => channel.assertCurrent(), /no longer current/);
+    await connect([NATIVE_DELIVERY_FEATURE]);
+    bridge.nativeDeliveryChannel()!.assertCurrent();
+    assert.throws(() => channel.assertCurrent(), /no longer current/);
+    const second = bridge.nativeDeliveryChannel()!;
+    await assert.rejects(bridge.receive("not a frame", t1));
+    assert.equal(bridge.nativeDeliveryChannel(), undefined);
+    assert.throws(() => second.assertCurrent(), /no longer current/);
+    await bridge.close();
+    await connect([]);
+    assert.equal(bridge.nativeDeliveryChannel(), undefined);
+  } finally {
+    await bridge.close();
+    journal.close();
+  }
+});
+
+test("authentication completing after close cannot restore the negotiated channel", async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const resolver = serverResolver(serverKeys.spki);
+  const bridge = new PortableNodeBridge(
+    { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: [NATIVE_DELIVERY_FEATURE] }, journal,
+    { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
+    new NodeProtocolAuthenticator({ async resolve(input) { entered(); await gate; return resolver.resolve(input); } }, journal,
+      new FixedWindowProtocolRateLimiter(100, 60)),
+  );
+  try {
+    const transport = new MemoryTransport();
+    await bridge.open(transport, { now: t1, transportIdentity: "tls:server" });
+    const accepted = serverFrame(serverKeys.privateKey, bridge.status().connectionId!, 1, "connection.accepted", {
+      selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: [NATIVE_DELIVERY_FEATURE], maxFrameBytes: 65_536,
+      heartbeatIntervalSeconds: 30, serverTime: t1,
+    });
+    const pending = assert.rejects(bridge.receive(JSON.stringify(accepted), t1), /connection changed/);
+    await waiting;
+    await bridge.close();
+    release();
+    await pending;
+    assert.equal(bridge.status().state, "stopped");
+    assert.equal(bridge.nativeDeliveryChannel(), undefined);
+    assert.equal(transport.sent.length, 1);
+  } finally { release(); await bridge.close(); journal.close(); }
+});
 
 function keys() {
   const pair = generateKeyPairSync("ed25519");

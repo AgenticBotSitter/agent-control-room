@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { NATIVE_DELIVERY_FEATURE } from "../harness/v1/native-delivery";
 import { sha256Digest } from "../security";
 import {
   NODE_PROTOCOL_MAX_FRAME_BYTES,
@@ -36,7 +37,7 @@ export interface BridgeIdentity {
   tenantId: string;
   nodeId: string;
   keyId: string;
-  features: string[];
+  features: readonly string[];
 }
 
 export interface BridgeStatus {
@@ -47,6 +48,17 @@ export interface BridgeStatus {
   heartbeatIntervalSeconds?: number;
   nextHeartbeatAt?: string;
   enabledFeatures?: string[];
+  maxFrameBytes?: number;
+}
+
+/** Negotiated channel state only: not liveness, owner approval, or execution authority. */
+export interface NativeDeliveryChannel {
+  readonly tenantId: string;
+  readonly nodeId: string;
+  readonly connectionId: string;
+  readonly maxFrameBytes: number;
+  readonly grantsExecutionAuthority: false;
+  assertCurrent(): void;
 }
 
 export interface OpenBridgeOptions {
@@ -63,6 +75,7 @@ export class PortableNodeBridge {
   private transport?: BridgeTransport;
   private transportIdentity?: string;
   private sendQueue: Promise<void> = Promise.resolve();
+  private connectionGeneration = 0;
 
   constructor(
     private readonly identity: BridgeIdentity,
@@ -71,7 +84,32 @@ export class PortableNodeBridge {
     private readonly serverAuthenticator: NodeProtocolAuthenticator,
     private readonly idFactory: () => string = randomUUID,
     private readonly commandHandler?: BridgeCommandHandler,
-  ) {}
+  ) {
+    this.identity = Object.freeze({ ...identity, features: Object.freeze([...identity.features]) });
+  }
+
+  nativeDeliveryChannel(): NativeDeliveryChannel | undefined {
+    const status = this.statusValue;
+    if (status.state !== "online" || status.lastSafeErrorCode || !this.transport ||
+        !status.connectionId || !status.maxFrameBytes ||
+        !this.identity.features.includes(NATIVE_DELIVERY_FEATURE) ||
+        !status.enabledFeatures?.includes(NATIVE_DELIVERY_FEATURE)) return undefined;
+    const generation = this.connectionGeneration;
+    const transport = this.transport;
+    return Object.freeze({
+      tenantId: this.identity.tenantId, nodeId: this.identity.nodeId,
+      connectionId: status.connectionId, maxFrameBytes: status.maxFrameBytes,
+      grantsExecutionAuthority: false as const,
+      assertCurrent: () => {
+        if (generation !== this.connectionGeneration || transport !== this.transport ||
+            this.statusValue.state !== "online" || this.statusValue.lastSafeErrorCode ||
+            this.statusValue.connectionId !== status.connectionId ||
+            !this.statusValue.enabledFeatures?.includes(NATIVE_DELIVERY_FEATURE)) {
+          throw new Error("Native delivery channel is no longer current");
+        }
+      },
+    });
+  }
 
   status(): BridgeStatus {
     return { ...this.statusValue, ...(this.statusValue.enabledFeatures ? { enabledFeatures: [...this.statusValue.enabledFeatures] } : {}) };
@@ -96,6 +134,7 @@ export class PortableNodeBridge {
   async open(transport: BridgeTransport, options: OpenBridgeOptions): Promise<void> {
     if (!["stopped", "backing_off"].includes(this.statusValue.state)) throw new Error("Bridge is already connected or connecting");
     const connectionId = `connection:${this.idFactory()}`;
+    this.connectionGeneration += 1;
     this.transport = transport;
     this.transportIdentity = options.transportIdentity;
     this.statusValue = { ...this.statusValue, state: "connecting", connectionId, lastSafeErrorCode: undefined };
@@ -119,6 +158,7 @@ export class PortableNodeBridge {
   }
 
   async receive(raw: string | Uint8Array, now: string): Promise<void> {
+    const generation = this.connectionGeneration;
     const connectionId = this.requireConnection();
     const transportIdentity = this.transportIdentity;
     if (!transportIdentity) throw new Error("Bridge transport identity is unavailable");
@@ -134,6 +174,7 @@ export class PortableNodeBridge {
       this.statusValue = { ...this.statusValue, lastSafeErrorCode: "protocol_rejected" };
       throw error;
     }
+    if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed during authentication");
     const { frame, delivery } = verified;
     const priorStatus = this.journal.inboundStatus(frame.messageId);
 
@@ -156,7 +197,9 @@ export class PortableNodeBridge {
         this.statusValue = { ...this.statusValue, state: "reconciling", reconnectAttempt: 0 };
         break;
       case "node.reconciliation.request":
+        if (this.statusValue.state !== "reconciling") throw new Error("Reconciliation arrived in the wrong state");
         await this.sendReconciliationReport(now);
+        if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed during reconciliation");
         this.statusValue = {
           ...this.statusValue,
           state: "online",
@@ -185,6 +228,7 @@ export class PortableNodeBridge {
         if (!response) throw new Error("Handled node operation did not produce a durable acknowledgement");
         await this.sendBody("node.operation.ack", response, true, now, frame.correlationId, frame.messageId);
         if (response.disposition === "applied") {
+          this.connectionGeneration += 1;
           this.statusValue = { ...this.statusValue, state: response.operation === "request_resume" ? "online" : "draining" };
         }
         break;
@@ -257,6 +301,7 @@ export class PortableNodeBridge {
   }
 
   async close(): Promise<void> {
+    this.connectionGeneration += 1;
     const transport = this.transport;
     this.transport = undefined;
     this.transportIdentity = undefined;
@@ -265,6 +310,7 @@ export class PortableNodeBridge {
   }
 
   async disconnected(): Promise<number> {
+    this.connectionGeneration += 1;
     const transport = this.transport;
     this.transport = undefined;
     this.transportIdentity = undefined;
@@ -279,7 +325,7 @@ export class PortableNodeBridge {
     if (body.selectedProtocol !== NODE_PROTOCOL_V1 || body.maxFrameBytes > NODE_PROTOCOL_MAX_FRAME_BYTES) throw new Error("Server negotiated an invalid connection contract");
     if (body.enabledFeatures.some((feature) => !this.identity.features.includes(feature))) throw new Error("Server enabled an unsupported bridge feature");
     if (causationId) this.journal.acknowledge([causationId], now);
-    this.statusValue = { ...this.statusValue, heartbeatIntervalSeconds: body.heartbeatIntervalSeconds, enabledFeatures: [...body.enabledFeatures] };
+    this.statusValue = { ...this.statusValue, maxFrameBytes: body.maxFrameBytes, heartbeatIntervalSeconds: body.heartbeatIntervalSeconds, enabledFeatures: [...body.enabledFeatures] };
   }
 
   private async sendReconciliationReport(now: string): Promise<void> {
@@ -427,6 +473,7 @@ export class PortableNodeBridge {
   }
 
   private failTransport(): void {
+    this.connectionGeneration += 1;
     const reconnectAttempt = this.statusValue.reconnectAttempt + 1;
     this.statusValue = { state: "backing_off", reconnectAttempt, lastSafeErrorCode: "transport_unavailable" };
   }
