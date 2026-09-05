@@ -9,6 +9,7 @@ import { WebConnectionService, type WebConnectionKeys } from "./connection-servi
 import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { createTaskHttpHandler } from "./task-http";
 import { WebTaskReviewService } from "./task-review-service";
+import type { TaskPlanningOperation } from "./task-execution-planner";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -21,6 +22,9 @@ export interface PrivateWebProcessOptions {
   connections?: WebConnectionKeys;
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
   tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
+  /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
+   * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
+  planning?: TaskPlanningOperation;
   clock?: () => number;
   /** Tests may shorten the production drain ceiling; never extend it. */
   drainMs?: number;
@@ -36,6 +40,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
+  if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
+    || typeof options.planning.plan !== "function")) throw new Error("invalid_private_app_config");
+  const planning = options.planning ? Object.freeze({ plan: options.planning.plan.bind(options.planning) }) : undefined;
   const drainMs = options.drainMs ?? 30_000;
   if (!Number.isSafeInteger(drainMs) || drainMs < 1 || drainMs > 30_000) throw new Error("invalid_private_app_config");
   const keys = createAccessKeyCache({ ...options, clock });
@@ -65,7 +72,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
-            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, clock })(request);
+            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, planning, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });

@@ -13,6 +13,11 @@ test("restricted private process serves protected task pages, saves real proposa
   const path = `/api/v1/projects/${encodeURIComponent(project.projectId)}/tasks`;
   const saved = await handle(request(path, "POST", taskDraft)); assert.equal(saved.status, 201);
   const { receipt } = await saved.json();
+  const planningPath = `${path}/${receipt.jobId}/plan`;
+  const planning = await (await handle(request(planningPath))).json();
+  assert.equal(planning.availability, "not_configured");
+  assert.equal((await handle(request(planningPath, "POST", { expectedInputDigest: planning.inputDigest }))).status, 503);
+  await assert.rejects(f.client.query("SELECT * FROM control_task_execution_plans"));
   assert.equal((await handle(request(path))).status, 200);
   assert.equal((await handle(request(`/projects/${encodeURIComponent(project.projectId)}/tasks`))).status, 200);
   assert.equal((await handle(request(`/projects/${encodeURIComponent(project.projectId)}/tasks/${encodeURIComponent(receipt.jobId)}`))).status, 200);

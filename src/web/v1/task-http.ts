@@ -3,15 +3,43 @@ import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-comm
 import type { WebTaskService } from "./task-service";
 import type { WebTaskReviewService } from "./task-review-service";
 import { taskReviewDraftSchema } from "./task-review-wire";
+import type { TaskExecutionPlanner } from "./task-execution-planner";
+import { taskPlanningDraftSchema, taskPlanningCommandSchema } from "./task-planning-wire";
+import { catalogProjectIdSchema } from "./project-wire";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; clock?: () => number }) {
+  ownerReviews?: WebTaskReviewService; planning?: Pick<TaskExecutionPlanner, "plan">; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
     try {
       requireSameOrigin(request, options.origin);
       const identity = verify(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const planningRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/plan$/.exec(url.pathname);
+      if (planningRoute) {
+        if (url.search) throw new WebAccessError("invalid_request");
+        let projectId: string, jobId: string;
+        try { projectId = decodeURIComponent(planningRoute[1]); jobId = decodeURIComponent(planningRoute[2]); }
+        catch { throw new WebAccessError("invalid_request"); }
+        if (!catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success)
+          throw new WebAccessError("invalid_request");
+        if (request.method === "GET") return Response.json(await options.service.planningOptions(identity, projectId, jobId,
+          !!options.planning), { headers: privateResponseHeaders });
+        if (request.method !== "POST") throw new WebAccessError("not_found");
+        if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
+          throw new WebAccessError("invalid_request");
+        const draft = taskPlanningDraftSchema.safeParse(await readBoundedJson(request.body, 1024));
+        if (!draft.success) throw new WebAccessError("invalid_request");
+        if (!options.planning) {
+          await options.service.authorize(identity, projectId);
+          throw new Error("task_planning_not_configured");
+        }
+        // Source uniqueness, not a browser-selected key, reconciles this exact plan after a lost reply.
+        const result = taskPlanningCommandSchema.parse(await options.planning.plan(identity, projectId, jobId, draft.data.expectedInputDigest));
+        if (result.receipt.projectId !== projectId || result.receipt.sourceJobId !== jobId
+          || result.receipt.sourceInputDigest !== draft.data.expectedInputDigest || result.receipt.jobId === jobId) throw new Error("task_plan_scope_mismatch");
+        return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+      }
       const route = /^\/api\/v1\/projects\/([^/]+)\/tasks(?:\/([^/]+)(?:\/(results)(?:\/([^/]+)(?:\/reviews\/([^/]+))?)?)?)?$/.exec(url.pathname);
       if (!route) throw new WebAccessError("not_found");
       let projectId: string, jobId: string | undefined;

@@ -42,6 +42,7 @@ const planSchema = z.object({ schema: z.literal("control-room.task-execution-pla
   acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
 }).strict();
 type Plan = z.infer<typeof planSchema>;
+export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } });
@@ -49,7 +50,8 @@ const fail = (): never => { throw new Error("task_execution_plan_unavailable"); 
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
 
 /** Privileged control-plane composition only; the existing private-web SQL role cannot use this
- * writer. Current owner permission is still mandatory. No HTTP route or live executor is installed. */
+ * writer. Current owner permission is still mandatory. The optional web operation exposes only
+ * planning, never this writer's read/bindReview methods or a live executor. */
 export class TaskExecutionPlanner {
   private readonly template: NativeTaskTemplate;
   private readonly key: Uint8Array;
@@ -68,6 +70,9 @@ export class TaskExecutionPlanner {
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
   }
   private tag(plan: Plan) { return hmacSha256Tag(this.key, { purpose: "task-execution-plan/v1", plan }); }
+  webOperation(): TaskPlanningOperation {
+    return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this) });
+  }
   private verify(row: Row) {
     const plan = planSchema.parse(row.plan), expected = Buffer.from(this.tag(plan)), actual = Buffer.from(row.auth_tag);
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || row.tenant_id !== plan.tenantId
@@ -161,7 +166,8 @@ export class TaskExecutionPlanner {
     });
   }
   private receipt(plan: Plan) { return { projectId: plan.projectId, sourceJobId: plan.sourceJobId, jobId: plan.job.id,
-    inputDigest: plan.job.inputDigest, plannedAt: plan.plannedAt, startsWork: false as const, grantsExecutionAuthority: false as const }; }
+    sourceInputDigest: plan.sourceInputDigest, inputDigest: plan.job.inputDigest, plannedAt: plan.plannedAt,
+    startsWork: false as const, grantsExecutionAuthority: false as const }; }
   private async jobWith(tx: DatabaseSession, projectId: string, jobId: string, lock = false) {
     const row = (await tx.query<{ payload: unknown; state: string; version: number; workflow_id: string;
       created_at: string | Date; updated_at: string | Date }>(`SELECT payload,state,version,workflow_id,created_at,updated_at

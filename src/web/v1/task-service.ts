@@ -17,6 +17,7 @@ import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
   taskRunSchema, type TaskRun, type TaskReceipt } from "./task-wire";
+import { taskPlanningOptionsSchema } from "./task-planning-wire";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -95,6 +96,24 @@ export class WebTaskService {
     this.id(projectId);
     await this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); await this.projects.getViewInSession(tx, actor, projectId);
+    });
+  }
+
+  /** Availability is a current UI hint, not admission. The planner rechecks owner authority
+   * and exact source/template inside its own transaction before creating anything. */
+  async planningOptions(identity: VerifiedWebIdentity, projectId: string, jobId: string, configured: boolean) {
+    this.id(projectId); this.id(jobId);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+      if (!row) throw new WebAccessError("not_found");
+      const { job } = validated(row, this.scope.tenantId, projectId);
+      const eligible = actor.can("tasks.plan", projectId, true) && job.jobType === "task.proposal"
+        && job.state === "proposed" && job.version === 0 && project.lifecycle === "active";
+      return taskPlanningOptionsSchema.parse({ projectId, sourceJobId: jobId, inputDigest: job.inputDigest,
+        availability: !eligible ? "not_eligible" : configured ? "available" : "not_configured", startsWork: false });
     });
   }
 

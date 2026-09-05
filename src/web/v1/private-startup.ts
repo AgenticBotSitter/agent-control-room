@@ -3,7 +3,7 @@ import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
 import { verifyPrivateDatabase } from "./private-database-preflight";
 import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./private-process";
 
-export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs"> & {
+export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning"> & {
   database: PrivatePostgresConfiguration; ownerIdentityId: string;
 };
 type OwnedDatabase = ReturnType<typeof createPrivatePostgresDatabase>;
@@ -13,6 +13,9 @@ function validateConfiguration(input: PrivateStartupConfiguration) {
   const reference = (value: string) => { if (typeof value !== "string" || !value.trim() || value.length > 256) throw new Error(); return value; };
   const key = (value: Uint8Array) => { if (!(value instanceof Uint8Array) || value.length !== 32) throw new Error(); return new Uint8Array(value); };
   try {
+    // The production bootstrap owns only the restricted web pool. Do not silently discard or
+    // pretend to configure a privileged planning dependency through this startup profile.
+    if ("planning" in input) throw new Error();
     if (!Number.isSafeInteger(input.maxSessionSeconds) || input.maxSessionSeconds < 1 || input.maxSessionSeconds > 604800
       || typeof input.loadKeys !== "function") throw new Error();
     return Object.freeze({ origin: exactOrigin(input.origin), issuer: exactOrigin(input.issuer), audience: reference(input.audience),

@@ -14,6 +14,8 @@ import { nativeTaskObservation, nativeTaskRegistration } from "../src/harness/he
 import { WebTaskReviewService } from "../src/web/v1/task-review-service";
 import type { CompletionAcceptanceProfileV1 } from "../src/completion-gate/v1";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+import { createPrivateWebProcess } from "../src/web/v1/private-process";
+import { origin, request } from "./helpers/web-foundation";
 
 async function fixture() {
   const f = await webNativeResultFixture();
@@ -39,6 +41,53 @@ async function fixture() {
   const planner = create(), plan = () => planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
   return { ...f, resultConfig: f.config, source, profile, template, config, create, planner, plan };
 }
+
+test("protected private process prepares a real saved proposal and reconciles it without starting work", async t => {
+  const f = await fixture(); t.after(f.close);
+  const app = createPrivateWebProcess({ origin, issuer: f.accessTrust.issuer, audience: f.accessTrust.audience,
+    maxSessionSeconds: f.accessTrust.maxSessionSeconds, ...f.scope, loadKeys: async () => f.accessTrust.keys,
+    database: { client: f.db, close: async () => {} }, planning: f.planner.webOperation(), clock: () => instant + 7000 });
+  t.after(() => app.close());
+  const path = `/api/v1/projects/${binding.projectId}/tasks/${f.source.receipt.jobId}/plan`;
+  const handle = (method = "GET", body?: unknown, route = path) => app.handle(request(route, method, body, undefined, f.jwt), () => new Response("shell"));
+  const before = (await f.db.query("SELECT * FROM control_outbox")).rows;
+  assert.equal((await (await handle()).json()).availability, "available");
+  assert.equal((await f.db.query("SELECT * FROM control_task_execution_plans")).rows.length, 0);
+  const saved = await handle("POST", { expectedInputDigest: sha256Digest(taskDraft) }); assert.equal(saved.status, 201);
+  const first = await saved.json();
+  assert.equal(first.receipt.startsWork, false); assert.equal(first.receipt.grantsExecutionAuthority, false);
+  assert.equal(first.receipt.sourceInputDigest, sha256Digest(taskDraft));
+  const replay = await handle("POST", { expectedInputDigest: sha256Digest(taskDraft) }); assert.equal(replay.status, 200);
+  assert.deepEqual((await replay.json()).receipt, first.receipt);
+  assert.equal((await f.db.query("SELECT * FROM control_task_execution_plans")).rows.length, 1);
+  assert.deepEqual((await f.db.query("SELECT * FROM control_outbox")).rows, before);
+  assert.equal((await f.db.query("SELECT * FROM control_attempts WHERE job_id=$1", [first.receipt.jobId])).rows.length, 0);
+  assert.equal((await handle("GET", undefined, path.replace(f.source.receipt.jobId, first.receipt.jobId)).then(r => r.json())).availability, "not_eligible");
+  for (const response of [saved, replay]) { assert.equal(response.headers.get("cache-control"), "no-store"); assert.match(response.headers.get("x-robots-tag")!, /noindex/); }
+  assert.equal((await handle("POST", undefined, "/api/v1/session/logout")).status, 204);
+  assert.equal((await handle()).status, 401);
+  assert.equal((await handle("POST", { expectedInputDigest: sha256Digest(taskDraft) })).status, 401);
+});
+
+test("planning HTTP rejects request-owned authority, bad routes, cross-origin and stale scope before writing", async t => {
+  const f = await fixture(); t.after(f.close);
+  const { createTaskHttpHandler } = await import("../src/web/v1/task-http");
+  const handler = createTaskHttpHandler({ origin, trust: f.accessTrust, service: f.tasks, planning: f.planner, clock: () => instant + 7000 });
+  const path = `/api/v1/projects/${binding.projectId}/tasks/${f.source.receipt.jobId}/plan`;
+  const body = { expectedInputDigest: sha256Digest(taskDraft) };
+  for (const extra of [{ template: f.template }, { nodeId: "node:other" }, { instructions: "replace source" }, { approved: true }])
+    assert.equal((await handler(request(path, "POST", { ...body, ...extra }, undefined, f.jwt))).status, 400);
+  for (const route of [`${path}?x=1`, path.replace(binding.projectId, "%ZZ"), path.replace(binding.projectId, "a%2Fb")])
+    assert.equal((await handler(request(route, "POST", body, undefined, f.jwt))).status, 400);
+  const crossOrigin = request(path, "POST", body, undefined, f.jwt); crossOrigin.headers.set("origin", "https://other.example.invalid");
+  assert.equal((await handler(crossOrigin)).status, 403);
+  assert.equal((await handler(request(path, "DELETE", undefined, undefined, f.jwt))).status, 404);
+  assert.equal((await handler(request(path, "POST", { expectedInputDigest: `sha256:${"f".repeat(64)}` }, undefined, f.jwt))).status, 409);
+  await f.db.query("UPDATE control_role_grants SET role_key='operator'");
+  assert.equal((await (await handler(request(path, "GET", undefined, undefined, f.jwt))).json()).availability, "not_eligible");
+  assert.equal((await handler(request(path, "POST", body, undefined, f.jwt))).status, 403);
+  assert.equal((await f.db.query("SELECT * FROM control_task_execution_plans")).rows.length, 0);
+});
 
 test("owner planning preserves the inert source and creates a distinct proposed bundle with exact input/profile lineage", async t => {
   const f = await fixture(); t.after(f.close);

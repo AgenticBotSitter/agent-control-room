@@ -7,6 +7,7 @@ import { PrivateHeader } from "./private-header";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, taskUrl } from "./task-panels";
 import { PrivateTaskResults } from "./task-results";
 import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
+import { PrivateTaskPlanning } from "./task-planning";
 
 /** Read-gated child; command memory is owned by the stable keyed task page, not this subtree. */
 export function TaskDetailResults({ detail, projectId, reviewWorkspace }: {
@@ -81,6 +82,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       {page.canPropose ? <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} uncertain={uncertain} onSave={() => { void save(); }} />
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
+    {jobId && <PrivateTaskPlanning detail={detail} />}
     <TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} />
     {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Agent dispatch is not connected; no work starts from refresh or reconnect.</p>}
   </main></div>;
