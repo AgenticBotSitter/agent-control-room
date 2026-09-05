@@ -78,6 +78,9 @@ test("preflight refuses omitted permissions, authority updates, broad membership
     "CREATE ROLE web_extra; GRANT web_extra TO control_room_private_web",
     "ALTER TABLE control_web_sessions DISABLE TRIGGER control_web_sessions_revocation_guard",
     "ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO control_room_private_web",
+    "GRANT MAINTAIN ON projects TO control_room_private_web",
+    "GRANT SET ON PARAMETER session_replication_role TO control_room_private_web",
+    "GRANT ALTER SYSTEM ON PARAMETER statement_timeout TO control_room_private_web",
   ]) await t.test(change.split(" ").slice(0,4).join(" "), async t => {
     const f = await limitedWebFixture(); t.after(() => f.pool.close());
     await f.db.exec(`SET SESSION AUTHORIZATION postgres; ${change}; SET SESSION AUTHORIZATION web_test`);

@@ -68,6 +68,10 @@ export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivateP
       const unsafe = (await tx.query<{ unsafe: boolean }>(`SELECT
         EXISTS(SELECT 1 FROM pg_auth_members WHERE pg_has_role(member,'MEMBER') AND admin_option)
         OR has_database_privilege(current_database(),'CREATE WITH GRANT OPTION')
+        OR has_parameter_privilege('session_replication_role','SET')
+        OR EXISTS(SELECT 1 FROM pg_parameter_acl p CROSS JOIN LATERAL aclexplode(p.paracl) a
+          WHERE a.privilege_type='ALTER SYSTEM' AND (a.grantee=0 OR
+            a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER'))))
         OR EXISTS(SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema'
           AND (nspname<>'public' OR has_schema_privilege(oid,'CREATE') OR pg_has_role(nspowner,'MEMBER')))
         OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
@@ -90,7 +94,7 @@ export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivateP
           OR has_column_privilege(c.oid,a.attnum,'UPDATE WITH GRANT OPTION')
           OR has_column_privilege(c.oid,a.attnum,'REFERENCES WITH GRANT OPTION')
           OR has_table_privilege(c.oid,'DELETE') OR has_table_privilege(c.oid,'TRUNCATE')
-          OR has_table_privilege(c.oid,'TRIGGER') AS extra
+          OR has_table_privilege(c.oid,'TRIGGER') OR has_table_privilege(c.oid,'MAINTAIN') AS extra
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
       const reads: ReadonlySet<string> = new Set(privateWebReadTables);

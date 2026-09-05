@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundPrivateDatabase, privateDatabaseLimits, type PrivateDatabaseLease } from "../src/web/v1/bounded-database";
+import { boundPrivateDatabase, PrivateDatabaseError, privateDatabaseLimits, type PrivateDatabaseLease } from "../src/web/v1/bounded-database";
 import { createPrivatePostgresDatabase, privatePostgresOptions } from "../src/web/v1/private-postgres";
 import { startupConfig } from "./helpers/web-startup";
 
@@ -79,4 +79,35 @@ test("close failure or a stalled close remains uncertain and termination is atte
     { ...privateDatabaseLimits, closeMs: 10 });
   await assert.rejects(pool.close(), /database_close_uncertain/); await assert.rejects(pool.close(), /database_close_uncertain/);
   assert.equal(closes, 1); await assert.rejects(pool.client.query("SELECT 1"), /database_unavailable/);
+});
+
+test("fast COMMIT uncertainty quarantines without a late rollback and waits for bounded termination", async () => {
+  const termination = deferred<void>(); let closes = 0;
+  const f = fake(async statement => { if (statement === "COMMIT") throw new Error("lost acknowledgement"); return { rows: [] }; });
+  const pool = boundPrivateDatabase({ ...f.driver, terminate: () => { closes++; return termination.promise; } });
+  let settled = false;
+  const work = pool.client.transaction(tx => tx.query("TEST WORK"));
+  void work.then(() => { settled = true; }, () => { settled = true; });
+  await tick(); assert.equal(pool.isAvailable(), false); assert.equal(settled, false);
+  assert.deepEqual(f.statements, ["BEGIN", "TEST WORK", "COMMIT"]);
+  await assert.rejects(pool.client.query("SELECT 1"), /database_unavailable/);
+  termination.resolve(); await assert.rejects(work, /database_outcome_uncertain/);
+  await pool.close(); assert.equal(closes, 1); assert.equal(f.releases(), 1);
+});
+
+test("failed ROLLBACK overrides callback failure with terminal uncertainty", async () => {
+  const f = fake(async statement => { if (statement === "ROLLBACK") throw new Error("rollback failed"); return { rows: [] }; });
+  const pool = boundPrivateDatabase(f.driver);
+  await assert.rejects(pool.client.transaction(async () => { throw new Error("ordinary callback failure"); }),
+    { message: "database_outcome_uncertain" });
+  assert.equal(pool.isAvailable(), false); assert.deepEqual(f.statements, ["BEGIN", "ROLLBACK"]);
+  await pool.close(); assert.equal(f.closes(), 1);
+});
+
+test("fast driver statement uncertainty quarantines instead of attempting more transaction commands", async () => {
+  const f = fake(async statement => { if (statement === "TEST WORK") throw new PrivateDatabaseError("database_outcome_uncertain"); return { rows: [] }; });
+  const pool = boundPrivateDatabase(f.driver);
+  await assert.rejects(pool.client.transaction(tx => tx.query("TEST WORK")), /database_outcome_uncertain/);
+  assert.deepEqual(f.statements, ["BEGIN", "TEST WORK"]); assert.equal(pool.isAvailable(), false);
+  await pool.close(); assert.equal(f.closes(), 1);
 });

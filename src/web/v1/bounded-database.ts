@@ -63,7 +63,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
       // Late checkout can never enter user code; its lease is still released.
       const lease = await driver.acquire();
       clearTimeout(checkoutTimer);
-      let began = false;
+      let began = false, commitAttempted = false;
       const query = async <U = Record<string, unknown>>(statement: string, params: unknown[] = []) => {
         assertActive();
         if (busy) { queryFailed = true; throw new PrivateDatabaseError("database_unavailable"); }
@@ -81,12 +81,17 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         assertActive();
         if (busy || queryFailed) throw new PrivateDatabaseError("database_outcome_uncertain");
         check(); assertActive();
-        if (transaction) { await query("COMMIT"); began = false; }
+        if (transaction) { commitAttempted = true; await query("COMMIT"); began = false; }
         return result;
       } catch (error) {
-        // On uncertainty the entire driver is already quarantined; never enqueue a late rollback/write.
+        // A missing COMMIT acknowledgement is not evidence of rollback. Quarantine even on a fast rejection.
+        if (commitAttempted || error instanceof PrivateDatabaseError && error.code === "database_outcome_uncertain") {
+          await stop(); throw new PrivateDatabaseError("database_outcome_uncertain");
+        }
+        // On timeout the driver is already quarantined; never enqueue a late rollback/write.
         if (began && valid && !stopped) {
-          try { await query("ROLLBACK"); } catch { void stop().catch(() => {}); }
+          try { await query("ROLLBACK"); }
+          catch { await stop(); throw new PrivateDatabaseError("database_outcome_uncertain"); }
         }
         throw error;
       } finally { valid = false; lease.release(); }
@@ -95,6 +100,10 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
       // Acquire has its own ceiling even when the encompassing transaction has time left.
       // It is measured separately by the wrapper below, before any statement can be issued.
       return await deadline(work, transaction ? limits.transactionMs : limits.statementMs);
+    } catch (error) {
+      // Invalidating active operations is immediate; reporting completion also awaits bounded termination.
+      if (stopped) await stop();
+      throw error;
     } finally { clearTimeout(checkoutTimer); valid = false; invalidations.delete(invalidate); active--; }
   }
   const client = Object.freeze<DatabaseClient>({

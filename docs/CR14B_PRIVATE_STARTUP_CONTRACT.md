@@ -36,13 +36,16 @@ exact current PG17 patch/artifact under the later preparation packet; other majo
 
 The transaction deadline includes checkout and the callback. Standalone queries have a total 5-second
 ceiling. Each reserved session allows one statement at a time. Every query and precommit boundary checks
-that the operation remains active; escaped/late callbacks cannot issue more queries. A statement error or
-failed precommit rolls back before release. An uncertain timeout quarantines the **whole pool**, rejects
+that the operation remains active; escaped/late callbacks cannot issue more queries. A known callback or
+failed precommit rolls back before release. Any fast driver uncertainty, failed rollback, failed COMMIT
+acknowledgement or deadline quarantines the **whole pool**, rejects
 admission, invalidates active operations, and calls postgres 3.4.7 `end({timeout:0})` once to terminate
 connections/queued work. It does not merely race a promise and keep the driver working. There is no retry
 or alternate host. Prepared statement caching is disabled to avoid the installed driver's automatic plan-cache
 retry; statements still use parameterized extended protocol. A commit already sent may have committed: retain its command key and reconcile its
-existing receipt explicitly. These are trusted application sessions, not a SQL sandbox for untrusted code.
+existing receipt explicitly. No ROLLBACK is issued after COMMIT is attempted. Uncertain operations await the
+shared bounded termination outcome before reporting, so cleanup can add up to 5 seconds to the work deadline.
+These are trusted application sessions, not a SQL sandbox for untrusted code.
 
 Readiness drops before shutdown. Admitted requests can drain; deadline expiry returns unavailable to remaining
 requests, closes key loading, terminates the pool and rejects shutdown as uncertain. A failed/stalled close also
