@@ -27,6 +27,8 @@ export interface EffectClaimRequestV1 {
   messageId: string;
   execution: ExecutionAuthoritySnapshotV1;
   claimedAt: string;
+  /** Optional atomic node-wide admission ceiling. Native start always supplies its local intersection. */
+  maximumActiveEffects?: number;
 }
 
 export interface EffectClaimTombstoneV1 {
@@ -134,6 +136,8 @@ export class SqliteEffectClaimStore {
   }
 
   claim(input: EffectClaimRequestV1): { created: boolean; claimKey: string; disposition: EffectClaimDispositionV1; lookup: EffectClaimLookupV1 } {
+    if (input.maximumActiveEffects !== undefined && (!Number.isSafeInteger(input.maximumActiveEffects)
+      || input.maximumActiveEffects < 1 || input.maximumActiveEffects > 10_000)) throw new EffectClaimConflictError("Invalid effect capacity ceiling");
     assertNoSecretMaterial(input, "effect claim");
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/.test(input.messageId)) throw new EffectClaimConflictError("Delivery message ID is invalid");
     if (input.execution.state !== "executing" && input.execution.state !== "expiring_soon") {
@@ -167,6 +171,9 @@ export class SqliteEffectClaimStore {
         return { created: false, claimKey: prior.claimKey, disposition: disposition(prior.state), lookup: { kind: "full", snapshot: prior } };
       }
       if (message) throw new EffectClaimConflictError();
+      if (input.maximumActiveEffects !== undefined
+        && this.countActiveWithin(snapshot.identity.tenantId, snapshot.identity.nodeId) >= input.maximumActiveEffects)
+        throw new EffectClaimConflictError("Effect capacity exhausted");
       this.db.prepare(`INSERT INTO effect_claims(
         claim_key,execution_id,admission_id,tenant_id,node_id,project_id,job_id,attempt_id,operation_digest,
         identity_digest,authority_digest,effective_deadline,state,version,snapshot_digest,snapshot_json,updated_at
@@ -289,6 +296,26 @@ export class SqliteEffectClaimStore {
 
   countFull(): number {
     return Number((this.db.prepare(`SELECT count(*) AS count FROM effect_claims`).get() as { count: number }).count);
+  }
+
+  /** Count integrity-checked unsettled claims, including claimed/ambiguous effects. A missing
+   * result never releases capacity. Bound the full-record scan; retention is explicit owner work. */
+  countActive(tenantId: string, nodeId: string): number {
+    return this.transaction(() => this.countActiveWithin(tenantId, nodeId));
+  }
+
+  private countActiveWithin(tenantId: string, nodeId: string): number {
+    const rows = this.db.prepare("SELECT claim_key FROM effect_claims LIMIT 10001").all() as Array<{ claim_key: string }>;
+    if (rows.length > 10_000) throw new EffectClaimConflictError("Effect capacity evidence unavailable");
+    let count = 0;
+    // Do not trust mutable indexed tenant/node/state projections to hide a corrupt active claim.
+    for (const row of rows) {
+      const claim = this.loadFullWithin(row.claim_key, true);
+      if (!claim) throw new EffectClaimConflictError("Effect capacity evidence unavailable");
+      if (claim.identity.tenantId === tenantId && claim.identity.nodeId === nodeId
+        && ["claimed", "executing", "ambiguous"].includes(claim.state)) count++;
+    }
+    return count;
   }
 
   countTombstones(): number {

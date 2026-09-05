@@ -127,6 +127,35 @@ test("effect identity is stable per effect and excludes delivery message identit
   }
 });
 
+test("atomic capacity includes unsettled claims across connections and releases only settled effects", async () => {
+  await withStore((store, path) => {
+    const other = new SqliteEffectClaimStore(path);
+    try {
+      const first = store.claim({ ...claimInput(), maximumActiveEffects: 1 });
+      assert.equal(other.countActive("tenant:owner", "node:marvin"), 1);
+      const next = claimInput("message:capacity:2", request({ jobId: "job:second", attemptId: "attempt:second" }));
+      assert.throws(() => other.claim({ ...next, maximumActiveEffects: 1 }), /capacity exhausted/);
+      assert.equal(other.claim({ ...claimInput("message:capacity:duplicate"), maximumActiveEffects: 1 }).created, false);
+      store.apply(first.claimKey, { eventId: "event:capacity:cancel", kind: "cancelled", occurredAt: "2026-08-23T12:00:03.000Z" });
+      assert.equal(other.countActive("tenant:owner", "node:marvin"), 0);
+      assert.equal(other.claim({ ...next, maximumActiveEffects: 1 }).created, true);
+      assert.throws(() => other.claim({ ...next, maximumActiveEffects: 0 }), /Invalid effect capacity/);
+    } finally { other.close(); }
+  });
+});
+
+test("capacity refuses corrupt state projections instead of counting a hidden active claim as terminal", async () => {
+  await withStore((store, path) => {
+    const claimed = store.claim({ ...claimInput(), maximumActiveEffects: 1 });
+    const raw = new DatabaseSync(path);
+    try { raw.prepare("UPDATE effect_claims SET state='confirmed' WHERE claim_key=?").run(claimed.claimKey); }
+    finally { raw.close(); }
+    assert.throws(() => store.countActive("tenant:owner", "node:marvin"), EffectClaimConflictError);
+    const next = claimInput("message:capacity:other", request({ jobId: "job:other", attemptId: "attempt:other" }));
+    assert.throws(() => store.claim({ ...next, maximumActiveEffects: 1 }), EffectClaimConflictError);
+  });
+});
+
 test("claim creation requires live execution authority and serializes fresh message aliases", async () => {
   await withStore((store,path) => {
     const input = claimInput();
