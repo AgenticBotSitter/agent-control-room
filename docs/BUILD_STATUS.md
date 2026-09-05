@@ -168,6 +168,8 @@ without requiring an unexpired work lease or enabling restart. See `CR14C_CURREN
 Local verification passed: CR14C 346, preparation 769, main 925 with two existing platform skips,
 post-suite 392, private compiled tests 16 and rendered tests four, plus both builds, TypeScript, ESLint
 and migrations through 0046 (132 tables).
+Published as [PR #307](https://github.com/MarvinAi5/control-room/pull/307), stacked on #306.
+Current-head CI remains required; no merge or runtime activation is claimed.
 Real local cleanup configuration, profile qualification, owner signing/intake, signed dispatch and
 revisions remain unconfigured. Continue repository work on Astra Medium; live task execution is disabled.
 PR #304 exact head `21ab559e8aaf13d429c5c3622fa9aa339c5388cf` passed CI `33984129093`
