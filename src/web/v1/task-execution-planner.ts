@@ -1,0 +1,197 @@
+import { timingSafeEqual } from "node:crypto";
+import { z } from "zod";
+import { DOMAIN_CONTRACT_VERSION, authorityEnvelopeSchema, jobRecordSchema, requestRecordSchema,
+  workflowRecordSchema, type JobRecord } from "../../domain/v1";
+import { CanonicalStore } from "../../persistence/canonical-store";
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { appendAuditWith } from "../../audit/audit-store";
+import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest, type RollbackCheckpointStoreV1 } from "../../security";
+import { CompletionGateStoreV1, completionAcceptanceProfileSchemaV1 } from "../../completion-gate/v1";
+import type { NativeResultSubmissionService } from "../../completion-gate/v1/native-result-submission";
+import { HarnessRunStoreV1 } from "../../harness/v1/store";
+import { HERMES_NATIVE_ADAPTER, localId, digestSchema } from "../../harness/hermes-native-v1/contracts";
+import { parseCanonicalHttpsDestination } from "../../node-policy/v1/network-target-guard";
+import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { WebSessionAuthority } from "./session-authority";
+import { WebProjectService } from "./project-service";
+import { taskDraftSchema } from "./task-wire";
+
+const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
+/** Server-owned template, never accepted from a browser or worker request. This first planning
+ * class describes one approval-required native text turn, not arbitrary tools or a runnable grant. */
+export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.literal(HERMES_NATIVE_ADAPTER),
+  instructions: z.string().max(8192).refine(value => Buffer.byteLength(value, "utf8") <= 8192),
+  authority: authorityEnvelopeSchema, acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
+}).strict().superRefine((value, context) => {
+  const a = value.authority;
+  if (a.allowedExecutor === "executor:unassigned" || a.allowedOperations.length !== 1
+    || a.allowedOperations[0] !== "harness.hermes.native.start" || a.filesystemRoots.length || a.credentialRefs.length !== 1
+    || a.networkPolicy !== "allowlist" || a.allowedNetworkDestinations.length !== 1
+    || a.effectPolicy !== "approval_required" || a.maxConcurrentEffects !== 1 || a.maxDurationSeconds > 300
+    || a.maxCostUsd !== undefined || a.parentDigest !== undefined || a.maxRisk !== "low"
+    || computeAuthorityDigest(a) !== a.digest) context.addIssue({ code: "custom", message: "unsupported native task template" });
+  try { for (const destination of a.allowedNetworkDestinations) parseCanonicalHttpsDestination(destination); }
+  catch { context.addIssue({ code: "custom", message: "unsupported native destination" }); }
+});
+export type NativeTaskTemplate = z.infer<typeof nativeTaskTemplateSchema>;
+const planSchema = z.object({ schema: z.literal("control-room.task-execution-plan/v1"), tenantId: localId,
+  projectId: localId, sourceJobId: localId, sourceDigest: digestSchema, sourceInputDigest: digestSchema,
+  templateDigest: digestSchema, plannedBy: localId, plannedAt: instant,
+  input: z.object({ prompt: z.string().min(1).max(4000), instructions: z.string().max(8192) }).strict(),
+  request: requestRecordSchema, workflow: workflowRecordSchema, job: jobRecordSchema,
+  acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
+}).strict();
+type Plan = z.infer<typeof planSchema>;
+type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
+const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } });
+const fail = (): never => { throw new Error("task_execution_plan_unavailable"); };
+const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
+
+/** Privileged control-plane composition only; the existing private-web SQL role cannot use this
+ * writer. Current owner permission is still mandatory. No HTTP route or live executor is installed. */
+export class TaskExecutionPlanner {
+  private readonly template: NativeTaskTemplate;
+  private readonly key: Uint8Array;
+  private readonly reviewKey: Uint8Array;
+  private readonly checkpoints: RollbackCheckpointStoreV1;
+  private readonly sessions: WebSessionAuthority;
+  private readonly projects: WebProjectService;
+  constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
+    config: { template: NativeTaskTemplate; integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
+      checkpoints: RollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array }, private readonly clock: () => number = Date.now) {
+    this.template = nativeTaskTemplateSchema.parse(config.template); assertNoSecretMaterial(this.template);
+    if (!(config.integrityKey instanceof Uint8Array) || config.integrityKey.length !== 32
+      || !(config.reviewIntegrityKey instanceof Uint8Array) || config.reviewIntegrityKey.length !== 32) fail();
+    this.key = Uint8Array.from(config.integrityKey); this.reviewKey = Uint8Array.from(config.reviewIntegrityKey);
+    this.checkpoints = { read: config.checkpoints.read.bind(config.checkpoints),
+      initialize: fail, advance: fail };
+    this.sessions = new WebSessionAuthority(db, scope, clock, "task");
+    this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
+  }
+  private tag(plan: Plan) { return hmacSha256Tag(this.key, { purpose: "task-execution-plan/v1", plan }); }
+  private verify(row: Row) {
+    const plan = planSchema.parse(row.plan), expected = Buffer.from(this.tag(plan)), actual = Buffer.from(row.auth_tag);
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || row.tenant_id !== plan.tenantId
+      || row.project_id !== plan.projectId || row.source_job_id !== plan.sourceJobId || row.job_id !== plan.job.id) fail();
+    return plan;
+  }
+  private async profile(tx: DatabaseSession, plan: { tenantId: string; projectId: string; acceptanceProfileId: string;
+    acceptanceProfileDigest: string }, at: string) {
+    const gate = new CompletionGateStoreV1(joined(tx), this.reviewKey, this.checkpoints);
+    const profile = completionAcceptanceProfileSchemaV1.parse(await gate.getRecord(plan.tenantId, plan.acceptanceProfileId, "profile"));
+    if (profile.tenantId !== plan.tenantId || profile.projectId !== plan.projectId || profile.targetKind !== "document"
+      || sha256Digest(profile) !== plan.acceptanceProfileDigest || Date.parse(profile.createdAt) > Date.parse(at)) fail();
+  }
+  private async source(tx: DatabaseSession, projectId: string, jobId: string) {
+    const job = await this.jobWith(tx, projectId, jobId, true), canonical = new CanonicalStore(joined(tx));
+    const workflow = workflowRecordSchema.parse(await canonical.get(this.scope.tenantId, "workflow", job.workflowId));
+    const request = requestRecordSchema.parse(await canonical.get(this.scope.tenantId, "request", workflow.requestId));
+    const draft = taskDraftSchema.parse({ title: request.title, instructions: request.objective });
+    const a = job.authority;
+    if (job.tenantId !== this.scope.tenantId || job.projectId !== projectId || job.id !== jobId || job.jobType !== "task.proposal"
+      || job.state !== "proposed" || job.version !== 0 || workflow.projectId !== projectId || request.projectId !== projectId
+      || workflow.tenantId !== job.tenantId || request.tenantId !== job.tenantId || workflow.jobIds.length !== 1
+      || workflow.jobIds[0] !== jobId || workflow.id !== job.workflowId || request.id !== workflow.requestId
+      || workflow.state !== "proposed" || request.state !== "draft" || workflow.version !== 0 || request.version !== 0
+      || job.inputDigest !== sha256Digest(draft) || a.digest !== computeAuthorityDigest(a)
+      || a.allowedExecutor !== "executor:unassigned" || a.networkPolicy !== "none" || a.effectPolicy !== "none"
+      || a.credentialRefs.length || a.filesystemRoots.length || a.allowedNetworkDestinations.length || a.maxConcurrentEffects) fail();
+    assertNoSecretMaterial({ job, workflow, request });
+    return { job, workflow, request };
+  }
+  /** An owner plans a saved proposal, not new request-supplied instructions or authority. Exact
+   * source uniqueness serves as reconciliation identity across browser keys and service restarts. */
+  async plan(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(sourceJobId); digestSchema.parse(expectedInputDigest);
+    return this.sessions.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.plan", projectId, true);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      const source = await this.source(tx, projectId, sourceJobId);
+      if (source.job.inputDigest !== expectedInputDigest) throw new WebAccessError("conflict");
+      const templateDigest = sha256Digest(this.template), sourceDigest = sha256Digest(source);
+      const prior = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
+        [this.scope.tenantId, sourceJobId])).rows[0];
+      if (prior) {
+        const plan = this.verify(prior);
+        if (plan.templateDigest !== templateDigest || plan.sourceDigest !== sourceDigest) throw new WebAccessError("conflict");
+        await this.checkedJob(tx, plan);
+        return { receipt: this.receipt(plan), replayed: true };
+      }
+      if (project.lifecycle !== "active" || this.template.authority.projectId !== projectId
+        || Date.parse(this.template.authority.expiresAt) < Date.parse(actor.now) + this.template.authority.maxDurationSeconds * 1000)
+        throw new WebAccessError("conflict");
+      const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
+      const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
+      const input = { prompt: source.request.objective, instructions: this.template.instructions };
+      const plan = planSchema.parse({ schema: "control-room.task-execution-plan/v1", tenantId: this.scope.tenantId,
+        projectId, sourceJobId, sourceDigest, sourceInputDigest: expectedInputDigest, templateDigest, plannedBy: actor.id, plannedAt: actor.now, input,
+        acceptanceProfileId: this.template.acceptanceProfileId, acceptanceProfileDigest: this.template.acceptanceProfileDigest,
+        request: { ...base, kind: "request", id: `request:execution:${suffix}`, projectId, title: source.request.title,
+          objective: source.request.objective, state: "draft", priority: source.request.priority,
+          requestedBy: { actorId: actor.id, actorType: "human" }, idempotencyKey: `execution:${suffix}` },
+        workflow: { ...base, kind: "workflow", id: `workflow:execution:${suffix}`, projectId, requestId: `request:execution:${suffix}`,
+          definitionVersion: "native-task-plan/v1", definitionDigest: sha256Digest({ sourceDigest, templateDigest }),
+          authorityMode: "control_room_native", state: "proposed", jobIds: [`job:execution:${suffix}`] },
+        job: { ...base, kind: "job", id: `job:execution:${suffix}`, projectId, workflowId: `workflow:execution:${suffix}`,
+          jobType: "harness.hermes.native.task", specVersion: "1.0.0", inputDigest: sha256Digest(input), state: "proposed",
+          priority: source.job.priority, requiredCapability: "harness.hermes.native.runs.v1", dependsOnJobIds: [], authority: this.template.authority,
+          retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } } });
+      await this.profile(tx, plan, actor.now); assertNoSecretMaterial(plan);
+      // The inert-proposal materializer deliberately rejects this richer envelope. Use the existing
+      // trusted canonical writer inside our one owner-authorized transaction, without any transition.
+      const canonical = new CanonicalStore(joined(tx));
+      for (const record of [plan.request, plan.workflow, plan.job]) await canonical.create(record);
+      await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
+        VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id, JSON.stringify(plan), this.tag(plan)]);
+      await appendAuditWith(tx, { id: `audit:execution:${suffix}`, tenantId: plan.tenantId, projectId, actorId: actor.id, actorType: "human",
+        action: "tasks.plan", targetType: "job", targetId: plan.job.id, idempotencyKey: `execution:${suffix}`, occurredAt: actor.now,
+        safeMetadata: { sourceJobId, sourceDigest, templateDigest, inputDigest: plan.job.inputDigest, startsWork: false } });
+      return { receipt: this.receipt(plan), replayed: false };
+    });
+  }
+  private receipt(plan: Plan) { return { projectId: plan.projectId, sourceJobId: plan.sourceJobId, jobId: plan.job.id,
+    inputDigest: plan.job.inputDigest, plannedAt: plan.plannedAt, startsWork: false as const, grantsExecutionAuthority: false as const }; }
+  private async jobWith(tx: DatabaseSession, projectId: string, jobId: string, lock = false) {
+    const row = (await tx.query<{ payload: unknown; state: string; version: number; workflow_id: string;
+      created_at: string | Date; updated_at: string | Date }>(`SELECT payload,state,version,workflow_id,created_at,updated_at
+      FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`,
+    [this.scope.tenantId, projectId, jobId])).rows[0];
+    if (!row) throw new WebAccessError("not_found");
+    const job = jobRecordSchema.parse(row.payload);
+    if (job.id !== jobId || job.projectId !== projectId || job.tenantId !== this.scope.tenantId || job.state !== row.state
+      || job.version !== Number(row.version) || job.workflowId !== row.workflow_id
+      || job.createdAt !== new Date(row.created_at).toISOString() || job.updatedAt !== new Date(row.updated_at).toISOString()) fail();
+    return job;
+  }
+  private async checkedJob(tx: DatabaseSession, plan: Plan) {
+    const job = await this.jobWith(tx, plan.projectId, plan.job.id), canonical = new CanonicalStore(joined(tx));
+    const workflow = workflowRecordSchema.parse(await canonical.get(plan.tenantId, "workflow", plan.workflow.id));
+    const request = requestRecordSchema.parse(await canonical.get(plan.tenantId, "request", plan.request.id));
+    if (sha256Digest(immutableJob(job)) !== sha256Digest(plan.job) || sha256Digest(plan.input) !== job.inputDigest) fail();
+    if (sha256Digest({ ...workflow, state: "proposed", version: 0, updatedAt: workflow.createdAt }) !== sha256Digest(plan.workflow)
+      || sha256Digest({ ...request, state: "draft", version: 0, updatedAt: request.createdAt }) !== sha256Digest(plan.request)) fail();
+    await this.profile(tx, plan, plan.plannedAt);
+    return job;
+  }
+  /** Trusted coordinator read. Returns a plan, not admission/approval. Recheck active scope, expiry,
+   * node ceiling, capability and current lease at the later admission boundary. Never expose as HTTP. */
+  async read(jobId: string) {
+    localId.parse(jobId);
+    return this.db.transaction(async tx => {
+      const row = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND job_id=$2", [this.scope.tenantId, jobId])).rows[0];
+      if (!row) return undefined;
+      const plan = this.verify(row); await this.checkedJob(tx, plan); return plan;
+    });
+  }
+  /** After separately accepted admission/registration, carry the saved profile to the existing
+   * submission service. Neither helper constructs an attempt nor fabricates native-start evidence. */
+  async bindReview(jobId: string, runId: string, harnessIntegrityKey: Uint8Array, submission: Pick<NativeResultSubmissionService, "register">) {
+    const plan = await this.read(jobId); if (!plan) return fail();
+    const inspected = await new HarnessRunStoreV1(this.db, harnessIntegrityKey).inspect(plan.tenantId, runId);
+    if (!inspected?.run.nativeTask || inspected.run.jobId !== jobId || inspected.run.projectId !== plan.projectId
+      || inspected.run.nativeTask.inputDigest !== plan.job.inputDigest || Date.parse(inspected.run.createdAt) < Date.parse(plan.plannedAt)) return fail();
+    return submission.register({ tenantId: plan.tenantId, runId, acceptanceProfileId: plan.acceptanceProfileId,
+      acceptanceProfileDigest: plan.acceptanceProfileDigest, plannedAt: inspected.run.createdAt });
+  }
+}

@@ -18,7 +18,7 @@ patch number must match the database and both probes. The private configuration 
 Credentials and real locators remain in the operator's private memory/configuration, never command-line
 arguments, logs, GitHub or returned evidence. Review the actual target, not merely its disposable-looking name.
 
-Setup remains separately authorized. Apply migrations 0001–0044 and the reviewed fresh web/database role
+Setup remains separately authorized. Apply migrations 0001–0045 and the reviewed fresh web/database role
 profiles as the administrator/migrator, not the web login. Provide one synthetic owner, workspace, Idea project
 and enrollment/signal with matching synthetic integrity material. The fixed synthetic fixture IDs and `.invalid`
 origins are exported as `rehearsalScope`; the fixture assertion must be for `test-owner` and remain valid for
