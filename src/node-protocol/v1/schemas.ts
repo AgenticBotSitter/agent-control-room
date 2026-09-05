@@ -2,6 +2,7 @@ import { z } from "zod";
 import { artifactManifestRecordSchema, authorityEnvelopeSchema } from "../../domain/v1";
 import { fleetSignalEnvelopeSchema } from "../../node-fleet/v1/schemas";
 import { nativeTaskSnapshotBodySchema } from "../../harness/v1/native-observation";
+import { nativeTaskDispatchBodySchema, nativeTaskDispatchReceiptBodySchema } from "../../harness/v1/native-delivery";
 import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
 import { computeAuthorityDigest, sha256Digest } from "../../security";
 import { CONNECTION_ENROLLMENT_DELIVERY_ID_MAX_LENGTH, CONNECTION_ENROLLMENT_DELIVERY_ID_MIN_LENGTH,
@@ -356,6 +357,8 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("job.lease.renewed", leaseRenewed),
   frame("job.event", jobEvent),
   frame("harness.native.snapshot", nativeTaskSnapshotBodySchema, { direction: "node_to_server", senderKind: "node" }),
+  frame("harness.native.dispatch", nativeTaskDispatchBodySchema, { direction: "server_to_node", senderKind: "control_room" }),
+  frame("harness.native.dispatch.receipt", nativeTaskDispatchReceiptBodySchema, { direction: "node_to_server", senderKind: "node" }),
   frame("job.cancel", cancelRequest),
   frame("job.cancel.ack", cancelAck),
   frame("node.reconciliation.request", reconciliationRequest),
@@ -368,6 +371,17 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   if (Date.parse(value.expiresAt) <= Date.parse(value.sentAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "frame must expire after sending" });
   if (value.direction === "node_to_server" && value.senderKind !== "node") context.addIssue({ code: "custom", path: ["senderKind"], message: "node-to-server frames must be node signed" });
   if (value.direction === "server_to_node" && value.senderKind !== "control_room") context.addIssue({ code: "custom", path: ["senderKind"], message: "server-to-node frames must be Control Room signed" });
+  if (value.type === "harness.native.dispatch") {
+    const r = value.body.request;
+    if (value.tenantId !== r.tenantId || Date.parse(value.expiresAt) > value.body.start.deadline
+      || Date.parse(value.sentAt) < Date.parse(value.body.packet.approval.body.issuedAt))
+      context.addIssue({ code: "custom", message: "native dispatch frame scope or deadline mismatch" });
+  }
+  if (value.type === "harness.native.dispatch.receipt") {
+    if (value.body.tenantId !== value.tenantId || value.body.nodeId !== value.actorId
+      || value.causationId !== value.body.dispatchMessageId || Date.parse(value.body.recordedAt) > Date.parse(value.sentAt))
+      context.addIssue({ code: "custom", message: "native receipt frame identity mismatch" });
+  }
   if (value.type === "connection.enrollment.deliver") {
     const envelope = value.body.envelope;
     if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
@@ -393,5 +407,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   }
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
-export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "harness.native.dispatch", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);
