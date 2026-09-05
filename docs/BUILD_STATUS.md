@@ -135,6 +135,8 @@ It resolves exact signed grants from real durable bridge receipts and owner-pinn
 including signed key revocation, in disposable tests. It does not activate a receiver or replace owner
 approval/profile evidence. Next: remaining current policy sources and owner signing/intake, signed
 dispatch and revisions on Astra Medium.
+Published as [PR #304](https://github.com/MarvinAi5/control-room/pull/304), stacked on #303.
+Current-head CI remains required; no merge or runtime activation is claimed.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
