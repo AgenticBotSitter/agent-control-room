@@ -124,6 +124,9 @@ It permits exact known-run cleanup within a separate bounded window without rene
 stop or claiming physical cessation. Tests use real disposable journals and fake transport, not live
 agents. Next: trusted current evidence sources, owner approval/signing intake, signed dispatch and
 bounded revisions on Astra Medium. Production composition and live acceptance remain unconfigured.
+Published as [PR #303](https://github.com/MarvinAi5/control-room/pull/303), stacked on #302.
+Current-head CI remains required; no merge or deployment is claimed. #302's exact head `0f08240`
+was running CI `33982945820` at the last inspection, not yet verified complete.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
