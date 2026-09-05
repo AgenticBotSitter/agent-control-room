@@ -16,6 +16,6 @@ export const taskVerificationCommandSchema = z.object({ receipt: taskVerificatio
 export const taskVerificationOptionsSchema = taskVerificationBindingSchema.extend({ projectId: id, jobId: id,
   scenarios: z.array(z.object({ scenarioId: id, label: z.string().min(1).max(120), instructions: z.string().min(1).max(2000),
     instructionsDigest: digest, availability: z.enum(["available", "access_denied", "project_inactive", "target_closed", "independence_required", "already_recorded"]),
-    ownVerification: taskVerificationReceiptSchema.nullable() }).strict()).max(50),
+    ownVerification: taskVerificationReceiptSchema.omit({ noteDigest: true }).nullable() }).strict()).max(50),
   source: z.enum(["configured", "not_configured"]), grantsExecutionAuthority: z.literal(false) }).strict();
 export type TaskVerificationOptions = z.infer<typeof taskVerificationOptionsSchema>;
