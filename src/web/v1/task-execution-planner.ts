@@ -9,7 +9,7 @@ import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Di
 import { CompletionGateStoreV1, completionAcceptanceProfileSchemaV1 } from "../../completion-gate/v1";
 import type { NativeResultSubmissionService } from "../../completion-gate/v1/native-result-submission";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
-import { HERMES_NATIVE_ADAPTER, localId, digestSchema } from "../../harness/hermes-native-v1/contracts";
+import { HERMES_NATIVE_ADAPTER, localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { parseCanonicalHttpsDestination } from "../../node-policy/v1/network-target-guard";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
@@ -55,7 +55,6 @@ export class TaskExecutionPlanner {
   private readonly key: Uint8Array;
   private readonly reviewKey: Uint8Array;
   private readonly checkpoints: RollbackCheckpointStoreV1;
-  private readonly sessions: WebSessionAuthority;
   private readonly projects: WebProjectService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: { template: NativeTaskTemplate; integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
@@ -66,7 +65,6 @@ export class TaskExecutionPlanner {
     this.key = Uint8Array.from(config.integrityKey); this.reviewKey = Uint8Array.from(config.reviewIntegrityKey);
     this.checkpoints = { read: config.checkpoints.read.bind(config.checkpoints),
       initialize: fail, advance: fail };
-    this.sessions = new WebSessionAuthority(db, scope, clock, "task");
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
   }
   private tag(plan: Plan) { return hmacSha256Tag(this.key, { purpose: "task-execution-plan/v1", plan }); }
@@ -104,7 +102,17 @@ export class TaskExecutionPlanner {
    * source uniqueness serves as reconciliation identity across browser keys and service restarts. */
   async plan(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string, expectedInputDigest: string) {
     localId.parse(projectId); localId.parse(sourceJobId); digestSchema.parse(expectedInputDigest);
-    return this.sessions.authenticated(identity, async (tx, actor) => {
+    let materializing = false;
+    const requireTemplateTime = () => {
+      const now = this.clock();
+      if (!Number.isSafeInteger(now) || Date.parse(this.template.authority.expiresAt) < now + this.template.authority.maxDurationSeconds * 1000)
+        throw new WebAccessError("conflict");
+    };
+    const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, () => {
+        check(); if (materializing) requireTemplateTime();
+      }) };
+    return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.plan", projectId, true);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const source = await this.source(tx, projectId, sourceJobId);
@@ -118,9 +126,11 @@ export class TaskExecutionPlanner {
         await this.checkedJob(tx, plan);
         return { receipt: this.receipt(plan), replayed: true };
       }
-      if (project.lifecycle !== "active" || this.template.authority.projectId !== projectId
-        || Date.parse(this.template.authority.expiresAt) < Date.parse(actor.now) + this.template.authority.maxDurationSeconds * 1000)
+      if (project.lifecycle !== "active" || this.template.authority.projectId !== projectId)
         throw new WebAccessError("conflict");
+      // Identity/source locks may have waited. Sample current time here and again at commit,
+      // but do not apply today's template expiry to exact historical reconciliation.
+      requireTemplateTime(); materializing = true;
       const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
       const input = { prompt: source.request.objective, instructions: this.template.instructions };

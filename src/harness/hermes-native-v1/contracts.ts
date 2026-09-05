@@ -1,13 +1,12 @@
 import { z } from "zod";
 import { sha256Digest } from "../../security/canonical-digest";
 import { parseCanonicalHttpsDestination } from "../../node-policy/v1/network-target-guard";
+import { HERMES_NATIVE_ADAPTER, digestSchema, localId } from "../v1/native-run-identifiers";
+export { HERMES_NATIVE_ADAPTER, digestSchema, localId } from "../v1/native-run-identifiers";
 
 export const HERMES_NATIVE_REVISION = "29112bef099274229cadff79cdff7bf7b99c4b77" as const;
-export const HERMES_NATIVE_ADAPTER = "hermes-native-runs/v1" as const;
 export const nativeLimits = Object.freeze({ requestBytes: 65_536, jsonBytes: 131_072, resultBytes: 65_536,
   eventBytes: 16_384, streamBytes: 1_048_576, streamEvents: 512, requestMs: 10_000, streamMs: 30_000 });
-export const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-export const localId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/);
 export const nativeId = z.string().regex(/^run_[a-f0-9]{32}$/);
 export const profileName = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 const instant = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);

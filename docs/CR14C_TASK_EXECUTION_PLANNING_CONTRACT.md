@@ -12,7 +12,8 @@ views. The caller supplies only the source job and expected input digest, not re
 `TaskExecutionPlanner.plan` requires the existing verified human session, project/workspace read scope,
 `tasks.read`, and owner-only `tasks.plan`; proposal permission alone does not grant planning. Identity,
 session and grants are rechecked at commit. New plans require an active project and a current template
-with at least the declared duration remaining. Exact historical reconciliation can return the existing
+with at least the declared duration remaining, sampled after source locking and again immediately before
+commit. Exact historical reconciliation can return the existing
 receipt after project closure or template expiry; it is not fresh execution authority.
 
 ## Selected first planning class
@@ -23,6 +24,9 @@ and credential reference, no filesystem roots, low risk, at most 300 seconds, on
 no unmeasurable dollar cap. The capability selector is `harness.hermes.native.runs.v1`, corresponding to
 adapter `hermes-native-runs/v1`; declaring it does not register or qualify an executor. Profiles, model,
 provider and actual tool restrictions still require accepted enrollment and node-local admission.
+The adapter name and identifier schemas live in a pure shared contract module; the planner does not
+import the native adapter subtree, transport or lifecycle code. The adapter re-exports those unchanged
+identifiers, and the existing no-application-adapter-import regression remains unchanged.
 Template prose does not enforce tool isolation. No native authority, profile isolation or qualification is
 self-issued here. `approval_required` is retained; planning is not the approval for a provider call.
 

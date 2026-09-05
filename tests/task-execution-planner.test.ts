@@ -101,17 +101,19 @@ test("unsupported template permissions and missing review profile fail without m
   assert.equal((await f.db.query("SELECT * FROM control_task_execution_plans")).rows.length, 0);
 });
 
-test("ordinary SQL failure and owner expiry roll back child bundle, lineage and audit together", async t => {
-  for (const mode of ["sql", "expiry"] as const) await t.test(mode, async t => {
+test("ordinary SQL failure, owner expiry and elapsed template window roll back the whole new plan", async t => {
+  for (const mode of ["sql", "expiry", "template_expiry", "template_lock_wait"] as const) await t.test(mode, async t => {
     const f = await fixture(); t.after(f.close); let now = instant + 7000;
     const wrap = (tx: DatabaseSession): DatabaseSession => ({ async query<T>(sql: string, params?: unknown[]) {
       const result = await tx.query<T>(sql, params);
-      if (sql.includes("INSERT INTO audit_events")) { if (mode === "sql") throw new Error("synthetic_sql_failure"); now = instant + 700_000; }
+      if (mode === "template_lock_wait" && sql.includes("FROM control_jobs") && sql.includes("FOR UPDATE")) now = instant + 241_000;
+      if (sql.includes("INSERT INTO audit_events")) { if (mode === "sql") throw new Error("synthetic_sql_failure");
+        now = instant + (mode === "expiry" ? 700_000 : 241_000); }
       return result;
     } });
     const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work(wrap(tx)), check) };
     await assert.rejects(f.create(db, () => now).plan(f.identity, binding.projectId, f.source.receipt.jobId, sha256Digest(taskDraft)),
-      mode === "sql" ? /synthetic_sql_failure/ : /authentication_required/);
+      mode === "sql" ? /synthetic_sql_failure/ : mode === "expiry" ? /authentication_required/ : /conflict/);
     assert.equal((await f.db.query("SELECT * FROM control_task_execution_plans")).rows.length, 0);
     assert.equal((await f.db.query("SELECT * FROM control_jobs WHERE payload->>'jobType'='harness.hermes.native.task'")).rows.length, 0);
   });
@@ -132,6 +134,8 @@ test("exact plan reconciliation survives project closure without granting anothe
   const f = await fixture(); t.after(f.close); const saved = await f.plan();
   await f.db.query("UPDATE control_manual_project_heads SET lifecycle='completed' WHERE project_id=$1", [binding.projectId]);
   const replay = await f.plan(); assert.equal(replay.replayed, true); assert.deepEqual(replay.receipt, saved.receipt);
+  const expiredReplay = await f.create(f.db, () => instant + 400_000).plan(f.identity, binding.projectId, f.source.receipt.jobId, sha256Digest(taskDraft));
+  assert.equal(expiredReplay.replayed, true); assert.deepEqual(expiredReplay.receipt, saved.receipt);
 });
 
 test("incorrect plan key fails closed and the private web SQL role cannot materialize execution plans", async t => {
