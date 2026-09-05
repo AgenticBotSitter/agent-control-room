@@ -1,8 +1,9 @@
 # CR14B exact setup/rehearsal packet — DRAFT, NOT AUTHORIZED TO RUN
 
 Date: 2026-09-04. Architect: Codex, Astra Xhigh. This is a scoped execution specification, not a dispatch,
-approval, ready claim or executable setup tool. The listener/static adapter and real-PG harness are not yet
-implemented. Stop at that prerequisite until their exact artifacts have passed independent review.
+approval, ready claim or executable setup tool. The listener/static adapter is now independently accepted
+in `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`; the real-PG harness is not yet implemented. Stop at that remaining
+prerequisite until the exact combined artifacts have passed independent review. No native effect is authorized.
 
 ## Separate setup from rehearsal
 
@@ -56,7 +57,8 @@ The later reviewed runner must execute this exact bounded sequence and retain fi
 6. Only after the listener/static adapter is reviewed and explicitly included in the same permission packet:
    one loopback-only listener, one synthetic request sequence, fixed built client assets only. Verify no server
    chunks/config/source/directory listing can be served. Close and prove listener/DB-session absence. This
-   step is currently **not runnable**, and must never be replaced with an improvised listener command.
+   step remains **not authorized/runnable as a rehearsal** until the real-PG harness and exact permission
+   packet exist; use the accepted serving entry, never an improvised listener command.
 7. Reopen once under the same bounded authorized rehearsal solely to reconcile stored receipts and demonstrate
    persistence. This is a planned restart, not an uncertain-operation retry. Restore a disposable backup into
    the separately named restore target only if that target/action is explicitly included; otherwise report

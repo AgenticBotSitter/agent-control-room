@@ -5067,3 +5067,35 @@ production preflight rejects that simulator connection. Real database ACL/concur
 The setup/rehearsal packet is a draft execution specification, not a ready or authorized native run. Listener,
 host/database/credential/IdP/MFA/ingress/restore/deployment effects still need their scoped prerequisites.
 Existing Sites preview, generic DB adapter and disabled legacy native qualification paths are preserved.
+
+## ADR-208 — Private HTTP serving is a distinct, bounded application authority
+
+**Date:** 2026-09-05. **Owner direction:** overnight repository implementation under the accepted completion
+program, preserving merge and live-effect gates. Lead: Astra Xhigh.
+
+Use one explicit import-inert Node HTTP service behind the separately configured same-host private ingress.
+Pin its runtime HTTP import authority to `src/web/v1/private-serving.ts`; retain the old custom `node:net`
+authority inventory and disabled native qualification paths unchanged. This is application serving, not an
+agent gateway or a permission to activate either listener. No ambient startup, environment/credential loader,
+service installer, arbitrary reverse proxy, public bind or runtime consumer is introduced.
+
+Successful service construction owns application cleanup, even before start. Exact loopback/HTTPS Host,
+strict framing, bounded headers/body/concurrency/response time/bytes and response backpressure precede the
+existing app authentication/SQL boundary. A disconnect cancels delivery, not a possibly committed command;
+reconcile its existing receipt and never automatically replay. Drop readiness before bounded all-settled
+network/application cleanup and retain uncertain outcomes. Physical absence remains real rehearsal evidence.
+
+Load a bounded immutable snapshot of approved browser files from `dist-vps/client`, never request-selected
+files or server intermediates. Assets contain no records/credentials. Private response policy applies to
+owned responses; Node-generated pre-handler timeout failures are explicitly not claimed covered or observed.
+The actual reverse proxy, TLS/Access/MFA, real database and browser remain later scoped integrations.
+
+**Evidence:** accepted product `070a1405a0441ca1225271d6a1d74773df29c3e0`, tree
+`4aacfed5b2372589202de4cfb1740fd42cc722c3`; `CR14B_PRIVATE_SERVING_ACCEPTANCE.md` and both review reports.
+The initial one Medium/three Low rejection is retained. Final 115 focused, 769 pretests, 540 main tests
+(two Windows-only skips), 392 posttests, seven private/four Sites artifact checks, both builds, TypeScript,
+full lint and 127-table migrations passed. Re-review found no remaining issues. No live service was run.
+
+**Next:** disposable PostgreSQL rehearsal tooling under the existing separate setup/rehearsal permission
+packet. This accepted code does not itself make that packet ready, authorize a live effect, complete B-WIRE
+or the private pilot, or authorize a merge/deployment.

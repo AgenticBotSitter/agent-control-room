@@ -15,8 +15,10 @@ pages now use authenticated SQL services in compiled integration tests; they are
 ordinary/Idea catalog and pagination are also accepted; Idea status remains read-only in this private view.
 The owner-only connection inventory and bounded startup/database-role implementation are also independently
 accepted. Startup checks the restricted SQL role and schema; uncertain saves stop pool use instead of retrying.
-This is not a deployed app or live fleet. Next is private Node serving and rehearsal tooling.
-See the [startup acceptance](docs/CR14B_PRIVATE_STARTUP_ACCEPTANCE.md),
+Private Node serving is now independently accepted too: bounded requests, compiled browser assets and clean
+lifecycle ownership. This is not a deployed app or live fleet. Next is disposable PostgreSQL rehearsal tooling.
+See the [serving acceptance](docs/CR14B_PRIVATE_SERVING_ACCEPTANCE.md),
+[startup acceptance](docs/CR14B_PRIVATE_STARTUP_ACCEPTANCE.md),
 [connection view acceptance](docs/CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md),
 [shared catalog acceptance](docs/CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md),
 [private application acceptance](docs/CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md),

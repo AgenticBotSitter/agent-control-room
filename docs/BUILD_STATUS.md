@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-09-04
+**Updated:** 2026-09-05
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Current delivery order is `CONTROL_ROOM_COMPLETION_PROGRAM.md`; integration direction is
 `CR14A_INTEGRATION_DIRECTION.md` / ADR-202. `CR3_BUILD_PLAN.md` and detailed reviews preserve historical
@@ -28,7 +28,10 @@ preparation design is recorded, not provisioned. See `CR14B_PRIVATE_CONNECTION_A
 **CR14B bounded startup/pool and database-role implementation is independently accepted** at
 `09db99b3925f2197f2421b14a95ccfb35c707b80`. It adds explicit startup, verified restricted role/schema and
 bounded shutdown with uncertain-save handling. See `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`.
-**Next: CR14B private Node serving and rehearsal tooling**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
+**CR14B private Node serving is independently accepted** at
+`070a1405a0441ca1225271d6a1d74773df29c3e0`. Its inert HTTP service, request/stream bridge and client-asset
+snapshot reach the compiled protected app in tests. See `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`.
+**Next: CR14B disposable PostgreSQL rehearsal tooling**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The current repository block adds explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
@@ -47,6 +50,9 @@ PR #283's exact head `39afa0f` passed GitHub CI run `33940801704` (completed 202
 The accepted startup/database follow-up is [PR #284](https://github.com/MarvinAi5/control-room/pull/284),
 stacked on #283. Its current-head checks remain required; integrate the stack in dependency order.
 This turn did not merge or deploy any PR.
+PR #284's exact head `0c520fb` passed GitHub CI run `33943680503` (completed 2026-09-05 04:20:56 UTC).
+The accepted serving follow-up is [PR #285](https://github.com/MarvinAi5/control-room/pull/285), stacked on #284.
+Its current-head checks remain required. Neither review acceptance nor publication authorizes a merge or live run.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
@@ -104,6 +110,12 @@ rejected one Medium fast transaction-uncertainty issue; remediation and re-revie
 findings. PGlite cannot revoke its template1 TEMP privilege; the production gate rejects it, and only that
 metadata field is injected in startup fixtures. Real DB ACL/concurrency, listener and deployment remain unproved.
 
+CR14B private-serving verification: 115/115 focused; full installed-script lifecycle passed 769 pretests,
+540 main tests (2 existing Windows-only skips) and 392 posttests. TypeScript/full lint/whitespace passed;
+both builds, 7 private compiled + 4 Sites checks and 127-table migrations passed. Independent re-review
+closed one Medium source inventory and three Low lifecycle/evidence findings. No physical listener,
+real PostgreSQL, credentials, browser, provider/agent or deployment was run.
+
 ### Historical component acceptance ledger
 
 The entries and narratives below retain their original scope and chronology. Terms such as complete,
@@ -113,6 +125,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14B private Node serving | Independently accepted request/static/lifecycle code and compiled SQL integration; no physical listener | `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`; `reviews/CR14B_PRIVATE_SERVING_REREVIEW.md` |
 | CR14B bounded private startup/database | Independently accepted repository bootstrap, narrow role, deadline/drain and uncertainty handling; real service not running | `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`; `reviews/CR14B_PRIVATE_STARTUP_REREVIEW.md` |
 | CR14B private connection view | Independently accepted existing enrollment/signal reads and startup preparation design; no live fleet or implemented bootstrap | `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`; `reviews/CR14B_CONNECTION_VIEW_REVIEW.md` |
 | CR14B shared private project catalog | Independently accepted ordinary/Idea reads and pagination; private Idea writes and full private pilot incomplete | `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; `reviews/CR14B_SHARED_CATALOG_REREVIEW.md` |
