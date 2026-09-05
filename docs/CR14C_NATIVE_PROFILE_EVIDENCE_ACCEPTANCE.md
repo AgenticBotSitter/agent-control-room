@@ -28,7 +28,7 @@ The initial build verification passed both private and Sites builds, 16 private 
 rendered tests, and migrations 0001–0046 (132 tables). TypeScript/full ESLint passed before remediation.
 The initial CR14C suite passed 360 and preparation 769. Main passed 940 with two existing platform
 skips, and post-suite passed 392. Because remediation overlapped the first broad run, CR14C/main and
-both builds are being refreshed against the fixed head; these initial results are not substituted for it.
+both builds were refreshed against the fixed head; these initial results were not substituted for it.
 Final-head TypeScript and full ESLint passed. Migration files/schema are unchanged by remediation.
 The final-head refresh passed CR14C 361 and main 940 with two existing platform skips. Both builds,
 16 private compiled tests and four rendered tests passed again. Whitespace checks passed.

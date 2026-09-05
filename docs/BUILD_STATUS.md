@@ -181,6 +181,8 @@ and supervisor installation are still required; the verifier does not manufactur
 Final local verification: CR14C 361, main 940 with two existing platform skips, preparation 769,
 post-suite 392, private compiled tests 16 and rendered tests four; both builds, TypeScript, full ESLint
 and migrations through 0046 (132 tables) passed. No live task execution is enabled.
+Published as [PR #308](https://github.com/MarvinAi5/control-room/pull/308), stacked on #307.
+Current-head CI remains required; no merge or deployment is claimed.
 PR #305 exact head `b3cb5ceee3529c2b11253ea196dbe99dceb0b566` passed CI `33984854964`
 at 2026-09-05 19:04:25 UTC. PR #306 was still running when checked. No merge is claimed.
 PR #304 exact head `21ab559e8aaf13d429c5c3622fa9aa339c5388cf` passed CI `33984129093`
