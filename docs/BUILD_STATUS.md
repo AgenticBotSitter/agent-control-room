@@ -104,6 +104,13 @@ but is not a live approval issuer or dispatch path. Next implementation: node-si
 composition, owner approval issuance/intake, signed dispatch and bounded revision submission.
 Published as [PR #300](https://github.com/MarvinAi5/control-room/pull/300), stacked on #299;
 current-head CI remains required. Neither PR is merged or deployed.
+The native start/live-read authority controller is independently accepted at
+`9bcaac9631b14f6625281bbf5ac5f8feb8ae9510`; see `CR14C_NATIVE_START_AUTHORITY_ACCEPTANCE.md`.
+It connects real local policy/admission/marker stores and atomic node capacity to the fake-tested adapter,
+with bounded unresolved checks and no restart of expired execution. Trusted platform resolvers and live
+activation remain unconfigured. Next: separately typed stop/post-deadline recovery, owner signing/intake,
+signed dispatch and revisions on Astra Medium. PR #300's run `33981299049` was cancelled at
+2026-09-05 17:53:11 UTC; this is not a pass or merge.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.

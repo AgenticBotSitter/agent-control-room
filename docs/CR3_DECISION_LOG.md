@@ -5508,3 +5508,25 @@ for full checks and preserved failed test expectations. No runtime or production
 
 **Next:** node-side authority composition, owner signing/intake and signed dispatch, then revisions.
 Continue Astra Medium. Live credentials, native/provider operations, deployment and merge remain gated.
+
+## ADR-224 — durable native start authority with atomic local capacity
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired start/live-read component.
+
+Compose payload-bound owner approval with the existing local evaluator, admission/execution journals and
+pre-effect marker before native submission. Recheck current permission before transport bytes. Trusted
+current ceiling/lease/profile/key resolvers remain mandatory upstream seams, not claimed host evidence.
+Do not reuse an existing execution for a new start or resurrect expired authority for live reads.
+
+Check node effect capacity inside the existing SQLite claim transaction, counting integrity-checked
+unsettled effects. All node controllers share this local enforcement ledger; PostgreSQL remains global
+authority. Retain resolver slots through actual settlement, not just caller timeout. Separate typed
+stop/post-deadline authority is required and is not inherited from start permission.
+
+**Evidence:** accepted `9bcaac9631b14f6625281bbf5ac5f8feb8ae9510`, tree
+`aa9b697115a0dbb6d1b710bb5868d1a4ab9bcc61`; independent re-review passed 37 tests and closed M-001's
+unbounded timed-out resolver finding. See `CR14C_NATIVE_START_AUTHORITY_ACCEPTANCE.md` for preserved
+negative evidence and full verification. No runtime activation, real qualification, provider or merge.
+
+**Next:** exact-run stop/recovery, real current authority sources, owner approval/intake, signed dispatch
+and revisions. Continue Astra Medium; no production effects are authorized by this decision.
