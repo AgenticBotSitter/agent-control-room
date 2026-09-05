@@ -76,6 +76,7 @@ export class PortableNodeBridge {
   private transportIdentity?: string;
   private sendQueue: Promise<void> = Promise.resolve();
   private connectionGeneration = 0;
+  private connectionReconciled = false;
 
   constructor(
     private readonly identity: BridgeIdentity,
@@ -90,7 +91,7 @@ export class PortableNodeBridge {
 
   nativeDeliveryChannel(): NativeDeliveryChannel | undefined {
     const status = this.statusValue;
-    if (status.state !== "online" || status.lastSafeErrorCode || !this.transport ||
+    if (!this.connectionReconciled || status.state !== "online" || status.lastSafeErrorCode || !this.transport ||
         !status.connectionId || !status.maxFrameBytes ||
         !this.identity.features.includes(NATIVE_DELIVERY_FEATURE) ||
         !status.enabledFeatures?.includes(NATIVE_DELIVERY_FEATURE)) return undefined;
@@ -101,7 +102,7 @@ export class PortableNodeBridge {
       connectionId: status.connectionId, maxFrameBytes: status.maxFrameBytes,
       grantsExecutionAuthority: false as const,
       assertCurrent: () => {
-        if (generation !== this.connectionGeneration || transport !== this.transport ||
+        if (!this.connectionReconciled || generation !== this.connectionGeneration || transport !== this.transport ||
             this.statusValue.state !== "online" || this.statusValue.lastSafeErrorCode ||
             this.statusValue.connectionId !== status.connectionId ||
             !this.statusValue.enabledFeatures?.includes(NATIVE_DELIVERY_FEATURE)) {
@@ -135,6 +136,7 @@ export class PortableNodeBridge {
     if (!["stopped", "backing_off"].includes(this.statusValue.state)) throw new Error("Bridge is already connected or connecting");
     const connectionId = `connection:${this.idFactory()}`;
     this.connectionGeneration += 1;
+    this.connectionReconciled = false;
     this.transport = transport;
     this.transportIdentity = options.transportIdentity;
     this.statusValue = { ...this.statusValue, state: "connecting", connectionId, lastSafeErrorCode: undefined };
@@ -200,6 +202,7 @@ export class PortableNodeBridge {
         if (this.statusValue.state !== "reconciling") throw new Error("Reconciliation arrived in the wrong state");
         await this.sendReconciliationReport(now);
         if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed during reconciliation");
+        this.connectionReconciled = true;
         this.statusValue = {
           ...this.statusValue,
           state: "online",
@@ -220,6 +223,7 @@ export class PortableNodeBridge {
         break;
       case "node.operation.request": {
         const handled = this.commandHandler && await this.commandHandler.handle(frame, now);
+        if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed during node operation");
         if (!handled) {
           this.journal.recordCommand(frame, now);
           break;
@@ -227,9 +231,11 @@ export class PortableNodeBridge {
         const response = this.commandHandler?.response?.(frame.messageId);
         if (!response) throw new Error("Handled node operation did not produce a durable acknowledgement");
         await this.sendBody("node.operation.ack", response, true, now, frame.correlationId, frame.messageId);
+        if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed during node acknowledgement");
         if (response.disposition === "applied") {
           this.connectionGeneration += 1;
-          this.statusValue = { ...this.statusValue, state: response.operation === "request_resume" ? "online" : "draining" };
+          this.statusValue = { ...this.statusValue, state: response.operation === "request_resume"
+            ? (this.connectionReconciled ? "online" : "reconciling") : "draining" };
         }
         break;
       }
@@ -302,6 +308,7 @@ export class PortableNodeBridge {
 
   async close(): Promise<void> {
     this.connectionGeneration += 1;
+    this.connectionReconciled = false;
     const transport = this.transport;
     this.transport = undefined;
     this.transportIdentity = undefined;
@@ -311,6 +318,7 @@ export class PortableNodeBridge {
 
   async disconnected(): Promise<number> {
     this.connectionGeneration += 1;
+    this.connectionReconciled = false;
     const transport = this.transport;
     this.transport = undefined;
     this.transportIdentity = undefined;
@@ -390,6 +398,8 @@ export class PortableNodeBridge {
     trackAcknowledgement: boolean,
   ): Promise<"staged" | "duplicate" | "coalesced"> {
     const connectionId = this.requireConnection();
+    const generation = this.connectionGeneration;
+    const transport = this.requireTransport();
     const sequence = this.journal.nextOutboundSequence(connectionId);
     const unsigned = {
       protocol: NODE_PROTOCOL_V1,
@@ -410,17 +420,18 @@ export class PortableNodeBridge {
       body,
     } as UnsignedNodeFrame<TType>;
     const frame = await this.signer.sign(unsigned) as SignedNodeFrame<TType>;
+    if (generation !== this.connectionGeneration || transport !== this.transport) throw new Error("Bridge connection changed during signing");
     const disposition = frame.type === "harness.native.snapshot"
       ? this.journal.stageNativeSnapshotOutbound(frame as SignedNodeFrame<"harness.native.snapshot">, now)
       : this.journal.stageOutbound(frame, essential, now);
     if (disposition === "coalesced") return disposition;
     try {
-      await this.requireTransport().send(JSON.stringify(frame));
+      await transport.send(JSON.stringify(frame));
       this.journal.markSent(frame.messageId, now);
       if (!trackAcknowledgement) this.journal.acknowledge([frame.messageId], now);
       return disposition;
     } catch (error) {
-      this.failTransport();
+      if (generation === this.connectionGeneration) this.failTransport();
       throw error;
     }
   }
@@ -474,6 +485,7 @@ export class PortableNodeBridge {
 
   private failTransport(): void {
     this.connectionGeneration += 1;
+    this.connectionReconciled = false;
     const reconnectAttempt = this.statusValue.reconnectAttempt + 1;
     this.statusValue = { state: "backing_off", reconnectAttempt, lastSafeErrorCode: "transport_unavailable" };
   }

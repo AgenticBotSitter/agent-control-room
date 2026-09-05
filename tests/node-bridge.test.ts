@@ -115,6 +115,62 @@ test("authentication completing after close cannot restore the negotiated channe
   } finally { release(); await bridge.close(); journal.close(); }
 });
 
+for (const delayed of [false, true]) test(`resume cannot bypass connection reconciliation (delayed=${delayed})`, async () => {
+  const nodeKeys = keys();
+  const serverKeys = keys();
+  const journal = new SqliteBridgeJournal(":memory:");
+  journal.initializeNodeControlState({ nodeId: "node:mac-mini", nodeVersion: 4, state: "draining", updatedAt: t0 });
+  const handler = new DurableNodeOperationHandler("node:mac-mini", journal, { requestRunningCancellation() {} });
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let id = 0;
+  let sequence = 0;
+  const bridge = new PortableNodeBridge(
+    { tenantId: "tenant:owner", nodeId: "node:mac-mini", keyId: "node-key:1", features: [NATIVE_DELIVERY_FEATURE] }, journal,
+    { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
+    new NodeProtocolAuthenticator(serverResolver(serverKeys.spki), journal, new FixedWindowProtocolRateLimiter(100, 60)),
+    () => `resume-${++id}`,
+    { async handle(frame, now) { entered(); if (delayed) await gate; return handler.handle(frame, now); },
+      response: (messageId) => handler.response(messageId) },
+  );
+  async function accept() {
+    const transport = new MemoryTransport();
+    await bridge.open(transport, { now: t1, transportIdentity: "tls:server" });
+    await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, bridge.status().connectionId!, ++sequence, "connection.accepted", {
+      selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: [NATIVE_DELIVERY_FEATURE], maxFrameBytes: 65_536,
+      heartbeatIntervalSeconds: 30, serverTime: t1,
+    }, transport.sent[0].messageId, 1)), t1);
+    return transport;
+  }
+  try {
+    await accept();
+    const resume = serverFrame(serverKeys.privateKey, bridge.status().connectionId!, ++sequence, "node.operation.request", {
+      ...nodeOperationRequest(), operation: "request_resume", desiredState: "active",
+    });
+    if (delayed) {
+      const pending = assert.rejects(bridge.receive(JSON.stringify(resume), t1), /connection changed/);
+      await waiting;
+      await bridge.disconnected();
+      const replacement = await accept();
+      const before = replacement.sent.length;
+      release();
+      await pending;
+      assert.equal(replacement.sent.length, before);
+    } else await bridge.receive(JSON.stringify(resume), t1);
+    assert.equal(bridge.status().state, "reconciling");
+    assert.equal(bridge.nativeDeliveryChannel(), undefined);
+    await bridge.receive(JSON.stringify(serverFrame(serverKeys.privateKey, bridge.status().connectionId!, ++sequence, "node.reconciliation.request", {
+      lastAcknowledgedNodeSequence: 0, requestedAttemptIds: [],
+    }, undefined, delayed ? 2 : 3)), t1);
+    const channel = bridge.nativeDeliveryChannel()!;
+    channel.assertCurrent();
+    await bridge.close();
+    assert.throws(() => channel.assertCurrent(), /no longer current/);
+  } finally { release(); await bridge.close(); journal.close(); }
+});
+
 function keys() {
   const pair = generateKeyPairSync("ed25519");
   return { privateKey: pair.privateKey, spki: pair.publicKey.export({ format: "der", type: "spki" }).toString("base64url") };
@@ -160,6 +216,7 @@ function serverFrame(
   type: "connection.accepted" | "node.reconciliation.request" | "job.cancel" | "node.operation.request" | "protocol.ack",
   body: SignedNodeFrame["body"],
   causationId?: string,
+  wireSequence = sequence,
 ): SignedNodeFrame {
   return signNodeFrame({
     protocol: NODE_PROTOCOL_V1,
@@ -172,7 +229,7 @@ function serverFrame(
     senderKind: "control_room",
     keyId: "server-key:1",
     connectionId,
-    sequence,
+    sequence: wireSequence,
     sentAt: t1,
     expiresAt: t2,
     nonce: `server_nonce_${sequence}_12345678901234567890`,
