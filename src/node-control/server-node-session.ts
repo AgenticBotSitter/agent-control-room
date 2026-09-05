@@ -46,6 +46,7 @@ export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
   private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "closed" = "new";
   private preparedFrame?: SignedNodeFrame<"harness.native.dispatch">;
+  private nativeDeliveryRecorded = false;
   private busy = false;
   private highWater = -Infinity;
   private deadline = Infinity;
@@ -88,10 +89,10 @@ export class ServerNodeSession {
     finally { if (timer) clearTimeout(timer); this.busy = false; }
   }
 
-  private async authenticate(raw: string | Uint8Array): Promise<SignedNodeFrame> {
+  private async authenticate(raw: string | Uint8Array, maxFrameBytes = this.maxFrameBytes): Promise<SignedNodeFrame> {
     const { frame, delivery } = await this.ports.authentication.verify(raw, {
       expectedDirection: "node_to_server", receivedAt: new Date(this.now()).toISOString(),
-      transportIdentity: this.config.transportIdentity, maxFrameBytes: this.maxFrameBytes,
+      transportIdentity: this.config.transportIdentity, maxFrameBytes: Math.min(this.maxFrameBytes, maxFrameBytes),
       ...(this.connectionId ? { expectedConnectionId: this.connectionId } : {}),
     });
     this.now();
@@ -222,8 +223,35 @@ export class ServerNodeSession {
       };
       assertCurrent();
       const value = await commit(structuredClone(frame), dispatch, assertCurrent);
-      assertCurrent(); this.state = "receipted";
+      assertCurrent(); this.nativeDeliveryRecorded = frame.body.disposition === "recorded"; this.state = "receipted";
       return value;
+    });
+  }
+
+  /** Persist authenticated progress for this exact delivered task before acknowledging it.
+   * The trusted store callback must apply assertCurrent inside its transaction before commit.
+   * A failed/lost acknowledgement closes this session; it does not permit re-execution. */
+  async acceptNativeSnapshot<T>(raw: string | Uint8Array, commit: (
+    frame: SignedNodeFrame<"harness.native.snapshot">, assertCurrent: () => void,
+  ) => Promise<T>): Promise<T> {
+    if (this.state !== "receipted" || !this.nativeDeliveryRecorded || !this.preparedFrame) throw new Error("Native progress requires recorded delivery");
+    const dispatch = structuredClone(this.preparedFrame);
+    return this.bounded(async () => {
+      const frame = await this.authenticate(raw, 16_384);
+      if (frame.type !== "harness.native.snapshot") throw new Error("Expected native progress");
+      const body = frame.body, request = dispatch.body.request;
+      if (body.projectId !== request.projectId || body.jobId !== request.jobId || body.attemptId !== request.attemptId
+        || body.bindingDigest !== dispatch.body.bindingDigest || Date.parse(body.observedAt) > Date.parse(frame.sentAt))
+        throw new Error("Native progress task mismatch");
+      const assertCurrent = () => {
+        if (this.now() >= Date.parse(frame.expiresAt) || this.state !== "receipted") throw new Error("Native progress unavailable");
+      };
+      assertCurrent();
+      const value = await commit(structuredClone(frame), assertCurrent);
+      assertCurrent();
+      await this.send("protocol.ack", { acknowledgedMessageIds: [frame.messageId],
+        highestContiguousSequence: frame.sequence, disposition: "accepted" }, frame.messageId);
+      assertCurrent(); return value;
     });
   }
 

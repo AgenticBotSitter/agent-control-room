@@ -108,7 +108,8 @@ export class HarnessRunStoreV1 {
 
   /** Trusted ingestion seam, called only after node-frame authentication. The row lock serializes
    * server event numbering; native snapshot versions may skip because these are snapshots, not SSE replay. */
-  async recordNativeSnapshot(tenantId: string, nodeId: string, input: NativeTaskSnapshotBody): Promise<{ run: HarnessRunV1; replayed: boolean }> {
+  async recordNativeSnapshot(tenantId: string, nodeId: string, input: NativeTaskSnapshotBody,
+    assertCurrent: () => void = () => {}): Promise<{ run: HarnessRunV1; replayed: boolean }> {
     const snapshot = nativeTaskSnapshotBodySchema.parse(input);
     assertNoSecretMaterial(snapshot, "native task snapshot");
     return this.db.transaction(async tx => {
@@ -124,7 +125,7 @@ export class HarnessRunStoreV1 {
         && item.payload.payload.snapshot.snapshotVersion === snapshot.snapshotVersion);
       if (prior) {
         if (sha256Digest(prior.payload.payload) !== sha256Digest({ category: "native_snapshot", snapshot })) throw new Error("native snapshot replay conflict");
-        return { run, replayed: true };
+        assertCurrent(); return { run, replayed: true };
       }
       if (Number(row.last_sequence) >= 1024) throw new Error("native observation history capacity reached");
       const last = row.event_rows.at(-1)?.payload.payload;
@@ -134,7 +135,8 @@ export class HarnessRunStoreV1 {
         sequence: Number(row.last_sequence) + 1, occurredAt: snapshot.observedAt, source: "harness_read",
         sourceEventKeyDigest: sha256Digest({ bindingDigest: snapshot.bindingDigest, snapshotVersion: snapshot.snapshotVersion }),
         payload: { category: "native_snapshot", snapshot } };
-      return this.appendWithin(tx, event, true);
+      const result = await this.appendWithin(tx, event, true);
+      assertCurrent(); return result;
     });
   }
 
