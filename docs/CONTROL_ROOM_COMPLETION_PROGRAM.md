@@ -287,6 +287,9 @@ supplied-resource ownership is accepted in `CR14C_TASK_COORDINATOR_LIFECYCLE_ACC
 The coordinator role/schema gate is accepted in `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`.
 Verified two-pool bootstrap mounting is accepted in `CR14C_VERIFIED_TASK_STARTUP_ACCEPTANCE.md`.
 Actual signed admission/dispatch and real deployment configuration remain; no live startup is claimed.
+Exact native payload/approval/effect binding is accepted in `CR14C_NATIVE_TASK_APPROVAL_BINDING_ACCEPTANCE.md`.
+The immediate next code block composes the node-side NativeAuthority with actual current-policy checks
+and durable claim/marker ordering; owner approval issuance/intake, signed dispatch and revisions remain.
 See `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.
 See `CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md` and `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Shared project reads/pagination are accepted in
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.

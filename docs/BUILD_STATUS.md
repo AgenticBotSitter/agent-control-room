@@ -97,6 +97,11 @@ Latest prerequisite refresh: #297 at `87f6051` had a cancelled CI run (`33978566
 2026-09-05 17:00:09 UTC), not a pass; #298 at `f84f22b` was still running (`33979372209`).
 **Next: CR14C executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
 while real database setup/pilot work awaits scoped owner authority.
+The exact native task approval-binding component is independently accepted at
+`7dd9a013863be76d976cb4d0b7b9b513869b149a`; see `CR14C_NATIVE_TASK_APPROVAL_BINDING_ACCEPTANCE.md`.
+It commits prompt/settings/enrollment/lease into owner-approved operation identity and durable markers,
+but is not a live approval issuer or dispatch path. Next implementation: node-side NativeAuthority
+composition, owner approval issuance/intake, signed dispatch and bounded revision submission.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.

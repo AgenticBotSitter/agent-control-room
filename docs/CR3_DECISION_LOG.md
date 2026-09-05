@@ -5484,3 +5484,27 @@ See `CR14C_VERIFIED_TASK_STARTUP_ACCEPTANCE.md` for all verification and its TEM
 
 **Next:** signed owner approval/local admission/dispatch and bounded revisions, Astra Medium.
 No live database, credentials, provider, listener, deployment or merge is authorized by this decision.
+
+## ADR-223 — commit native task payload into owner approval and effect identity
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired component.
+
+Extend normalized request/pre-effect operation material with optional SHA-256 `payloadDigest`, mandatory
+for native start. Include it in operation identity so an owner approval and durable claim cannot be
+reused after changing exact input, enrollment/model/profile, lease/epoch, authority or absolute deadline.
+Keep old operation digest material unchanged when the field is absent. Older peers must refuse, not
+strip, a native payload commitment. No new permission or schema migration is implied.
+
+The native builder validates the existing one-attempt, leased, approval-required task class and derives
+stable effect/run/session identity without circular hashes. Plain canonical records still need trusted
+provenance. The independent node verifier checks exact binding, not execution permission. Ceiling,
+signed lease, separate approval trust, current qualification/keys/pause, deadline and durable marker
+remain required before effects. Both marker boundaries independently require native payload binding.
+
+**Evidence:** accepted head `7dd9a013863be76d976cb4d0b7b9b513869b149a`, tree
+`2498fadb1fe11183add42fc56b28a9f4f53576d7`; independent review accepted after 30 passing tests and
+inspection of the final test-only narrowing correction. See `CR14C_NATIVE_TASK_APPROVAL_BINDING_ACCEPTANCE.md`
+for full checks and preserved failed test expectations. No runtime or production qualification claim.
+
+**Next:** node-side authority composition, owner signing/intake and signed dispatch, then revisions.
+Continue Astra Medium. Live credentials, native/provider operations, deployment and merge remain gated.
