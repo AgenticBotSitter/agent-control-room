@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0043 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "cd8dca07f7ae9d069ca860c8d19742344999e401975c1a198df35bb7823d1fd9";
+// Generated from migrations 0001-0044 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "61f5ef9f93457c8dc4e74d1ebfa33a42d7a6d8c59fa736c0a87f82c15d87345d";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",

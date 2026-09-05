@@ -1,12 +1,14 @@
 import type { NodeProtocolAuthenticator } from "../node-protocol/v1/authentication";
 import type { HarnessRunStoreV1 } from "../harness/v1/store";
 import type { NativeResultStore } from "../artifacts/v1/native-results";
+import type { NativeResultSubmissionService } from "../completion-gate/v1/native-result-submission";
 
 /** Inert private upload ingestion. A signed snapshot authenticates the exact bytes' recorded hash/size.
  * Transport supplies both arguments; this class starts no upload/listener/native run and never logs content. */
 export class NativeTaskResultService {
   constructor(private readonly authentication: NodeProtocolAuthenticator, private readonly runs: HarnessRunStoreV1,
-    private readonly results: NativeResultStore) {}
+    private readonly results: NativeResultStore,
+    private readonly submission?: Pick<NativeResultSubmissionService, "submit">) {}
   async ingest(raw: string | Uint8Array, bytes: Uint8Array,
     options: { transportIdentity: string; expectedConnectionId: string; receivedAt: string }) {
     try {
@@ -16,7 +18,9 @@ export class NativeTaskResultService {
       if (frame.type !== "harness.native.snapshot" || frame.body.state !== "completed" || !frame.body.result
         || Date.parse(frame.body.observedAt) > Date.parse(frame.sentAt)) throw new Error();
       await this.runs.recordNativeSnapshot(frame.tenantId, frame.actorId, frame.body);
-      return await this.results.capture(frame.tenantId, frame.actorId, frame.body, owned, options.receivedAt);
+      const captured = await this.results.capture(frame.tenantId, frame.actorId, frame.body, owned, options.receivedAt);
+      if (this.submission) await this.submission.submit(frame.tenantId, frame.body.runId);
+      return captured;
     } catch { throw new Error("native_result_rejected"); }
   }
 }

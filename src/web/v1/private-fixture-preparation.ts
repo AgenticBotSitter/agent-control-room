@@ -15,7 +15,7 @@ const packetSchema = z.object({ manifest: manifestSchema, migratorScopeDigest: d
   ownerApprovalDigest: digest, cleanupPlanDigest: digest, pgPackageDigest: digest,
   pgVersionNumber: z.number().int().min(170000).max(179999), expiresAt: z.number().int().positive(),
   durationMs: z.number().int().min(10_000).max(60_000), dedicatedEmptyDatabase: z.literal(true),
-  migrationsApplied: z.literal("0001-0043"), setupRolesAccepted: z.literal(true),
+  migrationsApplied: z.literal("0001-0044"), setupRolesAccepted: z.literal(true),
   maximumConnections: z.literal(1), maximumTransactions: z.literal(1), maximumStatements: z.literal(256),
   installOrProvision: z.literal(false), automaticRetry: z.literal(false),
   cleanup: z.literal("close_owned_client_then_operator_database_cleanup"),
@@ -117,7 +117,7 @@ function createPreparation(dependencies: Dependencies, execution: FixturePrepara
         ensure(metadata?.valid === true); ensure(await readPrivateWebSchemaDigest(tx) === privateWebSchemaDigest);
         const tables = (await tx.query<{ name: string }>(`SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='public' AND c.relkind IN ('r','p') ORDER BY c.relname COLLATE "C"`)).rows;
-        ensure(tables.length === 130 && tables.every(table => /^[a-z][a-z0-9_]{0,62}$/.test(table.name)));
+        ensure(tables.length === 131 && tables.every(table => /^[a-z][a-z0-9_]{0,62}$/.test(table.name)));
         // The reviewed schema fingerprint precedes catalog-derived identifier construction. Names are
         // validated and quoted; no caller supplies a table or SQL fragment. Locks serialize empty checks
         // and all seed writes, preventing two preparers from adopting the same initially empty database.
