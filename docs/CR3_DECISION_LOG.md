@@ -5099,3 +5099,34 @@ full lint and 127-table migrations passed. Re-review found no remaining issues. 
 **Next:** disposable PostgreSQL rehearsal tooling under the existing separate setup/rehearsal permission
 packet. This accepted code does not itself make that packet ready, authorize a live effect, complete B-WIRE
 or the private pilot, or authorize a merge/deployment.
+
+## ADR-209 — Rehearsal tooling reports observations, not self-issued acceptance
+
+**Date:** 2026-09-05. **Owner direction:** continue the accepted overnight repository build on Astra Xhigh,
+with independent review and private PR publication while preserving merge and live-effect gates.
+
+Introduce one fixed, single-use SQL/application rehearsal under a separately reviewed operator packet.
+Production startup/role/schema verification is reused without a simulator override. The runner has no
+provisioning, migration, credential loading, web-route, listener or automatic retry authority. Its separate
+VPS build entry remains inert until an explicitly scoped operator invocation.
+
+The workload exercises synthetic project saves, replay receipts, current views, session revocation, restricted
+columns, database limits, admission/drain and one planned pool reopen. Native probe error handling preserves
+specific observed SQLSTATEs without raw diagnostics. A potentially committed command is never automatically
+replayed. Setup, fixture creation and exact database/role cleanup remain operator-owned prerequisites/actions,
+not evidence the workload assumes it already produced.
+
+Keep the evidence boundaries explicit: checklist digests are not signed owner approval or artifact/host
+attestation; owned client counts are not physical connection attempts or complete server-session absence;
+idle-session disappearance is not exact timeout-cause evidence; pool reopen is not process restart or restore.
+Injected tests remain labeled as such, and every run returns false for real-PostgreSQL/private-beta acceptance.
+Independent review and required live/operator evidence, not the runner itself, determine later acceptance.
+
+**Evidence:** accepted product `7c52ad3ea88255a9ec6faccadea69eb9af66162d`, tree
+`7de613ba8be83ffea3292012bdda8e1e2fce3710`; `CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md`, retained initial
+one Medium/two Low rejection and accepted re-review. Final 133 focused, 769 pretests, 558 main passes/two
+existing skips, 392 posttests, eight private/four Sites artifact checks, both builds, type/lint/whitespace and
+127-table migrations passed. No real database, listener, credential, provider, deployment or merge occurred.
+
+**Next:** repository-only synthetic fixture/preparation handoff, then unblocked native adapter/task integration.
+The accepted code does not authorize a real run, database provisioning, live agent connection or deployment.

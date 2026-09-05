@@ -63,7 +63,8 @@ termination. The first three are checked by their specific SQLSTATE and elapsed 
 is explicitly not an exact timeout-cause claim. Timing tolerances are fixed, bounded
 and may produce negative evidence on an overloaded host. Primary references:
 [PG17 connection defaults](https://www.postgresql.org/docs/17/runtime-config-client.html),
-[PG17 activity statistics](https://www.postgresql.org/docs/17/monitoring-stats.html).
+[PG17 activity statistics](https://www.postgresql.org/docs/17/monitoring-stats.html),
+[PG17 error codes](https://www.postgresql.org/docs/17/errcodes-appendix.html).
 The installed postgres.js 3.4.7 reservation/close behavior was inspected. It is still unqualified on a real host.
 
 ## Cleanup and honest evidence

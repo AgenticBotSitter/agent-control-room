@@ -16,8 +16,11 @@ ordinary/Idea catalog and pagination are also accepted; Idea status remains read
 The owner-only connection inventory and bounded startup/database-role implementation are also independently
 accepted. Startup checks the restricted SQL role and schema; uncertain saves stop pool use instead of retrying.
 Private Node serving is now independently accepted too: bounded requests, compiled browser assets and clean
-lifecycle ownership. This is not a deployed app or live fleet. Next is disposable PostgreSQL rehearsal tooling.
-See the [serving acceptance](docs/CR14B_PRIVATE_SERVING_ACCEPTANCE.md),
+lifecycle ownership. The database rehearsal workload is also independently accepted with disposable/injected
+tests; it has not run against a real PostgreSQL service. Next is its synthetic fixture/preparation handoff,
+then unblocked agent/task integration. This is not a deployed app or live fleet.
+See the [rehearsal tooling acceptance](docs/CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md),
+[serving acceptance](docs/CR14B_PRIVATE_SERVING_ACCEPTANCE.md),
 [startup acceptance](docs/CR14B_PRIVATE_STARTUP_ACCEPTANCE.md),
 [connection view acceptance](docs/CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md),
 [shared catalog acceptance](docs/CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md),

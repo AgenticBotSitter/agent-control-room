@@ -6,7 +6,9 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14B — disposable PostgreSQL rehearsal tooling. The foundation,
+**Next block:** CR14B — disposable fixture/preparation handoff, then unblocked CR14C adapter/task integration.
+The SQL/application rehearsal tooling is accepted in `CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md`; it has not
+run against a real database. The foundation,
 ordinary-project private app and shared ordinary/Idea catalog with pagination are accepted; see
 `CR14B_FOUNDATION_ACCEPTANCE.md`, `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md` and
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`. Idea lifecycle remains read-only in the private view;
@@ -136,7 +138,9 @@ reads the existing owner-only enrollment registry and authenticated signal recei
 Startup/pool/role code is accepted in `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`, including explicit configuration,
 role/schema preflight and uncertain-outcome handling. The database TEMP simulator limitation is explicit;
 real DB permissions/concurrency are not accepted by the injected metadata test. The private Node request/static
-adapter is now accepted with injected lifecycle and compiled SQL tests. Next implement real-PG rehearsal tooling.
+adapter is now accepted with injected lifecycle and compiled SQL tests. The operator SQL/application rehearsal
+tooling is now accepted with synthetic/disposable tests and explicit pool-reopen/evidence limits. Next make
+its exact synthetic preparation/fixture handoff repeatable, without provisioning or running a service.
 IdP/MFA, real PostgreSQL, physical listener/static/browser
 rehearsal and deployment retain their separate readiness/authority gates.
 The project UI packet is a retired non-claimable draft; the three remaining drafts are not dispatched.

@@ -17,11 +17,26 @@ live credentials or real-agent connection. If one lane needs live permission, co
 - Final local checks: 115 focused; 769 pretests; 540 main passes/2 existing skips; 392 posttests; 7 private
   and 4 Sites compiled/rendered checks; TypeScript/full lint/whitespace; 127-table migrations.
 - No listener, real database, credentials, provider/agent, browser, DNS/IdP or deployment effect occurred.
+- Exact documentation head `e327c3c` passed GitHub CI run `33946020421` at 05:14:07 UTC.
+
+### CR14B SQL/application database rehearsal tooling
+
+- Accepted runtime: `7c52ad3ea88255a9ec6faccadea69eb9af66162d`.
+- [PR #286](https://github.com/MarvinAi5/control-room/pull/286), stacked on #285; no merge/deployment.
+- Single-use prepared-packet runner, fixed synthetic application/SQL checks, two bounded native probe
+  adapters, planned pool reopen, cancellation/cleanup and sanitized evidence. Server-only inert compiled entry.
+- Initial 1 Medium/2 Low corrected; independent re-review accepted with zero remaining findings.
+- Final checks: 133 focused; 769 pretests; 558 main passes/2 existing skips; 392 posttests; 8 private and
+  4 Sites artifact checks; both builds; TypeScript/full lint/whitespace; migrations0001–0040/127 tables.
+- No actual PostgreSQL, listener, credentials, agent/provider, browser, setup, deployment or merge effects.
+- Idle close cause and physical connection attempts remain unavailable/unobserved. Pool reopen is not OS
+  restart; exact operator DB/role cleanup and real-session absence proof are still separate.
 
 ## Next authorized repository work
 
-1. CR14B disposable PostgreSQL rehearsal tooling; implement the fixed bounded workload/cleanup/evidence
-   harness, verify it with injected/disposable tests and independent review. Do not run its real effects.
+1. CR14B disposable fixture/preparation handoff; make the accepted harness's synthetic preparation repeatable
+   with testable repository tooling, preserving separate migrator/web roles and exact cleanup. Do not run
+   a real setup, credentials, database, listener or service effect.
 2. Continue the accepted completion program's unblocked code lanes when B's live setup becomes the gate;
    first evaluate C-ADAPTER/C-WORK prerequisites, or settled UI/digest lanes. Do not silently qualify or
    connect a real agent. Existing worker capsules remain undispatched drafts.

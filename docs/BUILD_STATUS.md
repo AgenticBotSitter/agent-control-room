@@ -31,7 +31,11 @@ bounded shutdown with uncertain-save handling. See `CR14B_PRIVATE_STARTUP_ACCEPT
 **CR14B private Node serving is independently accepted** at
 `070a1405a0441ca1225271d6a1d74773df29c3e0`. Its inert HTTP service, request/stream bridge and client-asset
 snapshot reach the compiled protected app in tests. See `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`.
-**Next: CR14B disposable PostgreSQL rehearsal tooling**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
+**CR14B SQL/application rehearsal tooling is independently accepted** at
+`7c52ad3ea88255a9ec6faccadea69eb9af66162d`. Its fixed operator workload and native probe adapters are tested
+with injected/disposable SQL, not a real PostgreSQL service. See `CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md`.
+**Next: CR14B disposable fixture/preparation handoff**, using `gpt-6-astra` / `xhigh` (Astra Xhigh), then
+unblocked CR14C adapter/task integration while real setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The current repository block adds explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
@@ -53,10 +57,19 @@ This turn did not merge or deploy any PR.
 PR #284's exact head `0c520fb` passed GitHub CI run `33943680503` (completed 2026-09-05 04:20:56 UTC).
 The accepted serving follow-up is [PR #285](https://github.com/MarvinAi5/control-room/pull/285), stacked on #284.
 Its current-head checks remain required. Neither review acceptance nor publication authorizes a merge or live run.
+PR #285's exact head `e327c3c` passed GitHub CI run `33946020421` (completed 2026-09-05 05:14:07 UTC).
+The accepted rehearsal-tooling follow-up is [PR #286](https://github.com/MarvinAi5/control-room/pull/286),
+stacked on #285. Its own current-head checks remain required. No PR in this follow-up is claimed merged.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
+
+Latest rehearsal-tooling checks: 133 focused, 769 pretests, 558 main passes/two existing Windows skips,
+392 posttests, eight private/four Sites artifact checks, both builds, TypeScript/full lint/whitespace and
+127-table migrations. Independent review closed one Medium/two Low findings. Pool reopen is not process
+restart; client counts are not physical attempt/absence evidence; idle close cause remains unavailable.
+No real database, listener, credentials, native agent or deployment was used.
 
 The audited application baseline is merged `17d8a14499d2bdd517bb3b632e3f2501bb4cee88`.
 The repository is a tested component foundation plus a runnable **repository-fake local pilot**, not an
