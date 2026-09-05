@@ -79,6 +79,8 @@ PR #287's exact head `dfc1f36` passed GitHub CI run `33949755377` (completed 202
 The accepted unwired native-run adapter is [PR #288](https://github.com/MarvinAi5/control-room/pull/288),
 stacked on #287. Its exact head `fc199dd` passed GitHub CI run `33952565284` at 07:41:30 UTC.
 No merge, runtime activation or live connection is claimed.
+The accepted native-progress integration is [PR #289](https://github.com/MarvinAi5/control-room/pull/289),
+stacked on #288. Its own current-head CI remains required; this stack is not merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 

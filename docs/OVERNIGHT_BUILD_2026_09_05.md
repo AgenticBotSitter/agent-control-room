@@ -66,7 +66,9 @@ live credentials or real-agent connection. If one lane needs live permission, co
 
 ### CR14C canonical native progress delivery
 
-- Accepted runtime: `f7d0c1115e0b3a321b3c9c9b6ee6efced83122eb`; private publication tracked in build status.
+- Accepted runtime: `f7d0c1115e0b3a321b3c9c9b6ee6efced83122eb`.
+- [PR #289](https://github.com/MarvinAi5/control-room/pull/289), stacked on #288; current-head CI remains
+  required. No merge, deployment or runtime activation.
 - Native adapter snapshot -> durable node outbox -> signed protocol -> authenticated canonical harness
   evidence. Per-run acknowledgement ordering and reconnect recovery never restart native work.
 - Initial two Medium/two Low findings corrected; independent re-review accepted with no remaining findings,
