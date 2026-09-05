@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { ownerVerificationFixture, interceptVerificationDatabase } from "./helpers/owner-verification";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
@@ -8,7 +9,8 @@ import type { DatabaseClient } from "../src/persistence/database";
 import type { CompletionVerificationV1 } from "../src/completion-gate/v1";
 import { taskVerificationCommandSchema, taskVerificationOptionsSchema } from "../src/web/v1/task-verification-wire";
 import { createAccessVerifier } from "../src/web/v1/access-verifier";
-import { request, token } from "./helpers/web-foundation";
+import { request, token, origin } from "./helpers/web-foundation";
+import { createPrivateWebProcess } from "../src/web/v1/private-process";
 
 const checkpointScope = `completion-gate:${binding.tenantId}`;
 type Fixture = Awaited<ReturnType<typeof ownerVerificationFixture>>;
@@ -209,4 +211,98 @@ test("tampered persisted verification history cannot be read or replayed as an a
   await f.db.query(tamper);
   await assert.rejects(options(f), /integrity_failed/); await assert.rejects(record(f), /integrity_failed/);
   assert.deepEqual(f.checkpoints.read(checkpointScope), checkpoint);
+});
+
+function verificationHttp(f: Fixture, configured = true) {
+  const app = createPrivateWebProcess({ ...f.accessTrust, origin, tenantId: binding.tenantId, workspaceId: f.scope.workspaceId,
+    tasks: { ...f.ownerKeys, harnessIntegrityKey: f.harnessKey,
+      ...(configured ? { manualVerificationScenarios: [f.scenario] } : {}) },
+    loadKeys: async () => f.accessTrust.keys, database: { client: f.db, close: async () => {} }, clock: () => instant + 6000 });
+  const path = `/api/v1/projects/${binding.projectId}/tasks/${binding.jobId}/results/${f.artifact.artifactId}/verifications/${f.target.id}`;
+  const req = (method = "GET", body?: unknown, url = path, jwt = f.jwt) => {
+    const value = request(url, method, body, undefined, jwt);
+    value.headers.delete("idempotency-key");
+    return value;
+  };
+  return { app, path, req, handle: (request: Request) => app.handle(request, () => new Response("shell")) };
+}
+
+test("restricted private HTTP records actual human verification, exact replay and protected history without job authority", async t => {
+  const f = await ownerVerificationFixture(); t.after(f.close);
+  await f.raw.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
+  await f.raw.exec("SET ROLE control_room_private_web");
+  const http = verificationHttp(f); t.after(() => http.app.close());
+  const before = f.checkpoints.read(checkpointScope)!;
+  const initial = await http.handle(http.req());
+  assert.equal(initial.status, 200, await initial.clone().text());
+  const offered = taskVerificationOptionsSchema.parse(await initial.json());
+  assert.equal(offered.source, "configured"); assert.equal(offered.scenarios[0].availability, "available");
+  assert.deepEqual(f.checkpoints.read(checkpointScope), before);
+  const saved = await http.handle(http.req("POST", f.verificationDraft));
+  assert.equal(saved.status, 201, await saved.clone().text());
+  const value = taskVerificationCommandSchema.parse(await saved.json());
+  assert.equal(value.replayed, false); assert.equal(value.receipt.completesJob, false);
+  const record = await f.reviewStore.getRecord(binding.tenantId, value.receipt.verificationId, "verification") as CompletionVerificationV1;
+  assert.equal(record.verifier.actorType, "human"); assert.equal(record.verifier.actorId, "identity:test");
+  assert.equal(record.outcome, "passed"); assert.equal(record.targetDigest, f.verificationDraft.targetDigest);
+  assert.equal(f.checkpoints.read(checkpointScope)!.revision, before.revision + 1);
+  const replay = await http.handle(http.req("POST", f.verificationDraft));
+  assert.equal(replay.status, 200, await replay.clone().text());
+  assert.deepEqual(taskVerificationCommandSchema.parse(await replay.json()), { receipt: value.receipt, replayed: true });
+  const history = await http.handle(http.req()); assert.equal(history.status, 200);
+  const option = taskVerificationOptionsSchema.parse(await history.json()).scenarios[0];
+  assert.equal(option.availability, "already_recorded"); assert.equal(option.ownVerification?.verificationId, value.receipt.verificationId);
+  assert.equal(option.ownVerification && "noteDigest" in option.ownVerification, false);
+  assert.equal((await verificationRows(f)).length, 1);
+  assert.equal((await f.tasks.detail(f.identity, binding.projectId, binding.jobId)).task.state, "leased");
+  assert.equal((await http.handle(http.req("POST", { ...f.verificationDraft, note: "Changed observation." }))).status, 409);
+  for (const sql of ["UPDATE control_jobs SET state='succeeded'", "UPDATE control_jobs SET version=version+1",
+    "DELETE FROM control_jobs", "INSERT INTO control_effect_intents DEFAULT VALUES", "INSERT INTO control_approvals DEFAULT VALUES"])
+    await assert.rejects(f.db.query(sql), /permission denied/);
+  const logout = request("/api/v1/session/logout", "POST", undefined, undefined, f.jwt);
+  assert.equal((await http.handle(logout)).status, 204);
+  assert.equal((await http.handle(http.req())).status, 401);
+  assert.equal((await http.handle(http.req("POST", f.verificationDraft))).status, 401);
+  assert.equal((await verificationRows(f)).length, 1);
+});
+
+test("restricted SQL admits no agent verification, approval flags, policy records or unrelated writes", async t => {
+  const f = await ownerVerificationFixture(); t.after(f.close);
+  await f.raw.exec(await readFile("db/roles/private_web_roles.sql", "utf8")); await f.raw.exec("SET ROLE control_room_private_web");
+  await record(f);
+  let suffix = 0;
+  const insert = (kind: string, patch: unknown) => f.db.query(`INSERT INTO control_completion_gate_records
+    (id,tenant_id,project_id,kind,record_key,subject_id,parent_id,record_digest,record_auth_tag,payload,occurred_at)
+    SELECT $1,tenant_id,project_id,$2,$1,subject_id,parent_id,record_digest,record_auth_tag,
+      jsonb_set(payload,'{id}',to_jsonb($1::text)) || $3::jsonb,occurred_at
+    FROM control_completion_gate_records WHERE kind='verification' LIMIT 1`,
+  [`verification:forbidden:${++suffix}`, kind, JSON.stringify(patch)]);
+  for (const patch of [{ verifier: { actorId: "agent:test", actorType: "agent" } },
+    { verifier: { actorId: "worker:test", actorType: "worker" } }, { verifier: { actorType: "human" } },
+    { grantsApproval: true }, { grantsExecutionAuthority: true }, { grantsApproval: null }, { grantsExecutionAuthority: null },
+    { outcome: "accepted" }, { tenantId: "tenant:other" }, { projectId: "project:other" }])
+    await assert.rejects(insert("verification", patch), /private quality insert rejected/);
+  for (const kind of ["profile", "target", "revision", "preference", "approval_request", "approval_decision"])
+    await assert.rejects(insert(kind, {}), /private quality insert rejected/);
+  assert.equal((await verificationRows(f)).length, 1);
+  assert.equal((await f.reviewStore.snapshot(binding.tenantId, f.target.id)).status, "pending");
+});
+
+test("protected verification HTTP rejects malformed and cross-origin requests and remains unavailable without configuration", async t => {
+  const f = await ownerVerificationFixture(); t.after(f.close);
+  const http = verificationHttp(f), unconfigured = verificationHttp(f, false);
+  t.after(() => http.app.close()); t.after(() => unconfigured.app.close());
+  const crossOrigin = http.req("POST", f.verificationDraft); crossOrigin.headers.set("origin", "https://other.example.invalid");
+  assert.equal((await http.handle(crossOrigin)).status, 403);
+  const invalidType = http.req("POST", f.verificationDraft); invalidType.headers.set("content-type", "text/plain");
+  const invalidJson = new Request(`${origin}${http.path}`, { method: "POST", headers: http.req().headers, body: "{" });
+  for (const req of [invalidType, invalidJson, http.req("POST"), http.req("POST", { ...f.verificationDraft, verifier: "identity:other" }),
+    http.req("POST", { ...f.verificationDraft, artifactId: "artifact:other" }),
+    http.req("POST", { ...f.verificationDraft, targetId: "target:other" }),
+    http.req("POST", f.verificationDraft, `${http.path}?force=true`), http.req("DELETE", f.verificationDraft),
+    http.req("POST", f.verificationDraft, http.path, "invalid")])
+    assert.ok((await http.handle(req)).status >= 400);
+  assert.equal((await unconfigured.handle(unconfigured.req())).status, 503);
+  assert.equal((await unconfigured.handle(unconfigured.req("POST", f.verificationDraft))).status, 503);
+  assert.deepEqual(await verificationRows(f), []);
 });
