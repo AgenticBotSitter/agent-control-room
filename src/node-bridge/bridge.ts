@@ -14,6 +14,7 @@ import {
 } from "../node-protocol/v1";
 import { SqliteBridgeJournal } from "./journal";
 import type { BridgeCommandHandler } from "./admission-handler";
+import { nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 
 export type BridgeState = "stopped" | "connecting" | "authenticating" | "reconciling" | "online" | "backing_off" | "draining";
 
@@ -44,6 +45,7 @@ export interface BridgeStatus {
   lastSafeErrorCode?: "transport_unavailable" | "protocol_rejected";
   heartbeatIntervalSeconds?: number;
   nextHeartbeatAt?: string;
+  enabledFeatures?: string[];
 }
 
 export interface OpenBridgeOptions {
@@ -71,7 +73,7 @@ export class PortableNodeBridge {
   ) {}
 
   status(): BridgeStatus {
-    return { ...this.statusValue };
+    return { ...this.statusValue, ...(this.statusValue.enabledFeatures ? { enabledFeatures: [...this.statusValue.enabledFeatures] } : {}) };
   }
 
   reconnectDelayMilliseconds(): number {
@@ -163,6 +165,7 @@ export class PortableNodeBridge {
         };
         await this.flushPriorConnections(now);
         await this.flushJobEvents(now);
+        await this.flushNativeSnapshots(now);
         break;
       case "job.offer":
       case "job.lease.grant":
@@ -199,6 +202,30 @@ export class PortableNodeBridge {
     return this.sendBody("node.heartbeat", body, false, now);
   }
 
+  /** The node journal remains the snapshot source across disconnects. Publication uses the existing
+   * signed/acknowledged outbox; sending the same snapshot in a new frame never starts native work. */
+  async publishNativeSnapshot(input: NativeTaskSnapshotBody, now: string): Promise<"recorded" | "duplicate"> {
+    if (!this.identity.features.includes("harness.native.snapshot.v1")) throw new Error("native_snapshot_transport_not_ready");
+    const body = nativeTaskSnapshotBodySchema.parse(input);
+    if (Date.parse(body.observedAt) > Date.parse(now)) throw new Error("native_snapshot_time_invalid");
+    const disposition = this.journal.appendNativeSnapshot(body, now);
+    await this.flushNativeSnapshots(now);
+    return disposition;
+  }
+
+  async flushNativeSnapshots(now: string): Promise<number> {
+    if (!["online", "draining"].includes(this.statusValue.state)
+      || !this.statusValue.enabledFeatures?.includes("harness.native.snapshot.v1")) return 0;
+    return this.serializeSend(async () => {
+      let sent = 0;
+      for (const body of this.journal.pendingNativeSnapshots()) {
+        await this.sendBodyNow("harness.native.snapshot", body, true, now, `correlation:${body.attemptId}`, undefined, true);
+        sent++;
+      }
+      return sent;
+    });
+  }
+
   async flushJobEvents(now: string): Promise<number> {
     if (this.statusValue.state !== "online" && this.statusValue.state !== "draining") throw new Error("Bridge is not online");
     return this.serializeSend(async () => {
@@ -216,6 +243,7 @@ export class PortableNodeBridge {
     const due = this.statusValue.nextHeartbeatAt;
     if (!interval || !due || !["online", "draining"].includes(this.statusValue.state) || Date.parse(now) < Date.parse(due)) return false;
     await this.heartbeat(await snapshot(), now);
+    await this.flushNativeSnapshots(now);
     this.statusValue = { ...this.statusValue, nextHeartbeatAt: addSeconds(now, interval) };
     return true;
   }
@@ -243,7 +271,7 @@ export class PortableNodeBridge {
     if (body.selectedProtocol !== NODE_PROTOCOL_V1 || body.maxFrameBytes > NODE_PROTOCOL_MAX_FRAME_BYTES) throw new Error("Server negotiated an invalid connection contract");
     if (body.enabledFeatures.some((feature) => !this.identity.features.includes(feature))) throw new Error("Server enabled an unsupported bridge feature");
     if (causationId) this.journal.acknowledge([causationId], now);
-    this.statusValue = { ...this.statusValue, heartbeatIntervalSeconds: body.heartbeatIntervalSeconds };
+    this.statusValue = { ...this.statusValue, heartbeatIntervalSeconds: body.heartbeatIntervalSeconds, enabledFeatures: [...body.enabledFeatures] };
   }
 
   private async sendReconciliationReport(now: string): Promise<void> {
@@ -273,6 +301,7 @@ export class PortableNodeBridge {
   private async flushPriorConnections(now: string): Promise<void> {
     const current = this.requireConnection();
     this.journal.expireBefore(now);
+    this.journal.requeueNativeSnapshotsForConnection(current);
     this.journal.retireSupersededControlFrames(current);
     for (const pending of this.journal.pendingOutbound(current)) {
       try {
@@ -327,7 +356,9 @@ export class PortableNodeBridge {
       body,
     } as UnsignedNodeFrame<TType>;
     const frame = await this.signer.sign(unsigned) as SignedNodeFrame<TType>;
-    const disposition = this.journal.stageOutbound(frame, essential, now);
+    const disposition = frame.type === "harness.native.snapshot"
+      ? this.journal.stageNativeSnapshotOutbound(frame as SignedNodeFrame<"harness.native.snapshot">, now)
+      : this.journal.stageOutbound(frame, essential, now);
     if (disposition === "coalesced") return disposition;
     try {
       await this.requireTransport().send(JSON.stringify(frame));

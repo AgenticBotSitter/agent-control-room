@@ -3159,6 +3159,383 @@
         },
         "direction": {
           "type": "string",
+          "const": "node_to_server"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "causationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "actorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "senderKind": {
+          "type": "string",
+          "const": "node"
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "connectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "sequence": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sentAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        },
+        "nonce": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 16384,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "bodyDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 16384,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "type": {
+          "type": "string",
+          "const": "harness.native.snapshot"
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 160,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
+            "projectId": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 160,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
+            "jobId": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 160,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 160,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
+            "leaseId": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 160,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
+            "leaseEpoch": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "bindingDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "sessionKeyDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "nativeRunKeyDigest": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "snapshotVersion": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "observedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            },
+            "upstreamUpdatedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "prepared",
+                "dispatching",
+                "queued",
+                "running",
+                "waiting_approval",
+                "stopping",
+                "completed",
+                "failed",
+                "cancelled",
+                "interrupted",
+                "ambiguous"
+              ]
+            },
+            "availability": {
+              "type": "string",
+              "enum": [
+                "unknown",
+                "current",
+                "offline",
+                "expired"
+              ]
+            },
+            "lastActivity": {
+              "type": "string",
+              "enum": [
+                "none",
+                "tool_started",
+                "tool_completed",
+                "message_progress",
+                "approval_requested",
+                "status_resnapshot"
+              ]
+            },
+            "stopAttempted": {
+              "type": "boolean"
+            },
+            "safeReason": {
+              "type": "string",
+              "enum": [
+                "none",
+                "preflight_failed",
+                "dispatch_uncertain",
+                "run_unavailable",
+                "protocol_mismatch",
+                "transport_unavailable",
+                "authority_unavailable",
+                "deadline_reached",
+                "gateway_interrupted",
+                "storage_uncertain"
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "contentHash": {
+                      "type": "string",
+                      "pattern": "^sha256:[a-f0-9]{64}$"
+                    },
+                    "sizeBytes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 65536
+                    }
+                  },
+                  "required": [
+                    "contentHash",
+                    "sizeBytes"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "usage": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "outputTokens": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "totalTokens": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "provenance": {
+                      "type": "string",
+                      "const": "upstream_reported"
+                    },
+                    "cachedInputTokens": {
+                      "type": "null"
+                    },
+                    "reasoningTokens": {
+                      "type": "null"
+                    },
+                    "calls": {
+                      "type": "null"
+                    },
+                    "costUsd": {
+                      "type": "null"
+                    },
+                    "hardCostLimitEnforced": {
+                      "type": "boolean",
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "totalTokens",
+                    "provenance",
+                    "cachedInputTokens",
+                    "reasoningTokens",
+                    "calls",
+                    "costUsd",
+                    "hardCostLimitEnforced"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "runId",
+            "projectId",
+            "jobId",
+            "attemptId",
+            "leaseId",
+            "leaseEpoch",
+            "bindingDigest",
+            "sessionKeyDigest",
+            "nativeRunKeyDigest",
+            "snapshotVersion",
+            "observedAt",
+            "upstreamUpdatedAt",
+            "state",
+            "availability",
+            "lastActivity",
+            "stopAttempted",
+            "safeReason",
+            "result",
+            "usage"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "protocol",
+        "direction",
+        "messageId",
+        "correlationId",
+        "tenantId",
+        "actorId",
+        "senderKind",
+        "keyId",
+        "connectionId",
+        "sequence",
+        "sentAt",
+        "expiresAt",
+        "nonce",
+        "bodyDigest",
+        "signature",
+        "type",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "const": "control-room-node/v1"
+        },
+        "direction": {
+          "type": "string",
           "enum": [
             "node_to_server",
             "server_to_node"

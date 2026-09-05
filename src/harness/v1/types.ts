@@ -1,3 +1,5 @@
+import type { NativeSnapshotEventPayload, NativeTaskRegistration } from "./native-observation";
+
 export const HARNESS_CONTRACT_VERSION_V1 = "control-room-harness/v1" as const;
 export const HARNESS_EVENT_SCHEMA_VERSION_V1 = "control-room-harness-event/v1" as const;
 
@@ -40,7 +42,8 @@ export interface HarnessRunV1 {
   revisionOfRunId?: string;
   state: HarnessRunState;
   resumable: boolean;
-  cancelState: "not_requested" | "requested" | "confirmed" | "unsupported";
+  cancelState: "not_requested" | "requested" | "confirmed" | "reported" | "unsupported";
+  nativeTask?: NativeTaskRegistration;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -50,6 +53,7 @@ export interface HarnessRunV1 {
 }
 
 export type HarnessEventPayloadV1 =
+  | NativeSnapshotEventPayload
   | { category: "lifecycle"; state: HarnessRunState; reasonCode?: string }
   | { category: "activity"; activity: "tool" | "file" | "test" | "checkpoint"; phase: "started" | "progress" | "completed" | "failed"; count?: number }
   | { category: "attention"; attention: "input" | "approval"; state: "requested" | "resolved" }

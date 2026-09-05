@@ -3,6 +3,7 @@ import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../secur
 import { canTransitionHarnessRun, isTerminalHarnessRunState } from "./lifecycle";
 import { harnessRunEventSchemaV1, harnessRunSchemaV1 } from "./schemas";
 import type { HarnessRunEventV1, HarnessRunState, HarnessRunV1 } from "./types";
+import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "./native-observation";
 
 interface EventRow {
   tenant_id: string; run_id: string; sequence: number | string; occurred_at: string | Date; source: string;
@@ -71,15 +72,27 @@ export class HarnessRunStoreV1 {
     const run = harnessRunSchemaV1.parse(input) as HarnessRunV1;
     assertNoSecretMaterial(run, "harness run");
     if (run.state !== "discovered") throw new Error("harness run must be created as discovered");
+    if (run.nativeTask && (run.startedAt !== undefined || run.finishedAt !== undefined || run.safeReasonCode !== undefined
+      || run.cancelState !== "not_requested" || run.updatedAt !== run.createdAt || run.lastObservedAt !== run.createdAt)) {
+      throw new Error("native registration must contain only initial evidence");
+    }
     return this.db.transaction(async (tx) => {
       const existing = await tx.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [run.tenantId, run.id]);
       if (existing.rows[0]) {
         const verified = verifiedRun(existing.rows[0],this.integrityKey);
+        if (verified.nativeTask && run.nativeTask) {
+          const initial: HarnessRunV1 = { ...verified, state: "discovered", cancelState: "not_requested",
+            updatedAt: verified.createdAt, lastObservedAt: verified.createdAt };
+          delete initial.startedAt; delete initial.finishedAt; delete initial.safeReasonCode;
+          if (sha256Digest(initial) !== sha256Digest(run)) throw new Error("harness run replay conflict");
+          return { run: verified, replayed: true };
+        }
         if (existing.rows[0].run_digest !== sha256Digest(run)) throw new Error("harness run replay conflict");
         return { run: verified, replayed: true };
       }
       const attempt = await tx.query<{ state: string }>(`SELECT state FROM control_attempts WHERE tenant_id=$1 AND id=$2 AND job_id=$3 AND node_id=$4`, [run.tenantId,run.attemptId,run.jobId,run.nodeId]);
       if (!attempt.rows[0] || !["leased","running","waiting"].includes(attempt.rows[0].state)) throw new Error("harness run requires the bound active attempt and node");
+      if (run.nativeTask) await this.assertNativeCanonicalBinding(tx, run, true);
       await this.assertLineage(tx, run);
       const runDigest=sha256Digest(run); const authTag=hmacSha256Tag(this.integrityKey,runAuthMaterial({id:run.id,tenant_id:run.tenantId,project_id:run.projectId,job_id:run.jobId,attempt_id:run.attemptId,node_id:run.nodeId,adapter_id:run.adapterId,harness:run.harness,native_session_key_digest:run.nativeSessionKeyDigest,parent_run_id:run.parentRunId??null,revision_of_run_id:run.revisionOfRunId??null,payload:run,last_sequence:0,run_digest:runDigest,state:run.state,created_at:run.createdAt,updated_at:run.updatedAt,last_observed_at:run.lastObservedAt}));
       await tx.query(`INSERT INTO control_harness_runs (id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,native_session_key_digest,parent_run_id,revision_of_run_id,state,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18)`, [run.id,run.tenantId,run.projectId,run.jobId,run.attemptId,run.nodeId,run.adapterId,run.harness,run.nativeSessionKeyDigest,run.parentRunId ?? null,run.revisionOfRunId ?? null,run.state,runDigest,authTag,JSON.stringify(run),run.createdAt,run.updatedAt,run.lastObservedAt]);
@@ -89,13 +102,50 @@ export class HarnessRunStoreV1 {
 
   async append(input: HarnessRunEventV1): Promise<{ run: HarnessRunV1; replayed: boolean }> {
     const event = harnessRunEventSchemaV1.parse(input) as HarnessRunEventV1;
+    if (event.payload.category === "native_snapshot") throw new Error("native snapshots require authenticated node ingestion");
+    return this.db.transaction(tx => this.appendWithin(tx, event));
+  }
+
+  /** Trusted ingestion seam, called only after node-frame authentication. The row lock serializes
+   * server event numbering; native snapshot versions may skip because these are snapshots, not SSE replay. */
+  async recordNativeSnapshot(tenantId: string, nodeId: string, input: NativeTaskSnapshotBody): Promise<{ run: HarnessRunV1; replayed: boolean }> {
+    const snapshot = nativeTaskSnapshotBodySchema.parse(input);
+    assertNoSecretMaterial(snapshot, "native task snapshot");
+    return this.db.transaction(async tx => {
+      const row = (await tx.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [tenantId, snapshot.runId])).rows[0];
+      if (!row) throw new Error("native task not registered");
+      const run = verifiedRun(row, this.integrityKey), registration = run.nativeTask;
+      if (!registration || run.nodeId !== nodeId || run.projectId !== snapshot.projectId || run.jobId !== snapshot.jobId
+        || run.attemptId !== snapshot.attemptId || run.nativeSessionKeyDigest !== snapshot.sessionKeyDigest
+        || registration.bindingDigest !== snapshot.bindingDigest || registration.leaseId !== snapshot.leaseId
+        || registration.leaseEpoch !== snapshot.leaseEpoch) throw new Error("native task identity mismatch");
+      await this.assertNativeCanonicalBinding(tx, run, false);
+      const prior = row.event_rows.find(item => item.payload.payload.category === "native_snapshot"
+        && item.payload.payload.snapshot.snapshotVersion === snapshot.snapshotVersion);
+      if (prior) {
+        if (sha256Digest(prior.payload.payload) !== sha256Digest({ category: "native_snapshot", snapshot })) throw new Error("native snapshot replay conflict");
+        return { run, replayed: true };
+      }
+      if (Number(row.last_sequence) >= 1024) throw new Error("native observation history capacity reached");
+      const last = row.event_rows.at(-1)?.payload.payload;
+      if (last?.category === "native_snapshot") assertNativeSnapshotProgress(last.snapshot, snapshot);
+      if (isTerminalHarnessRunState(run.state)) throw new Error("native terminal observation is immutable");
+      const event: HarnessRunEventV1 = { schemaVersion: "control-room-harness-event/v1", tenantId, runId: run.id,
+        sequence: Number(row.last_sequence) + 1, occurredAt: snapshot.observedAt, source: "harness_read",
+        sourceEventKeyDigest: sha256Digest({ bindingDigest: snapshot.bindingDigest, snapshotVersion: snapshot.snapshotVersion }),
+        payload: { category: "native_snapshot", snapshot } };
+      return this.appendWithin(tx, event, true);
+    });
+  }
+
+  private async appendWithin(tx: DatabaseSession, event: HarnessRunEventV1, native = false): Promise<{ run: HarnessRunV1; replayed: boolean }> {
     assertNoSecretMaterial(event, "harness event");
     const eventDigest = sha256Digest(event);
-    return this.db.transaction(async (tx) => {
       const current = await tx.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [event.tenantId,event.runId]);
       const row = current.rows[0];
       if (!row) throw new Error("harness run not found");
       const run = verifiedRun(row,this.integrityKey);
+      if (Boolean(run.nativeTask) !== native) throw new Error("native and legacy observation paths cannot be mixed");
       const prior = await tx.query<EventRow>(`SELECT tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2 AND (sequence=$3 OR source_event_key_digest=$4)`, [event.tenantId,event.runId,event.sequence,event.sourceEventKeyDigest]);
       if (prior.rows[0]) {
         verifiedEvent(prior.rows[0],this.integrityKey);
@@ -105,18 +155,44 @@ export class HarnessRunStoreV1 {
       const lastSequence = Number(row.last_sequence);
       if (event.sequence !== lastSequence + 1) throw new Error("harness event sequence gap");
       if (Date.parse(event.occurredAt) < Date.parse(run.lastObservedAt)) throw new Error("harness event time regression");
-      const nextState = event.payload.category === "lifecycle" ? event.payload.state
+      const nextState = event.payload.category === "native_snapshot" ? this.nativeState(event.payload.snapshot)
+        : event.payload.category === "lifecycle" ? event.payload.state
         : event.payload.category === "attention" && event.payload.state === "requested" ? (event.payload.attention === "approval" ? "waiting_approval" : "waiting_input")
         : event.payload.category === "transport" && event.payload.state === "disconnected" ? "disconnected"
         : run.state;
-      if (!canTransitionHarnessRun(run.state, nextState)) throw new Error(`illegal harness run transition ${run.state} -> ${nextState}`);
+      if (native ? isTerminalHarnessRunState(run.state) : !canTransitionHarnessRun(run.state, nextState)) throw new Error(`illegal harness run transition ${run.state} -> ${nextState}`);
       const updated = this.updatedRun(run, nextState, event);
       const eventAuthTag=hmacSha256Tag(this.integrityKey,eventAuthMaterial({tenant_id:event.tenantId,run_id:event.runId,sequence:event.sequence,occurred_at:event.occurredAt,source:event.source,source_event_key_digest:event.sourceEventKeyDigest,event_digest:eventDigest,payload:event,recorded_at:event.occurredAt}));
       await tx.query(`INSERT INTO control_harness_run_events (tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)`, [event.tenantId,event.runId,event.sequence,event.occurredAt,event.source,event.sourceEventKeyDigest,eventDigest,eventAuthTag,JSON.stringify(event),event.occurredAt]);
       const updatedDigest=sha256Digest(updated); const runAuthTag=hmacSha256Tag(this.integrityKey,runAuthMaterial({...row,payload:updated,last_sequence:event.sequence,run_digest:updatedDigest,state:updated.state,updated_at:event.occurredAt,last_observed_at:event.occurredAt}));
       await tx.query(`UPDATE control_harness_runs SET state=$1,last_sequence=$2,run_digest=$3,run_auth_tag=$4,payload=$5::jsonb,updated_at=$6,last_observed_at=$6 WHERE tenant_id=$7 AND id=$8`, [updated.state,event.sequence,updatedDigest,runAuthTag,JSON.stringify(updated),event.occurredAt,event.tenantId,event.runId]);
       return { run: updated, replayed: false };
-    });
+  }
+
+  private nativeState(snapshot: NativeTaskSnapshotBody): HarnessRunState {
+    if (snapshot.state === "completed") return "succeeded";
+    if (snapshot.state === "failed" || snapshot.state === "interrupted") return "failed";
+    if (snapshot.state === "cancelled") return "cancelled";
+    if (snapshot.state === "ambiguous" || snapshot.availability === "offline" || snapshot.availability === "expired") return "disconnected";
+    if (snapshot.state === "waiting_approval") return "waiting_approval";
+    if (snapshot.state === "stopping") return "cancelling";
+    if (snapshot.state === "running") return "running";
+    return snapshot.state === "prepared" ? "discovered" : "starting";
+  }
+
+  private async assertNativeCanonicalBinding(tx: DatabaseSession, run: HarnessRunV1, registration: boolean): Promise<void> {
+    const native = run.nativeTask!;
+    const row = (await tx.query<{ input_digest: string; epoch: number | string; state: string; expires_at: string | Date; acquired_at: string | Date }>(
+      `SELECT j.payload->>'inputDigest' AS input_digest,l.epoch,l.state,l.expires_at,l.acquired_at
+       FROM control_jobs j JOIN control_attempts a ON a.tenant_id=j.tenant_id AND a.job_id=j.id
+       JOIN control_leases l ON l.tenant_id=a.tenant_id AND l.attempt_id=a.id
+       WHERE j.tenant_id=$1 AND j.id=$2 AND j.project_id=$3 AND a.id=$4 AND a.node_id=$5
+         AND l.id=$6 AND l.node_id=$5 AND a.lease_epoch=$7 AND l.epoch=$7 FOR SHARE OF j,a,l`,
+      [run.tenantId, run.jobId, run.projectId, run.attemptId, run.nodeId, native.leaseId, native.leaseEpoch])).rows[0];
+    if (!row || row.input_digest !== native.inputDigest || registration && (row.state !== "active"
+      || Date.parse(run.createdAt) < Date.parse(iso(row.acquired_at)) || Date.parse(native.deadline) > Date.parse(iso(row.expires_at))
+      || Date.parse(run.createdAt) >= Date.parse(native.deadline))) throw new Error("native canonical task binding mismatch");
+    // Late observations for this exact historical attempt/lease are evidence, never renewed execution authority.
   }
 
   async get(tenantId: string, runId: string): Promise<HarnessRunV1 | undefined> {
@@ -138,10 +214,15 @@ export class HarnessRunStoreV1 {
   }
 
   private updatedRun(run: HarnessRunV1, state: HarnessRunState, event: HarnessRunEventV1): HarnessRunV1 {
-    const startedAt = !run.startedAt && ["running","waiting_input","waiting_approval","cancelling","succeeded","failed","cancelled"].includes(state) ? event.occurredAt : run.startedAt;
+    // For native observations this is the first observed execution state, not an invented start time.
+    const observedExecution = event.payload.category === "native_snapshot"
+      ? event.payload.snapshot.nativeRunKeyDigest !== null && ["running", "waiting_approval", "stopping", "completed", "cancelled", "interrupted"].includes(event.payload.snapshot.state)
+      : ["running","waiting_input","waiting_approval","cancelling","succeeded","failed","cancelled"].includes(state);
+    const startedAt = !run.startedAt && observedExecution ? event.occurredAt : run.startedAt;
     const finishedAt = isTerminalHarnessRunState(state) ? event.occurredAt : undefined;
-    const cancelState = state === "cancelling" ? "requested" : state === "cancelled" ? "confirmed" : run.cancelState;
-    const safeReasonCode = event.payload.category === "lifecycle" ? event.payload.reasonCode : run.safeReasonCode;
+    const cancelState = state === "cancelling" ? "requested" : state === "cancelled" ? (run.nativeTask ? "reported" : "confirmed") : run.cancelState;
+    const safeReasonCode = event.payload.category === "native_snapshot" ? event.payload.snapshot.safeReason
+      : event.payload.category === "lifecycle" ? event.payload.reasonCode : run.safeReasonCode;
     return harnessRunSchemaV1.parse({ ...run,state,updatedAt:event.occurredAt,lastObservedAt:event.occurredAt,...(startedAt ? { startedAt } : {}),...(finishedAt ? { finishedAt } : {}),cancelState,...(safeReasonCode ? { safeReasonCode } : {}) }) as HarnessRunV1;
   }
 

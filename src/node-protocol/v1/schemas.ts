@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { artifactManifestRecordSchema, authorityEnvelopeSchema } from "../../domain/v1";
 import { fleetSignalEnvelopeSchema } from "../../node-fleet/v1/schemas";
+import { nativeTaskSnapshotBodySchema } from "../../harness/v1/native-observation";
 import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
 import { computeAuthorityDigest, sha256Digest } from "../../security";
 import { CONNECTION_ENROLLMENT_DELIVERY_ID_MAX_LENGTH, CONNECTION_ENROLLMENT_DELIVERY_ID_MIN_LENGTH,
@@ -354,6 +355,7 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("job.lease.grant", leaseGrant),
   frame("job.lease.renewed", leaseRenewed),
   frame("job.event", jobEvent),
+  frame("harness.native.snapshot", nativeTaskSnapshotBodySchema, { direction: "node_to_server", senderKind: "node" }),
   frame("job.cancel", cancelRequest),
   frame("job.cancel.ack", cancelAck),
   frame("node.reconciliation.request", reconciliationRequest),
@@ -391,5 +393,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   }
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
 export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);

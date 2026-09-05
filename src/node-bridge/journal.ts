@@ -9,6 +9,7 @@ import {
   type SignedNodeFrame,
 } from "../node-protocol/v1";
 import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
+import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -115,12 +116,75 @@ export class SqliteBridgeJournal implements ReplayGuard {
   constructor(path: string, private readonly maximumPendingFrames = 10_000) {
     if (!Number.isInteger(maximumPendingFrames) || maximumPendingFrames < 1) throw new Error("Pending-frame ceiling must be positive");
     this.db = new DatabaseSync(path);
-    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     this.migrate();
   }
 
   close(): void {
     this.db.close();
+  }
+
+  appendNativeSnapshot(input: NativeTaskSnapshotBody, recordedAt: string): "recorded" | "duplicate" {
+    const body = nativeTaskSnapshotBodySchema.parse(input), digest = sha256Digest(body);
+    assertNoSecretMaterial(body, "native snapshot outbox");
+    if (!Number.isFinite(Date.parse(recordedAt)) || Date.parse(recordedAt) < Date.parse(body.observedAt)) throw new Error("native snapshot time invalid");
+    return this.transaction(() => {
+      const prior = this.db.prepare(`SELECT body_digest FROM bridge_native_snapshots WHERE run_id=? AND snapshot_version=?`)
+        .get(body.runId, body.snapshotVersion) as { body_digest: string } | undefined;
+      if (prior) {
+        if (prior.body_digest !== digest) throw new Error("native snapshot outbox conflict");
+        return "duplicate";
+      }
+      const count = this.db.prepare(`SELECT count(*) AS count FROM bridge_native_snapshots`).get() as { count: number };
+      if (count.count >= 2048) throw new BridgeBackpressureError();
+      const latest = this.db.prepare(`SELECT snapshot_version,body_json,body_digest FROM bridge_native_snapshots WHERE run_id=? ORDER BY snapshot_version DESC LIMIT 1`)
+        .get(body.runId) as { snapshot_version: number; body_json: string; body_digest: string } | undefined;
+      if (latest && latest.snapshot_version >= body.snapshotVersion) throw new Error("native snapshot version regression");
+      if (latest) {
+        const preceding = nativeTaskSnapshotBodySchema.parse(JSON.parse(latest.body_json));
+        if (sha256Digest(preceding) !== latest.body_digest) throw new Error("native snapshot outbox integrity failure");
+        assertNativeSnapshotProgress(preceding, body);
+      }
+      this.db.prepare(`INSERT INTO bridge_native_snapshots(run_id,snapshot_version,body_digest,body_json,status,recorded_at)
+        VALUES(?,?,?,?,'pending',?)`).run(body.runId, body.snapshotVersion, digest, JSON.stringify(body), recordedAt);
+      return "recorded";
+    });
+  }
+
+  pendingNativeSnapshots(): NativeTaskSnapshotBody[] {
+    const rows = this.db.prepare(`SELECT body_json,body_digest FROM bridge_native_snapshots WHERE status='pending'
+      ORDER BY recorded_at,run_id,snapshot_version LIMIT 32`).all() as Array<{ body_json: string; body_digest: string }>;
+    return rows.map(row => {
+      const body = nativeTaskSnapshotBodySchema.parse(JSON.parse(row.body_json));
+      if (sha256Digest(body) !== row.body_digest) throw new Error("native snapshot outbox integrity failure");
+      return body;
+    });
+  }
+
+  stageNativeSnapshotOutbound(frame: SignedNodeFrame<"harness.native.snapshot">, stagedAt: string): "staged" | "duplicate" | "coalesced" {
+    if (frame.type !== "harness.native.snapshot") throw new Error("native snapshot staging conflict");
+    const body = nativeTaskSnapshotBodySchema.parse(frame.body);
+    return this.transaction(() => {
+      const row = this.db.prepare(`SELECT body_digest,status FROM bridge_native_snapshots WHERE run_id=? AND snapshot_version=?`)
+        .get(body.runId, body.snapshotVersion) as { body_digest: string; status: string } | undefined;
+      if (!row || row.status !== "pending" || row.body_digest !== sha256Digest(body) || frame.bodyDigest !== row.body_digest) throw new Error("native snapshot staging conflict");
+      const disposition = this.stageOutboundWithinTransaction(frame, true, stagedAt);
+      if (disposition === "coalesced") throw new Error("native snapshot cannot be coalesced");
+      this.db.prepare(`UPDATE bridge_native_snapshots SET status='staged',outbound_message_id=? WHERE run_id=? AND snapshot_version=?`)
+        .run(frame.messageId, body.runId, body.snapshotVersion);
+      return disposition;
+    });
+  }
+
+  requeueNativeSnapshotsForConnection(connectionId: string): void {
+    this.transaction(() => {
+      const rows = this.db.prepare(`SELECT n.outbound_message_id FROM bridge_native_snapshots n JOIN bridge_outbox o
+        ON o.message_id=n.outbound_message_id WHERE n.status='staged' AND o.connection_id<>?`).all(connectionId) as Array<{ outbound_message_id: string }>;
+      for (const row of rows) {
+        this.db.prepare(`UPDATE bridge_outbox SET status='expired' WHERE message_id=? AND status IN ('pending','sent')`).run(row.outbound_message_id);
+        this.db.prepare(`UPDATE bridge_native_snapshots SET status='pending',outbound_message_id=NULL WHERE outbound_message_id=? AND status='staged'`).run(row.outbound_message_id);
+      }
+    });
   }
 
   initializeNodeControlState(state: JournalNodeControlState): "initialized" | "duplicate" {
@@ -431,6 +495,7 @@ export class SqliteBridgeJournal implements ReplayGuard {
       for (const messageId of new Set(messageIds)) {
         changed += Number(statement.run(acknowledgedAt,messageId).changes);
         acknowledgeEvent.run(acknowledgedAt,messageId);
+        this.db.prepare(`UPDATE bridge_native_snapshots SET status='acknowledged' WHERE outbound_message_id=? AND status='staged'`).run(messageId);
       }
       return changed;
     });
@@ -453,6 +518,7 @@ export class SqliteBridgeJournal implements ReplayGuard {
       for (const row of expired) {
         changed += Number(expireFrame.run(row.message_id).changes);
         retryEvent.run(row.message_id);
+        this.db.prepare(`UPDATE bridge_native_snapshots SET status='pending',outbound_message_id=NULL WHERE outbound_message_id=? AND status='staged'`).run(row.message_id);
       }
       return changed;
     });
@@ -622,6 +688,17 @@ export class SqliteBridgeJournal implements ReplayGuard {
         state TEXT NOT NULL CHECK(state IN ('queued','handled','rejected')),
         received_at TEXT NOT NULL,
         handled_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS bridge_native_snapshots (
+        run_id TEXT NOT NULL,
+        snapshot_version INTEGER NOT NULL CHECK(snapshot_version>0),
+        body_digest TEXT NOT NULL,
+        body_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','staged','acknowledged')),
+        outbound_message_id TEXT,
+        recorded_at TEXT NOT NULL,
+        PRIMARY KEY(run_id,snapshot_version),
+        CHECK((status='pending')=(outbound_message_id IS NULL))
       );
       CREATE TABLE IF NOT EXISTS bridge_node_control_state (
         node_id TEXT PRIMARY KEY,

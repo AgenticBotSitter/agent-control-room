@@ -1,5 +1,6 @@
 import type { ArtifactManifestRecord, AuthorityEnvelope } from "../../domain/v1";
 import type { FleetSignalEnvelope } from "../../node-fleet/v1/schemas";
+import type { NativeTaskSnapshotBody } from "../../harness/v1/native-observation";
 
 export const NODE_PROTOCOL_V1 = "control-room-node/v1" as const;
 export const NODE_PROTOCOL_SUPPORTED_VERSIONS = [NODE_PROTOCOL_V1] as const;
@@ -290,6 +291,7 @@ export interface NodeMessageBodyMap {
   "job.lease.grant": LeaseGrantBody;
   "job.lease.renewed": LeaseRenewedBody;
   "job.event": JobEventBody;
+  "harness.native.snapshot": NativeTaskSnapshotBody;
   "job.cancel": CancelRequestBody;
   "job.cancel.ack": CancelAcknowledgementBody;
   "node.reconciliation.request": ReconciliationRequestBody;

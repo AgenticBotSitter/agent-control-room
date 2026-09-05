@@ -3,7 +3,8 @@ import { dirname, isAbsolute } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { sha256Digest } from "../../security/canonical-digest";
 import { bindingSchema, localId, snapshotSchema, terminalNativeState, NativeJournalVersionConflict,
-  type NativeBinding, type NativeRunJournal, type NativeSnapshot, type NativeState } from "./contracts";
+  type NativeBinding, type NativeRunJournal, type NativeSnapshot } from "./contracts";
+import { nativeReportedTransitions as transitions } from "../v1/native-observation";
 
 const schema = `CREATE TABLE hermes_native_runs (
   run_id TEXT PRIMARY KEY NOT NULL,
@@ -13,15 +14,6 @@ const schema = `CREATE TABLE hermes_native_runs (
   snapshot TEXT NOT NULL
 )`;
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
-const transitions: Record<NativeState, readonly NativeState[]> = {
-  prepared: ["dispatching", "failed"], dispatching: ["queued", "ambiguous"],
-  queued: ["running", "waiting_approval", "stopping", "completed", "failed", "cancelled", "interrupted", "ambiguous"],
-  running: ["waiting_approval", "stopping", "completed", "failed", "cancelled", "interrupted", "ambiguous"],
-  waiting_approval: ["running", "stopping", "completed", "failed", "cancelled", "interrupted", "ambiguous"],
-  stopping: ["completed", "failed", "cancelled", "interrupted", "ambiguous"],
-  ambiguous: ["queued", "running", "waiting_approval", "stopping", "completed", "failed", "cancelled", "interrupted"],
-  completed: [], failed: [], cancelled: [], interrupted: [],
-};
 function privatePath(path: string): void {
   if (!isAbsolute(path) || !process.getuid) throw new Error("native_journal_path_invalid");
   const uid = process.getuid(), parent = statSync(dirname(path));
