@@ -75,3 +75,26 @@ test("missing assignment receipt cannot be promoted into owner approval material
   }), check) };
   await assert.rejects(f.prepare(f.create(db)), /task_assignment_unavailable/);
 });
+
+test("revoked, not-yet-valid and commit-expired node keys cannot produce signing material", async t => {
+  for (const mode of ["revoked", "future", "commit-expiry"] as const) await t.test(mode, async t => {
+    const f = await fixture(); t.after(f.close);
+    if (mode === "revoked") await f.db.query("UPDATE control_node_keys SET state='revoked',revoked_at=$1 WHERE tenant_id=$2 AND node_id=$3", [new Date(instant + 9000).toISOString(), binding.tenantId, binding.nodeId]);
+    if (mode === "future") {
+      // Valid-from is immutable in the real database: simulate this read result, not a key rewrite.
+      const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work({
+        async query<T>(sql: string, params?: unknown[]) {
+          const result = await tx.query<T>(sql, params);
+          return sql.startsWith("SELECT valid_from,valid_until") ? { rows: result.rows.map(row => Object.assign({}, row, { valid_from: new Date(instant + 10_000).toISOString() })) } : result;
+        },
+      }), check) };
+      await assert.rejects(f.prepare(f.create(db))); return;
+    }
+    if (mode !== "commit-expiry") { await assert.rejects(f.prepare()); return; }
+    await f.db.query("UPDATE control_node_keys SET valid_until=$1 WHERE tenant_id=$2 AND node_id=$3", [new Date(instant + 10_000).toISOString(), binding.tenantId, binding.nodeId]);
+    const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(async tx => {
+      const result = await work(tx); f.setNow(instant + 10_000); return result;
+    }, check) };
+    await assert.rejects(f.prepare(f.create(db)), { code: "conflict" });
+  });
+});

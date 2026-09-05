@@ -12,8 +12,8 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import type { TaskExecutionPlanner } from "./task-execution-planner";
-import { enrollmentSchema, type NativeEnrollment } from "../../harness/hermes-native-v1/contracts";
-import { prepareNativeTaskApproval } from "../../harness/hermes-native-v1/task-approval-binding";
+import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native-run-contracts";
+import { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
 
 const routeSchema = z.object({ nodeId: localId, executorId: localId,
   capabilityProbeId: z.literal("harness.hermes.native.runs.v1"),
