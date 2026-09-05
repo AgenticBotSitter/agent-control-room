@@ -304,6 +304,15 @@ export class ConnectionRegistryStoreV1 {
   }
 
   async read(input: { tenantId: string; now: string }): Promise<IdeaLabHermes021ConnectionRosterV1> {
+    return this.#readWith(input, this.#transaction);
+  }
+
+  /** Caller owns authorization and the transaction; uses the same integrity verification as read(). */
+  async readInSession(session: DatabaseSession, input: { tenantId: string; now: string }): Promise<IdeaLabHermes021ConnectionRosterV1> {
+    return this.#readWith(input, async callback => callback(session));
+  }
+
+  async #readWith(input: { tenantId: string; now: string }, transaction: DatabaseClient["transaction"]): Promise<IdeaLabHermes021ConnectionRosterV1> {
     const captured = exactHostDataSnapshotV1(input, ["tenantId", "now"]);
     const nowValue = captured?.now, tenantId = captured?.tenantId;
     const now = typeof nowValue === "string" ? Date.parse(nowValue) : Number.NaN;
@@ -311,7 +320,7 @@ export class ConnectionRegistryStoreV1 {
       throw new ConnectionRegistryErrorV1("invalid_input");
     }
     try {
-      return await this.#transaction(async (tx) => {
+      return await transaction(async (tx) => {
         const stream = await this.#verifiedStream(tx, tenantId);
         const current: IdeaLabHermes021ConnectionSafeResultV1[] = [];
         for (const value of stream.values) {

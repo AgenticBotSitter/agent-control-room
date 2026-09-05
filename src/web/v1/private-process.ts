@@ -5,6 +5,7 @@ import { privateResponseHeaders, webFailure } from "./http-common";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
+import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -13,6 +14,8 @@ export interface PrivateWebProcessOptions {
   database: { client: DatabaseClient; close: () => Promise<void> };
   /** Optional existing registry integrity key, supplied privately; never loaded or created by this process. */
   ideaProjects?: { integrityKey: Uint8Array };
+  /** Existing enrollment/signal keys, supplied privately. Absence is unavailable, not an empty roster. */
+  connections?: WebConnectionKeys;
   clock?: () => number;
 }
 
@@ -29,6 +32,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const keys = createAccessKeyCache({ ...options, clock });
   const service = new WebProjectService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey);
+  const connections = new WebConnectionService(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   let closing = false;
   let active = 0;
   let drained: (() => void) | undefined;
@@ -46,6 +51,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = await keys.get();
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          if (url.pathname === "/api/v1/connections") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
+          }
           const stream = /^\/api\/v1\/projects\/([^/]+)\/events$/.exec(url.pathname);
           if (stream && request.method === "GET") {
             if (url.search) throw new WebAccessError("invalid_request");
@@ -70,6 +79,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
             throw new WebAccessError("invalid_request");
           await service.authorizeCatalog(identity);
+        } else if (url.pathname === "/connections") {
+          if (url.search) throw new WebAccessError("invalid_request");
+          await connections.authorize(identity);
         } else if (url.pathname !== "/session") throw new WebAccessError("not_found");
         if (url.pathname === "/") return new Response(null, { status: 303,
           headers: { ...privateResponseHeaders, location: "/projects" } });

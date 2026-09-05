@@ -5,10 +5,11 @@ import handler from "../dist-vps/server/index.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
 import { fixture, now, origin, trust, request } from "./helpers/web-foundation.ts";
 import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project.ts";
+import { seedWebConnection, seedWebSignal, webConnectionKeys } from "./helpers/web-connection.ts";
 
 test("compiled Node entry protects pages, APIs and streams before application composition", async () => {
   assert.equal(typeof handler, "function");
-  for (const path of ["/", "/ideas", "/api/v1/projects", "/api/v1/operator-surface", "/api/v1/projects/project:test/events"]) {
+  for (const path of ["/", "/ideas", "/connections", "/api/v1/connections", "/api/v1/projects", "/api/v1/operator-surface", "/api/v1/projects/project:test/events"]) {
     const response = await handler(new Request(`https://private.example.invalid${path}`));
     assert.equal(response.status, 503, path);
     assert.deepEqual(await response.json(), { error: "private_app_not_configured" });
@@ -24,8 +25,10 @@ test("Node client/SSR artifacts are separate from Sites metadata", () => {
 test("compiled private routes use the installed process, real disposable SQL, and shared revocation", async t => {
   const f = await fixture();
   const { project: idea } = await seedWebIdea(f.client);
+  await seedWebConnection(f.client); await seedWebSignal(f.client);
   const app = installPrivateWebProcess({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
     ideaProjects: { integrityKey: webIdeaKey },
+    connections: webConnectionKeys,
     database: { client: f.client, close: () => f.db.close() }, clock: () => now, loadKeys: async () => trust.keys });
   t.after(() => app.close());
   assert.throws(() => installPrivateWebProcess({}), /already_configured/);
@@ -54,14 +57,20 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const archive = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/lifecycle`, "POST",
     { lifecycle: "archived", expectedVersion: 1 }, "compiled-archive-0001"));
   assert.equal(archive.status, 200);
-  for (const legacy of ["/ideas", "/api/v1/fixture-snapshot", "/api/v1/local-pilot/session", "/api/v1/connections"])
+  const connectionsPage = await handler(request("/connections")); assert.equal(connectionsPage.status, 200);
+  const connectionsHtml = await connectionsPage.text(); assert.match(connectionsHtml, /Loading protected connection inventory/);
+  assert.match(connectionsHtml, /not a live fleet monitor/); assert.doesNotMatch(connectionsHtml, /node:private-test|connection:private-test/);
+  const inventory = await (await handler(request("/api/v1/connections"))).json();
+  assert.equal(inventory.projection.summary.connectionCount, 1); assert.equal(inventory.projection.summary.currentSignalCount, 1);
+  assert.equal(inventory.projection.summary.livePanelEligibleCount, 0); assert.equal(inventory.telemetry, "configured");
+  for (const legacy of ["/ideas", "/api/v1/fixture-snapshot", "/api/v1/local-pilot/session", "/api/v1/connections/enroll"])
     assert.equal((await handler(request(legacy))).status, 404, legacy);
   const stream = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/events`));
   assert.match(await stream.text(), /project-snapshot/);
   const session = await handler(request("/session")); assert.equal(session.status, 200);
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
-  for (const protectedPath of ["/projects", path, `/projects/${encodeURIComponent(idea.projectId)}`,
+  for (const protectedPath of ["/projects", "/connections", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
   await app.close(); assert.equal((await handler(request("/projects"))).status, 503);

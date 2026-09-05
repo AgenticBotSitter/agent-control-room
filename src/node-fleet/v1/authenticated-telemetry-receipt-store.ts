@@ -216,13 +216,22 @@ export class AuthenticatedTelemetryReceiptStoreV1 {
   }
 
   async read(inputValue: unknown): Promise<AuthenticatedTelemetryReceiptV1 | undefined> {
+    return this.#readWith(inputValue, this.#query);
+  }
+
+  /** Read in an already authorized transaction without opening another pool checkout. */
+  async readInSession(session: DatabaseSession, inputValue: unknown): Promise<AuthenticatedTelemetryReceiptV1 | undefined> {
+    return this.#readWith(inputValue, (statement, params) => session.query(statement, params));
+  }
+
+  async #readWith(inputValue: unknown, query: DatabaseSession["query"]): Promise<AuthenticatedTelemetryReceiptV1 | undefined> {
     const input = exactHostDataSnapshotV1(inputValue, ["tenantId", "nodeId"]);
     if (!input || typeof input.tenantId !== "string" || typeof input.nodeId !== "string"
       || !idPattern.test(input.tenantId) || !idPattern.test(input.nodeId)) {
       throw new AuthenticatedTelemetryReceiptErrorV1("invalid_input");
     }
     try {
-      const rows = capturedRows(await this.#query(`SELECT tenant_id,node_id,signal_sequence,signal_digest,
+      const rows = capturedRows(await query(`SELECT tenant_id,node_id,signal_sequence,signal_digest,
         message_id_digest,key_id_digest,connection_id_digest,
         to_char(observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at,
         to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS expires_at,

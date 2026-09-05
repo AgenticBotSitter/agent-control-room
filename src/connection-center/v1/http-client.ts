@@ -22,6 +22,13 @@ async function digestMatches(projection: ConnectionCenterProjectionV1): Promise<
   return actual === projectionDigest;
 }
 
+/** Browser-safe validation shared by preview and private app; never imports server-only registry code. */
+export async function parseConnectionCenterBrowserProjectionV1(value: unknown): Promise<ConnectionCenterProjectionV1> {
+  const projection = connectionCenterProjectionSchemaV1.parse(value) as ConnectionCenterProjectionV1;
+  if (!(await digestMatches(projection))) throw new Error("invalid_connection_projection");
+  return projection;
+}
+
 export async function fetchConnectionCenterV1(fetcher: FetchLike = fetch): Promise<ConnectionCenterDataStateV1> {
   try {
     const response = await fetcher("/api/v1/connections", { credentials: "same-origin", cache: "no-store" });
@@ -31,8 +38,7 @@ export async function fetchConnectionCenterV1(fetcher: FetchLike = fetch): Promi
     if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 1
       || !Object.prototype.hasOwnProperty.call(body, "projection")) return { state: "unavailable", code: "invalid_response" };
     try {
-      const projection = connectionCenterProjectionSchemaV1.parse((body as { projection: unknown }).projection) as ConnectionCenterProjectionV1;
-      if (!(await digestMatches(projection))) return { state: "unavailable", code: "invalid_response" };
+      const projection = await parseConnectionCenterBrowserProjectionV1((body as { projection: unknown }).projection);
       return { state: "available", projection };
     } catch {
       return { state: "unavailable", code: "invalid_response" };

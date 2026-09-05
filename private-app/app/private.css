@@ -2,6 +2,8 @@
 .private-header { display: flex; align-items: center; gap: 1.25rem; padding: 1.3rem 2rem; border-bottom: 1px solid var(--border); }
 .private-brand { font-weight: 750; font-size: 1.25rem; }
 .private-header > span { color: var(--muted); flex: 1; }
+.private-header nav { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; }
+.private-header nav a { display: inline-flex; align-items: center; min-height: 44px; }
 .private-shell main { padding: 2rem; }
 .private-heading { margin-bottom: 1.8rem; }
 .private-heading h1 { margin: .5rem 0; font-size: clamp(1.8rem, 3vw, 2.6rem); letter-spacing: -.04em; }

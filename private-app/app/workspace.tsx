@@ -5,6 +5,7 @@ import { ProjectCreateForm } from "../../app/components/project-create-form";
 import { BrowserRequestError, browserErrorMessage, createProjectBrowserClient } from "../../src/web/v1/browser-client";
 import type { ProjectCatalogPage, ProjectView, WebProject } from "../../src/web/v1/project-wire";
 import { ProjectCatalogNavigation } from "../../app/components/project-catalog-navigation";
+import { PrivateHeader } from "./private-header";
 
 export function PrivateProjectWorkspace({ projectId, section = "overview", after }: { projectId?: string; section?: string; after?: string }) {
   const [client] = useState(() => createProjectBrowserClient());
@@ -72,8 +73,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     finally { writeBusy.current = false; setPending(false); }
   }
   return <div className="private-shell">
-    <header className="private-header"><a href="/projects" className="private-brand">Control Room</a>
-      <span>Private workspace</span><a href="/session">Session and sign out</a></header>
+    <PrivateHeader />
     <main id="private-main">
       {error && <div className="private-notice" role="alert"><p>{browserErrorMessage[error.code]}</p>
         {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
