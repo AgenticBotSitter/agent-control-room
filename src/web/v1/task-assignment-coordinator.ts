@@ -181,13 +181,13 @@ export class TaskAssignmentCoordinator {
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
     return session.sendPreparedNativeDispatch((frame, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
-      async (tx, prepared, actorId, nodeKeyId, deadline) => {
+      async (tx, prepared, actorId, nodeKeyId, deadline, assertAuthorizationTime) => {
         if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId
             || Date.parse(frame.expiresAt) > deadline) conflict();
         const saved = await store.recordTransmissionInSession(tx, prepared, expectedPacketDigest, actorId, signal, frame, channel);
         const checkedAt = this.clock();
         const assertFresh = () => {
-          saved.assertFresh(); const now = this.clock();
+          assertAuthorizationTime(); saved.assertFresh(); const now = this.clock();
           if (!Number.isSafeInteger(now) || now < checkedAt || now >= deadline) conflict();
         };
         await appendAuditWith(tx, { id: `audit:transmit:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
@@ -197,7 +197,7 @@ export class TaskAssignmentCoordinator {
       }));
   }
   private async withNativeApproval<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
-    finish: (tx: DatabaseSession, prepared: CanonicalNativeApproval, actorId: string, nodeKeyId: string, deadline: number) => Promise<{ value: T; assertFresh?: () => void }>) {
+    finish: (tx: DatabaseSession, prepared: CanonicalNativeApproval, actorId: string, nodeKeyId: string, deadline: number, assertAuthorizationTime: () => void) => Promise<{ value: T; assertFresh?: () => void }>) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     let deadline: number | undefined, preparedAt: number | undefined, assertFresh: (() => void) | undefined;
     const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
@@ -233,7 +233,7 @@ export class TaskAssignmentCoordinator {
       preparedAt = now; deadline = Math.min(prepared.start.deadline, key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
       if (!Number.isFinite(deadline) || deadline <= now) conflict();
       const result = await finish(tx, { ...prepared, enrollment: structuredClone(enrollment), preparedAt: new Date(now).toISOString(),
-        sourceInputDigest: plan.sourceInputDigest, inputDigest: job.inputDigest }, actor.id, node.identityKeyId, deadline);
+        sourceInputDigest: plan.sourceInputDigest, inputDigest: job.inputDigest }, actor.id, node.identityKeyId, deadline, actor.assertTimeCurrent);
       assertFresh = result.assertFresh; return result.value;
     });
   }

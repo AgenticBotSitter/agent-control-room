@@ -4,6 +4,8 @@ import { sha256Digest } from "../../security/digest";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 
 export type WebActor = { id: string; now: string;
+  /** Time fences for this locked authorization snapshot, not a post-commit database revocation poll. */
+  assertTimeCurrent: () => void;
   can: (action: string, projectId?: string, ownerOnly?: boolean, risk?: RoleGrant["riskCeiling"]) => boolean;
   require: (action: string, projectId?: string, ownerOnly?: boolean, risk?: RoleGrant["riskCeiling"]) => void };
 const iso = (value: string | Date) => new Date(value).toISOString();
@@ -16,6 +18,7 @@ export class WebSessionAuthority {
 
   async authenticated<T>(identity: VerifiedWebIdentity,
     operation: (tx: DatabaseSession, actor: WebActor) => Promise<T>): Promise<T> {
+    identity = { ...identity };
     const nowMs = this.clock();
     const assertFresh = () => {
       const current = this.clock();
@@ -63,7 +66,8 @@ export class WebSessionAuthority {
         const check = () => { if (!can(action, projectId, ownerOnly, risk)) throw new WebAccessError("access_denied"); };
         check(); grantChecks.push(check);
       };
-      return operation(tx, { id: row.id, now, can, require });
+      return operation(tx, { id: row.id, now, can, require,
+        assertTimeCurrent: () => { assertFresh(); for (const check of grantChecks) check(); } });
     }, () => { assertFresh(); for (const check of grantChecks) check(); });
   }
 

@@ -112,3 +112,24 @@ test("transmission history verifies its HMAC before returning reconciliation evi
   }), check) };
   await assert.rejects(f.create(db).readNativeTransmissionIntent(...f.args));
 });
+
+test("authorization windows expiring after commit prevent send without erasing intent", async t => {
+  for (const mode of ["identity", "verification", "session", "grant"] as const) await t.test(mode, async t => {
+    const { f, s } = await ready(); t.after(async () => { await s.close(); await f.close(); });
+    const identity = { ...f.args[0] };
+    const deliver = (c = f.coordinator) => c.transmitQueuedNativeDelivery(identity, f.args[1], f.args[2], f.args[3], sha256Digest(f.packet), s.session, f.abort.signal);
+    const expiry = f.clock() + 1000;
+    if (mode === "identity") identity.expiresAt = new Date(expiry).toISOString();
+    else if (mode === "verification") identity.verificationExpiresAt = new Date(expiry).toISOString();
+    else if (mode === "session") {
+      identity.tokenDigest = sha256Digest("synthetic-short-session");
+      await f.coordinator.readNativeTransmissionIntent({ ...identity, expiresAt: new Date(expiry).toISOString() }, f.args[1], f.args[2], f.args[3]);
+    }
+    else await f.db.query("UPDATE control_role_grants SET expires_at=$1 WHERE id='grant:test'", [new Date(expiry).toISOString()]);
+    const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: async (work, check) => {
+      const value = await f.db.transactionWithPreCommitCheck(work, check); f.setNow(expiry); return value;
+    } };
+    await assert.rejects(deliver(f.create(db))); assert.equal(await count(f), 1); assert.equal(sends(s).length, 0);
+    await assert.rejects(deliver()); assert.equal(sends(s).length, 0);
+  });
+});
