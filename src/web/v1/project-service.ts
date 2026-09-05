@@ -129,10 +129,15 @@ export class WebProjectService {
   async getView(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectView> {
     if (!catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
     return this.authenticated(identity, async (tx, actor) => {
+      const ordinary = actor.can("projects.read", projectId), ideas = actor.can("idea_lab.project_read", projectId, true);
+      // Decide eligible sources before resolving an ID. A hidden source and an absent row must look identical.
+      if (!ordinary && !ideas) throw new WebAccessError("access_denied");
       const row = (await tx.query<{ adapter_id: string }>(`SELECT adapter_id FROM projects
-        WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3 FOR SHARE`, [this.scope.tenantId, this.scope.workspaceId, projectId])).rows[0];
-      // Keep unavailable/manual IDs behind the same project permission boundary as the original detail service.
-      return this.readView(tx, actor, projectId, row?.adapter_id ?? this.manualAdapterId());
+        WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3
+        AND ((adapter_id=$4 AND $6::boolean) OR (adapter_id=$5 AND $7::boolean)) FOR SHARE`,
+      [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, ordinary, ideas])).rows[0];
+      if (!row) throw new WebAccessError("not_found");
+      return this.readView(tx, actor, projectId, row.adapter_id);
     });
   }
 

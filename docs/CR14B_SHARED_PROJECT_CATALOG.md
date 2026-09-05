@@ -30,6 +30,10 @@ transaction. Each source actually included and each returned record registers it
 session and all required grant deadlines are rechecked before commit. An operator grant cannot satisfy an
 owner-only Idea read even if its action list is a wildcard. Per-project read grants allow exact detail reads,
 not workspace enumeration. No session assertion creates an identity or proves a strong effect approval.
+Direct reads determine source eligibility from the current grants before resolving the requested ID. The
+lookup filters out unauthorized sources, so a hidden Idea/ordinary record and an absent record return the
+same 404 response. A caller with neither source's exact read permission receives 403 without resolving the ID.
+This response-shape rule applies to API, HTML and finite snapshots; it is not a timing-side-channel proof.
 
 `IdeaLabProjectRegistryStoreV1.getProjectInSession` is a read-only composition method. It locks the exact
 tenant/workspace/project/adapter row inside the caller's already authorized transaction, then reuses the

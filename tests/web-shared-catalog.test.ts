@@ -51,12 +51,12 @@ test("operator permissions cannot reveal Idea records and owner Idea-only access
   await f.db.query("UPDATE control_role_grants SET role_key='operator' WHERE id='grant:web'");
   let page = await f.service.listPage(proof());
   assert.equal(page.projects.length, 1); assert.equal(page.sources.ideas, "not_authorized");
-  await assert.rejects(f.service.getView(proof(), f.project.projectId), /access_denied/);
+  await assert.rejects(f.service.getView(proof(), f.project.projectId), /not_found/);
   await f.db.query(`UPDATE control_role_grants SET role_key='owner',allowed_actions='["idea_lab.project_read"]'::jsonb WHERE id='grant:web'`);
   page = await f.service.listPage(proof());
   assert.equal(page.projects.length, 1); assert.equal(page.projects[0].origin, "idea_lab");
   assert.equal(page.sources.ordinary, "not_authorized"); assert.equal(page.canCreate, false);
-  await assert.rejects(f.service.getView(proof(), ordinary.project.projectId), /access_denied/);
+  await assert.rejects(f.service.getView(proof(), ordinary.project.projectId), /not_found/);
   await f.db.query("UPDATE control_role_grants SET project_ids=$1::jsonb WHERE id='grant:web'", [JSON.stringify([f.project.projectId])]);
   assert.equal((await f.service.getView(proof(), f.project.projectId)).origin, "idea_lab");
   await assert.rejects(f.service.listPage(proof()), /access_denied/);
@@ -143,4 +143,32 @@ test("Idea read permission expiry is rechecked before the shared transaction com
   const service = new WebProjectService(client, scope, () => current, webIdeaKey);
   await assert.rejects(service.getView(proof(), f.project.projectId), /access_denied/);
   current = now; await assert.rejects(service.listPage(proof()), /access_denied/);
+});
+
+test("hidden Idea and ordinary IDs are indistinguishable from absent IDs across API, HTML and finite snapshots", async t => {
+  const f = await setup(); t.after(() => f.db.close());
+  const ordinary = await f.service.create(proof(), { title: "Private ordinary", summary: "" }, "hidden-source-create-0001");
+  const app = createPrivateWebProcess({ origin, ...trust, ...scope, ideaProjects: { integrityKey: webIdeaKey },
+    database: { client: f.client, close: async () => {} }, clock: () => now, loadKeys: async () => trust.keys });
+  t.after(() => app.close()); let renders = 0;
+  const render = () => { renders++; return new Response("private shell"); };
+  for (const mode of ["ordinary_reader", "idea_reader", "no_read_access"] as const) {
+    const role = mode === "ordinary_reader" ? "operator" : "owner";
+    const actions = mode === "ordinary_reader" ? ["*"] : mode === "idea_reader" ? ["idea_lab.project_read"] : [];
+    await f.db.query("UPDATE control_role_grants SET role_key=$1,allowed_actions=$2::jsonb WHERE id='grant:web'", [role, JSON.stringify(actions)]);
+    const hidden = mode === "idea_reader" ? ordinary.project.projectId : f.project.projectId;
+    for (const [prefix, suffix, html] of [["/api/v1/projects/", "", false], ["/projects/", "", true],
+      ["/projects/", "/settings", true], ["/api/v1/projects/", "/events", false]] as const) {
+      const capture = async (id: string) => {
+        const input = request(`${prefix}${encodeURIComponent(id)}${suffix}`);
+        if (html) input.headers.set("accept", "text/html");
+        const response = await app.handle(input, render);
+        return { status: response.status, headers: [...response.headers], body: await response.text() };
+      };
+      const missing = await capture("project:absent");
+      assert.equal(missing.status, mode === "no_read_access" ? 403 : 404);
+      assert.deepEqual(await capture(hidden), missing);
+    }
+  }
+  assert.equal(renders, 0);
 });
