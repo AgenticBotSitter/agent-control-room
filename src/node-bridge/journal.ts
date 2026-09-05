@@ -150,6 +150,12 @@ export class SqliteBridgeJournal implements ReplayGuard {
 
   /** Private historical evidence, never current execution authority. No packet or prompt is returned. */
   nativeDeliveryReceipt(queueId: string): NativeTaskDispatchReceiptBody | undefined {
+    return this.acceptedNativeDelivery(queueId)?.receipt;
+  }
+
+  /** Trusted node execution composition only. Must reverify signatures/current policy before use.
+   * Contains private project input; never expose through browser, diagnostics or a worker receipt. */
+  acceptedNativeDelivery(queueId: string) {
     const row = this.db.prepare("SELECT message_id,frame_json,frame_digest,receipt_json,receipt_digest FROM bridge_native_deliveries WHERE queue_id=?").get(queueId) as
       { message_id: string; frame_json: string; frame_digest: string; receipt_json: string; receipt_digest: string } | undefined;
     if (!row) return undefined;
@@ -158,7 +164,7 @@ export class SqliteBridgeJournal implements ReplayGuard {
       || sha256Digest(frame) !== row.frame_digest) throw new Error("native_delivery_integrity_invalid");
     const r = matchNativeTaskDispatchReceipt(JSON.parse(row.receipt_json), frame);
     if (sha256Digest(r) !== row.receipt_digest) throw new Error("native_delivery_integrity_invalid");
-    return r;
+    return { frame, receipt: r };
   }
 
   appendNativeSnapshot(input: NativeTaskSnapshotBody, recordedAt: string): "recorded" | "duplicate" {

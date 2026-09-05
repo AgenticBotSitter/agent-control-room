@@ -12,9 +12,10 @@ import { computeArtifactBodyDigest, signArtifact, SqliteLocalAdmissionStore, Sql
   type OwnerApprovalAttestationBodyV1 } from "../../src/node-policy/v1";
 import { enrollment as defaultEnrollment, instant, capabilityBody, response, nativeRunId, statusBody } from "../hermes-native-fixture";
 
-export async function nativeStartAuthorityFixture(otherCommandKey?: string, configuredEnrollment?: NativeEnrollment) {
+export async function nativeStartAuthorityFixture(otherCommandKey?: string, configuredEnrollment?: NativeEnrollment,
+  existingFixture?: Awaited<ReturnType<typeof taskAssignmentFixture>>) {
   const enrollment = configuredEnrollment ?? defaultEnrollment;
-  const f = await taskAssignmentFixture();
+  const f = existingFixture ?? await taskAssignmentFixture();
   let assigned: Awaited<ReturnType<typeof f.assign>>["receipt"];
   if (otherCommandKey) {
     const source = await f.tasks.propose(f.identity, f.profile.projectId, taskDraft, otherCommandKey);
@@ -67,5 +68,5 @@ export async function nativeStartAuthorityFixture(otherCommandKey?: string, conf
   return { ...f, prepared, config, policy, dependencies, admissions, executions, effects, journal, create, calls, transport, adapter,
     setNow: (value: number) => { now = value; }, setProfile: (value: boolean) => { profileAvailable = value; },
     setExtraActive: (value: number) => { extraActive = value; }, reads: () => reads, profileChecks: () => profileChecks,
-    close: async () => { journal.close(); effects.close(); executions.close(); admissions.close(); await f.close(); } };
+    close: async () => { journal.close(); effects.close(); executions.close(); admissions.close(); if (!existingFixture) await f.close(); } };
 }
