@@ -5998,3 +5998,22 @@ selection, host guides and lifecycle regressions. Independent review accepted th
 `673380625f537de0d893c0f736f3eeab6ea37ef8` with31 scoped tests. The precommit finding, later legacy
 test-fixture correction and remaining pending Completion Gate are recorded in
 `CR14_PARALLEL_DELIVERY_BATCH.md`. No live task completion, installation or deployment is inferred.
+
+## ADR-248 — explicitly configured human verification is evidence, not job authority
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Provide an optional protected owner interface for acceptance scenarios explicitly designated by trusted
+composition as human-verifiable, pinned to the exact existing profile ID/digest. Do not configure a
+default or convert automated checks into human assertions. Derive identity and scope server-side;
+re-read actual artifact bytes and exact target/profile under current session/project/grant checks.
+Store a deterministic immutable owner/target/scenario verification and hashed observation evidence.
+The browser explicitly reconciles uncertain exact writes; there is no background save/retry.
+
+Migration0053 retains the restricted web role and narrowly extends its existing quality trigger to
+human verification with false approval/execution flags. No job update permission is granted. Successful
+quality evidence may satisfy an explicitly configured profile but cannot complete a canonical job or
+authorize an external effect. Automated verification, coordinated native completion and revisions remain
+separate integrations. Product `3e25462d729982b4c5f38cf80773630304eb1b3c` passed independent67-check
+review; corrected row-lock/Unicode-size findings and actual restricted SQL tests are recorded in
+`CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`.

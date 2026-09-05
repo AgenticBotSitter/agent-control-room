@@ -2128,7 +2128,7 @@ post-suite 392, private compiled 18, rendered 4, both builds, migrations0052/138
 Current-head GitHub CI and dependency-order integration remain; no merge is claimed.
 Published as [PR #324](https://github.com/MarvinAi5/control-room/pull/324), stacked on #323.
 
-## Next block
+## Parallel delivery batch
 
 The owner resumed internal parallel building. `CR14_PARALLEL_DELIVERY_BATCH.md` records the combined
 authenticated progress route, canonical task/result/review regression, ABS digest/store integration
@@ -2139,12 +2139,27 @@ types and lint passed. See the batch record for corrected negative evidence and 
 verification/completion/revision production calls. No native task or deployment is claimed.
 Published as [PR #325](https://github.com/MarvinAi5/control-room/pull/325), stacked on #324; not merged.
 
+## Optional human result verification
+
+Product `3e25462d729982b4c5f38cf80773630304eb1b3c` is independently reviewed with67 passing checks.
+The protected task-result page and API can record real human verification for explicitly configured,
+profile-pinned scenarios against the exact returned bytes. It is optional, not a new manual approval
+on every agent task and not a substitute for automated checks. Exact uncertain saves remain in task
+page memory for explicit reconciliation. Restricted-role HTTP/SQL and browser regression additions
+passed40 combined checks. See `CR14C_RESULT_VERIFICATION_ACCEPTANCE.md` for corrections and limits.
+Migration0053 narrowly permits human verification evidence; no new SQL grants or job-write authority.
+Both builds, private18/rendered4, migrations0053/138, types and lint passed at unchanged production.
+Final CR14C591, preparation770, main1135 with two existing platform skips and post-suite392 passed.
+Full regression disposition is recorded in the acceptance document. No deployment or merge.
+
+## Next block
+
 ```text
-Block: CR14C first-job runtime registration/completion, recovery, owner signing and revisions
+Block: CR14C automatic verification and coordinated native completion/revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Recorded input now reaches existing current local admission and effect-marker/run controllers in synthetic integration. Recovery, real resource composition and owner signing remain necessary before a live task can be accepted.
-Expected output: receipt/session lifecycle recovery, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Result bytes, quality review and optional human checks now reach the existing Completion Gate. Automatic verification, canonical completion and bounded revision submission still need real production callers.
+Expected output: trusted automatic verification evidence and coordinated canonical completion/revision integration, then runtime registration/recovery and owner signing composition. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
