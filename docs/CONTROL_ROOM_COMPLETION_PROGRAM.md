@@ -19,6 +19,9 @@ complete live C-WORK.
 Initial native lease evidence from accepted signed commands and current owner-pinned server trust is
 independently accepted in `CR14C_NATIVE_LEASE_EVIDENCE_ACCEPTANCE.md`. Other current policy sources,
 owner approval trust/custody and actual handler/runtime composition remain unconfigured.
+The immutable separate owner-public-pin ApprovalTrustStore implementation is now independently accepted
+in `CR14C_OWNER_APPROVAL_TRUST_ACCEPTANCE.md`. This supplies scoped public verification, not installed
+owner configuration, signing custody, authenticated rotation or runtime activation.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.

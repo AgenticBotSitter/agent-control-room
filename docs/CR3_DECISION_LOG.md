@@ -5574,3 +5574,28 @@ native transport and owner keys remain synthetic. See `CR14C_NATIVE_LEASE_EVIDEN
 
 **Next:** remaining current policy/owner approval sources, signing/intake, signed dispatch and revisions
 on Astra Medium. No live integration, credentials, provisioning, deployment or merge is authorized.
+
+## ADR-227 — keep owner approval pins outside online server trust
+
+**Date:** 2026-09-05. **Status:** independently accepted immutable public trust component.
+
+Implement ApprovalTrustStore with explicit owner-provisioned tenant/node/class public pin configuration,
+not online server key adoption. Require canonical Ed25519 bytes/fingerprints and recheck all configured
+approval identities/material against the current protected server trust bundle, including retained
+retired/revoked history. Newly introduced role collisions fail closed. Scope-check adaptation to native
+start/recovery policy; never supply a signer or remotely replaceable owner root through this store.
+
+Pin configuration is immutable for the instance. Validity and per-instance clock high-water are checked;
+bounded unresolved reads retain their slots, and timeout/close disables the instance. Trusted supervisor
+replacement and owner-installed configuration provenance remain required, without implied hot rotation,
+persistent approval epoch or deployment rollback protection.
+
+**Evidence:** `f75878a8b36f841210a120c7078e7164bbfa6aa8`, tree
+`9b217fdda86bf7266f2390854a9edf167c5579a5`; independent review accepted with 47 passing tests and
+no findings. See `CR14C_OWNER_APPROVAL_TRUST_ACCEPTANCE.md`. Generated keys and fake transport do not
+prove owner custody, human attendance or production installation.
+The reviewed test-only follow-up `27aae81180f7bc7a549e7b6b2948407db81bfa68` freezes the shutdown
+test's timer while asserting ordering; nine serving tests passed and product acceptance carries forward.
+
+**Next:** current policy/profile composition, owner signing/intake, signed dispatch and revisions,
+Astra Medium. No production effects, merge or runtime activation are authorized by this decision.

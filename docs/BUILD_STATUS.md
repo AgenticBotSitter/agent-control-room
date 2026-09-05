@@ -137,6 +137,17 @@ approval/profile evidence. Next: remaining current policy sources and owner sign
 dispatch and revisions on Astra Medium.
 Published as [PR #304](https://github.com/MarvinAi5/control-room/pull/304), stacked on #303.
 Current-head CI remains required; no merge or runtime activation is claimed.
+Prerequisite refresh: #303 head `ea1d446f2c9ae4391420b0b1dd9169bf8bb240b7` passed CI `33983457257`
+at 2026-09-05 18:32:41 UTC. #304 head `21ab559` was still running CI `33984129093` when checked.
+The separate owner-approval trust component is independently accepted at
+`f75878a8b36f841210a120c7078e7164bbfa6aa8`; see `CR14C_OWNER_APPROVAL_TRUST_ACCEPTANCE.md`.
+Explicit immutable owner public pins are scoped and checked against current/retained server signing
+material before native approval verification. Real disposable trust stores and fake transport are tested;
+owner installation/custody/rotation and runtime wiring are not claimed. Next: current policy/profile
+composition, owner signing/intake, signed dispatch and revisions on Astra Medium.
+Final accepted test-only follow-up: `27aae81180f7bc7a549e7b6b2948407db81bfa68`. It fixes an existing
+shutdown ordering test's wall-clock race without changing production timeouts; independent review
+carried acceptance after all nine serving tests passed. The initial broad failure is retained in acceptance.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
