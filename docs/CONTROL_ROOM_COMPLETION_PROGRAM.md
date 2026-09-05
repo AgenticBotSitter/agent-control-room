@@ -279,13 +279,14 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **CR14C verified two-pool startup mounting, executable admission/approval/dispatch and revision submission**, using
+block is **CR14C executable admission/approval/dispatch and revision submission**, using
 **Astra Medium (`gpt-6-astra`, `medium`)**. Planned initial result submission and owner-authorized execution
 planning are accepted in their separate records; neither dispatches tasks or revisions. Protected page/API
 planning and canonical assignment/expiry are now optionally mounted without changing web SQL privileges;
 supplied-resource ownership is accepted in `CR14C_TASK_COORDINATOR_LIFECYCLE_ACCEPTANCE.md`.
 The coordinator role/schema gate is accepted in `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`.
-Production bootstrap mounting and real signed admission/dispatch remain.
+Verified two-pool bootstrap mounting is accepted in `CR14C_VERIFIED_TASK_STARTUP_ACCEPTANCE.md`.
+Actual signed admission/dispatch and real deployment configuration remain; no live startup is claimed.
 See `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.
 See `CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md` and `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Shared project reads/pagination are accepted in
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.

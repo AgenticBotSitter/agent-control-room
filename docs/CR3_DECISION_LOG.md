@@ -5462,3 +5462,25 @@ in disposable PGlite, with only its existing TEMP metadata caveat. See `CR14C_CO
 
 **Next:** verified two-pool startup/shared-page mounting, signed approval/local admission/dispatch
 and bounded revisions on Astra Medium. No live database, credentials, provider, deployment or merge.
+
+## ADR-222 — verify both fixed database roles before shared task startup
+
+**Date:** 2026-09-05. **Status:** independently accepted repository/disposable integration.
+
+Use one explicit inert-import task bootstrap to open and independently verify the restricted web and
+coordinator logins against the same loopback PG17 primary, then install their combined application in
+the existing compiled runtime slot. Preserve separate SQL resources and unchanged grants. The original
+web-only startup remains an alternative, not an in-process upgrade or coordinator bypass.
+
+Validate/copy templates, keys and routes before opening. Own acquired resources through memoized,
+five-second bounded close, preserve cleanup uncertainty and never retry an attempted startup. Readiness
+requires both pools. A trusted supervisor receives only readiness and close, not planners or signing keys.
+
+**Evidence:** product `147dfc5fb0e93cb4c230c59161ebd0919371a776`, tree
+`79af63730e9b3204f623e53e4fc331a60a407023`. Independent review: no findings, 44 tests passed.
+Compiled proposal/planning/assignment/page/logout and restricted-role SQL tests remain disposable
+PGlite/in-process evidence, not physical connection isolation, native execution or production setup.
+See `CR14C_VERIFIED_TASK_STARTUP_ACCEPTANCE.md` for all verification and its TEMP metadata caveat.
+
+**Next:** signed owner approval/local admission/dispatch and bounded revisions, Astra Medium.
+No live database, credentials, provider, listener, deployment or merge is authorized by this decision.

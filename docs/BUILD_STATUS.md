@@ -86,7 +86,12 @@ coordinator-specific domain-transition outbox guard. A separate fixed-role prefl
 restricted-role planning/assignment/expiry without widening web writes. See
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`. No database was provisioned or attached; production
 bootstrap mounting remains. Current setup requires migrations 0001–0046, still 132 tables.
-**Next: CR14C verified two-pool production bootstrap mounting, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
+**CR14C verified two-pool startup mounting is independently accepted** at
+`147dfc5fb0e93cb4c230c59161ebd0919371a776`. Both fixed-role database preflights now precede shared
+compiled application installation; disposable tests cover proposal, planning, assignment, task page,
+logout and exact-once bounded cleanup. See `CR14C_VERIFIED_TASK_STARTUP_ACCEPTANCE.md`.
+No production database, listener or agent was started; assignment remains non-executing.
+**Next: CR14C executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
