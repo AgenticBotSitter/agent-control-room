@@ -390,6 +390,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 | CR14C canonical approval preparation | Independently accepted locked owner-authorized unsigned preparation; shared contracts preserve native isolation; no storage/signing/dispatch | `CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` |
 | CR14C task preparation interface | Independently accepted protected page/API and scoped planner operation; production composition and dispatch not enabled | `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`; `reviews/CR14C_TASK_PLANNING_INTERFACE_REVIEW.md` |
 | CR14C owner quality review | Independently accepted exact-result quality decisions and private change requests; no revision dispatch/live activation | `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`; `reviews/CR14C_OWNER_RESULT_REVIEW_REREVIEW.md` |
+| CR14C signed delivery and node intake | Independently accepted canonical send, owner-verified durable node input and authenticated receipt in disposable integration; native execution handoff and live activation remain | `CR14C_NODE_NATIVE_INTAKE_ACCEPTANCE.md`; `CR14C_NATIVE_RECEIPT_ACCEPTANCE.md` |
 | CR14C private task workspace | Independently accepted canonical proposals and recorded-progress pages; no live dispatch, artifact delivery or owner review | `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`; `reviews/CR14C_PRIVATE_TASK_WORKSPACE_REREVIEW.md` |
 | CR14C canonical native progress | Independently accepted durable signed evidence integration; no active dispatch or canonical task completion | `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`; `reviews/CR14C_CANONICAL_NATIVE_PROGRESS_REREVIEW.md` |
 | CR14C supported Hermes native-run adapter | Independently accepted unwired run journal/protocol/HTTPS/lifecycle code; no real agent or complete task integration | `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`; `reviews/CR14C_NATIVE_RUN_ADAPTER_REREVIEW.md` |
@@ -2095,14 +2096,28 @@ Current-head GitHub CI remains required before dependency-order integration.
 Published as [PR #322](https://github.com/MarvinAi5/control-room/pull/322), stacked on #321.
 No merge or runtime activation is claimed.
 
+## Owner-verified node-native intake
+
+Product `6c1fe4aec56b20b62f0af71e8e80c532b6b28c47` is independently accepted with 64 passing checks.
+The actual bridge authenticates canonical signed delivery, checks local enrollment and separate owner
+signatures, stores the exact task/receipt in bounded append-only SQLite, and sends the dedicated receipt
+back to the real canonical receipt store in disposable tests. No native execution is invoked. A stale
+intake failure cannot invalidate a replacement; reconciliation counters are connection-scoped.
+See `CR14C_NODE_NATIVE_INTAKE_ACCEPTANCE.md` for the corrected review finding and remaining limits.
+Protected host storage, node execution handoff, receipt acknowledgement/recovery, resource replacement
+and runtime mounting remain. PostgreSQL stays at0052/138 tables with unchanged role permissions.
+Final corrected-product checks passed CR14C 527, preparation 769, main 1,111 with two existing skips,
+post-suite 392, private compiled 18, rendered 4, both builds, migrations0052/138, TypeScript and ESLint.
+Current-head GitHub CI remains required; no merge or live activation is claimed.
+
 ## Next block
 
 ```text
-Block: CR14C signed delivery processing and node reconciliation, owner signing and revisions
+Block: CR14C node execution handoff and lifecycle recovery, owner signing and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Canonical queue, current authorization, exact signed transmission and authenticated receipt persistence are reviewed. The node must durably intake the exact task, apply separate owner and local admission checks, and produce honest receipt/recovery evidence before runtime mounting.
-Expected output: durable signed delivery processing and node receipt/reconciliation using existing admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: The canonical send-to-node-intake-to-server-receipt path is reviewed in disposable integration tests. Recorded input must now reach the existing current local admission and effect-marker/run controllers without turning historical evidence into permission or retrying uncertain effects.
+Expected output: node execution handoff and receipt/session lifecycle recovery using existing admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

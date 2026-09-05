@@ -5944,3 +5944,24 @@ Product `dd38e24dcccb1df31557dd66334768d989a53035`, tree
 `f36e4b51c845d6c359a9211d2500f32495b30341`, passed 59 independent checks without findings.
 Migration0052 adds the 138th table and coordinator SELECT/INSERT, no web permission. See
 `CR14C_NATIVE_RECEIPT_ACCEPTANCE.md`. Native node intake/admission and live activation remain separate.
+
+## ADR-245 — durable owner-verified node intake before execution handoff
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Use the existing bridge journal for bounded append-only exact native deliveries and intake receipts.
+The optional bridge handler requires current negotiated/reconciled channel evidence, local configured
+enrollment and verified separate owner start/recovery signatures. Its synchronous transaction retains
+current fences. Stored input is not admission or permission to start: later execution must apply the
+existing current local policy and durable marker controllers. Live host storage must be private because
+input is project data; local hash checks are not protection against privileged file modification.
+
+Return a dedicated signed receipt after storage, not a generic acknowledgement. A receipt-send failure
+does not permit intake replay. Skip automatic cross-connection receipt replay pending explicit recovery.
+Scope delayed failure mutation and reconciliation counters to their actual connection so old requests
+cannot invalidate a fully negotiated replacement.
+
+Product `6c1fe4aec56b20b62f0af71e8e80c532b6b28c47`, tree
+`196498fe564fed608582b0e00cd7e405e85d0d55`, passed 64 independent checks after correcting the reconnect
+race. No PostgreSQL migration, native adapter call, live connection, credentials or deployment is added.
+See `CR14C_NODE_NATIVE_INTAKE_ACCEPTANCE.md`.

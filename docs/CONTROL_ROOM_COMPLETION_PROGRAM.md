@@ -6,8 +6,8 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — trusted current authority sources, owner approval/intake,
-signed dispatch and revision submission, on Astra Medium.
+**Next block:** CR14C C-WORK — node execution handoff and lifecycle recovery,
+owner signing and revision submission, on Astra Medium.
 Verified two-pool startup and native task approval binding are independently accepted in their CR14C
 acceptance records. The start/live-read local authority composition is independently accepted in
 `CR14C_NATIVE_START_AUTHORITY_ACCEPTANCE.md`, including atomic effect capacity and bounded unresolved
@@ -358,7 +358,11 @@ authorization time fences survive commit, and uncertain outcomes never retry. Au
 persistence is now independently reviewed in `CR14C_NATIVE_RECEIPT_ACCEPTANCE.md` (migration0052/138
 tables). Exact session-authenticated receipts are stored with audit and current key/time checks; they
 report node intake claims, not execution proof. Node intake/admission, receipt production/acknowledgement
-and runtime routing/recovery remain; no live task delivery is claimed.
+and runtime routing/recovery remain; no live task delivery is claimed. The optional node bridge intake
+and actual signed receipt production are now independently reviewed in
+`CR14C_NODE_NATIVE_INTAKE_ACCEPTANCE.md`. This verifies local enrollment and separate owner signatures,
+records bounded append-only node input and returns a receipt without execution. Current-policy admission
+and native run handoff, acknowledgement/recovery, resource replacement and live mounting remain.
 Revalidation and insertion share a transaction; returned
 snapshots and historical receipts cannot authorize later delivery. Bounded approval lifecycle
 and historical reconciliation are accepted. Integrated owner signing and custody, durable
