@@ -107,3 +107,12 @@ test("observed expiry and newer disabled state cannot be rolled back into permis
   g.state.revision++; g.state.state = "disabled"; await assert.rejects(g.read(g.config.enrollment, g.now(), signal()));
   Object.assign(g.state, before); await assert.rejects(g.read(g.config.enrollment, g.now(), signal()));
 });
+
+test("newer expired supervisor evidence fences an older live snapshot and held proof", async t => {
+  const f = await fixture(); t.after(f.close);
+  const old = { ...f.state }, held = await f.read(f.config.enrollment, f.now(), signal());
+  f.state.revision++; f.state.observedAt = f.now() - 2; f.state.validUntil = f.now() - 1;
+  await assert.rejects(f.read(f.config.enrollment, f.now(), signal()));
+  Object.assign(f.state, old);
+  await assert.rejects(f.read(f.config.enrollment, f.now(), signal())); assert.throws(held);
+});

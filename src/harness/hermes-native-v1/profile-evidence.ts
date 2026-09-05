@@ -48,12 +48,12 @@ export function createNativeProfileEvidence(config: { enrollment: unknown; accep
     if (now < body.issuedAt || now >= enrollment.validUntil) throw new Error();
     const state = snapshotSchema.parse(read()), snapshotDigest = sha256Digest(state);
     if (state.enrollmentDigest !== digest || state.profilePolicyDigest !== enrollment.profilePolicyDigest
-      || state.qualificationDigest !== qualificationDigest || state.observedAt > now || state.validUntil <= now
+      || state.qualificationDigest !== qualificationDigest
       || state.validUntil <= state.observedAt || state.validUntil > enrollment.validUntil
       || state.revision < highRevision
       || (state.revision === highRevision && snapshotDigest !== lastSnapshot)) throw new Error();
     highRevision = state.revision; lastSnapshot = snapshotDigest;
-    if (state.state !== "active" || !state.credentialAvailable) throw new Error();
+    if (state.observedAt > now || state.validUntil <= now || state.state !== "active" || !state.credentialAvailable) throw new Error();
     approvals.assertAvailable();
     return sha256Digest({ state, trust: revision() });
   };
