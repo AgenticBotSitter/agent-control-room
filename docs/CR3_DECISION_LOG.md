@@ -5752,3 +5752,23 @@ execution permission. This gives a lost acknowledgement a read-only reconciliati
 See `CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md` for observed verification. No HTTP/bootstrap mounting,
 signer, live database, provider or runtime activation is claimed. Owner interface/startup composition,
 signed dispatch, supervisor persistence and revisions remain on Astra Medium.
+
+## ADR-235 — private signed-file intake without online owner signing
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Mount bounded unsigned review, paired signed-file intake and historical readback through the existing
+authenticated task HTTP route and verified two-pool bootstrap. Preserve owner/session checks and the
+restricted web SQL profile. Project/task/input/packet digests must match before the UI confirms a save;
+uncertainty requires exact readback, not automatic resubmission. Browser data excludes native enrollment
+and trust configuration. Approval evidence is not dispatch, admission or proof of running work.
+
+The page explicitly says integrated owner signing is not connected. File import is interim functionality,
+not a substitute for a separately protected owner signer. A web login never supplies owner-presence or
+owner-signature authority. Do not add owner private keys to the online application or browser bundle.
+
+Reviewed product `b094a1e8083ae8b8af88b4fb3a8a12fde6246ef0`, tree
+`18525f618ec0016ea6fb38953e391f112287ea2f`, passed independent review with no blocking findings,
+29 focused checks and two compiled checks. See `CR14C_PRIVATE_APPROVAL_INTERFACE_ACCEPTANCE.md` for
+verification chronology and remaining UI race-test coverage. Current saved-packet revalidation toward
+dispatch, integrated signing/custody, supervisor persistence and revisions remain. No live effects added.

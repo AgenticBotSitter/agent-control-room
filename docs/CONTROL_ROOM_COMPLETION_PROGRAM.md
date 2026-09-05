@@ -48,8 +48,10 @@ immutable evidence (133 tables), not consumable execution authority. Bounded lif
 signing custody and actual dispatch remain; no live task has started.
 The optional bounded approval lifecycle and historical receipt readback are independently accepted in
 `CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md`. They reuse coordinator admission/drain guards and allow
-current owners to reconcile a saved packet after expiry or a lost reply without resubmission. HTTP/page
-and startup mounting, signing custody and dispatch remain; historical evidence cannot authorize work.
+current owners to reconcile a saved packet after expiry or a lost reply without resubmission. The HTTP/page
+and optional two-pool startup mounting are reviewed in `CR14C_PRIVATE_APPROVAL_INTERFACE_ACCEPTANCE.md`.
+That panel imports already-signed files and explicitly says integrated signing is unavailable. Signing
+custody and dispatch remain; historical evidence cannot authorize work.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.
@@ -332,9 +334,10 @@ Verified two-pool bootstrap mounting is accepted in `CR14C_VERIFIED_TASK_STARTUP
 Actual signed admission/dispatch and real deployment configuration remain; no live startup is claimed.
 Exact native payload/approval/effect binding is accepted in `CR14C_NATIVE_TASK_APPROVAL_BINDING_ACCEPTANCE.md`.
 Node-side NativeAuthority, current-policy checks, durable claim/marker ordering, paired signature intake
-and canonical unsigned preparation are now independently accepted. The immediate next code block is
-owner HTTP/page intake and startup mounting, followed by signed dispatch. Bounded approval lifecycle
-and historical reconciliation are accepted. Owner signing custody, durable
+and canonical unsigned preparation are now independently accepted. Owner HTTP/page signed-file intake
+and startup mounting have independent review; the immediate next code block is current saved-packet
+revalidation toward signed dispatch. Bounded approval lifecycle
+and historical reconciliation are accepted. Integrated owner signing and custody, durable
 supervisor state and revision submission remain; no application import of the native adapter is permitted.
 See `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.
 See `CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md` and `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Shared project reads/pagination are accepted in

@@ -1952,14 +1952,25 @@ They are not published or claimable until the shared contract/base and integrati
 Codex validates/publishes them as ready. Existing route concurrency and submit-then-continue semantics remain.
 Only real product work is published; ordinary work does not require calibration-only jobs.
 
+## Latest approval interface
+
+The protected task approval interface and optional two-pool startup configuration were independently
+reviewed at `b094a1e8083ae8b8af88b4fb3a8a12fde6246ef0`, with no blocking findings, 29 focused review
+tests and two compiled review tests passed. The panel reviews unsigned task details and accepts an
+already-signed file, with exact uncertain-save reconciliation. It does not sign or start work.
+See `CR14C_PRIVATE_APPROVAL_INTERFACE_ACCEPTANCE.md` for final verification and retained negative evidence.
+Secure owner signing remains unconnected; file import is an interim capability, not the finished daily-use
+approval experience. Browser-click validation, physical services and live execution are not claimed.
+Prerequisite refresh: PRs #309, #310, #311 and #312 passed current-head CI; they remain unmerged.
+
 ## Next block
 
 ```text
-Block: CR14C owner approval interface and startup mounting, signed dispatch and revisions
+Block: CR14C current signed-packet dispatch integration, owner signing and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Two-pool startup, native authority sources, packet storage and bounded approval lifecycle/readback are accepted. The remaining path must connect the owner interface and configured startup to delivery and node admission.
-Expected output: bounded owner approval intake and signed dispatch using the existing node admission/marker controllers, then revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: The owner review and signed-file intake now reach the bounded coordinator through verified startup. The next integration must revalidate saved signatures against current canonical state before delivery, never reuse historical receipts as permission.
+Expected output: current signed-packet integration toward dispatch using existing node admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
