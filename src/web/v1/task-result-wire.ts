@@ -25,6 +25,18 @@ export const taskResultsPageSchema = z.object({ projectId: id, jobId: id, observ
   additionalResultsOmitted: z.boolean(), additionalTargetsOmitted: z.boolean(), canReadContent: z.boolean(),
   reviewCommands: z.literal("not_connected") }).strict();
 export type TaskResultsPage = z.infer<typeof taskResultsPageSchema>;
+/** Keep a valid private page below the browser's one-MiB reader limit. Quality state has already
+ * been calculated from the complete verified history; omit oldest whole projections, not findings
+ * from that calculation. Never alter a retained target's status or omission evidence. */
+export function boundedTaskResultsPage(value: unknown): TaskResultsPage {
+  const page = taskResultsPageSchema.parse(value);
+  const size = () => new TextEncoder().encode(JSON.stringify(page)).byteLength;
+  while (size() > 524_288 && page.reviews.length) {
+    page.reviews.pop(); page.additionalTargetsOmitted = true;
+  }
+  if (size() > 524_288) throw new Error("result_projection_unavailable");
+  return page;
+}
 export const taskResultContentSchema = z.object({ projectId: id, jobId: id, artifact: taskResultMetadataSchema,
   text: z.string().refine(value => new TextEncoder().encode(value).byteLength <= 65_536),
   contentVerifiedAt: time, untrustedContent: z.literal(true) }).strict();

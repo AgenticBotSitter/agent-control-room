@@ -46,6 +46,11 @@ single consistent read for a task subject; do not initialize checkpoints, create
 reviews, change revisions or issue approvals as a side effect of a read. Preserve exact target/result digest
 binding and separate quality review from execution approval. This block connects recorded review evidence;
 owner review/revision commands remain the next integration, not simulated by local UI state.
+The open file has a visible identity and fingerprint. Each review separately states whether both match
+that open file; a match to another listed file is not a match to the displayed content. After complete
+history verification/status calculation, the wire projection is capped at 524,288 UTF-8 JSON bytes by
+omitting oldest whole review targets with an explicit flag. Retained status/evidence is unchanged, the
+browser's one-MiB reader ceiling is not enlarged, and omitted history remains stored.
 
 The private web role receives only the additional artifact/completion reads and a lock-only integrity
 column privilege needed by existing verified review reads. It does not receive artifact/review writes or

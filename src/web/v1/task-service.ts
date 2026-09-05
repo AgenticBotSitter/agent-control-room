@@ -9,7 +9,7 @@ import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { NativeResultStore, type NativeResultReadConfiguration, type NativeResultReceipt } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import type { RollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
-import { taskResultMetadataSchema, taskResultsPageSchema, taskResultContentSchema, taskReviewEvidenceSchema } from "./task-result-wire";
+import { taskResultMetadataSchema, boundedTaskResultsPage, taskResultContentSchema, taskReviewEvidenceSchema } from "./task-result-wire";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
@@ -235,7 +235,7 @@ export class WebTaskService {
         findings: findings.map(value => ({ id: value.id, code: value.code, severity: value.severity, statementDigest: value.statementDigest, raisedAt: value.raisedAt })),
         missingVerificationScenarioIds: snapshot.missingVerificationScenarioIds, openFindingCount: snapshot.openFindingIds.length,
         grantsApproval: false, grantsExecutionAuthority: false }));
-      return taskResultsPageSchema.parse({ projectId, jobId, observedAt: actor.now,
+      return boundedTaskResultsPage({ projectId, jobId, observedAt: actor.now,
         resultSource: this.resultStore ? "configured" : "not_configured", reviewSource: this.reviewConfig ? "configured" : "not_configured",
         items, reviews, additionalResultsOmitted: result.additionalResultsOmitted, additionalTargetsOmitted: review.additionalTargetsOmitted,
         canReadContent: !!this.resultStore && actor.can("tasks.results.read", projectId), reviewCommands: "not_connected" });
