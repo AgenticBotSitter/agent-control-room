@@ -46,3 +46,4 @@ Final frozen-product verification exited zero: CR14C 514, preparation 769, main 
 platform skips, post-suite 392; private compiled 18 and rendered 4. Both application builds, migration
 verification through0052/138 tables, TypeScript and full ESLint passed. Current-head GitHub CI is still
 required before dependency-order integration; local acceptance is not a merge or live acceptance.
+Published as [PR #322](https://github.com/MarvinAi5/control-room/pull/322), stacked on #321.

@@ -2092,6 +2092,8 @@ listener, native/provider call, database service, deployment or merge is implied
 Final frozen-product verification passed CR14C 514, preparation 769, main 1,098 with two existing skips,
 post-suite 392, private compiled 18, rendered 4, both builds, migrations0052/138, TypeScript and full ESLint.
 Current-head GitHub CI remains required before dependency-order integration.
+Published as [PR #322](https://github.com/MarvinAi5/control-room/pull/322), stacked on #321.
+No merge or runtime activation is claimed.
 
 ## Next block
 
