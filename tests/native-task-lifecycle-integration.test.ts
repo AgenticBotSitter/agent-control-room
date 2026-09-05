@@ -116,6 +116,15 @@ test("an authenticated snapshot for another binding never enters the current dis
   assert.equal((await x.f.runs.events(x.registration.tenantId, x.registration.id)).length, 0);
 });
 
+test("server refuses progress when snapshot support was not negotiated", async t => {
+  const x = await nativeTaskLifecycleFixture({ serverFeatures: ["harness.native.dispatch.v1"] }); t.after(x.close);
+  let commits = 0;
+  // Refuse the channel before parsing or committing even an unsolicited frame.
+  await assert.rejects(x.session.acceptNativeSnapshot("{}", async () => { commits++; }), /negotiated support/);
+  assert.equal(commits, 0); assert.equal(x.outgoing.length, 0);
+  assert.deepEqual(x.local.calls, []);
+});
+
 test("lost session ACK retains one committed observation and cannot replay native start", async t => {
   const x = await nativeTaskLifecycleFixture(); t.after(x.close);
   await x.handoff.start(); await x.register(); x.loseNextAcknowledgement();

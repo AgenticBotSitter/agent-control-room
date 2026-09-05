@@ -19,7 +19,7 @@ import { response, statusBody } from "../hermes-native-fixture";
 /** Explicit in-process wiring, not a mounted runtime: real controllers/stores with synthetic
  * owner keys, qualification and native transport. All assertions use the newly planned job;
  * the reused fixture also contains unrelated pre-existing result/review records. */
-export async function nativeTaskLifecycleFixture() {
+export async function nativeTaskLifecycleFixture(configuration: { serverFeatures?: string[] } = {}) {
   const f = await canonicalApprovalStorageFixture();
   const local = await nativeStartAuthorityFixture(undefined, f.prepared.enrollment, f.assignmentFixture);
   assert.equal(sha256Digest(local.prepared.binding), sha256Digest(f.prepared.binding));
@@ -39,7 +39,7 @@ export async function nativeTaskLifecycleFixture() {
   const timestamp = () => new Date(f.clock()).toISOString();
   const session = new ServerNodeSession({ tenantId: "tenant:test", nodeId: "node:test", nodeKeyId: "key:test",
     serverId: "server:test", serverKeyId: "key:server", serverPublicKeySpki: spki, transportIdentity: "transport:lifecycle",
-    features, maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }, {
+    features: configuration.serverFeatures ?? features, maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }, {
     authentication: f.auth, clock: f.clock,
     async sign(frame) { return signNodeFrame(frame, serverKeys.privateKey); },
     async send(raw) {

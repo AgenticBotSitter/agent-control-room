@@ -234,7 +234,8 @@ export class ServerNodeSession {
   async acceptNativeSnapshot<T>(raw: string | Uint8Array, commit: (
     frame: SignedNodeFrame<"harness.native.snapshot">, assertCurrent: () => void,
   ) => Promise<T>): Promise<T> {
-    if (this.state !== "receipted" || !this.nativeDeliveryRecorded || !this.preparedFrame) throw new Error("Native progress requires recorded delivery");
+    if (this.state !== "receipted" || !this.nativeDeliveryRecorded || !this.preparedFrame
+      || !this.features.includes("harness.native.snapshot.v1")) throw new Error("Native progress requires recorded delivery and negotiated support");
     const dispatch = structuredClone(this.preparedFrame);
     return this.bounded(async () => {
       const frame = await this.authenticate(raw, 16_384);
