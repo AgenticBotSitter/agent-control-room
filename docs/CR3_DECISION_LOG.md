@@ -5813,3 +5813,24 @@ sign a bounded message and durably reconcile delivery; nodes retain current loca
 Reviewed product `7ede9e0677db04d78d9dddefcf71d1d431b1c62f`, tree
 `c7d96dd6e54e894a034ce28db7fa508e6fe36916`, passed69 independent checks without findings.
 See `CR14C_APPROVED_TASK_QUEUE_ACCEPTANCE.md`. No live effects or runtime activation added.
+
+## ADR-238 — exact native dispatch and evidence-only node receipt messages
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository protocol extension.
+
+Use dedicated server-to-node native dispatch and node-to-server receipt message types under the existing
+signed protocol. Bind queue, exact prompt/instructions input digest, request/start/owner-packet identity,
+deadline and receipt causation. The node resolves enrollment locally, recomputes the binding and passes
+the paired packet through separate owner-signature intake before current local admission. A server
+signature authenticates delivery, not owner permission. Receipt matches exact dispatch content and is
+not evidence of running, completion or stopping.
+
+Regenerate committed structural JSON schema; relational, size and cryptographic checks remain additional
+runtime requirements. Reserve the native-delivery feature for verified mutual negotiation before runtime
+activation, with no down-conversion or unsupported-node fallback. This extension does not advertise the
+feature, install a sender/handler or persist receipts; those integrations remain next.
+
+Corrected product `a3dcb5a546f122d02ecead18f89a21bece92af21`, tree
+`a63a39f1d87960dc510c1e3146e59c80a7e8cbee`, passed35 independent re-review checks. The initial
+input-digest inconsistency finding is retained in `CR14C_NATIVE_DELIVERY_PROTOCOL_ACCEPTANCE.md`.
+No runtime activation, live credentials, provider calls, listener or deployment is introduced.

@@ -1995,13 +1995,22 @@ Local verification passed CR14C437, preparation769, main1016 with two existing s
 private compiled18 and rendered4; both builds, TypeScript, full ESLint and migrations0048/134 tables
 passed. Current-head CI remains required; no merge or deployment is claimed.
 
+## Native delivery protocol
+
+Exact native dispatch/receipt schemas and trusted-local-enrollment handoff are independently reviewed
+at corrected product `a3dcb5a546f122d02ecead18f89a21bece92af21`, with35 passing re-review checks.
+The initial input-digest consistency finding is corrected and preserved in
+`CR14C_NATIVE_DELIVERY_PROTOCOL_ACCEPTANCE.md`. A valid server signature does not replace the owner's
+paired signatures, local policy or durable pre-effect admission. Receipt means recorded intake only.
+No sender/handler, mutual feature advertisement, durable receipt persistence or live execution is added.
+
 ## Next block
 
 ```text
 Block: CR14C signed delivery processing and node reconciliation, owner signing and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Approved-task queue insertion now shares current canonical revalidation and audit commit fences. A sender must resolve current queue eligibility, issue bounded signed delivery and record progress without replaying uncertain effects.
+Why: Approved-task queue insertion and exact delivery/receipt protocol are reviewed. A sender must resolve current queue eligibility, require negotiated native capability, issue bounded signed delivery and record progress without replaying uncertain effects.
 Expected output: durable signed delivery processing and node receipt/reconciliation using existing admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.

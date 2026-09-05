@@ -339,7 +339,9 @@ and startup mounting have independent review. Current saved-packet revalidation 
 in `CR14C_SAVED_APPROVAL_REVALIDATION_ACCEPTANCE.md`. Atomic approved-task queue insertion and audit
 are independently reviewed in `CR14C_APPROVED_TASK_QUEUE_ACCEPTANCE.md`; migration0048 brings the
 canonical schema to134 tables without adding web permissions. Signed delivery processing and node
-receipt/reconciliation are next. Revalidation and insertion share a transaction; returned
+receipt/reconciliation are next. Exact native delivery/receipt protocol and local-enrollment intake
+handoff are reviewed in `CR14C_NATIVE_DELIVERY_PROTOCOL_ACCEPTANCE.md`; no sender/handler or feature
+advertisement is activated. Revalidation and insertion share a transaction; returned
 snapshots and historical receipts cannot authorize later delivery. Bounded approval lifecycle
 and historical reconciliation are accepted. Integrated owner signing and custody, durable
 supervisor state and revision submission remain; no application import of the native adapter is permitted.
