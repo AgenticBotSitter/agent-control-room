@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
-import { createTaskReviewBrowserClient, reviewErrorMessage } from "../../src/web/v1/task-review-browser-client";
-import type { TaskReviewDraft, TaskReviewOptions, TaskReviewReceipt } from "../../src/web/v1/task-review-wire";
+import { reviewErrorMessage } from "../../src/web/v1/task-review-browser-client";
+import type { TaskReviewDraft, TaskReviewOptions } from "../../src/web/v1/task-review-wire";
+import { createTaskReviewWorkspace, type TaskReviewWorkspace, type TaskReviewSession, type ReviewWorkspaceBinding } from "../../src/web/v1/task-review-workspace";
 
 const availability: Record<TaskReviewOptions["availability"], string> = {
   available: "Review this exact result", not_configured: "Owner review is not configured.",
@@ -30,11 +31,24 @@ export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback,
   </section>;
 }
 
-export function OwnerTaskReview({ projectId, jobId, artifactId, targetId, targetDigest, contentHash, onSaved }: {
+export function OwnerTaskReview({ projectId, jobId, artifactId, targetId, targetDigest, contentHash, onSaved, workspace }: {
   projectId: string; jobId: string; artifactId: string; targetId: string; targetDigest: string; contentHash: string; onSaved: () => void;
+  workspace?: TaskReviewWorkspace;
 }) {
-  const [client] = useState(() => createTaskReviewBrowserClient()), [options, setOptions] = useState<TaskReviewOptions>();
-  const [feedback, setFeedback] = useState(""), [pending, setPending] = useState(false), [receipt, setReceipt] = useState<TaskReviewReceipt>();
+  const [fallbackWorkspace] = useState(() => createTaskReviewWorkspace());
+  let session: TaskReviewSession;
+  try { session = (workspace ?? fallbackWorkspace).get({ projectId, jobId, artifactId, targetId, targetDigest, contentHash }); }
+  catch { return <p className="private-notice" role="alert">This task page has reached its review workspace limit.
+    Existing drafts and pending saves are retained. Finish those reviews before leaving or reloading this page.</p>; }
+  return <OwnerTaskReviewController key={JSON.stringify([projectId, jobId, artifactId, targetId, targetDigest, contentHash])}
+    projectId={projectId} jobId={jobId} artifactId={artifactId} targetId={targetId} targetDigest={targetDigest}
+    contentHash={contentHash} session={session} onSaved={onSaved} />;
+}
+
+function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, targetDigest, contentHash, session, onSaved }:
+  ReviewWorkspaceBinding & { session: TaskReviewSession; onSaved: () => void }) {
+  const { client } = session, { feedback, pending, receipt, error: saveError } = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
+  const [options, setOptions] = useState<TaskReviewOptions>();
   const [error, setError] = useState<BrowserRequestError>(), [refresh, setRefresh] = useState(0);
   useEffect(() => {
     let live = true, busy = false;
@@ -43,7 +57,7 @@ export function OwnerTaskReview({ projectId, jobId, artifactId, targetId, target
       try {
         const next = await client.options(projectId, jobId, { artifactId, targetId, targetDigest, contentHash });
         if (live) { setOptions(next); if (!client.hasPending()) setError(undefined); }
-      } catch (reason) { if (live) { setOptions(undefined); setReceipt(undefined);
+      } catch (reason) { if (live) { setOptions(undefined);
         setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } }
       finally { busy = false; }
     };
@@ -52,24 +66,20 @@ export function OwnerTaskReview({ projectId, jobId, artifactId, targetId, target
     return () => { live = false; clearInterval(timer); window.removeEventListener("focus", focus); };
   }, [client, projectId, jobId, artifactId, targetId, targetDigest, contentHash, refresh]);
   const save = async (decision?: TaskReviewDraft["decision"]) => {
-    if (pending) return; setPending(true); setError(undefined);
-    try {
-      const saved = decision ? await client.record(projectId, jobId, { artifactId, targetId, targetDigest, contentHash,
-        decision, feedback: decision === "changes_requested" ? feedback : "" }) : await client.retrySave();
-      setReceipt(saved); setFeedback(""); setRefresh(value => value + 1); onSaved();
-    } catch (reason) { setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("uncertain")); }
-    finally { setPending(false); }
+    setError(undefined);
+    if (await session.save(decision)) { setRefresh(value => value + 1); onSaved(); }
   };
   return <>
     {!options && !error && <p role="status">Loading owner review…</p>}
     {options && <OwnerReviewPanel options={options} feedback={feedback} pending={pending} held={client.hasPending() || !!receipt}
-      onFeedback={setFeedback} onRecord={decision => { void save(decision); }} />}
+      onFeedback={session.setFeedback} onRecord={decision => { void save(decision); }} />}
     {pending && <p role="status">Saving your quality decision…</p>}
-    {receipt && <p role="status">Saved: {receipt.decision === "accepted" ? "quality acceptance" : "changes requested"}. No new work has been started.</p>}
+    {options && receipt && <p role="status">Saved: {receipt.decision === "accepted" ? "quality acceptance" : "changes requested"}. No new work has been started.</p>}
     {error && <p role="alert">{reviewErrorMessage[error.code]}</p>}
-    {client.hasPending() && <div className="private-notice"><p>An earlier save is unresolved. Keep this view open to retain its exact check key.</p>
+    {saveError && <p role="alert">{reviewErrorMessage[saveError.code]}</p>}
+    {client.hasPending() && <div className="private-notice"><p>An earlier save is unresolved. Keep this task page open to retain its exact check key.</p>
       <button type="button" disabled={pending} onClick={() => { void save(); }}>Check this exact review save</button></div>}
     {error && <button type="button" disabled={pending} onClick={() => { setError(undefined); setRefresh(value => value + 1); }}>Refresh recorded review</button>}
-    <p className="private-note">Closing this view discards unsaved text and any pending check key, not saved decisions. Reopen its recorded review before submitting again.</p>
+    <p className="private-note">Closing a result keeps unfinished reviews in this task page’s memory. Leaving or reloading the task page discards unsaved text and pending check keys, not saved decisions. Reopen its recorded review before submitting again.</p>
   </>;
 }

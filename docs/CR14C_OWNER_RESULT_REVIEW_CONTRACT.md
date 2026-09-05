@@ -20,8 +20,12 @@ submit distinct checked content through the existing bounded revision flow.
 One actor/target quality review is immutable under existing Completion Gate rules. A changed decision is
 not an overwrite. Exact command reconciliation retains its key, receipt, review ID and feedback. A prior
 uncertain browser save stays held through later denials; only a matching receipt reconciles it. Polling,
-focus, reconnect, mounting and ordinary refresh perform reads only. Closing the view loses any unsaved
-draft/pending browser key, not the saved record; show this limit explicitly.
+focus, reconnect, mounting and ordinary refresh perform reads only. Page-owned, memory-only review state
+survives a result subview closing or unmounting after failed/denied reads. Protected result content and
+review options are cleared on denial; retained draft/receipt data is not displayed without fresh matching
+authorized reads. Reopen the same exact result/target to recover its draft or explicitly reconcile its save.
+Leaving or reloading the task page loses unsaved drafts/pending browser keys, not saved records; show
+this limit explicitly. Completion while a result child is detached still updates page-owned command state.
 
 The authenticated command transaction locks current session/grants and existing review state, validates
 the exact artifact bytes, writes review/finding/feedback/receipt/audit, and rechecks authority before commit.

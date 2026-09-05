@@ -4,12 +4,13 @@ import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskResultContent, TaskResultsPage, TaskReviewEvidence } from "../../src/web/v1/task-result-wire";
 import { OwnerTaskReview } from "./task-owner-review";
+import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
 
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Superseded" };
 
-export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onReviewSaved }: { page: TaskResultsPage; content?: TaskResultContent;
-  pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void }) {
+export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onReviewSaved, reviewWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
+  pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace }) {
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
@@ -57,7 +58,7 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
             && review.matchingArtifactIds.includes(content.artifact.artifactId) && review.contentHash === content.artifact.contentHash
             && <OwnerTaskReview key={`${review.targetId}:${content.artifact.artifactId}:${content.artifact.contentHash}`}
               projectId={page.projectId} jobId={page.jobId} artifactId={content.artifact.artifactId} targetId={review.targetId}
-              targetDigest={review.targetDigest} contentHash={review.contentHash} onSaved={() => onReviewSaved?.()} />}
+              targetDigest={review.targetDigest} contentHash={review.contentHash} workspace={reviewWorkspace} onSaved={() => onReviewSaved?.()} />}
         </li>)}</ol>}
     {page.additionalTargetsOmitted && <p>Only the {page.reviews.length} most recent review targets are shown within this page’s size limit. Additional history remains saved.</p>}
   </section></div>;
@@ -65,6 +66,8 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
 
 export function PrivateTaskResults({ projectId, jobId }: { projectId: string; jobId: string }) {
   const [client] = useState(() => createTaskBrowserClient());
+  // This survives error-cleared result subtrees. No protected content is retained for rendering on denial.
+  const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
   const [page, setPage] = useState<TaskResultsPage>(), [content, setContent] = useState<TaskResultContent>();
   const [selected, setSelected] = useState<string>(), [error, setError] = useState<BrowserRequestError>();
   const [pending, setPending] = useState(false), [refresh, setRefresh] = useState(0);
@@ -93,9 +96,10 @@ export function PrivateTaskResults({ projectId, jobId }: { projectId: string; jo
   }, [client, projectId, jobId, selected, refresh]);
   return <>
     {error && <div className="private-notice" role="alert"><p>{taskErrorMessage[error.code]} Result content has been cleared.</p>
+      <p>Unsaved review text and exact pending save keys remain in this task page’s memory. Restore access and reopen the same result to continue. Leaving this task page discards them.</p>
       <button type="button" onClick={() => { setSelected(undefined); setRefresh(value => value + 1); }}>Refresh result records</button></div>}
     {!page && !error && <p role="status">Loading protected results and review…</p>}
-    {page && <TaskResultsPanel page={page} content={content} pending={pending}
+    {page && <TaskResultsPanel page={page} content={content} pending={pending} reviewWorkspace={reviewWorkspace}
       onReviewSaved={() => setRefresh(value => value + 1)}
       onOpen={artifactId => { generation.current++; setPending(true); setContent(undefined); setSelected(artifactId); setRefresh(value => value + 1); }}
       onClose={() => { generation.current++; setContent(undefined); setSelected(undefined); setPending(false); }} />}

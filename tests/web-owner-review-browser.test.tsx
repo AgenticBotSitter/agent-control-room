@@ -12,7 +12,83 @@ import { TaskResultsPanel } from "../private-app/app/task-results";
 import { taskResultContentSchema, taskResultsPageSchema } from "../src/web/v1/task-result-wire";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { sha256Digest } from "../src/security";
+import { createTaskReviewWorkspace } from "../src/web/v1/task-review-workspace";
 const commandKey = "browser-quality-review-001";
+
+test("page-owned review survives result subtree removal, denied reads and recovery without exposing retained feedback", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const handler = createTaskHttpHandler({ origin, trust: f.accessTrust, service: f.tasks, ownerReviews: f.reviews, clock: () => instant + 6000 });
+  let phase: "lost" | "denied" | "recover" = "lost";
+  const keys: string[] = [], bodies: string[] = [];
+  const workspace = createTaskReviewWorkspace(() => createTaskReviewBrowserClient(async (url, init) => {
+    if (init?.method === "POST") { keys.push(new Headers(init.headers).get("idempotency-key")!); bodies.push(String(init.body)); }
+    if (phase === "denied") return Response.json({}, { status: 403 });
+    const response = await handler(request(String(url), init?.method, init?.body ? JSON.parse(String(init.body)) : undefined,
+      new Headers(init?.headers).get("idempotency-key") ?? undefined, f.jwt));
+    if (phase === "lost") throw new Error("synthetic_lost_ack");
+    return response;
+  }, () => commandKey));
+  const bound = { projectId: binding.projectId, jobId: binding.jobId, ...f.draft };
+  const first = workspace.get(bound); first.setFeedback("Retained private revision draft");
+  let notifications = 0;
+  const detach = first.subscribe(() => { notifications++; });
+  await first.save("changes_requested"); assert.equal(first.client.hasPending(), true); assert.ok(notifications > 0);
+  detach(); // A denied result refresh removes the child subscriber, not the task page's workspace.
+  phase = "denied";
+  await assert.rejects(first.client.options(bound.projectId, bound.jobId, f.draft), { code: "access_denied" });
+  const restored = workspace.get(bound); assert.equal(restored, first);
+  const protectedShell = renderToStaticMarkup(createElement(OwnerTaskReview, { ...bound, workspace, onSaved() {} }));
+  assert.doesNotMatch(protectedShell, /Retained private revision draft|A useful private result|<textarea|Saved:/);
+  assert.match(protectedShell, /earlier save is unresolved/);
+  await restored.save(); assert.equal(restored.client.hasPending(), true);
+  assert.equal(restored.getSnapshot().feedback, "Retained private revision draft");
+  phase = "recover"; const checkpoint = f.checkpoints.read(`completion-gate:${binding.tenantId}`);
+  await restored.save(); assert.equal(restored.client.hasPending(), false);
+  assert.equal(restored.getSnapshot().receipt?.decision, "changes_requested"); assert.equal(restored.getSnapshot().feedback, "");
+  assert.equal(new Set(keys).size, 1); assert.equal(new Set(bodies).size, 1);
+  assert.deepEqual(f.checkpoints.read(`completion-gate:${binding.tenantId}`), checkpoint);
+  assert.equal((await f.db.query("SELECT * FROM control_web_task_review_commands")).rows.length, 1);
+});
+
+test("page-owned unsaved drafts survive result close/reopen and never follow a different exact binding", () => {
+  const workspace = createTaskReviewWorkspace();
+  const bound = { projectId: "project:one", jobId: "job:one", artifactId: "artifact:one", targetId: "target:one",
+    targetDigest: sha256Digest("target"), contentHash: sha256Digest("content") };
+  const session = workspace.get(bound); session.setFeedback("An unsaved owner draft");
+  const detach = session.subscribe(() => {}); detach();
+  assert.equal(workspace.get(bound).getSnapshot().feedback, "An unsaved owner draft");
+  for (const field of Object.keys(bound) as (keyof typeof bound)[])
+    assert.equal(workspace.get({ ...bound, [field]: `${bound[field]}-other` }).getSnapshot().feedback, "");
+  assert.equal(createTaskReviewWorkspace().get(bound).getSnapshot().feedback, "");
+});
+
+test("in-flight save completes in page memory while the result subtree is detached and prevents concurrent replacement", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const receipt = (await f.reviews.record(f.identity, binding.projectId, binding.jobId, f.draft, commandKey)).receipt;
+  let release!: (response: Response) => void, calls = 0;
+  const workspace = createTaskReviewWorkspace(() => createTaskReviewBrowserClient(async () => {
+    calls++; return new Promise<Response>(resolve => { release = resolve; });
+  }, () => commandKey));
+  const bound = { projectId: binding.projectId, jobId: binding.jobId, ...f.draft };
+  const session = workspace.get(bound), detach = session.subscribe(() => {});
+  const saving = session.save("accepted"); detach();
+  assert.equal(workspace.get(bound).getSnapshot().pending, true);
+  await workspace.get(bound).save("changes_requested"); assert.equal(calls, 1);
+  release(Response.json({ receipt, replayed: true })); await saving;
+  assert.equal(workspace.get(bound).getSnapshot().pending, false);
+  assert.deepEqual(workspace.get(bound).getSnapshot().receipt, receipt);
+});
+
+test("workspace capacity never evicts existing drafts or throws out of the owner review component", () => {
+  const workspace = createTaskReviewWorkspace();
+  const bound = { projectId: "project:one", jobId: "job:one", artifactId: "artifact:one", targetId: "target:one",
+    targetDigest: sha256Digest("target"), contentHash: sha256Digest("content") };
+  const existing = workspace.get(bound); existing.setFeedback("Retained draft at capacity");
+  for (let i = 1; i < 128; i++) workspace.get({ ...bound, artifactId: `artifact:${i}` });
+  const shell = renderToStaticMarkup(createElement(OwnerTaskReview, { ...bound, artifactId: "artifact:overflow", workspace, onSaved() {} }));
+  assert.match(shell, /workspace limit/); assert.doesNotMatch(shell, /Retained draft at capacity/);
+  assert.equal(workspace.get(bound), existing); assert.equal(existing.getSnapshot().feedback, "Retained draft at capacity");
+});
 
 test("real browser client only writes on an explicit quality command and reads the saved immutable feedback", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
