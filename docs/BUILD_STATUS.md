@@ -2052,6 +2052,18 @@ migrations0049/135 tables. Current-head GitHub CI remains required before integr
 Published as [PR #319](https://github.com/MarvinAi5/control-room/pull/319), stacked on #318.
 No merge, runtime activation or deployment is claimed.
 
+## Durable signed envelope staging
+
+Product `3e34d71e95f2ea86cda26a7227af3a0a51223f6a` is independently accepted with52 passing checks and
+no findings. The current canonical coordinator and negotiated server session sign the exact saved body
+and atomically store the envelope/audit. Commit fences include owner trust, cancellation, session,
+canonical key and deadline; uncertainty never causes a second signature. See
+`CR14C_DURABLE_ENVELOPE_ACCEPTANCE.md`. Migration0050 requires136 tables, with coordinator-only
+SELECT/INSERT and no web access. Staging does not transmit, admit or start work; native send-attempt and
+receipt integration remain next on Astra Medium. No live resource or deployment is configured.
+Final product checks passed CR14C477, preparation769, main1061 with two existing skips, post-suite392,
+private compiled18, rendered4, both builds, TypeScript, full ESLint and migrations0050/136 tables.
+
 ## Next block
 
 ```text

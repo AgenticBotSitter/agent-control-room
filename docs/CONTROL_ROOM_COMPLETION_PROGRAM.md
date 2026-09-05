@@ -350,6 +350,9 @@ This is connection-state evidence only. Server-side negotiation and actual sende
 Server-side signed negotiation with the actual bridge is now independently reviewed in
 `CR14C_SERVER_NODE_SESSION_ACCEPTANCE.md`, including bounded single-process replacement ownership.
 Long-lived session renewal/routing and durable task sending/receipts remain; no live transport is mounted.
+Exact signed envelope staging under the current canonical transaction is independently reviewed in
+`CR14C_DURABLE_ENVELOPE_ACCEPTANCE.md` (migration0050/136 tables). This reserves and stores a frame but
+does not transmit it. Durable transmission-attempt and receipt integration, then node intake, remain.
 Revalidation and insertion share a transaction; returned
 snapshots and historical receipts cannot authorize later delivery. Bounded approval lifecycle
 and historical reconciliation are accepted. Integrated owner signing and custody, durable

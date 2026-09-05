@@ -5889,3 +5889,23 @@ It does not mount a listener, load credentials, route ongoing traffic or dispatc
 Product `6e7124336416d9f7c3ec63cdd9ec79f33ce55e05`, tree
 `c0ee4930ff9684e9b493b488c4aad0bebecbe3c1`, passed39 independent review checks after a shutdown-race
 correction. See `CR14C_SERVER_NODE_SESSION_ACCEPTANCE.md`. Durable delivery and receipts remain next.
+
+## ADR-242 — persist exact signed native envelope before any transmission
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Stage the exact HMAC-verified saved delivery body through the actual negotiated server session and
+canonical approval transaction. Match the session node/key to the currently locked canonical identity;
+bound frame expiry by task, session and node-key validity. Persist immutable envelope, actor/time and
+audit together, preserving owner trust/cancel/current-channel fences through commit.
+
+One attempt has one envelope: an existing row rejects re-signing even on a replacement connection.
+Historical receipt readback reconciles commit uncertainty without exposing the packet or frame to web
+callers. A prepared session cannot skip or reuse its reserved sequence. The block has no transmit API;
+later durable send-attempt and authenticated receipt integration must preserve exact-frame identity.
+
+Migration0050 adds the136th table and coordinator SELECT/INSERT, no web permission. The verified schema
+fingerprint is `797e11e174de3dbac425f714d2f2c4a405b24b4fce8c39982b4d15a72250b758`.
+Product `3e34d71e95f2ea86cda26a7227af3a0a51223f6a`, tree
+`47de7084fb4834d3ad16984412a50e1b67b7a7ec`, passed52 independent checks with no findings. See
+`CR14C_DURABLE_ENVELOPE_ACCEPTANCE.md`. No native effect, credential use, listener or deployment.
