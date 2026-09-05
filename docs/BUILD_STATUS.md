@@ -91,7 +91,8 @@ The accepted native-progress integration is [PR #289](https://github.com/MarvinA
 stacked on #288. Its exact head `7020280` passed GitHub CI run `33955013136` at 08:36:30 UTC.
 The accepted private-task follow-up is [PR #290](https://github.com/MarvinAi5/control-room/pull/290),
 stacked on #289. Its exact head `be668c5` passed GitHub CI run `33956977824` at 09:20:35 UTC.
-The accepted private result/review follow-up is on `codex/cr14c-private-task-results`; publication is pending.
+The accepted private result/review follow-up is [PR #291](https://github.com/MarvinAi5/control-room/pull/291),
+stacked on #290 from `codex/cr14c-private-task-results`.
 Its own current-head CI remains required. This stack is not merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.

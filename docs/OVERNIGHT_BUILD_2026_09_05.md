@@ -112,7 +112,8 @@ running beta; report concrete live blockers without converting simulator evidenc
 ### CR14C private task results and recorded review
 
 - Accepted product `e5db1f436c7c3f9cf809fe5f2e3fbcf6122ae1a0`; branch `codex/cr14c-private-task-results`,
-  stacked on #290. Publication/current checks are tracked in `BUILD_STATUS.md`.
+  [PR #291](https://github.com/MarvinAi5/control-room/pull/291), stacked on #290. Current-head CI remains
+  required; no merge or runtime activation.
 - Signed native result capture, exact artifact readback, authenticated canonical receipts, private protected
   file views and existing checkpoint-verified review history. Raw result bytes stay in approved artifact
   storage; canonical job/approval state is not changed by result delivery or review reads.
