@@ -4,12 +4,15 @@ import { createAccessVerifier, requireSameOrigin, WebAccessError } from "./acces
 import { privateResponseHeaders, webFailure } from "./http-common";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
+import { catalogProjectIdSchema } from "./project-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
   maxSessionSeconds: number; loadKeys: AccessKeyLoader;
   /** A single process-owned pool, supplied by the separately reviewed deployment bootstrap. */
   database: { client: DatabaseClient; close: () => Promise<void> };
+  /** Optional existing registry integrity key, supplied privately; never loaded or created by this process. */
+  ideaProjects?: { integrityKey: Uint8Array };
   clock?: () => number;
 }
 
@@ -25,7 +28,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const clock = options.clock ?? Date.now;
   const keys = createAccessKeyCache({ ...options, clock });
   const service = new WebProjectService(options.database.client,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey);
   let closing = false;
   let active = 0;
   let drained: (() => void) | undefined;
@@ -48,7 +51,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (url.search) throw new WebAccessError("invalid_request");
             let id: string;
             try { id = decodeURIComponent(stream[1]); } catch { throw new WebAccessError("invalid_request"); }
-            const project = await service.get(identity, id);
+            const project = await service.getView(identity, id);
             // A finite, current-state snapshot, not a long-lived authorization or a replayable job-event history.
             return new Response(`event: project-snapshot\ndata: ${JSON.stringify({ project })}\n\n`, {
               headers: { ...privateResponseHeaders, "content-type": "text/event-stream", "x-accel-buffering": "no" },
@@ -61,8 +64,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         if (detail) {
           let id: string;
           try { id = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }
-          await service.get(identity, id);
+          await service.getView(identity, id);
         } else if (["/", "/projects"].includes(url.pathname)) {
+          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
+            || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
+            throw new WebAccessError("invalid_request");
           await service.authorizeCatalog(identity);
         } else if (url.pathname !== "/session") throw new WebAccessError("not_found");
         if (url.pathname === "/") return new Response(null, { status: 303,

@@ -4,6 +4,7 @@ import test from "node:test";
 import handler from "../dist-vps/server/index.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
 import { fixture, now, origin, trust, request } from "./helpers/web-foundation.ts";
+import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project.ts";
 
 test("compiled Node entry protects pages, APIs and streams before application composition", async () => {
   assert.equal(typeof handler, "function");
@@ -22,7 +23,9 @@ test("Node client/SSR artifacts are separate from Sites metadata", () => {
 
 test("compiled private routes use the installed process, real disposable SQL, and shared revocation", async t => {
   const f = await fixture();
+  const { project: idea } = await seedWebIdea(f.client);
   const app = installPrivateWebProcess({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
+    ideaProjects: { integrityKey: webIdeaKey },
     database: { client: f.client, close: () => f.db.close() }, clock: () => now, loadKeys: async () => trust.keys });
   t.after(() => app.close());
   assert.throws(() => installPrivateWebProcess({}), /already_configured/);
@@ -30,13 +33,24 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.equal(created.status, 201); const { project } = await created.json();
   const catalog = await handler(request("/projects")); assert.equal(catalog.status, 200);
   const catalogHtml = await catalog.text();
-  assert.match(catalogHtml, /New project/); assert.match(catalogHtml, /Loading projects/);
+  // The creation form waits for the authenticated catalog's canCreate result, not just a rendered shell.
+  assert.match(catalogHtml, /Loading projects/); assert.doesNotMatch(catalogHtml, /<form/);
   assert.doesNotMatch(catalogHtml, /Lo-Fi Wayfarer|Content Blooms|ABS AI/);
   const path = `/projects/${encodeURIComponent(project.projectId)}`;
   const detail = await handler(request(`${path}/settings`)); assert.equal(detail.status, 200);
   assert.match(await detail.text(), /Loading project/);
   const read = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}`));
   assert.equal((await read.json()).project.title, "Compiled project");
+  const combined = await (await handler(request())).json();
+  assert.equal(combined.projects.length, 2); assert.equal(combined.sources.ideas, "included");
+  const ideaRead = await (await handler(request(`/api/v1/projects/${encodeURIComponent(idea.projectId)}`))).json();
+  assert.equal(ideaRead.project.origin, "idea_lab"); assert.equal(ideaRead.project.lifecycleEditable, false);
+  const ideaPage = await handler(request(`/projects/${encodeURIComponent(idea.projectId)}/settings`));
+  assert.equal(ideaPage.status, 200); assert.match(await ideaPage.text(), /Loading project/);
+  const nextPage = await handler(request(`/projects?after=${encodeURIComponent(idea.projectId)}`));
+  assert.equal(nextPage.status, 200); assert.match(await nextPage.text(), /Loading projects/);
+  const nextRead = await (await handler(request(`/api/v1/projects?after=${encodeURIComponent(idea.projectId)}`))).json();
+  assert.ok(nextRead.projects.every(item => item.projectId > idea.projectId));
   const archive = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/lifecycle`, "POST",
     { lifecycle: "archived", expectedVersion: 1 }, "compiled-archive-0001"));
   assert.equal(archive.status, 200);
@@ -47,7 +61,8 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const session = await handler(request("/session")); assert.equal(session.status, 200);
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
-  for (const protectedPath of ["/projects", path, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
+  for (const protectedPath of ["/projects", path, `/projects/${encodeURIComponent(idea.projectId)}`,
+    `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
   await app.close(); assert.equal((await handler(request("/projects"))).status, 503);
 });

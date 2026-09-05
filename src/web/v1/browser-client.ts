@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { projectCreateSchema, projectTransitionSchema, webProjectSchema, type WebProject } from "./project-wire";
+import { catalogProjectIdSchema, projectCatalogPageSchema, projectCreateSchema, projectTransitionSchema,
+  projectViewSchema, webProjectSchema, type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
 
 export type BrowserFailureCode = "authentication_required" | "access_denied" | "invalid_request" | "conflict" | "not_found" | "unavailable" | "uncertain";
 export class BrowserRequestError extends Error {
@@ -52,13 +53,22 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
     } finally { busy = false; }
   }
   return {
-    async list(): Promise<WebProject[]> {
-      try { return z.object({ projects: z.array(webProjectSchema).max(200) }).strict().parse(await read(await call("/api/v1/projects"))).projects; }
+    async list(after?: string): Promise<ProjectCatalogPage> {
+      try {
+        if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new BrowserRequestError("invalid_request");
+        const page = projectCatalogPageSchema.parse(await read(await call(`/api/v1/projects${after ? `?after=${encodeURIComponent(after)}` : ""}`)));
+        const ids = page.projects.map(project => project.projectId);
+        if (ids.some((id, index) => (index > 0 && id <= ids[index - 1]) || (after !== undefined && id <= after))
+          || page.nextCursor !== null && (ids.length !== 50 || page.nextCursor !== ids.at(-1))
+          || page.projects.some(project => (project.origin === "ordinary" ? page.sources.ordinary : page.sources.ideas) !== "included")) throw new Error();
+        return page;
+      }
       catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async get(id: string): Promise<WebProject> {
+    async get(id: string): Promise<ProjectView> {
       try {
-        const result = z.object({ project: webProjectSchema }).strict().parse(await read(await call(`/api/v1/projects/${encodeURIComponent(id)}`)));
+        if (!catalogProjectIdSchema.safeParse(id).success) throw new BrowserRequestError("invalid_request");
+        const result = z.object({ project: projectViewSchema }).strict().parse(await read(await call(`/api/v1/projects/${encodeURIComponent(id)}`)));
         if (result.project.projectId !== id) throw new Error();
         return result.project;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }

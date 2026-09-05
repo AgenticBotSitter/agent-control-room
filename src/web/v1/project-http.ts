@@ -18,10 +18,14 @@ export function createProjectHttpHandler(options: {
     try {
       requireSameOrigin(request, options.origin);
       const identity = verifyIdentity(request, clock());
-      const path = new URL(request.url).pathname;
-      if (new URL(request.url).search) throw new WebAccessError("invalid_request");
+      const url = new URL(request.url), path = url.pathname;
+      if (path === "/api/v1/projects" && request.method === "GET") {
+        if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1)
+          throw new WebAccessError("invalid_request");
+        return Response.json(await options.service.listPage(identity, url.searchParams.get("after") ?? undefined), { headers: responseHeaders });
+      }
+      if (url.search) throw new WebAccessError("invalid_request");
       if (path === "/api/v1/projects") {
-        if (request.method === "GET") return Response.json({ projects: await options.service.list(identity) }, { headers: responseHeaders });
         if (request.method === "POST") {
           const result = await options.service.create(identity, await readBody(request), request.headers.get("idempotency-key") ?? "");
           return Response.json(result, { status: result.replayed ? 200 : 201, headers: responseHeaders });
@@ -38,7 +42,7 @@ export function createProjectHttpHandler(options: {
       if (detail && request.method === "GET") {
         let projectId: string;
         try { projectId = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }
-        return Response.json({ project: await options.service.get(identity, projectId) }, { headers: responseHeaders });
+        return Response.json({ project: await options.service.getView(identity, projectId) }, { headers: responseHeaders });
       }
       if (path === "/api/v1/session/logout" && request.method === "POST") {
         await options.service.logout(identity);

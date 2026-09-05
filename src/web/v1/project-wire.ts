@@ -10,3 +10,15 @@ export const webProjectSchema = z.object({ projectId: z.string().regex(/^project
   title: text(120).pipe(z.string().min(1)), summary: text(1000, true), lifecycle: lifecycleSchema,
   version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), createdAt: z.string().datetime(), updatedAt: z.string().datetime() }).strict();
 export type WebProject = z.infer<typeof webProjectSchema>;
+
+// Idea projects retain their existing logical ID alphabet; this is navigation, never authority.
+export const catalogProjectIdSchema = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+export const projectViewSchema = webProjectSchema.extend({ projectId: catalogProjectIdSchema,
+  origin: z.enum(["ordinary", "idea_lab"]), lifecycleEditable: z.boolean() }).strict()
+  .refine(project => project.origin !== "idea_lab" || !project.lifecycleEditable);
+export const projectCatalogPageSchema = z.object({ projects: z.array(projectViewSchema).max(50),
+  nextCursor: catalogProjectIdSchema.nullable(), canCreate: z.boolean(),
+  sources: z.object({ ordinary: z.enum(["included", "not_authorized"]),
+    ideas: z.enum(["included", "not_authorized", "not_configured"]) }).strict() }).strict();
+export type ProjectView = z.infer<typeof projectViewSchema>;
+export type ProjectCatalogPage = z.infer<typeof projectCatalogPageSchema>;

@@ -26,7 +26,7 @@ const eslintConfig = defineConfig([
   {
     // Private navigation intentionally performs document requests through the common server gate.
     // Access login/logout must likewise remain top-level navigation, not prefetch/router actions.
-    files: ["private-app/**/*.tsx"],
+    files: ["private-app/**/*.tsx", "app/components/project-catalog-navigation.tsx"],
     rules: { "@next/next/no-html-link-for-pages": "off" },
   },
   {

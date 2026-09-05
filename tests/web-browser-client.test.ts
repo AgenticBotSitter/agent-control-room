@@ -41,3 +41,23 @@ test("every browser API call requests an explicit expired-edge-session response"
   assert.equal(calls.length, 5);
   for (const init of calls) assert.equal(new Headers(init.headers).get("x-requested-with"), "XMLHttpRequest");
 });
+
+test("browser page reads validate mixed origins, ordering and continuation without retaining an unbounded catalog", async () => {
+  const view = { ...project, origin: "ordinary", lifecycleEditable: true };
+  const sources = { ordinary: "included", ideas: "included" };
+  let page: unknown = { projects: [view], nextCursor: null, canCreate: true, sources };
+  const paths: string[] = [];
+  const client = createProjectBrowserClient((async path => { paths.push(String(path)); return Response.json(page); }) as typeof fetch);
+  assert.equal((await client.list()).projects[0].origin, "ordinary");
+  assert.equal((await client.list("project:aaa")).projects.length, 1);
+  assert.equal(paths[1], "/api/v1/projects?after=project%3Aaaa");
+  for (const bad of [
+    { projects: [view, view], nextCursor: null, canCreate: true, sources },
+    { projects: [view], nextCursor: "project:web", canCreate: true, sources },
+    { projects: [{ ...view, origin: "idea_lab", lifecycleEditable: true }], nextCursor: null, canCreate: true, sources },
+    { projects: [view], nextCursor: null, canCreate: true, sources: { ...sources, ordinary: "not_authorized" } },
+  ]) { page = bad; await assert.rejects(client.list(), /unavailable/); }
+  page = { projects: [view], nextCursor: null, canCreate: true, sources };
+  await assert.rejects(client.list("project:zzz"), /unavailable/);
+  const count = paths.length; await assert.rejects(client.list("../escape"), /invalid_request/); assert.equal(paths.length, count);
+});

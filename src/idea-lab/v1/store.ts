@@ -283,6 +283,16 @@ export class IdeaLabProjectRegistryStoreV1 {
     return buildProjectRegistryProjectionV1(snapshot,event);
   }
   async getProject(tenantId:string,projectId:string):Promise<ProjectRegistryProjectionV1|undefined>{return this.#projectWith(this.#query,tenantId,projectId);}
+  /** Read-only composition inside an already authorized transaction. No new transaction or policy bypass. */
+  async getProjectInSession(session:DatabaseSession,tenantId:string,workspaceId:string,projectId:string):Promise<ProjectRegistryProjectionV1|undefined>{
+    const selected=await session.query(`SELECT id FROM projects WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3 AND adapter_id=$4 FOR SHARE`,
+      [ideaIdSchemaV1.parse(tenantId),ideaIdSchemaV1.parse(workspaceId),ideaIdSchemaV1.parse(projectId),CONTROL_ROOM_IDEA_ADAPTER_V1]);
+    if(!selected.rows.length)return undefined;
+    const project=await this.#projectWith((statement,params)=>session.query(statement,params),tenantId,projectId);
+    if(!project||project.tenantId!==tenantId||project.workspaceId!==workspaceId||project.projectId!==projectId)
+      throw new IdeaLabErrorV1("integrity_failed");
+    return project;
+  }
   async getLatestProjectLifecycleEvent(tenantId:string,projectId:string):Promise<ProjectLifecycleEventV1|undefined>{
     const result=await this.#query<LifecycleRow>(`SELECT payload,event_auth_tag FROM control_project_lifecycle_events
       WHERE tenant_id=$1 AND project_id=$2 ORDER BY version DESC LIMIT 1`,[ideaIdSchemaV1.parse(tenantId),ideaIdSchemaV1.parse(projectId)]);

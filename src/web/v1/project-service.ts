@@ -4,18 +4,31 @@ import { appendAuditWith } from "../../audit/audit-store";
 import { evaluatePolicy, type RoleGrant } from "../../security/policy";
 import { sha256Digest } from "../../security/digest";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
+import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
 
-import { projectCreateSchema, projectTransitionSchema, type WebProject } from "./project-wire";
+import { catalogProjectIdSchema, projectCreateSchema, projectTransitionSchema, projectViewSchema,
+  type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
 export { projectCreateSchema, projectTransitionSchema, lifecycleSchema, type WebProject } from "./project-wire";
-type Actor = { id: string; grants: RoleGrant[]; now: string };
+type Actor = { id: string; now: string;
+  can: (action: string, projectId?: string, ownerOnly?: boolean) => boolean;
+  require: (action: string, projectId?: string, ownerOnly?: boolean) => void };
 const iso = (value: string | Date) => new Date(value).toISOString();
 
 /** Server composition supplies deployment scope. No request can choose a tenant or workspace. */
 export class WebProjectService {
+  private readonly ideas?: IdeaLabProjectRegistryStoreV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    private readonly clock: () => number = Date.now) {}
+    private readonly clock: () => number = Date.now, ideaIntegrityKey?: Uint8Array) {
+    if (ideaIntegrityKey !== undefined) this.ideas = new IdeaLabProjectRegistryStoreV1(db, ideaIntegrityKey);
+  }
 
   private async authorized<T>(identity: VerifiedWebIdentity, action: string, projectId: string | undefined,
+    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>): Promise<T> {
+    return this.authenticated(identity, (tx, actor) => { actor.require(action, projectId); return operation(tx, actor); });
+  }
+
+  private async authenticated<T>(identity: VerifiedWebIdentity,
     operation: (tx: DatabaseSession, actor: Actor) => Promise<T>): Promise<T> {
     const nowMs = this.clock();
     const assertFresh = () => {
@@ -27,7 +40,7 @@ export class WebProjectService {
     };
     assertFresh();
     const now = new Date(nowMs).toISOString();
-    let checkGrant = () => {};
+    const grantChecks: (() => void)[] = [];
     return this.db.transactionWithPreCommitCheck(async tx => {
       // Serialize each identity's requests and lock its current grants through the operation.
       // Revocation committed before this lock is observed; already-running transactions may finish first.
@@ -47,23 +60,25 @@ export class WebProjectService {
         expires_at: string | null; revoked_at: string | null }>(
         `SELECT * FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2 FOR SHARE`, [this.scope.tenantId, row.id])).rows
         .filter(g => g.role_key === "owner" || g.role_key === "operator").map(g => ({ id: g.id,
-          allowedActions: g.allowed_actions, projectIds: g.project_ids, riskCeiling: g.risk_ceiling,
+          roleKey: g.role_key, allowedActions: g.allowed_actions, projectIds: g.project_ids, riskCeiling: g.risk_ceiling,
           allowExternalEffects: g.allow_external_effects, requireStrongFactor: g.require_strong_factor,
           ...(g.expires_at ? { expiresAt: iso(g.expires_at) } : {}), ...(g.revoked_at ? { revokedAt: iso(g.revoked_at) } : {}) }));
       const principal = { tenantId: this.scope.tenantId, identityId: row.id, actorType: "human" as const,
         authenticatedAt: identity.issuedAt, expiresAt: new Date(Math.min(Date.parse(session.expires_at), Date.parse(identity.expiresAt))).toISOString() };
-      const policyRequest = { tenantId: this.scope.tenantId, action, resourceType: "project", resourceId: projectId ?? this.scope.workspaceId,
-          ...(projectId ? { projectId } : {}), risk: "low" as const, externalEffect: false, occurredAt: now };
-      const decision = evaluatePolicy(principal, grants, policyRequest);
-      checkGrant = () => {
-        if (!evaluatePolicy(principal, grants, { ...policyRequest, occurredAt: new Date(this.clock()).toISOString() }).allowed)
-          throw new WebAccessError("access_denied");
+      const can = (action: string, projectId?: string, ownerOnly = false) => {
+        const selected = ownerOnly ? grants.filter(g => g.roleKey === "owner") : grants;
+        const decision = evaluatePolicy(principal, selected, { tenantId: this.scope.tenantId, action,
+          resourceType: "project", resourceId: projectId ?? this.scope.workspaceId, ...(projectId ? { projectId } : {}),
+          risk: "low", externalEffect: false, occurredAt: new Date(this.clock()).toISOString() });
+        // Enumeration/create always require a matching wildcard project grant, never just a per-project grant.
+        return decision.allowed && (!!projectId || selected.some(g => decision.matchedGrantIds.includes(g.id) && g.projectIds.includes("*")));
       };
-      // Catalog/create require a workspace-wide grant; a project-scoped grant cannot enumerate or create others.
-      if (!decision.allowed || !projectId && !grants.some(g => decision.matchedGrantIds.includes(g.id) && g.projectIds.includes("*")))
-        throw new WebAccessError("access_denied");
-      return operation(tx, { id: row.id, grants, now });
-    }, () => { assertFresh(); checkGrant(); });
+      const require = (action: string, projectId?: string, ownerOnly = false) => {
+        const check = () => { if (!can(action, projectId, ownerOnly)) throw new WebAccessError("access_denied"); };
+        check(); grantChecks.push(check);
+      };
+      return operation(tx, { id: row.id, now, can, require });
+    }, () => { assertFresh(); for (const check of grantChecks) check(); });
   }
 
   async list(identity: VerifiedWebIdentity): Promise<WebProject[]> {
@@ -80,7 +95,68 @@ export class WebProjectService {
   }
 
   async authorizeCatalog(identity: VerifiedWebIdentity): Promise<void> {
-    await this.authorized(identity, "projects.read", undefined, async () => {});
+    await this.authenticated(identity, async (_, actor) => { this.catalogAccess(actor); });
+  }
+
+  private catalogAccess(actor: Actor): ProjectCatalogPage["sources"] {
+    const ordinary = actor.can("projects.read");
+    const ideas = actor.can("idea_lab.project_read", undefined, true);
+    if (!ordinary && !ideas) throw new WebAccessError("access_denied");
+    if (!ordinary && !this.ideas) throw new Error("idea_catalog_not_configured");
+    if (ordinary) actor.require("projects.read");
+    if (ideas && this.ideas) actor.require("idea_lab.project_read", undefined, true);
+    return { ordinary: ordinary ? "included" : "not_authorized",
+      ideas: !ideas ? "not_authorized" : this.ideas ? "included" : "not_configured" };
+  }
+
+  async listPage(identity: VerifiedWebIdentity, after?: string): Promise<ProjectCatalogPage> {
+    if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new WebAccessError("invalid_request");
+    return this.authenticated(identity, async (tx, actor) => {
+      const sources = this.catalogAccess(actor);
+      const rows = await tx.query<{ id: string; adapter_id: string }>(`SELECT p.id,p.adapter_id FROM projects p
+        WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR p.id COLLATE "C" > $3 COLLATE "C")
+        AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
+          WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))
+        ORDER BY p.id COLLATE "C" LIMIT 51 FOR SHARE OF p`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
+        this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"]);
+      const projects: ProjectView[] = [];
+      for (const row of rows.rows.slice(0, 50)) projects.push(await this.readView(tx, actor, row.id, row.adapter_id));
+      return { projects, nextCursor: rows.rows.length > 50 ? projects.at(-1)!.projectId : null,
+        canCreate: actor.can("projects.create"), sources };
+    });
+  }
+
+  async getView(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectView> {
+    if (!catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
+    return this.authenticated(identity, async (tx, actor) => {
+      const row = (await tx.query<{ adapter_id: string }>(`SELECT adapter_id FROM projects
+        WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3 FOR SHARE`, [this.scope.tenantId, this.scope.workspaceId, projectId])).rows[0];
+      // Keep unavailable/manual IDs behind the same project permission boundary as the original detail service.
+      return this.readView(tx, actor, projectId, row?.adapter_id ?? this.manualAdapterId());
+    });
+  }
+
+  private async readView(tx: DatabaseSession, actor: Actor, projectId: string, adapterId: string): Promise<ProjectView> {
+    if (adapterId === CONTROL_ROOM_IDEA_ADAPTER_V1) {
+      actor.require("idea_lab.project_read", projectId, true);
+      if (!this.ideas) throw new Error("idea_catalog_not_configured");
+      const idea = await this.ideas.getProjectInSession(tx, this.scope.tenantId, this.scope.workspaceId, projectId);
+      if (!idea) throw new WebAccessError("not_found");
+      // Preserve the existing authenticated Idea lifecycle; this integration is read-only for Idea projects.
+      return projectViewSchema.parse({ projectId: idea.projectId, title: idea.title, summary: idea.summary,
+        lifecycle: idea.lifecycleState, version: idea.version, createdAt: iso(idea.createdAt), updatedAt: iso(idea.updatedAt),
+        origin: "idea_lab", lifecycleEditable: false });
+    }
+    actor.require("projects.read", projectId);
+    if (adapterId !== this.manualAdapterId()) throw new WebAccessError("not_found");
+    const row = (await tx.query<WebProject>(`SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
+      h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt" FROM projects p
+      JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+      WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 AND p.adapter_id=$4 FOR SHARE OF p,h`,
+    [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId()])).rows[0];
+    if (!row) throw new WebAccessError("not_found");
+    return projectViewSchema.parse({ ...row, version: Number(row.version), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),
+      origin: "ordinary", lifecycleEditable: actor.can("projects.lifecycle", projectId) });
   }
 
   private manualAdapterId() { return `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`; }
