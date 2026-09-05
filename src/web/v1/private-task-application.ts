@@ -4,9 +4,9 @@ import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
  */
-export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOptions, "planning" | "assignment" | "database"> & { database: TaskCoordinatorDatabase },
+export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOptions, "planning" | "assignment" | "approvals" | "database"> & { database: TaskCoordinatorDatabase },
   coordinator: TaskCoordinatorConfiguration) {
-  if ("planning" in web || "assignment" in web || web.tenantId !== coordinator.scope.tenantId
+  if ("planning" in web || "assignment" in web || "approvals" in web || web.tenantId !== coordinator.scope.tenantId
     || web.workspaceId !== coordinator.scope.workspaceId || web.database.client === coordinator.database.client
     || typeof web.database.isAvailable !== "function" || typeof web.database.close !== "function")
     throw new Error("private_task_application_config_invalid");
@@ -24,7 +24,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, planning: tasks.planning, assignment: tasks.assignment }); }
+  try { app = createPrivateWebProcess({ ...web, database, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals }); }
   catch {
     const results = await Promise.allSettled([tasks.close(), database.close()]);
     if (results.some(result => result.status === "rejected")) throw new Error("private_task_application_cleanup_uncertain");

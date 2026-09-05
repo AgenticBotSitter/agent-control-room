@@ -4,8 +4,8 @@ import { origin } from "./web-foundation";
 import type { DatabaseClient, DatabaseSession } from "../../src/persistence/database";
 import type { PrivateTaskStartupConfiguration } from "../../src/web/v1/private-task-startup";
 
-export async function taskStartupFixture() {
-  const f = await taskAssignmentFixture();
+export async function taskStartupFixture(base?: Awaited<ReturnType<typeof taskAssignmentFixture>>) {
+  const f = base ?? await taskAssignmentFixture();
   await f.raw.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
   await f.raw.exec(await readFile("db/roles/task_coordinator_roles.sql", "utf8"));
   await f.raw.exec(`CREATE ROLE web_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;

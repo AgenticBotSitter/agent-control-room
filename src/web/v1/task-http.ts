@@ -8,16 +8,27 @@ import { taskPlanningDraftSchema, taskPlanningCommandSchema } from "./task-plann
 import { catalogProjectIdSchema } from "./project-wire";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import { taskAssignmentDraftSchema, taskAssignmentCommandSchema, taskAssignmentOptionsSchema } from "./task-assignment-wire";
+import type { TaskApprovalOperation } from "./task-coordinator-lifecycle";
+import { taskApprovalHttp } from "./task-approval-http";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
   ownerReviews?: WebTaskReviewService; planning?: Pick<TaskExecutionPlanner, "plan">;
-  assignment?: TaskAssignmentOperation; clock?: () => number }) {
+  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
     try {
       requireSameOrigin(request, options.origin);
       const identity = verify(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const approvalRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/approval$/.exec(url.pathname);
+      if (approvalRoute) {
+        let projectId: string, jobId: string;
+        try { projectId = decodeURIComponent(approvalRoute[1]); jobId = decodeURIComponent(approvalRoute[2]); }
+        catch { throw new WebAccessError("invalid_request"); }
+        if (!catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success)
+          throw new WebAccessError("invalid_request");
+        return await taskApprovalHttp(request, identity, projectId, jobId, options.service, options.approvals);
+      }
       const assignmentRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/assignment$/.exec(url.pathname);
       if (assignmentRoute) {
         if (url.search) throw new WebAccessError("invalid_request");

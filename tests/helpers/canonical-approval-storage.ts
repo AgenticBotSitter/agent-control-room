@@ -33,7 +33,7 @@ export async function canonicalApprovalStorageFixture() {
       operations: ["status", "stop"], nonce: "synthetic-storage-nonce" }) };
   const abort = new AbortController();
   const save = (value: unknown = packet, c = coordinator) => c.storeNativeApproval(...args, value, abort.signal);
-  return { ...f, native, approvals, prepared, packet, abort, sign, save, create, args, coordinator, store, clock,
+  return { ...f, assignmentFixture: f, native, approvals, prepared, packet, abort, sign, save, create, args, coordinator, store, clock,
     setNow: (value: number) => { now = value; }, count: async () => (await f.db.query("SELECT * FROM control_native_approval_packets")).rows.length,
     close: async () => { approvals.close(); await native.close(); await f.close(); } };
 }

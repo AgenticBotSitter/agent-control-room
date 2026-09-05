@@ -27,6 +27,12 @@ const routeSchema = z.object({ nodeId: localId, executorId: localId,
   leaseSeconds: z.number().int().min(1).max(300) }).strict();
 export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
 export type NativeApprovalEnrollment = { enrollment: NativeEnrollment; nodeClass: string };
+export function validateNativeApprovalEnrollments(enrollments: readonly NativeApprovalEnrollment[], tenantId: string, routes: readonly TaskAssignmentRoute[]) {
+  const snapshot = z.array(z.object({ enrollment: enrollmentSchema, nodeClass: localId }).strict()).max(64).parse(enrollments);
+  if (new Set(snapshot.map(e => e.enrollment.nodeId)).size !== snapshot.length
+    || snapshot.some(e => e.enrollment.tenantId !== tenantId || !routes.some(r => r.nodeId === e.enrollment.nodeId))) unavailable();
+  return snapshot;
+}
 export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRoute[]) {
   const snapshot = z.array(routeSchema).max(64).parse(routes);
   if (new Set(snapshot.map(route => route.nodeId)).size !== snapshot.length) unavailable();
@@ -53,9 +59,7 @@ export class TaskAssignmentCoordinator {
     if (plannerScope.tenantId !== scope.tenantId || plannerScope.workspaceId !== scope.workspaceId) unavailable();
     this.scope = Object.freeze({ ...scope });
     this.routes = validateTaskAssignmentRoutes(routes);
-    this.enrollments = z.array(z.object({ enrollment: enrollmentSchema, nodeClass: localId }).strict()).max(64).parse(enrollments);
-    if (new Set(this.enrollments.map(e => e.enrollment.nodeId)).size !== this.enrollments.length
-      || this.enrollments.some(e => e.enrollment.tenantId !== scope.tenantId || !this.routes.some(r => r.nodeId === e.enrollment.nodeId))) unavailable();
+    this.enrollments = validateNativeApprovalEnrollments(enrollments, scope.tenantId, this.routes);
     this.projects = new WebProjectService(db, scope, clock);
   }
   webOperation(): TaskAssignmentOperation {

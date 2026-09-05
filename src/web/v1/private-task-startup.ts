@@ -6,12 +6,12 @@ import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration }
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
 import { nativeTaskTemplateSchema } from "./task-execution-planner";
-import { validateTaskAssignmentRoutes } from "./task-assignment-coordinator";
+import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes"> & { database: PrivatePostgresConfiguration };
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals"> & { database: PrivatePostgresConfiguration };
 };
 function configuration(input: PrivateTaskStartupConfiguration) {
   try {
@@ -28,7 +28,10 @@ function configuration(input: PrivateTaskStartupConfiguration) {
     const planning = { template, integrityKey: key(p.integrityKey), reviewIntegrityKey: key(p.reviewIntegrityKey),
       checkpoints: Object.freeze({ read, initialize: denied, advance: denied }),
       ...(p.ideaIntegrityKey ? { ideaIntegrityKey: key(p.ideaIntegrityKey) } : {}) };
-    return { web, database, planning, routes: validateTaskAssignmentRoutes(input.coordinator.routes) };
+    const routes = validateTaskAssignmentRoutes(input.coordinator.routes), a = input.coordinator.approvals;
+    if (a && (typeof a.store?.acceptInSession !== "function" || typeof a.store?.readInSession !== "function")) throw new Error();
+    const approvals = a ? { enrollments: validateNativeApprovalEnrollments(a.enrollments, web.tenantId, routes), store: a.store } : undefined;
+    return { web, database, planning, routes, approvals };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -78,7 +81,7 @@ export function createPrivateTaskBootstrap(dependencies: {
       if (!web.isAvailable() || !coordinator.isAvailable()) throw new Error();
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
-        planning: config.planning, routes: config.routes, clock,
+        planning: config.planning, routes: config.routes, approvals: config.approvals, clock,
       });
       if (!application.isReady()) throw new Error();
       dependencies.install(application);
