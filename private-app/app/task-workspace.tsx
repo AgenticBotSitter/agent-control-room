@@ -7,23 +7,25 @@ import { PrivateHeader } from "./private-header";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, taskUrl } from "./task-panels";
 import { PrivateTaskResults } from "./task-results";
 import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
+import { createTaskVerificationWorkspace, type TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
 import { PrivateTaskPlanning } from "./task-planning";
 import { PrivateTaskAssignment } from "./task-assignment";
 import { PrivateTaskApproval } from "./task-approval";
 
 /** Read-gated child; command memory is owned by the stable keyed task page, not this subtree. */
-export function TaskDetailResults({ detail, projectId, reviewWorkspace }: {
-  detail?: TaskDetail; projectId: string; reviewWorkspace: TaskReviewWorkspace;
+export function TaskDetailResults({ detail, projectId, reviewWorkspace, verificationWorkspace }: {
+  detail?: TaskDetail; projectId: string; reviewWorkspace: TaskReviewWorkspace; verificationWorkspace?: TaskVerificationWorkspace;
 }) {
   return detail && (detail.artifacts === "configured" || detail.review === "recorded")
     ? <PrivateTaskResults key={`${projectId}:${detail.task.jobId}`} projectId={projectId}
-      jobId={detail.task.jobId} reviewWorkspace={reviewWorkspace} /> : null;
+      jobId={detail.task.jobId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /> : null;
 }
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
   const [client] = useState(() => createTaskBrowserClient());
   // Neither failed task-detail reads nor failed result reads may discard an unfinished review.
   const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
+  const [verificationWorkspace] = useState(() => createTaskVerificationWorkspace());
   const [page, setPage] = useState<TaskPage>();
   const [detail, setDetail] = useState<TaskDetail>();
   const [draft, setDraft] = useState<TaskDraft>({ title: "", instructions: "" });
@@ -87,7 +89,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     {jobId && <PrivateTaskPlanning detail={detail} />}
     {jobId && <PrivateTaskAssignment detail={detail} />}
     {jobId && <PrivateTaskApproval detail={detail} />}
-    <TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} />
+    <TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} />
     {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Agent dispatch is not connected; no work starts from refresh or reconnect.</p>}
   </main></div>;
 }

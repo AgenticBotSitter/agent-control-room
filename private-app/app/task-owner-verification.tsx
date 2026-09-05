@@ -41,7 +41,7 @@ export function OwnerVerificationPanel({ options, scenarioId, result, note, pend
             {Object.entries(outcome).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>Required observation note<textarea aria-label="Required observation note" maxLength={4096} value={note}
               disabled={pending || held} onChange={event => onNote(event.target.value)} /></label>
-            <p className="private-note">Describe only what you observed. Do not include passwords, credentials or secrets. Maximum 4,096 UTF-8 bytes.</p>
+            <p className="private-note">Describe only what you observed. Only the note’s fingerprint is saved, not its text; keep any detailed evidence separately. Do not include passwords, credentials or secrets. Maximum 4,096 UTF-8 bytes.</p>
             <button type="button" disabled={pending || held || !result || !note.trim()} onClick={() => onRecord(selected)}>Record human verification</button></>}
         </div>}
       </>}

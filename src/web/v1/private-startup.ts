@@ -26,7 +26,8 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
         ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),
         ...(input.tasks.reviews ? { reviews: { ...input.tasks.reviews, integrityKey: key(input.tasks.reviews.integrityKey) } } : {}),
-        ...(input.tasks.ownerReviews ? { ownerReviews: { ...input.tasks.ownerReviews, integrityKey: key(input.tasks.ownerReviews.integrityKey) } } : {}) } } : {}),
+        ...(input.tasks.ownerReviews ? { ownerReviews: { ...input.tasks.ownerReviews, integrityKey: key(input.tasks.ownerReviews.integrityKey) } } : {}),
+        ...(input.tasks.manualVerificationScenarios ? { manualVerificationScenarios: input.tasks.manualVerificationScenarios.map(value => ({ ...value })) } : {}) } } : {}),
       ...(input.connections ? { connections: { registryIntegrityKey: key(input.connections.registryIntegrityKey),
         ...(input.connections.telemetryIntegrityKey ? { telemetryIntegrityKey: key(input.connections.telemetryIntegrityKey) } : {}) } } : {}),
     });

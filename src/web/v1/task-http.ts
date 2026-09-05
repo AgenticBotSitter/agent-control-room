@@ -2,6 +2,8 @@ import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTru
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import type { WebTaskService } from "./task-service";
 import type { WebTaskReviewService } from "./task-review-service";
+import type { WebTaskVerificationService } from "./task-verification-service";
+import { taskVerificationDraftSchema } from "./task-verification-wire";
 import { taskReviewDraftSchema } from "./task-review-wire";
 import type { TaskExecutionPlanner } from "./task-execution-planner";
 import { taskPlanningDraftSchema, taskPlanningCommandSchema } from "./task-planning-wire";
@@ -12,7 +14,7 @@ import type { TaskApprovalOperation } from "./task-coordinator-lifecycle";
 import { taskApprovalHttp } from "./task-approval-http";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; planning?: Pick<TaskExecutionPlanner, "plan">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskExecutionPlanner, "plan">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
@@ -20,6 +22,24 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
       requireSameOrigin(request, options.origin);
       const identity = verify(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const verificationRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/results\/([^/]+)\/verifications\/([^/]+)$/.exec(url.pathname);
+      if (verificationRoute) {
+        if (url.search) throw new WebAccessError("invalid_request");
+        let ids: string[];
+        try { ids = verificationRoute.slice(1).map(decodeURIComponent); } catch { throw new WebAccessError("invalid_request"); }
+        if (ids.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new WebAccessError("invalid_request");
+        const [projectId, jobId, artifactId, targetId] = ids;
+        if (!options.ownerVerifications) {
+          await options.service.authorize(identity, projectId); throw new Error("owner_verification_not_configured");
+        }
+        if (request.method === "GET") return Response.json(await options.ownerVerifications.options(identity, projectId, jobId, artifactId, targetId), { headers: privateResponseHeaders });
+        if (request.method !== "POST") throw new WebAccessError("not_found");
+        if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body) throw new WebAccessError("invalid_request");
+        const draft = taskVerificationDraftSchema.safeParse(await readBoundedJson(request.body, 16_384));
+        if (!draft.success || draft.data.artifactId !== artifactId || draft.data.targetId !== targetId) throw new WebAccessError("invalid_request");
+        const result = await options.ownerVerifications.record(identity, projectId, jobId, draft.data);
+        return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+      }
       const approvalRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/approval$/.exec(url.pathname);
       if (approvalRoute) {
         let projectId: string, jobId: string;

@@ -5,12 +5,15 @@ import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task
 import type { TaskResultContent, TaskResultsPage, TaskReviewEvidence } from "../../src/web/v1/task-result-wire";
 import { OwnerTaskReview } from "./task-owner-review";
 import type { TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
+import { OwnerTaskVerification } from "./task-owner-verification";
+import type { TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
 
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Superseded" };
 
-export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onReviewSaved, reviewWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
-  pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace }) {
+export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
+  pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;
+  verificationWorkspace?: TaskVerificationWorkspace }) {
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
@@ -59,13 +62,18 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
             && <OwnerTaskReview key={`${review.targetId}:${content.artifact.artifactId}:${content.artifact.contentHash}`}
               projectId={page.projectId} jobId={page.jobId} artifactId={content.artifact.artifactId} targetId={review.targetId}
               targetDigest={review.targetDigest} contentHash={review.contentHash} workspace={reviewWorkspace} onSaved={() => onReviewSaved?.()} />}
+          {page.verificationCommands === "configured" && content && review.kind === "document"
+            && review.matchingArtifactIds.includes(content.artifact.artifactId) && review.contentHash === content.artifact.contentHash
+            && <OwnerTaskVerification key={`verification:${review.targetId}:${content.artifact.artifactId}:${content.artifact.contentHash}`}
+              projectId={page.projectId} jobId={page.jobId} artifactId={content.artifact.artifactId} targetId={review.targetId}
+              targetDigest={review.targetDigest} contentHash={review.contentHash} workspace={verificationWorkspace} onSaved={() => onReviewSaved?.()} />}
         </li>)}</ol>}
     {page.additionalTargetsOmitted && <p>Only the {page.reviews.length} most recent review targets are shown within this page’s size limit. Additional history remains saved.</p>}
   </section></div>;
 }
 
-export function PrivateTaskResults({ projectId, jobId, reviewWorkspace }: {
-  projectId: string; jobId: string; reviewWorkspace: TaskReviewWorkspace;
+export function PrivateTaskResults({ projectId, jobId, reviewWorkspace, verificationWorkspace }: {
+  projectId: string; jobId: string; reviewWorkspace: TaskReviewWorkspace; verificationWorkspace?: TaskVerificationWorkspace;
 }) {
   const [client] = useState(() => createTaskBrowserClient());
   const [page, setPage] = useState<TaskResultsPage>(), [content, setContent] = useState<TaskResultContent>();
@@ -99,7 +107,7 @@ export function PrivateTaskResults({ projectId, jobId, reviewWorkspace }: {
       <p>Unsaved review text and exact pending save keys remain in this task page’s memory. Restore access and reopen the same result to continue. Leaving this task page discards them.</p>
       <button type="button" onClick={() => { setSelected(undefined); setRefresh(value => value + 1); }}>Refresh result records</button></div>}
     {!page && !error && <p role="status">Loading protected results and review…</p>}
-    {page && <TaskResultsPanel page={page} content={content} pending={pending} reviewWorkspace={reviewWorkspace}
+    {page && <TaskResultsPanel page={page} content={content} pending={pending} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace}
       onReviewSaved={() => setRefresh(value => value + 1)}
       onOpen={artifactId => { generation.current++; setPending(true); setContent(undefined); setSelected(artifactId); setRefresh(value => value + 1); }}
       onClose={() => { generation.current++; setContent(undefined); setSelected(undefined); setPending(false); }} />}

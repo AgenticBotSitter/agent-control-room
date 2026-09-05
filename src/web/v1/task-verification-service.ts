@@ -56,7 +56,7 @@ export class WebTaskVerificationService {
     actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
     const project = await this.projects.getViewInSession(tx, actor, projectId);
     const row = (await tx.query<{ payload: unknown; state: string; version: number }>(
-      "SELECT payload,state,version FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR SHARE",
+      "SELECT payload,state,version FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
       [this.scope.tenantId, projectId, jobId])).rows[0];
     if (!row) throw new WebAccessError("not_found");
     const job = jobRecordSchema.parse(row.payload);

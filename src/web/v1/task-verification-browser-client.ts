@@ -43,7 +43,7 @@ export function createTaskVerificationBrowserClient(transport: typeof fetch = fe
     try {
       for (;;) {
         const { value, done } = await reader.read(); if (done) break;
-        size += value.byteLength; if (size > 131_072) throw new Error(); chunks.push(value);
+        size += value.byteLength; if (size > 1_048_576) throw new Error(); chunks.push(value);
       }
       const bytes = new Uint8Array(size); let offset = 0;
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }

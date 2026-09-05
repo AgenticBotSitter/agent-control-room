@@ -9,6 +9,7 @@ import { WebConnectionService, type WebConnectionKeys } from "./connection-servi
 import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { createTaskHttpHandler } from "./task-http";
 import { WebTaskReviewService } from "./task-review-service";
+import { WebTaskVerificationService } from "./task-verification-service";
 import type { TaskPlanningOperation } from "./task-execution-planner";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { TaskApprovalOperation } from "./task-coordinator-lifecycle";
@@ -72,6 +73,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
+  const ownerVerifications = options.tasks?.manualVerificationScenarios ? new WebTaskVerificationService(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.reviews!,
+      harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey,
+      manualVerificationScenarios: options.tasks.manualVerificationScenarios }, clock) : undefined;
   let closing = false;
   let active = 0;
   let drained: (() => void) | undefined;
@@ -89,7 +94,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
-            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, planning, assignment, approvals, clock })(request);
+            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });

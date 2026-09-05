@@ -14,7 +14,7 @@ export function preparationInput(): FixturePreparationInput {
   return { manifest, migrator, webDatabase, packet: { manifest, migratorScopeDigest: fixtureMigratorScopeDigest(migrator),
     webScopeDigest: rehearsalScopeDigest({ ...webDatabase, password: "not-used" }), ownerApprovalDigest: "4".repeat(64),
     cleanupPlanDigest: "5".repeat(64), pgPackageDigest: "6".repeat(64), pgVersionNumber: 170005,
-    expiresAt: now + 60_000, durationMs: 30_000, dedicatedEmptyDatabase: true, migrationsApplied: "0001-0052",
+    expiresAt: now + 60_000, durationMs: 30_000, dedicatedEmptyDatabase: true, migrationsApplied: "0001-0053",
     setupRolesAccepted: true, maximumConnections: 1, maximumTransactions: 1, maximumStatements: 256,
     installOrProvision: false, automaticRetry: false, cleanup: "close_owned_client_then_operator_database_cleanup" } };
 }
