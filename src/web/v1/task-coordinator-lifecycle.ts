@@ -83,6 +83,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         try {
           if (active) await Promise.race([new Promise<void>(resolve => { drained = resolve; }),
             new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; interrupted = true; resolve(); }, drainMs); })]);
+          clearTimeout(drainTimer);
           invalid = true;
           await Promise.race([Promise.resolve().then(pool.close), new Promise<never>((_, reject) => {
             closeTimer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);

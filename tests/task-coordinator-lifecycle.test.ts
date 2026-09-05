@@ -61,6 +61,22 @@ test("drain timeout closes once and prevents late transaction writes or a false 
   await assert.rejects(owner.close(), /task_coordinator_close_uncertain/); assert.equal(f.closes(), 1);
 });
 
+test("a completed normal drain cancels its timer before separately bounded pool cleanup", async t => {
+  const f = await fixture(); t.after(f.close);
+  const entered = deferred(), release = deferred(), cleanupEntered = deferred(), cleanupRelease = deferred();
+  const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: async (work, check) => {
+    entered.resolve(); await release.promise; return f.db.transactionWithPreCommitCheck(work, check);
+  } };
+  const owner = createTaskCoordinatorLifecycle({ ...f.config, drainMs: 5, closeMs: 100, database: { ...f.config.database, client: db,
+    close: async () => { cleanupEntered.resolve(); await cleanupRelease.promise; } } });
+  const save = owner.assignment.assign(...f.args); await entered.promise;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const closing = owner.close(); release.resolve(); await cleanupEntered.promise;
+  assert.equal((await save).replayed, false);
+  t.mock.timers.tick(10); cleanupRelease.resolve(); await closing;
+  assert.equal(owner.isReady(), false);
+});
+
 test("pool cleanup failure or stall stays uncertain and never retries", async t => {
   for (const stalls of [false, true]) await t.test(String(stalls), async t => {
     const f = await fixture(); t.after(f.close); let calls = 0;
