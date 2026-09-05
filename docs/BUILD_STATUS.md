@@ -2003,6 +2003,10 @@ The initial input-digest consistency finding is corrected and preserved in
 `CR14C_NATIVE_DELIVERY_PROTOCOL_ACCEPTANCE.md`. A valid server signature does not replace the owner's
 paired signatures, local policy or durable pre-effect admission. Receipt means recorded intake only.
 No sender/handler, mutual feature advertisement, durable receipt persistence or live execution is added.
+Published as [PR #316](https://github.com/MarvinAi5/control-room/pull/316), stacked on #315.
+Exact corrected-head local verification passed CR14C446, preparation769, main1025 with two existing
+skips, post-suite392, private compiled18 and rendered4; both builds, TypeScript, full ESLint and
+migrations0048/134 tables passed. Current-head CI remains required; no merge or deployment is claimed.
 
 ## Next block
 

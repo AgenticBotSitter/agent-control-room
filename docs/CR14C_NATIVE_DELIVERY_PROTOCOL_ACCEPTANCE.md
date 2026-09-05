@@ -41,3 +41,6 @@ post-suite392); it is retained as chronology, not substituted for the exact-head
 The reserved native-delivery feature must be mutually negotiated before runtime activation. Older nodes
 must reject unsupported native work; no generic-message fallback is authorized. Current queue signing,
 durable delivery/receipt processing, node admission wiring and owner signing/custody remain incomplete.
+
+Published as [PR #316](https://github.com/MarvinAi5/control-room/pull/316), stacked on PR #315.
+Current-head GitHub checks remain required before dependency-order integration; no merge is claimed.
