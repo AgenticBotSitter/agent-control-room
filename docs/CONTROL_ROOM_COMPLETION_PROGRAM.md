@@ -4,7 +4,9 @@
 
 **Owner direction:** Implement the Astra reassessment; resume repository building.
 
-**Current block:** CR14A — architecture and delivery rebaseline.
+**Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
+
+**Next block:** CR14B — B-RUNTIME + B-AUTH + B-PROJECT-API; not yet implemented.
 
 **Scope:** Finish a useful private Control Room before optional specialist expansion and public release.
 
@@ -68,6 +70,8 @@ These settings are project allocation decisions, not performance guarantees. Cur
 checked against [official OpenAI guidance](https://developers.openai.com/api/docs/models/compare).
 Keep Astra Xhigh for architecture/security/integration decisions; Sol High for substantial settled implementation;
 Terra High for bounded UI and mechanical work. Do not change the owner's model automatically.
+Exact model/effort pairs for handoffs are `gpt-6-astra` / `xhigh`, `gpt-5.6-sol` / `high`, and
+`gpt-5.6-terra` / `high`. Recheck availability when dispatching; these names do not assert a worker's installed model.
 
 | Phase | Main work | User-visible exit | Lead setting |
 |---|---|---|---|
@@ -90,6 +94,15 @@ CR14G's daily-use gate requires D, E and F, but its backup, reconnect and update
 LANDING can be prepared independently after A. Publishing it is separate from deploying the private app.
 CR14H does not block private daily use. No Claude/Telegram/Unreal/public-package prerequisite is imposed
 on the first generic project + Hermes task workflow.
+
+### LANDING — independent public information lane
+
+| ID | Owner | Deliverable | Acceptance / prerequisite |
+|---|---|---|---|
+| LANDING | Worker implementation; Codex copy/access review; owner publication | Small responsive informational page for `agentcontrolroom.xyz`: what Control Room is, intended uses, and coming soon | After A, under a published bounded capsule: accessible mobile/desktop layout, no private-app links or routes, no login/agent controls, no private data/cookies, and no claim the private beta or public repository is released. DNS/hosting/publication require their own scoped approval; do not invent a public GitHub link. |
+
+The public page can ship independently of the private application. Its existence or publication does not
+make the private app discoverability-resistant, authenticated, deployed, or operational.
 
 ### CR14B — one integrated foundation batch
 
@@ -184,6 +197,10 @@ structural completeness only, never readiness, an accepted claim, or a live-feat
 Before publication: integrate the frozen UI contract, inspect current work/branches, confirm the exact base,
 create the named integration branch, validate capsules as ready, publish canonical issues and wait for
 `CLAIM ACCEPTED`. Use existing known route identities only; do not invent installed models or host readiness.
+Check the wave and every capsule's lifecycle together before publishing: the current capsule validator does
+not independently consult wave status. Preserve the draft-rejection regression with a draft fixture when
+updating the wave's draft-state snapshot tests for a deliberate ready transition. A changed label alone is
+not publication, an integration-base check, or a claim.
 Workers may hold up to three independent claims per route and continue after submission. Ordinary code
 has two focused repair iterations; an uncertain native or external effect never gains a retry from that rule.
 T0/T1 admission is based on the real task and prerequisites, not a separate qualification exercise.
@@ -199,8 +216,9 @@ Every block reports: implemented result, evidence level, mounted integration, re
 tests actually run, and the next block/model. Keep historical evidence separate from current readiness.
 No fresh calendar/percentage completion claim is made until the first real connected workflow is measured.
 
-After CR14A acceptance, the next architect block is **B-RUNTIME + B-AUTH + B-PROJECT-API design and
-effect-free implementation**, using **Astra Xhigh**. Publish the prepared worker wave only after its base
+CR14A is accepted locally for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The next architect
+block is **B-RUNTIME + B-AUTH + B-PROJECT-API design and effect-free implementation**, using
+**Astra Xhigh (`gpt-6-astra`, `xhigh`)**. Publish the prepared worker wave only after its base
 and shared contract are available; no extra owner message is needed for ordinary already-scoped code work.
 Stop before live credentials, host changes, provider calls, database services or deployment without the
 corresponding explicit scoped authority.

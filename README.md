@@ -9,7 +9,8 @@ The repository contains accepted contracts/components through **CR13A-LIVE-500**
 creation, production login, mounted Hermes/Codex dispatch, live ABS collection and fleet update/recovery still
 need integration and real acceptance. The GitHub V2 worker queue is the existing build-coordination mechanism.
 
-The active direction is **CR14A: private-beta integration rebaseline**. Start with the
+**CR14A: private-beta integration rebaseline** is accepted locally; the next implementation batch is
+**CR14B: VPS runtime, private login and general projects**. Start with the
 [current completion program](docs/CONTROL_ROOM_COMPLETION_PROGRAM.md),
 [integration decisions](docs/CR14A_INTEGRATION_DIRECTION.md), and
 [build status](docs/BUILD_STATUS.md). The older phase summary below is historical architecture, not current readiness.

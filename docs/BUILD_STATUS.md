@@ -8,8 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
-**CR14A — private-beta rebaseline is in progress on Astra Xhigh.** The owner accepted the reassessment and
-resumed repository building after the LIVE-500 merge/pause. This is not permission to activate a listener,
+**CR14A — private-beta rebaseline is accepted locally.** Independent review accepted product
+`93118f9169d03c6fde68b70a5a2e53fba19fc5f4` with no blocking findings. See `CR14A_ACCEPTANCE.md` for the
+review, actual checks and documentation-only handoff follow-up. It has not been pushed or merged.
+**Next: CR14B B-RUNTIME + B-AUTH + B-PROJECT-API**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
+This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
@@ -35,6 +38,12 @@ and separates setup prerequisites from evidence produced by a real rehearsal. Th
 worker packets are local **drafts**, not claims or dispatched work; see `CR14A_WORKER_BATCH_CONTRACT.md`.
 The current program maps R01-R16 to complete user journeys and names the architect integration tasks.
 
+CR14A verification: stage zero ready; 23/23 focused draft/queue/intake tests; the registered main test
+command passed 425 tests with 2 Windows-only skips; TypeScript, full lint and whitespace checks passed.
+The main test command was run directly, without pretest/posttest. Production build, real PostgreSQL,
+native/provider qualification and deployment were not rerun or inferred. No `app/`, `src/`, `db/`,
+dependency lockfile or hosting/runtime configuration changed. All four worker capsules remain local drafts.
+
 ### Historical component acceptance ledger
 
 The entries and narratives below retain their original scope and chronology. Terms such as complete,
@@ -44,6 +53,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14A delivery rebaseline | Accepted locally for plan and coordination tooling; not live integration or GitHub publication | `CR14A_ACCEPTANCE.md`; `reviews/CR14A_INDEPENDENT_REVIEW.md` |
 | CR-0 founding contract | Complete | Founding contract and versioned project-adapter contract |
 | CR-1 responsive read-only prototype | Complete | Portfolio, project, and worker fixture surfaces |
 | CR-2 persistence and simulator | Complete | PostgreSQL-compatible migrations, projection store, scheduler tests |
@@ -1597,13 +1607,13 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14A private-beta architecture and delivery rebaseline
-Set model: Astra
+Block: CR14B B-RUNTIME + B-AUTH + B-PROJECT-API (next; implementation not started)
+Set model: gpt-6-astra (Astra)
 Set reasoning effort: xhigh
-Why: the owner accepted the reassessment and resumed repository building.
-Expected output: current requirements/phase program, supported-interface direction, honest status and validated draft worker batches.
-Owner action: none for this effect-free repository block.
-Next after acceptance: CR14B B-RUNTIME + B-AUTH + B-PROJECT-API, Astra xhigh.
+Why: CR14A is accepted; freeze and implement the shared runtime, identity and project boundaries together.
+Expected output: explicit Node/VPS build profile, common verified-identity boundary and canonical general-project API, with local tests; later mount the accepted worker UI.
+Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
+Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
 ```
 

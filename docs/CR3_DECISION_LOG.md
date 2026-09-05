@@ -4901,3 +4901,9 @@ state tests actually run and must not import an old full-suite or native result 
 **Reevaluate:** in B-RUNTIME/B-AUTH/B-PROJECT-API and C-ADAPTER before selecting an installed runtime, wiring a
 transport or identity verifier, changing a contract/manifest, configuring a host, or issuing a live owner packet.
 Reference: `CR14A_INTEGRATION_DIRECTION.md`. This ADR changes direction, not the authority of dormant code.
+
+**CR14A acceptance:** Independent review accepted exact product
+`93118f9169d03c6fde68b70a5a2e53fba19fc5f4`, tree `0a6145d2a0cfca75014e40b7ad4856f654e4281c`, with no
+blocking finding. `CR14A_ACCEPTANCE.md` records the actual deterministic checks and the documentation-only
+follow-up for LANDING ownership, exact model IDs, and publication checks. Four packets remain local drafts;
+no source/runtime wiring, live qualification, deployment, GitHub publication or merge is claimed.
