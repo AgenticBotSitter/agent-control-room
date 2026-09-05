@@ -60,7 +60,9 @@ test("owned expectation refusals apply the full private response policy", async 
   }
   await f.service.close();
 });
-test("early network close failure still waits for bounded application cleanup", async () => {
+test("early network close failure still waits for bounded application cleanup", async t => {
+  // Keep the deadline fixed while observing ordering; scheduler load must not expire it first.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let finish!: () => void, settled = false;
   const f = fixture("close_error", () => new Promise(resolve => { finish = resolve; }));
   await f.service.start();
