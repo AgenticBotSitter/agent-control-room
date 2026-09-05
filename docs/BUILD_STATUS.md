@@ -2125,6 +2125,7 @@ Owner requested finishing the current block and a build assessment; no subsequen
 Final corrected-product checks passed CR14C 543, preparation 769, main 1,127 with two existing skips,
 post-suite 392, private compiled 18, rendered 4, both builds, migrations0052/138, TypeScript and ESLint.
 Current-head GitHub CI and dependency-order integration remain; no merge is claimed.
+Published as [PR #324](https://github.com/MarvinAi5/control-room/pull/324), stacked on #323.
 
 ## Next block
 

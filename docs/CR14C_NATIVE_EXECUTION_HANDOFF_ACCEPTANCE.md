@@ -34,3 +34,4 @@ Final corrected-product verification exited zero: CR14C 543, preparation 769, ma
 existing platform skips, post-suite 392. Both builds, private compiled 18, rendered 4, migrations0052/138
 tables, TypeScript, full ESLint and diff whitespace checks passed. Current-head GitHub CI remains
 required before dependency-order integration; these local checks do not imply a merge.
+Published as [PR #324](https://github.com/MarvinAi5/control-room/pull/324), stacked on #323.
