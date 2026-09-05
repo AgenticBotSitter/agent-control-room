@@ -139,6 +139,27 @@ test("configuration snapshots resist later input mutation and excess pending che
   assert.equal(g.effects.countFull(), 0);
 });
 
+test("timed-out unresolved resolvers retain capacity across repeated batches", async t => {
+  const f = await nativeStartAuthorityFixture(); t.after(f.close); let started = 0;
+  const releases: Array<() => void> = [];
+  const controller = f.create({ checkMs: 10, async readCurrent() {
+    started++; await new Promise<void>(resolve => releases.push(resolve));
+    throw new Error("synthetic late failure");
+  } });
+  t.after(() => controller.close());
+  for (let batch = 0; batch < 3; batch++) {
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => controller.authority.check("capabilities", f.prepared.binding)));
+    assert.equal(results.filter(result => result.status === "rejected").length, 8);
+    assert.equal(started, 8);
+  }
+  for (const release of releases) release();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const resumed = controller.authority.check("capabilities", f.prepared.binding);
+  const rejected = assert.rejects(resumed, /unavailable/);
+  assert.equal(started, 9); releases[8](); await rejected;
+  assert.equal(f.admissions.count(), 0); assert.equal(f.effects.countFull(), 0);
+});
+
 test("a replacement controller cannot resurrect expired durable authority using an earlier wall clock", async t => {
   const f = await nativeStartAuthorityFixture(); t.after(f.close); const first = f.create();
   await first.authority.markStart(f.prepared.binding); first.close();

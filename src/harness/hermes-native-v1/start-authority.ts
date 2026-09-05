@@ -60,6 +60,7 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
     live(current); if (active >= 8) return denied(); active++;
     const controller = new AbortController(); pending.add(controller);
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let started = false;
     try {
       const deadline = Math.min(binding.deadline, enrollment.validUntil, time() + checkMs);
       const operation = (async () => {
@@ -85,13 +86,17 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
           now + policy.lease.authority.maxDurationSeconds * 1000)) return denied();
         return { policy, decision, now, at };
       })();
+      started = true;
+      // Cancellation is advisory. An unresolved resolver retains its slot even after the caller
+      // times out; release only when the underlying work actually settles, handling both outcomes.
+      void operation.then(() => { active--; }, () => { active--; });
       return await Promise.race([operation, new Promise<never>((_, reject) => {
         const abort = () => reject(new Error("native_start_authority_unavailable"));
         controller.signal.addEventListener("abort", abort, { once: true });
         timer = setTimeout(() => controller.abort(), Math.max(1, deadline - time()));
       })]);
     } catch { return denied(); }
-    finally { clearTimeout(timer); controller.abort(); pending.delete(controller); active--; }
+    finally { clearTimeout(timer); controller.abort(); pending.delete(controller); if (!started) active--; }
   }
   function markedClaim() {
     const claim = effects.load(binding.effectClaimKey);

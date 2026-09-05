@@ -34,8 +34,10 @@ These are bounded current snapshots, not an atomic lock over independent externa
 Checks allow at most eight concurrent resolver operations, no queue, and at most five seconds each,
 also bounded by task/enrollment expiry. Test limits may shorten, never extend this. Close/timeouts abort
 the signal; late resolver completion cannot create admission or a marker. Abort does not prove an
-uncooperative resolver physically stopped. The local clock must be finite/nonnegative and cannot go
-backwards within a controller. Durable expired/cancelled/terminal execution state cannot be resurrected
+uncooperative resolver physically stopped. Timed-out resolver work retains its concurrency slot until it
+actually settles; repeated timeout batches cannot create additional unbounded pending work. The local
+clock must be finite/nonnegative and cannot go backwards within a controller.
+Durable expired/cancelled/terminal execution state cannot be resurrected
 for live observation by reconstructing a controller with an earlier wall clock.
 
 The task deadline must not outlive the current local ceiling duration, authority duration/expiry,
