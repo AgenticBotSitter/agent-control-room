@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { assertNoSecretMaterial, sha256Digest } from "../security";
 import {
   opaqueTokenDigest,
+  signedNodeFrameSchema,
   type JobEventBody,
   type NodeOperationAcknowledgementBody,
   type NodeOperationRequestBody,
@@ -569,6 +570,32 @@ export class SqliteBridgeJournal implements ReplayGuard {
 
   queuedCommandCount(): number {
     return (this.db.prepare(`SELECT count(*) AS count FROM bridge_commands WHERE state='queued'`).get() as { count: number }).count;
+  }
+
+  /** Exact accepted transport record, not current signing trust or lease permission. */
+  acceptedCommand(messageId: string): { frame: SignedNodeFrame; receivedAt: string } | undefined {
+    return this.transaction(() => {
+      const command = this.db.prepare("SELECT frame_json,frame_digest,received_at FROM bridge_commands WHERE message_id=?").get(messageId) as
+        { frame_json: string; frame_digest: string; received_at: string } | undefined;
+      const inbox = this.db.prepare("SELECT frame_digest,received_at,connection_id,sequence,nonce_digest,expires_at FROM bridge_inbox WHERE message_id=?").get(messageId) as
+        { frame_digest: string; received_at: string; connection_id: string; sequence: number; nonce_digest: string; expires_at: string } | undefined;
+      if (!command && !inbox) return undefined;
+      if (!command || !inbox) throw new Error("Accepted command evidence unavailable");
+      const frame = signedNodeFrameSchema.parse(JSON.parse(command.frame_json));
+      if (frame.messageId !== messageId || frame.direction !== "server_to_node" || frame.senderKind !== "control_room"
+        || sha256Digest(frame) !== command.frame_digest || command.frame_digest !== inbox.frame_digest
+        || command.received_at !== inbox.received_at || frame.connectionId !== inbox.connection_id
+        || frame.sequence !== inbox.sequence || opaqueTokenDigest(frame.nonce) !== inbox.nonce_digest
+        || frame.expiresAt !== inbox.expires_at) throw new Error("Accepted command evidence unavailable");
+      return { frame, receivedAt: inbox.received_at };
+    });
+  }
+
+  attemptSummary(attemptId: string): JournalAttemptSummary | undefined {
+    const row = this.db.prepare("SELECT attempt_id,job_id,lease_id,lease_epoch,state,last_event_sequence,checkpoint_ids FROM bridge_attempts WHERE attempt_id=?").get(attemptId) as
+      { attempt_id: string; job_id: string; lease_id: string; lease_epoch: number; state: JournalAttemptSummary["state"]; last_event_sequence: number; checkpoint_ids: string } | undefined;
+    return row ? { attemptId: row.attempt_id, jobId: row.job_id, leaseId: row.lease_id, leaseEpoch: row.lease_epoch,
+      state: row.state, lastEventSequence: row.last_event_sequence, checkpointIds: JSON.parse(row.checkpoint_ids) as string[] } : undefined;
   }
 
   highestInboundSequence(): number {
