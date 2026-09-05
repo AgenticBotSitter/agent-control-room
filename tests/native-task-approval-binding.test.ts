@@ -121,7 +121,7 @@ test("durable pre-effect marker retains payload commitment and rejects tampering
   assert.throws(() => createPreEffectMarker({ markerId: "marker:missing", claim: claimed.lookup.snapshot,
     request: unbound, authorityDigest: p.request.authorityDigest, effectiveDeadline: deadline, markedAt: at }), /payload commitment/);
   const unboundOperation = { ...marker.operation }; delete unboundOperation.payloadDigest;
-  assert.throws(() => store.commitPreEffectMarker({ ...marker, operation: unboundOperation }), /payload commitment/);
+  assert.throws(() => store.commitPreEffectMarker({ ...marker, operation: unboundOperation }), /Pre-effect marker binding mismatch/);
   assert.throws(() => store.commitPreEffectMarker({ ...marker, operation: { ...marker.operation, payloadDigest: sha256Digest("changed") } }));
   store.commitPreEffectMarker(marker);
   assert.equal(store.claim({ messageId: "message:native:duplicate", execution, claimedAt: at }).disposition, "in_progress");
