@@ -26,7 +26,7 @@ test("completion, reported cancellation, unknown tokens and missing review are n
     observedAt: project.updatedAt, attempts: [{ attemptId: "attempt:test", attemptNumber: 1, state: "leased", additionalRunsOmitted: false,
       runs: [{ runId: "run:test", harness: "hermes", state: "succeeded", lastObservedAt: project.updatedAt, stale: true,
         firstObservedExecutionAt: null, finishedObservedAt: project.updatedAt, cancellation: "reported", source: "native_snapshot",
-        nativeState: "completed", usage: null, resultClaim: { contentHash: `sha256:${"b".repeat(64)}`, sizeBytes: 12, verified: false },
+        nativeState: "completed", availability: "current", usage: null, resultClaim: { contentHash: `sha256:${"b".repeat(64)}`, sizeBytes: 12, verified: false },
         timeline: [], earlierObservationsOmitted: false }] }], earlierAttemptsOmitted: false, progressSource: "configured",
     dispatch: "not_connected", artifacts: "not_connected", review: "not_connected" };
   const html = renderToStaticMarkup(<TaskDetailPanel detail={detail} />);

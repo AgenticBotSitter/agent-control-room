@@ -13,7 +13,7 @@ export const taskErrorMessage: Record<BrowserFailureCode, string> = {
 };
 
 export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID()) {
-  let pending: { projectId: string; body: string; key: string } | undefined, busy = false;
+  let pending: { projectId: string; body: string; key: string; uncertain: boolean } | undefined, busy = false;
   const checkId = (id: string) => { if (!catalogProjectIdSchema.safeParse(id).success) throw new BrowserRequestError("invalid_request"); };
   const path = (id: string) => `/api/v1/projects/${encodeURIComponent(id)}/tasks`;
   const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied",
@@ -48,13 +48,21 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
     try {
       const response = await call(path(pending.projectId), pending);
       if (!response.ok) {
-        if ([400, 401, 403, 404, 409].includes(response.status)) { pending = undefined; throw new BrowserRequestError(failure(response.status)); }
+        if ([400, 401, 403, 404, 409].includes(response.status)) {
+          // A denied check cannot settle whether an earlier attempt committed. Only a first-attempt
+          // definitive rejection releases the hold; uncertain receipt identity survives later denials.
+          if (!pending.uncertain) pending = undefined;
+          throw new BrowserRequestError(failure(response.status));
+        }
         throw new BrowserRequestError("uncertain");
       }
       const result = taskCommandSchema.parse(await json(response));
       if (result.receipt.projectId !== pending.projectId) throw new Error();
       pending = undefined; return result.receipt;
-    } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain"); }
+    } catch (error) {
+      if (pending) pending.uncertain = true;
+      throw error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain");
+    }
     finally { busy = false; }
   }
   return {
@@ -82,7 +90,7 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
       const parsed = taskDraftSchema.safeParse(draft); if (!parsed.success) throw new BrowserRequestError("invalid_request");
       const body = JSON.stringify(parsed.data);
       if (pending && (pending.projectId !== projectId || pending.body !== body)) throw new BrowserRequestError("uncertain");
-      pending ??= { projectId, body, key: makeKey() };
+      pending ??= { projectId, body, key: makeKey(), uncertain: false };
       return commit();
     },
     // Explicit owner interaction only. Polling, reconnect and focus never invoke this method.

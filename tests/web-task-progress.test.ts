@@ -7,6 +7,9 @@ import { sha256Digest } from "../src/security";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { createAccessVerifier } from "../src/web/v1/access-verifier";
 import { token, request, trust } from "./helpers/web-foundation";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TaskDetailPanel } from "../private-app/app/task-panels";
 
 async function fixture() {
   const f = await nativeTaskFixture(), scope = { tenantId: "tenant:test", workspaceId: "workspace:test" };
@@ -71,4 +74,16 @@ test("wrong integrity material and changed stored run metadata never become an u
     .detail(f.identity, binding.projectId, binding.jobId), /integrity/);
   await f.db.query("UPDATE control_harness_runs SET state='succeeded' WHERE id='run:test'");
   await assert.rejects(f.tasks.detail(f.identity, binding.projectId, binding.jobId), /integrity/);
+});
+
+for (const availability of ["offline", "expired"] as const) test(`fresh ${availability} native observation prominently labels retained running state as unavailable`, async t => {
+  const f = await fixture(); t.after(f.close); await f.runs.create(registration);
+  await f.runs.recordNativeSnapshot(binding.tenantId, binding.nodeId, observation({ state: "running", availability }));
+  const detail = await f.tasks.detail(f.identity, binding.projectId, binding.jobId);
+  const run = detail.attempts[0].runs[0]; assert.equal(run.state, "disconnected"); assert.equal(run.stale, false);
+  assert.equal(run.availability, availability);
+  const html = renderToStaticMarkup(createElement(TaskDetailPanel, { detail }));
+  assert.match(html, /<h4>hermes · Agent progress is not current<\/h4>/);
+  assert.match(html, new RegExp(`Availability: ${availability}`)); assert.match(html, /Last reported state: Agent working/);
+  assert.match(html, /Last observed/); assert.doesNotMatch(html, /Last received|<h4>hermes · Agent working<\/h4>/);
 });

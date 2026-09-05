@@ -47,6 +47,9 @@ page's memory, holds changed submissions and offers **Check this exact save agai
 reconcile the same receipt, or inspect saved tasks. Reload/closing loses that temporary pending key; it does
 not undo a committed proposal. The owner must inspect saved work before submitting another after that event.
 Read refresh and transport reconnect remain read-only. This is not native/provider resubmission.
+An unsuccessful check after uncertainty, including a session/permission denial, does not settle the original
+save. Its exact body/key and changed-submission hold remain until a positive matching receipt is received
+in that page instance. Only a definitive first-attempt rejection may release the hold without a receipt.
 
 ## Truthful progress and result boundaries
 
@@ -63,6 +66,9 @@ time/cost remain unknown; zero tokens remain zero. Cancellation is reported adap
 proof of OS or external-effect cessation. No dollar limit is claimed enforceable. Observations older than
 120 seconds or postdating the view clock are labeled as not a current live signal; that label is presentation,
 not lease renewal, host qualification or authority to act.
+Native offline, expired or unknown availability, and disconnected harness state, are prominently unavailable
+even when the observation timestamp is fresh. The retained state is explicitly a last report, not a current
+working claim. Times are labeled observations, not measured server receipt times.
 
 The task catalog uses stable ID pagination, 50 per page. Detail shows the latest 10 attempts, latest 10 run
 records per attempt and latest 50 native observations per run; omission indicators are explicit and retained

@@ -29,6 +29,7 @@ export const taskRunSchema = z.object({ runId: id, harness: z.enum(["codex", "he
   firstObservedExecutionAt: z.string().datetime().nullable(), finishedObservedAt: z.string().datetime().nullable(),
   cancellation: z.enum(["not_requested", "requested", "confirmed", "reported", "unsupported"]),
   source: z.enum(["native_snapshot", "legacy"]), nativeState: nativeState.nullable(),
+  availability: z.enum(["unknown", "current", "offline", "expired"]).nullable(),
   usage: z.object({ inputTokens: count.nullable(), outputTokens: count.nullable(), totalTokens: count.nullable(),
     costUsd: z.null(), hardCostLimitEnforced: z.literal(false) }).strict().nullable(),
   resultClaim: z.object({ contentHash: digest, sizeBytes: count, verified: z.literal(false) }).strict().nullable(),

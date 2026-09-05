@@ -159,6 +159,7 @@ export class WebTaskService {
             stale: Date.parse(run.lastObservedAt) > Date.parse(actor.now) || Date.parse(actor.now) - Date.parse(run.lastObservedAt) > 120_000,
             firstObservedExecutionAt: run.startedAt ?? null, finishedObservedAt: run.finishedAt ?? null, cancellation: run.cancelState,
             source: run.nativeTask ? "native_snapshot" : "legacy", nativeState: last?.state ?? null,
+            availability: run.nativeTask ? last?.availability ?? "unknown" : null,
             usage: last?.usage ? { inputTokens: last.usage.inputTokens, outputTokens: last.usage.outputTokens,
               totalTokens: last.usage.totalTokens, costUsd: null, hardCostLimitEnforced: false } : null,
             resultClaim: last?.result ? { ...last.result, verified: false } : null,

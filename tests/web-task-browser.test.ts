@@ -15,11 +15,31 @@ test("task client uses the real HTTP service and exact receipt recovery after a 
   };
   const client = createTaskBrowserClient(transport, () => "browser-task-save-001");
   await assert.rejects(client.propose(f.project.projectId, taskDraft), { code: "uncertain" }); assert.equal(client.hasPending(), true);
-  assert.equal((await client.list(f.project.projectId)).tasks.length, 1); assert.equal(posts, 1);
+  await f.db.query("UPDATE control_role_grants SET allowed_actions='[\"projects.read\",\"tasks.read\"]'::jsonb");
+  await assert.rejects(client.retrySave(), { code: "access_denied" }); assert.equal(client.hasPending(), true);
+  await f.db.query("UPDATE control_role_grants SET allowed_actions='[\"*\"]'::jsonb");
+  assert.equal((await client.list(f.project.projectId)).tasks.length, 1); assert.equal(posts, 2);
   await assert.rejects(client.propose(f.project.projectId, { ...taskDraft, title: "Different" }), { code: "uncertain" });
-  assert.equal(posts, 1);
-  const receipt = await client.retrySave(); assert.equal(client.hasPending(), false); assert.equal(posts, 2);
-  assert.equal(keys[0], keys[1]); assert.equal((await client.detail(f.project.projectId, receipt.jobId)).task.state, "proposed");
+  assert.equal(posts, 2);
+  const receipt = await client.retrySave(); assert.equal(client.hasPending(), false); assert.equal(posts, 3);
+  assert.equal(new Set(keys).size, 1); assert.equal((await client.detail(f.project.projectId, receipt.jobId)).task.state, "proposed");
+});
+
+test("every definitive denial after an uncertain attempt preserves its key and changed-submission hold", async () => {
+  for (const status of [400, 401, 403, 404, 409]) {
+    let calls = 0; const keys: string[] = [];
+    const client = createTaskBrowserClient(async (_, init) => {
+      keys.push(new Headers(init?.headers).get("idempotency-key")!); calls++;
+      if (calls === 1) throw new Error();
+      if (calls === 2) return Response.json({}, { status });
+      return Response.json({ receipt: { projectId: "project:test", jobId: "job:test", requestId: "request:test",
+        createdAt: "2026-09-05T00:00:00.000Z", submission: "proposed", startsWork: false }, replayed: true });
+    }, () => `uncertain-${status}-save`);
+    await assert.rejects(client.propose("project:test", taskDraft), { code: "uncertain" });
+    await assert.rejects(client.retrySave()); assert.equal(client.hasPending(), true);
+    await assert.rejects(client.propose("project:test", { ...taskDraft, title: "Changed" }), { code: "uncertain" });
+    assert.equal(calls, 2); await client.retrySave(); assert.equal(client.hasPending(), false); assert.equal(new Set(keys).size, 1);
+  }
 });
 
 test("task reads reject mismatched project/task identities, malformed responses and private redirects", async () => {

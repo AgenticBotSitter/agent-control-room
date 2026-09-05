@@ -42,10 +42,13 @@ export function TaskCatalogPanel({ page, after }: { page: TaskPage; after?: stri
 }
 
 function RunPanel({ run }: { run: TaskRun }) {
+  const retained = run.stale || run.state === "disconnected" || run.availability !== null && run.availability !== "current";
+  const label = run.nativeState ? nativeLabel[run.nativeState] : run.state.replaceAll("_", " ");
   return <section className="private-run" aria-label="Agent observation">
-    <h4>{run.harness} · {run.nativeState ? nativeLabel[run.nativeState] : run.state.replaceAll("_", " ")}</h4>
-    <p>{run.source === "legacy" ? "Legacy adapter evidence" : "Native agent evidence"} · Last received {date(run.lastObservedAt)}
-      {run.stale && <strong> · Not a current live signal</strong>}</p>
+    <h4>{run.harness} · {retained ? "Agent progress is not current" : label}</h4>
+    {retained && <p className="private-notice">Not a current live signal. {run.availability ? `Availability: ${run.availability}. ` : ""}
+      Last reported state: {label}.</p>}
+    <p>{run.source === "legacy" ? "Legacy adapter evidence" : "Native agent evidence"} · Last observed {date(run.lastObservedAt)}</p>
     <dl className="private-task-facts"><div><dt>First observed working</dt><dd>{run.firstObservedExecutionAt ? date(run.firstObservedExecutionAt) : "Unknown"}</dd></div>
       <div><dt>Reported tokens</dt><dd>{run.usage?.totalTokens === null || run.usage?.totalTokens === undefined ? "Unknown" : run.usage.totalTokens.toLocaleString()}</dd></div>
       <div><dt>Cost</dt><dd>Unavailable — no enforced dollar limit</dd></div></dl>
