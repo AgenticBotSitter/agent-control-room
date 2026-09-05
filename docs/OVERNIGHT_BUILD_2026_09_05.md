@@ -97,7 +97,7 @@ live credentials or real-agent connection. If one lane needs live permission, co
 
 ## Next authorized repository work
 
-1. Continue C-WORK: artifact/result and existing Completion Gate review integration, plus bounded executable
+1. Continue C-WORK: owner review/revision-request commands, plus bounded executable
    planning/admission/dispatch. The native adapter and task pages are accepted but no real agent is connected.
    No real agent qualification tonight.
 2. B's live setup/pilot remains a separate gate; continue other settled UI/digest lanes if a particular live
@@ -108,3 +108,20 @@ Current setting: Astra Xhigh. No owner model change is needed for the next archi
 Actual private PostgreSQL preparation, IdP/MFA/hostname/ingress, browser acceptance and live agent runs remain
 explicit later gates. The work-computer alias still requires employer approval. A tested component is not a
 running beta; report concrete live blockers without converting simulator evidence into a pass.
+
+### CR14C private task results and recorded review
+
+- Accepted product `e5db1f436c7c3f9cf809fe5f2e3fbcf6122ae1a0`; branch `codex/cr14c-private-task-results`,
+  stacked on #290. Publication/current checks are tracked in `BUILD_STATUS.md`.
+- Signed native result capture, exact artifact readback, authenticated canonical receipts, private protected
+  file views and existing checkpoint-verified review history. Raw result bytes stay in approved artifact
+  storage; canonical job/approval state is not changed by result delivery or review reads.
+- Two Medium file-association/page-capacity findings corrected; independent re-review accepted with
+  67 passing tests and no remaining blocking findings. Initial rejection is retained.
+- Final checks: 129 focused, 769 pretests, 706 main passes/two existing skips, 392 posttests; both builds,
+  ten private/four Sites artifact tests, TypeScript/full lint/whitespace, migrations0001–0042/129 tables.
+- No physical upload/listener, real database, credentials, browser, native agent/provider, deployment or merge.
+- Preceding PR #290 exact head `be668c5` passed CI run `33956977824` at 09:20:35 UTC.
+- Next read-ahead: web review writes must stage existing Completion Gate checkpoint changes until after
+  the session/grant pre-commit checks; ordinary denial cannot advance the external anchor. Checkpoint/SQL
+  ambiguity still fails closed. Do not invent an approval or native retry while integrating this command.

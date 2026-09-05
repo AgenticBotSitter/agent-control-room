@@ -5246,3 +5246,30 @@ agent/provider, deployment or merge occurred.
 
 **Next:** remaining artifact/result, existing Completion Gate review/revision and canonical admission/dispatch
 composition. Full C-WORK and the private-beta exit still require separately scoped real acceptance.
+
+## ADR-214 — Exact native result artifacts and checkpoint-verified private review reads
+
+**Date:** 2026-09-05. **Owner direction:** continue authorized overnight repository building on Astra Xhigh.
+
+Reuse signed native observations, canonical harness lineage and artifact manifests. Accept separately
+supplied bounded UTF-8 result bytes only after exact storage readback; append an authenticated receipt and
+audit with the manifest in PostgreSQL. One deterministic artifact identity permits exact reconciliation,
+not repeated native work. I/O timeouts quarantine the instance without claiming actual effect cessation;
+unreferenced files remain for scoped reconciliation/retention, never automatic broad cleanup.
+
+The private task page reads result bytes only under its additional content grant and current shared
+session/project authority. Capture read-only artifact/checkpoint capabilities for the web service. Preserve
+Completion Gate HMAC/external rollback verification and complete-history status calculation. Reads never
+initialize/advance checkpoints or create approvals. An open file has visible identity/hash, and every
+review's open-file match requires both. Bound serialized projection to 524,288 bytes with explicit omission
+of oldest target views; no quality calculation is based on truncated history.
+
+Migration 0042 explicitly advances the restricted-role/schema preparation pin to 129 tables. No automatic
+migration or real database preparation is introduced. Runtime upload/dispatch, owner review/revision commands
+and production storage/host acceptance remain distinct future work, not implied by component acceptance.
+
+**Evidence:** accepted product `e5db1f436c7c3f9cf809fe5f2e3fbcf6122ae1a0`, tree
+`bd248c36f9c32a349d82553a52ed4f7062923d7c`; `CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md` and retained initial/
+corrective independent reviews. Final 129 focused, 769 pretests, 706 main passes/two existing skips,
+392 posttests, both builds, ten private/four Sites artifact checks, type/lint/whitespace and 129-table
+migrations passed. Independent re-review ran 67 tests. No live effects or merge occurred.

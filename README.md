@@ -22,9 +22,11 @@ is independently accepted too, with one checked transaction and private one-use 
 Hermes native-run adapter is now independently accepted as an unwired component: durable recovery, bounded
 HTTPS/progress and cancellation handling. Its durable signed progress path into canonical harness evidence
 is also independently accepted. Private project Tasks pages now save canonical non-running proposals and show
-recorded attempts/progress, with independently reviewed save recovery and availability labels. Artifact-content,
-owner review and actual dispatch integration remain. This is not a deployed app or live fleet.
-See the [private task acceptance](docs/CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md),
+recorded attempts/progress, with independently reviewed save recovery and availability labels. Native result
+capture/readback and private file/recorded-review views are now independently accepted too. Physical upload,
+owner review commands and actual dispatch integration remain. This is not a deployed app or live fleet.
+See the [private result acceptance](docs/CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md),
+[private task acceptance](docs/CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md),
 [native progress acceptance](docs/CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md),
 [native-run adapter acceptance](docs/CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md),
 [fixture preparation acceptance](docs/CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md),

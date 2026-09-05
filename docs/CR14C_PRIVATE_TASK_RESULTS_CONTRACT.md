@@ -1,6 +1,7 @@
 # CR14C private task results and recorded review integration
 
-Status: implementation candidate. Lead: Astra Xhigh. This continues C-WORK; it does not activate a host.
+Status: independently accepted repository implementation; see `CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md`.
+Lead: Astra Xhigh. This continues C-WORK; it does not activate a host.
 
 ## End-to-end repository path
 

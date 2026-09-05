@@ -6,10 +6,13 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — artifact/result, review and remaining admission/dispatch integration.
+**Next block:** CR14C C-WORK — owner review/revision requests and remaining admission/dispatch integration.
+Native result capture/readback and private file/recorded-review views are independently accepted in
+`CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md`. This connects checked artifact bytes and existing Completion
+Gate evidence in disposable tests; physical upload, review commands and live dispatch remain unfinished.
 The private task workspace is independently accepted in `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`:
 protected project task pages save real non-running canonical proposals and show recorded attempts/native
-progress. This is not a live assignment, delivered result file or connected review command.
+progress. Saving is not a live assignment; recorded review is not a connected owner command.
 The evidence path is independently accepted in `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`: native
 snapshots reach exact canonical harness records through durable signed delivery in disposable tests.
 This does not complete dispatch, final artifact verification, owner review or live C-WORK acceptance.
@@ -163,7 +166,8 @@ The project UI packet is a retired non-claimable draft; the three remaining draf
 - C-WORK: wire canonical project request -> job -> attempt -> node-local admission -> Hermes run ->
   normalized progress/result/artifact -> review. Keep cost estimates distinct from enforceable budgets.
   The private canonical proposal/task page and recorded native progress path are accepted repository blocks;
-  remaining work is bounded executable planning/admission/dispatch, final artifacts and owner review/revision.
+  checked result content and recorded review reads are now accepted too; remaining work is bounded executable
+  planning/admission/dispatch, physical artifact transport and owner review/revision commands.
 - CR14C-REVIEW-UI-001: build the result/revision view under the frozen presentation contract.
 - C-REHEARSE: one scoped real useful task on one prepared host, plus reconnect and uncertainty handling.
   Do not wait for macOS-specific credential issues if another explicitly qualified route can do the task.
