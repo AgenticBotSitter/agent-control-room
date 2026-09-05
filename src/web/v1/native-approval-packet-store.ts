@@ -11,6 +11,8 @@ import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, type NativeTa
 import { persistNativeDeliveryPreparation, readNativeDeliveryPreparationReceipt, readNativeDeliveryPreparationInSession } from "./native-delivery-preparation";
 import { assertNativeDeliveryEnvelopeAbsent, persistNativeDeliveryEnvelope, readNativeDeliveryEnvelopeReceipt } from "./native-delivery-envelope";
 import type { ServerNodeSession, NativeEnvelopeChannel } from "../../node-control/server-node-session";
+import type { SignedNodeFrame } from "../../node-protocol/v1";
+import { persistNativeTransmissionIntent, readNativeTransmissionIntentReceipt } from "./native-transmission-intent";
 import { nativeTaskDispatchBodySchema } from "../../harness/v1/native-delivery";
 
 type Trust = Omit<Parameters<typeof createNativeApprovalIntake>[1], "clock">;
@@ -157,5 +159,16 @@ export class NativeApprovalPacketStore {
   }
   readDeliveryEnvelopeInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
     return readNativeDeliveryEnvelopeReceipt(tx, this.key, scope);
+  }
+  async recordTransmissionInSession(tx: DatabaseSession, prepared: Prepared, expectedPacketDigest: string, actorId: string,
+    signal: AbortSignal, frame: SignedNodeFrame<"harness.native.dispatch">, channel: NativeEnvelopeChannel) {
+    const p = await this.prepareDeliveryInSession(tx, prepared, expectedPacketDigest, actorId, signal);
+    if (frame.bodyDigest !== p.receipt.bodyDigest) throw new Error("native_transmission_body_mismatch");
+    const receipt = await persistNativeTransmissionIntent(tx, this.key, frame, channel, actorId, this.clock());
+    const assertFresh = () => { p.assertFresh(); channel.assertCurrent(); };
+    assertFresh(); return { receipt, assertFresh };
+  }
+  readTransmissionInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
+    return readNativeTransmissionIntentReceipt(tx, this.key, scope);
   }
 }

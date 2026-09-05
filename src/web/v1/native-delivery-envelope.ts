@@ -23,7 +23,7 @@ const receipt = (r: Record) => {
     bodyDigest: f.bodyDigest, packetDigest: body.packetDigest, stagedAt: r.stagedAt, expiresAt: f.expiresAt,
     evidence: "stored_signed_delivery_envelope" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
 };
-async function read(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
+export async function readNativeDeliveryEnvelopeInSession(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
   const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,message_id,record,auth_tag FROM control_native_delivery_envelopes WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
     [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
   if (!row) return null;
@@ -36,7 +36,7 @@ async function read(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueue
   return r;
 }
 export async function assertNativeDeliveryEnvelopeAbsent(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
-  if (await read(tx, key, scope)) return fail();
+  if (await readNativeDeliveryEnvelopeInSession(tx, key, scope)) return fail();
 }
 /** Internal collaborator: current canonical/signature checks and commit fence are mandatory. */
 export async function persistNativeDeliveryEnvelope(tx: DatabaseSession, key: Uint8Array, input: SignedNodeFrame<"harness.native.dispatch">,
@@ -58,5 +58,5 @@ export async function persistNativeDeliveryEnvelope(tx: DatabaseSession, key: Ui
   channel.assertCurrent(); return receipt(r);
 }
 export async function readNativeDeliveryEnvelopeReceipt(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
-  const r = await read(tx, key, scope); return r ? receipt(r) : null;
+  const r = await readNativeDeliveryEnvelopeInSession(tx, key, scope); return r ? receipt(r) : null;
 }

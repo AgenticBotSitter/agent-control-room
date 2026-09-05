@@ -85,6 +85,9 @@ export class TaskAssignmentCoordinator {
   async readNativeDeliveryEnvelope(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
     return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readDeliveryEnvelopeInSession(tx, scope));
   }
+  async readNativeTransmissionIntent(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readTransmissionInSession(tx, scope));
+  }
   private async readNativeEvidence<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     read: (store: NativeApprovalPacketStore, tx: DatabaseSession, scope: NativeTaskQueueScope) => Promise<T>) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
@@ -170,6 +173,27 @@ export class TaskAssignmentCoordinator {
           action: "native.delivery.staged", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
           idempotencyKey: `envelope:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.stagedAt });
         return { value: saved.receipt, assertFresh: saved.assertFresh };
+      }));
+  }
+  async transmitQueuedNativeDelivery(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
+    expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal) {
+    digestSchema.parse(expectedPacketDigest);
+    if (!this.approvalStore || signal.aborted) conflict();
+    const store = this.approvalStore;
+    return session.sendPreparedNativeDispatch((frame, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
+      async (tx, prepared, actorId, nodeKeyId, deadline) => {
+        if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId
+            || Date.parse(frame.expiresAt) > deadline) conflict();
+        const saved = await store.recordTransmissionInSession(tx, prepared, expectedPacketDigest, actorId, signal, frame, channel);
+        const checkedAt = this.clock();
+        const assertFresh = () => {
+          saved.assertFresh(); const now = this.clock();
+          if (!Number.isSafeInteger(now) || now < checkedAt || now >= deadline) conflict();
+        };
+        await appendAuditWith(tx, { id: `audit:transmit:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
+          action: "native.delivery.transmission_requested", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
+          idempotencyKey: `transmit:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.requestedAt });
+        return { value: { value: saved.receipt, assertFresh }, assertFresh };
       }));
   }
   private async withNativeApproval<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,

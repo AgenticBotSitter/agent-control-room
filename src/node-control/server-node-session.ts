@@ -44,7 +44,8 @@ export interface NativeEnvelopeChannel extends ServerNativeChannel {
 /** One explicitly owned transport session. No listener, key loading or task dispatch. */
 export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
-  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "closed" = "new";
+  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "closed" = "new";
+  private preparedFrame?: SignedNodeFrame<"harness.native.dispatch">;
   private busy = false;
   private highWater = -Infinity;
   private deadline = Infinity;
@@ -158,6 +159,7 @@ export class ServerNodeSession {
     if (!available) throw new Error("Native delivery channel unavailable");
     return this.bounded(async () => {
       let signed = false;
+      let reserved: SignedNodeFrame<"harness.native.dispatch"> | undefined;
       const assertCurrent = () => { this.now(); if (this.state !== "ready") throw new Error("Native envelope reservation is unavailable"); };
       const channel = Object.freeze({ ...available, serverId: this.config.serverId, serverKeyId: this.config.serverKeyId,
         serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent });
@@ -168,12 +170,38 @@ export class ServerNodeSession {
         const body = nativeTaskDispatchBodySchema.parse(input);
         if (body.request.tenantId !== this.config.tenantId || body.request.nodeId !== this.config.nodeId ||
             !Number.isSafeInteger(deadline) || deadline <= this.now()) throw new Error("Native envelope scope or deadline mismatch");
-        return this.signFrame("harness.native.dispatch", body, undefined, Math.min(deadline, body.start.deadline));
+        const frame = await this.signFrame("harness.native.dispatch", body, undefined, Math.min(deadline, body.start.deadline));
+        assertCurrent(); reserved = structuredClone(frame); return frame;
       }, channel);
       assertCurrent();
-      if (!signed) throw new Error("Native envelope transaction did not reserve a frame");
+      if (!signed || !reserved) throw new Error("Native envelope transaction did not reserve a frame");
+      this.preparedFrame = reserved;
       this.state = "prepared";
       return value;
+    });
+  }
+
+  /** Trusted coordinator callback must commit a unique transmission intent before this sends once. */
+  async sendPreparedNativeDispatch<T>(commit: (frame: SignedNodeFrame<"harness.native.dispatch">, channel: NativeEnvelopeChannel) => Promise<{ value: T; assertFresh(): void }>) {
+    if (this.state !== "prepared" || !this.preparedFrame) throw new Error("No prepared native envelope is available");
+    const frame = structuredClone(this.preparedFrame);
+    return this.bounded(async () => {
+      const assertCurrent = () => {
+        if (this.now() >= Date.parse(frame.expiresAt) || this.state !== "prepared") throw new Error("Prepared native transmission is unavailable");
+      };
+      assertCurrent();
+      const channel: NativeEnvelopeChannel = Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId,
+        nodeKeyId: this.config.nodeKeyId, connectionId: this.connectionId!, maxFrameBytes: this.maxFrameBytes,
+        expiresAt: new Date(this.deadline).toISOString(), grantsExecutionAuthority: false,
+        serverId: this.config.serverId, serverKeyId: this.config.serverKeyId, serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent });
+      const result = await commit(structuredClone(frame), channel);
+      assertCurrent(); result.assertFresh(); assertCurrent();
+      // No awaited work between consuming the local slot and entering the transport.
+      this.state = "transmitting";
+      await this.ports.send(JSON.stringify(frame));
+      this.now();
+      this.state = "sent";
+      return { receipt: result.value, transportResult: "returned_without_receipt" as const, deliveryConfirmed: false as const };
     });
   }
 
