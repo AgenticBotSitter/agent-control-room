@@ -20,6 +20,7 @@ function validateConfiguration(input: PrivateStartupConfiguration) {
       maxSessionSeconds: input.maxSessionSeconds, loadKeys: input.loadKeys,
       database: validatePrivatePostgresConfiguration(input.database),
       ...(input.ideaProjects ? { ideaProjects: { integrityKey: key(input.ideaProjects.integrityKey) } } : {}),
+      ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey) } } : {}),
       ...(input.connections ? { connections: { registryIntegrityKey: key(input.connections.registryIntegrityKey),
         ...(input.connections.telemetryIntegrityKey ? { telemetryIntegrityKey: key(input.connections.telemetryIntegrityKey) } : {}) } } : {}),
     });

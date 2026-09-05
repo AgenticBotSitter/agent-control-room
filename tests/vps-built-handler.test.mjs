@@ -40,6 +40,15 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.match(catalogHtml, /Loading projects/); assert.doesNotMatch(catalogHtml, /<form/);
   assert.doesNotMatch(catalogHtml, /Lo-Fi Wayfarer|Content Blooms|ABS AI/);
   const path = `/projects/${encodeURIComponent(project.projectId)}`;
+  const taskPath = `/api/v1/projects/${encodeURIComponent(project.projectId)}/tasks`;
+  const taskSaved = await handler(request(taskPath, "POST", { title: "Compiled task", instructions: "Produce a useful comparison" }, "compiled-task-save-001"));
+  assert.equal(taskSaved.status, 201); const { receipt: taskReceipt } = await taskSaved.json();
+  const taskPage = await handler(request(`${path}/tasks`)); assert.equal(taskPage.status, 200);
+  assert.match(await taskPage.text(), /Loading protected tasks/);
+  const taskDetailPage = await handler(request(`${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`));
+  assert.equal(taskDetailPage.status, 200); assert.match(await taskDetailPage.text(), /Task progress · Control Room/);
+  const taskRead = await (await handler(request(`${taskPath}/${encodeURIComponent(taskReceipt.jobId)}`))).json();
+  assert.equal(taskRead.task.title, "Compiled task"); assert.equal(taskRead.task.state, "proposed"); assert.equal(taskRead.review, "not_connected");
   const detail = await handler(request(`${path}/settings`)); assert.equal(detail.status, 200);
   assert.match(await detail.text(), /Loading project/);
   const read = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}`));
@@ -74,6 +83,7 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
   for (const protectedPath of ["/projects", "/connections", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
+    taskPath, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
   await app.close(); assert.equal((await handler(request("/projects"))).status, 503);

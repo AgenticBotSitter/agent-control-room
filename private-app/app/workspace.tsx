@@ -87,7 +87,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             {catalog.sources.ideas === "not_authorized" && <p className="private-note">Idea Lab projects require owner access and are not included.</p>}
             {catalog.sources.ordinary === "not_authorized" && <p className="private-note">Ordinary projects are not included with your current access.</p>}
           </>}
-          <p className="private-note">Agent work is not connected to this private view yet.</p></div>
+          <p className="private-note">Each project has its own Tasks page. Live agent assignment is not connected yet.</p></div>
           {catalog?.canCreate ? <ProjectCreateForm pending={pending || state !== "ready"} result={result} onCreate={draft => { void create(draft); }} />
             : state === "ready" && <p className="private-note">Your current access does not allow creating ordinary projects.</p>}</div>
       </> : <>
@@ -97,6 +97,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <nav className="private-tabs" aria-label="Project pages">
             <a href={`/projects/${encodeURIComponent(projectId)}`} aria-current={section === "overview" ? "page" : undefined}>Overview</a>
+            <a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Tasks</a>
             <a href={`/projects/${encodeURIComponent(projectId)}/settings`} aria-current={section === "settings" ? "page" : undefined}>Settings</a>
           </nav>
           <section className="private-panel"><h2>{section === "settings" ? "Project status" : "Purpose"}</h2>
@@ -109,7 +110,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
                 : <p className="private-note">{project.origin === "idea_lab" ? "Idea Lab status is read-only here. Its existing history is preserved; lifecycle controls are not connected to this private view yet."
                   : "Your current access allows viewing this project, not changing its status."}</p>}
               <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
-            </> : <p className="private-note">Agent tasks and live progress are not connected yet. No work starts automatically.</p>}
+            </> : <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to save proposed work and inspect recorded agent progress. Live assignment is not connected yet.</p>}
             <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
           </section>
         </>}

@@ -78,8 +78,12 @@ export class WebProjectService {
   }
 
   async getView(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectView> {
+    return this.authenticated(identity, (tx, actor) => this.getViewInSession(tx, actor, projectId));
+  }
+
+  /** Server-only composition inside the shared session/grant transaction. No new identity authority. */
+  async getViewInSession(tx: DatabaseSession, actor: Actor, projectId: string): Promise<ProjectView> {
     if (!catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
-    return this.authenticated(identity, async (tx, actor) => {
       const ordinary = actor.can("projects.read", projectId), ideas = actor.can("idea_lab.project_read", projectId, true);
       // Decide eligible sources before resolving an ID. A hidden source and an absent row must look identical.
       if (!ordinary && !ideas) throw new WebAccessError("access_denied");
@@ -89,7 +93,6 @@ export class WebProjectService {
       [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, ordinary, ideas])).rows[0];
       if (!row) throw new WebAccessError("not_found");
       return this.readView(tx, actor, projectId, row.adapter_id);
-    });
   }
 
   private async readView(tx: DatabaseSession, actor: Actor, projectId: string, adapterId: string): Promise<ProjectView> {

@@ -204,6 +204,14 @@ export class HarnessRunStoreV1 {
     return result.rows[0] ? verifiedRun(result.rows[0],this.integrityKey) : undefined;
   }
 
+  /** A single SQL snapshot verifies the run and its history together. Presentation may omit older
+   * points only after full existing integrity verification; it must not mix two observation revisions. */
+  async inspect(tenantId: string, runId: string): Promise<{ run: HarnessRunV1; events: HarnessRunEventV1[] } | undefined> {
+    const row = (await this.db.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2`,
+      [tenantId, runId])).rows[0];
+    return row ? { run: verifiedRun(row, this.integrityKey), events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) } : undefined;
+  }
+
   async events(tenantId: string, runId: string, limit = 200): Promise<HarnessRunEventV1[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("invalid harness event limit");
     const run=await this.get(tenantId,runId); if (!run) return [];

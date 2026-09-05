@@ -6,6 +6,8 @@ import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
+import { WebTaskService } from "./task-service";
+import { createTaskHttpHandler } from "./task-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -16,6 +18,8 @@ export interface PrivateWebProcessOptions {
   ideaProjects?: { integrityKey: Uint8Array };
   /** Existing enrollment/signal keys, supplied privately. Absence is unavailable, not an empty roster. */
   connections?: WebConnectionKeys;
+  /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
+  tasks?: { harnessIntegrityKey: Uint8Array };
   clock?: () => number;
   /** Tests may shorten the production drain ceiling; never extend it. */
   drainMs?: number;
@@ -38,6 +42,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey);
   const connections = new WebConnectionService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
+  const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
+    { harnessIntegrityKey: options.tasks?.harnessIntegrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey });
   let closing = false;
   let active = 0;
   let drained: (() => void) | undefined;
@@ -54,6 +60,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = await keys.get();
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
+            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
@@ -72,8 +80,17 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           return await createProjectHttpHandler({ origin: options.origin, trust, service, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
+        const taskPage = /^\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
-        if (detail) {
+        if (taskPage) {
+          let id: string, jobId: string | undefined;
+          try { id = decodeURIComponent(taskPage[1]); jobId = taskPage[2] ? decodeURIComponent(taskPage[2]) : undefined; }
+          catch { throw new WebAccessError("invalid_request"); }
+          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
+            || jobId && url.search || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
+            throw new WebAccessError("invalid_request");
+          if (jobId) await tasks.detail(identity, id, jobId); else await tasks.authorize(identity, id);
+        } else if (detail) {
           let id: string;
           try { id = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }
           await service.getView(identity, id);

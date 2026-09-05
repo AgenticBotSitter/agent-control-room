@@ -37,4 +37,25 @@
 .private-actions > .private-note { flex-basis: 100%; margin-top: 0; }
 .private-project-grid .private-note { display: block; margin: .75rem 0; }
 .private-summary { white-space: pre-wrap; overflow-wrap: anywhere; }
+.private-task-list { list-style: none; padding: 0; display: grid; gap: .8rem; }
+.private-task-list li { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.private-task-list a { display: grid; gap: .6rem; padding: 1.25rem; overflow-wrap: anywhere; }
+.private-task-list a:hover { background: var(--surface-2); border-radius: var(--radius); }
+.private-task-list h3 { margin: 0; }
+.private-task-list .private-state { justify-self: start; }
+.private-task-list .private-note, .private-create .private-note { margin: 0; }
+.private-task-detail { display: grid; gap: 1.25rem; }
+.private-task-detail h2 { margin-top: .5rem; }
+.private-attempt { border-top: 1px solid var(--border); margin-top: 1.5rem; }
+.private-run { padding: 1rem; background: var(--surface-2); border-radius: .6rem; margin: 1rem 0; overflow-wrap: anywhere; }
+.private-run h4 { font-size: 1rem; margin-top: 0; }
+.private-task-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 1rem; }
+.private-task-facts dt { color: var(--muted); font-size: .875rem; }
+.private-task-facts dd { margin: .25rem 0 0; }
+.private-result-claim { padding: 1rem; border-left: 3px solid var(--amber); }
+.private-run summary { cursor: pointer; min-height: 44px; padding-top: .75rem; }
+.private-timeline { padding-left: 1.5rem; }
+.private-timeline li { padding: .5rem 0; }
+.private-timeline time, .private-timeline li > span:last-child { display: block; font-size: .875rem; color: var(--muted); }
+.private-tabs { flex-wrap: wrap; }
 @media (max-width: 800px) { .private-columns { grid-template-columns: 1fr; } .private-create { grid-row: 1; } .private-shell main { padding: 1.25rem; } .private-header { padding: 1rem; flex-wrap: wrap; } }

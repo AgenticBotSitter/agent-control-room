@@ -2,14 +2,16 @@ import { createHash } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0040 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "5710437d4d5bd5e0b60432993371b196f969ec5bc66fc695409ce89a2622393a";
+// Generated from migrations 0001-0041 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "8eaac37e2f4eb704e18df21a2b793edab66c8d23863b28d900da00acb9cb3045";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
-  "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts"] as const;
+  "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
+  "control_jobs", "control_attempts", "control_harness_runs", "control_harness_run_events", "control_web_task_commands"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
-  "control_web_project_commands", "audit_events", "control_audit_chain_heads"]);
+  "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
+  "control_jobs", "control_web_task_commands"]);
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
