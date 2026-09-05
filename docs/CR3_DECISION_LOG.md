@@ -4933,3 +4933,40 @@ and commit-time expiry bound admission without claiming instantaneous revocation
 deployment. This is foundation acceptance, not CR14B private-pilot completion. B-WIRE must finish shared page/API/
 stream verification, browser session UX, project UI and process-owned dependencies before replacing the guard.
 Database privileges, actual Node lifecycle and private ingress/MFA remain later explicit setup/rehearsal gates.
+
+## ADR-204 — Mount a separate private project application with explicit process ownership
+
+**Date:** 2026-09-04. **Owner direction:** continue the integrated CR14B build on Astra Xhigh.
+
+Build the private Node profile from its own route tree while preserving the existing Sites/local-pilot app.
+Compile the request handler and server-only runtime composition in one graph so both share one process-owned
+Access key cache, project service and supplied SQL pool. Importing the build never reads credentials, opens
+a database or starts a listener; absent explicit composition it remains unavailable. No HTTP configuration
+endpoint or browser-accessible runtime setter is introduced.
+
+Use the reviewed verifier and current SQL session/permission checks for every project page, API and finite
+snapshot request. Key refresh is demand-driven, single-flight and bounded, with no expired-key fallback and
+a full post-failure backoff. Browser API calls request an explicit expired-edge-session response. Session
+controls disclose cross-application Access logout while preserving durable local exact-session revocation.
+Shutdown stops new admission and drains admitted handlers before closing the supplied pool; bounded real
+database query/shutdown behavior still belongs to the later deployment bootstrap and rehearsal.
+
+Reuse canonical ordinary-project storage for catalog/create/detail/lifecycle pages. Retain archive history,
+version checks and audit/idempotency. Browser reads refresh without replaying writes; uncertain saves permit
+only explicit same-command retry in the current page instance. A finite current-project snapshot is not a
+long-lived or replayable job stream. The private catalog never substitutes fixtures or imports Idea records
+as manual projects. Combined Idea discovery must preserve owner-only authority and authenticated history.
+
+The architect implemented the settled project UI before a worker claim; retire its draft rather than issuing
+duplicate work. Three other drafts remain undispatched. Enable private compiled checks for stacked architect
+PRs, but retain dependency-order integration and exact-head CI checks.
+
+**Evidence:** `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`; initial two Medium and one Low findings retained in
+`reviews/CR14B_WIRE_INITIAL_REVIEW.md`. Independent re-review accepts correction
+`d0858a5eea7f04e600e8d80d429696c87bae394e`, tree `90be4edf28d12be0df8c2a81651b5d4250b9c9f6`,
+with no residual findings. Compiled handler and disposable SQL checks prove mounted code, not browser clicks.
+
+**Remaining:** Idea integration, pagination, protected connection presentation, production bootstrap,
+IdP/MFA/ingress, actual database roles/restore, listener/static/shutdown/browser rehearsal and private deployment.
+Full B-WIRE and private-pilot completion are not claimed. No live agent/provider, credential, host service,
+database provisioning, public endpoint, Sites deployment, or automatic rollout authority is added.

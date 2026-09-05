@@ -9,9 +9,11 @@ The repository contains accepted contracts/components through **CR13A-LIVE-500**
 creation, production login, mounted Hermes/Codex dispatch, live ABS collection and fleet update/recovery still
 need integration and real acceptance. The GitHub V2 worker queue is the existing build-coordination mechanism.
 
-**CR14A: private-beta integration rebaseline** and the **CR14B runtime/access/project service foundation**
-are accepted for repository work. Next is connecting that foundation to the website; the private pilot is
-not complete. Start with the
+**CR14A: private-beta integration rebaseline**, the **CR14B runtime/access/project foundation**, and the
+**ordinary-project private application** are independently accepted for repository work. The separate private
+pages now use authenticated SQL services in compiled integration tests; they are not deployed. Next is shared
+Idea-project discovery and the remaining private integration; the private pilot is not complete. See the
+[private application acceptance](docs/CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md),
 [current completion program](docs/CONTROL_ROOM_COMPLETION_PROGRAM.md),
 [integration decisions](docs/CR14A_INTEGRATION_DIRECTION.md), and
 [build status](docs/BUILD_STATUS.md). The older phase summary below is historical architecture, not current readiness.

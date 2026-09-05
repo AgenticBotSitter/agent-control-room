@@ -13,11 +13,18 @@ component acceptance. This file reports current product readiness and the next b
 review, actual checks and documentation-only handoff follow-up.
 **CR14B runtime/access/project foundation is accepted**, including the independent logout/schema re-review
 at `2de0a4760fe1d5a0f2b39894e2e19ad897486d5f`. See `CR14B_FOUNDATION_ACCEPTANCE.md`.
-The separate Node build, Access verifier, durable session checks and ordinary-project HTTP/SQL services
-are tested, but the website is not yet wired to them. CR14B's private-pilot exit is not complete.
-**Next: CR14B B-WIRE**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
+**CR14B's ordinary-project private application is now independently accepted** at
+`d0858a5eea7f04e600e8d80d429696c87bae394e`. Its separate compiled route tree connects project creation,
+catalog, detail, lifecycle and session management to the reviewed Access/SQL services. See
+`CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. Deployment bootstrap is deliberately unconfigured; this is
+compiled/in-process integration evidence, not a running private beta or observed browser-click test.
+**Next: remaining CR14B B-WIRE project integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh):
+owner-only Idea-project discovery, combined catalog pagination and the remaining private integration.
+Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The combined CR14A/CR14B feature branch is published in [PR #280](https://github.com/MarvinAi5/control-room/pull/280)
 against `main`. Current GitHub checks are tracked on the PR; no merge is claimed.
+The private-application follow-up is [PR #281](https://github.com/MarvinAi5/control-room/pull/281), stacked
+on #280. Integrate #280 first; current PR checks must pass before integration. Neither PR is claimed merged.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
@@ -29,8 +36,8 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 
 | Owner outcome | Current operational truth | Remaining delivery |
 |---|---|---|
-| General project creation and lifecycle | Ordinary-project HTTP/SQL service is tested; current website still has only local Idea-promoted projects | CR14B B-WIRE + pilot |
-| Everyday private login and VPS app | Separate Node build and Access/session core tested; current website still uses its loopback pilot login | CR14B B-WIRE + setup/pilot |
+| General project creation and lifecycle | Private compiled pages use real disposable SQL in tests; ordinary-only catalog, not deployed | Remaining CR14B B-WIRE + pilot |
+| Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
 | Real task -> agent -> progress -> result -> review in the website | Components/contracts exist; mounted live dispatch/review absent | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Host-specific evidence and disabled/inert seams; no mounted live roster/dispatch | CR14D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
@@ -41,7 +48,8 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 CR14A selects a thin supported Hermes native-run interface and an explicit VPS Node application target.
 It leaves the old native-listener and qualification paths disabled, preserves existing security invariants,
 and separates setup prerequisites from evidence produced by a real rehearsal. The first four substantial
-worker packets are local **drafts**, not claims or dispatched work; see `CR14A_WORKER_BATCH_CONTRACT.md`.
+worker packets remain local **drafts**, not claims or dispatched work. The project UI draft is now retired
+because Codex implemented it before any claim; three other drafts remain. See `CR14A_WORKER_BATCH_CONTRACT.md`.
 The current program maps R01-R16 to complete user journeys and names the architect integration tasks.
 
 CR14A verification: stage zero ready; 23/23 focused draft/queue/intake tests; the registered main test
@@ -49,6 +57,12 @@ command passed 425 tests with 2 Windows-only skips; TypeScript, full lint and wh
 The main test command was run directly, without pretest/posttest. Production build, real PostgreSQL,
 native/provider qualification and deployment were not rerun or inferred. No `app/`, `src/`, `db/`,
 dependency lockfile or hosting/runtime configuration changed. All four worker capsules remain local drafts.
+
+CR14B private-application verification: 41/41 focused tests; registered main command 468 tests (466 passed,
+2 Windows-only skips); TypeScript and full lint passed. Both installed build profiles passed; rebuilt artifact
+checks passed 3 private Node + 4 Sites tests. Disposable PGlite verified migrations 0001-0039 and 127 tables.
+Local pretest/posttest were not run; current GitHub full-lifecycle results remain separate. Independent
+re-review closed two Medium and one Low findings. No live credentials, listener, database or deployment effects.
 
 ### Historical component acceptance ledger
 
@@ -59,6 +73,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14B ordinary-project private application | Independently accepted compiled/in-process route integration; full B-WIRE and private pilot incomplete | `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`; `reviews/CR14B_WIRE_REREVIEW.md` |
 | CR14B runtime/access/project foundation | Accepted for components and in-process SQL/HTTP integration; browser and private pilot incomplete | `CR14B_FOUNDATION_ACCEPTANCE.md`; `reviews/CR14B_FOUNDATION_REREVIEW.md` |
 | CR14A delivery rebaseline | Accepted locally for plan and coordination tooling; not live integration or GitHub publication | `CR14A_ACCEPTANCE.md`; `reviews/CR14A_INDEPENDENT_REVIEW.md` |
 | CR-0 founding contract | Complete | Founding contract and versioned project-adapter contract |
@@ -1607,6 +1622,8 @@ The first real V2 implementation wave is `CR5D-EXEC-1`, pinned to product base `
 `docs/CONTROL_ROOM_COMPLETION_PROGRAM.md` now records the CR14 private-daily-use program; the original
 CR5D-CR10 program is archived. Wave `CR14-PRIVATE-UI-1` contains four local draft implementation packets
 for project creation/catalog UI, connection onboarding, result/revision review and ABS digest selection.
+The project creation/catalog draft is now retired after architect implementation before any worker claim;
+do not issue duplicate work. Three other drafts remain undispatched.
 They are not published or claimable until the shared contract/base and integration target are available and
 Codex validates/publishes them as ready. Existing route concurrency and submit-then-continue semantics remain.
 Only real product work is published; ordinary work does not require calibration-only jobs.
@@ -1614,11 +1631,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14B B-WIRE (shared authenticated application and project UI integration)
+Block: CR14B remaining B-WIRE project integration
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: xhigh
-Why: The Node build and corrected access/project service foundation are accepted; the website is not yet connected to them.
-Expected output: process-owned store/trust composition, shared page/API/stream verification, browser session UX and mounted project catalog/create/detail/lifecycle, with explicit local acceptance.
+Why: The ordinary-project private route tree is accepted; Idea projects and the rest of the private integration are not connected yet.
+Expected output: owner-only integrity-checked Idea-project discovery, combined catalog pagination, and remaining private connection/bootstrap preparation with honest evidence levels.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

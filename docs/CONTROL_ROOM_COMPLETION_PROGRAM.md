@@ -6,8 +6,10 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14B — B-WIRE authenticated application and project UI integration. The runtime/access/project
-foundation is accepted in `CR14B_FOUNDATION_ACCEPTANCE.md`; the private-pilot exit remains incomplete.
+**Next block:** CR14B — remaining B-WIRE project integration. The runtime/access/project foundation and
+ordinary-project private application are accepted in `CR14B_FOUNDATION_ACCEPTANCE.md` and
+`CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. Owner-only Idea-project discovery, combined pagination and
+remaining private integration are next; the full B-WIRE and private-pilot exits remain incomplete.
 
 **Scope:** Finish a useful private Control Room before optional specialist expansion and public release.
 
@@ -112,7 +114,7 @@ make the private app discoverability-resistant, authenticated, deployed, or oper
 | B-RUNTIME | Codex | Explicit VPS Node build profile; preserve existing Sites preview; no D1 authority or unverified hosting-header fallback | A |
 | B-AUTH | Codex | Common verified-identity boundary for pages, APIs and streams; revocation and session policy; safe return paths | A |
 | B-PROJECT-API | Codex | General project creation/catalog/lifecycle over canonical PostgreSQL, server-derived owner/tenant scope, idempotency and audit | A |
-| CR14B-PROJECT-UI-001 | Worker | Project catalog and creation form, accessible states and tests against the frozen UI contract | Published capsule and accepted claim |
+| CR14B-PROJECT-UI-001 | Codex; worker draft retired | Project catalog and creation form implemented before any worker claim | Accepted in `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`; do not dispatch duplicate work |
 | CR14B-CONNECTION-UI-001 | Worker | Clear connection onboarding/status presentation and tests, without credential or connect authority | Published capsule and accepted claim |
 | B-WIRE | Codex | Mount accepted UI against B-AUTH/B-PROJECT-API; replace fixture dependence only in the explicit operational profile | B-RUNTIME, B-AUTH, B-PROJECT-API, PROJECT-UI |
 | B-DB-PREP | Codex + owner | Scoped database/host preparation, backup/restore setup and private network evidence | B-RUNTIME design; separate effect packet |
@@ -122,6 +124,12 @@ make the private app discoverability-resistant, authenticated, deployed, or oper
 B-PROJECT-API freezes the wire API and browser controller before B-WIRE. The worker components are
 controlled presentation components; they cannot choose authentication, persist a second catalog, or turn
 callbacks into authority. Their separate commits are not reported as a delivered live feature.
+
+B-WIRE now has an accepted compiled ordinary-project route tree, shared authentication/session composition,
+project pages and SQL commands. Its current catalog is ordinary-only and bounded to 200 records; owner-only
+Idea projection, combined pagination and private connection presentation remain. Production bootstrap,
+IdP/MFA, real PostgreSQL, listener/static/browser rehearsal and deployment are not accepted by code tests.
+The project UI packet is a retired non-claimable draft; the three remaining drafts are not dispatched.
 
 ### CR14C/D — useful work first, then more machines
 
@@ -218,9 +226,11 @@ tests actually run, and the next block/model. Keep historical evidence separate 
 No fresh calendar/percentage completion claim is made until the first real connected workflow is measured.
 
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
-accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The next architect
-block is **B-WIRE shared authentication, browser session and project UI integration**, using
-**Astra Xhigh (`gpt-6-astra`, `xhigh`)**. Publish the prepared worker wave only after its base
+accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
+private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
+block is **remaining B-WIRE project integration**, using **Astra Xhigh (`gpt-6-astra`, `xhigh`)**:
+owner-only Idea-project discovery, combined pagination and remaining private connection/bootstrap preparation.
+Publish only the unimplemented prepared worker packets after their base
 and shared contract are available; no extra owner message is needed for ordinary already-scoped code work.
 Stop before live credentials, host changes, provider calls, database services or deployment without the
 corresponding explicit scoped authority.
