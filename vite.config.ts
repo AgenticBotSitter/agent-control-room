@@ -58,7 +58,8 @@ export default defineConfig(async ({ mode }) => {
     define: { "process.env.CONTROL_ROOM_BUILD_TARGET": JSON.stringify(target) },
     ...(nodeTarget ? { environments: {
       client: { build: { outDir: "dist-vps/client" } },
-      rsc: { build: { rollupOptions: { input: { runtime: "src/web/v1/private-process.ts", bootstrap: "src/web/v1/private-startup.ts" } } } },
+      rsc: { build: { rollupOptions: { input: { runtime: "src/web/v1/private-process.ts", bootstrap: "src/web/v1/private-startup.ts",
+        serving: "src/web/v1/private-serving.ts" } } } },
     } } : {}),
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
