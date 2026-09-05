@@ -85,7 +85,8 @@ stacked on #287. Its exact head `fc199dd` passed GitHub CI run `33952565284` at 
 No merge, runtime activation or live connection is claimed.
 The accepted native-progress integration is [PR #289](https://github.com/MarvinAi5/control-room/pull/289),
 stacked on #288. Its exact head `7020280` passed GitHub CI run `33955013136` at 08:36:30 UTC.
-This stack is not merged or deployed. The accepted private-task follow-up awaits publication below.
+The accepted private-task follow-up is [PR #290](https://github.com/MarvinAi5/control-room/pull/290),
+stacked on #289. Its own current-head CI remains required. This stack is not merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 

@@ -83,6 +83,7 @@ live credentials or real-agent connection. If one lane needs live permission, co
 ### CR14C private task workspace
 
 - Accepted product: `a8021de5d6744c796f4a31eb48b60000e27bd986`; publication tracked in `BUILD_STATUS.md`.
+- [PR #290](https://github.com/MarvinAi5/control-room/pull/290), stacked on #289; current-head CI required.
 - Protected project Tasks/task-detail pages; canonical proposed-work creation, current grants/revocation,
   append-only exact receipts, bounded pagination and integrity-verified recorded native progress.
 - Initial two Medium findings corrected; re-review accepted with no remaining findings, 60 independent tests.
