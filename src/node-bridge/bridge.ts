@@ -193,7 +193,7 @@ export class PortableNodeBridge {
         await this.sendBody("harness.native.dispatch.receipt", receipt, true, receipt.recordedAt, frame.correlationId, frame.messageId);
         channel.assertCurrent();
         return;
-      } catch (error) { this.failTransport(); throw error; }
+      } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
     }
 
     if (frame.type === "protocol.ack") {
@@ -355,7 +355,7 @@ export class PortableNodeBridge {
   private async sendReconciliationReport(now: string): Promise<void> {
     const attempts = this.journal.unresolvedAttempts();
     const body: ReconciliationReportBody = {
-      lastAcknowledgedServerSequence: this.journal.highestInboundSequence(),
+      lastAcknowledgedServerSequence: this.journal.highestInboundSequence(this.requireConnection()),
       attempts: attempts.map((attempt) => ({
         attemptId: attempt.attemptId,
         leaseId: attempt.leaseId,

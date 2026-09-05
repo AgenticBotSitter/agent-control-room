@@ -634,7 +634,9 @@ export class SqliteBridgeJournal implements ReplayGuard {
       state: row.state, lastEventSequence: row.last_event_sequence, checkpointIds: JSON.parse(row.checkpoint_ids) as string[] } : undefined;
   }
 
-  highestInboundSequence(): number {
+  highestInboundSequence(connectionId?: string): number {
+    if (connectionId !== undefined) return (this.db.prepare(`SELECT COALESCE(max(sequence),0) AS sequence FROM bridge_inbox WHERE connection_id=?`)
+      .get(connectionId) as { sequence: number }).sequence;
     return (this.db.prepare(`SELECT COALESCE(max(sequence),0) AS sequence FROM bridge_inbox`).get() as { sequence: number }).sequence;
   }
 

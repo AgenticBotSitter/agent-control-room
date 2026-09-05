@@ -18,7 +18,7 @@ export async function nativeEnvelopeSession(f: { db: DatabaseClient; keys: { pri
     new NodeProtocolAuthenticator({ async resolve(input) { return { ...input, algorithm: "ed25519" as const, publicKeySpki: spki,
       state: "active" as const, principalState: "active" as const, validFrom: new Date(f.clock() - 60_000).toISOString() }; } }, journal,
     new FixedWindowProtocolRateLimiter(100, 60)), undefined, undefined, nativeHandler);
-  const session = new ServerNodeSession({ tenantId: "tenant:test", nodeId: "node:test", nodeKeyId: "key:test",
+  const createSession = () => new ServerNodeSession({ tenantId: "tenant:test", nodeId: "node:test", nodeKeyId: "key:test",
     serverId: "server:test", serverKeyId: "key:server", serverPublicKeySpki: spki, transportIdentity: "transport:synthetic",
     features: [NATIVE_DELIVERY_FEATURE], maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30,
     ...(options.timeoutMs ? { operationTimeoutMs: options.timeoutMs } : {}) }, {
@@ -26,13 +26,24 @@ export async function nativeEnvelopeSession(f: { db: DatabaseClient; keys: { pri
     clock: f.clock, async sign(frame) { return signNodeFrame(frame, keys.privateKey); },
     async send(raw) { sent.push(raw); outgoing.push(raw); if (JSON.parse(raw).type === "harness.native.dispatch") await options.send?.(raw); },
   });
-  await bridge.open({ async send(raw) { incoming.push(raw); await options.nodeSend?.(raw); }, async close() {} }, { now: new Date(f.clock()).toISOString(), transportIdentity: "transport:synthetic" });
-  await session.acceptHello(incoming.shift()!);
-  for (let i = 0; i < 20 && (outgoing.length || incoming.length); i++) {
-    while (outgoing.length) await bridge.receive(outgoing.shift()!, new Date(f.clock()).toISOString());
-    while (incoming.length) await session.receive(incoming.shift()!);
-  }
-  if (!session.nativeDeliveryChannel() || outgoing.length || incoming.length) throw new Error("Synthetic session failed to reconcile");
-  return { session, sent, spki, bridge, journal, incoming,
+  let session = createSession();
+  const handshake = async () => {
+    await bridge.open({ async send(raw) { incoming.push(raw); await options.nodeSend?.(raw); }, async close() {} }, { now: new Date(f.clock()).toISOString(), transportIdentity: "transport:synthetic" });
+    await session.acceptHello(incoming.shift()!);
+    for (let i = 0; i < 20 && (outgoing.length || incoming.length); i++) {
+      while (outgoing.length) await bridge.receive(outgoing.shift()!, new Date(f.clock()).toISOString());
+      while (incoming.length) await session.receive(incoming.shift()!);
+    }
+    if (!session.nativeDeliveryChannel() || outgoing.length || incoming.length) throw new Error("Synthetic session failed to reconcile");
+  };
+  await handshake();
+  const reconnect = async () => {
+    session.disconnect(); await bridge.disconnected();
+    // These arrays represent detached transport buffers, not the durable bridge journal.
+    outgoing.length = 0; incoming.length = 0;
+    session = createSession(); await handshake();
+    return session;
+  };
+  return { get session() { return session; }, reconnect, sent, spki, bridge, journal, incoming,
     close: async () => { nativeHandler?.close(); session.disconnect(); await bridge.close(); journal.close(); } };
 }

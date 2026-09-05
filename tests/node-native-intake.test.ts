@@ -117,3 +117,21 @@ test("owner trust closure while intake is awaiting verification leaves no durabl
   x.f.approvals.close(); await assert.rejects(pending);
   assert.equal(x.s.journal.nativeDeliveryReceipt(x.frame.body.queueId), undefined);
 });
+
+test("old bridge intake failure cannot invalidate a fully reconciled replacement connection", async t => {
+  const x = await ready(); t.after(x.close);
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  t.after(() => release());
+  const accept = x.handler!.accept.bind(x.handler);
+  x.handler!.accept = async (...args) => { entered(); await gate; return accept(...args); };
+  const old = assert.rejects(x.deliver()); await waiting;
+  const replacement = await x.s.reconnect();
+  assert.equal(x.s.bridge.status().state, "online"); assert.ok(replacement.nativeDeliveryChannel());
+  const current = x.s.bridge.nativeDeliveryChannel()!; assert.notEqual(current.connectionId, x.frame.connectionId);
+  release(); await old;
+  current.assertCurrent(); assert.equal(x.s.bridge.status().state, "online");
+  assert.ok(replacement.nativeDeliveryChannel()); assert.equal(x.s.incoming.length, 0);
+  assert.equal(x.s.journal.nativeDeliveryReceipt(x.frame.body.queueId), undefined);
+});
