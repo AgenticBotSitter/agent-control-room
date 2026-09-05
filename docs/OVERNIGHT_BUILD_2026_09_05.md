@@ -36,6 +36,7 @@ live credentials or real-agent connection. If one lane needs live permission, co
 ### CR14B disposable fixture/preparation handoff
 
 - Accepted runtime: `fd8b2736a806735dc07ada577df31967c573a96b`.
+- [PR #287](https://github.com/MarvinAi5/control-room/pull/287), stacked on #286; current-head CI remains required.
 - Separate server-only operator entry, existing empty DB/schema/role checks, one joined synthetic seed
   transaction and fresh one-use private test material. No installation, migration, role change or live setup.
 - Independent review: zero High/Medium/Low findings, 28 preparation/rehearsal checks passed independently.

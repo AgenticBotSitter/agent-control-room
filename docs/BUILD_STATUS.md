@@ -65,6 +65,8 @@ PR #285's exact head `e327c3c` passed GitHub CI run `33946020421` (completed 202
 The accepted rehearsal-tooling follow-up is [PR #286](https://github.com/MarvinAi5/control-room/pull/286),
 stacked on #285. Its own current-head checks remain required. No PR in this follow-up is claimed merged.
 PR #286's exact head `78a6a98` passed GitHub CI run `33948058630` (completed 2026-09-05 06:00:47 UTC).
+The accepted preparation follow-up is [PR #287](https://github.com/MarvinAi5/control-room/pull/287), stacked
+on #286. Its current-head checks remain required; the stack is not merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 

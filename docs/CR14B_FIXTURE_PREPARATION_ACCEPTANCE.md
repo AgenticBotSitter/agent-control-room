@@ -6,6 +6,9 @@ Date: 2026-09-05. Architect: Codex, Astra Xhigh.
 **Tree:** `a6cf590e7c4ff73b57409a700414a55177091c86`.
 **Base:** `78a6a983b70ccec28f5f1d79787d1e175e345909` (database rehearsal PR #286).
 
+Published as [PR #287](https://github.com/MarvinAi5/control-room/pull/287), stacked on #286. Publication is
+not integration: current-head CI, dependency order and owner merge approval remain required.
+
 The separate operator entry now prepares the synthetic data needed by the reviewed database rehearsal.
 It requires an existing dedicated empty database and a distinct migrator, locks/checks the schema and all
 127 public tables, uses one joined transaction and supplies fresh private test material once in memory only
