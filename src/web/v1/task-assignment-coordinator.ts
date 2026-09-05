@@ -97,6 +97,19 @@ export class TaskAssignmentCoordinator {
       return { value: stored.receipt, assertFresh: stored.assertFresh };
     });
   }
+  /** Internal, non-web dispatch preparation. Rebuild and verify now; do not expose private enrollment
+   * to the browser or treat the returned snapshot as a durable permission/callback for later execution. */
+  async prepareStoredNativeDispatch(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
+    expectedPacketDigest: string, signal: AbortSignal) {
+    digestSchema.parse(expectedPacketDigest);
+    if (!this.approvalStore || signal.aborted) conflict();
+    const store = this.approvalStore;
+    return this.withNativeApproval(identity, projectId, jobId, expectedInputDigest, async (tx, prepared) => {
+      const { assertFresh, ...material } = await store.revalidateInSession(tx, prepared, expectedPacketDigest, signal);
+      return { value: { ...material, inputDigest: prepared.inputDigest, preparedAt: prepared.preparedAt,
+        evidence: "revalidated_signed_snapshot" as const }, assertFresh };
+    });
+  }
   private async withNativeApproval<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     finish: (tx: DatabaseSession, prepared: CanonicalNativeApproval, actorId: string) => Promise<{ value: T; assertFresh?: () => void }>) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);

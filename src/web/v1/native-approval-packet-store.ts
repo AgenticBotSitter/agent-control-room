@@ -84,4 +84,29 @@ export class NativeApprovalPacketStore {
       packetDigest: saved.packetDigest, operationDigest: saved.operationDigest, acceptedAt: saved.acceptedAt,
       replayed: !!prior, startsWork: false as const, grantsExecutionAuthority: false as const } };
   }
+  /** Internal dispatch preparation only: reauthenticate immutable evidence against the locked current
+   * reservation and current owner pins. Historical receipts must never enter this path as authority.
+   * The caller holds canonical locks and must run assertFresh before committing; the returned material
+   * is a snapshot, not permission to execute later without node-side admission.
+   */
+  async revalidateInSession(tx: DatabaseSession, prepared: Prepared, expectedPacketDigest: string, signal: AbortSignal) {
+    digestSchema.parse(expectedPacketDigest);
+    if (signal.aborted) return fail();
+    const r = prepared.request;
+    const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [r.tenantId, r.jobId, r.attemptId])).rows[0];
+    if (!row) return fail();
+    const record = this.verify(row);
+    if (record.tenantId !== r.tenantId || record.projectId !== r.projectId || record.jobId !== r.jobId
+      || record.attemptId !== r.attemptId || record.nodeId !== r.nodeId || record.leaseId !== r.leaseId
+      || record.leaseEpoch !== r.leaseEpoch || record.inputDigest !== prepared.inputDigest
+      || record.enrollmentDigest !== sha256Digest(prepared.enrollment) || record.operationDigest !== r.operationDigest
+      || record.bindingDigest !== sha256Digest(prepared.binding) || record.packetDigest !== expectedPacketDigest) return fail();
+    const trust = this.trust.get(sha256Digest({ tenantId: r.tenantId, nodeId: r.nodeId, nodeClass: r.nodeClass }));
+    if (!trust) return fail();
+    const verified = await createNativeApprovalIntake(prepared, { ...trust, clock: this.clock })(record.packet, signal);
+    const assertFresh = () => { if (signal.aborted) fail(); verified.assertFresh(); };
+    assertFresh();
+    return { ...verified, assertFresh };
+  }
 }
