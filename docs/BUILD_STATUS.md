@@ -2008,13 +2008,23 @@ Exact corrected-head local verification passed CR14C446, preparation769, main102
 skips, post-suite392, private compiled18 and rendered4; both builds, TypeScript, full ESLint and
 migrations0048/134 tables passed. Current-head CI remains required; no merge or deployment is claimed.
 
+## Durable unsigned delivery bodies
+
+Exact queued delivery preparation/history is independently reviewed at
+`9101304739f18cb17b976b56cec098a414dcd5e0`, with74 passing review checks and no actionable findings.
+Current canonical/signature checks, matching queue intent, immutable body and audit share one checked
+transaction. Replay retains the original body; authenticated historical readback exposes only metadata.
+See `CR14C_DURABLE_DELIVERY_PREPARATION_ACCEPTANCE.md` for the corrected replay timestamp issue.
+Migration0049 requires135 tables with coordinator-only SELECT/INSERT and no web access. A stored body
+is unsigned and does not imply sending or agent acknowledgement; no sender or live execution is active.
+
 ## Next block
 
 ```text
 Block: CR14C signed delivery processing and node reconciliation, owner signing and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Approved-task queue insertion and exact delivery/receipt protocol are reviewed. A sender must resolve current queue eligibility, require negotiated native capability, issue bounded signed delivery and record progress without replaying uncertain effects.
+Why: Approved-task queue, exact delivery/receipt protocol and durable unsigned body preparation are reviewed. A sender must resolve current queue eligibility, require negotiated native capability, issue bounded signed delivery and record progress without replaying uncertain effects.
 Expected output: durable signed delivery processing and node receipt/reconciliation using existing admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.

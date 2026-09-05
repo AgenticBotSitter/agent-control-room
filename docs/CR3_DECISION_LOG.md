@@ -5834,3 +5834,24 @@ Corrected product `a3dcb5a546f122d02ecead18f89a21bece92af21`, tree
 `a63a39f1d87960dc510c1e3146e59c80a7e8cbee`, passed35 independent re-review checks. The initial
 input-digest inconsistency finding is retained in `CR14C_NATIVE_DELIVERY_PROTOCOL_ACCEPTANCE.md`.
 No runtime activation, live credentials, provider calls, listener or deployment is introduced.
+
+## ADR-239 — persist exact unsigned native delivery bodies separately from send evidence
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository persistence integration.
+
+Current canonical and owner-signature revalidation must match the original HMAC-verified queue intent
+before an exact dispatch body and audit are stored in one checked transaction. Persisting a body is not
+signing, negotiating a connection, sending, receiving or running. Current-owner historical reads return
+receipt metadata only and support uncertain-commit reconciliation without re-preparation.
+
+Canonical revalidation updates request occurredAt. Replay compares every other field and retains the
+original exact body/digest; its occurrence must remain between queue insertion and current time. This
+does not renew authority or record an execution timestamp. All commit-time expiry/trust/cancel fences
+remain required. Migration0049 adds one immutable coordinator SELECT/INSERT table and no web access.
+The checked135-table fingerprint is `a2633202d45bdf6a6e287ca25ea0e92d68802c659afd9164957683d50ad319c1`.
+
+Product `9101304739f18cb17b976b56cec098a414dcd5e0`, tree
+`2a277d80bae6b89b837b639d97e0f0c3b8913dc0`, passed74 independent checks with no actionable findings.
+See `CR14C_DURABLE_DELIVERY_PREPARATION_ACCEPTANCE.md` for initial replay failure and verification.
+Current connection/feature/key checks, server signing, durable send/receipt tracking and node admission
+remain next. No runtime activation, credentials, provider calls, listener or deployment was added.

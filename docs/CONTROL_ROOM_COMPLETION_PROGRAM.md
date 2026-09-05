@@ -341,7 +341,10 @@ are independently reviewed in `CR14C_APPROVED_TASK_QUEUE_ACCEPTANCE.md`; migrati
 canonical schema to134 tables without adding web permissions. Signed delivery processing and node
 receipt/reconciliation are next. Exact native delivery/receipt protocol and local-enrollment intake
 handoff are reviewed in `CR14C_NATIVE_DELIVERY_PROTOCOL_ACCEPTANCE.md`; no sender/handler or feature
-advertisement is activated. Revalidation and insertion share a transaction; returned
+advertisement is activated. Durable exact unsigned body preparation/history is reviewed in
+`CR14C_DURABLE_DELIVERY_PREPARATION_ACCEPTANCE.md` (migration0049/135 tables). Current connection
+checks, server signing, delivery progress and node acknowledgement remain next.
+Revalidation and insertion share a transaction; returned
 snapshots and historical receipts cannot authorize later delivery. Bounded approval lifecycle
 and historical reconciliation are accepted. Integrated owner signing and custody, durable
 supervisor state and revision submission remain; no application import of the native adapter is permitted.
