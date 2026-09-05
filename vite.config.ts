@@ -56,12 +56,15 @@ export default defineConfig(async ({ mode }) => {
 
   return {
     define: { "process.env.CONTROL_ROOM_BUILD_TARGET": JSON.stringify(target) },
-    ...(nodeTarget ? { environments: { client: { build: { outDir: "dist-vps/client" } } } } : {}),
+    ...(nodeTarget ? { environments: {
+      client: { build: { outDir: "dist-vps/client" } },
+      rsc: { build: { rollupOptions: { input: { runtime: "src/web/v1/private-process.ts" } } } },
+    } } : {}),
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
-      vinext(nodeTarget ? { rscOutDir: "dist-vps/server", ssrOutDir: "dist-vps/server/ssr" } : {}),
+      vinext(nodeTarget ? { appDir: "private-app", rscOutDir: "dist-vps/server", ssrOutDir: "dist-vps/server/ssr" } : {}),
       ...(nodeTarget ? [] : [sites()]),
       ...(cloudflarePlugin ? [cloudflarePlugin] : []),
     ],
