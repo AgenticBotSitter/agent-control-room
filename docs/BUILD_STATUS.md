@@ -1976,6 +1976,10 @@ reservation, owner and node/key state before returning a private non-authority s
 receipts remain readable but cannot substitute for these checks. See
 `CR14C_SAVED_APPROVAL_REVALIDATION_ACCEPTANCE.md` for verification and remaining delivery work.
 The method is not mounted in HTTP or browser operations and does not sign, queue or execute a task.
+Published in [PR #314](https://github.com/MarvinAi5/control-room/pull/314), stacked on #313.
+Local verification passed CR14C427, preparation769, main1006 with two existing skips, post-suite392,
+private compiled18 and rendered4; both builds, TypeScript, full ESLint and migrations0047/133 tables
+passed. Current-head CI remains required; no merge, deployment or live task execution is claimed.
 
 ## Next block
 

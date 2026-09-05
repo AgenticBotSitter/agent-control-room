@@ -31,3 +31,6 @@ is forbidden. Owner signing/custody, durable queue/signing/delivery, node consum
 No native/provider call, real credentials, physical listener, database provisioning, deployment or merge
 occurred. Tests use synthetic signing keys and disposable SQL. PR #313 was still running CI33990318798
 at the start of this block; no prerequisite completion or merge is inferred from that running state.
+
+Published as [PR #314](https://github.com/MarvinAi5/control-room/pull/314), stacked on PR #313.
+Current-head GitHub checks remain required before dependency-order integration; no merge is claimed.
