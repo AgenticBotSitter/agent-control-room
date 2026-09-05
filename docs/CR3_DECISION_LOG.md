@@ -4970,3 +4970,34 @@ with no residual findings. Compiled handler and disposable SQL checks prove moun
 IdP/MFA/ingress, actual database roles/restore, listener/static/shutdown/browser rehearsal and private deployment.
 Full B-WIRE and private-pilot completion are not claimed. No live agent/provider, credential, host service,
 database provisioning, public endpoint, Sites deployment, or automatic rollout authority is added.
+
+## ADR-205 — Combine project discovery without combining source authority
+
+**Date:** 2026-09-04. **Owner direction:** continue CR14B repository integration on Astra Xhigh.
+
+One private project catalog may combine ordinary and Idea-promoted read views, but it must not turn an Idea
+project into a manual record or weaken its owner-only action policy and authenticated registry projection.
+Use an already authorized SQL transaction, exact tenant/workspace/adapter selection and the existing latest
+event/mirror verifier. Supply the existing integrity key only through explicit future server composition;
+missing configuration and failed integrity remain visible/unavailable, never an invented empty Idea source.
+Ordinary commands are unchanged. Idea lifecycle is explicitly read-only in this private view until its
+source-specific command integration; this is not an additional scheduler or bot execution path.
+
+Use bounded C-collated logical-ID pagination with 50 verified records and a 51st-row continuation probe.
+The cursor is only a position; each request rechecks current session and source/project grants. Pages are
+fresh reads rather than a frozen snapshot, and returning to the first page includes newer records before
+the current cursor. Keep page-local archive labels, source-origin labels and normal document navigation.
+
+Resolve a detail ID only among sources the caller is authorized to read. An unknown row and a hidden source
+must have indistinguishable public responses; no-source permission denies before lookup. Do not disclose
+hidden Idea existence through API, HTML or finite snapshot status distinctions. No timing-channel proof is claimed.
+
+**Evidence:** `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md` and the initial/re-review reports. One Medium
+response-distinction finding is retained and corrected at `58f060cb71a4675d35e8adabea01ab521cab260c`, tree
+`1db68a494ffd3fa69d1bd2b171004c71c30ffde3`; independent re-review has no remaining findings. The mixed
+211-record traversal, source authority, expiry, integrity and compiled routes pass the recorded tests.
+
+**Limits/next:** private connection view and bootstrap/role/setup preparation remain B-WIRE work; actual
+IdP/MFA/ingress, credentials, database services/restore, listeners/static/browser and deployment need their
+separate gates. Existing Sites preview is preserved. Private Idea commands, real conversations and agent
+work remain later integration. This ADR does not complete B-WIRE or authorize a production effect.

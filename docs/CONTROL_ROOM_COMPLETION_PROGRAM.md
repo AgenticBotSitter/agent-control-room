@@ -6,10 +6,11 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14B — remaining B-WIRE project integration. The runtime/access/project foundation and
-ordinary-project private application are accepted in `CR14B_FOUNDATION_ACCEPTANCE.md` and
-`CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. Owner-only Idea-project discovery, combined pagination and
-remaining private integration are next; the full B-WIRE and private-pilot exits remain incomplete.
+**Next block:** CR14B — remaining B-WIRE private connection view and bootstrap preparation. The foundation,
+ordinary-project private app and shared ordinary/Idea catalog with pagination are accepted; see
+`CR14B_FOUNDATION_ACCEPTANCE.md`, `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md` and
+`CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`. Idea lifecycle remains read-only in the private view;
+full B-WIRE and private-pilot exits remain incomplete.
 
 **Scope:** Finish a useful private Control Room before optional specialist expansion and public release.
 
@@ -126,8 +127,9 @@ controlled presentation components; they cannot choose authentication, persist a
 callbacks into authority. Their separate commits are not reported as a delivered live feature.
 
 B-WIRE now has an accepted compiled ordinary-project route tree, shared authentication/session composition,
-project pages and SQL commands. Its current catalog is ordinary-only and bounded to 200 records; owner-only
-Idea projection, combined pagination and private connection presentation remain. Production bootstrap,
+project pages and SQL commands. The accepted shared catalog now adds owner-only authenticated Idea reads
+and 50-record pagination. Private Idea commands remain CR14E integration. Private connection presentation,
+production bootstrap,
 IdP/MFA, real PostgreSQL, listener/static/browser rehearsal and deployment are not accepted by code tests.
 The project UI packet is a retired non-claimable draft; the three remaining drafts are not dispatched.
 
@@ -228,8 +230,9 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **remaining B-WIRE project integration**, using **Astra Xhigh (`gpt-6-astra`, `xhigh`)**:
-owner-only Idea-project discovery, combined pagination and remaining private connection/bootstrap preparation.
+block is **remaining B-WIRE private connection view and bootstrap preparation**, using
+**Astra Xhigh (`gpt-6-astra`, `xhigh`)**. Shared project reads/pagination are accepted in
+`CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.
 Publish only the unimplemented prepared worker packets after their base
 and shared contract are available; no extra owner message is needed for ordinary already-scoped code work.
 Stop before live credentials, host changes, provider calls, database services or deployment without the

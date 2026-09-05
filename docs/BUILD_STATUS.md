@@ -18,13 +18,19 @@ at `2de0a4760fe1d5a0f2b39894e2e19ad897486d5f`. See `CR14B_FOUNDATION_ACCEPTANCE.
 catalog, detail, lifecycle and session management to the reviewed Access/SQL services. See
 `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. Deployment bootstrap is deliberately unconfigured; this is
 compiled/in-process integration evidence, not a running private beta or observed browser-click test.
-**Next: remaining CR14B B-WIRE project integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh):
-owner-only Idea-project discovery, combined catalog pagination and the remaining private integration.
+**The shared ordinary/Idea project catalog is independently accepted** at
+`58f060cb71a4675d35e8adabea01ab521cab260c`. The private app now supports owner-authorized Idea reads and
+50-record pagination; Idea lifecycle remains read-only here. See `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`.
+**Next: remaining CR14B B-WIRE private connection view and bootstrap preparation**, using
+`gpt-6-astra` / `xhigh` (Astra Xhigh).
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The combined CR14A/CR14B feature branch is published in [PR #280](https://github.com/MarvinAi5/control-room/pull/280)
 against `main`. Current GitHub checks are tracked on the PR; no merge is claimed.
 The private-application follow-up is [PR #281](https://github.com/MarvinAi5/control-room/pull/281), stacked
 on #280. Integrate #280 first; current PR checks must pass before integration. Neither PR is claimed merged.
+PR #281's exact head `5937373` passed GitHub CI run `33937757696`. The shared-catalog follow-up is
+[PR #282](https://github.com/MarvinAi5/control-room/pull/282), stacked on #281; integrate in order #280 → #281 → #282
+only after accepted review and current checks. #282 is not claimed merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
@@ -36,7 +42,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 
 | Owner outcome | Current operational truth | Remaining delivery |
 |---|---|---|
-| General project creation and lifecycle | Private compiled pages use real disposable SQL in tests; ordinary-only catalog, not deployed | Remaining CR14B B-WIRE + pilot |
+| General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
 | Real task -> agent -> progress -> result -> review in the website | Components/contracts exist; mounted live dispatch/review absent | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Host-specific evidence and disabled/inert seams; no mounted live roster/dispatch | CR14D |
@@ -64,6 +70,11 @@ checks passed 3 private Node + 4 Sites tests. Disposable PGlite verified migrati
 Local pretest/posttest were not run; current GitHub full-lifecycle results remain separate. Independent
 re-review closed two Medium and one Low findings. No live credentials, listener, database or deployment effects.
 
+CR14B shared-catalog verification: 52/52 focused tests; main command 479 tests (477 passed, 2 Windows-only
+skips); TypeScript/full lint passed. Both build profiles and 7 compiled/render checks passed. Existing Idea
+regressions passed 15/15 and disposable PGlite verified 127 tables. Initial one Medium finding was corrected
+and independently re-reviewed with no remaining findings. These are repository checks, not live pilot evidence.
+
 ### Historical component acceptance ledger
 
 The entries and narratives below retain their original scope and chronology. Terms such as complete,
@@ -73,6 +84,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14B shared private project catalog | Independently accepted ordinary/Idea reads and pagination; private Idea writes and full private pilot incomplete | `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; `reviews/CR14B_SHARED_CATALOG_REREVIEW.md` |
 | CR14B ordinary-project private application | Independently accepted compiled/in-process route integration; full B-WIRE and private pilot incomplete | `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`; `reviews/CR14B_WIRE_REREVIEW.md` |
 | CR14B runtime/access/project foundation | Accepted for components and in-process SQL/HTTP integration; browser and private pilot incomplete | `CR14B_FOUNDATION_ACCEPTANCE.md`; `reviews/CR14B_FOUNDATION_REREVIEW.md` |
 | CR14A delivery rebaseline | Accepted locally for plan and coordination tooling; not live integration or GitHub publication | `CR14A_ACCEPTANCE.md`; `reviews/CR14A_INDEPENDENT_REVIEW.md` |
@@ -1631,11 +1643,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14B remaining B-WIRE project integration
+Block: CR14B remaining B-WIRE private connection view and bootstrap preparation
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: xhigh
-Why: The ordinary-project private route tree is accepted; Idea projects and the rest of the private integration are not connected yet.
-Expected output: owner-only integrity-checked Idea-project discovery, combined catalog pagination, and remaining private connection/bootstrap preparation with honest evidence levels.
+Why: The shared project catalog is accepted; private connection presentation and production process/setup ownership are still incomplete.
+Expected output: protected current connection view, bounded bootstrap/database-role design, and scoped setup/rehearsal handoff. No live configuration or deployment implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

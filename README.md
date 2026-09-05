@@ -11,8 +11,10 @@ need integration and real acceptance. The GitHub V2 worker queue is the existing
 
 **CR14A: private-beta integration rebaseline**, the **CR14B runtime/access/project foundation**, and the
 **ordinary-project private application** are independently accepted for repository work. The separate private
-pages now use authenticated SQL services in compiled integration tests; they are not deployed. Next is shared
-Idea-project discovery and the remaining private integration; the private pilot is not complete. See the
+pages now use authenticated SQL services in compiled integration tests; they are not deployed. The shared
+ordinary/Idea catalog and pagination are also accepted; Idea status remains read-only in this private view.
+Next is the private connection view and bootstrap preparation; the private pilot is not complete. See the
+[shared catalog acceptance](docs/CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md),
 [private application acceptance](docs/CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md),
 [current completion program](docs/CONTROL_ROOM_COMPLETION_PROGRAM.md),
 [integration decisions](docs/CR14A_INTEGRATION_DIRECTION.md), and
