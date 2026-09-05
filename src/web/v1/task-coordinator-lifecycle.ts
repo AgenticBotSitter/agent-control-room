@@ -1,0 +1,95 @@
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { localId } from "../../harness/v1/native-run-identifiers";
+import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
+import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute } from "./task-assignment-coordinator";
+
+export type TaskCoordinatorDatabase = Readonly<{ client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean }>;
+export type TaskCoordinatorConfiguration = {
+  scope: { tenantId: string; workspaceId: string };
+  planning: ConstructorParameters<typeof TaskExecutionPlanner>[2]; routes: readonly TaskAssignmentRoute[];
+  /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
+  database: TaskCoordinatorDatabase;
+  clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
+};
+
+/** Takes ownership only after synchronous construction succeeds. No pool opening, role verification,
+ * listener, credential loading, approval or dispatch. The supplying bootstrap must verify the pool.
+ */
+export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfiguration) {
+  const scope = Object.freeze({ tenantId: localId.parse(input.scope.tenantId), workspaceId: localId.parse(input.scope.workspaceId) });
+  const maxActive = input.maxActive ?? 8, drainMs = input.drainMs ?? 30_000, closeMs = input.closeMs ?? 5000;
+  for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])
+    if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error("task_coordinator_config_invalid");
+  const resource = input.database;
+  if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
+    || [resource.client?.query, resource.client?.transaction, resource.client?.transactionWithPreCommitCheck].some(fn => typeof fn !== "function"))
+    throw new Error("task_coordinator_config_invalid");
+  const pool = Object.freeze({ client: resource.client, close: resource.close.bind(resource), isAvailable: resource.isAvailable.bind(resource) });
+  const raw = Object.freeze({ query: pool.client.query.bind(pool.client), transaction: pool.client.transaction.bind(pool.client),
+    transactionWithPreCommitCheck: pool.client.transactionWithPreCommitCheck.bind(pool.client) });
+  let closing = false, invalid = false, active = 0, closePromise: Promise<void> | undefined;
+  let drained: (() => void) | undefined, force!: () => void;
+  const stops = new Set<() => void>();
+  const forced = new Promise<void>(resolve => { force = resolve; });
+  const check = () => { if (invalid || !pool.isAvailable()) throw new Error("task_coordinator_unavailable"); };
+  const db: DatabaseClient = {
+    async query<T>(sql: string, params?: unknown[]) { check(); const value = await raw.query<T>(sql, params); check(); return value; },
+    transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
+    transactionWithPreCommitCheck: (work, precommit) => {
+      check();
+      return raw.transactionWithPreCommitCheck(async tx => {
+        let usable = true;
+        const session: DatabaseSession = { async query<T>(sql: string, params?: unknown[]) {
+          check(); if (!usable) throw new Error("task_coordinator_session_closed");
+          const value = await tx.query<T>(sql, params); check();
+          if (!usable) throw new Error("task_coordinator_session_closed"); return value;
+        } };
+        try { return await work(Object.freeze(session)); } finally { usable = false; }
+      }, () => { check(); precommit(); check(); });
+    },
+  };
+  // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
+  const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock);
+  const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock);
+  async function run<T>(work: () => Promise<T>): Promise<T> {
+    if (closing || active >= maxActive) throw new Error("task_coordinator_unavailable");
+    check(); active++;
+    let stop!: () => void;
+    const stopped = new Promise<never>((_, reject) => { stop = () => reject(new Error("task_coordinator_save_uncertain")); });
+    stops.add(stop);
+    const operation = Promise.resolve().then(work).finally(() => { stops.delete(stop); active--; if (closing && active === 0) drained?.(); });
+    try {
+      return await Promise.race([operation, stopped]);
+    } catch (error) {
+      // Invalidated SQL failures cannot escape before the bounded pool-close outcome is known.
+      if (invalid) { await forced; throw new Error("task_coordinator_save_uncertain"); }
+      throw error;
+    }
+  }
+  const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)) });
+  const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
+    assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
+    options: (...args) => run(() => assignment.options(...args)) });
+  return Object.freeze({ planning, assignment: assignments,
+    isReady: () => !closing && !invalid && pool.isAvailable(),
+    close(): Promise<void> {
+      if (closePromise) return closePromise;
+      closing = true;
+      closePromise = (async () => {
+        let drainTimer: ReturnType<typeof setTimeout> | undefined, closeTimer: ReturnType<typeof setTimeout> | undefined;
+        let timedOut = false;
+        try {
+          if (active) await Promise.race([new Promise<void>(resolve => { drained = resolve; }),
+            new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; resolve(); }, drainMs); })]);
+          invalid = true;
+          await Promise.race([Promise.resolve().then(pool.close), new Promise<never>((_, reject) => {
+            closeTimer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);
+          })]);
+          if (timedOut) throw new Error("task_coordinator_close_uncertain");
+        } catch { throw new Error("task_coordinator_close_uncertain"); }
+        finally { invalid = true; clearTimeout(drainTimer); clearTimeout(closeTimer); force(); for (const stop of stops) stop(); }
+      })();
+      return closePromise;
+    },
+  });
+}
