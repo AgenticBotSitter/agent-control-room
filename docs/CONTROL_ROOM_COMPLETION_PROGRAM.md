@@ -92,10 +92,13 @@ Project creation must not require an Idea Lab conversation or an engineer-writte
 
 These settings are project allocation decisions, not performance guarantees. Current model roles were
 checked against [official OpenAI guidance](https://developers.openai.com/api/docs/models/compare).
-Keep Astra Xhigh for architecture/security/integration decisions; Sol High for substantial settled implementation;
-Terra High for bounded UI and mechanical work. Do not change the owner's model automatically.
-Exact model/effort pairs for handoffs are `gpt-6-astra` / `xhigh`, `gpt-5.6-sol` / `high`, and
-`gpt-5.6-terra` / `high`. Recheck availability when dispatching; these names do not assert a worker's installed model.
+Current allocation update (2026-09-05): start multi-module integration on Astra Medium; use Sol
+Medium/High for settled backend implementation and Terra Medium for routine UI/docs. Higher effort is
+an escalation for a specific unresolved decision or demonstrated difficulty, not an automatic integration
+requirement. The owner selected Astra Medium for planned result submission and the next integration block.
+Do not change the owner's model automatically. The phase table below retains the original allocation;
+this update and `BUILD_STATUS.md` govern current handoffs. Recheck available settings when dispatching;
+these recommendations do not assert a worker's installed model or guarantee performance.
 
 | Phase | Main work | User-visible exit | Lead setting |
 |---|---|---|---|
@@ -264,8 +267,9 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **CR14C bounded executable planning/admission/dispatch and planned result submission**, using
-**Astra Xhigh (`gpt-6-astra`, `xhigh`)**. Shared project reads/pagination are accepted in
+block is **CR14C bounded executable planning/admission/dispatch and revision submission**, using
+**Astra Medium (`gpt-6-astra`, `medium`)**. Planned initial result submission has its separate current
+acceptance record; it does not dispatch tasks or revisions. Shared project reads/pagination are accepted in
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.
 The connection read view, startup/role, serving, rehearsal and fixture-preparation code are accepted in their
 CR14B acceptance records. Owner quality commands are accepted in `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. The next code

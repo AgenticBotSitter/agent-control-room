@@ -5307,3 +5307,31 @@ skips, 392 posttests, both builds, eleven private/four Sites artifact checks, ty
 **Next:** trusted executable planning/profile binding, canonical admission/dispatch and checked result/
 revision submission. Existing UI/result components do not complete the live C-WORK journey. The retired
 undispatched review-UI capsule must not be published as duplicate work.
+
+## ADR-216 — Bind initial native result review before recorded progress
+
+**Date:** 2026-09-05. **Status:** accepted for repository integration; no runtime activation.
+
+The trusted planner registers an immutable HMAC-bound native review plan against a canonical run/job
+and existing document acceptance profile before recorded observations. One plan per canonical job/run
+prevents an execution retry from creating a new initial review root. This internal capability is not a
+browser or node authorization endpoint and cannot provision profiles or checkpoints.
+
+Explicitly configured result ingestion re-reads the checked artifact and submits one exact document
+target into the existing Completion Gate. Receipt time and deterministic identity make reconciliation
+stable. Target/audit share a SQL transaction and checkpoint advancement is staged until precommit.
+Capture may precede submission failure; retained files are not falsely described as rolled back, and
+reconciliation does not rerun execution. Missing plans cannot be backfilled after progress.
+
+Migration 0044 adds immutable plans with no new private-web grants. This submits evidence for review;
+it grants no quality acceptance, verification, execution approval, completion or revision.
+
+**Evidence:** product `dbd5885bf362803f8cc049817367c9c2134c6c17`, tree
+`8fa4438feb3cf2b9db19e22d86efa39bb88d8014`; independent review accepted with no findings and 36 passes.
+Root: 166 focused, 769 pretests, 743 main passes/two existing skips, 392 posttests, both builds,
+eleven private/four Sites artifact tests, type/lint/whitespace and 131-table disposable migrations passed.
+See `CR14C_PLANNED_RESULT_SUBMISSION_ACCEPTANCE.md` for scope and remaining work.
+
+**Next:** executable proposal lineage, canonical admission/dispatch and bounded revision submission;
+physical transport/private-pilot gates remain separate. Continue on Astra Medium, escalating only for
+a specific unresolved decision rather than categorically requiring Xhigh for integration.

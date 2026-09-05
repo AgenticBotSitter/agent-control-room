@@ -1,6 +1,6 @@
 # CR14C planned native result submission
 
-Status: implemented for independent review; repository-only, not mounted or deployed.
+Status: independently accepted; repository-only, not mounted or deployed. See the acceptance record.
 
 ## Product connection
 

@@ -84,7 +84,8 @@ adds read access to canonical task/attempt/harness evidence and insert-only, tri
 proposals/receipts, then read-only artifact receipts/manifests and verified review history. Migration 0043 adds
 guarded human quality-review/finding inserts, immutable private feedback receipts and the required integrity/
 lock columns. It grants no profile/target/verification/revision/approval inserts, task transitions, attempts,
-leases, dispatch, effects or artifact writes. Extra/missing
+leases, dispatch, effects or artifact writes. Migration 0044 adds trusted native review plans without
+granting the private web role any privileges on that table. Extra/missing
 permissions and schema drift fail closed. Migrators/DB administrators remain trusted; this is a startup snapshot,
 not continuous monitoring of administrator changes. New schema/role versions require reviewed compatibility.
 
