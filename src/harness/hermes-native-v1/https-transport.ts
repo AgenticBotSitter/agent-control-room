@@ -48,6 +48,7 @@ export function createNativeHttpsTransport(value: NativeEnrollment,
   now: () => number = Date.now): NativeRunTransport {
   const enrollment = Object.freeze(enrollmentSchema.parse(value));
   async function exchange(input: NativeWireRequest, receiveChunk?: (chunk: Uint8Array) => void): Promise<NativeWireResponse> {
+    input = Object.freeze({ ...input });
     let shape: ReturnType<typeof wireShape>;
     try { shape = wireShape(input, enrollment, Boolean(receiveChunk)); } catch { throw new Error("native_wire_invalid"); }
     const at = now(), maximumMs = receiveChunk ? nativeLimits.streamMs : nativeLimits.requestMs;

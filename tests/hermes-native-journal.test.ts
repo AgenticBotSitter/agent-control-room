@@ -34,7 +34,7 @@ test("journal compare-and-swap protects immutable native identity and monotonic 
     assert.throws(() => journal.update(binding.runId, 5, { resultText: "Changed output" }));
   } finally { journal.close(); }
 });
-test("a private file journal survives reopen without returning permission to submit", () => {
+test("a private file journal survives reopen without returning permission to submit", { skip: typeof process.getuid !== "function" }, () => {
   const directory = mkdtempSync(join(tmpdir(), "cr14c-journal-")), path = join(directory, "runs.sqlite");
   let journal: SqliteNativeRunJournal | undefined;
   try {

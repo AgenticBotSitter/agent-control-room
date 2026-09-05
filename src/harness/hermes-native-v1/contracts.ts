@@ -73,6 +73,10 @@ export interface NativeRunJournal {
   load(runId: string): NativeSnapshot | undefined;
   update(runId: string, version: number, patch: Partial<Omit<NativeSnapshot, "binding" | "version">>): NativeSnapshot;
 }
+/** Only a known, rolled-back version conflict is retryable as a local observation update. */
+export class NativeJournalVersionConflict extends Error {
+  constructor() { super("native_journal_version_conflict"); }
+}
 export type NativeOperation = "capabilities" | "start" | "status" | "events" | "stop";
 /** Trusted node controller seam, never provided by a browser/job payload. Check must verify current
  * ceiling/lease, pause, qualification/profile isolation, credential and exact task/payload binding.

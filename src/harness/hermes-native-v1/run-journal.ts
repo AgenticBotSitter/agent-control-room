@@ -2,7 +2,7 @@ import { closeSync, lstatSync, openSync, statSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { sha256Digest } from "../../security/canonical-digest";
-import { bindingSchema, localId, snapshotSchema, terminalNativeState,
+import { bindingSchema, localId, snapshotSchema, terminalNativeState, NativeJournalVersionConflict,
   type NativeBinding, type NativeRunJournal, type NativeSnapshot, type NativeState } from "./contracts";
 
 const schema = `CREATE TABLE hermes_native_runs (
@@ -59,6 +59,7 @@ function validateUpdate(before: NativeSnapshot, after: NativeSnapshot): void {
 export class SqliteNativeRunJournal implements NativeRunJournal {
   private readonly db: DatabaseSync;
   private usable = true;
+  private closed = false;
   private readonly maximumEntries: number;
   constructor(path: string, options: { testOnlyAllowEphemeral?: boolean; maximumEntries?: number } = {}) {
     this.maximumEntries = options.maximumEntries ?? 1024;
@@ -91,9 +92,10 @@ export class SqliteNativeRunJournal implements NativeRunJournal {
     this.assertUsable(); this.db.exec("BEGIN IMMEDIATE");
     let committing = false;
     try { const result = work(); committing = true; this.db.exec("COMMIT"); return result; }
-    catch {
-      if (committing) { this.usable = false; try { this.db.close(); } catch { /* Quarantined regardless of close outcome. */ } }
+    catch (error) {
+      if (committing) { this.usable = false; try { this.close(); } catch { /* Quarantined regardless of close outcome. */ } }
       else { try { this.db.exec("ROLLBACK"); } catch { this.usable = false; } }
+      if (!committing && this.usable && error instanceof NativeJournalVersionConflict) throw error;
       throw new Error(committing ? "native_journal_commit_uncertain" : "native_journal_write_rejected");
     }
   }
@@ -118,14 +120,15 @@ export class SqliteNativeRunJournal implements NativeRunJournal {
   update(runId: string, version: number, patch: Partial<Omit<NativeSnapshot, "binding" | "version">>) {
     return this.transaction(() => {
       const before = this.load(runId);
-      if (!before || before.version !== version || "binding" in patch || "version" in patch) throw new Error("native_journal_conflict");
+      if (!before || "binding" in patch || "version" in patch) throw new Error("native_journal_write_rejected");
+      if (before.version !== version) throw new NativeJournalVersionConflict();
       const after = snapshotSchema.parse({ ...before, ...patch, version: version + 1 });
       validateUpdate(before, after);
       const result = this.db.prepare("UPDATE hermes_native_runs SET version=?,snapshot=? WHERE run_id=? AND version=?")
         .run(after.version, JSON.stringify(after), runId, version);
-      if (result.changes !== 1) throw new Error("native_journal_conflict");
+      if (result.changes !== 1) throw new NativeJournalVersionConflict();
       return after;
     });
   }
-  close() { if (this.usable) { this.usable = false; this.db.close(); } }
+  close() { if (!this.closed) { this.usable = false; this.closed = true; this.db.close(); } }
 }

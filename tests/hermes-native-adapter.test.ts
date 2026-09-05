@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { HermesNativeRunAdapter } from "../src/harness/hermes-native-v1/adapter.ts";
 import { SqliteNativeRunJournal } from "../src/harness/hermes-native-v1/run-journal.ts";
-import type { NativeAuthority, NativeOperation, NativeRunJournal, NativeRunTransport, NativeWireRequest } from "../src/harness/hermes-native-v1/contracts.ts";
+import { NativeJournalVersionConflict, type NativeAuthority, type NativeOperation, type NativeRunJournal, type NativeRunTransport, type NativeWireRequest } from "../src/harness/hermes-native-v1/contracts.ts";
 import { binding, capabilityBody, enrollment, input, instant, nativeRunId, response, statusBody } from "./hermes-native-fixture.ts";
 
 function fixture() {
@@ -184,4 +184,62 @@ test("a hung preflight is bounded and its late resolution cannot advance to subm
   const result = await adapter.start({ ...input, deadline: instant + 15 }); assert.equal(result.state, "failed");
   release(response(capabilityBody)); await new Promise(resolve => setImmediate(resolve));
   assert.equal(posts, 0); assert.equal(marked, 0);
+});
+test("stop interrupts the owned progress stream, ignores late chunks and never opens another stream", async t => {
+  const f = fixture(); t.after(() => f.journal.close()); let opened!: () => void, late: (chunk: Uint8Array) => void = () => undefined;
+  const ready = new Promise<void>(resolve => { opened = resolve; }); let streams = 0, aborted = false;
+  const transport: NativeRunTransport = { ...f.transport, async events(request, receive) {
+    await request.authorize(); streams++; late = receive;
+    return new Promise<void>((_, reject) => {
+      request.signal!.addEventListener("abort", () => { aborted = true; reject(new Error("fixture stream aborted")); }, { once: true }); opened();
+    });
+  } };
+  const adapter = new HermesNativeRunAdapter(enrollment, f.journal, f.authority, transport, () => instant);
+  await adapter.start(input); const watching = adapter.observe(input.runId); await ready;
+  assert.equal((await adapter.stop(input.runId)).state, "stopping"); await watching;
+  assert.equal(aborted, true); const version = adapter.snapshot(input.runId).version;
+  late(Buffer.from(`data: ${JSON.stringify({ event: "tool.started", run_id: nativeRunId })}\n\n`));
+  assert.equal(adapter.snapshot(input.runId).version, version);
+  await adapter.observe(input.runId); assert.equal(streams, 1); assert.equal(f.calls.filter(call => call.operation === "stop").length, 1);
+});
+test("stop also interrupts an owned status poll instead of rejecting with busy", async t => {
+  const f = fixture(); t.after(() => f.journal.close()); let opened!: () => void;
+  const ready = new Promise<void>(resolve => { opened = resolve; }); let aborted = false;
+  const transport: NativeRunTransport = { ...f.transport, async json(request) {
+    if (request.operation !== "status") return f.transport.json(request);
+    return new Promise<ReturnType<typeof response>>((_, reject) => {
+      request.signal!.addEventListener("abort", () => { aborted = true; reject(new Error("fixture poll aborted")); }, { once: true }); opened();
+    });
+  } };
+  const adapter = new HermesNativeRunAdapter(enrollment, f.journal, f.authority, transport, () => instant);
+  await adapter.start(input); const polling = adapter.poll(input.runId); await ready;
+  assert.equal((await adapter.stop(input.runId)).state, "stopping"); await polling; assert.equal(aborted, true);
+});
+test("a concurrent adapter status cannot discard a stop acknowledgement or overwrite its terminal result", async t => {
+  for (const state of ["running", "completed"] as const) {
+    const f = fixture(); t.after(() => f.journal.close()); let opened!: () => void, release!: () => void;
+    const ready = new Promise<void>(resolve => { opened = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+    const transport: NativeRunTransport = { ...f.transport, async json(request) {
+      if (request.operation === "stop") { opened(); await held; } return f.transport.json(request);
+    } };
+    const adapter = new HermesNativeRunAdapter(enrollment, f.journal, f.authority, transport, () => instant);
+    await adapter.start(input); const stopping = adapter.stop(input.runId); await ready;
+    f.configure({ status: response(statusBody(state, state === "completed" ? { output: "Final from concurrent poll" } : {})) });
+    await f.adapter.poll(input.runId); release(); const result = await stopping;
+    assert.equal(result.state, state === "running" ? "stopping" : "completed");
+    if (state === "completed") assert.equal(result.resultText, "Final from concurrent poll");
+    assert.equal(f.calls.filter(call => call.operation === "stop").length, 1);
+    if (state === "running") assert.equal((await f.adapter.poll(input.runId)).state, "stopping");
+  }
+});
+test("only known local observation version conflicts retry; native operations remain single-attempt", async t => {
+  const f = fixture(); t.after(() => f.journal.close()); let conflicts = 2, observationWrites = 0;
+  const journal: NativeRunJournal = { reserve: (...args) => f.journal.reserve(...args), load: id => f.journal.load(id),
+    update: (id, version, patch) => {
+      if (patch.lastActivity === "status_resnapshot") { observationWrites++; if (conflicts-- > 0) throw new NativeJournalVersionConflict(); }
+      return f.journal.update(id, version, patch);
+    } };
+  const adapter = new HermesNativeRunAdapter(enrollment, journal, f.authority, f.transport, () => instant);
+  await adapter.start(input); assert.equal((await adapter.poll(input.runId)).state, "running"); assert.equal(observationWrites, 3);
+  assert.equal(f.calls.filter(call => call.operation === "status").length, 1);
 });

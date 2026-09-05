@@ -60,6 +60,11 @@ cannot attach an arbitrary ID through this adapter.
 
 Known-run disconnects preserve state and mark availability offline. Reconnection reads exact-ID status.
 Native 404 becomes ambiguous, not completed/failed. Regressing status time/identity cannot replace evidence.
+Cancellation interrupts the adapter's owned SSE or status observation, waits for its operation handoff, and
+then sends the separately authorized exact-ID stop. Late aborted-stream chunks cannot mutate the journal.
+Known, rolled-back observation version conflicts may rebase against current durable state at most three
+times; native operations and uncertain commits are never retried. A concurrent terminal result wins over a
+late stop acknowledgement; a nonterminal concurrent poll does not discard that acknowledgement.
 The upstream SSE queue is single-consumer and is removed on disconnect; it offers no event replay cursor.
 One stream is consumed at most once, with bounded bytes/frames/UTF-8 framing. It retains fixed activity
 categories, not reasoning, command arguments or partial private text. SSE completion does not finalize a job.
