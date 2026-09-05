@@ -5772,3 +5772,22 @@ Reviewed product `b094a1e8083ae8b8af88b4fb3a8a12fde6246ef0`, tree
 29 focused checks and two compiled checks. See `CR14C_PRIVATE_APPROVAL_INTERFACE_ACCEPTANCE.md` for
 verification chronology and remaining UI race-test coverage. Current saved-packet revalidation toward
 dispatch, integrated signing/custody, supervisor persistence and revisions remain. No live effects added.
+
+## ADR-236 — revalidate saved signatures against locked current preparation
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Read the actual HMAC-protected paired packet under the existing owner/session, project and canonical
+reservation transaction. Match exact input/packet/lease/enrollment/operation/binding digests, then verify
+both signatures against current pinned owner keys and server trust. Preserve commit-time cancellation,
+trust-revision and deadline checks. Historical receipt output is never accepted as authority.
+
+Internal preparation returns a private non-authority snapshot, not a web operation, a deferred permission
+callback, a signed delivery command or queue entry. Future queue insertion must occur inside the same
+transaction as revalidation; a sender cannot authorize effects from this returned snapshot alone.
+Node-local current policy/admission and durable claim/marker checks remain mandatory at execution.
+
+Product `07285197290ba24823ccd0faa26639a76353d5b2`, tree
+`29412703f93db7ddcf2ac5145e6023c105d95db1`, passed independent review with38 tests and no actionable
+findings. See `CR14C_SAVED_APPROVAL_REVALIDATION_ACCEPTANCE.md` for verification and remaining work.
+No schema/privilege change, actual signing service, listener, provider call or deployment is introduced.

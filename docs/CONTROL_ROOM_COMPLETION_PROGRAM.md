@@ -335,8 +335,10 @@ Actual signed admission/dispatch and real deployment configuration remain; no li
 Exact native payload/approval/effect binding is accepted in `CR14C_NATIVE_TASK_APPROVAL_BINDING_ACCEPTANCE.md`.
 Node-side NativeAuthority, current-policy checks, durable claim/marker ordering, paired signature intake
 and canonical unsigned preparation are now independently accepted. Owner HTTP/page signed-file intake
-and startup mounting have independent review; the immediate next code block is current saved-packet
-revalidation toward signed dispatch. Bounded approval lifecycle
+and startup mounting have independent review. Current saved-packet revalidation is independently reviewed
+in `CR14C_SAVED_APPROVAL_REVALIDATION_ACCEPTANCE.md`; the immediate next code block is atomic approved-task
+queue insertion and signed dispatch. Revalidation and insertion must share a transaction; returned
+snapshots and historical receipts cannot authorize later delivery. Bounded approval lifecycle
 and historical reconciliation are accepted. Integrated owner signing and custody, durable
 supervisor state and revision submission remain; no application import of the native adapter is permitted.
 See `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.

@@ -1967,14 +1967,24 @@ Local full verification passed: CR14C412, preparation769, main991 with two exist
 private compiled18 and rendered4; both builds, TypeScript, ESLint and migrations0047/133 tables passed.
 Current-head GitHub CI remains required; no merge or deployment is claimed.
 
+## Current saved approval checks
+
+Current saved-packet revalidation is independently reviewed at
+`07285197290ba24823ccd0faa26639a76353d5b2`, with38 passing review checks and no actionable findings.
+The internal coordinator now verifies the exact stored signature packet against current locked task,
+reservation, owner and node/key state before returning a private non-authority snapshot. Historical
+receipts remain readable but cannot substitute for these checks. See
+`CR14C_SAVED_APPROVAL_REVALIDATION_ACCEPTANCE.md` for verification and remaining delivery work.
+The method is not mounted in HTTP or browser operations and does not sign, queue or execute a task.
+
 ## Next block
 
 ```text
-Block: CR14C current signed-packet dispatch integration, owner signing and revisions
+Block: CR14C atomic approved-task delivery queue, owner signing and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: The owner review and signed-file intake now reach the bounded coordinator through verified startup. The next integration must revalidate saved signatures against current canonical state before delivery, never reuse historical receipts as permission.
-Expected output: current signed-packet integration toward dispatch using existing node admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Current saved-packet revalidation is independently reviewed. Delivery queue insertion must share that canonical transaction; historical receipts and returned snapshots cannot authorize later effects.
+Expected output: atomic approved-task queue/signing/delivery integration using existing node admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
