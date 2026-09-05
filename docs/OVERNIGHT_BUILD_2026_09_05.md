@@ -78,11 +78,27 @@ live credentials or real-agent connection. If one lane needs live permission, co
 - No real network/agent/database, credentials, listener, deployment or merge. Registration and snapshots
   do not mutate canonical job completion, approvals or effect/artifact authority.
 - Private task/result UI, task admission/dispatch, verified artifact transfer and owner review remain.
+- Exact documentation head `7020280` passed GitHub CI run `33955013136` at 08:36:30 UTC.
+
+### CR14C private task workspace
+
+- Accepted product: `a8021de5d6744c796f4a31eb48b60000e27bd986`; publication tracked in `BUILD_STATUS.md`.
+- Protected project Tasks/task-detail pages; canonical proposed-work creation, current grants/revocation,
+  append-only exact receipts, bounded pagination and integrity-verified recorded native progress.
+- Initial two Medium findings corrected; re-review accepted with no remaining findings, 60 independent tests.
+- Final checks: 102 focused, 769 pretests, 679 main passes/two existing skips, 392 posttests; both builds;
+  nine private/four Sites artifact checks; TypeScript/full lint/whitespace; migrations0001–0041/128 tables.
+- Native availability and last reported state are distinct; uncertain saves retain their exact recovery key.
+  Saving is not assignment, reported completion is not canonical acceptance, result hashes are not delivered files.
+- Restricted-role SQL permits only initial effect-free proposal inserts. No attempts/leases/effects/reviews
+  are created by this feature. The startup/preparation schema pin advances; no real database was changed.
+- No listener, real database, credentials, browser, agent/provider, deployment or merge effects.
 
 ## Next authorized repository work
 
-1. Continue C-WORK: canonical project task/attempt, admission/effect integration, native lifecycle/usage mapping
-   and result/review wiring. The native adapter component is accepted but not active. No real agent qualification tonight.
+1. Continue C-WORK: artifact/result and existing Completion Gate review integration, plus bounded executable
+   planning/admission/dispatch. The native adapter and task pages are accepted but no real agent is connected.
+   No real agent qualification tonight.
 2. B's live setup/pilot remains a separate gate; continue other settled UI/digest lanes if a particular live
    prerequisite blocks integration. Existing worker capsules remain undispatched drafts.
 3. Keep accepted code in feature branches/private PRs; preserve dependency-order/current-CI/merge approval.

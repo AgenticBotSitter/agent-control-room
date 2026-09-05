@@ -1,6 +1,6 @@
 # CR14C private task workspace
 
-Status: repository implementation candidate; acceptance and independent review are recorded separately.
+Status: independently accepted repository implementation; acceptance and independent review are recorded separately.
 Lead: Astra Xhigh. This continues C-WORK's useful website integration, not live activation.
 
 ## Owner workflow

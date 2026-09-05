@@ -5215,3 +5215,34 @@ whitespace passed. Unchanged migrations verified 127 tables. Independent re-revi
 
 **Next:** private project task/result pages and remaining canonical draft/admission/dispatch/artifact/review
 composition. Full C-WORK, real host qualification and private-beta activation remain incomplete and separately gated.
+
+## ADR-213 — Private task pages save proposals and distinguish recorded progress from work authority
+
+**Date:** 2026-09-05. **Owner direction:** continue authorized overnight repository building on Astra Xhigh.
+
+Use the existing shared Access/session/project services and canonical request/workflow/job tables for private
+project Tasks pages. A proposal, its audit record and append-only receipt commit together under current
+membership/grants. Exact retries recover a lost response, not a second job. Once a save is uncertain, later
+permission/session denial cannot discard its identity or release the changed-submission hold. Reconnect and
+refresh are reads only; browser state is not global task authority.
+
+New proposals are unassigned and effect-free. SQL permits the private web role to insert only initial
+proposed records, without canonical transitions, attempts, leases, dispatch, approvals or harness writes.
+Later planning must materialize properly bounded executable work with lineage; it cannot expand the proposal's
+immutable envelope. Schema/role checks advance explicitly to migration 0041 and 128 tables, never auto-migrate.
+
+Read canonical task status separately from verified harness history. An unavailable or stale observation
+shows its last reported state, not current activity. Native completion is not canonical job completion;
+hash/size claims are not delivered or independently verified files; cancellation is not OS-cessation proof.
+Unknown timestamps/tokens/cost stay unknown. Missing dispatch/artifact-content/review commands remain visibly
+not connected. Stable project/task URLs and bounded read refresh provide useful pages without fake outcomes.
+
+**Evidence:** accepted product `a8021de5d6744c796f4a31eb48b60000e27bd986`, tree
+`fb75541d35e830a007bc2662e5af2eb5f8dcf777`; `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`, retained two Medium
+initial findings and accepted re-review. Final 102 focused, 769 pretests, 679 main passes/two existing skips,
+392 posttests, both builds, nine private/four Sites artifact checks, type/lint/whitespace and 128-table
+migrations passed. Independent re-review ran 60 tests. No live database, listener, credentials, browser,
+agent/provider, deployment or merge occurred.
+
+**Next:** remaining artifact/result, existing Completion Gate review/revision and canonical admission/dispatch
+composition. Full C-WORK and the private-beta exit still require separately scoped real acceptance.

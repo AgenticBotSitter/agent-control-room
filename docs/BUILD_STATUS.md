@@ -46,7 +46,11 @@ cancellation handling; no native connection was made. See `CR14C_NATIVE_RUN_ADAP
 signed protocol and canonical harness evidence store in disposable integration tests. Runtime activation,
 task dispatch, verified artifact transfer and owner review are not implied. See
 `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`.
-**Next: CR14C C-WORK private task/result interface and remaining dispatch/review integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
+**CR14C private task workspace is independently accepted** at
+`a8021de5d6744c796f4a31eb48b60000e27bd986`. Protected project Tasks pages save canonical non-running
+proposals and show recorded attempts/progress with truthful uncertainty and availability. See
+`CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`. This does not connect live dispatch, delivered files or review commands.
+**Next: CR14C C-WORK artifact/result, review and remaining admission/dispatch integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
@@ -80,16 +84,18 @@ The accepted unwired native-run adapter is [PR #288](https://github.com/MarvinAi
 stacked on #287. Its exact head `fc199dd` passed GitHub CI run `33952565284` at 07:41:30 UTC.
 No merge, runtime activation or live connection is claimed.
 The accepted native-progress integration is [PR #289](https://github.com/MarvinAi5/control-room/pull/289),
-stacked on #288. Its own current-head CI remains required; this stack is not merged or deployed.
+stacked on #288. Its exact head `7020280` passed GitHub CI run `33955013136` at 08:36:30 UTC.
+This stack is not merged or deployed. The accepted private-task follow-up awaits publication below.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
 
-Latest native-progress checks: 74 focused, 769 pretests, 651 main passes/two existing Windows skips,
+Latest private-task checks: 102 focused, 769 pretests, 679 main passes/two existing Windows skips,
 392 posttests, nine private/four Sites artifact checks, both builds and type/lint/whitespace.
-Unchanged migrations verified 127 tables. Independent re-review closed two Medium/two Low delivery findings.
-The native adapter is not wired to task dispatch. Pool reopen is not process
+Migrations 0001–0041 verified 128 tables. Independent re-review closed two Medium save/availability findings.
+The private project pages now save real canonical proposals and show recorded task/agent evidence in tests;
+the native adapter is not wired to task dispatch or delivered-file/review commands. Pool reopen is not process
 restart; client counts are not physical attempt/absence evidence; idle close cause remains unavailable.
 No real database, listener, credentials, native agent or deployment was used.
 
@@ -101,7 +107,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 |---|---|---|
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
-| Real task -> agent -> progress -> result -> review in the website | Components/contracts exist; mounted live dispatch/review absent | CR14C |
+| Real task -> agent -> progress -> result -> review in the website | Private task pages save non-running canonical proposals and read recorded progress; live dispatch, result content and review commands absent | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Private view reads existing enrollments/signals; new native adapter is component-tested but unwired; no live fleet/dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
@@ -160,6 +166,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C private task workspace | Independently accepted canonical proposals and recorded-progress pages; no live dispatch, artifact delivery or owner review | `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`; `reviews/CR14C_PRIVATE_TASK_WORKSPACE_REREVIEW.md` |
 | CR14C canonical native progress | Independently accepted durable signed evidence integration; no active dispatch or canonical task completion | `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`; `reviews/CR14C_CANONICAL_NATIVE_PROGRESS_REREVIEW.md` |
 | CR14C supported Hermes native-run adapter | Independently accepted unwired run journal/protocol/HTTPS/lifecycle code; no real agent or complete task integration | `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`; `reviews/CR14C_NATIVE_RUN_ADAPTER_REREVIEW.md` |
 | CR14B private Node serving | Independently accepted request/static/lifecycle code and compiled SQL integration; no physical listener | `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`; `reviews/CR14B_PRIVATE_SERVING_REREVIEW.md` |
