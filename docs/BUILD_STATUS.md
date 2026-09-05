@@ -118,6 +118,12 @@ its 20-minute limit during private VPS verification, leaving migrations skipped.
 job budget to 35 minutes, preserving every check and permission; exact workflow-difference validation
 passed. See `CR14C_CI_VERIFICATION_BUDGET.md`. Current-head CI completion remains unverified; previous
 cancelled runs are not passes. None of #300–#302 is merged or deployed.
+The separately signed native status/stop recovery component is independently accepted at
+`271eff68a2235d28e4bd98f47a017564b916b0ca`; see `CR14C_NATIVE_RECOVERY_AUTHORITY_ACCEPTANCE.md`.
+It permits exact known-run cleanup within a separate bounded window without renewing work, replaying
+stop or claiming physical cessation. Tests use real disposable journals and fake transport, not live
+agents. Next: trusted current evidence sources, owner approval/signing intake, signed dispatch and
+bounded revisions on Astra Medium. Production composition and live acceptance remain unconfigured.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.

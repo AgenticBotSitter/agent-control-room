@@ -5530,3 +5530,25 @@ negative evidence and full verification. No runtime activation, real qualificati
 
 **Next:** exact-run stop/recovery, real current authority sources, owner approval/intake, signed dispatch
 and revisions. Continue Astra Medium; no production effects are authorized by this decision.
+
+## ADR-225 — sign bounded exact-run recovery separately from work permission
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired component.
+
+Use a domain-separated owner-signed recovery permission for status and stop only, binding the complete
+native run identity and enrollment. Require signed issuance no later than durable execution/claim
+creation. Bound its expiry by enrollment and five minutes past the work deadline. Validate current
+trusted key, credential, explicit cleanup policy/revocation and exact profile evidence before bytes.
+This is not lease renewal or permission to create new work, and does not settle an effect.
+
+Read existing native/effect/execution journals for exact known-run evidence. Preserve the adapter's
+durable one-attempt stop intent and honest ambiguity. Route status/stop only to recovery; never fall
+back to start permission after a failure. Retain unresolved-check slots until actual settlement.
+
+**Evidence:** `271eff68a2235d28e4bd98f47a017564b916b0ca`, tree
+`4d49001d89f2cc24e2633d72e6221f3c479c6726`. Independent review accepted with 56 passing tests and
+no blocking findings. See `CR14C_NATIVE_RECOVERY_AUTHORITY_ACCEPTANCE.md`. Synthetic signing/current
+evidence and fake transport do not establish live owner custody, qualification or physical stop.
+
+**Next:** real trusted sources, owner signing/intake, signed dispatch and revisions, Astra Medium.
+No provider, credential operation, deployment or merge is authorized by this decision.

@@ -6,13 +6,16 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — typed stop/recovery, trusted current authority sources, owner approval/intake,
+**Next block:** CR14C C-WORK — trusted current authority sources, owner approval/intake,
 signed dispatch and revision submission, on Astra Medium.
 Verified two-pool startup and native task approval binding are independently accepted in their CR14C
 acceptance records. The start/live-read local authority composition is independently accepted in
 `CR14C_NATIVE_START_AUTHORITY_ACCEPTANCE.md`, including atomic effect capacity and bounded unresolved
 checks. It is unwired and fake-transport tested; stop/post-deadline permission and real resolver sources
-are not yet connected. These component acceptances do not complete live C-WORK.
+are not yet connected. Separately signed exact-run recovery composition is now accepted in
+`CR14C_NATIVE_RECOVERY_AUTHORITY_ACCEPTANCE.md`, fake-tested without renewal or stop replay;
+real permission issuance and runtime sources remain unconfigured. These component acceptances do not
+complete live C-WORK.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.
