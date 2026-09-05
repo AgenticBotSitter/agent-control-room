@@ -6,11 +6,12 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14B — remaining B-WIRE private connection view and bootstrap preparation. The foundation,
+**Next block:** CR14B — bounded startup/pool and database-role implementation. The foundation,
 ordinary-project private app and shared ordinary/Idea catalog with pagination are accepted; see
 `CR14B_FOUNDATION_ACCEPTANCE.md`, `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md` and
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`. Idea lifecycle remains read-only in the private view;
-full B-WIRE and private-pilot exits remain incomplete.
+the owner-only private connection read view is accepted in `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`.
+Startup/role preparation is design only; full B-WIRE and private-pilot exits remain incomplete.
 
 **Scope:** Finish a useful private Control Room before optional specialist expansion and public release.
 
@@ -128,9 +129,10 @@ callbacks into authority. Their separate commits are not reported as a delivered
 
 B-WIRE now has an accepted compiled ordinary-project route tree, shared authentication/session composition,
 project pages and SQL commands. The accepted shared catalog now adds owner-only authenticated Idea reads
-and 50-record pagination. Private Idea commands remain CR14E integration. Private connection presentation,
-production bootstrap,
-IdP/MFA, real PostgreSQL, listener/static/browser rehearsal and deployment are not accepted by code tests.
+and 50-record pagination. Private Idea commands remain CR14E integration. The private connection view now
+reads the existing owner-only enrollment registry and authenticated signal receipts, explicitly not a live fleet.
+Startup/pool/role preparation is documented in `CR14B_BOOTSTRAP_DATABASE_PREPARATION.md`; implementation,
+IdP/MFA, real PostgreSQL, listener/static/browser rehearsal and deployment are not accepted by these code tests.
 The project UI packet is a retired non-claimable draft; the three remaining drafts are not dispatched.
 
 ### CR14C/D — useful work first, then more machines

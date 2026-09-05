@@ -21,7 +21,11 @@ compiled/in-process integration evidence, not a running private beta or observed
 **The shared ordinary/Idea project catalog is independently accepted** at
 `58f060cb71a4675d35e8adabea01ab521cab260c`. The private app now supports owner-authorized Idea reads and
 50-record pagination; Idea lifecycle remains read-only here. See `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`.
-**Next: remaining CR14B B-WIRE private connection view and bootstrap preparation**, using
+**The private connection inventory is independently accepted** at
+`e6fa438dbb2e71cb4435c6872051722171928d22`. The owner-only page/API reads existing verified enrollments and
+signal evidence under shared session revocation. It is not a live fleet or native-run adapter. Startup/role
+preparation design is recorded, not provisioned. See `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`.
+**Next: CR14B bounded startup/pool and database-role implementation**, using
 `gpt-6-astra` / `xhigh` (Astra Xhigh).
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The combined CR14A/CR14B feature branch is published in [PR #280](https://github.com/MarvinAi5/control-room/pull/280)
@@ -31,6 +35,9 @@ on #280. Integrate #280 first; current PR checks must pass before integration. N
 PR #281's exact head `5937373` passed GitHub CI run `33937757696`. The shared-catalog follow-up is
 [PR #282](https://github.com/MarvinAi5/control-room/pull/282), stacked on #281; integrate in order #280 → #281 → #282
 only after accepted review and current checks. #282 is not claimed merged or deployed.
+PR #282's exact head `98b6030` passed GitHub CI run `33939343152`. The connection-view follow-up is
+[PR #283](https://github.com/MarvinAi5/control-room/pull/283), stacked on #282; its own current-head checks
+remain required. No merge or deployment is claimed for this stack.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
@@ -45,7 +52,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
 | Real task -> agent -> progress -> result -> review in the website | Components/contracts exist; mounted live dispatch/review absent | CR14C |
-| Mac/PC/VPS Hermes and Codex fleet | Host-specific evidence and disabled/inert seams; no mounted live roster/dispatch | CR14D |
+| Mac/PC/VPS Hermes and Codex fleet | Private compiled view reads existing Hermes enrollments/signals; no live fleet, new native-run adapter or dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
 | Live ABS news -> agent work | Synthetic stories and local draft editor; no mounted collection/dispatch | CR14F |
@@ -75,6 +82,12 @@ skips); TypeScript/full lint passed. Both build profiles and 7 compiled/render c
 regressions passed 15/15 and disposable PGlite verified 127 tables. Initial one Medium finding was corrected
 and independently re-reviewed with no remaining findings. These are repository checks, not live pilot evidence.
 
+CR14B private-connection verification: 62/62 focused tests; final main command 489 tests (487 passed,
+2 Windows-only skips); TypeScript/full lint/cumulative whitespace passed. Both build profiles passed,
+with 3 private compiled + 4 Sites render checks; 127-table disposable migration verification passed.
+Independent review closed two Low documentation/page-label findings with no remaining findings.
+Database-role, pool-deadline and startup preparation is design only, not a running or deployed service.
+
 ### Historical component acceptance ledger
 
 The entries and narratives below retain their original scope and chronology. Terms such as complete,
@@ -84,6 +97,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14B private connection view | Independently accepted existing enrollment/signal reads and startup preparation design; no live fleet or implemented bootstrap | `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`; `reviews/CR14B_CONNECTION_VIEW_REVIEW.md` |
 | CR14B shared private project catalog | Independently accepted ordinary/Idea reads and pagination; private Idea writes and full private pilot incomplete | `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; `reviews/CR14B_SHARED_CATALOG_REREVIEW.md` |
 | CR14B ordinary-project private application | Independently accepted compiled/in-process route integration; full B-WIRE and private pilot incomplete | `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`; `reviews/CR14B_WIRE_REREVIEW.md` |
 | CR14B runtime/access/project foundation | Accepted for components and in-process SQL/HTTP integration; browser and private pilot incomplete | `CR14B_FOUNDATION_ACCEPTANCE.md`; `reviews/CR14B_FOUNDATION_REREVIEW.md` |
@@ -1643,11 +1657,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14B remaining B-WIRE private connection view and bootstrap preparation
+Block: CR14B bounded startup/pool and database-role implementation
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: xhigh
-Why: The shared project catalog is accepted; private connection presentation and production process/setup ownership are still incomplete.
-Expected output: protected current connection view, bounded bootstrap/database-role design, and scoped setup/rehearsal handoff. No live configuration or deployment implied.
+Why: Shared projects and the owner-only connection read view are accepted; production startup, bounded pool behavior and least-privilege roles are still unimplemented.
+Expected output: injected/tested startup and pool ownership, restricted role/lock support, and one exact scoped setup/rehearsal packet. No live configuration or deployment implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

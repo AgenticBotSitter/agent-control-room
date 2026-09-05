@@ -5001,3 +5001,34 @@ response-distinction finding is retained and corrected at `58f060cb71a4675d35e8a
 IdP/MFA/ingress, credentials, database services/restore, listeners/static/browser and deployment need their
 separate gates. Existing Sites preview is preserved. Private Idea commands, real conversations and agent
 work remain later integration. This ADR does not complete B-WIRE or authorize a production effect.
+
+## ADR-206 — Share private session authority with an observation-only connection view
+
+**Date:** 2026-09-04. **Owner direction:** keep building the accepted CR14B integration on Astra Xhigh.
+
+Extract the existing project session/grant transaction and exact-session logout into `WebSessionAuthority`,
+preserving project policy and admitted-transaction/revocation ordering. Mount the existing protected connection
+registry as an owner-only tenant-wide read requiring wildcard `connections.read`. Verify the enrollment history
+and authenticated telemetry receipts in that same SQL session; never replace keyed evidence with fleet-current
+rows, caller-controlled sources, fixture fallback or a separate authorization check detached from the read.
+
+The private page and API disclose only existing privacy-safe references and observed check-time status.
+Missing registry configuration is unavailable; missing telemetry configuration is explicit and never current.
+The page identifies its all-workspaces scope, legacy Hermes source and read-only/non-live boundary. It exposes
+refresh/navigation but no native connection, credential, provider, enrollment, qualification or dispatch action.
+Future platform/harness onboarding still requires its own real source and evidence; its worker draft is not
+completed by this legacy enrollment view. The existing Sites preview remains separate.
+
+Record production bootstrap as a distinct implementation task, not as a label applied to the injectable process
+factory. `CR14B_BOOTSTRAP_DATABASE_PREPARATION.md` names finite pool/query/transaction/shutdown targets,
+the actual mounted table requirements and the PostgreSQL row-lock privilege issue. Do not provision the old
+broad application role as the private web role or claim that SELECT-only grants satisfy the current locks.
+The next repository block must implement and test a narrow role/lock solution and bounded startup; actual
+host/database/IdP/MFA/ingress/listener/browser/deployment work retains its separately scoped prerequisites.
+
+**Evidence:** `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md` and `reviews/CR14B_CONNECTION_VIEW_REVIEW.md`.
+Independent review accepted `e6fa438dbb2e71cb4435c6872051722171928d22`, tree
+`3434d4aa0f4ca966631a8e4c1eb0eda7c91d6609`, after two Low documentation/page-label corrections. No residual
+findings. Main suite 489 tests (487 passed, two Windows-only skips), focused 62/62, both builds and seven
+compiled/rendered checks passed. This accepts repository connection reads and preparation design only;
+full B-WIRE, live agents, implemented startup/roles, real PostgreSQL and private deployment are not claimed.
