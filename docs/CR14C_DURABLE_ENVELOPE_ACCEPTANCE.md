@@ -36,3 +36,6 @@ Final immutable-product checks exited zero: CR14C477, preparation769, main1061 w
 platform skips, post-suite392. Both application builds,18 private compiled checks,four rendered-page
 checks,TypeScript,full ESLint,stage zero,whitespace and migrations0001–0050/136 tables passed.
 Only documentation changed after the independently accepted product during final verification.
+
+Published as [PR #320](https://github.com/MarvinAi5/control-room/pull/320), stacked on #319.
+Current-head GitHub CI remains required; no merge or deployment is claimed.

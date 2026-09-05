@@ -2063,6 +2063,8 @@ SELECT/INSERT and no web access. Staging does not transmit, admit or start work;
 receipt integration remain next on Astra Medium. No live resource or deployment is configured.
 Final product checks passed CR14C477, preparation769, main1061 with two existing skips, post-suite392,
 private compiled18, rendered4, both builds, TypeScript, full ESLint and migrations0050/136 tables.
+Published as [PR #320](https://github.com/MarvinAi5/control-room/pull/320), stacked on #319.
+Current-head GitHub CI remains required; no merge or runtime activation is claimed.
 
 ## Next block
 
