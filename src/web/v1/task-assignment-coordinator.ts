@@ -17,6 +17,7 @@ import { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import type { NativeTaskQueueScope } from "./native-task-queue";
+import type { ServerNodeSession } from "../../node-control/server-node-session";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApproval> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -80,6 +81,9 @@ export class TaskAssignmentCoordinator {
   }
   async readNativeDeliveryPreparation(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
     return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readDeliveryPreparationInSession(tx, scope));
+  }
+  async readNativeDeliveryEnvelope(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readDeliveryEnvelopeInSession(tx, scope));
   }
   private async readNativeEvidence<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     read: (store: NativeApprovalPacketStore, tx: DatabaseSession, scope: NativeTaskQueueScope) => Promise<T>) {
@@ -153,8 +157,23 @@ export class TaskAssignmentCoordinator {
       return { value: saved.receipt, assertFresh: saved.assertFresh };
     });
   }
+  async stageQueuedNativeDelivery(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
+    expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal) {
+    digestSchema.parse(expectedPacketDigest);
+    if (!this.approvalStore || signal.aborted) conflict();
+    const store = this.approvalStore;
+    return session.stageNativeDispatch((sign, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
+      async (tx, prepared, actorId, nodeKeyId, deadline) => {
+        if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId) conflict();
+        const saved = await store.stageDeliveryEnvelopeInSession(tx, prepared, expectedPacketDigest, actorId, signal, sign, channel, deadline);
+        await appendAuditWith(tx, { id: `audit:envelope:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
+          action: "native.delivery.staged", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
+          idempotencyKey: `envelope:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.stagedAt });
+        return { value: saved.receipt, assertFresh: saved.assertFresh };
+      }));
+  }
   private async withNativeApproval<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
-    finish: (tx: DatabaseSession, prepared: CanonicalNativeApproval, actorId: string) => Promise<{ value: T; assertFresh?: () => void }>) {
+    finish: (tx: DatabaseSession, prepared: CanonicalNativeApproval, actorId: string, nodeKeyId: string, deadline: number) => Promise<{ value: T; assertFresh?: () => void }>) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     let deadline: number | undefined, preparedAt: number | undefined, assertFresh: (() => void) | undefined;
     const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
@@ -190,7 +209,7 @@ export class TaskAssignmentCoordinator {
       preparedAt = now; deadline = Math.min(prepared.start.deadline, key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
       if (!Number.isFinite(deadline) || deadline <= now) conflict();
       const result = await finish(tx, { ...prepared, enrollment: structuredClone(enrollment), preparedAt: new Date(now).toISOString(),
-        sourceInputDigest: plan.sourceInputDigest, inputDigest: job.inputDigest }, actor.id);
+        sourceInputDigest: plan.sourceInputDigest, inputDigest: job.inputDigest }, actor.id, node.identityKeyId, deadline);
       assertFresh = result.assertFresh; return result.value;
     });
   }

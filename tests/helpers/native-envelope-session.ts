@@ -1,0 +1,32 @@
+import { generateKeyPairSync, type KeyObject } from "node:crypto";
+import type { DatabaseClient } from "../../src/persistence/database";
+import { ServerNodeSession } from "../../src/node-control/server-node-session";
+import { PortableNodeBridge, SqliteBridgeJournal } from "../../src/node-bridge";
+import { DatabaseNodeKeyResolver, DatabaseReplayGuard, FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator, signNodeFrame } from "../../src/node-protocol/v1";
+import { NATIVE_DELIVERY_FEATURE } from "../../src/harness/v1/native-delivery";
+
+export async function nativeEnvelopeSession(f: { db: DatabaseClient; keys: { privateKey: KeyObject }; clock(): number }) {
+  const journal = new SqliteBridgeJournal(":memory:"), keys = generateKeyPairSync("ed25519");
+  const spki = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const outgoing: string[] = [], incoming: string[] = [], sent: string[] = [];
+  const bridge = new PortableNodeBridge({ tenantId: "tenant:test", nodeId: "node:test", keyId: "key:test", features: [NATIVE_DELIVERY_FEATURE] }, journal,
+    { async sign(frame) { return signNodeFrame(frame, f.keys.privateKey); } },
+    new NodeProtocolAuthenticator({ async resolve(input) { return { ...input, algorithm: "ed25519" as const, publicKeySpki: spki,
+      state: "active" as const, principalState: "active" as const, validFrom: new Date(f.clock() - 60_000).toISOString() }; } }, journal,
+    new FixedWindowProtocolRateLimiter(100, 60)));
+  const session = new ServerNodeSession({ tenantId: "tenant:test", nodeId: "node:test", nodeKeyId: "key:test",
+    serverId: "server:test", serverKeyId: "key:server", serverPublicKeySpki: spki, transportIdentity: "transport:synthetic",
+    features: [NATIVE_DELIVERY_FEATURE], maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }, {
+    authentication: new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(f.db), new DatabaseReplayGuard(f.db), new FixedWindowProtocolRateLimiter(100, 60)),
+    clock: f.clock, async sign(frame) { return signNodeFrame(frame, keys.privateKey); },
+    async send(raw) { sent.push(raw); outgoing.push(raw); },
+  });
+  await bridge.open({ async send(raw) { incoming.push(raw); }, async close() {} }, { now: new Date(f.clock()).toISOString(), transportIdentity: "transport:synthetic" });
+  await session.acceptHello(incoming.shift()!);
+  for (let i = 0; i < 20 && (outgoing.length || incoming.length); i++) {
+    while (outgoing.length) await bridge.receive(outgoing.shift()!, new Date(f.clock()).toISOString());
+    while (incoming.length) await session.receive(incoming.shift()!);
+  }
+  if (!session.nativeDeliveryChannel() || outgoing.length || incoming.length) throw new Error("Synthetic session failed to reconcile");
+  return { session, sent, spki, close: async () => { session.disconnect(); await bridge.close(); journal.close(); } };
+}

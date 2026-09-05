@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { NATIVE_DELIVERY_FEATURE } from "../harness/v1/native-delivery";
+import { NATIVE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
 import { sha256Digest } from "../security";
 import { NodeProtocolAuthenticator, NODE_PROTOCOL_V1, NODE_PROTOCOL_MAX_FRAME_BYTES,
   signedNodeFrameSchema, verifyNodeFrameSignature, type NodeMessageBodyMap,
@@ -35,10 +35,16 @@ export interface ServerNativeChannel {
   assertCurrent(): void;
 }
 
+export interface NativeEnvelopeChannel extends ServerNativeChannel {
+  readonly serverId: string;
+  readonly serverKeyId: string;
+  readonly serverPublicKeySpki: string;
+}
+
 /** One explicitly owned transport session. No listener, key loading or task dispatch. */
 export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
-  private state: "new" | "negotiating" | "reconciling" | "ready" | "closed" = "new";
+  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "closed" = "new";
   private busy = false;
   private highWater = -Infinity;
   private deadline = Infinity;
@@ -66,16 +72,17 @@ export class ServerNodeSession {
     return now;
   }
 
-  private async bounded(operation: () => Promise<void>): Promise<void> {
+  private async bounded<T>(operation: () => Promise<T>): Promise<T> {
     this.now();
     if (this.busy) throw new Error("Server node session already has an unresolved operation");
     this.busy = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([operation(), new Promise<never>((_, reject) => {
+      const value = await Promise.race([operation(), new Promise<never>((_, reject) => {
         timer = setTimeout(() => { this.disconnect(); reject(new Error("Server node session operation is uncertain")); }, this.config.operationTimeoutMs);
       })]);
       this.now();
+      return value;
     } catch (error) { this.disconnect(); throw error; }
     finally { if (timer) clearTimeout(timer); this.busy = false; }
   }
@@ -145,12 +152,45 @@ export class ServerNodeSession {
     });
   }
 
+  /** Trusted coordinator transaction only. A reserved sequence cannot be reused or transmitted here. */
+  async stageNativeDispatch<T>(commit: (sign: (body: NativeTaskDispatchBody, deadline: number) => Promise<SignedNodeFrame<"harness.native.dispatch">>, channel: NativeEnvelopeChannel) => Promise<T>): Promise<T> {
+    const available = this.nativeDeliveryChannel();
+    if (!available) throw new Error("Native delivery channel unavailable");
+    return this.bounded(async () => {
+      let signed = false;
+      const assertCurrent = () => { this.now(); if (this.state !== "ready") throw new Error("Native envelope reservation is unavailable"); };
+      const channel = Object.freeze({ ...available, serverId: this.config.serverId, serverKeyId: this.config.serverKeyId,
+        serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent });
+      const value = await commit(async (input, deadline) => {
+        assertCurrent();
+        if (signed) throw new Error("Native envelope already reserved");
+        signed = true;
+        const body = nativeTaskDispatchBodySchema.parse(input);
+        if (body.request.tenantId !== this.config.tenantId || body.request.nodeId !== this.config.nodeId ||
+            !Number.isSafeInteger(deadline) || deadline <= this.now()) throw new Error("Native envelope scope or deadline mismatch");
+        return this.signFrame("harness.native.dispatch", body, undefined, Math.min(deadline, body.start.deadline));
+      }, channel);
+      assertCurrent();
+      if (!signed) throw new Error("Native envelope transaction did not reserve a frame");
+      this.state = "prepared";
+      return value;
+    });
+  }
+
   private async send<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack">(type: T, body: NodeMessageBodyMap[T], causationId?: string): Promise<void> {
+    const signed = await this.signFrame(type, body, causationId);
+    this.now();
+    await this.ports.send(JSON.stringify(signed));
+    this.now();
+    this.outboundIds.add(signed.messageId);
+  }
+
+  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch">(type: T, body: NodeMessageBodyMap[T], causationId?: string, deadline = this.deadline): Promise<SignedNodeFrame<T>> {
     const frame = { protocol: NODE_PROTOCOL_V1, direction: "server_to_node", senderKind: "control_room",
       tenantId: this.config.tenantId, actorId: this.config.serverId, keyId: this.config.serverKeyId,
       connectionId: this.connectionId!, sequence: ++this.outboundSequence, messageId: `message:${randomUUID()}`,
       correlationId: `correlation:${randomUUID()}`, ...(causationId ? { causationId } : {}),
-      sentAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.deadline).toISOString(),
+      sentAt: new Date(this.now()).toISOString(), expiresAt: new Date(Math.min(this.deadline, deadline)).toISOString(),
       nonce: randomBytes(24).toString("base64url"), type, body } as UnsignedNodeFrame<T>;
     const signed = signedNodeFrameSchema.parse(await this.ports.sign(structuredClone(frame))) as SignedNodeFrame;
     this.now();
@@ -159,9 +199,7 @@ export class ServerNodeSession {
         !verifyNodeFrameSignature(signed, this.config.serverPublicKeySpki)) throw new Error("Server signer changed handshake content");
     const json = JSON.stringify(signed);
     if (Buffer.byteLength(json) > this.maxFrameBytes) throw new Error("Negotiated server frame limit exceeded");
-    await this.ports.send(json);
-    this.now();
-    this.outboundIds.add(signed.messageId);
+    return signed as SignedNodeFrame<T>;
   }
 }
 

@@ -15,7 +15,7 @@ const tag = (key: Uint8Array, record: Record) => hmacSha256Tag(key, { purpose: "
 const receipt = (r: Record) => ({ projectId: r.body.request.projectId, jobId: r.body.request.jobId, attemptId: r.body.request.attemptId,
   queueId: r.body.queueId, bodyDigest: sha256Digest(r.body), packetDigest: r.body.packetDigest, preparedAt: r.preparedAt,
   evidence: "stored_unsigned_delivery_body" as const, startsWork: false as const, grantsExecutionAuthority: false as const });
-async function read(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
+export async function readNativeDeliveryPreparationInSession(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
   const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_delivery_preparations WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
     [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
   if (!row) return null;
@@ -36,7 +36,7 @@ export async function persistNativeDeliveryPreparation(tx: DatabaseSession, key:
     || intent.packetDigest !== body.packetDigest || intent.operationDigest !== q.operationDigest
     || intent.bindingDigest !== body.bindingDigest || intent.enrollmentDigest !== body.enrollmentDigest
     || intent.deadline !== body.start.deadline || now < Date.parse(intent.queuedAt) || now >= intent.deadline) return fail();
-  const prior = await read(tx, key, scope);
+  const prior = await readNativeDeliveryPreparationInSession(tx, key, scope);
   if (prior) {
     // Canonical revalidation observes a new time; retain the first exact prepared body rather than
     // changing its digest on replay. All permission/content fields still have to match.
@@ -51,5 +51,5 @@ export async function persistNativeDeliveryPreparation(tx: DatabaseSession, key:
   return { ...receipt(prior ?? r), replayed: !!prior };
 }
 export async function readNativeDeliveryPreparationReceipt(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
-  const r = await read(tx, key, scope); return r ? receipt(r) : null;
+  const r = await readNativeDeliveryPreparationInSession(tx, key, scope); return r ? receipt(r) : null;
 }

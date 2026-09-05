@@ -8,7 +8,9 @@ import { createNativeApprovalIntake } from "../../harness/v1/native-approval-int
 import type { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
 import type { NativeEnrollment } from "../../harness/v1/native-run-contracts";
 import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, type NativeTaskQueueScope } from "./native-task-queue";
-import { persistNativeDeliveryPreparation, readNativeDeliveryPreparationReceipt } from "./native-delivery-preparation";
+import { persistNativeDeliveryPreparation, readNativeDeliveryPreparationReceipt, readNativeDeliveryPreparationInSession } from "./native-delivery-preparation";
+import { assertNativeDeliveryEnvelopeAbsent, persistNativeDeliveryEnvelope, readNativeDeliveryEnvelopeReceipt } from "./native-delivery-envelope";
+import type { ServerNodeSession, NativeEnvelopeChannel } from "../../node-control/server-node-session";
 import { nativeTaskDispatchBodySchema } from "../../harness/v1/native-delivery";
 
 type Trust = Omit<Parameters<typeof createNativeApprovalIntake>[1], "clock">;
@@ -137,5 +139,23 @@ export class NativeApprovalPacketStore {
   }
   readDeliveryPreparationInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
     return readNativeDeliveryPreparationReceipt(tx, this.key, scope);
+  }
+  async stageDeliveryEnvelopeInSession(tx: DatabaseSession, prepared: Prepared, expectedPacketDigest: string, actorId: string,
+    signal: AbortSignal, sign: Parameters<Parameters<ServerNodeSession["stageNativeDispatch"]>[0]>[0], channel: NativeEnvelopeChannel, deadline: number) {
+    const p = await this.prepareDeliveryInSession(tx, prepared, expectedPacketDigest, actorId, signal);
+    const scope = { tenantId: prepared.request.tenantId, projectId: prepared.request.projectId, jobId: prepared.request.jobId,
+      attemptId: prepared.request.attemptId, inputDigest: prepared.inputDigest };
+    await assertNativeDeliveryEnvelopeAbsent(tx, this.key, scope);
+    const saved = await readNativeDeliveryPreparationInSession(tx, this.key, scope);
+    if (!saved) throw new Error("native_delivery_preparation_unavailable");
+    p.assertFresh(); channel.assertCurrent();
+    const frame = await sign(saved.body, deadline);
+    p.assertFresh(); channel.assertCurrent();
+    const receipt = await persistNativeDeliveryEnvelope(tx, this.key, frame, channel, actorId, this.clock());
+    const assertFresh = () => { p.assertFresh(); channel.assertCurrent(); };
+    assertFresh(); return { receipt, assertFresh };
+  }
+  readDeliveryEnvelopeInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
+    return readNativeDeliveryEnvelopeReceipt(tx, this.key, scope);
   }
 }
