@@ -209,6 +209,21 @@ Published as [PR #310](https://github.com/MarvinAi5/control-room/pull/310), stac
 Current-head GitHub checks remain required; no merge, runtime wiring or deployment is claimed.
 Prerequisite refresh: #308 exact head `d844ce487e0529e30fe3297872a5b5e8c0104e59` passed CI
 `33986571515` at 2026-09-05 19:37:21 UTC. #309 was still running when inspected; no merge is claimed.
+Canonical approval-packet storage is independently accepted at
+`5fac6177782b5e0743d2a921219fbd29e1879355`. It saves exact verified start/recovery signatures under
+current owner and canonical reservation locks, rejects replacement packets, preserves identical replay
+receipts, and fences cancellation/trust/expiry before commit. It is trusted coordinator storage, not a
+browser route, signer, canonical effect approval or dispatch command. See
+`CR14C_CANONICAL_APPROVAL_STORAGE_ACCEPTANCE.md` for exact verification chronology and limits.
+Independent review passed 48 tests plus 19 final-head fixture tests. The lifecycle passed CR14C395,
+preparation769, main974 with two existing platform skips, and post-suite392. Both builds, private16,
+rendered4, TypeScript/ESLint and disposable migrations through 0047 (133 tables) passed; the final
+one-line inventory correction was separately re-reviewed/tested after initial builds.
+Private-web SQL access is unchanged. Coordinator privileges add only SELECT/INSERT on immutable packet
+evidence. Remaining: bounded lifecycle/owner intake interface, signing custody, signed delivery, durable
+supervisor state and revisions. Continue repository implementation on Astra Medium; live C-WORK is incomplete.
+PR #309 exact head `b52a14c0f9c996afe68343880e798c7745979877` passed CI `33987001639`
+at 2026-09-05 19:42:43 UTC. #310 was still running when inspected; no merge is claimed.
 PR #306 exact head `4f32ef1891490b475282ddcbe575b69be6cae9e9` passed CI `33985592476`
 at 2026-09-05 19:19:47 UTC. PR #307 was still running when checked. No merge is claimed.
 PR #305 exact head `b3cb5ceee3529c2b11253ea196dbe99dceb0b566` passed CI `33984854964`
@@ -357,6 +372,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C canonical approval storage | Independently accepted immutable signed-packet evidence under current canonical/owner locks; no browser/signer/dispatch | `CR14C_CANONICAL_APPROVAL_STORAGE_ACCEPTANCE.md` |
 | CR14C canonical approval preparation | Independently accepted locked owner-authorized unsigned preparation; shared contracts preserve native isolation; no storage/signing/dispatch | `CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` |
 | CR14C task preparation interface | Independently accepted protected page/API and scoped planner operation; production composition and dispatch not enabled | `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`; `reviews/CR14C_TASK_PLANNING_INTERFACE_REVIEW.md` |
 | CR14C owner quality review | Independently accepted exact-result quality decisions and private change requests; no revision dispatch/live activation | `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`; `reviews/CR14C_OWNER_RESULT_REVIEW_REREVIEW.md` |
@@ -1925,11 +1941,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14C authenticated approval storage, signed dispatch and bounded revision submission
+Block: CR14C bounded approval intake interface, signed dispatch and revision submission
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Two-pool startup, current native authority sources, paired approval verification and canonical unsigned preparation are accepted. The remaining path must connect those components to durable approved work and delivery.
-Expected output: authenticated canonical approval persistence and bounded signed dispatch using the existing node admission/marker controllers, then revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Two-pool startup, native authority sources and canonical signed-packet storage are accepted. The remaining path must connect the owner interface and bounded coordinator lifecycle to delivery and node admission.
+Expected output: bounded owner approval intake and signed dispatch using the existing node admission/marker controllers, then revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

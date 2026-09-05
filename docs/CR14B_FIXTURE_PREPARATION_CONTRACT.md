@@ -22,7 +22,7 @@ the future app, reachable at `127.0.0.1` only. Database names must use the `cr14
 alone is not proof of isolation. No RDS, production data or shared database is suitable. The operator verifies
 the actual host, executable artifact and isolation separately, rather than trusting a caller-supplied digest.
 
-Apply reviewed migrations 0001–0046 as a separate restricted LOGIN that directly owns the public tables.
+Apply reviewed migrations 0001–0047 as a separate restricted LOGIN that directly owns the public tables.
 Apply the reviewed web role/database ACL profiles under their own administrative approval, and create the
 distinct web LOGIN with only the reviewed web group permissions. Do not populate any table beforehand.
 This is an empty-database seeder, not a migration, bootstrap of an existing installation, or repair tool.
@@ -49,7 +49,7 @@ Within one outer transaction, the tool:
 
 1. Checks current/session login, exact DB/PG patch, primary/read-write status and fixed session settings.
    The migrator must be a non-elevated, inheriting LOGIN, not a web-group member, and own every public table.
-2. Requires the current reviewed schema digest and exactly 132 validated public table names. It locks all
+2. Requires the current reviewed schema digest and exactly 133 validated public table names. It locks all
    of those tables, rechecks the fingerprint under the locks, and requires **every table to be empty** before
    the first insert. Validated catalog identifiers are quoted; no caller supplies SQL or a table list. These
    exclusive locks are appropriate only to the dedicated empty database and bounded by the lock timeout.

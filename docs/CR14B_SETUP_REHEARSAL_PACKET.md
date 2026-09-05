@@ -31,7 +31,7 @@ No credential goes in the command line, GitHub, logs or retained evidence; the o
 
 ## Operator-controlled preparation in the disposable database
 
-- Apply the reviewed migrations 0001–0046 as the separate migrator. Do not auto-migrate from web startup.
+- Apply the reviewed migrations 0001–0047 as the separate migrator. Do not auto-migrate from web startup.
   CR14C's task proposal schema and restricted-role insert guards require a newly prepared packet; older
   schema fingerprints/preparation packets are not reusable. No real database has been migrated by this change.
 - Apply the exact reviewed `private_web_roles.sql` fresh-role profile and `private_web_database.sql` database

@@ -5707,3 +5707,28 @@ findings. See `CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` for initial f
 The trusted operation is deliberately absent from the browser-facing assignment surface and does not
 sign, store approvals or dispatch. Owner signing/custody, authenticated canonical approval persistence,
 trusted supervisor state, signed delivery and revisions remain on Astra Medium. No live effects are added.
+
+## ADR-233 — persist exact signed native approval evidence under canonical locks
+
+**Date:** 2026-09-05. **Status:** independently accepted repository implementation.
+
+The trusted assignment coordinator snapshots an owner-submitted packet, authenticates current owner
+approval access, rebuilds exact preparation from locked canonical sources and verifies both signatures
+using scoped owner pins and current protected server trust. Persist only immutable signature evidence
+and safe binding digests with an integrity tag. Same-packet replay preserves the original receipt; a
+different packet cannot replace the original for that attempt. Fence abort, trust, session, key and
+reservation expiry before commit. Future dispatch must revalidate; persistence grants no execution.
+
+Migration0047 adds `control_native_approval_packets`, making 133 tables. Only the coordinator gains
+SELECT/INSERT; private-web permissions remain unchanged. The schema fingerprint, offline role setup,
+preparation manifest and exact inventory are updated. No deployed database is modified. Shared verifier
+and signature contracts stay outside the native adapter implementation, with compatibility re-exports.
+
+**Evidence:** accepted `5fac6177782b5e0743d2a921219fbd29e1879355`, tree
+`44889457c38fbd0c6a656454583876a6f2d8a83d`; independent review passed 48 storage/authority/database tests
+plus 19 final-head preparation tests, with no actionable findings. Acceptance records full verification
+chronology, including initial TypeScript narrowing correction and final table-count follow-up.
+
+**Remaining:** bounded lifecycle/owner intake interface, signer custody, signed dispatch and node receipt
+consumption, persistent supervisor state, revisions and live qualification. Astra Medium remains the
+current repository implementation setting. No route, runtime activation, native call or merge is implied.
