@@ -2,8 +2,10 @@
 
 Date: 2026-09-04. Architect: Codex, Astra Xhigh. This is a scoped execution specification, not a dispatch,
 approval, ready claim or executable setup tool. The listener/static adapter is now independently accepted
-in `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`; the real-PG harness is not yet implemented. Stop at that remaining
-prerequisite until the exact combined artifacts have passed independent review. No native effect is authorized.
+in `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`. The SQL/application rehearsal tooling is now implemented as a
+review candidate in `CR14B_DATABASE_REHEARSAL_CONTRACT.md`; no native run is authorized. Its explicit
+pool-reopen, cleanup and non-exercised listener/restore labels narrow what this portion can prove. Stop until
+the exact artifacts, remaining operator composition and permission packet have passed the required review.
 
 ## Separate setup from rehearsal
 
