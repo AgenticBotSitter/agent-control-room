@@ -7,6 +7,7 @@ import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval
 import { createNativeApprovalIntake } from "../../harness/v1/native-approval-intake";
 import type { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
 import type { NativeEnrollment } from "../../harness/v1/native-run-contracts";
+import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, type NativeTaskQueueScope } from "./native-task-queue";
 
 type Trust = Omit<Parameters<typeof createNativeApprovalIntake>[1], "clock">;
 type Prepared = ReturnType<typeof prepareNativeTaskApproval> & { enrollment: NativeEnrollment; inputDigest: string };
@@ -108,5 +109,19 @@ export class NativeApprovalPacketStore {
     const assertFresh = () => { if (signal.aborted) fail(); verified.assertFresh(); };
     assertFresh();
     return { ...verified, assertFresh };
+  }
+  async enqueueInSession(tx: DatabaseSession, prepared: Prepared, expectedPacketDigest: string, actorId: string, signal: AbortSignal) {
+    const verified = await this.revalidateInSession(tx, prepared, expectedPacketDigest, signal), r = prepared.request;
+    const receipt = await enqueueNativeTaskInSession(tx, this.key, {
+      schema: "control-room.native-task-queue/v1", tenantId: r.tenantId, projectId: r.projectId, jobId: r.jobId,
+      attemptId: r.attemptId, nodeId: r.nodeId, leaseId: r.leaseId, leaseEpoch: r.leaseEpoch,
+      inputDigest: prepared.inputDigest, packetDigest: verified.packetDigest, operationDigest: r.operationDigest,
+      bindingDigest: sha256Digest(verified.binding), enrollmentDigest: sha256Digest(prepared.enrollment),
+      deadline: prepared.start.deadline, queuedAt: new Date(this.clock()).toISOString(), queuedBy: actorId,
+    });
+    verified.assertFresh(); return { receipt, assertFresh: verified.assertFresh };
+  }
+  readQueueInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
+    return readNativeTaskQueueInSession(tx, this.key, scope);
   }
 }

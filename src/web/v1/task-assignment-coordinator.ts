@@ -16,6 +16,7 @@ import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native
 import { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
+import type { NativeTaskQueueScope } from "./native-task-queue";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApproval> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -72,6 +73,13 @@ export class TaskAssignmentCoordinator {
   }
   /** Trusted authenticated packet intake; never part of webOperation or an execution command. */
   async readNativeApproval(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readInSession(tx, scope));
+  }
+  async readNativeTaskQueue(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readQueueInSession(tx, scope));
+  }
+  private async readNativeEvidence<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
+    read: (store: NativeApprovalPacketStore, tx: DatabaseSession, scope: NativeTaskQueueScope) => Promise<T>) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     if (!this.approvalStore) conflict();
     const store = this.approvalStore;
@@ -83,7 +91,7 @@ export class TaskAssignmentCoordinator {
       if (project.origin !== "ordinary") conflict();
       const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();
-      return store.readInSession(tx, { tenantId: this.scope.tenantId, projectId, jobId,
+      return read(store, tx, { tenantId: this.scope.tenantId, projectId, jobId,
         attemptId: this.ids(jobId).attemptId, inputDigest: expectedInputDigest });
     });
   }
@@ -108,6 +116,23 @@ export class TaskAssignmentCoordinator {
       const { assertFresh, ...material } = await store.revalidateInSession(tx, prepared, expectedPacketDigest, signal);
       return { value: { ...material, inputDigest: prepared.inputDigest, preparedAt: prepared.preparedAt,
         evidence: "revalidated_signed_snapshot" as const }, assertFresh };
+    });
+  }
+  /** Durable intent insertion shares current revalidation and commit fences. No sender is invoked. */
+  async enqueueNativeTask(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
+    expectedPacketDigest: string, signal: AbortSignal) {
+    digestSchema.parse(expectedPacketDigest);
+    if (!this.approvalStore || signal.aborted) conflict();
+    const store = this.approvalStore;
+    return this.withNativeApproval(identity, projectId, jobId, expectedInputDigest, async (tx, prepared, actorId) => {
+      const queued = await store.enqueueInSession(tx, prepared, expectedPacketDigest, actorId, signal);
+      if (!queued.receipt.replayed) await appendAuditWith(tx, {
+        id: `audit:${queued.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
+        action: "native.task.queued", targetType: "job", targetId: jobId, correlationId: queued.receipt.queueId,
+        idempotencyKey: queued.receipt.queueId, safeMetadata: { packetDigest: expectedPacketDigest },
+        occurredAt: queued.receipt.queuedAt,
+      });
+      return { value: queued.receipt, assertFresh: queued.assertFresh };
     });
   }
   private async withNativeApproval<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,

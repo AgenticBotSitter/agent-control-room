@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0047 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "27323374215b98cf61e96fb336b872a1c1ec6c935065d6a69e99e76da0617d8d";
+// Generated from migrations 0001-0048 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "66f6a11270506a3fc3deadcd4c9d3759b771e6b760725c13bcd85bbf0750d128";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
@@ -27,10 +27,10 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "projects", "control_manual_project_heads", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
   "control_node_fleet_current", "control_job_dependencies", "control_transition_events", "control_outbox",
-  "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets"];
+  "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
-  "audit_events", "control_audit_chain_heads", "control_native_approval_packets"]);
+  "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
     .map(table => [table, ["state", "version", "payload", "updated_at"]])),
