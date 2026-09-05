@@ -113,8 +113,11 @@ signed dispatch and revisions on Astra Medium. PR #300's run `33981299049` was c
 2026-09-05 17:53:11 UTC; this is not a pass or merge.
 Published as [PR #301](https://github.com/MarvinAi5/control-room/pull/301), stacked on #300.
 Inspection of #300's cancelled run shows type/lint/full lifecycle and Sites build passed; the job reached
-its 20-minute limit during private VPS verification, leaving migrations skipped. The CI time budget needs
-correction without dropping checks. Neither #300 nor #301 is merged or deployed.
+its 20-minute limit during private VPS verification, leaving migrations skipped.
+[PR #302](https://github.com/MarvinAi5/control-room/pull/302), stacked on #301, increases only the finite
+job budget to 35 minutes, preserving every check and permission; exact workflow-difference validation
+passed. See `CR14C_CI_VERIFICATION_BUDGET.md`. Current-head CI completion remains unverified; previous
+cancelled runs are not passes. None of #300–#302 is merged or deployed.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
