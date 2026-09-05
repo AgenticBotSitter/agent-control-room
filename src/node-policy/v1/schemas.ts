@@ -201,6 +201,7 @@ export const normalizedLocalPolicyRequestSchema = z.object({
   operationId: safeId,
   operationDigest: digest,
   authorityDigest: digest,
+  payloadDigest: digest.optional(),
   credentialRefs: sortedUnique(safeId, 500),
   target: normalizedTargetSchema,
   risk: z.enum(riskClasses),
@@ -211,6 +212,8 @@ export const normalizedLocalPolicyRequestSchema = z.object({
   approval: ownerApprovalAttestationSchema.optional(),
 }).strict().superRefine((request, context) => {
   if (!request.externalEffect && request.target.kind === "network") context.addIssue({ code: "custom", path: ["externalEffect"], message: "network targets are external effects" });
+  if (request.operationId === "harness.hermes.native.start" && request.payloadDigest === undefined)
+    context.addIssue({ code: "custom", path: ["payloadDigest"], message: "native task requires exact payload commitment" });
 });
 
 export const executorCapabilitySchema = z.object({

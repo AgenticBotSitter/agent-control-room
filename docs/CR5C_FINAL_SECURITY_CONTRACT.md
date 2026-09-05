@@ -276,3 +276,14 @@ Real PostgreSQL concurrency, process-kill boundaries, native key-store prompts/s
 - destination-specific idempotency evidence.
 
 These are deployment or later-block settings. None may silently weaken the contract defaults: missing values fail closed.
+
+## 14. CR14C typed payload commitment extension
+
+Native task integration adds an optional SHA-256 `payloadDigest` to normalized local requests and
+pre-effect operation material. When present it participates in the existing normalized operation
+digest and therefore the owner approval and effect claim. Native start requires it; the typed native
+binding verifier must recompute it from exact input, enrollment, lease and authority/deadline material.
+Legacy operations without the field keep their prior digest material. Unsupported nodes refuse the
+extended native request; dropping the commitment is forbidden. This extension supplies no execution
+authority and does not replace any signature, ceiling, current-state or pre-effect check above.
+See `CR14C_NATIVE_TASK_APPROVAL_BINDING_CONTRACT.md` for material and evidence boundaries.

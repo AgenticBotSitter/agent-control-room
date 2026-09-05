@@ -42,6 +42,7 @@ export interface PreEffectOperationMaterialV1 {
   risk: NormalizedLocalPolicyRequestV1["risk"];
   externalEffect: true;
   estimatedDurationSeconds: number;
+  payloadDigest?: string;
   estimatedCostUsd?: string;
 }
 
@@ -189,6 +190,7 @@ export function createPreEffectMarker(input: {
     operationId: input.request.operationId, credentialRefs: [...input.request.credentialRefs],
     target: structuredClone(input.request.target), risk: input.request.risk, externalEffect: true,
     estimatedDurationSeconds: input.request.estimatedDurationSeconds,
+    ...(input.request.payloadDigest === undefined ? {} : { payloadDigest: digest(input.request.payloadDigest, "Payload digest") }),
     ...(input.request.estimatedCostUsd === undefined ? {} : { estimatedCostUsd: input.request.estimatedCostUsd }),
   };
   return {
@@ -204,9 +206,10 @@ export function computePreEffectOperationDigest(operation: PreEffectOperationMat
 
 export function validatePreEffectMarkerBinding(marker: PreEffectMarkerV1, claim: EffectClaimSnapshotV1): void {
   exactKeys(marker,["schema","markerId","claimKey","requestDigest","operationDigest","operation","authorityDigest","effectiveDeadline","markedAt"],"Pre-effect marker");
-  exactKeys(marker.operation,marker.operation.estimatedCostUsd === undefined
-    ? ["tenantId","nodeId","projectId","jobId","attemptId","executorId","operationId","credentialRefs","target","risk","externalEffect","estimatedDurationSeconds"]
-    : ["tenantId","nodeId","projectId","jobId","attemptId","executorId","operationId","credentialRefs","target","risk","externalEffect","estimatedDurationSeconds","estimatedCostUsd"],"Pre-effect operation");
+  exactKeys(marker.operation,["tenantId","nodeId","projectId","jobId","attemptId","executorId","operationId","credentialRefs","target","risk","externalEffect","estimatedDurationSeconds",
+    ...(marker.operation.estimatedCostUsd === undefined ? [] : ["estimatedCostUsd"]),
+    ...(marker.operation.payloadDigest === undefined ? [] : ["payloadDigest"])],"Pre-effect operation");
+  if (marker.operation.payloadDigest !== undefined) digest(marker.operation.payloadDigest, "Payload digest");
   if (marker.schema !== "control-room.pre-effect-marker/v1") throw new Error("Pre-effect marker schema is invalid");
   safeToken(marker.markerId, "Marker ID");
   digest(marker.claimKey, "Claim key");

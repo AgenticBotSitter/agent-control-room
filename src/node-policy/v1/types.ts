@@ -168,6 +168,8 @@ export interface NormalizedLocalPolicyRequestV1 {
   executorId: string;
   operationId: string;
   operationDigest: string;
+  /** Optional executor-specific immutable payload commitment, included in operation identity. */
+  payloadDigest?: string;
   authorityDigest: string;
   credentialRefs: string[];
   target: NormalizedTargetV1;

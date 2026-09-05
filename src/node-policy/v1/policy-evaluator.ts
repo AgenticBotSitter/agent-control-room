@@ -74,6 +74,7 @@ export function computeNormalizedOperationDigest(request: LocalPolicyEvaluationI
     risk: request.risk,
     externalEffect: request.externalEffect,
     estimatedDurationSeconds: request.estimatedDurationSeconds,
+    ...(request.payloadDigest === undefined ? {} : { payloadDigest: request.payloadDigest }),
     ...(request.estimatedCostUsd === undefined ? {} : { estimatedCostUsd: request.estimatedCostUsd }),
   });
 }
