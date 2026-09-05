@@ -1962,6 +1962,10 @@ See `CR14C_PRIVATE_APPROVAL_INTERFACE_ACCEPTANCE.md` for final verification and 
 Secure owner signing remains unconnected; file import is an interim capability, not the finished daily-use
 approval experience. Browser-click validation, physical services and live execution are not claimed.
 Prerequisite refresh: PRs #309, #310, #311 and #312 passed current-head CI; they remain unmerged.
+Published as [PR #313](https://github.com/MarvinAi5/control-room/pull/313), stacked on #312.
+Local full verification passed: CR14C412, preparation769, main991 with two existing skips, post-suite392,
+private compiled18 and rendered4; both builds, TypeScript, ESLint and migrations0047/133 tables passed.
+Current-head GitHub CI remains required; no merge or deployment is claimed.
 
 ## Next block
 

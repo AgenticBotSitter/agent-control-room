@@ -39,3 +39,6 @@ role fixes only the fixture, with no application privilege change. Final focused
 No browser-click test, physical listener, native/provider call, real credentials, host service, production
 database, deployment or merge occurred. PR #312's exact base passed GitHub CI run33989108566 at
 2026-09-05 20:26:21 UTC; that prerequisite pass is not acceptance of this new change.
+
+Published in [PR #313](https://github.com/MarvinAi5/control-room/pull/313), targeting PR #312's branch.
+Current-head GitHub CI remains required before dependency-order integration; no merge is claimed.
