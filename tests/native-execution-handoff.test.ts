@@ -56,6 +56,17 @@ test("current owner, server, cancellation and deadline remain required after han
   });
 });
 
+test("observing expiry then rolling the clock back cannot revive the prepared handoff", async t => {
+  const x = await ready(); t.after(x.close); const handoff = await x.prepare(); t.after(handoff.close);
+  const original = x.f.clock();
+  x.setNow(Date.parse(x.s.journal.acceptedNativeDelivery(x.config.queueId)!.frame.expiresAt));
+  assert.throws(() => handoff.start());
+  x.setNow(original);
+  assert.throws(() => handoff.start());
+  assert.deepEqual(x.local.calls, []); assert.equal(x.local.effects.countFull(), 0);
+  assert.equal(x.local.journal.load(x.f.prepared.binding.runId), undefined);
+});
+
 test("current local pause and profile qualification still gate execution of already recorded input", async t => {
   for (const mode of ["pause", "profile"] as const) await t.test(mode, async t => {
     const x = await ready(); t.after(x.close); const handoff = await x.prepare(); t.after(handoff.close);

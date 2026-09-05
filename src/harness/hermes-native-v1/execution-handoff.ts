@@ -39,10 +39,12 @@ export async function prepareNativeExecutionHandoff(config: { queueId: string; e
   let closed = false, highWater = -1;
   const assertCurrent = () => {
     const now = clock();
-    if (closed || signal.aborted || !Number.isSafeInteger(now) || now < highWater || now < Date.parse(saved.receipt.recordedAt)
+    if (!Number.isSafeInteger(now) || now < highWater) throw new Error("native_handoff_unavailable");
+    // Remember even a denied observation, so a clock rollback cannot revive an expired handle.
+    highWater = now;
+    if (closed || signal.aborted || now < Date.parse(saved.receipt.recordedAt)
       || now >= Date.parse(saved.frame.expiresAt) || revision() !== before || sha256Digest(load(queueId)) !== digest)
       throw new Error("native_handoff_unavailable");
-    highWater = now;
   };
   assertCurrent();
   const controller = new AbortController();
