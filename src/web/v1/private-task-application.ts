@@ -2,7 +2,7 @@ import { createPrivateWebProcess, type PrivateWebProcessOptions } from "./privat
 import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
- * No pools are opened here. Production bootstrap remains unconfigured pending a coordinator role gate.
+ * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
  */
 export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOptions, "planning" | "assignment" | "database"> & { database: TaskCoordinatorDatabase },
   coordinator: TaskCoordinatorConfiguration) {

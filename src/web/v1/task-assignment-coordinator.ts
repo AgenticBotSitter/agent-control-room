@@ -18,6 +18,11 @@ const routeSchema = z.object({ nodeId: localId, executorId: localId,
   maxConcurrentTasks: z.number().int().min(1).max(8), requiredScratchBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   leaseSeconds: z.number().int().min(1).max(300) }).strict();
 export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
+export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRoute[]) {
+  const snapshot = z.array(routeSchema).max(64).parse(routes);
+  if (new Set(snapshot.map(route => route.nodeId)).size !== snapshot.length) unavailable();
+  return Object.freeze(snapshot.map(route => Object.freeze(route)));
+}
 export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: string;
   assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"]; options: TaskAssignmentCoordinator["options"] }>;
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
@@ -36,8 +41,7 @@ export class TaskAssignmentCoordinator {
     const plannerScope = planner.webOperation();
     if (plannerScope.tenantId !== scope.tenantId || plannerScope.workspaceId !== scope.workspaceId) unavailable();
     this.scope = Object.freeze({ ...scope });
-    this.routes = z.array(routeSchema).max(64).parse(routes);
-    if (new Set(this.routes.map(route => route.nodeId)).size !== this.routes.length) unavailable();
+    this.routes = validateTaskAssignmentRoutes(routes);
     this.projects = new WebProjectService(db, scope, clock);
   }
   webOperation(): TaskAssignmentOperation {

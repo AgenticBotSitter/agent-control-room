@@ -166,12 +166,19 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   };
 }
 
-let installed: ReturnType<typeof createPrivateWebProcess> | undefined;
+export type PrivateApplication = Pick<ReturnType<typeof createPrivateWebProcess>, "handle" | "close">;
+let installed: PrivateApplication | undefined;
+/** Trusted server composition only. A closed installation is not replaceable in-process. */
+export function installPrivateApplication(application: PrivateApplication) {
+  if (installed) throw new Error("private_app_already_configured");
+  installed = Object.freeze({ handle: application.handle.bind(application), close: application.close.bind(application) });
+}
 /** Exported in the server-only runtime entry, never exposed as an HTTP configuration route. */
 export function installPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (installed) throw new Error("private_app_already_configured");
-  installed = createPrivateWebProcess(options);
-  return { close: () => installed!.close() };
+  const application = createPrivateWebProcess(options);
+  installPrivateApplication(application);
+  return { close: () => application.close() };
 }
 export function handlePrivateWebRequest(request: Request, render: () => Promise<Response> | Response) {
   return installed ? installed.handle(request, render) : privateNotConfigured();

@@ -7,7 +7,7 @@ export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "databa
   database: PrivatePostgresConfiguration; ownerIdentityId: string;
 };
 type OwnedDatabase = ReturnType<typeof createPrivatePostgresDatabase>;
-function validateConfiguration(input: PrivateStartupConfiguration) {
+export function validatePrivateStartupConfiguration(input: PrivateStartupConfiguration) {
   const exactOrigin = (value: string) => { const url = new URL(value);
     if (url.protocol !== "https:" || url.origin !== value) throw new Error(); return value; };
   const reference = (value: string) => { if (typeof value !== "string" || !value.trim() || value.length > 256) throw new Error(); return value; };
@@ -44,7 +44,7 @@ export function createPrivateWebBootstrap(dependencies: {
   return Object.freeze({ async start(input: PrivateStartupConfiguration) {
     if (started) throw new Error("private_startup_already_attempted");
     started = true;
-    const config = validateConfiguration(input);
+    const config = validatePrivateStartupConfiguration(input);
     let database: OwnedDatabase | undefined;
     try {
       const clock = dependencies.clock ?? Date.now;
