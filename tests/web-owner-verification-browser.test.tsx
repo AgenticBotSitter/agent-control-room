@@ -7,6 +7,14 @@ import { sha256Digest } from "../src/security";
 import { createTaskVerificationBrowserClient } from "../src/web/v1/task-verification-browser-client";
 import { createTaskVerificationWorkspace } from "../src/web/v1/task-verification-workspace";
 import type { TaskVerificationDraft, TaskVerificationOptions, TaskVerificationReceipt } from "../src/web/v1/task-verification-wire";
+import { ownerVerificationFixture } from "./helpers/owner-verification";
+import { binding, instant } from "./hermes-native-fixture";
+import { WebTaskService } from "../src/web/v1/task-service";
+import { taskResultContentSchema, taskResultsPageSchema } from "../src/web/v1/task-result-wire";
+import { taskDetailSchema } from "../src/web/v1/task-wire";
+import { TaskResultsPanel } from "../private-app/app/task-results";
+import { TaskDetailResults } from "../private-app/app/task-workspace";
+import { createTaskReviewWorkspace } from "../src/web/v1/task-review-workspace";
 
 const bound = { projectId: "project:one", jobId: "job:one", artifactId: "artifact:one", targetId: "target:one",
   targetDigest: sha256Digest("target"), contentHash: sha256Digest("content") };
@@ -47,6 +55,36 @@ test("browser reads only exact configured human checks and never sends an idempo
     .options(bound.projectId, bound.jobId, bound), missing);
   await assert.rejects(createTaskVerificationBrowserClient(async () => Response.json({ ...missing,
     scenarios: configured().scenarios })).options(bound.projectId, bound.jobId, bound), { code: "unavailable" });
+});
+
+test("browser accepts the maximum configured multibyte human-verification options within the one-MiB bound", async () => {
+  const scenarios = Array.from({ length: 50 }, (_, index) => ({ scenarioId: `scenario:unicode-${index}`,
+    label: `${index}:` + "界".repeat(117), instructions: "界".repeat(2000),
+    instructionsDigest: sha256Digest({ index, kind: "maximum-unicode-instructions" }),
+    availability: "available" as const, ownVerification: null }));
+  const options = configured({ scenarios }), serialized = JSON.stringify(options);
+  const size = new TextEncoder().encode(serialized).byteLength;
+  assert.ok(size > 131_072, `expected prior 131-KiB bound to be exceeded, got ${size}`);
+  assert.ok(size < 1_048_576, `expected schema maximum to fit one MiB, got ${size}`);
+  const value = await createTaskVerificationBrowserClient(async () => new Response(serialized,
+    { headers: { "content-type": "application/json; charset=utf-8" } })).options(bound.projectId, bound.jobId, bound);
+  assert.equal(value.scenarios.length, 50); assert.equal(value.scenarios.at(-1)?.instructions.length, 2000);
+});
+
+test("browser stops and refuses a verification response as soon as its stream exceeds one MiB", async () => {
+  let pulls = 0, cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls++;
+      if (pulls <= 18) controller.enqueue(new Uint8Array(65_536).fill(120));
+      else controller.close();
+    },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  const client = createTaskVerificationBrowserClient(async () => new Response(body, { headers: { "content-type": "application/json" } }));
+  await assert.rejects(client.options(bound.projectId, bound.jobId, bound), { code: "unavailable" });
+  assert.equal(pulls, 17, "the seventeenth 64-KiB chunk is the first byte range beyond one MiB");
+  assert.equal(cancelled, true);
 });
 
 test("browser records only an explicit draft and matches every command binding plus canonical note digest", async () => {
@@ -174,4 +212,35 @@ test("workspace capacity retains earlier human verification notes", () => {
     { ...bound, artifactId: "artifact:overflow", workspace, onSaved() {} }));
   assert.match(shell, /workspace limit/); assert.doesNotMatch(shell, /Retained at capacity/);
   assert.equal(workspace.get(bound), existing); assert.equal(existing.getSnapshot().note, "Retained at capacity");
+});
+
+test("configured matching results mount human verification and retain its task-owned workspace across close and reopen", async t => {
+  const f = await ownerVerificationFixture(); t.after(f.close);
+  const tasks = new WebTaskService(f.db, f.scope, () => instant + 6000,
+    { ...f.ownerKeys, manualVerificationScenarios: [f.scenario] });
+  const page = taskResultsPageSchema.parse(await tasks.results(f.identity, binding.projectId, binding.jobId));
+  const content = taskResultContentSchema.parse(await tasks.results(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId));
+  const detail = taskDetailSchema.parse(await tasks.detail(f.identity, binding.projectId, binding.jobId));
+  const reviewWorkspace = createTaskReviewWorkspace(), verificationWorkspace = createTaskVerificationWorkspace();
+  const exact = { projectId: binding.projectId, jobId: binding.jobId, artifactId: f.artifact.artifactId, targetId: f.target.id,
+    targetDigest: sha256Digest(f.target), contentHash: f.artifact.contentHash };
+  const session = verificationWorkspace.get(exact); session.selectScenario(f.scenario.scenarioId); session.setOutcome("inconclusive");
+  session.setNote("The viewport was unavailable; this is an unsaved human observation.");
+
+  assert.equal(page.verificationCommands, "configured");
+  const mounted = TaskDetailResults({ detail, projectId: binding.projectId, reviewWorkspace, verificationWorkspace });
+  assert.equal(mounted?.props.verificationWorkspace, verificationWorkspace);
+  assert.equal(TaskDetailResults({ detail: undefined, projectId: binding.projectId, reviewWorkspace, verificationWorkspace }), null);
+  assert.equal(verificationWorkspace.get(exact), session);
+  assert.equal(verificationWorkspace.get(exact).getSnapshot().note,
+    "The viewport was unavailable; this is an unsaved human observation.");
+  const reopened = TaskDetailResults({ detail, projectId: binding.projectId, reviewWorkspace, verificationWorkspace });
+  assert.equal(reopened?.props.verificationWorkspace, verificationWorkspace);
+
+  const render = (source = page, value = content) => renderToStaticMarkup(createElement(TaskResultsPanel,
+    { page: source, content: value, pending: false, onOpen() {}, onClose() {}, reviewWorkspace, verificationWorkspace }));
+  assert.match(render(), /Loading human verification/);
+  assert.doesNotMatch(render({ ...page, verificationCommands: "not_connected" }), /Loading human verification/);
+  assert.doesNotMatch(render(page, { ...content, artifact: { ...content.artifact, artifactId: "artifact:different" } }),
+    /Loading human verification/);
 });
