@@ -59,6 +59,9 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.equal(archive.status, 200);
   const connectionsPage = await handler(request("/connections")); assert.equal(connectionsPage.status, 200);
   const connectionsHtml = await connectionsPage.text(); assert.match(connectionsHtml, /Loading protected connection inventory/);
+  assert.match(connectionsHtml, /<title>Connections · Control Room<\/title>/);
+  assert.match(connectionsHtml, /Private connection inventory across all workspaces/);
+  assert.match(connectionsHtml, /covers all workspaces in this Control Room account/);
   assert.match(connectionsHtml, /not a live fleet monitor/); assert.doesNotMatch(connectionsHtml, /node:private-test|connection:private-test/);
   const inventory = await (await handler(request("/api/v1/connections"))).json();
   assert.equal(inventory.projection.summary.connectionCount, 1); assert.equal(inventory.projection.summary.currentSignalCount, 1);

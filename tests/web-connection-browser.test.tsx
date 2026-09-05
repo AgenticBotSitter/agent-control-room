@@ -46,6 +46,7 @@ test("private connection client surfaces authentication, permission and availabi
 test("private connection presentation exposes observation scope, setup limits and navigation without actions", () => {
   const html = renderToStaticMarkup(<PrivateConnectionView data={{ state: "ready", snapshot }} onRefresh={() => {}} />);
   assert.match(html, /Connections/); assert.match(html, /Last checked/); assert.match(html, /not a live fleet monitor/);
+  assert.match(html, /covers all workspaces in this Control Room account/);
   assert.match(html, /Signal verification is not configured/); assert.match(html, /Refresh connections/);
   assert.match(html, /href="\/projects"/); assert.match(html, /href="\/session"/);
   assert.match(html, /Read only · no connect action/);

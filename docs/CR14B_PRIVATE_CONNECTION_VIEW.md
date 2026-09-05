@@ -39,7 +39,8 @@ local-pilot owner-session implementation remain separate and unchanged.
 ## UI behavior
 
 The page reuses the established read-only `ConnectionCenterPanel` and private styling. It labels the
-inventory as the existing Hermes 0.21 source, explicitly not a live fleet monitor. Refresh is a GET only,
+inventory as the existing Hermes 0.21 source, explicitly not a live fleet monitor, with page copy identifying
+its account-wide/all-workspaces scope and a Connections browser-tab title. Refresh is a GET only,
 on mount/focus/manual refresh and every 30 seconds while visible. Each refresh clears the old view while
 loading; only the latest pending read can replace it. A failure clears records. The displayed check time
 and wording avoid representing a background tab's snapshot as continuously current. No browser storage,
