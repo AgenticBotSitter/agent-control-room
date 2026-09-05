@@ -90,7 +90,7 @@ test("private result HTTP accepts only authenticated same-origin GETs and never 
   const cross = req(); cross.headers.set("sec-fetch-site", "cross-site"); assert.equal((await handle(cross)).status, 403);
 });
 
-test("restricted private process can read results and review evidence but cannot write either authority", async t => {
+test("restricted result process reads evidence while artifact and execution writes remain unavailable", async t => {
   const f = await webNativeResultFixture(); t.after(f.close); const input = f.complete("Restricted SQL result");
   const { receipt } = await f.resultService.ingest(input.raw, input.bytes, f.options(at(2000)));
   await f.reviewTarget(receipt.contentHash);
@@ -103,7 +103,7 @@ test("restricted private process can read results and review evidence but cannot
   const handle = (url: string) => app.handle(request(url, "GET", undefined, undefined, f.jwt), () => new Response("shell"));
   assert.equal((await handle(path)).status, 200); assert.equal((await handle(`${path}/${receipt.artifactId}`)).status, 200);
   for (const sql of ["INSERT INTO control_native_artifact_receipts DEFAULT VALUES", "INSERT INTO control_artifact_manifests DEFAULT VALUES",
-    "INSERT INTO control_completion_gate_records DEFAULT VALUES", "UPDATE control_completion_gate_integrity SET revision=revision+1",
+    "INSERT INTO control_completion_gate_records DEFAULT VALUES",
     "DELETE FROM control_native_artifact_receipts", "UPDATE control_jobs SET state='succeeded'"]) await assert.rejects(f.db.query(sql));
   assert.equal((await app.handle(request("/api/v1/session/logout", "POST", undefined, undefined, f.jwt), () => new Response())).status, 204);
   assert.equal((await handle(`${path}/${receipt.artifactId}`)).status, 401);

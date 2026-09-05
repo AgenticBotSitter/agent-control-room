@@ -9,6 +9,7 @@ import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { NativeResultStore, type NativeResultReadConfiguration, type NativeResultReceipt } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import type { RollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
+import type { WebTaskReviewConfiguration } from "./task-review-service";
 import { taskResultMetadataSchema, boundedTaskResultsPage, taskResultContentSchema, taskReviewEvidenceSchema } from "./task-result-wire";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
@@ -50,6 +51,7 @@ export interface WebTaskKeys {
   ideaIntegrityKey?: Uint8Array;
   results?: NativeResultReadConfiguration;
   reviews?: { integrityKey: Uint8Array; checkpoints: RollbackCheckpointStoreV1 };
+  ownerReviews?: WebTaskReviewConfiguration;
 }
 const resultMetadata = (receipt: NativeResultReceipt) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
   attemptId: receipt.attemptId, runId: receipt.runId, contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes,
@@ -61,9 +63,14 @@ export class WebTaskService {
   private readonly harnessKey?: Uint8Array;
   private readonly resultStore?: NativeResultStore;
   private readonly reviewConfig?: NonNullable<WebTaskKeys["reviews"]>;
+  private readonly reviewCommandsConfigured: boolean;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
+    this.reviewCommandsConfigured = !!keys?.ownerReviews;
+    if (keys?.ownerReviews && (!keys.results || !keys.reviews || !(keys.ownerReviews.integrityKey instanceof Uint8Array)
+      || keys.ownerReviews.integrityKey.length !== 32 || keys.reviews.integrityKey.length !== 32
+      || keys.ownerReviews.integrityKey.some((byte, index) => byte !== keys.reviews!.integrityKey[index]))) throw new Error("task_key_invalid");
     this.projects = new WebProjectService(db, scope, clock, keys?.ideaIntegrityKey);
     if (keys?.harnessIntegrityKey !== undefined) {
       if (!(keys.harnessIntegrityKey instanceof Uint8Array) || keys.harnessIntegrityKey.length !== 32) throw new Error("task_key_invalid");
@@ -238,7 +245,8 @@ export class WebTaskService {
       return boundedTaskResultsPage({ projectId, jobId, observedAt: actor.now,
         resultSource: this.resultStore ? "configured" : "not_configured", reviewSource: this.reviewConfig ? "configured" : "not_configured",
         items, reviews, additionalResultsOmitted: result.additionalResultsOmitted, additionalTargetsOmitted: review.additionalTargetsOmitted,
-        canReadContent: !!this.resultStore && actor.can("tasks.results.read", projectId), reviewCommands: "not_connected" });
+        canReadContent: !!this.resultStore && actor.can("tasks.results.read", projectId),
+        reviewCommands: this.reviewCommandsConfigured ? "configured" : "not_connected" });
     });
   }
 }

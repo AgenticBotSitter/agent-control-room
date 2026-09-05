@@ -4,8 +4,8 @@ import { sha256Digest } from "../../security/digest";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 
 export type WebActor = { id: string; now: string;
-  can: (action: string, projectId?: string, ownerOnly?: boolean) => boolean;
-  require: (action: string, projectId?: string, ownerOnly?: boolean) => void };
+  can: (action: string, projectId?: string, ownerOnly?: boolean, risk?: RoleGrant["riskCeiling"]) => boolean;
+  require: (action: string, projectId?: string, ownerOnly?: boolean, risk?: RoleGrant["riskCeiling"]) => void };
 const iso = (value: string | Date) => new Date(value).toISOString();
 
 /** Shared, server-only session/grant transaction for the private application. Never bootstraps an identity. */
@@ -51,16 +51,16 @@ export class WebSessionAuthority {
           ...(g.expires_at ? { expiresAt: iso(g.expires_at) } : {}), ...(g.revoked_at ? { revokedAt: iso(g.revoked_at) } : {}) }));
       const principal = { tenantId: this.scope.tenantId, identityId: row.id, actorType: "human" as const,
         authenticatedAt: identity.issuedAt, expiresAt: new Date(Math.min(Date.parse(session.expires_at), Date.parse(identity.expiresAt))).toISOString() };
-      const can = (action: string, projectId?: string, ownerOnly = false) => {
+      const can = (action: string, projectId?: string, ownerOnly = false, risk: RoleGrant["riskCeiling"] = "low") => {
         const selected = ownerOnly ? grants.filter(g => g.roleKey === "owner") : grants;
         const decision = evaluatePolicy(principal, selected, { tenantId: this.scope.tenantId, action,
           resourceType: this.resourceType, resourceId: projectId ?? this.scope.workspaceId, ...(projectId ? { projectId } : {}),
-          risk: "low", externalEffect: false, occurredAt: new Date(this.clock()).toISOString() });
+          risk, externalEffect: false, occurredAt: new Date(this.clock()).toISOString() });
         // Enumeration/create always require a matching wildcard project grant, never just a per-project grant.
         return decision.allowed && (!!projectId || selected.some(g => decision.matchedGrantIds.includes(g.id) && g.projectIds.includes("*")));
       };
-      const require = (action: string, projectId?: string, ownerOnly = false) => {
-        const check = () => { if (!can(action, projectId, ownerOnly)) throw new WebAccessError("access_denied"); };
+      const require = (action: string, projectId?: string, ownerOnly = false, risk: RoleGrant["riskCeiling"] = "low") => {
+        const check = () => { if (!can(action, projectId, ownerOnly, risk)) throw new WebAccessError("access_denied"); };
         check(); grantChecks.push(check);
       };
       return operation(tx, { id: row.id, now, can, require });

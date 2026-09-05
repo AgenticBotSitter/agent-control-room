@@ -3,12 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskResultContent, TaskResultsPage, TaskReviewEvidence } from "../../src/web/v1/task-result-wire";
+import { OwnerTaskReview } from "./task-owner-review";
 
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Superseded" };
 
-export function TaskResultsPanel({ page, content, pending, onOpen, onClose }: { page: TaskResultsPage; content?: TaskResultContent;
-  pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void }) {
+export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onReviewSaved }: { page: TaskResultsPage; content?: TaskResultContent;
+  pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void }) {
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
@@ -29,7 +30,8 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose }: { 
       {content.text.length ? <textarea aria-label="Agent result text" readOnly value={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
       <p className="private-note">Bytes checked again {new Date(content.contentVerifiedAt).toLocaleString()}.</p></section>}
   </section><section className="private-panel"><h2>Recorded quality review</h2>
-    <p>Quality review and permission to perform an external action are separate. Review and revision commands are not connected yet.</p>
+    <p>Quality review and permission to perform an external action are separate.
+      {page.reviewCommands === "not_connected" ? " Review and revision commands are not connected yet." : " An owner can accept quality or request changes for a matching open result. Revision dispatch remains separate."}</p>
     {page.reviewSource === "not_configured" ? <p className="private-notice">Protected review history is not configured for this app.</p>
       : !page.reviews.length ? <p>No review targets are recorded for this task.</p> : <ol className="private-review-list">
         {page.reviews.map(review => <li key={review.targetId}><h3>Revision {review.revision} · {reviewLabel[review.status]}</h3>
@@ -51,6 +53,11 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose }: { 
             <details><summary>Finding statement fingerprint</summary><code>{item.statementDigest}</code></details></li>)}</ul>}
           {review.supersedesTargetId && <p>This revision supersedes an earlier immutable target.</p>}
           {review.additionalEvidenceOmitted && <p>Only recent review evidence is displayed; the recorded quality status uses the full verified history.</p>}
+          {page.reviewCommands === "configured" && content && review.kind === "document"
+            && review.matchingArtifactIds.includes(content.artifact.artifactId) && review.contentHash === content.artifact.contentHash
+            && <OwnerTaskReview key={`${review.targetId}:${content.artifact.artifactId}:${content.artifact.contentHash}`}
+              projectId={page.projectId} jobId={page.jobId} artifactId={content.artifact.artifactId} targetId={review.targetId}
+              targetDigest={review.targetDigest} contentHash={review.contentHash} onSaved={() => onReviewSaved?.()} />}
         </li>)}</ol>}
     {page.additionalTargetsOmitted && <p>Only the {page.reviews.length} most recent review targets are shown within this page’s size limit. Additional history remains saved.</p>}
   </section></div>;
@@ -89,6 +96,7 @@ export function PrivateTaskResults({ projectId, jobId }: { projectId: string; jo
       <button type="button" onClick={() => { setSelected(undefined); setRefresh(value => value + 1); }}>Refresh result records</button></div>}
     {!page && !error && <p role="status">Loading protected results and review…</p>}
     {page && <TaskResultsPanel page={page} content={content} pending={pending}
+      onReviewSaved={() => setRefresh(value => value + 1)}
       onOpen={artifactId => { generation.current++; setPending(true); setContent(undefined); setSelected(artifactId); setRefresh(value => value + 1); }}
       onClose={() => { generation.current++; setContent(undefined); setSelected(undefined); setPending(false); }} />}
   </>;

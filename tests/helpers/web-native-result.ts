@@ -38,17 +38,18 @@ export async function webNativeResultFixture() {
     const body = observation({ state: "completed", version: 5, observedAt: instant + 2000, resultText: text });
     return { body, raw: JSON.stringify(f.frame(body)), bytes: new TextEncoder().encode(text) };
   };
-  async function reviewTarget(contentHash: string) {
+  async function reviewTarget(contentHash: string, overrides: { profile?: Partial<CompletionAcceptanceProfileV1>;
+    producer?: CompletionReviewTargetV1["producer"] } = {}) {
     const profile: CompletionAcceptanceProfileV1 = { schemaVersion: "control-room-completion-gate/v1", id: "profile:result-review",
       tenantId: scope.tenantId, projectId: binding.projectId, name: "Private result quality", targetKind: "document",
       requiredVerificationScenarioIds: ["scenario:content"], minimumIndependentReviews: 1,
       reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false },
       verificationRequiresProducerSeparation: true, minimumRisk: "low", maximumRevisionRounds: 2, automaticLowRiskDisposition: false,
-      createdBy: { actorId: "identity:test", actorType: "human" }, createdAt: at() };
+      createdBy: { actorId: "identity:test", actorType: "human" }, createdAt: at(), ...overrides.profile };
     const target: CompletionReviewTargetV1 = { schemaVersion: "control-room-completion-gate/v1", id: "target:result:0",
       tenantId: scope.tenantId, projectId: binding.projectId, kind: "document", subjectId: binding.jobId, subjectDigest: contentHash,
       acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile), producer: { actorId: binding.nodeId, actorType: "agent" },
-      rootTargetId: "target:result:0", revisionNumber: 0, submittedAt: at(2000) };
+      rootTargetId: "target:result:0", revisionNumber: 0, submittedAt: at(2000), ...(overrides.producer ? { producer: overrides.producer } : {}) };
     await reviewStore.registerProfile(profile); await reviewStore.registerTarget(target);
     return { profile, target };
   }

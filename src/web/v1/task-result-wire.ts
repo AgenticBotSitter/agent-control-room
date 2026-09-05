@@ -23,7 +23,7 @@ export const taskResultsPageSchema = z.object({ projectId: id, jobId: id, observ
   resultSource: z.enum(["configured", "not_configured"]), reviewSource: z.enum(["configured", "not_configured"]),
   items: z.array(taskResultMetadataSchema).max(50), reviews: z.array(taskReviewEvidenceSchema).max(20),
   additionalResultsOmitted: z.boolean(), additionalTargetsOmitted: z.boolean(), canReadContent: z.boolean(),
-  reviewCommands: z.literal("not_connected") }).strict();
+  reviewCommands: z.enum(["not_connected", "configured"]) }).strict();
 export type TaskResultsPage = z.infer<typeof taskResultsPageSchema>;
 /** Keep a valid private page below the browser's one-MiB reader limit. Quality state has already
  * been calculated from the complete verified history; omit oldest whole projections, not findings

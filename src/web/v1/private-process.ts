@@ -8,6 +8,7 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { createTaskHttpHandler } from "./task-http";
+import { WebTaskReviewService } from "./task-review-service";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -44,6 +45,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+  const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
+      harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
   let closing = false;
   let active = 0;
   let drained: (() => void) | undefined;
@@ -61,7 +65,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
-            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, clock })(request);
+            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
