@@ -111,7 +111,9 @@ stacked on #291 from `codex/cr14c-owner-result-review`. Its exact head `77db0d5`
 `33968240457` at 13:31:24 UTC. The accepted planned-submission follow-up is
 [PR #293](https://github.com/MarvinAi5/control-room/pull/293), stacked on #292 from
 `codex/cr14c-planned-result-submission`. Its exact head `114f584` passed GitHub CI run
-`33970027382` at 14:08:01 UTC. Execution-planning publication is tracked in the follow-up handoff.
+`33970027382` at 14:08:01 UTC. The accepted execution-planning follow-up is
+[PR #294](https://github.com/MarvinAi5/control-room/pull/294), stacked on #293 from
+`codex/cr14c-task-execution-planning`. Its own current-head GitHub checks remain required.
 This stack is not merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
