@@ -12,12 +12,15 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import type { TaskExecutionPlanner } from "./task-execution-planner";
+import { enrollmentSchema, type NativeEnrollment } from "../../harness/hermes-native-v1/contracts";
+import { prepareNativeTaskApproval } from "../../harness/hermes-native-v1/task-approval-binding";
 
 const routeSchema = z.object({ nodeId: localId, executorId: localId,
   capabilityProbeId: z.literal("harness.hermes.native.runs.v1"),
   maxConcurrentTasks: z.number().int().min(1).max(8), requiredScratchBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   leaseSeconds: z.number().int().min(1).max(300) }).strict();
 export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
+export type NativeApprovalEnrollment = { enrollment: NativeEnrollment; nodeClass: string };
 export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRoute[]) {
   const snapshot = z.array(routeSchema).max(64).parse(routes);
   if (new Set(snapshot.map(route => route.nodeId)).size !== snapshot.length) unavailable();
@@ -34,18 +37,62 @@ function unavailable(): never { throw new Error("task_assignment_unavailable"); 
  * does not sign a command, approve an effect, register a native run or call an executor. */
 export class TaskAssignmentCoordinator {
   private readonly routes: readonly TaskAssignmentRoute[];
+  private readonly enrollments: readonly NativeApprovalEnrollment[];
   private readonly projects: WebProjectService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly planner: TaskExecutionPlanner, routes: readonly TaskAssignmentRoute[],
-    private readonly clock: () => number = Date.now) {
+    private readonly clock: () => number = Date.now, enrollments: readonly NativeApprovalEnrollment[] = []) {
     const plannerScope = planner.webOperation();
     if (plannerScope.tenantId !== scope.tenantId || plannerScope.workspaceId !== scope.workspaceId) unavailable();
     this.scope = Object.freeze({ ...scope });
     this.routes = validateTaskAssignmentRoutes(routes);
+    this.enrollments = z.array(z.object({ enrollment: enrollmentSchema, nodeClass: localId }).strict()).max(64).parse(enrollments);
+    if (new Set(this.enrollments.map(e => e.enrollment.nodeId)).size !== this.enrollments.length
+      || this.enrollments.some(e => e.enrollment.tenantId !== scope.tenantId || !this.routes.some(r => r.nodeId === e.enrollment.nodeId))) unavailable();
     this.projects = new WebProjectService(db, scope, clock);
   }
   webOperation(): TaskAssignmentOperation {
     return Object.freeze({ ...this.scope, assign: this.assign.bind(this), expire: this.expire.bind(this), options: this.options.bind(this) });
+  }
+  /** Trusted coordinator/signing integration only. Not included in the browser operation surface.
+   * Enrollment is configured at construction, never supplied by the approval request. */
+  async prepareNativeApproval(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    let deadline: number | undefined, preparedAt: number | undefined;
+    const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, () => {
+        check(); const now = this.clock();
+        if (!Number.isSafeInteger(now) || preparedAt === undefined || now < preparedAt || deadline === undefined || now >= deadline) conflict();
+      }) };
+    return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
+      // Match reservation/expiry lock order, keeping the complete canonical snapshot in one transaction.
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE", [this.scope.tenantId, projectId]);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
+      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
+      if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || !stored || job.inputDigest !== expectedInputDigest) conflict();
+      const configured = this.enrollments.find(e => e.enrollment.nodeId === stored.lease.nodeId), route = this.routes.find(r => r.nodeId === stored.lease.nodeId);
+      if (!configured || !route || route.executorId !== job.authority.allowedExecutor) conflict();
+      const enrollment = configured.enrollment;
+      const row = (await tx.query<{ payload: unknown; state: string; version: number }>(
+        "SELECT payload,state,version FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [this.scope.tenantId, enrollment.nodeId])).rows[0];
+      if (!row) conflict(); const node = nodeRecordSchema.parse(row.payload);
+      if (node.id !== enrollment.nodeId || node.tenantId !== this.scope.tenantId || node.state !== "active"
+        || node.state !== row.state || node.version !== Number(row.version)) conflict();
+      const key = (await tx.query<{ valid_from: string | Date; valid_until: string | Date | null }>(
+        "SELECT valid_from,valid_until FROM control_node_keys WHERE tenant_id=$1 AND node_id=$2 AND id=$3 AND state='active' FOR SHARE",
+        [this.scope.tenantId, node.id, node.identityKeyId])).rows[0];
+      const now = this.clock();
+      if (!Number.isSafeInteger(now) || !key || new Date(key.valid_from).getTime() > now) conflict();
+      const prepared = prepareNativeTaskApproval({ job, attempt: stored.attempt, lease: stored.lease, input: plan.input,
+        enrollment, nodeClass: configured.nodeClass, now });
+      preparedAt = now; deadline = Math.min(prepared.start.deadline, key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
+      if (!Number.isFinite(deadline) || deadline <= now) conflict();
+      return { ...prepared, enrollment: structuredClone(enrollment), preparedAt: new Date(now).toISOString(),
+        sourceInputDigest: plan.sourceInputDigest, inputDigest: job.inputDigest };
+    });
   }
   async options(identity: VerifiedWebIdentity, projectId: string, jobId: string) {
     localId.parse(projectId); localId.parse(jobId);
