@@ -4,7 +4,7 @@ import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskResultContent, TaskResultsPage, TaskReviewEvidence } from "../../src/web/v1/task-result-wire";
 import { OwnerTaskReview } from "./task-owner-review";
-import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
+import type { TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
 
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Superseded" };
@@ -64,10 +64,10 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
   </section></div>;
 }
 
-export function PrivateTaskResults({ projectId, jobId }: { projectId: string; jobId: string }) {
+export function PrivateTaskResults({ projectId, jobId, reviewWorkspace }: {
+  projectId: string; jobId: string; reviewWorkspace: TaskReviewWorkspace;
+}) {
   const [client] = useState(() => createTaskBrowserClient());
-  // This survives error-cleared result subtrees. No protected content is retained for rendering on denial.
-  const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
   const [page, setPage] = useState<TaskResultsPage>(), [content, setContent] = useState<TaskResultContent>();
   const [selected, setSelected] = useState<string>(), [error, setError] = useState<BrowserRequestError>();
   const [pending, setPending] = useState(false), [refresh, setRefresh] = useState(0);

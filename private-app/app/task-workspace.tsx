@@ -6,9 +6,21 @@ import type { TaskDetail, TaskDraft, TaskPage, TaskReceipt } from "../../src/web
 import { PrivateHeader } from "./private-header";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, taskUrl } from "./task-panels";
 import { PrivateTaskResults } from "./task-results";
+import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
+
+/** Read-gated child; command memory is owned by the stable keyed task page, not this subtree. */
+export function TaskDetailResults({ detail, projectId, reviewWorkspace }: {
+  detail?: TaskDetail; projectId: string; reviewWorkspace: TaskReviewWorkspace;
+}) {
+  return detail && (detail.artifacts === "configured" || detail.review === "recorded")
+    ? <PrivateTaskResults key={`${projectId}:${detail.task.jobId}`} projectId={projectId}
+      jobId={detail.task.jobId} reviewWorkspace={reviewWorkspace} /> : null;
+}
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
   const [client] = useState(() => createTaskBrowserClient());
+  // Neither failed task-detail reads nor failed result reads may discard an unfinished review.
+  const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
   const [page, setPage] = useState<TaskPage>();
   const [detail, setDetail] = useState<TaskDetail>();
   const [draft, setDraft] = useState<TaskDraft>({ title: "", instructions: "" });
@@ -56,6 +68,8 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   return <div className="private-shell"><PrivateHeader /><main id="private-main">
     <a className="private-back" href={jobId ? taskUrl(projectId) : "/projects"}>{jobId ? "← Project tasks" : "← All projects"}</a>
     {error && <div className="private-notice" role="alert"><p>{taskErrorMessage[error.code]}</p>
+      {jobId && <p>Result content has been cleared. Unfinished review text and exact pending save keys remain in this task page’s memory.
+        Restore access and reopen the same result to continue. Leaving or reloading the task page discards them.</p>}
       {error.code === "authentication_required" ? <><p>Signing in again also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
         : <div className="private-actions"><button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved tasks</button>
           {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div>}</div>}
@@ -67,7 +81,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       {page.canPropose ? <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} uncertain={uncertain} onSave={() => { void save(); }} />
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
-    {detail && (detail.artifacts === "configured" || detail.review === "recorded") && <PrivateTaskResults key={`${projectId}:${detail.task.jobId}`} projectId={projectId} jobId={detail.task.jobId} />}
+    <TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} />
     {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Agent dispatch is not connected; no work starts from refresh or reconnect.</p>}
   </main></div>;
 }

@@ -3,6 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TaskResultsPanel, PrivateTaskResults } from "../private-app/app/task-results";
+import { createTaskReviewWorkspace } from "../src/web/v1/task-review-workspace";
 import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
 import { createTaskHttpHandler } from "../src/web/v1/task-http";
 import { boundedTaskResultsPage, taskResultContentSchema, taskResultsPageSchema } from "../src/web/v1/task-result-wire";
@@ -67,7 +68,8 @@ test("empty, unconfigured and pending results stay separate and server shell con
   const content = taskResultContentSchema.parse(await f.tasks.results(f.identity, binding.projectId, binding.jobId, receipt.artifactId));
   const html = renderToStaticMarkup(createElement(TaskResultsPanel, { page: next, content, pending: true, onOpen() {}, onClose() {} }));
   assert.match(html, /empty result file \(0 bytes\)/); assert.match(html, /button[^>]*disabled/);
-  const shell = renderToStaticMarkup(createElement(PrivateTaskResults, { projectId: binding.projectId, jobId: binding.jobId }));
+  const shell = renderToStaticMarkup(createElement(PrivateTaskResults, { projectId: binding.projectId, jobId: binding.jobId,
+    reviewWorkspace: createTaskReviewWorkspace() }));
   assert.match(shell, /Loading protected results and review/); assert.doesNotMatch(shell, /<button|artifact:native|Native task results/);
 });
 
