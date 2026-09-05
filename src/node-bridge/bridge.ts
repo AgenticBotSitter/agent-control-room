@@ -5,6 +5,7 @@ import {
   NODE_PROTOCOL_MAX_FRAME_BYTES,
   NODE_PROTOCOL_V1,
   NodeProtocolAuthenticator,
+  signedNodeFrameSchema,
   type ConnectionAcceptedBody,
   type HeartbeatBody,
   type JobEventBody,
@@ -16,6 +17,7 @@ import {
 } from "../node-protocol/v1";
 import { SqliteBridgeJournal } from "./journal";
 import type { BridgeCommandHandler } from "./admission-handler";
+import type { NativeDispatchIntakeHandler } from "./native-dispatch-handler";
 import { nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 
 export type BridgeState = "stopped" | "connecting" | "authenticating" | "reconciling" | "online" | "backing_off" | "draining";
@@ -85,6 +87,7 @@ export class PortableNodeBridge {
     private readonly serverAuthenticator: NodeProtocolAuthenticator,
     private readonly idFactory: () => string = randomUUID,
     private readonly commandHandler?: BridgeCommandHandler,
+    private readonly nativeHandler?: NativeDispatchIntakeHandler,
   ) {
     this.identity = Object.freeze({ ...identity, features: Object.freeze([...identity.features]) });
   }
@@ -179,6 +182,19 @@ export class PortableNodeBridge {
     if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed during authentication");
     const { frame, delivery } = verified;
     const priorStatus = this.journal.inboundStatus(frame.messageId);
+
+    if (frame.type === "harness.native.dispatch") {
+      try {
+        const channel = this.nativeDeliveryChannel();
+        if (delivery !== "accepted" || !channel || !this.nativeHandler) throw new Error("Native intake channel unavailable");
+        const receipt = await this.nativeHandler.accept(frame, channel);
+        channel.assertCurrent();
+        this.journal.markInboundProcessed(frame.messageId, receipt.recordedAt);
+        await this.sendBody("harness.native.dispatch.receipt", receipt, true, receipt.recordedAt, frame.correlationId, frame.messageId);
+        channel.assertCurrent();
+        return;
+      } catch (error) { this.failTransport(); throw error; }
+    }
 
     if (frame.type === "protocol.ack") {
       if (delivery === "duplicate" && priorStatus === "processed") return;
@@ -366,6 +382,8 @@ export class PortableNodeBridge {
     this.journal.requeueNativeSnapshotsForConnection(current);
     this.journal.retireSupersededControlFrames(current);
     for (const pending of this.journal.pendingOutbound(current)) {
+      // Native receipt uncertainty is reconciled explicitly; never replay it over a replacement connection.
+      if (pending.frame.type === "harness.native.dispatch.receipt") continue;
       try {
         await this.requireTransport().send(JSON.stringify(pending.frame));
         this.journal.markSent(pending.frame.messageId, now);
@@ -423,8 +441,14 @@ export class PortableNodeBridge {
       type,
       body,
     } as UnsignedNodeFrame<TType>;
+    const materialDigest = type === "harness.native.dispatch.receipt" ? sha256Digest(unsigned) : undefined;
     const frame = await this.signer.sign(unsigned) as SignedNodeFrame<TType>;
     if (generation !== this.connectionGeneration || transport !== this.transport) throw new Error("Bridge connection changed during signing");
+    if (materialDigest) {
+      const { signature, bodyDigest, ...material } = signedNodeFrameSchema.parse(frame);
+      if (!signature || bodyDigest !== sha256Digest(body) || sha256Digest(material) !== materialDigest
+        || Buffer.byteLength(JSON.stringify(frame)) > (this.statusValue.maxFrameBytes ?? 0)) throw new Error("Native receipt signer changed the negotiated frame");
+    }
     const disposition = frame.type === "harness.native.snapshot"
       ? this.journal.stageNativeSnapshotOutbound(frame as SignedNodeFrame<"harness.native.snapshot">, now)
       : this.journal.stageOutbound(frame, essential, now);

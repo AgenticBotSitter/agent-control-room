@@ -11,6 +11,7 @@ import {
 } from "../node-protocol/v1";
 import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
+import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -123,6 +124,41 @@ export class SqliteBridgeJournal implements ReplayGuard {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Authenticated/owner-verified delivery only. This records intake, not admission or execution.
+   * Host composition must place this journal in protected node storage; no payload goes to diagnostics. */
+  recordNativeDelivery(input: SignedNodeFrame<"harness.native.dispatch">, receipt: NativeTaskDispatchReceiptBody, assertCurrent: () => void) {
+    const parsed = signedNodeFrameSchema.parse(input);
+    if (parsed.type !== "harness.native.dispatch") throw new Error("native_delivery_type_invalid");
+    const r = matchNativeTaskDispatchReceipt(receipt, parsed), q = parsed.body.request;
+    assertNoSecretMaterial(parsed.body, "native delivery");
+    if (r.disposition !== "recorded" || Date.parse(r.recordedAt) < Date.parse(parsed.sentAt)
+      || Date.parse(r.recordedAt) >= Date.parse(parsed.expiresAt)) throw new Error("native_delivery_time_invalid");
+    return this.transaction(() => {
+      assertCurrent();
+      if (this.db.prepare("SELECT message_id FROM bridge_native_deliveries WHERE queue_id=? OR message_id=?").get(parsed.body.queueId, parsed.messageId))
+        throw new Error("native_delivery_already_recorded");
+      const count = this.db.prepare("SELECT count(*) AS count FROM bridge_native_deliveries").get() as { count: number };
+      if (count.count >= 1024) throw new BridgeBackpressureError();
+      this.db.prepare(`INSERT INTO bridge_native_deliveries(queue_id,message_id,tenant_id,job_id,attempt_id,frame_json,frame_digest,receipt_json,receipt_digest)
+        VALUES(?,?,?,?,?,?,?,?,?)`).run(parsed.body.queueId, parsed.messageId, q.tenantId, q.jobId, q.attemptId,
+          JSON.stringify(parsed), sha256Digest(parsed), JSON.stringify(r), sha256Digest(r));
+      assertCurrent(); return structuredClone(r);
+    });
+  }
+
+  /** Private historical evidence, never current execution authority. No packet or prompt is returned. */
+  nativeDeliveryReceipt(queueId: string): NativeTaskDispatchReceiptBody | undefined {
+    const row = this.db.prepare("SELECT message_id,frame_json,frame_digest,receipt_json,receipt_digest FROM bridge_native_deliveries WHERE queue_id=?").get(queueId) as
+      { message_id: string; frame_json: string; frame_digest: string; receipt_json: string; receipt_digest: string } | undefined;
+    if (!row) return undefined;
+    const frame = signedNodeFrameSchema.parse(JSON.parse(row.frame_json));
+    if (frame.type !== "harness.native.dispatch" || frame.body.queueId !== queueId || frame.messageId !== row.message_id
+      || sha256Digest(frame) !== row.frame_digest) throw new Error("native_delivery_integrity_invalid");
+    const r = matchNativeTaskDispatchReceipt(JSON.parse(row.receipt_json), frame);
+    if (sha256Digest(r) !== row.receipt_digest) throw new Error("native_delivery_integrity_invalid");
+    return r;
   }
 
   appendNativeSnapshot(input: NativeTaskSnapshotBody, recordedAt: string): "recorded" | "duplicate" {
@@ -734,6 +770,22 @@ export class SqliteBridgeJournal implements ReplayGuard {
         PRIMARY KEY(run_id,snapshot_version),
         CHECK((status='pending')=(outbound_message_id IS NULL))
       );
+      CREATE TABLE IF NOT EXISTS bridge_native_deliveries (
+        queue_id TEXT PRIMARY KEY NOT NULL,
+        message_id TEXT NOT NULL UNIQUE,
+        tenant_id TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        frame_json TEXT NOT NULL,
+        frame_digest TEXT NOT NULL,
+        receipt_json TEXT NOT NULL,
+        receipt_digest TEXT NOT NULL,
+        UNIQUE(tenant_id,job_id,attempt_id)
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_native_deliveries_no_update BEFORE UPDATE ON bridge_native_deliveries
+        BEGIN SELECT RAISE(ABORT,'native delivery is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_native_deliveries_no_delete BEFORE DELETE ON bridge_native_deliveries
+        BEGIN SELECT RAISE(ABORT,'native delivery is immutable'); END;
       CREATE TABLE IF NOT EXISTS bridge_node_control_state (
         node_id TEXT PRIMARY KEY,
         node_version INTEGER NOT NULL CHECK(node_version>=0),
