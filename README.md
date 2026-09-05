@@ -20,9 +20,11 @@ lifecycle ownership. The database rehearsal workload is also independently accep
 tests; it has not run against a real PostgreSQL service. Its separate synthetic fixture/preparation handoff
 is independently accepted too, with one checked transaction and private one-use test keys. The supported
 Hermes native-run adapter is now independently accepted as an unwired component: durable recovery, bounded
-HTTPS/progress and cancellation handling. Next is canonical task/result/review integration. This is not a
+HTTPS/progress and cancellation handling. Its durable signed progress path into canonical harness evidence
+is also independently accepted. Next is the private task/result interface and remaining dispatch/review integration. This is not a
 deployed app or live fleet.
-See the [native-run adapter acceptance](docs/CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md),
+See the [native progress acceptance](docs/CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md),
+[native-run adapter acceptance](docs/CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md),
 [fixture preparation acceptance](docs/CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md),
 [rehearsal tooling acceptance](docs/CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md),
 [serving acceptance](docs/CR14B_PRIVATE_SERVING_ACCEPTANCE.md),

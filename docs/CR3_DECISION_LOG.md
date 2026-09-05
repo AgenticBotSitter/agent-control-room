@@ -5187,3 +5187,31 @@ nine private/four Sites artifact checks, type/lint/whitespace passed. Unchanged 
 **Next:** C-WORK canonical task/progress/result/review integration, including explicit native lifecycle/usage
 mapping. Host setup, private transport topology and live useful-task acceptance remain separate scoped gates.
 This acceptance does not merge a PR, activate a native consumer or establish a usable fleet.
+
+## ADR-212 — Native progress is durable authenticated evidence, not task-completion authority
+
+**Date:** 2026-09-05. **Owner direction:** continue the authorized overnight repository build on Astra Xhigh.
+
+Project native snapshots into one bounded content-free observation contract, not synthetic lifecycle events.
+Bind registration to the existing canonical attempt/input/lease/epoch/node and permit one native run per
+attempt. Reuse the current signed node protocol and existing integrity-protected harness history. The native
+journal and bridge outbox are local recovery state; PostgreSQL remains the sole global write authority.
+
+Persist node evidence before transport; permit one unacknowledged snapshot per run. A durable central ACK
+drains subsequent evidence. Lost-ACK expiry enters existing reconnect/backoff and re-envelopes the same body
+on a fresh connection; it never resubmits native work. Exact duplicates recover an uncertain SQL response.
+Do not evict evidence at capacity. Production retention and longer-running capacity proof remain outstanding.
+
+Preserve unknown execution start, nullable usage and reported cancellation. Result hashes are producer claims,
+not artifact verification or owner acceptance. Late evidence for an exact historical lease does not revive
+authority. Observation ingestion cannot complete canonical jobs/attempts, approve reviews or confirm effects.
+No runtime consumer, listener, credential read, provider call or native profile activation is introduced.
+
+**Evidence:** accepted product `f7d0c1115e0b3a321b3c9c9b6ee6efced83122eb`, tree
+`ef934336fddc50f190092fa60712efcf9dcde2ab`; `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md` and retained
+initial two Medium/two Low rejection plus accepted re-review. Final 74 focused, 769 pretests, 651 main
+passes/two existing skips, 392 posttests, both builds, nine private/four Sites artifact checks and type/lint/
+whitespace passed. Unchanged migrations verified 127 tables. Independent re-review ran 51 checks.
+
+**Next:** private project task/result pages and remaining canonical draft/admission/dispatch/artifact/review
+composition. Full C-WORK, real host qualification and private-beta activation remain incomplete and separately gated.

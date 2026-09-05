@@ -62,6 +62,21 @@ live credentials or real-agent connection. If one lane needs live permission, co
 - Hard cost/deadline enforcement, private HTTPS topology and installed-host qualification remain specific
   live gates. Canonical task/result/review integration is the next substantial repository block.
 
+- Exact documentation head `fc199dd` passed GitHub CI run `33952565284` at 07:41:30 UTC.
+
+### CR14C canonical native progress delivery
+
+- Accepted runtime: `f7d0c1115e0b3a321b3c9c9b6ee6efced83122eb`; private publication tracked in build status.
+- Native adapter snapshot -> durable node outbox -> signed protocol -> authenticated canonical harness
+  evidence. Per-run acknowledgement ordering and reconnect recovery never restart native work.
+- Initial two Medium/two Low findings corrected; independent re-review accepted with no remaining findings,
+  independently running 51 tests plus type/whitespace checks.
+- Final checks: 74 focused, 769 pretests, 651 main passes/two existing skips, 392 posttests; both builds;
+  nine private/four Sites checks; TypeScript/full lint/whitespace. Unchanged 127-table migrations verified.
+- No real network/agent/database, credentials, listener, deployment or merge. Registration and snapshots
+  do not mutate canonical job completion, approvals or effect/artifact authority.
+- Private task/result UI, task admission/dispatch, verified artifact transfer and owner review remain.
+
 ## Next authorized repository work
 
 1. Continue C-WORK: canonical project task/attempt, admission/effect integration, native lifecycle/usage mapping

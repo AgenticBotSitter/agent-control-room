@@ -6,7 +6,10 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — canonical task/progress/result/review integration.
+**Next block:** CR14C C-WORK — private task/result interface and remaining dispatch/review integration.
+The evidence path is independently accepted in `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`: native
+snapshots reach exact canonical harness records through durable signed delivery in disposable tests.
+This does not complete dispatch, final artifact verification, owner review or live C-WORK acceptance.
 The supported Hermes native-run adapter is independently accepted as an unwired component in
 `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`; no real agent is connected and full C-ADAPTER/live C exit remains gated.
 Repository disposable fixture/preparation handoff is accepted in `CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md`;

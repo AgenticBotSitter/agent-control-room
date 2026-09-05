@@ -41,7 +41,12 @@ hands test keys to the rehearsal once in memory; no database was provisioned or 
 **CR14C's supported Hermes native-run adapter is independently accepted as an unwired component** at
 `4b5fb69d8386cdf859ba22079aef3e7771f45f18`. It adds durable run recovery, bounded HTTPS/progress and
 cancellation handling; no native connection was made. See `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`.
-**Next: CR14C C-WORK canonical task/progress/result/review integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
+**CR14C native progress delivery is independently accepted** at
+`f7d0c1115e0b3a321b3c9c9b6ee6efced83122eb`. Native snapshots now pass through the durable node outbox,
+signed protocol and canonical harness evidence store in disposable integration tests. Runtime activation,
+task dispatch, verified artifact transfer and owner review are not implied. See
+`CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`.
+**Next: CR14C C-WORK private task/result interface and remaining dispatch/review integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
@@ -72,15 +77,16 @@ The accepted preparation follow-up is [PR #287](https://github.com/MarvinAi5/con
 on #286. Its current-head checks remain required; the stack is not merged or deployed.
 PR #287's exact head `dfc1f36` passed GitHub CI run `33949755377` (completed 2026-09-05 06:39:19 UTC).
 The accepted unwired native-run adapter is [PR #288](https://github.com/MarvinAi5/control-room/pull/288),
-stacked on #287. Its own current-head checks remain required. No merge, runtime activation or live connection is claimed.
+stacked on #287. Its exact head `fc199dd` passed GitHub CI run `33952565284` at 07:41:30 UTC.
+No merge, runtime activation or live connection is claimed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
 
-Latest native-adapter checks: 47 focused plus 152 private-app regressions, 769 pretests, 624 main passes/two
-existing Windows skips, 392 posttests, nine private/four Sites artifact checks, both builds and type/lint/whitespace.
-Unchanged migrations verified 127 tables. Independent re-review closed two Medium timing findings.
+Latest native-progress checks: 74 focused, 769 pretests, 651 main passes/two existing Windows skips,
+392 posttests, nine private/four Sites artifact checks, both builds and type/lint/whitespace.
+Unchanged migrations verified 127 tables. Independent re-review closed two Medium/two Low delivery findings.
 The native adapter is not wired to task dispatch. Pool reopen is not process
 restart; client counts are not physical attempt/absence evidence; idle close cause remains unavailable.
 No real database, listener, credentials, native agent or deployment was used.
@@ -152,6 +158,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C canonical native progress | Independently accepted durable signed evidence integration; no active dispatch or canonical task completion | `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`; `reviews/CR14C_CANONICAL_NATIVE_PROGRESS_REREVIEW.md` |
 | CR14C supported Hermes native-run adapter | Independently accepted unwired run journal/protocol/HTTPS/lifecycle code; no real agent or complete task integration | `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`; `reviews/CR14C_NATIVE_RUN_ADAPTER_REREVIEW.md` |
 | CR14B private Node serving | Independently accepted request/static/lifecycle code and compiled SQL integration; no physical listener | `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`; `reviews/CR14B_PRIVATE_SERVING_REREVIEW.md` |
 | CR14B bounded private startup/database | Independently accepted repository bootstrap, narrow role, deadline/drain and uncertainty handling; real service not running | `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`; `reviews/CR14B_PRIVATE_STARTUP_REREVIEW.md` |

@@ -1,6 +1,6 @@
 # CR14C canonical native progress integration
 
-Status: implementation candidate; independent acceptance is recorded separately.
+Status: independently accepted repository integration; see `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`.
 
 ## Scope and authority
 
