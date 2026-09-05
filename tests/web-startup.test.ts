@@ -10,7 +10,7 @@ test("invalid startup configuration has zero pool, install or key-loader calls",
   let calls = 0;
   for (const patch of [{ origin: "http://invalid.example.invalid" }, { audience: "" }, { ownerIdentityId: "" },
     { database: { ...startupConfig.database, password: "" } }, { maxSessionSeconds: 604801 },
-    { connections: { registryIntegrityKey: new Uint8Array(1) } }, { planning: {} }]) {
+    { connections: { registryIntegrityKey: new Uint8Array(1) } }, { planning: {} }, { assignment: {} }]) {
     const bootstrap = createPrivateWebBootstrap({ openDatabase: () => { calls++; throw new Error(); },
       install: () => { calls++; throw new Error(); } });
     await assert.rejects(bootstrap.start({ ...startupConfig, ...patch } as PrivateStartupConfiguration), /config_invalid/);

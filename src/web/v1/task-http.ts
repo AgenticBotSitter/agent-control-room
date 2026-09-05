@@ -6,15 +6,44 @@ import { taskReviewDraftSchema } from "./task-review-wire";
 import type { TaskExecutionPlanner } from "./task-execution-planner";
 import { taskPlanningDraftSchema, taskPlanningCommandSchema } from "./task-planning-wire";
 import { catalogProjectIdSchema } from "./project-wire";
+import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
+import { taskAssignmentDraftSchema, taskAssignmentCommandSchema, taskAssignmentOptionsSchema } from "./task-assignment-wire";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; planning?: Pick<TaskExecutionPlanner, "plan">; clock?: () => number }) {
+  ownerReviews?: WebTaskReviewService; planning?: Pick<TaskExecutionPlanner, "plan">;
+  assignment?: TaskAssignmentOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
     try {
       requireSameOrigin(request, options.origin);
       const identity = verify(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const assignmentRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/assignment$/.exec(url.pathname);
+      if (assignmentRoute) {
+        if (url.search) throw new WebAccessError("invalid_request");
+        let projectId: string, jobId: string;
+        try { projectId = decodeURIComponent(assignmentRoute[1]); jobId = decodeURIComponent(assignmentRoute[2]); }
+        catch { throw new WebAccessError("invalid_request"); }
+        if (!catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success)
+          throw new WebAccessError("invalid_request");
+        if (!options.assignment) { await options.service.authorize(identity, projectId); throw new Error("assignment_not_configured"); }
+        if (request.method === "GET") {
+          const value = taskAssignmentOptionsSchema.parse(await options.assignment.options(identity, projectId, jobId));
+          if (value.projectId !== projectId || value.jobId !== jobId) throw new Error("assignment_scope_mismatch");
+          return Response.json(value, { headers: privateResponseHeaders });
+        }
+        if (request.method !== "POST") throw new WebAccessError("not_found");
+        if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body) throw new WebAccessError("invalid_request");
+        const draft = taskAssignmentDraftSchema.safeParse(await readBoundedJson(request.body, 1024));
+        if (!draft.success) throw new WebAccessError("invalid_request");
+        const result = taskAssignmentCommandSchema.parse(draft.data.action === "assign"
+          ? await options.assignment.assign(identity, projectId, jobId, draft.data.nodeId, draft.data.expectedInputDigest)
+          : await options.assignment.expire(identity, projectId, jobId, draft.data.expectedInputDigest));
+        if (result.receipt.projectId !== projectId || result.receipt.jobId !== jobId || result.receipt.inputDigest !== draft.data.expectedInputDigest
+          || draft.data.action === "assign" && result.receipt.nodeId !== draft.data.nodeId
+          || draft.data.action === "expire" && result.receipt.leaseState !== "expired") throw new Error("assignment_scope_mismatch");
+        return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+      }
       const planningRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/plan$/.exec(url.pathname);
       if (planningRoute) {
         if (url.search) throw new WebAccessError("invalid_request");

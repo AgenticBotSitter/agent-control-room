@@ -193,12 +193,14 @@ export class TaskExecutionPlanner {
   /** Trusted coordinator read. Returns a plan, not admission/approval. Recheck active scope, expiry,
    * node ceiling, capability and current lease at the later admission boundary. Never expose as HTTP. */
   async read(jobId: string) {
+    return this.db.transaction(tx => this.readInSession(tx, jobId));
+  }
+  /** Trusted coordinator only: keep plan verification inside the assignment's locking transaction. */
+  async readInSession(tx: DatabaseSession, jobId: string) {
     localId.parse(jobId);
-    return this.db.transaction(async tx => {
-      const row = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND job_id=$2", [this.scope.tenantId, jobId])).rows[0];
-      if (!row) return undefined;
-      const plan = this.verify(row); await this.checkedJob(tx, plan); return plan;
-    });
+    const row = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND job_id=$2", [this.scope.tenantId, jobId])).rows[0];
+    if (!row) return undefined;
+    const plan = this.verify(row); await this.checkedJob(tx, plan); return plan;
   }
   /** After separately accepted admission/registration, carry the saved profile to the existing
    * submission service. Neither helper constructs an attempt nor fabricates native-start evidence. */
