@@ -117,7 +117,7 @@ function createPreparation(dependencies: Dependencies, execution: FixturePrepara
         ensure(metadata?.valid === true); ensure(await readPrivateWebSchemaDigest(tx) === privateWebSchemaDigest);
         const tables = (await tx.query<{ name: string }>(`SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='public' AND c.relkind IN ('r','p') ORDER BY c.relname COLLATE "C"`)).rows;
-        ensure(tables.length === 132 && tables.every(table => /^[a-z][a-z0-9_]{0,62}$/.test(table.name)));
+        ensure(tables.length === 133 && tables.every(table => /^[a-z][a-z0-9_]{0,62}$/.test(table.name)));
         // The reviewed schema fingerprint precedes catalog-derived identifier construction. Names are
         // validated and quoted; no caller supplies a table or SQL fragment. Locks serialize empty checks
         // and all seed writes, preventing two preparers from adopting the same initially empty database.
