@@ -2033,6 +2033,8 @@ No feature advertisement, native sender/receiver or runtime activation is introd
 session negotiation, durable delivery/receipts, owner signing and revisions remain next on Astra Medium.
 Final frozen-product checks passed: CR14C457, preparation769, main1041 with two existing skips,
 post-suite392, private compiled18, rendered4, both builds, TypeScript, full ESLint and migrations0049/135.
+Published as [PR #318](https://github.com/MarvinAi5/control-room/pull/318), stacked on #317.
+Current-head GitHub CI remains required; no merge or runtime activation is claimed.
 
 ## Next block
 

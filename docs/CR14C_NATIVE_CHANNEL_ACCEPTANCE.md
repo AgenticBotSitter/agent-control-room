@@ -40,3 +40,6 @@ rendered-page checks. TypeScript, full ESLint, stage zero, whitespace and migrat
 No live credentials/provider/native calls, listener, production database, deployment or merge.
 Remaining work: server session negotiation and current keys, durable signed sending/receipt tracking,
 actual node intake/admission, owner signing/custody and bounded revision submission.
+
+Published as [PR #318](https://github.com/MarvinAi5/control-room/pull/318), stacked on #317.
+Current-head GitHub CI remains required before dependency-order integration; no merge is claimed.
