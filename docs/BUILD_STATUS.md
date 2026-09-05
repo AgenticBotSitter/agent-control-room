@@ -38,10 +38,13 @@ with injected/disposable SQL, not a real PostgreSQL service. See `CR14B_DATABASE
 `fd8b2736a806735dc07ada577df31967c573a96b`. It creates synthetic records in one checked transaction and
 hands test keys to the rehearsal once in memory; no database was provisioned or accessed natively. See
 `CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md`.
-**Next: CR14C native-run adapter and task/result integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
+**CR14C's supported Hermes native-run adapter is independently accepted as an unwired component** at
+`4b5fb69d8386cdf859ba22079aef3e7771f45f18`. It adds durable run recovery, bounded HTTPS/progress and
+cancellation handling; no native connection was made. See `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`.
+**Next: CR14C C-WORK canonical task/progress/result/review integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
-The current repository block adds explicit PG17 same-host startup, effective-role/schema checks, bounded
+The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
 See `CR14B_PRIVATE_STARTUP_CONTRACT.md` and the still-draft `CR14B_SETUP_REHEARSAL_PACKET.md`.
 The combined CR14A/CR14B feature branch is published in [PR #280](https://github.com/MarvinAi5/control-room/pull/280)
@@ -67,14 +70,16 @@ stacked on #285. Its own current-head checks remain required. No PR in this foll
 PR #286's exact head `78a6a98` passed GitHub CI run `33948058630` (completed 2026-09-05 06:00:47 UTC).
 The accepted preparation follow-up is [PR #287](https://github.com/MarvinAi5/control-room/pull/287), stacked
 on #286. Its current-head checks remain required; the stack is not merged or deployed.
+PR #287's exact head `dfc1f36` passed GitHub CI run `33949755377` (completed 2026-09-05 06:39:19 UTC).
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
 
-Latest fixture-preparation checks: 152 focused, 769 pretests, 577 main passes/two existing Windows skips,
-392 posttests, nine private/four Sites artifact checks, both builds, TypeScript/full lint/whitespace and
-127-table migrations. Independent preparation review accepted with no findings. Pool reopen is not process
+Latest native-adapter checks: 47 focused plus 152 private-app regressions, 769 pretests, 624 main passes/two
+existing Windows skips, 392 posttests, nine private/four Sites artifact checks, both builds and type/lint/whitespace.
+Unchanged migrations verified 127 tables. Independent re-review closed two Medium timing findings.
+The native adapter is not wired to task dispatch. Pool reopen is not process
 restart; client counts are not physical attempt/absence evidence; idle close cause remains unavailable.
 No real database, listener, credentials, native agent or deployment was used.
 
@@ -87,7 +92,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
 | Real task -> agent -> progress -> result -> review in the website | Components/contracts exist; mounted live dispatch/review absent | CR14C |
-| Mac/PC/VPS Hermes and Codex fleet | Private compiled view reads existing Hermes enrollments/signals; no live fleet, new native-run adapter or dispatch | CR14C/D |
+| Mac/PC/VPS Hermes and Codex fleet | Private view reads existing enrollments/signals; new native adapter is component-tested but unwired; no live fleet/dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
 | Live ABS news -> agent work | Synthetic stories and local draft editor; no mounted collection/dispatch | CR14F |
@@ -145,6 +150,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C supported Hermes native-run adapter | Independently accepted unwired run journal/protocol/HTTPS/lifecycle code; no real agent or complete task integration | `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`; `reviews/CR14C_NATIVE_RUN_ADAPTER_REREVIEW.md` |
 | CR14B private Node serving | Independently accepted request/static/lifecycle code and compiled SQL integration; no physical listener | `CR14B_PRIVATE_SERVING_ACCEPTANCE.md`; `reviews/CR14B_PRIVATE_SERVING_REREVIEW.md` |
 | CR14B bounded private startup/database | Independently accepted repository bootstrap, narrow role, deadline/drain and uncertainty handling; real service not running | `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`; `reviews/CR14B_PRIVATE_STARTUP_REREVIEW.md` |
 | CR14B private connection view | Independently accepted existing enrollment/signal reads and startup preparation design; no live fleet or implemented bootstrap | `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`; `reviews/CR14B_CONNECTION_VIEW_REVIEW.md` |

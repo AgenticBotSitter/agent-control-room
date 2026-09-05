@@ -18,9 +18,12 @@ accepted. Startup checks the restricted SQL role and schema; uncertain saves sto
 Private Node serving is now independently accepted too: bounded requests, compiled browser assets and clean
 lifecycle ownership. The database rehearsal workload is also independently accepted with disposable/injected
 tests; it has not run against a real PostgreSQL service. Its separate synthetic fixture/preparation handoff
-is independently accepted too, with one checked transaction and private one-use test keys. Next is unblocked
-Hermes native-run adapter/task integration. This is not a deployed app or live fleet.
-See the [fixture preparation acceptance](docs/CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md),
+is independently accepted too, with one checked transaction and private one-use test keys. The supported
+Hermes native-run adapter is now independently accepted as an unwired component: durable recovery, bounded
+HTTPS/progress and cancellation handling. Next is canonical task/result/review integration. This is not a
+deployed app or live fleet.
+See the [native-run adapter acceptance](docs/CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md),
+[fixture preparation acceptance](docs/CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md),
 [rehearsal tooling acceptance](docs/CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md),
 [serving acceptance](docs/CR14B_PRIVATE_SERVING_ACCEPTANCE.md),
 [startup acceptance](docs/CR14B_PRIVATE_STARTUP_ACCEPTANCE.md),

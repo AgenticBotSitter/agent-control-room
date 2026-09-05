@@ -44,11 +44,27 @@ live credentials or real-agent connection. If one lane needs live permission, co
   Sites artifact checks; both builds; TypeScript/full lint/whitespace; migrations0001–0040/127 tables.
 - No actual PostgreSQL, listener, credentials, agent/provider, browser, provisioning, deployment or merge.
 - Native preparation/rehearsal and operator cleanup still require their own explicit scoped authority.
+- Exact documentation head `dfc1f36` passed GitHub CI run `33949755377` at 06:39:19 UTC.
+
+### CR14C supported Hermes native-run adapter
+
+- Accepted runtime: `4b5fb69d8386cdf859ba22079aef3e7771f45f18`.
+- Branch `codex/cr14c-hermes-native-run-adapter`, stacked on #287; publication tracked in build status.
+- Durable node-private run journal; pinned capability/session mapping; bounded outbound HTTPS and progress;
+  exact-ID cancellation and status recovery. No core fork, personal profile cloning or application activation.
+- Initial two Medium timing findings corrected; independent re-review accepted with zero remaining findings.
+- Final checks: 47 focused, 152 private-app regressions, 769 pretests, 624 main passes/two existing skips,
+  392 posttests; both builds; nine private/four Sites checks; TypeScript/full lint/whitespace. Unchanged
+  migrations0001–0040/127 tables also verified. Review independently ran all 47 focused checks.
+- No real network connection, credentials, listener, agent/provider, native profile, provisioning, deployment
+  or merge. File persistence used an exact test-owned disposable directory with cleanup.
+- Hard cost/deadline enforcement, private HTTPS topology and installed-host qualification remain specific
+  live gates. Canonical task/result/review integration is the next substantial repository block.
 
 ## Next authorized repository work
 
-1. Continue C-ADAPTER/C-WORK: pinned upstream native-run capability/profile/session mapping, bounded lifecycle,
-   event/usage truth and task/result wiring. No real agent connection or native qualification tonight.
+1. Continue C-WORK: canonical project task/attempt, admission/effect integration, native lifecycle/usage mapping
+   and result/review wiring. The native adapter component is accepted but not active. No real agent qualification tonight.
 2. B's live setup/pilot remains a separate gate; continue other settled UI/digest lanes if a particular live
    prerequisite blocks integration. Existing worker capsules remain undispatched drafts.
 3. Keep accepted code in feature branches/private PRs; preserve dependency-order/current-CI/merge approval.

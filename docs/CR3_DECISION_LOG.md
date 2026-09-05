@@ -5155,3 +5155,35 @@ nine private/four Sites artifact checks, both builds, type/lint/whitespace and 1
 
 **Next:** unblocked CR14C native-run adapter/task integration. Real setup/rehearsal, browser/IdP/deployment,
 backup/restore and private-pilot exits remain separate owner gates; none is inferred from fixture tests.
+
+## ADR-211 — Thin native Hermes run recovery keeps canonical authority and truthful outcomes
+
+**Date:** 2026-09-05. **Owner direction:** continue authorized overnight repository implementation on Astra Xhigh.
+
+Implement the ADR-202 supported native-run subset against the pinned candidate source, initially unwired.
+One reviewed enrollment/profile, fresh derived task session and exact request digest bind each attempt.
+The existing node controller still owns admission, current ceilings, profile qualification and the durable
+pre-effect marker. The new SQLite journal is node-private execution recovery, not global task coordination;
+PostgreSQL remains the sole global write authority. A request/operation digest is never itself permission.
+
+Unknown dispatch/save outcome cannot automatically resubmit. Reconnection reads the exact recorded run.
+Native SSE has no replay guarantee, so use one bounded stream plus status resnapshot. Cancellation interrupts
+the owned observation before handing off to exact-ID stop; concurrent durable updates preserve acknowledged
+stop or a completed result. Only known rolled-back local observation conflicts can retry bounded CAS saves.
+Native requests and uncertain commits are never retried. Native cancellation is reported state, not OS absence.
+
+The HTTPS module keeps the existing destination, connect-time address and certificate requirements. It is
+not wired or activated. No private-DNS/plaintext exception, public Hermes exposure, installation, credential
+discovery, core fork, inherited personal profile or runtime-list enablement is introduced. Hard dollar limits
+remain unsupported; absent usage stays unknown. Dedicated profile/host isolation and hard deadlines still
+need real qualification rather than a capabilities assertion.
+
+**Evidence:** accepted product `4b5fb69d8386cdf859ba22079aef3e7771f45f18`, tree
+`1fa5287e551e418015e61d8e38911f5213c04eca`; `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`. Two initial Medium
+timing findings were corrected and independently re-reviewed with no remaining findings. Final 47 focused,
+152 private-app regressions, 769 pretests, 624 main passes/two existing skips, 392 posttests, both builds,
+nine private/four Sites artifact checks, type/lint/whitespace passed. Unchanged 127-table migrations verified.
+
+**Next:** C-WORK canonical task/progress/result/review integration, including explicit native lifecycle/usage
+mapping. Host setup, private transport topology and live useful-task acceptance remain separate scoped gates.
+This acceptance does not merge a PR, activate a native consumer or establish a usable fleet.

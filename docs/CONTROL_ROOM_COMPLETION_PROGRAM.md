@@ -6,7 +6,9 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C — supported native-run adapter and canonical task/result integration.
+**Next block:** CR14C C-WORK — canonical task/progress/result/review integration.
+The supported Hermes native-run adapter is independently accepted as an unwired component in
+`CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`; no real agent is connected and full C-ADAPTER/live C exit remains gated.
 Repository disposable fixture/preparation handoff is accepted in `CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md`;
 real database preparation/rehearsal/pilot remain gated, not completed.
 The SQL/application rehearsal tooling is accepted in `CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md`; it has not
