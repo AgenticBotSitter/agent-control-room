@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { NATIVE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
+import { NATIVE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, matchNativeTaskDispatchReceipt, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
 import { sha256Digest } from "../security";
 import { NodeProtocolAuthenticator, NODE_PROTOCOL_V1, NODE_PROTOCOL_MAX_FRAME_BYTES,
   signedNodeFrameSchema, verifyNodeFrameSignature, type NodeMessageBodyMap,
@@ -41,10 +41,10 @@ export interface NativeEnvelopeChannel extends ServerNativeChannel {
   readonly serverPublicKeySpki: string;
 }
 
-/** One explicitly owned transport session. No listener, key loading or task dispatch. */
+/** One explicitly owned supplied transport session. No listener or key loading. */
 export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
-  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "closed" = "new";
+  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "closed" = "new";
   private preparedFrame?: SignedNodeFrame<"harness.native.dispatch">;
   private busy = false;
   private highWater = -Infinity;
@@ -202,6 +202,28 @@ export class ServerNodeSession {
       this.now();
       this.state = "sent";
       return { receipt: result.value, transportResult: "returned_without_receipt" as const, deliveryConfirmed: false as const };
+    });
+  }
+
+  /** Authenticated intake evidence only. Trusted callback must commit before this reports recording.
+   * The host serializes transport callbacks after send settles; no retry or receipt acknowledgement here. */
+  async acceptNativeReceipt<T>(raw: string | Uint8Array, commit: (receipt: SignedNodeFrame<"harness.native.dispatch.receipt">,
+    dispatch: SignedNodeFrame<"harness.native.dispatch">, assertCurrent: () => void) => Promise<T>): Promise<T> {
+    if (this.state !== "sent" || !this.preparedFrame) throw new Error("Native receipt has no sent envelope");
+    const dispatch = structuredClone(this.preparedFrame);
+    return this.bounded(async () => {
+      const frame = await this.authenticate(raw);
+      if (frame.type !== "harness.native.dispatch.receipt") throw new Error("Expected native receipt, not transport acknowledgement");
+      matchNativeTaskDispatchReceipt(frame.body, dispatch);
+      const assertCurrent = () => {
+        const now = this.now();
+        if (this.state !== "sent" || now >= Date.parse(frame.expiresAt) || Date.parse(frame.body.recordedAt) > now
+          || Date.parse(frame.body.recordedAt) < Date.parse(dispatch.sentAt)) throw new Error("Native receipt window unavailable");
+      };
+      assertCurrent();
+      const value = await commit(structuredClone(frame), dispatch, assertCurrent);
+      assertCurrent(); this.state = "receipted";
+      return value;
     });
   }
 

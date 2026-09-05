@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import type { DatabaseSession } from "../../persistence/database";
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { appendAuditWith } from "../../audit/audit-store";
 import { hmacSha256Tag, sha256Digest } from "../../security";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
@@ -14,6 +15,7 @@ import type { ServerNodeSession, NativeEnvelopeChannel } from "../../node-contro
 import type { SignedNodeFrame } from "../../node-protocol/v1";
 import { persistNativeTransmissionIntent, readNativeTransmissionIntentReceipt } from "./native-transmission-intent";
 import { nativeTaskDispatchBodySchema } from "../../harness/v1/native-delivery";
+import { persistNativeDeliveryReceipt, readNativeDeliveryReceipt } from "./native-delivery-receipt";
 
 type Trust = Omit<Parameters<typeof createNativeApprovalIntake>[1], "clock">;
 type Prepared = ReturnType<typeof prepareNativeTaskApproval> & { enrollment: NativeEnrollment; inputDigest: string };
@@ -170,5 +172,27 @@ export class NativeApprovalPacketStore {
   }
   readTransmissionInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
     return readNativeTransmissionIntentReceipt(tx, this.key, scope);
+  }
+  readReceiptInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
+    return readNativeDeliveryReceipt(tx, this.key, scope);
+  }
+  /** Trusted node router only, not owner approval or a mounted browser operation. */
+  async receiveDeliveryReceipt(db: DatabaseClient, session: ServerNodeSession, raw: string | Uint8Array, signal: AbortSignal) {
+    if (signal.aborted) return fail();
+    return session.acceptNativeReceipt(raw, async (frame, dispatch, assertCurrent) => {
+      let fence = () => { if (signal.aborted) fail(); assertCurrent(); };
+      const value = await db.transactionWithPreCommitCheck(async tx => {
+        const check = fence;
+        const result = await persistNativeDeliveryReceipt(tx, this.key, frame, dispatch, this.clock, check);
+        fence = () => { check(); result.assertFresh(); };
+        await appendAuditWith(tx, { id: `audit:native-receipt:${frame.body.queueId}`, tenantId: frame.tenantId,
+          projectId: frame.body.projectId, actorId: frame.actorId, actorType: "worker",
+          action: "native.delivery.receipt_recorded", targetType: "attempt", targetId: frame.body.attemptId,
+          occurredAt: result.value.receivedAt, safeMetadata: { receiptFrameDigest: sha256Digest(frame),
+            disposition: frame.body.disposition, safeReason: frame.body.safeReason } });
+        fence(); return result.value;
+      }, () => fence());
+      fence(); return value;
+    });
   }
 }

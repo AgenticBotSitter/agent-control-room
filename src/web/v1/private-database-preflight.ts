@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0051 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "f86730c7e0047bc44c346cde2c58f8bce19371f75951f7c9fc8067fc88be7732";
+// Generated from migrations 0001-0052 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "93d4767ea03998da6049b2e75c2b3cdf3b2c6da150dc024278a10786aa0dc6c3";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
@@ -27,10 +27,10 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "projects", "control_manual_project_heads", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
   "control_node_fleet_current", "control_job_dependencies", "control_transition_events", "control_outbox",
-  "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents"];
+  "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
-  "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents"]);
+  "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
     .map(table => [table, ["state", "version", "payload", "updated_at"]])),

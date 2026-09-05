@@ -88,6 +88,9 @@ export class TaskAssignmentCoordinator {
   async readNativeTransmissionIntent(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
     return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readTransmissionInSession(tx, scope));
   }
+  async readNativeDeliveryReceipt(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readReceiptInSession(tx, scope));
+  }
   private async readNativeEvidence<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     read: (store: NativeApprovalPacketStore, tx: DatabaseSession, scope: NativeTaskQueueScope) => Promise<T>) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
