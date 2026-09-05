@@ -34,8 +34,12 @@ snapshot reach the compiled protected app in tests. See `CR14B_PRIVATE_SERVING_A
 **CR14B SQL/application rehearsal tooling is independently accepted** at
 `7c52ad3ea88255a9ec6faccadea69eb9af66162d`. Its fixed operator workload and native probe adapters are tested
 with injected/disposable SQL, not a real PostgreSQL service. See `CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md`.
-**Next: CR14B disposable fixture/preparation handoff**, using `gpt-6-astra` / `xhigh` (Astra Xhigh), then
-unblocked CR14C adapter/task integration while real setup/pilot work awaits scoped owner authority.
+**CR14B disposable fixture/preparation handoff is independently accepted** at
+`fd8b2736a806735dc07ada577df31967c573a96b`. It creates synthetic records in one checked transaction and
+hands test keys to the rehearsal once in memory; no database was provisioned or accessed natively. See
+`CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md`.
+**Next: CR14C native-run adapter and task/result integration**, using `gpt-6-astra` / `xhigh` (Astra Xhigh),
+while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The current repository block adds explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
@@ -60,14 +64,15 @@ Its current-head checks remain required. Neither review acceptance nor publicati
 PR #285's exact head `e327c3c` passed GitHub CI run `33946020421` (completed 2026-09-05 05:14:07 UTC).
 The accepted rehearsal-tooling follow-up is [PR #286](https://github.com/MarvinAi5/control-room/pull/286),
 stacked on #285. Its own current-head checks remain required. No PR in this follow-up is claimed merged.
+PR #286's exact head `78a6a98` passed GitHub CI run `33948058630` (completed 2026-09-05 06:00:47 UTC).
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
 
-Latest rehearsal-tooling checks: 133 focused, 769 pretests, 558 main passes/two existing Windows skips,
-392 posttests, eight private/four Sites artifact checks, both builds, TypeScript/full lint/whitespace and
-127-table migrations. Independent review closed one Medium/two Low findings. Pool reopen is not process
+Latest fixture-preparation checks: 152 focused, 769 pretests, 577 main passes/two existing Windows skips,
+392 posttests, nine private/four Sites artifact checks, both builds, TypeScript/full lint/whitespace and
+127-table migrations. Independent preparation review accepted with no findings. Pool reopen is not process
 restart; client counts are not physical attempt/absence evidence; idle close cause remains unavailable.
 No real database, listener, credentials, native agent or deployment was used.
 

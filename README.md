@@ -17,9 +17,11 @@ The owner-only connection inventory and bounded startup/database-role implementa
 accepted. Startup checks the restricted SQL role and schema; uncertain saves stop pool use instead of retrying.
 Private Node serving is now independently accepted too: bounded requests, compiled browser assets and clean
 lifecycle ownership. The database rehearsal workload is also independently accepted with disposable/injected
-tests; it has not run against a real PostgreSQL service. Next is its synthetic fixture/preparation handoff,
-then unblocked agent/task integration. This is not a deployed app or live fleet.
-See the [rehearsal tooling acceptance](docs/CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md),
+tests; it has not run against a real PostgreSQL service. Its separate synthetic fixture/preparation handoff
+is independently accepted too, with one checked transaction and private one-use test keys. Next is unblocked
+Hermes native-run adapter/task integration. This is not a deployed app or live fleet.
+See the [fixture preparation acceptance](docs/CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md),
+[rehearsal tooling acceptance](docs/CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md),
 [serving acceptance](docs/CR14B_PRIVATE_SERVING_ACCEPTANCE.md),
 [startup acceptance](docs/CR14B_PRIVATE_STARTUP_ACCEPTANCE.md),
 [connection view acceptance](docs/CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md),

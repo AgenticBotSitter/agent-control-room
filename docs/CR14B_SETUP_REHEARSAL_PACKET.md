@@ -36,8 +36,11 @@ No credential goes in the command line, GitHub, logs or retained evidence; the o
   ACL profile as the authorized administrator. Their PUBLIC/default-privilege changes require a dedicated DB.
 - Create the private web LOGIN with only `control_room_private_web` membership, no ADMIN option, no ownership,
   no elevated attributes. Verify all migrator roles' future default grants; web startup must reject drift.
-- Bind one synthetic active human owner to the fixed test issuer and existing synthetic tenant/workspace.
-  Do not use the ordinary web role for identity/bootstrap. Supply synthetic integrity keys separately.
+- After separate host/DB/migration/role setup, use the accepted `CR14B_FIXTURE_PREPARATION_CONTRACT.md`
+  entry under its exact owner packet to populate the still-empty disposable DB in one transaction. It uses
+  the separate migrator, not the ordinary web role. Retrieve its fresh synthetic material once in memory
+  and pass it directly to the rehearsal; record the preparation digest only after that prerequisite exists.
+  Do not manually prepopulate tables, log keys or treat fixture completion as acceptance of real setup.
 - Confirm DB ingress denies Internet access, local-only endpoint, private authentication and owner-controlled
   credential delivery. Retain pass/fail references, not addresses, subjects, passwords or raw host diagnostics.
 

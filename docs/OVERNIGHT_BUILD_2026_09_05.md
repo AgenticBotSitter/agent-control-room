@@ -31,15 +31,25 @@ live credentials or real-agent connection. If one lane needs live permission, co
 - No actual PostgreSQL, listener, credentials, agent/provider, browser, setup, deployment or merge effects.
 - Idle close cause and physical connection attempts remain unavailable/unobserved. Pool reopen is not OS
   restart; exact operator DB/role cleanup and real-session absence proof are still separate.
+- Exact documentation head `78a6a98` passed GitHub CI run `33948058630` at 06:00:47 UTC.
+
+### CR14B disposable fixture/preparation handoff
+
+- Accepted runtime: `fd8b2736a806735dc07ada577df31967c573a96b`.
+- Separate server-only operator entry, existing empty DB/schema/role checks, one joined synthetic seed
+  transaction and fresh one-use private test material. No installation, migration, role change or live setup.
+- Independent review: zero High/Medium/Low findings, 28 preparation/rehearsal checks passed independently.
+- Final checks: 152 focused; 769 pretests; 577 main passes/two existing skips; 392 posttests; nine private/four
+  Sites artifact checks; both builds; TypeScript/full lint/whitespace; migrations0001–0040/127 tables.
+- No actual PostgreSQL, listener, credentials, agent/provider, browser, provisioning, deployment or merge.
+- Native preparation/rehearsal and operator cleanup still require their own explicit scoped authority.
 
 ## Next authorized repository work
 
-1. CR14B disposable fixture/preparation handoff; make the accepted harness's synthetic preparation repeatable
-   with testable repository tooling, preserving separate migrator/web roles and exact cleanup. Do not run
-   a real setup, credentials, database, listener or service effect.
-2. Continue the accepted completion program's unblocked code lanes when B's live setup becomes the gate;
-   first evaluate C-ADAPTER/C-WORK prerequisites, or settled UI/digest lanes. Do not silently qualify or
-   connect a real agent. Existing worker capsules remain undispatched drafts.
+1. Continue C-ADAPTER/C-WORK: pinned upstream native-run capability/profile/session mapping, bounded lifecycle,
+   event/usage truth and task/result wiring. No real agent connection or native qualification tonight.
+2. B's live setup/pilot remains a separate gate; continue other settled UI/digest lanes if a particular live
+   prerequisite blocks integration. Existing worker capsules remain undispatched drafts.
 3. Keep accepted code in feature branches/private PRs; preserve dependency-order/current-CI/merge approval.
 
 Current setting: Astra Xhigh. No owner model change is needed for the next architecture/integration block.

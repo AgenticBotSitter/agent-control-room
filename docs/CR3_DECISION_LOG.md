@@ -5130,3 +5130,28 @@ existing skips, 392 posttests, eight private/four Sites artifact checks, both bu
 
 **Next:** repository-only synthetic fixture/preparation handoff, then unblocked native adapter/task integration.
 The accepted code does not authorize a real run, database provisioning, live agent connection or deployment.
+
+## ADR-210 — Disposable fixture setup is one checked transaction with a private one-use handoff
+
+**Date:** 2026-09-05. **Owner direction:** continue the authorized overnight repository build on Astra Xhigh.
+
+Complete the rehearsal's fixture prerequisite with a separate inert operator entry, not an application seed
+route or startup migration. The owner still prepares and approves the exact dedicated PG17 database, distinct
+migrator/web logins, migrations/ACLs and cleanup. Before fixture writes, require the reviewed schema, correct
+restricted table-owning migrator and every public table empty under bounded locks. Existing accepted stores
+join one transaction; no nested store can commit independently.
+
+Fresh synthetic assertion and integrity keys remain private in memory and become retrievable once only after
+acknowledged commit plus successful owned-client shutdown. Ordinary failure rolls back; uncertainty never
+automatically retries or hands over material. A lost acknowledgement can leave committed rows for operator
+reconciliation. Counts are acknowledged observations, not proof of absence; client close is not server absence.
+No provisioning, migrations, role changes, credential reads, production owner enrollment, listener or real bot
+is introduced. A synthetic enrollment keeps all execution grants false. Exact cleanup remains operator-owned.
+
+**Evidence:** accepted runtime `fd8b2736a806735dc07ada577df31967c573a96b`, tree
+`a6cf590e7c4ff73b57409a700414a55177091c86`; `CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md` and independent
+review with zero findings. Final 152 focused, 769 pretests, 577 main passes/two existing skips, 392 posttests,
+nine private/four Sites artifact checks, both builds, type/lint/whitespace and 127-table migrations passed.
+
+**Next:** unblocked CR14C native-run adapter/task integration. Real setup/rehearsal, browser/IdP/deployment,
+backup/restore and private-pilot exits remain separate owner gates; none is inferred from fixture tests.
