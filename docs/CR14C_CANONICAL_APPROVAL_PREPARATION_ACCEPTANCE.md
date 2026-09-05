@@ -45,6 +45,8 @@ Both private and Sites builds passed, with 16 private compiled checks and four r
 TypeScript, full ESLint and stage zero passed. Disposable migrations 0001–0046 verified 132 tables.
 The stage-zero suggestion was not executed as a native readiness or qualification attempt.
 Whitespace verification passed. Only documentation changes followed the accepted product head.
+Published in [PR #310](https://github.com/MarvinAi5/control-room/pull/310), targeting PR #309's branch.
+Current-head GitHub CI remains required before dependency-order integration; no merge is claimed.
 
 This is not packet storage,
 owner signing, runtime dispatch or physical host qualification. No live credentials/providers/listeners,

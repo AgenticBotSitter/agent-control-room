@@ -205,6 +205,8 @@ post-suite 392, private compiled checks 16 and rendered routes four; both builds
 ESLint, stage zero and disposable migrations through 0046 (132 tables) passed.
 Owner signing/custody, authenticated packet storage, durable supervisor state, signed dispatch and
 revision submission remain. Continue effect-free repository integration on Astra Medium.
+Published as [PR #310](https://github.com/MarvinAi5/control-room/pull/310), stacked on #309.
+Current-head GitHub checks remain required; no merge, runtime wiring or deployment is claimed.
 Prerequisite refresh: #308 exact head `d844ce487e0529e30fe3297872a5b5e8c0104e59` passed CI
 `33986571515` at 2026-09-05 19:37:21 UTC. #309 was still running when inspected; no merge is claimed.
 PR #306 exact head `4f32ef1891490b475282ddcbe575b69be6cae9e9` passed CI `33985592476`
