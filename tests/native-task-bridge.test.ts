@@ -115,8 +115,8 @@ test("snapshot outbox survives SQLite reopen and requeues expired signatures wit
 test("an uncertain database response returns no ACK; exact delivery recovers committed evidence only", async t => {
   const f = await nativeTaskFixture(); t.after(f.close); await f.runs.create(registration);
   let loseCommitReply = true;
-  const runs = new HarnessRunStoreV1({ ...f.db, async transaction(work) {
-    const value = await f.db.transaction(work);
+  const runs = new HarnessRunStoreV1({ ...f.db, async transactionWithPreCommitCheck(work, check) {
+    const value = await f.db.transactionWithPreCommitCheck(work, check);
     if (loseCommitReply) { loseCommitReply = false; throw new Error("fixture commit response unavailable"); }
     return value;
   } }, new Uint8Array(32).fill(17));
