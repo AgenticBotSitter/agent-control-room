@@ -44,6 +44,9 @@ PR #282's exact head `98b6030` passed GitHub CI run `33939343152`. The connectio
 [PR #283](https://github.com/MarvinAi5/control-room/pull/283), stacked on #282; its own current-head checks
 remain required. No merge or deployment is claimed for this stack.
 PR #283's exact head `39afa0f` passed GitHub CI run `33940801704` (completed 2026-09-05 03:12:42 UTC).
+The accepted startup/database follow-up is [PR #284](https://github.com/MarvinAi5/control-room/pull/284),
+stacked on #283. Its current-head checks remain required; integrate the stack in dependency order.
+This turn did not merge or deploy any PR.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 

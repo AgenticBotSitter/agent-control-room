@@ -8,8 +8,10 @@ Initial implementation: `c34ba89e1cb0792fb25724cc84aa871d8fff39f1`.
 Rejected review candidate: `007eeb1473504a1dab4394f8b2d1d0b045a8b1c9`.
 Accepted product: `09db99b3925f2197f2421b14a95ccfb35c707b80`.
 Accepted tree: `48602c8361d03897197f945a9a7d72f10718a9bf`.
-Branch: `codex/cr14b-private-startup-database`. Publication is a stacked PR on the #283 branch;
-current-head CI and dependency-order integration remain required. No merge or deployment is claimed.
+Branch: `codex/cr14b-private-startup-database`.
+Publication: [PR #284](https://github.com/MarvinAi5/control-room/pull/284), stacked on #283.
+Current-head CI and dependency-order integration #280 → #281 → #282 → #283 → #284 remain required.
+No merge or deployment is claimed.
 
 ## Delivered and verified
 
