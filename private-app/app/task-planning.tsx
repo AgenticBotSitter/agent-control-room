@@ -36,7 +36,8 @@ export function PrivateTaskPlanning({ detail }: { detail?: TaskDetail }) {
   useEffect(() => {
     const current = ++generation.current; let live = true;
     if (detail) void client.options(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
-      if (live && current === generation.current) { setCheckedDetail(detail); setOptions(value); setReceipt(undefined);
+      if (live && current === generation.current) { setCheckedDetail(detail); setOptions(value);
+        setReceipt(client.savedReceipt(detail.task.projectId, detail.task.jobId, detail.inputDigest));
         setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
     }).catch(reason => { if (live && current === generation.current) { setCheckedDetail(detail); setOptions(undefined); setReceipt(undefined);
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } });
@@ -47,7 +48,9 @@ export function PrivateTaskPlanning({ detail }: { detail?: TaskDetail }) {
     busy.current = true; setPending(true); setError(undefined); const current = ++generation.current;
     try {
       const value = retry ? await client.retrySave() : await client.prepare(detail.task.projectId, detail.task.jobId, detail.inputDigest);
-      if (alive.current && current === generation.current) setReceipt(value);
+      // A same-source refresh may finish before this write. The confirmed receipt remains safe
+      // to retain; rendering below still requires the current successful protected read.
+      if (alive.current) setReceipt(value);
     } catch (reason) {
       if (alive.current && current === generation.current) {
         const error = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); setError(error);
@@ -57,6 +60,8 @@ export function PrivateTaskPlanning({ detail }: { detail?: TaskDetail }) {
   }
   if (!detail) return null;
   const current = checkedDetail === detail;
-  return <TaskPlanningPanel options={current ? options : undefined} receipt={current ? receipt : undefined} error={current ? error : undefined} pending={pending}
+  const visibleReceipt = current && options && receipt?.projectId === detail.task.projectId
+    && receipt.sourceJobId === detail.task.jobId && receipt.sourceInputDigest === detail.inputDigest ? receipt : undefined;
+  return <TaskPlanningPanel options={current ? options : undefined} receipt={visibleReceipt} error={current ? error : undefined} pending={pending}
     uncertain={current && client.hasPending() && !!options} onPrepare={() => { void prepare(); }} onRetry={() => { void prepare(true); }} />;
 }

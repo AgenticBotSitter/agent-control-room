@@ -1,6 +1,6 @@
 import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
 import { catalogProjectIdSchema } from "./project-wire";
-import { taskPlanningDraftSchema, taskPlanningOptionsSchema, taskPlanningCommandSchema } from "./task-planning-wire";
+import { taskPlanningDraftSchema, taskPlanningOptionsSchema, taskPlanningCommandSchema, type TaskPlanningReceipt } from "./task-planning-wire";
 
 export const planningErrorMessage: Record<BrowserFailureCode, string> = {
   authentication_required: "Sign in again before preparing this task.", access_denied: "Your current access does not permit preparing this task.",
@@ -11,6 +11,7 @@ export const planningErrorMessage: Record<BrowserFailureCode, string> = {
 
 export function createTaskPlanningBrowserClient(transport: typeof fetch = fetch) {
   let pending: { projectId: string; jobId: string; digest: string; body: string; uncertain: boolean } | undefined, busy = false;
+  let confirmed: TaskPlanningReceipt | undefined;
   const path = (projectId: string, jobId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/plan`;
   const ids = (...values: string[]) => { if (values.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new BrowserRequestError("invalid_request"); };
   const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied",
@@ -47,7 +48,7 @@ export function createTaskPlanningBrowserClient(transport: typeof fetch = fetch)
       const { receipt } = taskPlanningCommandSchema.parse(await json(response));
       if (receipt.projectId !== pending.projectId || receipt.sourceJobId !== pending.jobId
         || receipt.sourceInputDigest !== pending.digest || receipt.jobId === pending.jobId) throw new Error();
-      pending = undefined; return receipt;
+      confirmed = { ...receipt }; pending = undefined; return receipt;
     } catch (error) {
       if (pending) pending.uncertain = true;
       throw error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain");
@@ -55,6 +56,12 @@ export function createTaskPlanningBrowserClient(transport: typeof fetch = fetch)
   }
   return {
     hasPending: () => !!pending,
+    // Page-local acknowledgement only, not authorization. Display only after a current protected
+    // read of this exact source/input; a refresh must not destroy an acknowledged plan's link.
+    savedReceipt(projectId: string, jobId: string, inputDigest: string) {
+      return confirmed?.projectId === projectId && confirmed.sourceJobId === jobId && confirmed.sourceInputDigest === inputDigest
+        ? { ...confirmed } : undefined;
+    },
     async options(projectId: string, jobId: string, inputDigest: string) {
       ids(projectId, jobId);
       try {

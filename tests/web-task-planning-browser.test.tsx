@@ -25,6 +25,12 @@ test("planning client reads without writes and validates exact source/receipt wi
   assert.deepEqual(JSON.parse(calls[1].body as string), { expectedInputDigest: digest });
   assert.equal(calls[1].credentials, "same-origin"); assert.equal(calls[1].redirect, "error"); assert.equal(calls[1].cache, "no-store");
   assert.equal(client.hasPending(), false);
+  await client.options(options.projectId, options.sourceJobId, digest);
+  assert.deepEqual(client.savedReceipt(options.projectId, options.sourceJobId, digest), receipt);
+  assert.equal(client.savedReceipt(options.projectId, "job:other", digest), undefined);
+  assert.equal(client.savedReceipt(options.projectId, options.sourceJobId, `sha256:${"c".repeat(64)}`), undefined);
+  const exposed = client.savedReceipt(options.projectId, options.sourceJobId, digest)!; exposed.jobId = "job:mutated";
+  assert.deepEqual(client.savedReceipt(options.projectId, options.sourceJobId, digest), receipt);
 });
 
 test("lost planning replies hold exact identity through denial and reads until explicit reconciliation", async () => {
