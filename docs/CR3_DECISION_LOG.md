@@ -5855,3 +5855,18 @@ Product `9101304739f18cb17b976b56cec098a414dcd5e0`, tree
 See `CR14C_DURABLE_DELIVERY_PREPARATION_ACCEPTANCE.md` for initial replay failure and verification.
 Current connection/feature/key checks, server signing, durable send/receipt tracking and node admission
 remain next. No runtime activation, credentials, provider calls, listener or deployment was added.
+
+## ADR-240 — derive native channel evidence from the actual reconciled bridge
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository component integration.
+
+Use the real bridge's authenticated negotiated feature/frame-size state and private reconciliation
+provenance, never a caller-supplied feature array or saved connection inventory. Snapshot identity and
+return immutable non-executing evidence with a current-generation assertion. Applied resume cannot
+replace reconciliation; authentication, node-control completions, queued sends and signing must not
+carry old connection state into a replacement transport. Owner authority remains separately verified.
+
+Accepted product `03d1e66f7deaac00e8cfc8fac050f31541025c96`, tree
+`94254e56bf66d2dce26c72d17e2086fd247811a6`, passed41 independent checks. Two review findings and
+their corrections are retained in `CR14C_NATIVE_CHANNEL_ACCEPTANCE.md`. This does not prove liveness,
+activate delivery, or finish server-side session management and receipt persistence.

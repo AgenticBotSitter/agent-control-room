@@ -2022,6 +2022,18 @@ Local verification passed CR14C457, preparation769, main1036 with two existing s
 private compiled18 and rendered4; both builds, TypeScript, full ESLint and migrations0049/135 tables
 passed. Current-head CI remains required; no merge or deployment is claimed.
 
+## Negotiated node channel evidence
+
+Product `03d1e66f7deaac00e8cfc8fac050f31541025c96` is independently reviewed with41 passing checks.
+The actual bridge now exposes native delivery channel state only after authenticated feature negotiation
+and current-connection reconciliation. Generation fences reject stale snapshots and delayed/queued
+acknowledgements across reconnect. Both review findings and fixture corrections are retained in
+`CR14C_NATIVE_CHANNEL_ACCEPTANCE.md`. This is not physical liveness or execution authority.
+No feature advertisement, native sender/receiver or runtime activation is introduced. Server-side current
+session negotiation, durable delivery/receipts, owner signing and revisions remain next on Astra Medium.
+Final frozen-product checks passed: CR14C457, preparation769, main1041 with two existing skips,
+post-suite392, private compiled18, rendered4, both builds, TypeScript, full ESLint and migrations0049/135.
+
 ## Next block
 
 ```text

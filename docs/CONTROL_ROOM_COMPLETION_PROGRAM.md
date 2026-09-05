@@ -344,6 +344,9 @@ handoff are reviewed in `CR14C_NATIVE_DELIVERY_PROTOCOL_ACCEPTANCE.md`; no sende
 advertisement is activated. Durable exact unsigned body preparation/history is reviewed in
 `CR14C_DURABLE_DELIVERY_PREPARATION_ACCEPTANCE.md` (migration0049/135 tables). Current connection
 checks, server signing, delivery progress and node acknowledgement remain next.
+The node-side negotiated/reconciled channel gate is independently reviewed in
+`CR14C_NATIVE_CHANNEL_ACCEPTANCE.md`; old queued control sends cannot migrate across reconnect.
+This is connection-state evidence only. Server-side negotiation and actual sender/receiver remain.
 Revalidation and insertion share a transaction; returned
 snapshots and historical receipts cannot authorize later delivery. Bounded approval lifecycle
 and historical reconciliation are accepted. Integrated owner signing and custody, durable
