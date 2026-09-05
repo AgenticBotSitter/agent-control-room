@@ -2066,6 +2066,18 @@ private compiled18, rendered4, both builds, TypeScript, full ESLint and migratio
 Published as [PR #320](https://github.com/MarvinAi5/control-room/pull/320), stacked on #319.
 Current-head GitHub CI remains required; no merge or runtime activation is claimed.
 
+## One-shot native transmission intent
+
+Product `6ad15ff023c35a7ef2293a95ea0e6e7fa4eee97e` is independently accepted with50 passing review checks.
+The coordinator commits immutable intent/audit before the session enters its supplied transport once.
+Owner authorization time fences survive commit acknowledgement; uncertain delivery cannot trigger retry.
+See `CR14C_NATIVE_TRANSMISSION_ACCEPTANCE.md` for the corrected review finding and limits. Intent is not
+delivery confirmation or execution evidence. Migration0051 requires137 tables, no new web access.
+Final product verification passed CR14C494, preparation769, main1078 with two existing skips, post392,
+private compiled18, rendered4, both builds, TypeScript, ESLint and migrations0051/137.
+Authenticated receipts and node intake/admission remain next on Astra Medium. No live resource,
+listener, credential, provider, deployment or merge is authorized by this acceptance.
+
 ## Next block
 
 ```text

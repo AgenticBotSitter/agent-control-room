@@ -352,7 +352,10 @@ Server-side signed negotiation with the actual bridge is now independently revie
 Long-lived session renewal/routing and durable task sending/receipts remain; no live transport is mounted.
 Exact signed envelope staging under the current canonical transaction is independently reviewed in
 `CR14C_DURABLE_ENVELOPE_ACCEPTANCE.md` (migration0050/136 tables). This reserves and stores a frame but
-does not transmit it. Durable transmission-attempt and receipt integration, then node intake, remain.
+does not transmit it. One-shot transmission intent/transport integration is independently reviewed in
+`CR14C_NATIVE_TRANSMISSION_ACCEPTANCE.md` (migration0051/137 tables): intent commits before send,
+authorization time fences survive commit, and uncertain outcomes never retry. Authenticated receipt
+persistence and node intake/admission remain; no live task delivery is claimed.
 Revalidation and insertion share a transaction; returned
 snapshots and historical receipts cannot authorize later delivery. Bounded approval lifecycle
 and historical reconciliation are accepted. Integrated owner signing and custody, durable

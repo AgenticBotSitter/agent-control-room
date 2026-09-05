@@ -5909,3 +5909,18 @@ fingerprint is `797e11e174de3dbac425f714d2f2c4a405b24b4fce8c39982b4d15a72250b758
 Product `3e34d71e95f2ea86cda26a7227af3a0a51223f6a`, tree
 `47de7084fb4834d3ad16984412a50e1b67b7a7ec`, passed52 independent checks with no findings. See
 `CR14C_DURABLE_ENVELOPE_ACCEPTANCE.md`. No native effect, credential use, listener or deployment.
+
+## ADR-243 — commit transmission intent before one exact send
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+The canonical coordinator commits one immutable transmission intent and audit against the exact saved
+envelope. Only after confirmed commit does its session consume the prepared slot and enter the supplied
+transport once. Current trust/cancellation/channel/deadline and locked owner authorization time windows
+are checked through that boundary. This is not a post-commit database revocation poll.
+
+Intent means intention, not physical send or delivery. Returned transport status remains unconfirmed;
+timeout, lost acknowledgement and rejection never permit automatic retransmission. Authenticated node
+receipt persistence and admission remain separate. Product `6ad15ff023c35a7ef2293a95ea0e6e7fa4eee97e`
+passed50 independent checks after the authorization expiry finding was corrected. Migration0051 adds
+the137th table with coordinator SELECT/INSERT only. See `CR14C_NATIVE_TRANSMISSION_ACCEPTANCE.md`.
