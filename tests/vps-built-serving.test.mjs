@@ -39,6 +39,9 @@ test("compiled Node bridge reaches authenticated SQL routes without a physical l
     assert.ok(JSON.parse(catalog.body()).projects.some(project => project.title === "Node bridge project"));
     const page = await send(request("/projects")); assert.equal(page.output.statusCode, 200);
     assert.match(page.body(), /Loading projects/);
+    const references = [...page.body().matchAll(/(?:src|href)="(\/_next\/static\/[^"?#]+)"/g)].map(match => match[1]);
+    assert.ok(references.some(path => path.endsWith(".js"))); assert.ok(references.some(path => path.endsWith(".css")));
+    for (const path of references) assert.equal(assets.respond(path, "GET")?.status, 200, path);
     const head = await send(new Request(request("/projects"), { method: "HEAD" }));
     assert.equal(head.output.statusCode, 200); assert.equal(head.body(), "");
     const logout = await send(request("/api/v1/session/logout", "POST")); assert.equal(logout.output.statusCode, 204);

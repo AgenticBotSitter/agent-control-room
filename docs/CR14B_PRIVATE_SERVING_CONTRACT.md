@@ -11,8 +11,14 @@ starts the already-reviewed database bootstrap, then supplies that application, 
 handler and explicit port to `createPrivateNodeService`. Only explicit `start()` can construct/bind a server.
 No environment/credential loading, migration, IdP configuration, signal handler, service installation, provider
 call or deployment is included. The rehearsal's exact reviewed entry and scope must authorize that effect.
-Calling `start()` transfers application ownership, including cleanup after failed startup; a rejected factory
-configuration has not transferred ownership. Failed/closed lifecycles never restart themselves.
+Successful service factory construction transfers application ownership, including close-before-start and
+cleanup after failed startup; a rejected factory configuration has not transferred ownership. Failed/closed
+lifecycles never restart themselves.
+
+The new HTTP server factory is explicitly pinned by a repository source-boundary regression to
+`src/web/v1/private-serving.ts`. The old direct `node:net` custom-listener allowlist stays unchanged and
+its disabled consumers remain disabled. The HTTP type's socket member avoids an unnecessary separate
+type-only networking dependency; the new authority is not concealed by that cleanup.
 
 The first serving profile is HTTP/1.1 on literal `127.0.0.1`, behind the separately configured same-host private
 Access ingress. The proxy must preserve the configured HTTPS Host; forwarded host/protocol headers cannot
@@ -42,7 +48,8 @@ Finite project snapshots are supported; this is not an indefinitely open event s
 Readiness drops synchronously on close/error; HTTP admission stops before application drain. The bridge
 waits up to 30 seconds for admitted delivery, then aborts remaining transfers and closes the app once. The
 service gives network/app cleanup up to 35 seconds, forces owned sockets closed on uncertainty and reports
-a fixed uncertain outcome. The existing pool has its independent bounded termination. Neither forcing a
+a fixed uncertain outcome. Both network and application cleanup are awaited, including when one fails early,
+until both settle or the shared ceiling expires. The existing pool has its independent bounded termination. Neither forcing a
 socket nor an injected callback proves real OS resource absence; the later rehearsal verifies that.
 
 ## Browser assets, not an arbitrary file server
@@ -55,8 +62,13 @@ operator must keep release files immutable during loading; same-UID/administrato
 
 HTTP performs exact in-memory lookup, never filesystem reads, normalization, range serving, directory lists
 or fallback. Assets contain no records/credentials and require private ingress/peer/Host but not a database
-session lookup; protected application records never use this path. All responses remain no-store/noindex
+session lookup; protected application records never use this path. All application/asset/owned 417 responses remain no-store/noindex
 with MIME sniffing disabled. No public CDN cache or discoverability guarantee is claimed.
+
+Node may generate its own pre-handler 408 responses for HTTP header/request timeouts; these do not carry
+the application's full header policy. Malformed parser/client errors close the socket without an application
+response. No private records are attached to either path. Injected tests do not prove physical parser timing
+or the actual wire headers of Node-generated failures; retain that in the real ingress/rehearsal checks.
 
 ## Evidence and remaining gates
 

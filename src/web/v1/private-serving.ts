@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerOptions, ServerResponse } from "node:http";
-import type { Socket } from "node:net";
 import { createPrivateNodeHandler, privateHttpLimits } from "./private-node-handler";
+import { privateResponseHeaders } from "./http-common";
 export { loadPrivateClientAssets } from "./private-assets";
 export { createPrivateNodeHandler } from "./private-node-handler";
 
@@ -11,10 +11,12 @@ export const privateServerOptions: Readonly<ServerOptions> = Object.freeze({
   insecureHTTPParser: false, requireHostHeader: true,
 });
 type ServerFactory = (options: Readonly<ServerOptions>) => Server;
+type Socket = IncomingMessage["socket"];
 
 /** Inert until explicit start(). Tests inject a server with no sockets.
  * Start is a physical effect and requires the separate approved deployment/rehearsal packet.
- * The caller transfers ownership of the already-preflighted application on start, including failure.
+ * Successful factory construction transfers ownership of the already-preflighted application,
+ * including close-before-start and startup failure. Invalid factory configuration does not transfer it.
  * No signal handler, service installation, environment loader or retry is installed.
  */
 export function createPrivateNodeService(options: Parameters<typeof createPrivateNodeHandler>[0] & {
@@ -44,7 +46,9 @@ export function createPrivateNodeService(options: Parameters<typeof createPrivat
         server!.closeIdleConnections();
       }) : Promise.resolve();
       try {
-        await Promise.race([Promise.all([network, bridge.close()]), new Promise<never>((_, reject) => {
+        await Promise.race([Promise.allSettled([network, bridge.close()]).then(results => {
+          if (results.some(result => result.status === "rejected")) throw new Error("private_listener_close_uncertain");
+        }), new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error("private_listener_close_uncertain")), closeMs);
         })]);
       } catch {
@@ -78,7 +82,7 @@ export function createPrivateNodeService(options: Parameters<typeof createPrivat
         instance.on("clientError", (_error, socket) => socket.destroy());
         for (const event of ["checkContinue", "checkExpectation"])
           instance.on(event, (_request: IncomingMessage, response: ServerResponse) => {
-            response.writeHead(417, { "connection": "close", "cache-control": "no-store" }); response.end();
+            response.writeHead(417, { ...privateResponseHeaders, "connection": "close" }); response.end();
           });
         instance.on("error", () => { ready = false; void close().catch(() => {}); });
         await new Promise<void>((resolve, reject) => {
