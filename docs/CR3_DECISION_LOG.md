@@ -5364,3 +5364,26 @@ transitions in the end-to-end test are not live admission or execution evidence.
 
 **Next:** planner mounting, actual admission/approval/dispatch and bounded revisions on Astra Medium.
 No real database, native/provider call, credential access, service, listener, deployment or merge occurred.
+
+## ADR-218 — Expose task preparation through a narrow scoped coordinator operation
+
+**Date:** 2026-09-05. **Status:** independently accepted repository integration; production unconfigured.
+
+Connect private task pages to planning through a scope-labelled operation, not a privileged web SQL
+login. Protected GET reads availability; POST accepts only the immutable source input digest and uses
+the existing owner-authorized planner. The coordinator-supplied operation owns its transaction and
+resource lifecycle; the web process does not construct another pool or expose planner keys/read methods.
+The existing single-pool production bootstrap explicitly refuses this new dependency until a separately
+implemented coordinator composition can own its bounded lifecycle.
+
+Preparation remains distinct from assignment, execution approval, admission, dispatch and quality review.
+Exact source uniqueness reconciles lost replies without new jobs. Browser pending and confirmed state
+is source/input-bound, never authorization; current protected reads gate every display and action.
+
+**Evidence:** product `f1d1856a6a295f4dd6f9a5d70bffe0b21f396afe`; independent re-review accepted with
+32 passes/no remaining findings after the refresh-link correction. Root passed full registered test
+lifecycle, 191 focused tests, both builds, 12 private/four Sites artifact tests, type/lint/whitespace
+and unchanged 132-table migration verification. See `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`.
+
+**Next:** coordinator ownership, executable admission/approval/dispatch and bounded revisions on Astra
+Medium. No physical service, provider, native credential access, deployment or merge is authorized here.

@@ -66,7 +66,11 @@ file delivery to the existing exact owner-review target in disposable integratio
 `48c30f7feb3aeadcc7b252ce67e0f3a4bb357583`. It preserves the inert proposal, creates a separate proposed
 execution bundle and binds its fixed input/template/profile to result review in disposable tests. See
 `CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md`. Planner mounting and actual admission/dispatch remain.
-**Next: CR14C C-WORK planner mounting, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
+**CR14C protected task preparation interface is independently accepted** at
+`f1d1856a6a295f4dd6f9a5d70bffe0b21f396afe`. The task page and protected route connect saved proposals
+to a scoped optional planner, retain exact reconciliation and confirmed links, and preserve the restricted
+web SQL role. See `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Production planner composition is not configured.
+**Next: CR14C C-WORK coordinator composition, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
@@ -140,7 +144,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 |---|---|---|
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
-| Real task -> agent -> progress -> result -> review in the website | Private task pages save proposals; owner-authorized planning and initial result submission connect through disposable tests; planner mounting, physical upload, actual admission/dispatch and revisions remain | CR14C |
+| Real task -> agent -> progress -> result -> review in the website | Private task pages save proposals and optionally prepare execution plans through protected routes; owner planning and initial result submission connect in disposable tests; production coordinator composition, physical upload, actual admission/dispatch and revisions remain | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Private view reads existing enrollments/signals; new native adapter is component-tested but unwired; no live fleet/dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
@@ -200,6 +204,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C task preparation interface | Independently accepted protected page/API and scoped planner operation; production composition and dispatch not enabled | `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`; `reviews/CR14C_TASK_PLANNING_INTERFACE_REVIEW.md` |
 | CR14C owner quality review | Independently accepted exact-result quality decisions and private change requests; no revision dispatch/live activation | `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`; `reviews/CR14C_OWNER_RESULT_REVIEW_REREVIEW.md` |
 | CR14C private task workspace | Independently accepted canonical proposals and recorded-progress pages; no live dispatch, artifact delivery or owner review | `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`; `reviews/CR14C_PRIVATE_TASK_WORKSPACE_REREVIEW.md` |
 | CR14C canonical native progress | Independently accepted durable signed evidence integration; no active dispatch or canonical task completion | `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md`; `reviews/CR14C_CANONICAL_NATIVE_PROGRESS_REREVIEW.md` |
@@ -1766,11 +1771,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14B private Node serving and rehearsal tooling
+Block: CR14C C-WORK coordinator composition and executable admission/approval/dispatch
 Set model: gpt-6-astra (Astra)
-Set reasoning effort: xhigh
-Why: Shared pages, explicit startup, bounded pool/drain and restricted role code are accepted; Node request/static delivery and an executable real-PG rehearsal harness remain unimplemented.
-Expected output: private request/static adapter and bounded disposable real-PG rehearsal tooling, independently reviewed with injected tests. No physical listener, real connection, setup or deployment run implied.
+Set reasoning effort: medium
+Why: Protected task preparation and planned result submission are accepted; the trusted coordinator still needs bounded resource ownership and the actual current-node/admission/approval/lease path.
+Expected output: integrated coordinator and assignment path using existing canonical and local-policy services, followed by bounded revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

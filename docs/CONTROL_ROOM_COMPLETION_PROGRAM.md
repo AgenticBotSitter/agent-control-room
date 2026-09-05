@@ -6,12 +6,15 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — bounded executable planning/admission/dispatch and planned result submission.
+**Next block:** CR14C C-WORK — coordinator composition, executable admission/approval/dispatch and revision submission.
+Protected task preparation is independently accepted in `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`;
+the optional page/API operation does not enable production planning or live execution. Initial planned
+result submission and owner-authorized execution planning are accepted in their separate CR14C records.
 Owner quality acceptance and private change requests are independently accepted in
 `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`; no revision dispatch or live activation is implied.
 Native result capture/readback and private file/recorded-review views are independently accepted in
 `CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md`. This connects checked artifact bytes and existing Completion
-Gate evidence in disposable tests; physical upload, planned target/revision submission and live dispatch remain unfinished.
+Gate evidence in disposable tests; physical upload, revision submission and live dispatch remain unfinished.
 The private task workspace is independently accepted in `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`:
 protected project task pages save real non-running canonical proposals and show recorded attempts/native
 progress. Saving is not a live assignment; owner commands are connected by the subsequent owner-review block.
@@ -267,10 +270,11 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **CR14C planner mounting, executable admission/approval/dispatch and revision submission**, using
+block is **CR14C coordinator composition, executable admission/approval/dispatch and revision submission**, using
 **Astra Medium (`gpt-6-astra`, `medium`)**. Planned initial result submission and owner-authorized execution
-planning are accepted in their separate records; neither dispatches tasks or revisions. See
-`CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md`. Shared project reads/pagination are accepted in
+planning are accepted in their separate records; neither dispatches tasks or revisions. Protected page/API
+planning is now optionally mounted without changing web SQL privileges; production composition remains.
+See `CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md` and `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`. Shared project reads/pagination are accepted in
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.
 The connection read view, startup/role, serving, rehearsal and fixture-preparation code are accepted in their
 CR14B acceptance records. Owner quality commands are accepted in `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. The next code

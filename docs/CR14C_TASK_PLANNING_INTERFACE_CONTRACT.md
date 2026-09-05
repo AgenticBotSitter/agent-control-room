@@ -1,6 +1,7 @@
 # CR14C — protected task preparation interface
 
-Status: implementation candidate, independent review required. Predecessor: PR #294.
+Status: independently accepted repository integration at `f1d1856a6a295f4dd6f9a5d70bffe0b21f396afe`.
+Predecessor: PR #294. Production configuration remains unavailable.
 
 ## Owner journey
 
