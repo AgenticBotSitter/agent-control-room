@@ -159,6 +159,8 @@ Final local verification: CR14C 334, preparation 769, main 913 with two existing
 post-suite 392, compiled private tests 16 and rendered tests four passed; both builds, TypeScript,
 ESLint and migrations through 0046 passed. Next: profile/recovery sources, owner signing/intake,
 signed dispatch and revisions, Astra Medium. Live task execution remains disabled.
+Published as [PR #306](https://github.com/MarvinAi5/control-room/pull/306), stacked on #305.
+Current-head GitHub CI remains required; no merge or deployment is claimed.
 PR #304 exact head `21ab559e8aaf13d429c5c3622fa9aa339c5388cf` passed CI `33984129093`
 at 2026-09-05 18:49:12 UTC. PR #305 was still running when checked. Neither is merged here.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
