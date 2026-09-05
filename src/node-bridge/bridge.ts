@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { sha256Digest } from "../security";
 import {
   NODE_PROTOCOL_MAX_FRAME_BYTES,
   NODE_PROTOCOL_V1,
@@ -140,6 +141,7 @@ export class PortableNodeBridge {
       if (delivery === "duplicate" && priorStatus === "processed") return;
       this.journal.acknowledge(frame.body.acknowledgedMessageIds, now);
       this.journal.markInboundProcessed(frame.messageId, now);
+      await this.flushNativeSnapshots(now);
       return;
     }
 
@@ -217,9 +219,15 @@ export class PortableNodeBridge {
     if (!["online", "draining"].includes(this.statusValue.state)
       || !this.statusValue.enabledFeatures?.includes("harness.native.snapshot.v1")) return 0;
     return this.serializeSend(async () => {
+      if (this.journal.nativeSnapshotAcknowledgementExpired(this.requireConnection(), now)) {
+        // A new connection removes uncertainty about a missing old protocol sequence. Reconciliation
+        // re-envelopes the durable body; no new native run/provider request is involved.
+        await this.disconnected();
+        return 0;
+      }
       let sent = 0;
       for (const body of this.journal.pendingNativeSnapshots()) {
-        await this.sendBodyNow("harness.native.snapshot", body, true, now, `correlation:${body.attemptId}`, undefined, true);
+        await this.sendBodyNow("harness.native.snapshot", body, true, now, `correlation:native:${sha256Digest(body.attemptId).slice(7)}`, undefined, true);
         sent++;
       }
       return sent;
@@ -244,7 +252,7 @@ export class PortableNodeBridge {
     if (!interval || !due || !["online", "draining"].includes(this.statusValue.state) || Date.parse(now) < Date.parse(due)) return false;
     await this.heartbeat(await snapshot(), now);
     await this.flushNativeSnapshots(now);
-    this.statusValue = { ...this.statusValue, nextHeartbeatAt: addSeconds(now, interval) };
+    if (["online", "draining"].includes(this.statusValue.state)) this.statusValue = { ...this.statusValue, nextHeartbeatAt: addSeconds(now, interval) };
     return true;
   }
 

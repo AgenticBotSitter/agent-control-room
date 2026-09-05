@@ -3,7 +3,8 @@ import { z } from "zod";
 /** Evidence only: these fields grant no dispatch, retry, approval or cleanup authority. */
 export const NATIVE_HERMES_ADAPTER_ID = "adapter.hermes.native_runs.v1" as const;
 export const NATIVE_HERMES_VERSION = "2026.8.31" as const;
-const id = z.string().min(3).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+export const nativeTaskProtocolId = z.string().min(3).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+const id = nativeTaskProtocolId;
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const time = z.string().datetime().refine(value => new Date(value).toISOString() === value);

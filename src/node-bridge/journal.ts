@@ -152,8 +152,10 @@ export class SqliteBridgeJournal implements ReplayGuard {
   }
 
   pendingNativeSnapshots(): NativeTaskSnapshotBody[] {
-    const rows = this.db.prepare(`SELECT body_json,body_digest FROM bridge_native_snapshots WHERE status='pending'
-      ORDER BY recorded_at,run_id,snapshot_version LIMIT 32`).all() as Array<{ body_json: string; body_digest: string }>;
+    const rows = this.db.prepare(`SELECT n.body_json,n.body_digest FROM bridge_native_snapshots n WHERE n.status='pending'
+      AND NOT EXISTS(SELECT 1 FROM bridge_native_snapshots p WHERE p.run_id=n.run_id
+        AND p.snapshot_version<n.snapshot_version AND p.status IN ('pending','staged'))
+      ORDER BY n.recorded_at,n.run_id,n.snapshot_version LIMIT 32`).all() as Array<{ body_json: string; body_digest: string }>;
     return rows.map(row => {
       const body = nativeTaskSnapshotBodySchema.parse(JSON.parse(row.body_json));
       if (sha256Digest(body) !== row.body_digest) throw new Error("native snapshot outbox integrity failure");
@@ -185,6 +187,11 @@ export class SqliteBridgeJournal implements ReplayGuard {
         this.db.prepare(`UPDATE bridge_native_snapshots SET status='pending',outbound_message_id=NULL WHERE outbound_message_id=? AND status='staged'`).run(row.outbound_message_id);
       }
     });
+  }
+
+  nativeSnapshotAcknowledgementExpired(connectionId: string, now: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM bridge_native_snapshots n JOIN bridge_outbox o ON o.message_id=n.outbound_message_id
+      WHERE n.status='staged' AND o.connection_id=? AND o.status IN ('pending','sent') AND o.expires_at<=? LIMIT 1`).get(connectionId, now));
   }
 
   initializeNodeControlState(state: JournalNodeControlState): "initialized" | "duplicate" {

@@ -33,6 +33,7 @@ for (const [state, expected] of [["running", "running"], ["waiting_approval", "w
     const result = await f.runs.recordNativeSnapshot(binding.tenantId, binding.nodeId, observation({ state, stopAttempted: state === "stopping" }));
     assert.equal(result.run.state, expected);
     if (state === "cancelled") assert.equal(result.run.cancelState, "reported");
+    if (["stopping", "cancelled", "interrupted"].includes(state)) assert.equal(result.run.startedAt, undefined);
     assert.equal((await f.runs.events(binding.tenantId, binding.runId)).length, 1);
   });
 }
@@ -49,6 +50,7 @@ test("snapshot identity binds canonical project, job, attempt, lease, input, nod
   await assert.rejects(f.runs.create({ ...registration, nativeTask: { ...registration.nativeTask!, inputDigest: digest("e") } }), /binding/);
   await assert.rejects(f.runs.create({ ...registration, nativeTask: { ...registration.nativeTask!, leaseEpoch: 2 } }), /binding/);
   await f.runs.create(registration);
+  await assert.rejects(f.runs.create({ ...registration, id: "run:second", nativeSessionKeyDigest: digest("e") }), /already has/);
   for (const patch of [{ projectId: "project:other" }, { jobId: "job:other" }, { attemptId: "attempt:other" }, { leaseId: "lease:other" },
     { leaseEpoch: 2 }, { sessionKeyDigest: digest("e") }, { bindingDigest: digest("f") }]) {
     await assert.rejects(f.runs.recordNativeSnapshot(binding.tenantId, binding.nodeId, { ...observation(), ...patch }), /identity/);

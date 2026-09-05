@@ -21,7 +21,7 @@ async function bridgeFixture(enabled = true) {
   const serverAuth = new NodeProtocolAuthenticator({ async resolve(value) { return { ...value, algorithm: "ed25519", state: "active",
     principalState: "active", validFrom: at(-60_000), publicKeySpki: server.publicKey.export({ format: "der", type: "spki" }).toString("base64url") }; } },
   journal, new FixedWindowProtocolRateLimiter(100, 60));
-  let ordinal = 0, failAfterStore = false;
+  let ordinal = 0, failAfterStore = false, failBeforeCommit = false, currentTime = at(1000);
   const sent: SignedNodeFrame[] = [], receipts: Awaited<ReturnType<NativeTaskSnapshotService["ingest"]>>[] = [];
   const bridge = new PortableNodeBridge({ tenantId: binding.tenantId, nodeId: binding.nodeId, keyId: "key:test",
     features: ["harness.native.snapshot.v1"] }, journal, { async sign(frame) { return signNodeFrame(frame, f.keys.privateKey); } },
@@ -29,6 +29,12 @@ async function bridgeFixture(enabled = true) {
   const transport = { async close() {}, async send(raw: string) {
     const frame = JSON.parse(raw) as SignedNodeFrame; sent.push(frame);
     if (frame.type === "harness.native.snapshot") {
+      if (failBeforeCommit) {
+        failBeforeCommit = false;
+        await f.auth.verify(raw, { expectedDirection: "node_to_server", receivedAt: frame.sentAt, transportIdentity: "transport:fixture" });
+        // Server authenticated the delivery but its business transaction never committed; no ACK.
+        return;
+      }
       receipts.push(await f.service.ingest(raw, { ...f.options(frame.sentAt), expectedConnectionId: bridge.status().connectionId! }));
       if (failAfterStore) { failAfterStore = false; throw new Error("fixture acknowledgement lost"); }
     } else await f.auth.verify(raw, { expectedDirection: "node_to_server", receivedAt: frame.sentAt, transportIdentity: "transport:fixture" });
@@ -39,16 +45,18 @@ async function bridgeFixture(enabled = true) {
     const connectionId = bridge.status().connectionId!;
     const frame = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "server_to_node", senderKind: "control_room", tenantId: binding.tenantId,
       actorId: "server:test", keyId: "server-key:test", connectionId, sequence: incoming, messageId: `server:${connectionId}:${incoming}`,
-      correlationId: "correlation:test", nonce: `server_${connectionId.replaceAll(":", "_")}_${incoming}_nonce_123456789`, sentAt: at(1000), expiresAt: at(60_000), type, body } as UnsignedNodeFrame<T>, server.privateKey);
-    await bridge.receive(JSON.stringify(frame), at(1000));
+      correlationId: "correlation:test", nonce: `server_${connectionId.replaceAll(":", "_")}_${incoming}_nonce_123456789`, sentAt: currentTime,
+      expiresAt: new Date(Date.parse(currentTime) + 60_000).toISOString(), type, body } as UnsignedNodeFrame<T>, server.privateKey);
+    await bridge.receive(JSON.stringify(frame), currentTime);
   }
-  async function open() {
-    incoming = 0; await bridge.open(transport, { now: at(1000), transportIdentity: "transport:server" });
+  async function open(now = at(1000)) {
+    currentTime = now; incoming = 0; await bridge.open(transport, { now, transportIdentity: "transport:server" });
     await receive("connection.accepted", { selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: enabled ? ["harness.native.snapshot.v1"] : [],
-      maxFrameBytes: 16_384, heartbeatIntervalSeconds: 30, serverTime: at(1000) });
+      maxFrameBytes: 16_384, heartbeatIntervalSeconds: 30, serverTime: now });
     await receive("node.reconciliation.request", { lastAcknowledgedNodeSequence: 0, requestedAttemptIds: [] });
   }
   return { ...f, bridge, journal, sent, receipts, open, receive, loseNextAcknowledgement() { failAfterStore = true; },
+    failNextBeforeCommit() { failBeforeCommit = true; },
     async close() { await bridge.close(); journal.close(); await f.close(); } };
 }
 
@@ -133,6 +141,7 @@ test("native adapter to SQLite outbox to signed protocol to canonical progress w
   }, () => now);
   const queued = await adapter.start(input);
   await f.bridge.publishNativeSnapshot(nativeTaskObservation(queued, registration.nativeTask!), at(1000));
+  await f.receive("protocol.ack", f.receipts[0].acknowledgement);
   now += 1000;
   const complete = await adapter.poll(binding.runId);
   await f.bridge.publishNativeSnapshot(nativeTaskObservation(complete, registration.nativeTask!), at(2000));
@@ -153,6 +162,42 @@ test("offline evidence queue has a finite capacity and conflicting records are n
     for (let index = 0; index < 2048; index++) journal.appendNativeSnapshot({ ...observation(), snapshotVersion: index + 1 }, at(1000));
     assert.throws(() => journal.appendNativeSnapshot({ ...observation(), snapshotVersion: 2049 }, at(1000)), /ceiling/);
     assert.equal(journal.appendNativeSnapshot({ ...observation(), snapshotVersion: 1 }, at(1000)), "duplicate");
-    assert.equal(journal.pendingNativeSnapshots().length, 32);
+    assert.equal(journal.pendingNativeSnapshots().length, 1);
   } finally { journal.close(); }
+});
+
+test("failure before commit cannot be overtaken by newer progress; reconnect and ACK drain in order", async t => {
+  const f = await bridgeFixture(); t.after(f.close); await f.open(); f.failNextBeforeCommit();
+  await f.bridge.publishNativeSnapshot(observation(), at(1000));
+  await f.bridge.publishNativeSnapshot(observation({ version: 4, state: "running", observedAt: instant + 2000 }), at(2000));
+  assert.equal(f.sent.filter(frame => frame.type === "harness.native.snapshot").length, 1);
+  assert.equal(f.receipts.length, 0); assert.equal((await f.runs.events(binding.tenantId, binding.runId)).length, 0);
+  await f.bridge.flushNativeSnapshots(at(301_000)); assert.equal(f.bridge.status().state, "backing_off");
+  await f.open(at(302_000));
+  assert.equal(f.receipts.length, 1); assert.equal(f.receipts[0].event.snapshotVersion, 3);
+  await f.receive("protocol.ack", f.receipts[0].acknowledgement);
+  assert.equal(f.receipts.length, 2); assert.equal(f.receipts[1].event.snapshotVersion, 4);
+  assert.deepEqual((await f.runs.events(binding.tenantId, binding.runId)).map(event => event.sequence), [1, 2]);
+});
+
+test("healthy-connection heartbeat detects a silently lost ACK and requests bounded reconnect", async t => {
+  const f = await bridgeFixture(); t.after(f.close); await f.open();
+  await f.bridge.publishNativeSnapshot(observation(), at(1000));
+  const connection = f.bridge.status().connectionId;
+  await f.bridge.tick(at(301_000), async () => ({ observedAt: at(301_000), health: "healthy", policyVersion: "policy:test", activeAttemptIds: [],
+    resources: { freeMemoryMb: 100, freeScratchMb: 100, cpuUtilizationPercent: 0 } }));
+  assert.equal(f.bridge.status().state, "backing_off");
+  await f.open(at(302_000));
+  assert.notEqual(f.bridge.status().connectionId, connection); assert.equal(f.receipts.at(-1)?.event.replayed, true);
+  assert.equal((await f.runs.events(binding.tenantId, binding.runId)).length, 1);
+});
+
+test("maximum-length attempt IDs still produce bounded signed correlation references", async t => {
+  const f = await bridgeFixture(); t.after(f.close); await f.open();
+  const body = { ...observation(), attemptId: "a".repeat(160) };
+  // The deliberately unmatched canonical attempt will be rejected by the server, after successful signing.
+  await assert.rejects(f.bridge.publishNativeSnapshot(body, at(1000)), /native_snapshot_rejected/);
+  const sent = f.sent.at(-1)!;
+  assert.equal(sent.type, "harness.native.snapshot"); assert.ok(sent.correlationId.length <= 160);
+  assert.equal(sent.body && "attemptId" in sent.body && sent.body.attemptId, body.attemptId);
 });

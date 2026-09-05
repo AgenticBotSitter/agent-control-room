@@ -13,7 +13,8 @@ private task pages and real-host rehearsal are still separate remaining work.
 Registration is a trusted coordinator operation after local admission, not a browser operation or an
 owner-signed permission. The helper creates no lease or admission. The receiving store checks an
 existing active attempt, canonical project/job/input digest, assigned node, exact lease/epoch and
-deadline within that lease. It retains the exact native binding digest and session digest. Registration
+deadline within that lease. Registration serializes on the attempt and permits only one native run for
+that attempt. It retains the exact native binding digest and session digest. Registration
 may be replayed after progress only with the identical initial binding; it returns the existing observation
 without resetting it or recreating execution authority. Registration
 does not assert that an agent has actually started, that a profile is qualified, or that an effect was authorized.
@@ -42,11 +43,16 @@ Final text remains in the private native journal pending the artifact integratio
 SHA-256 of its exact UTF-8 bytes and is a producer claim, not independent verification or owner acceptance.
 
 The bridge journals the body while offline. After reconciliation it signs a new delivery envelope and
-stages its link to that body in the same SQLite transaction before sending. A server ACK retires the
+stages its link to that body in the same SQLite transaction before sending. There is only one in-flight
+snapshot per run; a later snapshot waits for the preceding durable ACK, while different runs can make
+progress independently. A server ACK drains the next queued snapshot and retires the
 body only after its durable SQL event has committed. Expired or old-connection envelopes return the
 body to pending and are replaced with a fresh connection signature; they are never replayed as a
 native start. Uncertain SQL commit responses return no ACK; an exact redelivery recovers the committed
-snapshot if it exists. There is no automatic native/provider retry in any of these paths.
+snapshot if it exists. A heartbeat/flush detects an expired outstanding native ACK, closes that transport
+and enters the existing bounded reconnect state. The next reconciliation re-signs the pending evidence
+on a fresh connection, avoiding reuse or skipping of an uncertain old protocol sequence. There is no
+automatic native/provider retry in any of these paths. Correlation references are fixed-length digests.
 
 The node outbox retains at most 2,048 snapshot bodies, including acknowledged records, and flushes at
 most 32 per reconciliation/publication/heartbeat opportunity. Central native history is capped at
@@ -67,7 +73,7 @@ without inventing an intermediate running event.
 Legacy harness lifecycle ingestion and native snapshot ingestion cannot be mixed. Existing legacy
 contracts keep their transition rules. A native run's `startedAt`, if present, means **first observed
 execution**, not an inferred upstream start timestamp. A failed preflight has no start timestamp.
-`finishedAt` is the local observation time; the upstream update is retained separately. Unknown
+Stopping, cancellation or interruption alone do not establish an execution start. `finishedAt` is the local observation time; the upstream update is retained separately. Unknown
 transport state maps to disconnected. `cancelState: reported` means Hermes reported cancellation;
 it never means that every OS descendant or external effect has ceased.
 

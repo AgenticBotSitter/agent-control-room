@@ -2,7 +2,7 @@ import { sha256Digest } from "../../security/canonical-digest";
 import { createHash } from "node:crypto";
 import { snapshotSchema, bindingSchema, type NativeBinding, type NativeSnapshot } from "./contracts";
 import { nativeTaskRegistrationSchema, nativeTaskSnapshotBodySchema, NATIVE_HERMES_ADAPTER_ID, NATIVE_HERMES_VERSION,
-  type NativeTaskRegistration, type NativeTaskSnapshotBody } from "../v1/native-observation";
+  nativeTaskProtocolId, type NativeTaskRegistration, type NativeTaskSnapshotBody } from "../v1/native-observation";
 import type { HarnessRunV1 } from "../v1/types";
 
 /** Trusted coordinator registration after admission, not authority. The receiving store checks the
@@ -10,6 +10,7 @@ import type { HarnessRunV1 } from "../v1/types";
 export function nativeTaskRegistration(bindingInput: NativeBinding, inputDigest: string,
   leaseId: string, leaseEpoch: number, createdAt: string): HarnessRunV1 {
   const binding = bindingSchema.parse(bindingInput);
+  for (const id of [binding.tenantId, binding.nodeId, binding.projectId, binding.jobId, binding.attemptId, binding.runId]) nativeTaskProtocolId.parse(id);
   const registration = nativeTaskRegistrationSchema.parse({ bindingDigest: sha256Digest(binding), inputDigest,
     leaseId, leaseEpoch, deadline: new Date(binding.deadline).toISOString() });
   if (Date.parse(createdAt) >= binding.deadline) throw new Error("native_registration_expired");

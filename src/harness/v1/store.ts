@@ -187,11 +187,15 @@ export class HarnessRunStoreV1 {
        FROM control_jobs j JOIN control_attempts a ON a.tenant_id=j.tenant_id AND a.job_id=j.id
        JOIN control_leases l ON l.tenant_id=a.tenant_id AND l.attempt_id=a.id
        WHERE j.tenant_id=$1 AND j.id=$2 AND j.project_id=$3 AND a.id=$4 AND a.node_id=$5
-         AND l.id=$6 AND l.node_id=$5 AND a.lease_epoch=$7 AND l.epoch=$7 FOR SHARE OF j,a,l`,
+         AND l.id=$6 AND l.node_id=$5 AND a.lease_epoch=$7 AND l.epoch=$7 FOR SHARE OF j,l ${registration ? "FOR UPDATE OF a" : "FOR SHARE OF a"}`,
       [run.tenantId, run.jobId, run.projectId, run.attemptId, run.nodeId, native.leaseId, native.leaseEpoch])).rows[0];
     if (!row || row.input_digest !== native.inputDigest || registration && (row.state !== "active"
       || Date.parse(run.createdAt) < Date.parse(iso(row.acquired_at)) || Date.parse(native.deadline) > Date.parse(iso(row.expires_at))
       || Date.parse(run.createdAt) >= Date.parse(native.deadline))) throw new Error("native canonical task binding mismatch");
+    if (registration && (await tx.query(`SELECT id FROM control_harness_runs
+      WHERE tenant_id=$1 AND attempt_id=$2 AND adapter_id=$3 AND id<>$4`, [run.tenantId, run.attemptId, run.adapterId, run.id])).rows.length) {
+      throw new Error("native attempt already has a registered run");
+    }
     // Late observations for this exact historical attempt/lease are evidence, never renewed execution authority.
   }
 
@@ -216,7 +220,7 @@ export class HarnessRunStoreV1 {
   private updatedRun(run: HarnessRunV1, state: HarnessRunState, event: HarnessRunEventV1): HarnessRunV1 {
     // For native observations this is the first observed execution state, not an invented start time.
     const observedExecution = event.payload.category === "native_snapshot"
-      ? event.payload.snapshot.nativeRunKeyDigest !== null && ["running", "waiting_approval", "stopping", "completed", "cancelled", "interrupted"].includes(event.payload.snapshot.state)
+      ? event.payload.snapshot.nativeRunKeyDigest !== null && ["running", "waiting_approval", "completed"].includes(event.payload.snapshot.state)
       : ["running","waiting_input","waiting_approval","cancelling","succeeded","failed","cancelled"].includes(state);
     const startedAt = !run.startedAt && observedExecution ? event.occurredAt : run.startedAt;
     const finishedAt = isTerminalHarnessRunState(state) ? event.occurredAt : undefined;
