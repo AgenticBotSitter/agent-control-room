@@ -1,21 +1,12 @@
-import { z } from "zod";
 import { sha256Digest } from "../../security";
 import { verifyArtifactSignature } from "../../node-policy/v1/crypto";
 import type { SqliteEffectClaimStore } from "../../node-policy/v1/effect-claim-store";
 import type { SqliteExecutionStateStore } from "../../node-policy/v1/execution-state-store";
-import { bindingSchema, enrollmentSchema, digestSchema, localId, snapshotSchema,
+import { bindingSchema, enrollmentSchema, snapshotSchema,
   type NativeAuthority, type NativeBinding, type NativeEnrollment, type NativeRunJournal, type NativeOperation } from "./contracts";
 
-const instant = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-export const nativeRecoveryPermissionBodySchema = z.object({
-  schema: z.literal("control-room.native-run-recovery-permission/v1"),
-  bindingDigest: digestSchema, approvalKeyId: localId, issuedAt: instant, expiresAt: instant,
-  operations: z.tuple([z.literal("status"), z.literal("stop")]),
-  nonce: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/), bodyDigest: digestSchema,
-}).strict();
-export type NativeRecoveryPermissionBody = z.infer<typeof nativeRecoveryPermissionBodySchema>;
-export const nativeRecoveryPermissionSchema = z.object({ body: nativeRecoveryPermissionBodySchema,
-  signatureAlgorithm: z.literal("Ed25519"), signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/) }).strict();
+import { nativeRecoveryPermissionSchema } from "../v1/native-approval-packet";
+export { nativeRecoveryPermissionSchema, nativeRecoveryPermissionBodySchema, type NativeRecoveryPermissionBody } from "../v1/native-approval-packet";
 export type NativeRecoveryCurrent = {
   approvalKey: { keyId: string; publicKeySpki: string };
   credentialAvailable: boolean;
