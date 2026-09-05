@@ -193,6 +193,20 @@ private compiled tests 16 and rendered tests four passed; both builds, TypeScrip
 migrations through 0046 (132 tables) passed. Live C-WORK remains incomplete.
 Published as [PR #309](https://github.com/MarvinAi5/control-room/pull/309), stacked on #308.
 Current-head CI remains required; no merge or activation is claimed.
+Canonical native approval preparation is independently accepted at
+`51cdd1db63d97dd2b7bf3e98de04a4fbe1f5d98b`, with 44 passing re-review tests. The coordinator requires
+current owner approval access and reads the actual saved plan, reservation, node and identity key under
+locks. Its unsigned result is not a browser operation, signature, saved approval or dispatch command.
+The broad suite caught an application/native import violation; pure helpers were moved to shared
+contracts and the unchanged isolation test now passes. See
+`CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` for retained negative evidence and verification.
+Final local checks passed: CR14C 385, preparation 769, main 964 with two existing platform skips,
+post-suite 392, private compiled checks 16 and rendered routes four; both builds, TypeScript, full
+ESLint, stage zero and disposable migrations through 0046 (132 tables) passed.
+Owner signing/custody, authenticated packet storage, durable supervisor state, signed dispatch and
+revision submission remain. Continue effect-free repository integration on Astra Medium.
+Prerequisite refresh: #308 exact head `d844ce487e0529e30fe3297872a5b5e8c0104e59` passed CI
+`33986571515` at 2026-09-05 19:37:21 UTC. #309 was still running when inspected; no merge is claimed.
 PR #306 exact head `4f32ef1891490b475282ddcbe575b69be6cae9e9` passed CI `33985592476`
 at 2026-09-05 19:19:47 UTC. PR #307 was still running when checked. No merge is claimed.
 PR #305 exact head `b3cb5ceee3529c2b11253ea196dbe99dceb0b566` passed CI `33984854964`
@@ -341,6 +355,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C canonical approval preparation | Independently accepted locked owner-authorized unsigned preparation; shared contracts preserve native isolation; no storage/signing/dispatch | `CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` |
 | CR14C task preparation interface | Independently accepted protected page/API and scoped planner operation; production composition and dispatch not enabled | `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`; `reviews/CR14C_TASK_PLANNING_INTERFACE_REVIEW.md` |
 | CR14C owner quality review | Independently accepted exact-result quality decisions and private change requests; no revision dispatch/live activation | `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`; `reviews/CR14C_OWNER_RESULT_REVIEW_REREVIEW.md` |
 | CR14C private task workspace | Independently accepted canonical proposals and recorded-progress pages; no live dispatch, artifact delivery or owner review | `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`; `reviews/CR14C_PRIVATE_TASK_WORKSPACE_REREVIEW.md` |
@@ -1908,11 +1923,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14C verified two-pool startup mounting, followed by executable admission/approval/dispatch
+Block: CR14C authenticated approval storage, signed dispatch and bounded revision submission
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Supplied-resource ownership and exact web/coordinator database gates are accepted; production still needs shared startup/page-handler mounting before actual signed approval/local admission/dispatch.
-Expected output: two separately verified, bounded pools mounted through the shared compiled application, then executable admission and bounded revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Two-pool startup, current native authority sources, paired approval verification and canonical unsigned preparation are accepted. The remaining path must connect those components to durable approved work and delivery.
+Expected output: authenticated canonical approval persistence and bounded signed dispatch using the existing node admission/marker controllers, then revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

@@ -5685,3 +5685,25 @@ See `CR14C_NATIVE_APPROVAL_INTAKE_ACCEPTANCE.md` for test-authoring correction a
 
 **Next:** owner signing/custody, authenticated intake and canonical persistence, durable supervisor state,
 signed dispatch and revisions on Astra Medium. No live qualification, runtime activation or merge is added.
+
+## ADR-232 — prepare unsigned native approvals from locked canonical reservations
+
+**Date:** 2026-09-05. **Status:** independently accepted corrected coordinator component.
+
+Use current owner `tasks.approve` authority and the saved execution plan, canonical assignment receipt,
+lease, attempt, active node and valid identity key in one checked transaction. Enrollment/profile settings
+are constructor configuration, never request-supplied. Preserve assignment lock order and recheck session,
+grants, clock, work deadline and key expiry before commit. Preparation proves only that snapshot; later
+approval persistence and execution must revalidate their current sources.
+
+Keep pure native contracts and payload binding in the shared harness contract layer. Native implementation
+paths re-export those definitions; application code cannot import the adapter, transport or journals. The
+unchanged isolation test detected the initial integration defect and passes after the mechanical extraction.
+
+**Evidence:** corrected product `51cdd1db63d97dd2b7bf3e98de04a4fbe1f5d98b`, tree
+`a3202ec302e46f56b7560245e8ada6472b294f30`; independent re-review passed 44 tests with no blocking
+findings. See `CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` for initial failures and corrections.
+
+The trusted operation is deliberately absent from the browser-facing assignment surface and does not
+sign, store approvals or dispatch. Owner signing/custody, authenticated canonical approval persistence,
+trusted supervisor state, signed delivery and revisions remain on Astra Medium. No live effects are added.
