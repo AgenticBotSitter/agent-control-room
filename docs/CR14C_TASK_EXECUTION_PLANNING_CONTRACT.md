@@ -1,6 +1,6 @@
 # CR14C owner-authorized task execution planning
 
-Status: implemented for independent review; repository-only, unmounted. Lead: Astra Medium.
+Status: independently accepted; repository-only, unmounted. Lead: Astra Medium.
 
 ## Product behavior
 

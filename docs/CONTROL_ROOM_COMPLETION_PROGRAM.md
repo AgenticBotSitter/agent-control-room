@@ -267,9 +267,10 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **CR14C bounded executable planning/admission/dispatch and revision submission**, using
-**Astra Medium (`gpt-6-astra`, `medium`)**. Planned initial result submission has its separate current
-acceptance record; it does not dispatch tasks or revisions. Shared project reads/pagination are accepted in
+block is **CR14C planner mounting, executable admission/approval/dispatch and revision submission**, using
+**Astra Medium (`gpt-6-astra`, `medium`)**. Planned initial result submission and owner-authorized execution
+planning are accepted in their separate records; neither dispatches tasks or revisions. See
+`CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md`. Shared project reads/pagination are accepted in
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.
 The connection read view, startup/role, serving, rehearsal and fixture-preparation code are accepted in their
 CR14B acceptance records. Owner quality commands are accepted in `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. The next code

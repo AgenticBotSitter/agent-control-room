@@ -5335,3 +5335,32 @@ See `CR14C_PLANNED_RESULT_SUBMISSION_ACCEPTANCE.md` for scope and remaining work
 **Next:** executable proposal lineage, canonical admission/dispatch and bounded revision submission;
 physical transport/private-pilot gates remain separate. Continue on Astra Medium, escalating only for
 a specific unresolved decision rather than categorically requiring Xhigh for integration.
+
+## ADR-217 — Preserve proposals while materializing owner-authorized execution plans
+
+**Date:** 2026-09-05. **Status:** independently accepted repository integration; unmounted.
+
+Use a separate proposed canonical child bundle for a saved task's execution plan. Do not mutate the
+source proposal's inert authority or infer execution approval from its prose. Owner-only `tasks.plan`
+permission and existing project/session checks authorize this internal planning write, not a native effect.
+A server-owned bounded approval-required template fixes executor/operation/destination/reference/time
+and existing review-profile bindings; real enrollment, node ceilings and admission remain separate.
+
+One authenticated append-only plan per source preserves immutable source/template/input/profile lineage
+and exact reconciliation. Source locking, child/plan/audit atomicity and final session/grant plus current
+template-duration checks prevent duplicate or stale new plans. Historical replay does not renew authority.
+Migration 0045 adds no private-web privileges. Trusted planner composition cannot be mounted by replacing
+the web connection with an unrestricted database login.
+
+After separately registered canonical runs, the stored profile binds to existing planned result submission.
+Pure shared identifiers keep application planning separate from the unwired native adapter subtree.
+
+**Evidence:** product `48c30f7feb3aeadcc7b252ce67e0f3a4bb357583`, tree
+`05152ac602715cac63b7a716233e38d25b01c0e4`; independent re-review accepted 58 tests/no remaining findings.
+Root verified 183 focused, 769 pretests, 760 main passes/two existing skips, 392 posttests, both builds,
+eleven private/four Sites artifact checks, type/lint/whitespace and 132-table disposable migrations.
+Initial timing rejection and isolation-test failure/correction remain recorded. Synthetic claim/run
+transitions in the end-to-end test are not live admission or execution evidence.
+
+**Next:** planner mounting, actual admission/approval/dispatch and bounded revisions on Astra Medium.
+No real database, native/provider call, credential access, service, listener, deployment or merge occurred.

@@ -85,7 +85,9 @@ proposals/receipts, then read-only artifact receipts/manifests and verified revi
 guarded human quality-review/finding inserts, immutable private feedback receipts and the required integrity/
 lock columns. It grants no profile/target/verification/revision/approval inserts, task transitions, attempts,
 leases, dispatch, effects or artifact writes. Migration 0044 adds trusted native review plans without
-granting the private web role any privileges on that table. Extra/missing
+granting the private web role any privileges on that table. Migration 0045 adds owner-authorized execution
+plan lineage, also without private-web grants; it requires separate trusted control-plane composition.
+Extra/missing
 permissions and schema drift fail closed. Migrators/DB administrators remain trusted; this is a startup snapshot,
 not continuous monitoring of administrator changes. New schema/role versions require reviewed compatibility.
 

@@ -62,7 +62,11 @@ See `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. Planned review-target/revision su
 `dbd5885bf362803f8cc049817367c9c2134c6c17`. A trusted pre-progress profile binding now connects authenticated
 file delivery to the existing exact owner-review target in disposable integration tests. See
 `CR14C_PLANNED_RESULT_SUBMISSION_ACCEPTANCE.md`. Actual planning/dispatch, transport and revision submission remain.
-**Next: CR14C C-WORK bounded executable planning/admission/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
+**CR14C owner-authorized execution planning is independently accepted** at
+`48c30f7feb3aeadcc7b252ce67e0f3a4bb357583`. It preserves the inert proposal, creates a separate proposed
+execution bundle and binds its fixed input/template/profile to result review in disposable tests. See
+`CR14C_TASK_EXECUTION_PLANNING_ACCEPTANCE.md`. Planner mounting and actual admission/dispatch remain.
+**Next: CR14C C-WORK planner mounting, executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
@@ -106,20 +110,22 @@ The accepted owner-review follow-up is [PR #292](https://github.com/MarvinAi5/co
 stacked on #291 from `codex/cr14c-owner-result-review`. Its exact head `77db0d5` passed GitHub CI run
 `33968240457` at 13:31:24 UTC. The accepted planned-submission follow-up is
 [PR #293](https://github.com/MarvinAi5/control-room/pull/293), stacked on #292 from
-`codex/cr14c-planned-result-submission`. Its own current-head GitHub checks remain required.
+`codex/cr14c-planned-result-submission`. Its exact head `114f584` passed GitHub CI run
+`33970027382` at 14:08:01 UTC. Execution-planning publication is tracked in the follow-up handoff.
 This stack is not merged or deployed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
 ### What the owner can actually use
 
-Latest planned-submission checks: 166 focused, 769 pretests, 743 main passes/two existing Windows skips,
+Latest execution-planning checks: 183 focused, 769 pretests, 760 main passes/two existing Windows skips,
 392 posttests, eleven private/four Sites artifact checks, both builds and type/lint/whitespace.
-Migrations 0001–0044 verified 131 tables. Independent submission review accepted with 36 passing tests
-and no findings. Earlier owner-review negative dispositions and their accepted corrections are retained.
+Migrations 0001–0045 verified 132 tables. Independent planning re-review accepted with 58 passing tests
+and no remaining findings. Initial timing finding and adapter-isolation regression are retained with corrections.
 The private project pages save real canonical proposals, show recorded task/agent evidence and read checked
 result content plus matching review history and explicit owner decisions in tests. Planned initial target
-submission is connected through explicitly injected result ingestion. Physical upload, task dispatch and
+submission is connected through explicitly injected result ingestion. Owner-authorized planning creates a
+separate proposed execution job in tests; planner mounting, physical upload, actual task dispatch and
 revision submission remain unwired. Pool reopen is not process
 restart; client counts are not physical attempt/absence evidence; idle close cause remains unavailable.
 No real database, listener, credentials, native agent or deployment was used.
@@ -132,7 +138,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 |---|---|---|
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
-| Real task -> agent -> progress -> result -> review in the website | Private task pages save non-running proposals; planned initial result submission connects checked files to owner review in tests; actual planning, physical upload, live dispatch and revisions remain | CR14C |
+| Real task -> agent -> progress -> result -> review in the website | Private task pages save proposals; owner-authorized planning and initial result submission connect through disposable tests; planner mounting, physical upload, actual admission/dispatch and revisions remain | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Private view reads existing enrollments/signals; new native adapter is component-tested but unwired; no live fleet/dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
