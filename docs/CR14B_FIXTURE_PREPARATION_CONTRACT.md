@@ -22,7 +22,7 @@ the future app, reachable at `127.0.0.1` only. Database names must use the `cr14
 alone is not proof of isolation. No RDS, production data or shared database is suitable. The operator verifies
 the actual host, executable artifact and isolation separately, rather than trusting a caller-supplied digest.
 
-Apply reviewed migrations 0001–0045 as a separate restricted LOGIN that directly owns the public tables.
+Apply reviewed migrations 0001–0046 as a separate restricted LOGIN that directly owns the public tables.
 Apply the reviewed web role/database ACL profiles under their own administrative approval, and create the
 distinct web LOGIN with only the reviewed web group permissions. Do not populate any table beforehand.
 This is an empty-database seeder, not a migration, bootstrap of an existing installation, or repair tool.

@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0045 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "dd116699e6c89d5de0c9a15dcbd8a91cabfb99709e3d2792f6ef7e492a94f608";
+// Generated from migrations 0001-0046 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "dab0f6b51a3f60768873d2eae4ec4804a5ed93006e1bcc9a1400a9c14e0b0b2a";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
@@ -23,6 +23,21 @@ const updates: Record<string, readonly string[]> = {
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
+const coordinatorReads = ["tenants", "workspaces", "control_identities", "control_role_grants", "control_web_sessions",
+  "projects", "control_manual_project_heads", "control_requests", "control_workflows", "control_jobs",
+  "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
+  "control_node_fleet_current", "control_job_dependencies", "control_transition_events", "control_outbox",
+  "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records"];
+const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
+  "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
+  "audit_events", "control_audit_chain_heads"]);
+const coordinatorUpdates: Record<string, readonly string[]> = {
+  ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
+    .map(table => [table, ["state", "version", "payload", "updated_at"]])),
+  ...Object.fromEntries(["tenants", "control_nodes", "control_node_keys", "control_manual_project_heads", "projects"].map(table => [table, ["coordinator_lock"]])),
+  ...Object.fromEntries(["control_identities", "control_role_grants", "workspaces", "control_completion_gate_integrity"].map(table => [table, ["web_lock"]])),
+  control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+};
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
  * Effective permissions are checked separately. Any migrated schema change needs a new reviewed digest.
@@ -53,6 +68,21 @@ export async function readPrivateWebSchemaDigest(db: DatabaseSession) {
 /** Read-only setup gate; never grants, migrates, creates an owner, or repairs a failed prerequisite. */
 export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
   scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
+  return verifyDatabase(db, config, scope, now, false);
+}
+
+/** Exact task-coordinator profile. No request-selected role or caller-supplied permission policy. */
+export async function verifyTaskCoordinatorDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
+  return verifyDatabase(db, config, scope, now, true);
+}
+
+async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, coordinator: boolean) {
+  const role = coordinator ? "control_room_task_coordinator" : "control_room_private_web";
+  const allowedReads = coordinator ? coordinatorReads : privateWebReadTables;
+  const allowedInserts = coordinator ? coordinatorInserts : inserts;
+  const allowedUpdates = coordinator ? coordinatorUpdates : updates;
   try {
     await db.transaction(async tx => {
       const settings = (await tx.query<{ valid: boolean; database_temp: boolean }>(`SELECT
@@ -69,7 +99,7 @@ export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivateP
         NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) AND rolinherit
         AND rolcanlogin=(rolname=current_user) AS valid FROM pg_roles WHERE pg_has_role(oid,'MEMBER') ORDER BY rolname`)).rows;
       if (roles.length !== 2 || roles.some(r => !r.valid)
-        || !roles.some(r => r.rolname === config.username) || !roles.some(r => r.rolname === "control_room_private_web")) fail();
+        || !roles.some(r => r.rolname === config.username) || !roles.some(r => r.rolname === role)) fail();
       const unsafe = (await tx.query<{ unsafe: boolean }>(`SELECT
         EXISTS(SELECT 1 FROM pg_auth_members WHERE pg_has_role(member,'MEMBER') AND admin_option)
         OR has_database_privilege(current_database(),'CREATE WITH GRANT OPTION')
@@ -102,9 +132,9 @@ export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivateP
           OR has_table_privilege(c.oid,'TRIGGER') OR has_table_privilege(c.oid,'MAINTAIN') AS extra
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
-      const reads: ReadonlySet<string> = new Set(privateWebReadTables);
+      const reads: ReadonlySet<string> = new Set(allowedReads);
       if (!columns.length || columns.some(c => c.extra || c.read !== reads.has(c.table_name)
-        || c.insert !== inserts.has(c.table_name) || c.update !== !!updates[c.table_name]?.includes(c.column_name))) fail();
+        || c.insert !== allowedInserts.has(c.table_name) || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();
       if (await readPrivateWebSchemaDigest(tx) !== privateWebSchemaDigest) fail();
       const binding = (await tx.query<{ valid: boolean }>(`SELECT EXISTS(SELECT 1 FROM workspaces w
         JOIN control_identities i ON i.tenant_id=w.tenant_id JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
