@@ -91,6 +91,10 @@ bootstrap mounting remains. Current setup requires migrations 0001–0046, still
 compiled application installation; disposable tests cover proposal, planning, assignment, task page,
 logout and exact-once bounded cleanup. See `CR14C_VERIFIED_TASK_STARTUP_ACCEPTANCE.md`.
 No production database, listener or agent was started; assignment remains non-executing.
+Published in [PR #299](https://github.com/MarvinAi5/control-room/pull/299), stacked on #298.
+Current-head CI is required before dependency-order integration; no merge is claimed.
+Latest prerequisite refresh: #297 at `87f6051` had a cancelled CI run (`33978566237`,
+2026-09-05 17:00:09 UTC), not a pass; #298 at `f84f22b` was still running (`33979372209`).
 **Next: CR14C executable admission/approval/dispatch and revision submission**, using `gpt-6-astra` / `medium` (Astra Medium),
 while real database setup/pilot work awaits scoped owner authority.
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
