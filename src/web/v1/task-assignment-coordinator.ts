@@ -67,6 +67,23 @@ export class TaskAssignmentCoordinator {
     return this.withNativeApproval(identity, projectId, jobId, expectedInputDigest, async (_tx, prepared) => ({ value: prepared }));
   }
   /** Trusted authenticated packet intake; never part of webOperation or an execution command. */
+  async readNativeApproval(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    if (!this.approvalStore) conflict();
+    const store = this.approvalStore;
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE", [this.scope.tenantId, projectId]);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (project.origin !== "ordinary") conflict();
+      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
+      if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();
+      return store.readInSession(tx, { tenantId: this.scope.tenantId, projectId, jobId,
+        attemptId: this.ids(jobId).attemptId, inputDigest: expectedInputDigest });
+    });
+  }
+  /** Trusted authenticated packet intake; never part of webOperation or an execution command. */
   async storeNativeApproval(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     packet: unknown, signal: AbortSignal) {
     if (!this.approvalStore || signal.aborted) conflict();

@@ -46,6 +46,18 @@ export class NativeApprovalPacketStore {
       || row.attempt_id !== record.attemptId || record.packetDigest !== sha256Digest(record.packet)) fail();
     return record;
   }
+  /** Authenticated coordinator readback only. Historical evidence is not a current permission check. */
+  async readInSession(tx: DatabaseSession, scope: { tenantId: string; projectId: string; jobId: string; attemptId: string; inputDigest: string }) {
+    const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+    if (!row) return null;
+    const record = this.verify(row);
+    if (record.tenantId !== scope.tenantId || record.projectId !== scope.projectId || record.jobId !== scope.jobId
+      || record.attemptId !== scope.attemptId || record.inputDigest !== scope.inputDigest) fail();
+    return { projectId: record.projectId, jobId: record.jobId, attemptId: record.attemptId,
+      packetDigest: record.packetDigest, operationDigest: record.operationDigest, acceptedAt: record.acceptedAt,
+      evidence: "stored_signatures_only" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
+  }
   async acceptInSession(tx: DatabaseSession, prepared: Prepared, packet: unknown, acceptedBy: string, signal: AbortSignal) {
     const r = prepared.request, trust = this.trust.get(sha256Digest({ tenantId: r.tenantId, nodeId: r.nodeId, nodeClass: r.nodeClass }));
     if (!trust) return fail();

@@ -1,12 +1,19 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
-import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute } from "./task-assignment-coordinator";
+import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment } from "./task-assignment-coordinator";
+import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
+import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
+
+export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
+  prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
+  read: TaskAssignmentCoordinator["readNativeApproval"] }>;
 
 export type TaskCoordinatorDatabase = Readonly<{ client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean }>;
 export type TaskCoordinatorConfiguration = {
   scope: { tenantId: string; workspaceId: string };
   planning: ConstructorParameters<typeof TaskExecutionPlanner>[2]; routes: readonly TaskAssignmentRoute[];
+  approvals?: { enrollments: readonly NativeApprovalEnrollment[]; store: NativeApprovalPacketStore };
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
   database: TaskCoordinatorDatabase;
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
@@ -20,6 +27,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const maxActive = input.maxActive ?? 8, drainMs = input.drainMs ?? 30_000, closeMs = input.closeMs ?? 5000;
   for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])
     if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error("task_coordinator_config_invalid");
+  if (input.approvals && (!Array.isArray(input.approvals.enrollments)
+    || typeof input.approvals.store?.acceptInSession !== "function" || typeof input.approvals.store?.readInSession !== "function"))
+    throw new Error("task_coordinator_config_invalid");
   const resource = input.database;
   if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
     || [resource.client?.query, resource.client?.transaction, resource.client?.transactionWithPreCommitCheck].some(fn => typeof fn !== "function"))
@@ -50,7 +60,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   };
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock);
-  const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock);
+  const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
+    input.approvals?.enrollments, input.approvals?.store);
   async function run<T>(work: () => Promise<T>): Promise<T> {
     if (closing || active >= maxActive) throw new Error("task_coordinator_unavailable");
     check(); active++;
@@ -72,7 +83,15 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
     options: (...args) => run(() => assignment.options(...args)) });
-  return Object.freeze({ planning, assignment: assignments,
+  const approvals: TaskApprovalOperation | undefined = input.approvals ? Object.freeze({ ...scope,
+    prepare: (...args: Parameters<TaskApprovalOperation["prepare"]>) => run(() => assignment.prepareNativeApproval(...args)),
+    read: (...args: Parameters<TaskApprovalOperation["read"]>) => run(() => assignment.readNativeApproval(...args)),
+    store: (identity, projectId, jobId, digest, packet, signal) => {
+      const snapshot = nativeTaskApprovalPacketSchema.parse(packet);
+      return run(() => assignment.storeNativeApproval(identity, projectId, jobId, digest, snapshot, signal));
+    },
+  }) : undefined;
+  return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}),
     isReady: () => !closing && !invalid && pool.isAvailable(),
     close(): Promise<void> {
       if (closePromise) return closePromise;
