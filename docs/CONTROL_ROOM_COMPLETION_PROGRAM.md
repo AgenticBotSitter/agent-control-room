@@ -6,12 +6,13 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14B — bounded startup/pool and database-role implementation. The foundation,
+**Next block:** CR14B — private Node serving and rehearsal tooling. The foundation,
 ordinary-project private app and shared ordinary/Idea catalog with pagination are accepted; see
 `CR14B_FOUNDATION_ACCEPTANCE.md`, `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md` and
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`. Idea lifecycle remains read-only in the private view;
 the owner-only private connection read view is accepted in `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`.
-Startup/role preparation is design only; full B-WIRE and private-pilot exits remain incomplete.
+Bounded startup, pool/drain and restricted roles are accepted in `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`.
+No database/listener was provisioned; full B-WIRE and private-pilot exits remain incomplete.
 
 **Scope:** Finish a useful private Control Room before optional specialist expansion and public release.
 
@@ -131,8 +132,11 @@ B-WIRE now has an accepted compiled ordinary-project route tree, shared authenti
 project pages and SQL commands. The accepted shared catalog now adds owner-only authenticated Idea reads
 and 50-record pagination. Private Idea commands remain CR14E integration. The private connection view now
 reads the existing owner-only enrollment registry and authenticated signal receipts, explicitly not a live fleet.
-Startup/pool/role preparation is documented in `CR14B_BOOTSTRAP_DATABASE_PREPARATION.md`; implementation,
-IdP/MFA, real PostgreSQL, listener/static/browser rehearsal and deployment are not accepted by these code tests.
+Startup/pool/role code is accepted in `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`, including explicit configuration,
+role/schema preflight and uncertain-outcome handling. The database TEMP simulator limitation is explicit;
+real DB permissions/concurrency are not accepted by the injected metadata test. Next implement the private
+Node request/static adapter and real-PG rehearsal tooling. IdP/MFA, real PostgreSQL, listener/static/browser
+rehearsal and deployment retain their separate readiness/authority gates.
 The project UI packet is a retired non-claimable draft; the three remaining drafts are not dispatched.
 
 ### CR14C/D — useful work first, then more machines
@@ -232,9 +236,11 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **remaining B-WIRE private connection view and bootstrap preparation**, using
+block is **CR14B private Node serving and rehearsal tooling**, using
 **Astra Xhigh (`gpt-6-astra`, `xhigh`)**. Shared project reads/pagination are accepted in
 `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; source-specific Idea writes are not enabled by that acceptance.
+The connection read view and startup/role code are accepted in their CR14B acceptance records. The next code
+block must not open a physical listener or connect/provision PostgreSQL without the separate scoped packet.
 Publish only the unimplemented prepared worker packets after their base
 and shared contract are available; no extra owner message is needed for ordinary already-scoped code work.
 Stop before live credentials, host changes, provider calls, database services or deployment without the

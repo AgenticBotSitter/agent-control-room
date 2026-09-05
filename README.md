@@ -13,9 +13,11 @@ need integration and real acceptance. The GitHub V2 worker queue is the existing
 **ordinary-project private application** are independently accepted for repository work. The separate private
 pages now use authenticated SQL services in compiled integration tests; they are not deployed. The shared
 ordinary/Idea catalog and pagination are also accepted; Idea status remains read-only in this private view.
-The owner-only private connection inventory and startup preparation design are also accepted; this is not a
-live fleet. Next is bounded startup/pool and database-role implementation; the private pilot is not complete.
-See the [connection view acceptance](docs/CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md),
+The owner-only connection inventory and bounded startup/database-role implementation are also independently
+accepted. Startup checks the restricted SQL role and schema; uncertain saves stop pool use instead of retrying.
+This is not a deployed app or live fleet. Next is private Node serving and rehearsal tooling.
+See the [startup acceptance](docs/CR14B_PRIVATE_STARTUP_ACCEPTANCE.md),
+[connection view acceptance](docs/CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md),
 [shared catalog acceptance](docs/CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md),
 [private application acceptance](docs/CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md),
 [current completion program](docs/CONTROL_ROOM_COMPLETION_PROGRAM.md),

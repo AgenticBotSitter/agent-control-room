@@ -25,8 +25,10 @@ compiled/in-process integration evidence, not a running private beta or observed
 `e6fa438dbb2e71cb4435c6872051722171928d22`. The owner-only page/API reads existing verified enrollments and
 signal evidence under shared session revocation. It is not a live fleet or native-run adapter. Startup/role
 preparation design is recorded, not provisioned. See `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`.
-**CR14B bounded startup/pool and database-role implementation is in review**, using
-`gpt-6-astra` / `xhigh` (Astra Xhigh).
+**CR14B bounded startup/pool and database-role implementation is independently accepted** at
+`09db99b3925f2197f2421b14a95ccfb35c707b80`. It adds explicit startup, verified restricted role/schema and
+bounded shutdown with uncertain-save handling. See `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`.
+**Next: CR14B private Node serving and rehearsal tooling**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
 Neither full B-WIRE nor CR14B's private-pilot exit is complete.
 The current repository block adds explicit PG17 same-host startup, effective-role/schema checks, bounded
 pool/drain behavior and a separate least-privilege profile. No listener or real database was started.
@@ -90,7 +92,14 @@ CR14B private-connection verification: 62/62 focused tests; final main command 4
 2 Windows-only skips); TypeScript/full lint/cumulative whitespace passed. Both build profiles passed,
 with 3 private compiled + 4 Sites render checks; 127-table disposable migration verification passed.
 Independent review closed two Low documentation/page-label findings with no remaining findings.
-Database-role, pool-deadline and startup preparation is design only, not a running or deployed service.
+That connection-view block accepted preparation design only; the following block implements it.
+
+CR14B private-startup verification: 90/90 focused tests; final main command 517 tests (515 passed,
+2 Windows-only skips); TypeScript/full lint/whitespace passed. Both build profiles passed with 5 private
+compiled + 4 Sites render checks; migrations 0001–0040 verified 127 tables. Independent review initially
+rejected one Medium fast transaction-uncertainty issue; remediation and re-review closed it with no remaining
+findings. PGlite cannot revoke its template1 TEMP privilege; the production gate rejects it, and only that
+metadata field is injected in startup fixtures. Real DB ACL/concurrency, listener and deployment remain unproved.
 
 ### Historical component acceptance ledger
 
@@ -101,6 +110,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14B bounded private startup/database | Independently accepted repository bootstrap, narrow role, deadline/drain and uncertainty handling; real service not running | `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md`; `reviews/CR14B_PRIVATE_STARTUP_REREVIEW.md` |
 | CR14B private connection view | Independently accepted existing enrollment/signal reads and startup preparation design; no live fleet or implemented bootstrap | `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md`; `reviews/CR14B_CONNECTION_VIEW_REVIEW.md` |
 | CR14B shared private project catalog | Independently accepted ordinary/Idea reads and pagination; private Idea writes and full private pilot incomplete | `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md`; `reviews/CR14B_SHARED_CATALOG_REREVIEW.md` |
 | CR14B ordinary-project private application | Independently accepted compiled/in-process route integration; full B-WIRE and private pilot incomplete | `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`; `reviews/CR14B_WIRE_REREVIEW.md` |
@@ -1661,11 +1671,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14B bounded startup/pool and database-role implementation
+Block: CR14B private Node serving and rehearsal tooling
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: xhigh
-Why: Shared projects and the owner-only connection read view are accepted; production startup, bounded pool behavior and least-privilege roles are still unimplemented.
-Expected output: injected/tested startup and pool ownership, restricted role/lock support, and one exact scoped setup/rehearsal packet. No live configuration or deployment implied.
+Why: Shared pages, explicit startup, bounded pool/drain and restricted role code are accepted; Node request/static delivery and an executable real-PG rehearsal harness remain unimplemented.
+Expected output: private request/static adapter and bounded disposable real-PG rehearsal tooling, independently reviewed with injected tests. No physical listener, real connection, setup or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

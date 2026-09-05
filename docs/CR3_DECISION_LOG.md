@@ -5032,3 +5032,38 @@ Independent review accepted `e6fa438dbb2e71cb4435c6872051722171928d22`, tree
 findings. Main suite 489 tests (487 passed, two Windows-only skips), focused 62/62, both builds and seven
 compiled/rendered checks passed. This accepts repository connection reads and preparation design only;
 full B-WIRE, live agents, implemented startup/roles, real PostgreSQL and private deployment are not claimed.
+
+## ADR-207 — Explicit private startup owns a bounded pool and refuses uncertain continuation
+
+**Date:** 2026-09-04. **Owner direction:** implement the next CR14B startup/database block on Astra Xhigh.
+
+Use an explicit import-inert VPS bootstrap sharing the compiled application's one installation. Configure the
+exact HTTPS/Access/scope binding and privately supplied PG17 same-VPS loopback locator/credentials; do not
+inherit an environment/URL/default identity, create a second database authority or auto-provision prerequisites.
+Before installation verify the effective restricted role, membership/ownership/permissions, connection limits,
+reviewed public-schema fingerprint and existing owner/workspace. No request can configure the process.
+
+Keep a maximum eight-operation/no-pending-queue pool, bounded checkout/query/transaction deadlines and
+64-handler admission. Database timeouts complement callback/session fences. A fast uncertain COMMIT or
+failed rollback is as terminal as a deadline: quarantine the pool, block later commands, await bounded
+termination, and never send a rollback after COMMIT is attempted or silently retry a possibly committed write.
+Disable prepared-plan retry in the installed postgres driver. Readiness drops before bounded drain/close;
+the later listener and supervisor own their physical resource/exit behavior. No physical close proof is inferred.
+
+Migration 0040's constant-false lock columns let the private web role acquire existing identity/grant/workspace/
+registry row locks without updating authority fields. A fixed-search-path invoker trigger enforces immutable
+session binding/expiry and irreversible first revocation. Use the separate fresh restricted-role and dedicated
+DB ACL profiles, never the historical broad application role. Ordinary project/audit writes remain trusted
+application behavior; table/column privileges are not per-row/per-tenant isolation against a compromised app.
+
+**Evidence:** accepted product `09db99b3925f2197f2421b14a95ccfb35c707b80`, tree
+`48602c8361d03897197f945a9a7d72f10718a9bf`; `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md` and both independent
+review reports. Retain the original Medium rejection and its accepted correction. Main suite 517 tests
+(515 passed, 2 Windows-only skips), focused 90/90, both builds, five private/four Sites artifact checks and
+127-table migrations passed. PGlite's current-database TEMP ACL metadata is injected only in tests; unmodified
+production preflight rejects that simulator connection. Real database ACL/concurrency/cancellation stays gated.
+
+**Next/limits:** private Node serving and executable real-PG rehearsal tooling, with injected repository tests.
+The setup/rehearsal packet is a draft execution specification, not a ready or authorized native run. Listener,
+host/database/credential/IdP/MFA/ingress/restore/deployment effects still need their scoped prerequisites.
+Existing Sites preview, generic DB adapter and disabled legacy native qualification paths are preserved.
