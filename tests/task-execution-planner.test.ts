@@ -44,9 +44,20 @@ async function fixture() {
 
 test("protected private process prepares a real saved proposal and reconciles it without starting work", async t => {
   const f = await fixture(); t.after(f.close);
+  await f.raw.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
+  // Each web transaction really runs under the restricted role; the trusted operation owns its
+  // separately supplied canonical transaction. SET LOCAL expires at the transaction boundary.
+  const restricted: DatabaseClient = {
+    query: (sql, params) => f.db.transaction(async tx => { await tx.query("SET LOCAL ROLE control_room_private_web"); return tx.query(sql, params); }),
+    transaction: work => f.db.transaction(async tx => { await tx.query("SET LOCAL ROLE control_room_private_web"); return work(tx); }),
+    transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(async tx => {
+      await tx.query("SET LOCAL ROLE control_room_private_web"); return work(tx);
+    }, check),
+  };
+  await assert.rejects(restricted.query("SELECT * FROM control_task_execution_plans"));
   const app = createPrivateWebProcess({ origin, issuer: f.accessTrust.issuer, audience: f.accessTrust.audience,
     maxSessionSeconds: f.accessTrust.maxSessionSeconds, ...f.scope, loadKeys: async () => f.accessTrust.keys,
-    database: { client: f.db, close: async () => {} }, planning: f.planner.webOperation(), clock: () => instant + 7000 });
+    database: { client: restricted, close: async () => {} }, planning: f.planner.webOperation(), clock: () => instant + 7000 });
   t.after(() => app.close());
   const path = `/api/v1/projects/${binding.projectId}/tasks/${f.source.receipt.jobId}/plan`;
   const handle = (method = "GET", body?: unknown, route = path) => app.handle(request(route, method, body, undefined, f.jwt), () => new Response("shell"));
@@ -75,6 +86,8 @@ test("planning HTTP rejects request-owned authority, bad routes, cross-origin an
   const handler = createTaskHttpHandler({ origin, trust: f.accessTrust, service: f.tasks, planning: f.planner, clock: () => instant + 7000 });
   const path = `/api/v1/projects/${binding.projectId}/tasks/${f.source.receipt.jobId}/plan`;
   const body = { expectedInputDigest: sha256Digest(taskDraft) };
+  const tooLarge = request(path, "POST", { expectedInputDigest: "x".repeat(1025) }, undefined, f.jwt);
+  assert.equal((await handler(tooLarge)).status, 400);
   for (const extra of [{ template: f.template }, { nodeId: "node:other" }, { instructions: "replace source" }, { approved: true }])
     assert.equal((await handler(request(path, "POST", { ...body, ...extra }, undefined, f.jwt))).status, 400);
   for (const route of [`${path}?x=1`, path.replace(binding.projectId, "%ZZ"), path.replace(binding.projectId, "a%2Fb")])
@@ -87,6 +100,17 @@ test("planning HTTP rejects request-owned authority, bad routes, cross-origin an
   assert.equal((await (await handler(request(path, "GET", undefined, undefined, f.jwt))).json()).availability, "not_eligible");
   assert.equal((await handler(request(path, "POST", body, undefined, f.jwt))).status, 403);
   assert.equal((await f.db.query("SELECT * FROM control_task_execution_plans")).rows.length, 0);
+});
+
+test("private planning rejects a different coordinator scope before any key or database calls", () => {
+  let calls = 0;
+  for (const scope of [{ tenantId: "tenant:other", workspaceId: "workspace:test" }, { tenantId: "tenant:test", workspaceId: "workspace:other" }]) {
+    assert.throws(() => createPrivateWebProcess({ origin, issuer: origin, audience: "test", maxSessionSeconds: 600,
+      tenantId: "tenant:test", workspaceId: "workspace:test", loadKeys: async () => { calls++; return []; },
+      database: { client: {} as DatabaseClient, close: async () => { calls++; } },
+      planning: { ...scope, plan: async () => { calls++; throw new Error(); } } }), /invalid_private_app_config/);
+  }
+  assert.equal(calls, 0);
 });
 
 test("owner planning preserves the inert source and creates a distinct proposed bundle with exact input/profile lineage", async t => {
