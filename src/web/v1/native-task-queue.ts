@@ -19,7 +19,7 @@ const receipt = (r: NativeTaskQueueIntent) => ({ projectId: r.projectId, jobId: 
   queueId: `native-queue:${sha256Digest({ tenantId: r.tenantId, jobId: r.jobId, attemptId: r.attemptId }).slice(7)}`,
   packetDigest: r.packetDigest, operationDigest: r.operationDigest, queuedAt: r.queuedAt,
   evidence: "recorded_delivery_intent" as const, startsWork: false as const, grantsExecutionAuthority: false as const });
-async function read(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
+export async function readNativeTaskQueueIntentInSession(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
   const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_task_queue WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
     [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
   if (!row) return null;
@@ -32,7 +32,7 @@ async function read(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueue
 }
 /** Internal SQL helpers. Caller owns authentication, current revalidation and the checked transaction. */
 export async function enqueueNativeTaskInSession(tx: DatabaseSession, key: Uint8Array, value: NativeTaskQueueIntent) {
-  const r = intentSchema.parse(value), prior = await read(tx, key, r);
+  const r = intentSchema.parse(value), prior = await readNativeTaskQueueIntentInSession(tx, key, r);
   if (prior) {
     const stable = ({ queuedAt: _at, queuedBy: _by, ...value }: NativeTaskQueueIntent) => { void _at; void _by; return value; };
     if (sha256Digest(stable(prior)) !== sha256Digest(stable(r))) return fail();
@@ -41,5 +41,5 @@ export async function enqueueNativeTaskInSession(tx: DatabaseSession, key: Uint8
   return { ...receipt(prior ?? r), replayed: !!prior };
 }
 export async function readNativeTaskQueueInSession(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
-  const r = await read(tx, key, scope); return r ? receipt(r) : null;
+  const r = await readNativeTaskQueueIntentInSession(tx, key, scope); return r ? receipt(r) : null;
 }

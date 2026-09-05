@@ -78,6 +78,9 @@ export class TaskAssignmentCoordinator {
   async readNativeTaskQueue(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
     return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readQueueInSession(tx, scope));
   }
+  async readNativeDeliveryPreparation(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readDeliveryPreparationInSession(tx, scope));
+  }
   private async readNativeEvidence<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     read: (store: NativeApprovalPacketStore, tx: DatabaseSession, scope: NativeTaskQueueScope) => Promise<T>) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
@@ -133,6 +136,21 @@ export class TaskAssignmentCoordinator {
         occurredAt: queued.receipt.queuedAt,
       });
       return { value: queued.receipt, assertFresh: queued.assertFresh };
+    });
+  }
+  async prepareQueuedNativeDelivery(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
+    expectedPacketDigest: string, signal: AbortSignal) {
+    digestSchema.parse(expectedPacketDigest);
+    if (!this.approvalStore || signal.aborted) conflict();
+    const store = this.approvalStore;
+    return this.withNativeApproval(identity, projectId, jobId, expectedInputDigest, async (tx, prepared, actorId) => {
+      const saved = await store.prepareDeliveryInSession(tx, prepared, expectedPacketDigest, actorId, signal);
+      if (!saved.receipt.replayed) await appendAuditWith(tx, {
+        id: `audit:delivery:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
+        action: "native.delivery.prepared", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
+        idempotencyKey: `delivery:${saved.receipt.queueId}`, safeMetadata: { bodyDigest: saved.receipt.bodyDigest }, occurredAt: saved.receipt.preparedAt,
+      });
+      return { value: saved.receipt, assertFresh: saved.assertFresh };
     });
   }
   private async withNativeApproval<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,

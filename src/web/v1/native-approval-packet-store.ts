@@ -8,6 +8,8 @@ import { createNativeApprovalIntake } from "../../harness/v1/native-approval-int
 import type { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
 import type { NativeEnrollment } from "../../harness/v1/native-run-contracts";
 import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, type NativeTaskQueueScope } from "./native-task-queue";
+import { persistNativeDeliveryPreparation, readNativeDeliveryPreparationReceipt } from "./native-delivery-preparation";
+import { nativeTaskDispatchBodySchema } from "../../harness/v1/native-delivery";
 
 type Trust = Omit<Parameters<typeof createNativeApprovalIntake>[1], "clock">;
 type Prepared = ReturnType<typeof prepareNativeTaskApproval> & { enrollment: NativeEnrollment; inputDigest: string };
@@ -123,5 +125,17 @@ export class NativeApprovalPacketStore {
   }
   readQueueInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
     return readNativeTaskQueueInSession(tx, this.key, scope);
+  }
+  async prepareDeliveryInSession(tx: DatabaseSession, prepared: Prepared, expectedPacketDigest: string, actorId: string, signal: AbortSignal) {
+    const v = await this.revalidateInSession(tx, prepared, expectedPacketDigest, signal), r = prepared.request;
+    const body = nativeTaskDispatchBodySchema.parse({ schema: "control-room.native-task-dispatch/v1",
+      queueId: `native-queue:${sha256Digest({ tenantId: r.tenantId, jobId: r.jobId, attemptId: r.attemptId }).slice(7)}`,
+      inputDigest: prepared.inputDigest, enrollmentDigest: sha256Digest(prepared.enrollment), bindingDigest: sha256Digest(v.binding),
+      packetDigest: v.packetDigest, request: r, start: v.start, packet: { schema: "control-room.native-task-approval-packet/v1", approval: v.request.approval, recovery: v.recoveryPermission } });
+    const receipt = await persistNativeDeliveryPreparation(tx, this.key, body, actorId, this.clock());
+    v.assertFresh(); return { receipt, assertFresh: v.assertFresh };
+  }
+  readDeliveryPreparationInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
+    return readNativeDeliveryPreparationReceipt(tx, this.key, scope);
   }
 }
