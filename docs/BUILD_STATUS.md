@@ -2077,6 +2077,21 @@ Final product verification passed CR14C494, preparation769, main1078 with two ex
 private compiled18, rendered4, both builds, TypeScript, ESLint and migrations0051/137.
 Authenticated receipts and node intake/admission remain next on Astra Medium. No live resource,
 listener, credential, provider, deployment or merge is authorized by this acceptance.
+Published as [PR #321](https://github.com/MarvinAi5/control-room/pull/321), stacked on #320.
+Current-head CI remains required; no merge is claimed.
+
+## Authenticated native receipt recording
+
+Product `dd38e24dcccb1df31557dd66334768d989a53035` is independently accepted with 59 passing checks
+and no findings. The authenticated session matches the exact sent envelope, then immutable receipt and
+audit commit under current node/key locks. Current-owner history exposes the node's reported disposition,
+not an execution claim. See `CR14C_NATIVE_RECEIPT_ACCEPTANCE.md` for verification and fixture corrections.
+Migration0052 requires 138 tables with no new web SQL access. Native node intake/admission, receipt
+production/acknowledgement, router mounting and cross-connection recovery remain. No live resource,
+listener, native/provider call, database service, deployment or merge is implied.
+Final frozen-product verification passed CR14C 514, preparation 769, main 1,098 with two existing skips,
+post-suite 392, private compiled 18, rendered 4, both builds, migrations0052/138, TypeScript and full ESLint.
+Current-head GitHub CI remains required before dependency-order integration.
 
 ## Next block
 
@@ -2084,7 +2099,7 @@ listener, credential, provider, deployment or merge is authorized by this accept
 Block: CR14C signed delivery processing and node reconciliation, owner signing and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Approved-task queue, exact delivery/receipt protocol and durable unsigned body preparation are reviewed. A sender must resolve current queue eligibility, require negotiated native capability, issue bounded signed delivery and record progress without replaying uncertain effects.
+Why: Canonical queue, current authorization, exact signed transmission and authenticated receipt persistence are reviewed. The node must durably intake the exact task, apply separate owner and local admission checks, and produce honest receipt/recovery evidence before runtime mounting.
 Expected output: durable signed delivery processing and node receipt/reconciliation using existing admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.

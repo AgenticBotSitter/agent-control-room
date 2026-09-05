@@ -5924,3 +5924,23 @@ timeout, lost acknowledgement and rejection never permit automatic retransmissio
 receipt persistence and admission remain separate. Product `6ad15ff023c35a7ef2293a95ea0e6e7fa4eee97e`
 passed50 independent checks after the authorization expiry finding was corrected. Migration0051 adds
 the137th table with coordinator SELECT/INSERT only. See `CR14C_NATIVE_TRANSMISSION_ACCEPTANCE.md`.
+
+## ADR-244 — retain authenticated node receipts as evidence, not execution authority
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+The current reconciled session accepts a dedicated authenticated native receipt only for its exact sent
+dispatch. Match all task/body/packet identities against both the retained session frame and HMAC-verified
+durable envelope/intent. Recheck the node signature under current locked node/key records and persist
+immutable receipt plus chained audit together. Preserve time/cancel/session fences across commit.
+
+A receipt reports recorded or rejected intake; it does not grant permission, prove execution or renew
+an expired task. Current owners can read metadata history after expiry. Lost acknowledgement may leave
+history without a successful response. Replay consumption before persistence means rollback is not a
+retry permission. No automatic replay or cross-connection recovery is added. The trusted router must
+serialize early replies after send settles; this block does not mount that router or emit receipt acks.
+
+Product `dd38e24dcccb1df31557dd66334768d989a53035`, tree
+`f36e4b51c845d6c359a9211d2500f32495b30341`, passed 59 independent checks without findings.
+Migration0052 adds the 138th table and coordinator SELECT/INSERT, no web permission. See
+`CR14C_NATIVE_RECEIPT_ACCEPTANCE.md`. Native node intake/admission and live activation remain separate.

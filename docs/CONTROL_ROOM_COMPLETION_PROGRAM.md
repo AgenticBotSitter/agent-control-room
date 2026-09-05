@@ -355,7 +355,10 @@ Exact signed envelope staging under the current canonical transaction is indepen
 does not transmit it. One-shot transmission intent/transport integration is independently reviewed in
 `CR14C_NATIVE_TRANSMISSION_ACCEPTANCE.md` (migration0051/137 tables): intent commits before send,
 authorization time fences survive commit, and uncertain outcomes never retry. Authenticated receipt
-persistence and node intake/admission remain; no live task delivery is claimed.
+persistence is now independently reviewed in `CR14C_NATIVE_RECEIPT_ACCEPTANCE.md` (migration0052/138
+tables). Exact session-authenticated receipts are stored with audit and current key/time checks; they
+report node intake claims, not execution proof. Node intake/admission, receipt production/acknowledgement
+and runtime routing/recovery remain; no live task delivery is claimed.
 Revalidation and insertion share a transaction; returned
 snapshots and historical receipts cannot authorize later delivery. Bounded approval lifecycle
 and historical reconciliation are accepted. Integrated owner signing and custody, durable
