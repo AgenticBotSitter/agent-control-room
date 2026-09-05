@@ -2109,6 +2109,7 @@ and runtime mounting remain. PostgreSQL stays at0052/138 tables with unchanged r
 Final corrected-product checks passed CR14C 527, preparation 769, main 1,111 with two existing skips,
 post-suite 392, private compiled 18, rendered 4, both builds, migrations0052/138, TypeScript and ESLint.
 Current-head GitHub CI remains required; no merge or live activation is claimed.
+Published as [PR #323](https://github.com/MarvinAi5/control-room/pull/323), stacked on #322.
 
 ## Next block
 
