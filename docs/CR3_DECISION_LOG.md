@@ -5619,3 +5619,26 @@ This is not a distributed transaction, physical stop guarantee, production profi
 activation. The abstract legacy trusted-policy seam remains available; verified compositions must
 preserve the supplied fence. Owner signing/intake, profile/recovery source composition, signed dispatch
 and revisions remain next on Astra Medium. No live effects or merge authority are added.
+
+## ADR-229 — separate current recovery trust from expired work authority
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired component.
+
+Resolve the exact configured cleanup approval key through the scoped owner-public-pin store, with an
+explicit synchronous local credential/cleanup state source. Check exact credential reference, explicit
+booleans, monotonic per-instance revision and same-revision content consistency. No defaults or worker
+self-reports supply cleanup authority. Runtime must provide the trusted state service and preserve the
+freshness callback.
+
+Separate the protected repository's verified committed server-trust revision from its combined work
+ceiling/trust revision. Cleanup under separately signed bounded recovery permission must not require an
+unexpired work lease or ceiling. Fence current trust/local state after approval and profile awaits,
+then recheck freshness and durable exact-run evidence after the controller's Promise.race settles.
+Recovery remains status/stop only; no restart, renewal, settlement or automatic stop retry is added.
+
+**Evidence:** product `7a169755b2e4f9b29d38dda255ba3acf3d4c57a4`, tree
+`7320e00c5ceea2e22b71c312db98ff476a803049`; independent review accepted all six changed paths with
+46 passing tests and no actionable findings. See `CR14C_CURRENT_RECOVERY_POLICY_ACCEPTANCE.md`.
+
+**Remaining:** real local cleanup service, accepted current profile/credential qualification, owner
+signing/intake, signed dispatch and revisions on Astra Medium. No live connections, deployment or merge.

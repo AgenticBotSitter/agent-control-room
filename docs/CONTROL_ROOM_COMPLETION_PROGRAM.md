@@ -25,6 +25,10 @@ owner configuration, signing custody, authenticated rotation or runtime activati
 Current-policy store composition and freshness fencing are independently accepted in
 `CR14C_NATIVE_CURRENT_POLICY_ACCEPTANCE.md`. Native profile/key evidence remains explicitly synthetic
 in tests; no handler, live agent or runtime registration is enabled by this component.
+Current recovery-policy composition is independently accepted in
+`CR14C_CURRENT_RECOVERY_POLICY_ACCEPTANCE.md`, joining scoped owner pins to explicit node-local
+cleanup/credential state with freshness fences. This does not implement the persistent local-state
+service, qualify credentials/profiles or activate recovery requests against a real agent.
 The exact coordinator role/schema gate is independently accepted in
 `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`; migration 0046 preserves the web write profile and
 adds inert coordinator locks plus a domain-transition-only outbox guard. This is not database setup.

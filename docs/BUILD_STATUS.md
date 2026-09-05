@@ -161,6 +161,15 @@ ESLint and migrations through 0046 passed. Next: profile/recovery sources, owner
 signed dispatch and revisions, Astra Medium. Live task execution remains disabled.
 Published as [PR #306](https://github.com/MarvinAi5/control-room/pull/306), stacked on #305.
 Current-head GitHub CI remains required; no merge or deployment is claimed.
+Current recovery-policy composition is independently accepted at
+`7a169755b2e4f9b29d38dda255ba3acf3d4c57a4` with 46 passing review tests and no actionable findings.
+It resolves scoped owner pins and fences explicit local cleanup/credential state across profile awaits,
+without requiring an unexpired work lease or enabling restart. See `CR14C_CURRENT_RECOVERY_POLICY_ACCEPTANCE.md`.
+Local verification passed: CR14C 346, preparation 769, main 925 with two existing platform skips,
+post-suite 392, private compiled tests 16 and rendered tests four, plus both builds, TypeScript, ESLint
+and migrations through 0046 (132 tables).
+Real local cleanup configuration, profile qualification, owner signing/intake, signed dispatch and
+revisions remain unconfigured. Continue repository work on Astra Medium; live task execution is disabled.
 PR #304 exact head `21ab559e8aaf13d429c5c3622fa9aa339c5388cf` passed CI `33984129093`
 at 2026-09-05 18:49:12 UTC. PR #305 was still running when checked. Neither is merged here.
 The private-runtime foundation provides explicit PG17 same-host startup, effective-role/schema checks, bounded
