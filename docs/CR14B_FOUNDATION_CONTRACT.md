@@ -25,11 +25,15 @@ not deployment, an identity-provider setup, real PostgreSQL rehearsal or complet
   every operation. Logout revokes that exact assertion; a new upstream sign-in can yield a distinct assertion.
   Browser integration still must perform Access logout and handle IdP session behavior. Suspension/revocation must
   retain session rows; deleting them would remove logout evidence and is not the supported recovery procedure.
+  Logout is a separate exact-token transaction, not a project permission check: a valid verified caller can revoke
+  its own assertion even after identity/grant suspension, expiry or narrowing. It does not revoke another assertion
+  or re-enable any identity. Repeating logout is idempotent and preserves the first revocation timestamp.
 - A transaction locks the identity, current session and grant rows before a project read/write. Revocations committed
   before admission are observed; an in-flight admitted transaction can finish before a competing revocation commits.
   Token/session and grant deadlines are checked again before commit. No instantaneous revocation promise is made.
 - Ordinary projects use existing `projects`, not a parallel catalog database. Migration 0039 adds manual lifecycle
   heads, browser session state and append-only command receipts. Existing Idea Lab lifecycle evidence is untouched.
+  Manual heads reference their canonical project; workspace ownership is not duplicated in a second column.
   The initial manual-project list is bounded at 200; it refuses a larger catalog instead of silently truncating.
   The combined manual/Idea-project catalog and pagination are `B-WIRE` integration work.
 - Create and lifecycle commands are atomic with canonical audit append and idempotency receipt. A replay with the

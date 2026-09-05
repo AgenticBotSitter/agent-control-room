@@ -98,8 +98,8 @@ export class WebProjectService {
         VALUES($1,$2,$3,$4,$1,'1',$5,$6,'planned','manual_project_active','healthy','control_room_native',$7,$8::jsonb,$7)`,
       [project.projectId, this.scope.tenantId, this.scope.workspaceId, adapterId, project.title, project.summary, actor.now,
         JSON.stringify({ projectKind: "general", origin: "manual", createdAt: actor.now })]);
-      await tx.query(`INSERT INTO control_manual_project_heads(tenant_id,workspace_id,project_id,lifecycle,version,created_at,updated_at)
-        VALUES($1,$2,$3,'active',1,$4,$4)`, [this.scope.tenantId, this.scope.workspaceId, project.projectId, actor.now]);
+      await tx.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+        VALUES($1,$2,'active',1,$3,$3)`, [this.scope.tenantId, project.projectId, actor.now]);
       return project;
     });
   }
@@ -165,9 +165,29 @@ export class WebProjectService {
   }
 
   async logout(identity: VerifiedWebIdentity): Promise<void> {
-    await this.authorized(identity, "projects.read", undefined, async (tx, actor) => {
-      await tx.query(`UPDATE control_web_sessions SET revoked_at=$1 WHERE tenant_id=$2 AND token_digest=$3`,
-        [actor.now, this.scope.tenantId, identity.tokenDigest]);
-    });
+    const started = this.clock();
+    const assertFresh = () => {
+      const current = this.clock();
+      if (!Number.isSafeInteger(current) || current < started || !Number.isFinite(Date.parse(identity.issuedAt))
+        || Date.parse(identity.issuedAt) > current || !Number.isFinite(Date.parse(identity.expiresAt))
+        || Date.parse(identity.expiresAt) <= current || !Number.isFinite(Date.parse(identity.verificationExpiresAt))
+        || Date.parse(identity.verificationExpiresAt) <= current) throw new WebAccessError("authentication_required");
+    };
+    assertFresh();
+    await this.db.transactionWithPreCommitCheck(async tx => {
+      // Authentication binds the caller's own assertion. Revoking it never needs project authority,
+      // and remains possible after the identity or its grants have been suspended/revoked.
+      const actor = (await tx.query<{ id: string }>(`SELECT id FROM control_identities WHERE tenant_id=$1
+        AND auth_provider=$2 AND auth_subject_digest=$3 AND actor_type='human' FOR UPDATE`,
+      [this.scope.tenantId, identity.provider, sha256Digest({ provider: identity.provider, subject: identity.subject })])).rows[0];
+      if (!actor) throw new WebAccessError("authentication_required");
+      await tx.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
+        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+      [this.scope.tenantId, identity.tokenDigest, actor.id, identity.issuedAt, identity.expiresAt]);
+      const revoked = await tx.query(`UPDATE control_web_sessions SET revoked_at=coalesce(revoked_at,$1)
+        WHERE tenant_id=$2 AND token_digest=$3 AND identity_id=$4 AND issued_at=$5 RETURNING token_digest`,
+      [new Date(started).toISOString(), this.scope.tenantId, identity.tokenDigest, actor.id, identity.issuedAt]);
+      if (revoked.rows.length !== 1) throw new WebAccessError("authentication_required");
+    }, assertFresh);
   }
 }

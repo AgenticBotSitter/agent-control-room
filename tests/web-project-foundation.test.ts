@@ -91,3 +91,33 @@ test("grant expiry during a save rolls back both the project and audit", async t
   assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM projects")).rows[0].n, 0);
   assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM audit_events")).rows[0].n, 0);
 });
+
+for (const [label, change] of [
+  ["identity suspension", "UPDATE control_identities SET state='suspended' WHERE id='identity:web'"],
+  ["identity revocation", "UPDATE control_identities SET state='revoked' WHERE id='identity:web'"],
+  ["grant revocation", "UPDATE control_role_grants SET revoked_at='2026-09-04T12:00:00Z' WHERE id='grant:web'"],
+  ["grant expiry", "UPDATE control_role_grants SET expires_at='2026-09-04T12:00:00Z' WHERE id='grant:web'"],
+  ["permission removal", "UPDATE control_role_grants SET allowed_actions='[]'::jsonb WHERE id='grant:web'"],
+  ["project scope narrowing", "UPDATE control_role_grants SET project_ids='[\"project:one\"]'::jsonb WHERE id='grant:web'"],
+  ["strong factor requirement", "UPDATE control_role_grants SET require_strong_factor=true WHERE id='grant:web'"],
+]) {
+  test(`exact-session logout remains available after ${label}`, async t => {
+    const f = await fixture(); t.after(() => f.db.close());
+    assert.equal((await f.handler(request())).status, 200);
+    await f.db.query(change);
+    assert.equal((await f.handler(request())).status, 403);
+    assert.equal((await f.handler(request("/api/v1/session/logout", "POST"))).status, 204);
+    assert.equal((await f.handler(request("/api/v1/session/logout", "POST"))).status, 204);
+    await f.db.query("UPDATE control_identities SET state='active' WHERE id='identity:web'");
+    await f.db.query("UPDATE control_role_grants SET revoked_at=NULL,expires_at=NULL,allowed_actions='[\"*\"]'::jsonb,project_ids='[\"*\"]'::jsonb,require_strong_factor=false WHERE id='grant:web'");
+    assert.equal((await f.handler(request())).status, 401);
+    assert.equal((await f.handler(request(undefined, undefined, undefined, undefined, token({ iat: now / 1000 - 30 })))).status, 200);
+  });
+}
+
+test("manual lifecycle heads cannot disagree with their project's workspace", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const result = await f.db.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='control_manual_project_heads'");
+  assert.equal(result.rows.some(row => row.column_name === "workspace_id"), false);
+  await assert.rejects(() => f.db.query("INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at) VALUES('tenant:web','project:absent','active',1,now(),now())"));
+});
