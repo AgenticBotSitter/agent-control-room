@@ -191,6 +191,8 @@ canonical persistence, durable supervisor state and signed dispatch remain next 
 Local verification: CR14C 373, preparation 769, main 952 with two existing platform skips, post-suite 392,
 private compiled tests 16 and rendered tests four passed; both builds, TypeScript, full ESLint and
 migrations through 0046 (132 tables) passed. Live C-WORK remains incomplete.
+Published as [PR #309](https://github.com/MarvinAi5/control-room/pull/309), stacked on #308.
+Current-head CI remains required; no merge or activation is claimed.
 PR #306 exact head `4f32ef1891490b475282ddcbe575b69be6cae9e9` passed CI `33985592476`
 at 2026-09-05 19:19:47 UTC. PR #307 was still running when checked. No merge is claimed.
 PR #305 exact head `b3cb5ceee3529c2b11253ea196dbe99dceb0b566` passed CI `33984854964`
