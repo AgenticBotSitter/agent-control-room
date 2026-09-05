@@ -1990,6 +1990,10 @@ intent and audit insert. Authenticated historical readback reconciles uncertain 
 See `CR14C_APPROVED_TASK_QUEUE_ACCEPTANCE.md`. Migration0048 requires134 tables; only coordinator
 SELECT/INSERT grows, not web access. A recorded queue intent is not delivery, execution or current
 permission, and no sender, HTTP/lifecycle mounting or live service is added by this block.
+Published in [PR #315](https://github.com/MarvinAi5/control-room/pull/315), stacked on #314.
+Local verification passed CR14C437, preparation769, main1016 with two existing skips, post-suite392,
+private compiled18 and rendered4; both builds, TypeScript, full ESLint and migrations0048/134 tables
+passed. Current-head CI remains required; no merge or deployment is claimed.
 
 ## Next block
 

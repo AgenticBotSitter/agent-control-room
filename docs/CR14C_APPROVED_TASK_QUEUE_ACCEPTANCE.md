@@ -40,3 +40,6 @@ No native/provider call, real credentials, listener, production SQL, deployment 
 The queue has no sender/consumer or HTTP/lifecycle mounting in this block. Signed delivery processing,
 node receipt/reconciliation and eventual physical admission remain separate incomplete integration.
 Queue receipt means recorded intent only, not live eligibility, dispatch or execution.
+
+Published as [PR #315](https://github.com/MarvinAi5/control-room/pull/315), stacked on PR #314.
+Current-head GitHub checks remain required before dependency-order integration; no merge is claimed.
