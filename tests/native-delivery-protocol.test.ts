@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { canonicalApprovalStorageFixture as fixture } from "./helpers/canonical-approval-storage";
-import { sha256Digest } from "../src/security";
+import { sha256Digest, canonicalJson } from "../src/security";
 import { NodeProtocolAuthenticator, signNodeFrame, NODE_PROTOCOL_V1, signedNodeFrameSchema,
   type SignedNodeFrame } from "../src/node-protocol/v1";
 import { nativeTaskDispatchBodySchema, nativeTaskDispatchReceiptBodySchema, matchNativeTaskDispatchReceipt, prepareNativeTaskDispatchIntake } from "../src/harness/v1/native-delivery";
@@ -113,4 +113,15 @@ test("even server-signed delivery cannot substitute invalid owner signatures", a
   const authenticated = await f.verify(frame);
   const prepared = prepareNativeTaskDispatchIntake(authenticated.frame.body, f.prepared.enrollment);
   await assert.rejects(createNativeApprovalIntake(prepared, { approvals: f.approvals, security: f.native.trust, clock: f.clock })(prepared.packet, f.abort.signal));
+});
+
+test("new server signature cannot legitimize a contradictory canonical input digest", async t => {
+  const f = await setup(); t.after(f.close);
+  const body = { ...f.body, inputDigest: sha256Digest("different canonical input") };
+  assert.throws(() => prepareNativeTaskDispatchIntake(body, f.prepared.enrollment));
+  const { signature: _signature, ...original } = f.frame; void _signature;
+  const material = { ...original, body, bodyDigest: sha256Digest(body) };
+  // Sign deliberately malformed fixture material without the producer's schema helper.
+  const frame = { ...material, signature: sign(null, Buffer.from(canonicalJson(material)), f.server.privateKey).toString("base64url") };
+  await assert.rejects(f.verify(frame));
 });

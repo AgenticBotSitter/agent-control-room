@@ -14,7 +14,8 @@ export const nativeTaskDispatchBodySchema = z.object({
 }).strict().superRefine((v, ctx) => {
   const r = v.request, s = v.start, a = v.packet.approval.body;
   const expectedQueue = `native-queue:${sha256Digest({ tenantId: r.tenantId, jobId: r.jobId, attemptId: r.attemptId }).slice(7)}`;
-  if (v.queueId !== expectedQueue || r.approval || r.operationId !== "harness.hermes.native.start"
+  if (v.queueId !== expectedQueue || v.inputDigest !== sha256Digest({ prompt: s.prompt, instructions: s.instructions })
+    || r.approval || r.operationId !== "harness.hermes.native.start"
     || r.tenantId !== s.tenantId || r.projectId !== s.projectId || r.jobId !== s.jobId
     || r.attemptId !== s.attemptId || r.nodeId !== s.nodeId || r.operationDigest !== s.operationDigest
     || a.tenantId !== r.tenantId || a.nodeId !== r.nodeId || a.projectId !== r.projectId

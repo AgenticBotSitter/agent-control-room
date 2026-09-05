@@ -8,7 +8,7 @@ committed structural JSON schema; runtime relational checks and cryptographic ch
 The dispatch contains exact queue/input/enrollment/binding/packet digests, bounded start material, the
 unsigned normalized request and separately owner-signed start/recovery packet. It never supplies a local
 enrollment configuration or private key. IDs and operation scope must agree; the queue ID is deterministic
-for tenant/job/attempt. The frame cannot outlive the task deadline or predate the owner approval. The
+for tenant/job/attempt, and inputDigest must hash the exact prompt/instructions object. The frame cannot outlive the task deadline or predate the owner approval. The
 native body is capped at64KiB in addition to existing protocol and start-field limits.
 
 After authenticating a message, the receiver must resolve its own trusted local enrollment and use
