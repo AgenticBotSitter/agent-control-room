@@ -1981,14 +1981,24 @@ Local verification passed CR14C427, preparation769, main1006 with two existing s
 private compiled18 and rendered4; both builds, TypeScript, full ESLint and migrations0047/133 tables
 passed. Current-head CI remains required; no merge, deployment or live task execution is claimed.
 
+## Durable approved-task queue
+
+Atomic queue recording and audit are independently reviewed at
+`7ede9e0677db04d78d9dddefcf71d1d431b1c62f`, with69 passing review checks and no findings. Current owner,
+canonical reservation and both saved signatures are checked in the same transaction as the immutable
+intent and audit insert. Authenticated historical readback reconciles uncertain acknowledgement.
+See `CR14C_APPROVED_TASK_QUEUE_ACCEPTANCE.md`. Migration0048 requires134 tables; only coordinator
+SELECT/INSERT grows, not web access. A recorded queue intent is not delivery, execution or current
+permission, and no sender, HTTP/lifecycle mounting or live service is added by this block.
+
 ## Next block
 
 ```text
-Block: CR14C atomic approved-task delivery queue, owner signing and revisions
+Block: CR14C signed delivery processing and node reconciliation, owner signing and revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Current saved-packet revalidation is independently reviewed. Delivery queue insertion must share that canonical transaction; historical receipts and returned snapshots cannot authorize later effects.
-Expected output: atomic approved-task queue/signing/delivery integration using existing node admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Approved-task queue insertion now shares current canonical revalidation and audit commit fences. A sender must resolve current queue eligibility, issue bounded signed delivery and record progress without replaying uncertain effects.
+Expected output: durable signed delivery processing and node receipt/reconciliation using existing admission/marker controllers, separate owner signing support and revision submission. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

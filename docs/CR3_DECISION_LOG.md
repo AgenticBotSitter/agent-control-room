@@ -5791,3 +5791,25 @@ Product `07285197290ba24823ccd0faa26639a76353d5b2`, tree
 `29412703f93db7ddcf2ac5145e6023c105d95db1`, passed independent review with38 tests and no actionable
 findings. See `CR14C_SAVED_APPROVAL_REVALIDATION_ACCEPTANCE.md` for verification and remaining work.
 No schema/privilege change, actual signing service, listener, provider call or deployment is introduced.
+
+## ADR-237 — atomic immutable native delivery intent
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Revalidate the actual saved signatures, insert one HMAC-protected intent per canonical attempt and
+append its audit event within the same checked owner/canonical transaction. Cancellation, trust changes,
+expiry and audit failure roll back the intent. Replay verifies original committed material; historical
+readback reconciles uncertain acknowledgement under current owner permission without enqueue retry.
+
+Migration0048 adds an immutable queue table bound to the job/project and saved approval attempt.
+Coordinator SELECT/INSERT alone is extended; no web access or update/delete/truncate privilege is added.
+Current catalog fingerprint is `66f6a11270506a3fc3deadcd4c9d3759b771e6b760725c13bcd85bbf0750d128`;
+disposable preparation now requires134 tables and migrations0001–0048.
+
+An intent is not live eligibility, a server signature, node receipt or execution authority. No sender is
+invoked inside the transaction. Future delivery processing must resolve current canonical/trust state,
+sign a bounded message and durably reconcile delivery; nodes retain current local admission/claim checks.
+
+Reviewed product `7ede9e0677db04d78d9dddefcf71d1d431b1c62f`, tree
+`c7d96dd6e54e894a034ce28db7fa508e6fe36916`, passed69 independent checks without findings.
+See `CR14C_APPROVED_TASK_QUEUE_ACCEPTANCE.md`. No live effects or runtime activation added.
