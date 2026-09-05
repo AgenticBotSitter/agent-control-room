@@ -31,3 +31,5 @@ changed during verification or after review; only documentation followed the acc
 No failed native attempt or qualification was consumed. No real credentials, private key loader, live
 database, listener, provider call, deployment or merge was used. The accepted result is a trusted lifecycle
 port and historical receipt readback, not a browser approval flow or live agent delivery.
+Published in [PR #312](https://github.com/MarvinAi5/control-room/pull/312), targeting PR #311's branch.
+Current-head CI remains required before dependency-order integration; no merge is claimed.
