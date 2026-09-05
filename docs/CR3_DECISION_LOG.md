@@ -4907,3 +4907,29 @@ Reference: `CR14A_INTEGRATION_DIRECTION.md`. This ADR changes direction, not the
 blocking finding. `CR14A_ACCEPTANCE.md` records the actual deterministic checks and the documentation-only
 follow-up for LANDING ownership, exact model IDs, and publication checks. Four packets remain local drafts;
 no source/runtime wiring, live qualification, deployment, GitHub publication or merge is claimed.
+
+## ADR-203 — Implement the private web foundation without enabling the preview as production
+
+**Date:** 2026-09-04. **Owner direction:** build the accepted CR14B foundation on Astra Xhigh.
+
+Use the installed Vinext Node build path, isolated output and a build-fixed all-route readiness guard until
+B-WIRE supplies the reviewed authenticated composition. Preserve the Sites preview and its hosting metadata.
+Use deployment-selected Access public keys and exact application-assertion verification, with no request-driven
+key discovery, automatic account enrollment or implicit effect approval. Persist token digests and exact-session
+revocation in PostgreSQL; public-key freshness must not shorten remembered-session records. Logout revokes only
+the caller's verified assertion and must remain possible after project authority or identity state is withdrawn.
+
+Ordinary projects use canonical projects and existing identity/grant authority. Server-selected tenant/workspace,
+per-project or workspace-wide grants, atomic command/audit persistence, idempotency and version conflicts govern
+the new HTTP/SQL service. A manual lifecycle head derives workspace ownership through its canonical project;
+there is no duplicated workspace column. Archive/reopen does not cancel or authorize work. Identity/grant locks
+and commit-time expiry bound admission without claiming instantaneous revocation of an in-flight transaction.
+
+**Evidence:** `CR14B_FOUNDATION_ACCEPTANCE.md`; original Medium logout and Low schema findings retained in
+`reviews/CR14B_FOUNDATION_INITIAL_REVIEW.md`, closed by the bounded independent re-review at exact repair
+`2de0a4760fe1d5a0f2b39894e2e19ad897486d5f`, tree `f30ed73082ed439a72f7d358c42af9b31f3cda97`.
+
+**Limits:** no production database migration/connection, listener, credentials, live agents, IdP setup, DNS or
+deployment. This is foundation acceptance, not CR14B private-pilot completion. B-WIRE must finish shared page/API/
+stream verification, browser session UX, project UI and process-owned dependencies before replacing the guard.
+Database privileges, actual Node lifecycle and private ingress/MFA remain later explicit setup/rehearsal gates.

@@ -6,7 +6,8 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14B — B-RUNTIME + B-AUTH + B-PROJECT-API; not yet implemented.
+**Next block:** CR14B — B-WIRE authenticated application and project UI integration. The runtime/access/project
+foundation is accepted in `CR14B_FOUNDATION_ACCEPTANCE.md`; the private-pilot exit remains incomplete.
 
 **Scope:** Finish a useful private Control Room before optional specialist expansion and public release.
 
@@ -216,8 +217,9 @@ Every block reports: implemented result, evidence level, mounted integration, re
 tests actually run, and the next block/model. Keep historical evidence separate from current readiness.
 No fresh calendar/percentage completion claim is made until the first real connected workflow is measured.
 
-CR14A is accepted locally for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The next architect
-block is **B-RUNTIME + B-AUTH + B-PROJECT-API design and effect-free implementation**, using
+CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
+accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The next architect
+block is **B-WIRE shared authentication, browser session and project UI integration**, using
 **Astra Xhigh (`gpt-6-astra`, `xhigh`)**. Publish the prepared worker wave only after its base
 and shared contract are available; no extra owner message is needed for ordinary already-scoped code work.
 Stop before live credentials, host changes, provider calls, database services or deployment without the

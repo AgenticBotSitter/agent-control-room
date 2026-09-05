@@ -10,11 +10,13 @@ component acceptance. This file reports current product readiness and the next b
 
 **CR14A — private-beta rebaseline is accepted locally.** Independent review accepted product
 `93118f9169d03c6fde68b70a5a2e53fba19fc5f4` with no blocking findings. See `CR14A_ACCEPTANCE.md` for the
-review, actual checks and documentation-only handoff follow-up. It has not been pushed or merged.
-**CR14B B-RUNTIME + B-AUTH + B-PROJECT-API foundation is in progress**, using `gpt-6-astra` / `xhigh`
-(Astra Xhigh). The candidate implements a separate Node build, Access verifier, durable session checks and
-ordinary-project HTTP/SQL services. See `CR14B_FOUNDATION_CONTRACT.md`. Independent review and the final
-acceptance record are pending; the website is not yet wired to these services.
+review, actual checks and documentation-only handoff follow-up.
+**CR14B runtime/access/project foundation is accepted**, including the independent logout/schema re-review
+at `2de0a4760fe1d5a0f2b39894e2e19ad897486d5f`. See `CR14B_FOUNDATION_ACCEPTANCE.md`.
+The separate Node build, Access verifier, durable session checks and ordinary-project HTTP/SQL services
+are tested, but the website is not yet wired to them. CR14B's private-pilot exit is not complete.
+**Next: CR14B B-WIRE**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
+GitHub publication of the combined CR14A/CR14B feature branch is pending; no merge is claimed.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
@@ -26,8 +28,8 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 
 | Owner outcome | Current operational truth | Remaining delivery |
 |---|---|---|
-| General project creation and lifecycle | Local Idea-promoted projects only; no general live catalog/create flow | CR14B |
-| Everyday private login and VPS app | 15-minute loopback code; default production build still Sites/Worker-oriented | CR14B |
+| General project creation and lifecycle | Ordinary-project HTTP/SQL service is tested; current website still has only local Idea-promoted projects | CR14B B-WIRE + pilot |
+| Everyday private login and VPS app | Separate Node build and Access/session core tested; current website still uses its loopback pilot login | CR14B B-WIRE + setup/pilot |
 | Real task -> agent -> progress -> result -> review in the website | Components/contracts exist; mounted live dispatch/review absent | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Host-specific evidence and disabled/inert seams; no mounted live roster/dispatch | CR14D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
@@ -56,6 +58,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14B runtime/access/project foundation | Accepted for components and in-process SQL/HTTP integration; browser and private pilot incomplete | `CR14B_FOUNDATION_ACCEPTANCE.md`; `reviews/CR14B_FOUNDATION_REREVIEW.md` |
 | CR14A delivery rebaseline | Accepted locally for plan and coordination tooling; not live integration or GitHub publication | `CR14A_ACCEPTANCE.md`; `reviews/CR14A_INDEPENDENT_REVIEW.md` |
 | CR-0 founding contract | Complete | Founding contract and versioned project-adapter contract |
 | CR-1 responsive read-only prototype | Complete | Portfolio, project, and worker fixture surfaces |
@@ -1610,11 +1613,11 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14B B-RUNTIME + B-AUTH + B-PROJECT-API foundation (implementation candidate; review pending)
+Block: CR14B B-WIRE (shared authenticated application and project UI integration)
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: xhigh
-Why: CR14A is accepted; freeze and implement the shared runtime, identity and project boundaries together.
-Expected output: explicit Node/VPS build profile, common verified-identity boundary and canonical general-project API, with local tests; later mount the accepted worker UI.
+Why: The Node build and corrected access/project service foundation are accepted; the website is not yet connected to them.
+Expected output: process-owned store/trust composition, shared page/API/stream verification, browser session UX and mounted project catalog/create/detail/lifecycle, with explicit local acceptance.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
