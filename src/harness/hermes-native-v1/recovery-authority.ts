@@ -21,6 +21,8 @@ export type NativeRecoveryCurrent = {
   credentialAvailable: boolean;
   /** Trusted current owner cleanup policy/revocation result, independent of expired work permission. */
   recoveryAllowed: boolean;
+  /** Verified compositions fence owner trust/local policy across profile and controller awaits. */
+  assertFresh?: () => void;
 };
 export type NativeRecoveryDependencies = {
   readCurrent: (signal: AbortSignal) => Promise<NativeRecoveryCurrent>;
@@ -79,20 +81,24 @@ export function createNativeRecoveryAuthority(config: { enrollment: unknown; bin
       try {
         const deadline = Math.min(time() + checkMs, body.expiresAt, enrollment.validUntil);
         const work = (async () => {
-          const trust = structuredClone(await read(controller.signal));
+          const { assertFresh, ...observed } = await read(controller.signal);
+          const trust = structuredClone(observed);
           if (controller.signal.aborted) return unavailable(); live(current);
           if (trust.credentialAvailable !== true || trust.recoveryAllowed !== true
             || trust.approvalKey.keyId !== body.approvalKeyId
             || !verifyArtifactSignature(permission, trust.approvalKey.publicKeySpki)) return unavailable();
           await profile(enrollment, time(), controller.signal);
           if (controller.signal.aborted || time() >= deadline) return unavailable();
-          live(current); durable();
+          live(current); assertFresh?.(); durable();
+          return assertFresh;
         })();
         started = true; void work.then(() => { active--; }, () => { active--; });
-        await Promise.race([work, new Promise<never>((_, reject) => {
+        const assertFresh = await Promise.race([work, new Promise<never>((_, reject) => {
           controller.signal.addEventListener("abort", () => reject(new Error("native_recovery_authority_unavailable")), { once: true });
           timer = setTimeout(() => controller.abort(), Math.max(1, deadline - time()));
         })]);
+        if (controller.signal.aborted || time() >= deadline) return unavailable();
+        live(current); assertFresh?.(); durable();
       } catch { return unavailable(); }
       finally { clearTimeout(timer); controller.abort(); pending.delete(controller); if (!started) active--; }
     },

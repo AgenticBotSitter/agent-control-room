@@ -201,13 +201,21 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
   /** Synchronous freshness fence; never repairs a partially committed update. */
   currentPolicyRevision(): string {
     const ceiling = this.ceilingRow(), ceilingWater = this.ceilingHighWater();
+    if (!ceiling || !ceilingWater) throw new ProtectedStoreError("missing");
+    if (ceilingWater.phase !== "committed" || ceiling.version !== ceilingWater.sequence
+      || ceiling.body_digest !== ceilingWater.body_digest) throw new ProtectedStoreError("recovery_required");
+    this.verifyCeilingRow(ceiling);
+    return `${ceiling.version}:${ceiling.body_digest}:${this.currentServerTrustRevision()}`;
+  }
+
+  /** Recovery may need current owner trust after work authority has expired or become unavailable. */
+  currentServerTrustRevision(): string {
     const trust = this.trustRow(), trustWater = this.trustHighWater();
-    if (!ceiling || !trust || !ceilingWater || !trustWater) throw new ProtectedStoreError("missing");
-    if (ceilingWater.phase !== "committed" || trustWater.phase !== "committed"
-      || ceiling.version !== ceilingWater.sequence || ceiling.body_digest !== ceilingWater.body_digest
-      || trust.epoch !== trustWater.sequence || trust.body_digest !== trustWater.body_digest) throw new ProtectedStoreError("recovery_required");
-    this.verifyCeilingRow(ceiling); this.verifyTrustRow(trust);
-    return `${ceiling.version}:${ceiling.body_digest}:${trust.epoch}:${trust.body_digest}`;
+    if (!trust || !trustWater) throw new ProtectedStoreError("missing");
+    if (trustWater.phase !== "committed" || trust.epoch !== trustWater.sequence
+      || trust.body_digest !== trustWater.body_digest) throw new ProtectedStoreError("recovery_required");
+    this.verifyTrustRow(trust);
+    return `${trust.epoch}:${trust.body_digest}`;
   }
 
   async loadCeiling(): Promise<SignedNodeAuthorityCeilingV1> {
