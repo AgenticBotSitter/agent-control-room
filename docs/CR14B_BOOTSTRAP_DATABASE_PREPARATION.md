@@ -65,7 +65,7 @@ provisioning are separate operator-owned operations, never ordinary web login ca
 |---|---|---|
 | Identity/grant admission | `control_identities`, `control_role_grants` | Read and row-lock; no changing subject/provider/state/actions/scope/expiry or issuing grants |
 | Session admission/logout | `control_web_sessions` | Insert exact session, read/lock, revoke existing assertion; no deleting tombstones or extending expiry |
-| Ordinary project creation/lifecycle | `adapters`, `projects`, `control_manual_project_heads` | Create manual adapter/project/head, update only existing manual lifecycle fields; no delete |
+| Ordinary project creation/lifecycle | `workspaces`, `adapter_registry`, `projects`, `control_manual_project_heads` | Read/lock the existing workspace; create manual adapter/project/head, update only existing manual lifecycle fields; no delete |
 | Command replay and audit | `control_web_project_commands`, `audit_events`, `control_audit_chain_heads` | Append receipts/events and advance audit head; never edit immutable events/receipts |
 | Idea project read | canonical `projects`, `control_project_lifecycle_events` | Read verified latest event/mirror only; no Idea decision or lifecycle write |
 | Connection read | `control_connection_registry_heads`, `control_connection_enrollments`, `control_connection_authenticated_telemetry_receipts` | Read/verify existing enrollment and telemetry; no enrollment, renewal or signal publication |
