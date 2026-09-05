@@ -11,7 +11,10 @@ component acceptance. This file reports current product readiness and the next b
 **CR14A — private-beta rebaseline is accepted locally.** Independent review accepted product
 `93118f9169d03c6fde68b70a5a2e53fba19fc5f4` with no blocking findings. See `CR14A_ACCEPTANCE.md` for the
 review, actual checks and documentation-only handoff follow-up. It has not been pushed or merged.
-**Next: CR14B B-RUNTIME + B-AUTH + B-PROJECT-API**, using `gpt-6-astra` / `xhigh` (Astra Xhigh).
+**CR14B B-RUNTIME + B-AUTH + B-PROJECT-API foundation is in progress**, using `gpt-6-astra` / `xhigh`
+(Astra Xhigh). The candidate implements a separate Node build, Access verifier, durable session checks and
+ordinary-project HTTP/SQL services. See `CR14B_FOUNDATION_CONTRACT.md`. Independent review and the final
+acceptance record are pending; the website is not yet wired to these services.
 This is not permission to activate a listener,
 read credentials, invoke an agent/provider, provision a database, start a service or deploy.
 
@@ -1607,7 +1610,7 @@ Only real product work is published; ordinary work does not require calibration-
 ## Next block
 
 ```text
-Block: CR14B B-RUNTIME + B-AUTH + B-PROJECT-API (next; implementation not started)
+Block: CR14B B-RUNTIME + B-AUTH + B-PROJECT-API foundation (implementation candidate; review pending)
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: xhigh
 Why: CR14A is accepted; freeze and implement the shared runtime, identity and project boundaries together.

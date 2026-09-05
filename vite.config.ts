@@ -2,6 +2,7 @@ import vinext from "vinext";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
+import { selectBuildTarget } from "./src/config/build-target";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -33,6 +34,8 @@ const localBindingConfig = {
 };
 
 export default defineConfig(async ({ mode }) => {
+  const target = selectBuildTarget(process.env.CONTROL_ROOM_BUILD_TARGET);
+  const nodeTarget = target === "vps-node";
   const localPilotRequested = mode === "development"
     && process.env.CONTROL_ROOM_LOCAL_PILOT_MODE === "repository_fake";
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
@@ -44,7 +47,7 @@ export default defineConfig(async ({ mode }) => {
   // PGlite is a Node-local development database and does not run inside the
   // Cloudflare worker simulator. Production and ordinary previews keep the
   // Cloudflare plugin; the explicit local pilot uses Vinext's Node runtime.
-  const cloudflarePlugin = localPilotRequested
+  const cloudflarePlugin = localPilotRequested || nodeTarget
     ? undefined
     : (await import("@cloudflare/vite-plugin")).cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
@@ -52,12 +55,14 @@ export default defineConfig(async ({ mode }) => {
       });
 
   return {
+    define: { "process.env.CONTROL_ROOM_BUILD_TARGET": JSON.stringify(target) },
+    ...(nodeTarget ? { environments: { client: { build: { outDir: "dist-vps/client" } } } } : {}),
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
-      vinext(),
-      sites(),
+      vinext(nodeTarget ? { rscOutDir: "dist-vps/server", ssrOutDir: "dist-vps/server/ssr" } : {}),
+      ...(nodeTarget ? [] : [sites()]),
       ...(cloudflarePlugin ? [cloudflarePlugin] : []),
     ],
   };

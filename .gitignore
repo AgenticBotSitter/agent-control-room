@@ -41,3 +41,4 @@ yarn-error.log*
 /outputs/
 /work/
 *.tsbuildinfo
+dist-vps/

@@ -1,0 +1,7 @@
+import { createBuilder } from "vite";
+
+// Build only: no vinext CLI dependency upgrades, prerender listener, startup or deployment.
+process.env.CONTROL_ROOM_BUILD_TARGET = "vps-node";
+const builder = await createBuilder({ mode: "production", configFile: "vite.config.ts" });
+await builder.buildApp();
+console.log("VPS Node artifact compiled in dist-vps; private application wiring remains pending.");
