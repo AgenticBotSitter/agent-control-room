@@ -27,7 +27,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const pool = Object.freeze({ client: resource.client, close: resource.close.bind(resource), isAvailable: resource.isAvailable.bind(resource) });
   const raw = Object.freeze({ query: pool.client.query.bind(pool.client), transaction: pool.client.transaction.bind(pool.client),
     transactionWithPreCommitCheck: pool.client.transactionWithPreCommitCheck.bind(pool.client) });
-  let closing = false, invalid = false, active = 0, closePromise: Promise<void> | undefined;
+  let closing = false, invalid = false, interrupted = false, active = 0, closePromise: Promise<void> | undefined;
   let drained: (() => void) | undefined, force!: () => void;
   const stops = new Set<() => void>();
   const forced = new Promise<void>(resolve => { force = resolve; });
@@ -59,7 +59,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     stops.add(stop);
     const operation = Promise.resolve().then(work).finally(() => { stops.delete(stop); active--; if (closing && active === 0) drained?.(); });
     try {
-      return await Promise.race([operation, stopped]);
+      const result = await Promise.race([operation, stopped]);
+      if (interrupted) { await forced; throw new Error("task_coordinator_save_uncertain"); }
+      return result;
     } catch (error) {
       // Invalidated SQL failures cannot escape before the bounded pool-close outcome is known.
       if (invalid) { await forced; throw new Error("task_coordinator_save_uncertain"); }
@@ -80,7 +82,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         let timedOut = false;
         try {
           if (active) await Promise.race([new Promise<void>(resolve => { drained = resolve; }),
-            new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; resolve(); }, drainMs); })]);
+            new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; interrupted = true; resolve(); }, drainMs); })]);
           invalid = true;
           await Promise.race([Promise.resolve().then(pool.close), new Promise<never>((_, reject) => {
             closeTimer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);

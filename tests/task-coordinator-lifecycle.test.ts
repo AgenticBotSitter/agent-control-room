@@ -110,6 +110,26 @@ test("configuration failure retains caller ownership and unavailable pools refus
   await assert.rejects(owner.assignment.assign(...f.args), /task_coordinator_unavailable/); await owner.close();
 });
 
+test("a commit acknowledgement arriving during forced pool cleanup cannot report success", async t => {
+  const f = await fixture(); t.after(f.close);
+  const committed = deferred(), acknowledge = deferred(), cleanupEntered = deferred(), cleanupRelease = deferred(), operationReturned = deferred();
+  const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: async (work, check) => {
+    const value = await f.db.transactionWithPreCommitCheck(work, check); committed.resolve(); await acknowledge.promise;
+    operationReturned.resolve(); return value;
+  } };
+  const owner = createTaskCoordinatorLifecycle({ ...f.config, drainMs: 5, database: { ...f.config.database, client: db,
+    close: async () => { cleanupEntered.resolve(); await cleanupRelease.promise; } } });
+  let outcome = "pending";
+  const save = owner.assignment.assign(...f.args).then(() => { outcome = "success"; }, error => { outcome = error.message; });
+  await committed.promise;
+  const closing = assert.rejects(owner.close(), /task_coordinator_close_uncertain/);
+  await cleanupEntered.promise; acknowledge.resolve(); await operationReturned.promise;
+  // Flush promise reactions, without a wall-clock assertion or starting another operation.
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const duringCleanup = outcome; cleanupRelease.resolve(); await closing; await save;
+  assert.equal(duringCleanup, "pending"); assert.equal(outcome, "task_coordinator_save_uncertain");
+});
+
 test("combined application mounts real assignment behind a genuinely restricted web role and closes both resources", async t => {
   const f = await fixture(); t.after(f.close); await f.raw.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
   const restricted: DatabaseClient = {
