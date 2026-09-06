@@ -66,6 +66,11 @@ path first for ordinary task results; keep RoomLink for independent bot handoff.
 [E07](research/REUSE_E07_HERMES_REMOTE_FETCH.md) subsequently passed 11 offline tests of
 the original transport. Run completion still lacks a canonical file handoff; inspect
 the existing authenticated media API rather than silently widening the text-result path.
+[E08](research/REUSE_E08_HERMES_FILE_API.md) found the dashboard read/download endpoints
+but no Control Room project/run binding. Nine path-policy tests preserve that limitation.
+Do not activate a broad dashboard file browser as our artifact service, or import the
+credential/skill filesystem sync. A narrow verified producer-to-project bridge remains;
+this does not block other selected reuse integrations or erase the rich-file outcome.
 Keep project/attempt authorization and a Codex-compatible artifact path in Control Room.
 Pinned offline tests precede adoption; no installed-fleet capability or live transfer is
 claimed. Prepare during B/C, use in D, and do not delay B's text-only task for rich files.

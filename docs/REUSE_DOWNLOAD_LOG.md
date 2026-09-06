@@ -257,3 +257,32 @@ Only synthetic fixture files/symlinks were created and removed automatically by
 the test harness. Downloads remain retained; no source copied into runtime, no
 live gateway/remote backend/agent or provider used. Preserve these pinned sources
 for reproducibility; only the exact E06 directory is a future cleanup target.
+
+### E08 — Hermes authenticated file access source fit
+
+Pre-download disk: 105 GiB free. Retain `e08-` files in the same exact evaluation
+directory, pinned to E07's merge `b499ab11fe8b081470e269f2fb27abae03000da5`.
+Inspect existing media/file interfaces and their authorization before integration.
+Public tree metadata reads only so far; no live service or credential access.
+
+Four pinned source files retained (three tree listings viewed, not saved). Source URL
+Combined E06/E07/E08 retention is **864 KiB**; disk remains approximately 105 GiB free.
+prefix is E07's public raw URL. Local names map to `hermes_cli/web_routers/files.py`,
+`hermes_cli/web_server.py`, `hermes_cli/web_server_files.py` and
+`tools/environments/file_sync.py` respectively. Same pinned MIT root license retained.
+
+| E08 filename | Retained SHA256 |
+|---|---|
+| `e08-hermes_cli-web_routers-files.py` | `727c8a05cb3c4491f47f9a21537a523064b823f4094c64bd68996117917e533c` |
+| `e08-hermes_cli-web_server.py` | `cebf1e020b7934dac336ddeb1b532259a917baea21f94097ced429b366471433` |
+| `e08-hermes_cli-web_server_files.py` | `bbfddf761fe9949812e5eab53dad8288bbde55b0ef7662e5994df76b6edb0610` |
+| `e08-tools-environments-file_sync.py` | `0ebbf3515a511deed9efa90c86fff31c4fd5380e89f4937f9a41a2b07109b9ee` |
+
+One orchestration call failed JavaScript parsing before execution; corrected call
+retrieved the intended web server source. Bundled FastAPI import probe reported absent;
+no install performed. Nine source-level policy tests used explicitly documented type
+stand-ins, not a fake HTTP/auth pass. Synthetic test fixtures were cleaned automatically.
+All source retained for provenance; no source modules from the web server, file router
+or credential-sync manager executed. Only the isolated path-policy module was evaluated.
+See [E08 evidence](research/REUSE_E08_HERMES_FILE_API.md). No live service or credential
+access, no runtime source adoption, and no directory cleanup beyond test fixtures.

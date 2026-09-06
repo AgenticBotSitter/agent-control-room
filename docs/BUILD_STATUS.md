@@ -53,6 +53,13 @@ general binary files. E06/E07 source/head/hash inventory retained (712 KiB combi
 installation, live transfer, source adoption or runtime wiring. Keep canonical project
 authorization and harness-neutral artifact storage. No full gateway or live backend test yet.
 
+**E08 — file API fit:** [Assessment](research/REUSE_E08_HERMES_FILE_API.md) found existing
+Hermes dashboard file downloads and passed nine source-level path-policy tests. A locked
+folder is not project/run authorization; the unlocked default is a file browser, not an
+artifact boundary. No dashboard activation or credential sharing selected. Keep native
+retrieval as a candidate, preserve the explicit run-to-file handoff gap, and continue
+other selected reuse work while rich file results remain unfinished. No live API test.
+
 **Reuse validation progress:** The owner directed following the new plan until complete
 or blocked. See [`REUSE_FIRST_VALIDATION_PACKET.md`](REUSE_FIRST_VALIDATION_PACKET.md)
 for candidate acquisition scope, concrete integration/retirement points and host-package
