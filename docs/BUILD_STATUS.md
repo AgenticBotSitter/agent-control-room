@@ -2417,6 +2417,8 @@ Final combined checks passed78; compiled managed-session/root pins checks passed
 Types, full lint and the private build passed. Usage recovery allowed ordinary approved
 integration to resume; no rejection was bypassed. See `CR14C_NODE_RUNTIME_ACCEPTANCE.md`
 for retained failures, exact evidence and limits. This is not a live agent or deployment.
+Published as [PR #343](https://github.com/MarvinAi5/control-room/pull/343), stacked on
+#342. Current-head CI is required; no merge is claimed.
 
 ```text
 Block: CR14C signed-frame and saved-result transport handoff
