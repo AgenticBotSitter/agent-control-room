@@ -21,12 +21,18 @@ import { response, statusBody } from "../hermes-native-fixture";
 
 export const currentSignal = () => new AbortController().signal;
 type Login = "managed_auth_test" | "managed_evidence_test" | "managed_result_test";
+type Base = Awaited<ReturnType<typeof canonicalApprovalStorageFixture>>;
+type Local = Pick<Awaited<ReturnType<typeof nativeStartAuthorityFixture>>,
+  "policy" | "dependencies" | "journal" | "transport" | "calls" | "setNow" | "close"> & {
+    prepared: { binding: Base["prepared"]["binding"] };
+  };
+export type ManagedNativePreparedContext = { f: Base; local: Local; providerRunId: string; resultText: string };
 
 /** Real signed node protocol and restricted server SQL, entirely in disposable fake-native fixtures.
  * Canonical assignment/approval/dispatch and producer policy reads remain labelled privileged setup.
  * Never constructs a server session or supplies f.auth to the managed server. */
-export async function managedNativeSessionFixture() {
-  const f = await canonicalApprovalStorageFixture();
+export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext) {
+  const f = context?.f ?? await canonicalApprovalStorageFixture();
   const cleanup: (() => void | Promise<void>)[] = [f.close];
   const admin = async <T>(work: () => Promise<T>): Promise<T> => {
     // PGlite retains SESSION AUTHORIZATION after commit. Only setup, fake-node work and
@@ -35,7 +41,7 @@ export async function managedNativeSessionFixture() {
     return work();
   };
   try {
-    const local = await nativeStartAuthorityFixture(undefined, f.prepared.enrollment, f.assignmentFixture);
+    const local: Local = context?.local ?? await nativeStartAuthorityFixture(undefined, f.prepared.enrollment, f.assignmentFixture);
     cleanup.push(local.close);
     local.policy.approvalKey = await resolvePinnedApprovalKey(f.approvals, f.approvals.binding(), f.packet.approval.body.approvalKeyId);
     assert.equal(sha256Digest(local.prepared.binding), sha256Digest(f.prepared.binding));
@@ -170,7 +176,8 @@ export async function managedNativeSessionFixture() {
           async json(wire: Parameters<typeof local.transport.json>[0]) {
             if (wire.operation === "status" && resultText !== undefined) {
               await wire.authorize(); local.calls.push(wire.operation);
-              return response(statusBody("completed", { session_id: f.prepared.binding.sessionId, output: resultText,
+              return response(statusBody("completed", { ...(context ? { run_id: context.providerRunId } : {}),
+                session_id: f.prepared.binding.sessionId, output: resultText,
                 usage: { input_tokens: 12, output_tokens: 5 } }));
             }
             return local.transport.json(wire);
@@ -180,7 +187,7 @@ export async function managedNativeSessionFixture() {
       cleanup.push(() => handoff.close());
       const produce = (phase: "start" | "running" | "completed") => admin(async () => {
         if (phase === "start") await handoff.start();
-        else { const now = f.clock() + 1000; f.setNow(now); local.setNow(now); if (phase === "completed") resultText = qualityText; await handoff.poll(); }
+        else { const now = f.clock() + 1000; f.setNow(now); local.setNow(now); if (phase === "completed") resultText = context?.resultText ?? qualityText; await handoff.poll(); }
         const body = nativeTaskObservation(handoff.snapshot(), registration.nativeTask!);
         await x.peer.bridge.publishNativeSnapshot(body, timestamp()); const raw = x.peer.incoming.shift(); assert.ok(raw); return { raw, body };
       });
