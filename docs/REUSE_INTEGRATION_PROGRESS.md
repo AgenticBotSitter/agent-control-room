@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E60 task host](research/REUSE_E60_TASK_HOST_COMPOSITION.md) connects the existing
+application and loopback service with installed queue factories, preserving once-only
+cleanup and failure uncertainty. Compiled tests use fake listener methods; deployment
+configuration, real resources and operational acceptance remain open.
+
 [E59 task transport](research/REUSE_E59_TASK_TRANSPORT_LIMIT.md) corrects the VPS bridge
 body ceiling to carry existing valid task inputs and verifies the compiled route/store
 journey. Existing serving code will be reused; no new listener or deployment was added.

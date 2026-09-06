@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local host integration — E60:** [Application/serving composition](research/REUSE_E60_TASK_HOST_COMPOSITION.md)
+connects verified task startup to the existing loopback service, with installed
+PostgreSQL/pg-boss composition and once-only cleanup. The expanded compiled suite passes
+39 tests, including normal startup and bind/cleanup failures; build, TypeScript and
+targeted lint pass. Listener methods are fake and databases disposable. Trusted runtime
+configuration, owner signing and real deployment remain unfinished.
+
 **Latest deployment-path fix — E59:** [Task transport compatibility](research/REUSE_E59_TASK_TRANSPORT_LIMIT.md)
 removes the outer 8 KiB mismatch for existing larger task envelopes, retaining bounded
 32 KiB task-only intake and smaller unrelated-route limits. A valid >8 KiB proposal now

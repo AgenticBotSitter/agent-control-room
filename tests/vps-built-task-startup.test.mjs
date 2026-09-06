@@ -12,13 +12,26 @@ import { request } from "./helpers/web-foundation.ts";
 import { sha256Digest } from "../src/security/index.ts";
 import { createPrivateNodeHandler } from "../dist-vps/server/serving.js";
 import { nodeExchange } from "./helpers/web-node.ts";
+import { EventEmitter } from "node:events";
+import { createPrivateTaskHost, createInstalledPrivateTaskHost } from "../dist-vps/server/taskHost.js";
 
 test("compiled two-pool bootstrap mounts protected planning, assignment and page rendering under shared logout", async t => {
   assert.equal(typeof startPrivateTaskApplication, "function");
   assert.equal((await handler(request())).status, 503);
   const f = await taskStartupFixture(); t.after(f.close);
-  const bootstrap = createPrivateTaskBootstrap({ openDatabase: f.openDatabase, install: installPrivateApplication, clock: () => instant + 8000 });
-  const app = await bootstrap.start(f.config); t.after(() => app.close());
+  assert.equal(typeof createPrivateTaskBootstrap, "function");
+  assert.equal(typeof createInstalledPrivateTaskHost().start, "function");
+  let binds = 0, listenerCloses = 0;
+  const server = new EventEmitter();
+  server.listen = (options, callback) => { binds++; assert.equal(options.host, "127.0.0.1"); queueMicrotask(callback); return server; };
+  server.close = callback => { listenerCloses++; queueMicrotask(() => callback?.()); return server; };
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const host = createPrivateTaskHost({ openDatabase: f.openDatabase, install: installPrivateApplication,
+    clock: () => instant + 8000, createServer: () => server });
+  assert.equal(binds, 0);
+  const app = await host.start({ configuration: f.config, port: 3210, handler,
+    assets: { count: 0, digest: "synthetic-no-assets", respond: () => undefined } });
+  t.after(() => app.close()); assert.equal(app.isReady(), true); assert.equal(binds, 1);
   const project = `/api/v1/projects/${f.profile.projectId}`;
   const req = (path, method = "GET", body) => request(path, method, body, "built-task-startup-001", f.jwt);
   const bridge = createPrivateNodeHandler({ origin: f.config.web.origin, application: app, handler,
@@ -48,6 +61,32 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
   assert.equal((await handler(req(path))).status, 401);
   const closing = app.close(); assert.equal(app.isReady(), false); await closing;
   assert.equal((await handler(req(path))).status, 503); assert.equal(f.web.closes(), 1); assert.equal(f.coordinator.closes(), 1);
+  assert.equal(listenerCloses, 1);
+  await assert.rejects(host.start({}), /already_attempted/);
+});
+
+test("compiled host denies invalid setup before pools and cleans up after failed bind", async t => {
+  for (const mode of ["invalid-port", "bind-error", "cleanup-error"]) await t.test(mode, async t => {
+    const f = await taskStartupFixture(); t.after(f.close);
+    let opens = 0, binds = 0, listenerCloses = 0;
+    const server = new EventEmitter();
+    server.listen = () => { binds++; queueMicrotask(() => server.emit("error", new Error("synthetic bind error"))); return server; };
+    server.close = callback => { listenerCloses++; queueMicrotask(() => callback?.()); return server; };
+    server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+    const host = createPrivateTaskHost({ openDatabase(config) {
+      opens++; const pool = f.openDatabase(config);
+      if (mode !== "cleanup-error" || config.username !== f.config.coordinator.database.username) return pool;
+      return { ...pool, async close() { await pool.close(); throw new Error("synthetic pool close error"); } };
+    }, install() {}, clock: () => instant + 8000, createServer: () => server });
+    await assert.rejects(host.start({ configuration: f.config, port: mode === "invalid-port" ? 0 : 3210, handler,
+      assets: { count: 0, digest: "synthetic", respond: () => undefined } }),
+    new RegExp(mode === "invalid-port" ? "config_invalid" : mode === "cleanup-error" ? "cleanup_uncertain" : "start_failed"));
+    assert.equal(opens, mode === "invalid-port" ? 0 : 2);
+    assert.equal(binds, mode === "invalid-port" ? 0 : 1);
+    assert.equal(listenerCloses, binds);
+    assert.equal(f.web.closes(), binds); assert.equal(f.coordinator.closes(), binds);
+    await assert.rejects(host.start({}), /already_attempted/);
+  });
 });
 
 test("task startup and database role material never enter browser assets", () => {

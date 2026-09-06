@@ -10,6 +10,7 @@ document. Current readiness is in BUILD_STATUS.md, not inferred from a compiled 
 |---|---|---|
 | `dist-vps/client` | Private browser assets | No server or worker |
 | `dist-vps/server/taskBootstrap.js` | Explicit configured task application startup | No; calling startup opens supplied databases and can start a configured worker |
+| `dist-vps/server/taskHost.js` | Connects configured application/queue startup to existing loopback serving | No; explicit `start` can open databases, start a configured worker and bind a listener |
 | `dist-vps/server/nativeQueueFactories.js` | Installed pg-boss producer/worker factories | No; factory operations are explicit |
 | `dist-vps/server/nativeQueueInspection.js` | Exported `inspectInstalledNativeQueueSchema(database, signal)` | No; invocation reads the supplied SQL port |
 | Remaining `dist-vps/server` files | Shared compiled modules, rendering and existing preparation/rehearsal entries | Preserve the whole output; do not cherry-pick entry files |
@@ -25,8 +26,9 @@ packages to make an installation pass. Retain third-party licenses/notices.
 
 Do not substitute plain `vinext start`: its installed CLI defaults to `dist` and an
 all-interface production bind. This private build uses `dist-vps` and the existing
-loopback-only serving entry. The complete startup composition remains unfinished;
-see [E59 startup findings](research/REUSE_E59_TASK_TRANSPORT_LIMIT.md).
+loopback-only serving entry. [E60](research/REUSE_E60_TASK_HOST_COMPOSITION.md) now
+connects application startup and serving. Trusted executable configuration and actual
+resource provisioning remain unfinished; this is not an installation command.
 
 From the repository root with already prepared dependencies:
 

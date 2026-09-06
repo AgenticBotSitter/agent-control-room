@@ -63,7 +63,7 @@ export default defineConfig(async ({ mode }) => {
         serving: "src/web/v1/private-serving.ts", rehearsal: "src/web/v1/private-database-rehearsal.ts",
         preparation: "src/web/v1/private-fixture-preparation.ts", taskApplication: "src/web/v1/private-task-application.ts",
         taskBootstrap: "src/web/v1/private-task-startup.ts", nativeQueueFactories: "src/web/v1/installed-native-queue.ts",
-        nativeQueueInspection: "src/persistence/pg-boss-schema-inspection.ts" } } } },
+        nativeQueueInspection: "src/persistence/pg-boss-schema-inspection.ts", taskHost: "src/web/v1/private-task-host.ts" } } } },
     } } : {}),
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
