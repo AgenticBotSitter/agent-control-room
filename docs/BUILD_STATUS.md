@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E43:** [Saved-plan readback](research/REUSE_E43_SAVED_PLAN_READBACK.md)
+recovers verified historical plan links on page reload without another preparation POST.
+Needs Me excludes verified already-planned proposals and distinguishes prepared tasks.
+All 48 focused checks, the VPS build, three compiled full-host journeys and 35 compiled
+regressions pass. Task-specific delivery
+uncertainty, interactive browser and real-service acceptance remain open.
+
 **Latest local implementation — E42:** [Task attention](research/REUSE_E42_TASK_ATTENTION.md)
 adds paginated saved-task links to Needs Me, reusing verified review records and current
 owner/project authorization. 14 related tests and source/compiled full-host journeys

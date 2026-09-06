@@ -314,9 +314,9 @@ export class WebTaskService {
       for (const row of rows.slice(0, 25)) {
         await this.projects.getViewInSession(tx, actor, row.project_id);
         actor.require("tasks.read", row.project_id, true);
-        const { summary } = validated(row, this.scope.tenantId, row.project_id);
+        const { summary, job } = validated(row, this.scope.tenantId, row.project_id);
         const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
-        if (summary.state === "proposed") reasons.push("proposal");
+        if (summary.state === "proposed") reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
         if (summary.state === "waiting_approval") reasons.push("approval");
         if (summary.state === "failed" || summary.state === "orphaned") reasons.push(summary.state);
         if (row.has_artifacts) {

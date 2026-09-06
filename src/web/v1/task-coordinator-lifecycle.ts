@@ -167,7 +167,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   sessionState.manager = sessions;
   const nativeHttp = httpSettings ? createNativeHttpHost({ ...httpSettings, connections: sessions!,
     isReady: () => { try { check(); return !closing && !invalid; } catch { return false; } }, clock: input.clock }) : undefined;
-  const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)) });
+  const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)),
+    readSaved: (identity, projectId, sourceJobId) => {
+      const actor = { ...identity };
+      return run(() => planner.readSaved(actor, projectId, sourceJobId));
+    } });
   const revisions = input.revisionPlanning ? Object.freeze({ ...scope,
     plan: (identity: Parameters<TaskExecutionPlanner["revise"]>[0], projectId: string, sourceJobId: string,
       input: Parameters<TaskExecutionPlanner["revise"]>[3], signal: AbortSignal) => {

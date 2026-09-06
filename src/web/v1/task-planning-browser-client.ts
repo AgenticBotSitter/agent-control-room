@@ -69,6 +69,10 @@ export function createTaskPlanningBrowserClient(transport: typeof fetch = fetch)
         if (!response.ok) throw new BrowserRequestError(failure(response.status));
         const value = taskPlanningOptionsSchema.parse(await json(response));
         if (value.projectId !== projectId || value.sourceJobId !== jobId || value.inputDigest !== inputDigest) throw new Error();
+        if (value.savedPlan) {
+          confirmed = { ...value.savedPlan };
+          if (!busy && pending?.projectId === projectId && pending.jobId === jobId && pending.digest === inputDigest) pending = undefined;
+        }
         return value;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },

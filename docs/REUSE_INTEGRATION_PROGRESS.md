@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E43 saved-plan readback](research/REUSE_E43_SAVED_PLAN_READBACK.md) reuses trusted plan
+verification to restore task links and remove already-planned proposal inbox entries.
+Separate authorized transactions avoid nested identity locks across pools; reads never
+create work. Saved-plan availability is explicit for older/unconfigured compositions.
+
 [E42 task attention](research/REUSE_E42_TASK_ATTENTION.md) adds saved task/review items
 and direct task links to Needs Me using existing canonical records and verification.
 It does not create another queue. Pagination, current owner/source access and incomplete

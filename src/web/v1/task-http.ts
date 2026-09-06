@@ -5,8 +5,8 @@ import type { WebTaskReviewService } from "./task-review-service";
 import type { WebTaskVerificationService } from "./task-verification-service";
 import { taskVerificationDraftSchema } from "./task-verification-wire";
 import { taskReviewDraftSchema } from "./task-review-wire";
-import type { TaskExecutionPlanner } from "./task-execution-planner";
-import { taskPlanningDraftSchema, taskPlanningCommandSchema } from "./task-planning-wire";
+import type { TaskPlanningOperation } from "./task-execution-planner";
+import { taskPlanningDraftSchema, taskPlanningCommandSchema, taskPlanningOptionsSchema } from "./task-planning-wire";
 import { catalogProjectIdSchema } from "./project-wire";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import { taskAssignmentDraftSchema, taskAssignmentCommandSchema, taskAssignmentOptionsSchema } from "./task-assignment-wire";
@@ -19,7 +19,7 @@ import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-rev
 import { sha256Digest } from "../../security";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskExecutionPlanner, "plan">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
@@ -144,8 +144,13 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
         catch { throw new WebAccessError("invalid_request"); }
         if (!catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success)
           throw new WebAccessError("invalid_request");
-        if (request.method === "GET") return Response.json(await options.service.planningOptions(identity, projectId, jobId,
-          !!options.planning), { headers: privateResponseHeaders });
+        if (request.method === "GET") {
+          const value = await options.service.planningOptions(identity, projectId, jobId, !!options.planning);
+          const savedPlan = await options.planning?.readSaved?.(identity, projectId, jobId);
+          return Response.json(taskPlanningOptionsSchema.parse({ ...value,
+            ...(savedPlan !== undefined ? { savedPlan, ...(savedPlan ? { availability: "already_planned" } : {}) } : {}) }),
+          { headers: privateResponseHeaders });
+        }
         if (request.method !== "POST") throw new WebAccessError("not_found");
         if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
           throw new WebAccessError("invalid_request");

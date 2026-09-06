@@ -46,7 +46,8 @@ const initialPlanSchema = z.object({ schema: z.literal("control-room.task-execut
 const revisionPlanSchema = initialPlanSchema.extend({ schema: z.literal("control-room.task-execution-plan/v2"), revision: taskRevisionContextSchema });
 const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPlanSchema]);
 type Plan = z.infer<typeof planSchema>;
-export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"] }>;
+export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
+  readSaved?: TaskExecutionPlanner["readSaved"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } });
@@ -55,7 +56,8 @@ const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 
 
 /** Privileged control-plane composition only; the existing private-web SQL role cannot use this
  * writer. Current owner permission is still mandatory. The optional web operation exposes only
- * planning, never this writer's read/bindReview methods or a live executor. */
+ * planning and an authenticated historical receipt, never this writer's raw read/bindReview
+ * methods or a live executor. */
 export class TaskExecutionPlanner {
   private readonly template: NativeTaskTemplate;
   private readonly key: Uint8Array;
@@ -82,7 +84,28 @@ export class TaskExecutionPlanner {
   private tag(plan: Plan) { return hmacSha256Tag(this.key, {
     purpose: plan.schema === "control-room.task-execution-plan/v1" ? "task-execution-plan/v1" : "task-execution-plan/v2", plan }); }
   webOperation(): TaskPlanningOperation {
-    return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this) });
+    return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
+      readSaved: this.readSaved.bind(this) });
+  }
+  /** Historical receipt only; never replans or applies current template expiry to saved evidence. */
+  async readSaved(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
+    localId.parse(projectId); localId.parse(sourceJobId);
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const job = await this.jobWith(tx, projectId, sourceJobId);
+      if (job.jobType !== "task.proposal") return null;
+      const source = await this.source(tx, projectId, sourceJobId);
+      const row = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
+        [this.scope.tenantId, sourceJobId])).rows[0];
+      if (!row) return null;
+      const plan = this.verify(row);
+      if (plan.schema !== "control-room.task-execution-plan/v1" || plan.projectId !== projectId
+        || plan.sourceJobId !== sourceJobId || plan.sourceDigest !== sha256Digest(source)
+        || plan.sourceInputDigest !== source.job.inputDigest) fail();
+      await this.checkedJob(tx, plan);
+      return this.receipt(plan);
+    });
   }
   private verify(row: Row) {
     const plan = planSchema.parse(row.plan), expected = Buffer.from(this.tag(plan)), actual = Buffer.from(row.auth_tag);

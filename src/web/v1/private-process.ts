@@ -15,6 +15,8 @@ import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
+import { taskPlanningReceiptSchema } from "./task-planning-wire";
+import { taskAttentionPageSchema } from "./task-attention-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -57,8 +59,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const queueAttention = options.queueAttention ? Object.freeze({ tenantId: options.tenantId,
     workspaceId: options.workspaceId, read: options.queueAttention.read.bind(options.queueAttention) }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
-    || typeof options.planning.plan !== "function")) throw new Error("invalid_private_app_config");
-  const planning = options.planning ? Object.freeze({ plan: options.planning.plan.bind(options.planning) }) : undefined;
+    || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function")) throw new Error("invalid_private_app_config");
+  const planning = options.planning ? Object.freeze({ plan: options.planning.plan.bind(options.planning),
+    readSaved: options.planning.readSaved?.bind(options.planning) }) : undefined;
   if (options.revisions && (options.revisions.tenantId !== options.tenantId || options.revisions.workspaceId !== options.workspaceId
     || typeof options.revisions.plan !== "function")) throw new Error("invalid_private_app_config");
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
@@ -114,7 +117,21 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.pathname === "/api/v1/needs-me/tasks") {
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
               || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
-            return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+            const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
+            // Separate authenticated transactions: never call a second identity-locking pool
+            // from inside the web read transaction. Each receipt read rechecks current access.
+            if (planning?.readSaved) for (const item of page.items) {
+              if (!item.reasons.includes("proposal")) continue;
+              const saved = await planning.readSaved(identity, item.task.projectId, item.task.jobId);
+              if (saved) {
+                const receipt = taskPlanningReceiptSchema.parse(saved);
+                if (receipt.projectId !== item.task.projectId || receipt.sourceJobId !== item.task.jobId
+                  || receipt.jobId === item.task.jobId) throw new Error("planning_receipt_scope_mismatch");
+                item.reasons = item.reasons.filter(reason => reason !== "proposal");
+              }
+            }
+            return Response.json(taskAttentionPageSchema.parse({ ...page, planningSource: planning?.readSaved ? "configured" : "not_configured",
+              items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");

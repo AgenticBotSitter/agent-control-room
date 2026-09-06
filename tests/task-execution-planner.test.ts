@@ -16,6 +16,7 @@ import type { CompletionAcceptanceProfileV1 } from "../src/completion-gate/v1";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { origin, request } from "./helpers/web-foundation";
+import { taskAttentionPageSchema } from "../src/web/v1/task-attention-wire";
 
 async function fixture() {
   const f = await webNativeResultFixture();
@@ -42,6 +43,18 @@ async function fixture() {
   return { ...f, resultConfig: f.config, source, profile, template, config, create, planner, plan };
 }
 
+test("historical plan reads verify saved evidence without applying the current planning template", async t => {
+  const f = await fixture(); t.after(f.close);
+  assert.equal(await f.planner.readSaved(f.identity, binding.projectId, f.source.receipt.jobId), null);
+  const saved = await f.plan();
+  const changed = f.create(f.db, () => instant + 400_000, { template: { ...f.template, instructions: "Changed future template" } });
+  assert.deepEqual(await changed.readSaved(f.identity, binding.projectId, f.source.receipt.jobId), saved.receipt);
+  assert.equal(await changed.readSaved(f.identity, binding.projectId, saved.receipt.jobId), null);
+  await assert.rejects(f.db.query("UPDATE control_task_execution_plans SET auth_tag='invalid' WHERE source_job_id=$1", [f.source.receipt.jobId]), /append-only/);
+  const wrongKey = f.create(f.db, () => instant + 7000, { integrityKey: new Uint8Array(32).fill(99) });
+  await assert.rejects(wrongKey.readSaved(f.identity, binding.projectId, f.source.receipt.jobId), /task_execution_plan_unavailable/);
+});
+
 test("protected private process prepares a real saved proposal and reconciles it without starting work", async t => {
   const f = await fixture(); t.after(f.close);
   await f.raw.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
@@ -66,6 +79,11 @@ test("protected private process prepares a real saved proposal and reconciles it
   assert.equal((await f.db.query("SELECT * FROM control_task_execution_plans")).rows.length, 0);
   const saved = await handle("POST", { expectedInputDigest: sha256Digest(taskDraft) }); assert.equal(saved.status, 201);
   const first = await saved.json();
+  const readback = await (await handle()).json();
+  assert.equal(readback.availability, "already_planned"); assert.deepEqual(readback.savedPlan, first.receipt);
+  const inbox = taskAttentionPageSchema.parse(await (await handle("GET", undefined, "/api/v1/needs-me/tasks")).json());
+  assert.ok(!inbox.items.some(item => item.task.jobId === f.source.receipt.jobId));
+  assert.ok(inbox.items.some(item => item.task.jobId === first.receipt.jobId && item.reasons.includes("assignment")));
   assert.equal(first.receipt.startsWork, false); assert.equal(first.receipt.grantsExecutionAuthority, false);
   assert.equal(first.receipt.sourceInputDigest, sha256Digest(taskDraft));
   const replay = await handle("POST", { expectedInputDigest: sha256Digest(taskDraft) }); assert.equal(replay.status, 200);

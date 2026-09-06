@@ -33,6 +33,21 @@ test("planning client reads without writes and validates exact source/receipt wi
   assert.deepEqual(client.savedReceipt(options.projectId, options.sourceJobId, digest), receipt);
 });
 
+test("saved receipt read reconciles a lost planning reply without another write", async () => {
+  let writes = 0;
+  const client = createTaskPlanningBrowserClient(async (_url, init) => {
+    if (init?.method === "POST") { writes++; throw new Error("synthetic lost reply"); }
+    return Response.json({ ...options, availability: "already_planned", savedPlan: receipt });
+  });
+  await assert.rejects(client.prepare(options.projectId, options.sourceJobId, digest), { code: "uncertain" });
+  const read = await client.options(options.projectId, options.sourceJobId, digest);
+  assert.equal(read.availability, "already_planned"); assert.equal(client.hasPending(), false); assert.equal(writes, 1);
+  assert.deepEqual(client.savedReceipt(options.projectId, options.sourceJobId, digest), receipt);
+  const fresh = createTaskPlanningBrowserClient(async () => Response.json({ ...options, availability: "already_planned", savedPlan: receipt }));
+  await fresh.options(options.projectId, options.sourceJobId, digest);
+  assert.deepEqual(fresh.savedReceipt(options.projectId, options.sourceJobId, digest), receipt);
+});
+
 test("lost planning replies hold exact identity through denial and reads until explicit reconciliation", async () => {
   let mode = "lost", writes = 0;
   const bodies: unknown[] = [];
