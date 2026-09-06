@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest deployment audit — E75:** [Checkpoint placement and acceptance](research/REUSE_E75_CHECKPOINT_DEPLOYMENT_DECISION.md)
+records the independent restore boundary, a consolidated setup/rehearsal packet and
+explicit unresolved custody/recovery decisions. Ten record/access tests pass, including
+a limitation diagnostic: restoring both database and anchor can preserve matching old
+digests. That is negative deployment evidence, not restore acceptance. No service ran.
+
 **Latest access composition — E74:** [Joined checkpoint path](research/REUSE_E74_CHECKPOINT_ACCESS_COMPOSITION.md)
 joins exact read, conditional advance and single-Put receipt validation through supplied
 transport under one deadline. Negative/late responses cannot become a successful write

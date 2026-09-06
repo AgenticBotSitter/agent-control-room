@@ -155,3 +155,15 @@ test("canceled access cannot proceed from a late read into write", async () => {
   await assert.rejects(access.advance(rollbackCheckpointDigestV1(checkpoint), { ...checkpoint, revision: 2 }, controller.signal));
   assert.equal(writes, 0); assert.equal(cancels, 1);
 });
+
+test("documented limitation: unchanged identity cannot detect a same-domain snapshot rollback", () => {
+  const oldResponse = fixture();
+  const older = parseEtcdCheckpointRecord(oldResponse, binding).checkpoint;
+  const newer = { ...checkpoint, revision: 2, recordCount: 1 };
+  // A current database can detect an old anchor by digest mismatch.
+  assert.notEqual(rollbackCheckpointDigestV1(older), rollbackCheckpointDigestV1(newer));
+  // If BOTH database and anchor are restored, their old digests match. Static
+  // cluster/key identity is not an independent high-water mark. This passing
+  // diagnostic demonstrates a missing deployment guarantee, not restore safety.
+  assert.equal(rollbackCheckpointDigestV1(older), rollbackCheckpointDigestV1(checkpoint));
+});
