@@ -8,10 +8,11 @@ import { createPrivateTaskApplication } from "./private-task-application";
 import { nativeTaskTemplateSchema } from "./task-execution-planner";
 import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
+import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task-quality-coordinator";
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals"> & { database: PrivatePostgresConfiguration };
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality"> & { database: PrivatePostgresConfiguration };
 };
 function configuration(input: PrivateTaskStartupConfiguration) {
   try {
@@ -31,7 +32,9 @@ function configuration(input: PrivateTaskStartupConfiguration) {
     const routes = validateTaskAssignmentRoutes(input.coordinator.routes), a = input.coordinator.approvals;
     if (a && (typeof a.store?.acceptInSession !== "function" || typeof a.store?.readInSession !== "function")) throw new Error();
     const approvals = a ? { enrollments: validateNativeApprovalEnrollments(a.enrollments, web.tenantId, routes), store: a.store } : undefined;
-    return { web, database, planning, routes, approvals };
+    const quality = input.coordinator.quality ? captureTaskQualityConfiguration(input.coordinator.quality) : undefined;
+    if (quality) validateTaskQualityKeys(quality, planning.reviewIntegrityKey, web.tasks);
+    return { web, database, planning, routes, approvals, quality };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -81,12 +84,13 @@ export function createPrivateTaskBootstrap(dependencies: {
       if (!web.isAvailable() || !coordinator.isAvailable()) throw new Error();
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
-        planning: config.planning, routes: config.routes, approvals: config.approvals, clock,
+        planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality, clock,
       });
       if (!application.isReady()) throw new Error();
       dependencies.install(application);
-      // No privileged planner, SQL resource or key is returned to the serving supervisor.
-      return Object.freeze({ isReady: application.isReady, close: application.close });
+      // Only the optional scoped quality command is exposed to trusted server composition, never HTTP or raw SQL/keys.
+      return Object.freeze({ isReady: application.isReady, close: application.close,
+        ...(application.quality ? { quality: application.quality } : {}) });
     } catch {
       const results = await Promise.allSettled(application ? [application.close()] : acquired.map(pool => pool.close()));
       if (results.some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");

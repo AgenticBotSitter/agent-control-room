@@ -1,5 +1,6 @@
 import { createPrivateWebProcess, type PrivateWebProcessOptions } from "./private-process";
 import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
+import { validateTaskQualityKeys } from "./task-quality-coordinator";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
@@ -11,6 +12,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     || typeof web.database.isAvailable !== "function" || typeof web.database.close !== "function")
     throw new Error("private_task_application_config_invalid");
   // Until construction succeeds, the caller retains both resources.
+  if (coordinator.quality) validateTaskQualityKeys(coordinator.quality, coordinator.planning.reviewIntegrityKey, web.tasks);
   const tasks = createTaskCoordinatorLifecycle(coordinator);
   const available = web.database.isAvailable.bind(web.database), closePool = web.database.close.bind(web.database);
   let poolClose: Promise<void> | undefined;
@@ -32,6 +34,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   }
   let closing = false, closePromise: Promise<void> | undefined;
   return Object.freeze({
+    ...(tasks.quality ? { quality: tasks.quality } : {}),
     isReady: () => !closing && available() && tasks.isReady(),
     handle: app.handle.bind(app),
     close(): Promise<void> {

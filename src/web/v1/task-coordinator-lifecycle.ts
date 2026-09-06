@@ -4,6 +4,8 @@ import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-executi
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment } from "./task-assignment-coordinator";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
+import { TaskQualityCoordinator, taskQualityRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
+import { timingSafeEqual } from "node:crypto";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -14,6 +16,7 @@ export type TaskCoordinatorConfiguration = {
   scope: { tenantId: string; workspaceId: string };
   planning: ConstructorParameters<typeof TaskExecutionPlanner>[2]; routes: readonly TaskAssignmentRoute[];
   approvals?: { enrollments: readonly NativeApprovalEnrollment[]; store: NativeApprovalPacketStore };
+  quality?: TaskQualityConfiguration;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
   database: TaskCoordinatorDatabase;
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
@@ -62,6 +65,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
     input.approvals?.enrollments, input.approvals?.store);
+  if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
+    || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
+    throw new Error("task_coordinator_config_invalid");
+  const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock) : undefined;
   async function run<T>(work: () => Promise<T>): Promise<T> {
     if (closing || active >= maxActive) throw new Error("task_coordinator_unavailable");
     check(); active++;
@@ -91,7 +98,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return run(() => assignment.storeNativeApproval(identity, projectId, jobId, digest, snapshot, signal));
     },
   }) : undefined;
-  return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}),
+  const quality: TaskQualityOperation | undefined = qualityCoordinator ? Object.freeze({ ...scope,
+    reconcile: (input, signal) => {
+      const snapshot = taskQualityRequestSchema.parse(input);
+      return run(() => qualityCoordinator.reconcile(snapshot, signal, check));
+    },
+  }) : undefined;
+  return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     isReady: () => !closing && !invalid && pool.isAvailable(),
     close(): Promise<void> {
       if (closePromise) return closePromise;

@@ -1,0 +1,105 @@
+import { z } from "zod";
+import { timingSafeEqual } from "node:crypto";
+import { NativeResultStore } from "../../artifacts/v1/native-results";
+import type { PrivateWebProcessOptions } from "./private-process";
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { NativeResultSubmissionService } from "../../completion-gate/v1/native-result-submission";
+import { NativeResultVerificationService, nativeQualityRequestSchema, type AutomaticDocumentScenario,
+  type NativeQualityConfiguration } from "../../completion-gate/v1/native-result-verification";
+import { NativeTaskCompletionService } from "../../persistence/native-task-completion";
+import { documentStructureRulesSchema } from "../../completion-gate/v1/document-structure-contract";
+import { assertNoSecretMaterial, sha256Digest } from "../../security";
+import { catalogProjectIdSchema } from "./project-wire";
+
+export type TaskQualityConfiguration = NativeQualityConfiguration & { scenarios: readonly AutomaticDocumentScenario[] };
+export const taskQualityRequestSchema = nativeQualityRequestSchema.extend({ projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict();
+export type TaskQualityRequest = z.infer<typeof taskQualityRequestSchema>;
+const scenariosSchema = z.array(z.object({ scenarioId: catalogProjectIdSchema, acceptanceProfileId: catalogProjectIdSchema,
+  acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), rules: documentStructureRulesSchema }).strict()).max(50);
+const deny = (): never => { throw new Error("task_quality_unavailable"); };
+
+export function validateTaskQualityKeys(quality: TaskQualityConfiguration, reviewKey: Uint8Array, web: PrivateWebProcessOptions["tasks"]) {
+  const equal = (a: Uint8Array, b: Uint8Array | undefined) => b instanceof Uint8Array && a.length === 32 && b.length === 32 && timingSafeEqual(a, b);
+  if (!equal(quality.integrityKey, reviewKey) || !equal(quality.integrityKey, web?.reviews?.integrityKey)
+    || !equal(quality.harnessIntegrityKey, web?.harnessIntegrityKey) || !equal(quality.results.integrityKey, web?.results?.integrityKey)) return deny();
+}
+
+/** Capture all supplied capabilities and config before any asynchronous startup/admission. */
+export function captureTaskQualityConfiguration(config: TaskQualityConfiguration): TaskQualityConfiguration {
+  const key = (value: Uint8Array) => { if (!(value instanceof Uint8Array) || value.length !== 32) return deny(); return Uint8Array.from(value); };
+  const scenarios = scenariosSchema.parse(config.scenarios); assertNoSecretMaterial(scenarios);
+  if (new Set(scenarios.map(value => JSON.stringify([value.acceptanceProfileId, value.acceptanceProfileDigest, value.scenarioId]))).size !== scenarios.length) return deny();
+  const captured = { integrityKey: key(config.integrityKey), harnessIntegrityKey: key(config.harnessIntegrityKey), scenarios,
+    results: { ...config.results, integrityKey: key(config.results.integrityKey), storage: Object.freeze({ read: config.results.storage.read.bind(config.results.storage) }) },
+    checkpoints: Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints), advance: config.checkpoints.advance.bind(config.checkpoints),
+      initialize: () => { throw new Error("task_quality_provisioning_unavailable"); } }) };
+  // Constructor validation is effect-free; malformed storage limits fail before pool acquisition.
+  const unused: DatabaseClient = { query: deny, transaction: deny, transactionWithPreCommitCheck: deny };
+  new NativeResultStore(unused, captured.harnessIntegrityKey, captured.results);
+  return captured;
+}
+
+export class TaskQualityCoordinator {
+  private readonly config: TaskQualityConfiguration;
+  private readonly scope: { tenantId: string; workspaceId: string };
+  private highWater = Number.NEGATIVE_INFINITY;
+  constructor(private readonly db: DatabaseClient, scope: { tenantId: string; workspaceId: string },
+    config: TaskQualityConfiguration, private readonly clock: () => number = Date.now) {
+    this.scope = Object.freeze({ tenantId: catalogProjectIdSchema.parse(scope.tenantId), workspaceId: catalogProjectIdSchema.parse(scope.workspaceId) });
+    this.config = captureTaskQualityConfiguration(config);
+  }
+  private async scopeIn(tx: DatabaseSession, request: TaskQualityRequest) {
+    const rows = await tx.query(`SELECT p.id FROM control_harness_runs r
+      JOIN control_jobs j ON j.tenant_id=r.tenant_id AND j.id=r.job_id AND j.project_id=r.project_id
+      JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
+      WHERE r.tenant_id=$1 AND r.id=$2 AND j.id=$3 AND p.id=$4 AND p.workspace_id=$5 FOR SHARE OF p`,
+    [this.scope.tenantId, request.runId, request.jobId, request.projectId, this.scope.workspaceId]);
+    if (rows.rows.length !== 1) return deny();
+  }
+  async reconcile(input: TaskQualityRequest, signal: AbortSignal, assertCurrent: () => void) {
+    const request = taskQualityRequestSchema.parse(input); assertNoSecretMaterial(request);
+    if (request.tenantId !== this.scope.tenantId || !(signal instanceof AbortSignal)) return deny();
+    const time = () => { const now = this.clock(); if (!Number.isSafeInteger(now) || now < this.highWater) return deny(); this.highWater = now; return now; };
+    const started = time(), current = () => { if (signal.aborted || time() - started > 10_000) return deny(); assertCurrent(); };
+    current();
+    const db: DatabaseClient = { query: () => { throw new Error("task_quality_transaction_required"); },
+      transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
+      transactionWithPreCommitCheck: (work, precommit) => { current(); return this.db.transactionWithPreCommitCheck(async tx => {
+        current(); await this.scopeIn(tx, request); current(); return work(tx);
+      }, () => { current(); precommit(); current(); }); } };
+    const native = nativeQualityRequestSchema.parse({ tenantId: request.tenantId, runId: request.runId,
+      targetDigest: request.targetDigest, contentHash: request.contentHash });
+    const submission = new NativeResultSubmissionService(db, this.config);
+    const inspect = () => db.transaction(async tx => {
+      const context = await submission.inspectSubmitted(tx, request.tenantId, request.runId);
+      if (context.run.projectId !== request.projectId || context.run.jobId !== request.jobId
+        || context.snapshot.targetDigest !== request.targetDigest || context.result.receipt.contentHash !== request.contentHash) return deny();
+      return context;
+    });
+    let context = await inspect();
+    let verification: "not_configured" | "not_run" | "recorded" | "replayed" = "not_run";
+    if (["pending", "ready"].includes(context.snapshot.status)) {
+      const scenarios = this.config.scenarios.filter(value => value.acceptanceProfileId === context.profile.id
+        && value.acceptanceProfileDigest === sha256Digest(context.profile) && context.profile.requiredVerificationScenarioIds.includes(value.scenarioId));
+      if (scenarios.length) {
+        const verified = await new NativeResultVerificationService(db, this.config, scenarios, time).verify(native, current);
+        verification = verified.replayed ? "replayed" : "recorded"; context = await inspect();
+      } else verification = "not_configured";
+    }
+    const base = { ...request, verification, grantsApproval: false as const, grantsExecutionAuthority: false as const };
+    switch (context.snapshot.status) {
+      case "ready": {
+        const completion = await new NativeTaskCompletionService(db, this.config, time).complete(native, current);
+        current(); return { ...base, disposition: "completed" as const, completion };
+      }
+      case "pending": current(); return { ...base, disposition: "waiting_review" as const };
+      case "changes_requested": case "revision_limit_reached":
+        current(); return { ...base, disposition: "changes_requested" as const };
+      case "verification_blocked": current(); return { ...base, disposition: "verification_blocked" as const };
+      case "superseded": current(); return { ...base, disposition: "superseded" as const };
+      default: return deny();
+    }
+  }
+}
+export type TaskQualityOperation = Readonly<{ tenantId: string; workspaceId: string;
+  reconcile: (input: TaskQualityRequest, signal: AbortSignal) => ReturnType<TaskQualityCoordinator["reconcile"]> }>;

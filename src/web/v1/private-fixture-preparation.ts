@@ -15,7 +15,7 @@ const packetSchema = z.object({ manifest: manifestSchema, migratorScopeDigest: d
   ownerApprovalDigest: digest, cleanupPlanDigest: digest, pgPackageDigest: digest,
   pgVersionNumber: z.number().int().min(170000).max(179999), expiresAt: z.number().int().positive(),
   durationMs: z.number().int().min(10_000).max(60_000), dedicatedEmptyDatabase: z.literal(true),
-  migrationsApplied: z.literal("0001-0053"), setupRolesAccepted: z.literal(true),
+  migrationsApplied: z.literal("0001-0054"), setupRolesAccepted: z.literal(true),
   maximumConnections: z.literal(1), maximumTransactions: z.literal(1), maximumStatements: z.literal(256),
   installOrProvision: z.literal(false), automaticRetry: z.literal(false),
   cleanup: z.literal("close_owned_client_then_operator_database_cleanup"),

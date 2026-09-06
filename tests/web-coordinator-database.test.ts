@@ -54,9 +54,9 @@ test("coordinator lock columns cannot change authority and unrelated reads/write
   for (const sql of ["UPDATE control_identities SET state='suspended'", "UPDATE control_role_grants SET allowed_actions='[\"*\"]'",
     "UPDATE control_node_keys SET valid_until=valid_until+interval '1 day'", "UPDATE control_nodes SET state='active'",
     "UPDATE control_manual_project_heads SET lifecycle='active'", "UPDATE control_node_fleet_current SET expires_at=expires_at+interval '1 day'",
-    "UPDATE control_completion_gate_integrity SET revision=revision+1", "DELETE FROM control_attempts", "TRUNCATE control_outbox",
+    "UPDATE control_harness_runs SET payload=payload", "DELETE FROM control_attempts", "TRUNCATE control_outbox",
     "UPDATE audit_events SET actor_id='identity:other'", "SELECT * FROM control_approvals", "SELECT * FROM node_protocol_connections",
-    "SELECT * FROM control_harness_runs", "CREATE TABLE coordinator_extra(id text)"])
+    "DELETE FROM control_native_review_plans", "CREATE TABLE coordinator_extra(id text)"])
     await assert.rejects(f.db.query(sql), sql);
   await assert.rejects(f.db.query(`INSERT INTO control_outbox(id,tenant_id,topic,aggregate_type,aggregate_id,idempotency_key,status,available_at,payload)
     VALUES('outbox:forbidden','tenant:test','job.dispatch','job','job:test','forbidden','pending',now(),'{}')`), /coordinator outbox insert rejected/);
