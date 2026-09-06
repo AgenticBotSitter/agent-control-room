@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Community handoff drafted:** [First work queue](COMMUNITY_FIRST_WORK_DRAFT.md) defines
+four independent UI/documentation jobs with paths, prerequisites, acceptance evidence
+and review boundaries. All are drafts pending an exact reviewed public base; no worker
+was dispatched and no issue created. The public brand question is pending. Export,
+license and live-integration decisions remain with the lead build.
+
 **Shared stylesheet relocated:** The protected app now imports `styles/control-room.css`
 directly; the preview imports that same single source through its existing wrapper.
 Pre-change declaration bytes are identical, and the standalone build passes. This
