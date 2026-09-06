@@ -90,6 +90,30 @@ test("audit failure rolls back artifact metadata together while retaining the ex
   assert.equal((await f.db.query("SELECT * FROM control_artifact_manifests")).rows.length, 0); assert.equal(f.storage.count(), 1);
 });
 
+test("invalidated capture at metadata precommit retains bytes but rolls back artifact metadata", async t => {
+  const f = await webNativeResultFixture(); t.after(f.close); const input = f.complete("Expired capture fence");
+  await f.service.ingest(input.raw, f.options(at(2000)));
+  let current = true, reached = false;
+  const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: (work, check) => {
+    let wrote = false;
+    return f.db.transactionWithPreCommitCheck(tx => work({ query: async <T>(sql: string, params?: unknown[]) => {
+      const value = await tx.query<T>(sql, params);
+      if (sql.includes("INSERT INTO control_native_artifact_receipts")) wrote = true;
+      return value;
+    } }), () => {
+      if (wrote) { reached = true; current = false; }
+      check();
+    });
+  } };
+  await assert.rejects(new NativeResultStore(db, f.harnessKey, f.config).capture(
+    binding.tenantId, binding.nodeId, input.body, input.bytes, at(2000),
+    () => { if (!current) throw new Error("synthetic_capture_invalidated"); }),
+  /synthetic_capture_invalidated/);
+  assert.equal(reached, true); assert.equal(f.storage.count(), 1);
+  assert.equal((await f.db.query("SELECT * FROM control_native_artifact_receipts")).rows.length, 0);
+  assert.equal((await f.db.query("SELECT * FROM control_artifact_manifests")).rows.length, 0);
+});
+
 test("wrong integrity material and inconsistent manifest read metadata make existing content unavailable", async t => {
   const f = await webNativeResultFixture(); t.after(f.close); const input = f.complete("Protected metadata");
   const { receipt } = await f.resultService.ingest(input.raw, input.bytes, f.options(at(2000)));

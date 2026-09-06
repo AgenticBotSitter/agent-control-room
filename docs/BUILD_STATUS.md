@@ -2351,13 +2351,14 @@ PR #336 at `8e3247e` passed all nine GitHub checks in run `34012452533`.
 The new block still requires its own current-head CI and dependency-order integration.
 No merge, native/provider call, database service or deployment is claimed.
 
-## Active verification: native evidence receiver
+## Native evidence receiver: accepted locally
 
 The optional fourth-role receiver is implemented through `ff5d542` and independently
 statically reviewed with no remaining production findings. It derives saved runs,
 records authenticated progress and passes verified result bytes to the existing review
-writer. Integrated startup and receiver replay verification is still pending; this block
-is not yet accepted. See `CR14C_NATIVE_EVIDENCE_RECEIVER_ACCEPTANCE.md` for retained
+writer. Seven restricted receiver tests and 15 startup/compiled tests passed, including
+replay, cancellation, resource cleanup and browser isolation. See
+`CR14C_NATIVE_EVIDENCE_RECEIVER_ACCEPTANCE.md` for retained
 findings, test failures and corrections. Existing 91 role/startup tests, 30 compiled
 tests, the rebuilt VPS artifact and disposable migrations 0056/138 passed.
 Prerequisite PR #337 at `6dac246` now has all nine GitHub checks successful in run
@@ -2366,11 +2367,11 @@ Prerequisite PR #337 at `6dac246` now has all nine GitHub checks successful in r
 ## Next block
 
 ```text
-Block: CR14C trusted native evidence receiver ownership
+Block: CR14C authenticated session ownership and runtime evidence routing
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: The runtime now owns review binding and submission, but canonical run/progress registration and authenticated file capture still depend on privileged fixture preparation.
-Expected output: root-owned bounded receiver composition using existing authenticated admission, server-session progress and result-capture services; register review bindings before progress and submit only after verified capture. Define exact resource/SQL ownership with independent disposable initial/revised and uncertainty tests. Do not activate a listener, live dispatch or widen the existing web/result roles. Runtime routing/recovery and owner signing remain unconfigured; PR #329 remains a separate unresolved gate.
+Why: The runtime now owns run/progress evidence, verified capture and review submission; its authenticated ServerNodeSession and transport resources still come from external fixture composition.
+Expected output: connect existing session authentication and transport lifecycle to the owned receiver with explicit resource ownership, bounded recovery and independent initial/revised routing tests. Preserve the existing protocol, fixed-role boundaries and separate quality approval. No listener or live dispatch activation. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
