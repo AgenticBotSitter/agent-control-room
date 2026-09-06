@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E56:** [Bounded signature adapter](research/REUSE_E56_BOUNDED_OWNER_SIGNATURE.md)
+handles the candidate's close-without-callback behavior with one attempt, bounded wait,
+exact signature verification and owned closure. Eight actual-package diagnostics and
+ten unit/inventory checks pass; the unit/package checks pass again after the cleanup
+refinement. Final TypeScript, lint and whitespace checks pass.
+No real key custody, owner consent, packet issuer or runtime wiring is claimed.
+
 **Latest offline evaluation — E55:** [Pinned SSH signing](research/REUSE_E55_SSH_SIGNING_EVALUATION.md)
 confirms ssh2 1.17.0 signatures fit existing approval intake using in-memory streams
 and synthetic keys. Three final diagnostic tests and lint pass. Malformed replies can

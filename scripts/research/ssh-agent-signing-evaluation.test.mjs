@@ -12,6 +12,7 @@ import { canonicalJson } from '../../src/security/index.ts';
 import { prepareNativeOwnerApprovalMaterial } from '../../src/harness/v1/native-owner-approval-material.ts';
 import { verifyArtifactSignature } from '../../src/node-policy/v1/crypto.ts';
 import { canonicalApprovalStorageFixture } from '../../tests/helpers/canonical-approval-storage.ts';
+import { createBoundedOwnerSignature } from '../../src/harness/v1/bounded-owner-signature.ts';
 
 const root = process.env.CR_SIGNER_EVAL_ROOT;
 assert.ok(root && isAbsolute(root), 'Explicit isolated evaluation root required');
@@ -89,3 +90,28 @@ test('malformed reply closes the protocol without settling its signing callback 
   assert.ok(writeError); assert.equal(errors.length, 0);
   assert.equal(callbacks, 0, 'adapter must settle the outer request on protocol closure; callback/error alone can hang');
 });
+
+for (const mode of ['valid', 'malformed', 'silent', 'wrong-key', 'abort'])
+  test(`bounded wrapper with actual protocol: ${mode}`, { timeout: 3000 }, async t => {
+    const keys = generateKeyPairSync('ed25519'), other = generateKeyPairSync('ed25519');
+    const protocol = new AgentProtocol(true), server = new AgentProtocol(false);
+    const abort = new AbortController(); let requests = 0, closes = 0;
+    t.after(() => { protocol.destroy(); server.destroy(); });
+    server.on('error', () => {});
+    protocol.pipe(server).pipe(protocol);
+    server.on('sign', (request, _key, bytes) => {
+      requests++;
+      if (mode === 'silent') return;
+      if (mode === 'abort') return abort.abort();
+      if (mode === 'malformed') return protocol.write(Buffer.from([0, 0, 0, 1, 14]), () => {});
+      server.signReply(request, sign(null, bytes, mode === 'wrong-key' ? other.privateKey : keys.privateKey));
+    });
+    const wrapper = createBoundedOwnerSignature({ protocol, timeoutMs: 100,
+      publicKeySpki: keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'),
+      close() { closes++; protocol.destroy(); server.destroy(); } });
+    const bytes = Buffer.from('synthetic exact approval bytes');
+    if (mode === 'valid') assert.equal((await wrapper.sign(bytes, abort.signal)).length, 64);
+    else await assert.rejects(wrapper.sign(bytes, abort.signal), /owner_signature_unavailable/);
+    await assert.rejects(wrapper.sign(bytes, new AbortController().signal), /owner_signature_unavailable/);
+    assert.equal(requests, 1); assert.equal(closes, 1);
+  });

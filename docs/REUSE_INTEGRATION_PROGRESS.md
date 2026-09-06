@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E56 bounded signing](research/REUSE_E56_BOUNDED_OWNER_SIGNATURE.md) addresses the
+upstream callback limitation through a thin supplied-channel adapter, preserving one
+attempt and uncertainty. The package remains an isolated candidate, not app dependency.
+
 [E55 offline signing](research/REUSE_E55_SSH_SIGNING_EVALUATION.md) verifies the pinned
 candidate's bytes through existing intake and identifies a callback/closure limitation.
 Three final diagnostics pass; two earlier cancelled diagnostics remain documented.
