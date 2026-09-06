@@ -394,3 +394,10 @@ new retained directory, production database changes or external publication.
 Existing repository dependencies and retained E01 package only. Synthetic transports
 and in-memory fixtures closed after tests. No acquisition, credentials, native service,
 provider call, deployment or external publication.
+
+### E27 — recovery startup wiring (no acquisition)
+
+Retained E01 package and repository dependencies only. Disposable in-memory fixtures
+closed after tests. Initial administrative fixture pickup used the wrong retained
+logical identity and failed; fixed in test setup without expanding coordinator grants.
+No download, credentials, native service or external publication.

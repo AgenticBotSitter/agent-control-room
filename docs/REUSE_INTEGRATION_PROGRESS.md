@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E27 recovery startup](research/REUSE_E27_RECOVERY_STARTUP.md) selects the exact
+permission profile and captured recovery/verification ports through explicit startup
+configuration. 55 package and 54 startup/runtime checks pass. Signed-reconciliation
+triggering is next; no production service has been enabled.
+
 [E26](research/REUSE_E26_RECOVERED_PICKUP.md) connects lifecycle-owned recovery and
 canonical audit verification to optional worker admission. The actual package test
 now reaches pending review from an offline first pickup after explicit recovery on

@@ -2,13 +2,14 @@ import { validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration
 import { verifyNativeQueueWorkerDatabase } from "./private-database-preflight";
 import type { TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { startPgBossNativeTaskRuntime, type PgBossNativeRuntimeConstructor } from "../../persistence/pg-boss-native-task-runtime";
-import type { NativeTaskDeliveryHandler } from "../../persistence/pg-boss-native-task-worker";
+import type { NativeTaskDeliveryHandler, NativeTaskRecoveryVerifier } from "../../persistence/pg-boss-native-task-worker";
 
 export interface NativeQueueWorkerStartupConfiguration {
   database: PrivatePostgresConfiguration;
   /** Trusted application topology, not a request-provided tenant/permission policy. */
   application: Pick<PrivatePostgresConfiguration, "host" | "port" | "database"> & { loginNames: readonly string[] };
   deliver: NativeTaskDeliveryHandler;
+  verifyRecovery?: NativeTaskRecoveryVerifier;
   concurrency?: number;
 }
 const failure = (message: string) => { const error = new Error(message); error.stack = undefined; return error; };
@@ -29,6 +30,7 @@ export function createNativeQueueWorkerBootstrap(dependencies: {
     if (attempted) throw failure("native_queue_worker_already_attempted");
     attempted = true;
     let config: PrivatePostgresConfiguration, deliver: NativeTaskDeliveryHandler, concurrency: number;
+    let verifyRecovery: NativeTaskRecoveryVerifier | undefined;
     try {
       config = validatePrivatePostgresConfiguration(input.database);
       const app = input.application;
@@ -36,10 +38,11 @@ export function createNativeQueueWorkerBootstrap(dependencies: {
         || !Array.isArray(app.loginNames) || app.loginNames.length < 2 || app.loginNames.length > 5
         || new Set(app.loginNames).size !== app.loginNames.length
         || app.loginNames.some(name => typeof name !== "string" || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name === config.username)
-        || typeof input.deliver !== "function") throw new Error();
+        || typeof input.deliver !== "function" || input.verifyRecovery !== undefined && typeof input.verifyRecovery !== "function") throw new Error();
       concurrency = input.concurrency ?? 1;
       if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error();
       deliver = input.deliver;
+      verifyRecovery = input.verifyRecovery;
     } catch { throw failure("native_queue_worker_config_invalid"); }
     let pool: TaskCoordinatorDatabase | undefined, closing: Promise<void> | undefined, closed = false, timedOut = false;
     const bounded = async <T>(work: () => Promise<T>) => {
@@ -63,7 +66,10 @@ export function createNativeQueueWorkerBootstrap(dependencies: {
       check();
       return await startPgBossNativeTaskRuntime(PgBoss, { close, async query<T>(sql: string, values?: unknown[]) {
         check(); const result = await query<T>(sql, values); check(); return result;
-      } }, { backend, concurrency, async deliver(reference, signal) {
+      } }, { backend, concurrency,
+        ...(verifyRecovery ? { async verifyRecovery(reference, ordinal, signal) {
+          check(); await verifyRecovery!(reference, ordinal, signal); check();
+        } } : {}), async deliver(reference, signal) {
         check(); const result = await deliver(reference, signal); check(); return result;
       } });
     } catch (error) {

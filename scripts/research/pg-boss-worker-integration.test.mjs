@@ -378,9 +378,11 @@ test('dedicated worker login passes shared session gates and runs without canoni
     await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE');
     await f.raw.exec(restore); await verifyNativeQueueWorkerDatabase(db, config);
   }
-  let closed = 0, delivered = 0;
+  let closed = 0, delivered = 0, verified = 0;
   const input = { database: config, application: { host: config.host, port: config.port, database: config.database,
-    loginNames: ['web_test', 'coordinator_test'] }, async deliver() { delivered++; return { disposition: 'held' }; } };
+    loginNames: ['web_test', 'coordinator_test'] }, async verifyRecovery(ref, ordinal, signal) {
+      assert.equal(ref.jobId, 'job:92'); assert.equal(ordinal, 1); assert.equal(signal.aborted, false); verified++;
+    }, async deliver() { delivered++; return { disposition: 'held' }; } };
   const make = () => createNativeQueueWorkerBootstrap({ PgBoss, backend: 'pglite', openDatabase: () => ({
     client: db, isAvailable: () => true, async close() { closed++; },
   }) });
@@ -388,11 +390,17 @@ test('dedicated worker login passes shared session gates and runs without canoni
   await assert.rejects(make().start(input), /native_queue_worker_start_failed/);
   assert.equal(closed, 1); assert.equal(delivered, 0);
   await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE; GRANT DELETE ON control_room_queue.job_common TO control_room_native_queue_worker');
+  // Synthetic recovered row preparation before any worker starts. Canonical
+  // recovery is separately exercised by the connected test above.
+  const recoveredId = await f.send(92);
+  await f.boss.fetch(spec.name); await f.boss.fail(spec.name, recoveredId, { reason: 'synthetic offline' });
+  await f.boss.retry(spec.name, recoveredId); await f.boss.update(spec.name, undefined, { id: recoveredId, retryLimit: 0 });
   const bootstrap = make(), runtime = await bootstrap.start(input);
   await assert.rejects(bootstrap.start(input), /already_attempted/);
   f.workers.push(runtime);
   const id = await f.send(91); await until(async () => (await f.get(id))?.state === 'completed');
-  await runtime.close(); assert.equal(closed, 2); assert.equal(delivered, 1);
+  await until(async () => (await f.get(recoveredId))?.state === 'completed');
+  await runtime.close(); assert.equal(closed, 2); assert.equal(delivered, 2); assert.equal(verified, 1);
 });
 
 test('candidate worker role setup rejects retry-enabled queue before creating a role', { timeout: 20000 }, async t => {

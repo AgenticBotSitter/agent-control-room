@@ -301,10 +301,12 @@ test('preexisting operational collision is not accepted as a fresh canonical enq
 });
 
 test('explicit startup prepares actual producer after database gates and closes it before the pool', { timeout: 30000 }, async t => {
-  for (const mode of ['success', 'install', 'prepare', 'close', 'late']) await t.test(mode, async t => {
+  for (const mode of ['success', 'install', 'prepare', 'close', 'late', 'recovery', 'recovery-missing']) await t.test(mode, async t => {
     const f = await fixture(t); await f.save();
     const host = await taskStartupFixture(f);
     await f.raw.exec(await readFile('db/roles/native_queue_producer_roles.sql', 'utf8'));
+    const withRecovery = mode.startsWith('recovery');
+    if (withRecovery) await f.raw.exec(await readFile('db/roles/native_queue_recovery_roles.sql', 'utf8'));
     let prepared = 0, closed = 0, releaseLate;
     const bootstrap = createPrivateTaskBootstrap({ clock: f.clock, openDatabase: host.openDatabase,
       install: () => { if (mode === 'install') throw new Error('synthetic install failure'); },
@@ -314,15 +316,17 @@ test('explicit startup prepares actual producer after database gates and closes 
         if (mode === 'late') return new Promise(resolve => { releaseLate = () => resolve({
           async enqueueInSession() { assert.fail('late producer must never be installed'); }, async close() { closed++; },
         }); });
-        const producer = await preparePgBossNativeTaskSubmission(PgBoss, db, { backend: 'pglite' });
-        return { enqueueInSession: producer.enqueueInSession, async close() {
+        const producer = await preparePgBossNativeTaskSubmission(PgBoss, db, { backend: 'pglite', ...(mode === 'recovery' ? { recovery: true } : {}) });
+        return { enqueueInSession: producer.enqueueInSession,
+          ...(producer.recoverUnsentInSession ? { recoverUnsentInSession: producer.recoverUnsentInSession } : {}), async close() {
           assert.equal(host.coordinator.closes(), 0); closed++; await producer.close();
           if (mode === 'close') throw new Error('synthetic close failure');
         } };
       } });
     const config = { ...host.config, coordinator: { ...host.config.coordinator, nativeQueue: true,
+      ...(withRecovery ? { nativeQueueRecovery: true } : {}),
       approvals: { enrollments: [{ enrollment, nodeClass: 'personal-compute' }], store: f.store } } };
-    if (mode === 'install') await assert.rejects(bootstrap.start(config), /prerequisites_failed/);
+    if (mode === 'install' || mode === 'recovery-missing') await assert.rejects(bootstrap.start(config), /prerequisites_failed/);
     else if (mode === 'prepare') await assert.rejects(bootstrap.start(config), /cleanup_uncertain/);
     else if (mode === 'late') {
       await assert.rejects(bootstrap.start(config), /cleanup_uncertain/);
@@ -331,7 +335,18 @@ test('explicit startup prepares actual producer after database gates and closes 
     else {
       const runtime = await bootstrap.start(config);
       t.after(() => mode === 'close' ? assert.rejects(runtime.close(), /cleanup_uncertain/) : runtime.close());
-      assert.equal((await runtime.submission.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal)).replayed, false);
+      const queued = await runtime.submission.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal);
+      assert.equal(queued.replayed, false);
+      assert.equal(!!runtime.queueRecovery, withRecovery);
+      if (withRecovery) {
+        const ref = reference(f, queued), id = nativeTaskSubmissionId(ref);
+        // PGlite retains the last logical session identity. Administrative
+        // synthetic pickup is separate from the coordinator's recovery grants.
+        await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE');
+        await f.admin.fetch(spec.name); await f.admin.fail(spec.name, id, { reason: 'synthetic offline' });
+        assert.deepEqual(await runtime.queueRecovery.recover(ref, f.abort.signal), { recovered: true, ordinal: 1 });
+        await runtime.queueRecovery.verify(ref, 1, f.abort.signal);
+      }
       if (mode === 'close') {
         await assert.rejects(runtime.close(), /cleanup_uncertain/); await assert.rejects(runtime.close(), /cleanup_uncertain/);
       } else { await runtime.close(); await runtime.close(); }

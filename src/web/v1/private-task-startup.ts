@@ -24,6 +24,7 @@ export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
     nativeQueue?: true;
+    nativeQueueRecovery?: true;
     /** Explicit local composition; no default worker factory or deployment activation. */
     queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
@@ -50,6 +51,8 @@ function configuration(input: PrivateTaskStartupConfiguration) {
     const approvals = a ? { enrollments: validateNativeApprovalEnrollments(a.enrollments, web.tenantId, routes), store: a.store } : undefined;
     const nativeQueue = input.coordinator.nativeQueue;
     if (nativeQueue !== undefined && (nativeQueue !== true || !approvals)) throw new Error();
+    const nativeQueueRecovery = input.coordinator.nativeQueueRecovery;
+    if (nativeQueueRecovery !== undefined && (nativeQueueRecovery !== true || !nativeQueue)) throw new Error();
     const quality = input.coordinator.quality ? captureTaskQualityConfiguration(input.coordinator.quality) : undefined;
     if (quality) validateTaskQualityKeys(quality, planning.reviewIntegrityKey, web.tasks);
     const resultDatabase = input.coordinator.resultDatabase ? validatePrivatePostgresConfiguration(input.coordinator.resultDatabase) : undefined;
@@ -78,7 +81,7 @@ function configuration(input: PrivateTaskStartupConfiguration) {
       || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
       || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username, sessions.database.username].includes(queueWorker.database.username)
       || !Number.isSafeInteger(queueWorker.concurrency) || queueWorker.concurrency < 1 || queueWorker.concurrency > 8)) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, queueWorker };
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -104,7 +107,8 @@ export function createPrivateTaskBootstrap(dependencies: {
     const config = configuration(input);
     if (config.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
     if (config.queueWorker && !startWorker) throw new Error("private_task_startup_config_invalid");
-    const queue = config.nativeQueue ? { nativeQueue: true as const } : undefined;
+    const queue = config.nativeQueue ? { nativeQueue: true as const,
+      ...(config.nativeQueueRecovery ? { nativeQueueRecovery: true as const } : {}) } : undefined;
     let submission: (NativeTaskSubmission & { close(): Promise<void> }) | undefined;
     let abandoned = false, preparationUncertain = false;
     const acquired: TaskCoordinatorDatabase[] = [];
@@ -176,6 +180,11 @@ export function createPrivateTaskBootstrap(dependencies: {
           // Acquire cleanup before validating the operation, even for a malformed factory result.
           submission = { enqueueInSession: raw.enqueueInSession?.bind(raw), close };
           if (abandoned || typeof submission.enqueueInSession !== "function") { await close(); throw new Error(); }
+          if (config.nativeQueueRecovery) {
+            const recover = raw.recoverUnsentInSession;
+            if (typeof recover !== "function") { await close(); throw new Error(); }
+            submission.recoverUnsentInSession = recover.bind(raw);
+          }
           return submission;
         }).catch(error => {
           // A rejected factory may have acquired a client internally; without a
@@ -199,7 +208,7 @@ export function createPrivateTaskBootstrap(dependencies: {
       if (!application.isReady()) throw new Error();
       if (config.queueWorker) {
         if (!application.queueDelivery) throw new Error();
-        const workerConfig = config.queueWorker, deliver = application.queueDelivery;
+        const workerConfig = config.queueWorker, deliver = application.queueDelivery, verifyRecovery = application.queueRecovery?.verify;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const pending = Promise.resolve().then(() => startWorker!({ ...workerConfig,
           application: { host: config.database.host, port: config.database.port, database: config.database.database,
@@ -209,6 +218,11 @@ export function createPrivateTaskBootstrap(dependencies: {
             if (abandoned) throw new Error("native_task_delivery_unresolved");
             return deliver(reference, AbortSignal.any([signal, startupAbort.signal]));
           },
+          ...(verifyRecovery ? { async verifyRecovery(reference, ordinal, signal) {
+            if (abandoned) throw new Error("native_task_delivery_unresolved");
+            await verifyRecovery(reference, ordinal, AbortSignal.any([signal, startupAbort.signal]));
+            if (abandoned) throw new Error("native_task_delivery_unresolved");
+          } } : {}),
         })).then(async raw => {
           if (!raw || typeof raw.close !== "function") { workerUncertain = true; throw new Error(); }
           const closeRaw = raw.close.bind(raw); let closing: Promise<void> | undefined;
@@ -236,6 +250,7 @@ export function createPrivateTaskBootstrap(dependencies: {
       return Object.freeze({ isReady: installed.isReady, close: installed.close,
         ...(application.queueDelivery ? { queueDelivery: application.queueDelivery } : {}),
         ...(application.submission ? { submission: application.submission } : {}),
+        ...(application.queueRecovery ? { queueRecovery: application.queueRecovery } : {}),
         ...(application.quality ? { quality: application.quality } : {}),
         ...(application.revisions ? { revisions: application.revisions } : {}),
         ...(application.results ? { results: application.results } : {}),

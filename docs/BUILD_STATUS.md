@@ -157,6 +157,13 @@ call, with one signed dispatch. 53 package and 71 related checks pass. Automatic
 reconnect triggering and recovery startup configuration remain unmounted; native
 execution is simulated and production is not activated.
 
+**E27 — recovery startup wiring:** [Evidence](research/REUSE_E27_RECOVERY_STARTUP.md)
+adds an explicit recovery flag selecting the permission profile, required prepared
+method, owned commands and worker verifier together. Missing methods refuse startup;
+default startup stays unchanged. 55 package and 54 startup/runtime checks pass.
+Automatic recovery after signed reconciliation, candidate discovery and stale/duplicate
+reconnect handling remain next. No production activation.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before
