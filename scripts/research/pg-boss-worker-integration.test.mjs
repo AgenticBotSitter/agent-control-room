@@ -22,6 +22,7 @@ import { managedStartupFixture, restrictedPool } from '../../tests/helpers/manag
 import { createPrivateTaskBootstrap } from '../../src/web/v1/private-task-startup.ts';
 import { taskStartupFixture } from '../../tests/helpers/task-startup.ts';
 import { request as webRequest } from '../../tests/helpers/web-foundation.ts';
+import { createTaskSubmissionBrowserClient } from '../../src/web/v1/task-submission-browser-client.ts';
 
 const root = process.env.CR_REUSE_EVAL_ROOT;
 assert.ok(root && isAbsolute(root), 'Explicit existing E01 acquisition root required');
@@ -31,7 +32,8 @@ const { PgBoss } = await import(pathToFileURL(join(packageRoot, 'dist/index.js')
 const hostFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/taskBootstrap.js')).createPrivateTaskBootstrap : createPrivateTaskBootstrap;
 
-for (const offline of [false, true]) test(`fresh HTTP task traverses actual six-role host to signed result and pending review: ${offline ? 'offline recovery' : 'online'}`, { timeout: 30000 }, async t => {
+for (const mode of ['online', 'offline recovery', 'lost browser response']) test(`fresh HTTP task traverses actual six-role host to signed result and pending review: ${mode}`, { timeout: 30000 }, async t => {
+  const offline = mode === 'offline recovery';
   const x = await managedNativeSessionFixture(undefined, { queue: true, stopHandshakeAtDispatch: true });
   // Reuse only the fake peer/provider and preparation; the fixture manager must not deliver.
   await x.manager.close();
@@ -69,11 +71,25 @@ for (const offline of [false, true]) test(`fresh HTTP task traverses actual six-
   };
   let connection = offline ? undefined : await attach();
   await x.admin(() => x.f.save());
-  const path = `/api/v1/projects/${encodeURIComponent(x.task.projectId)}/tasks/${encodeURIComponent(x.task.jobId)}/submission`;
-  const req = webRequest(path, 'POST', { expectedInputDigest: x.task.inputDigest, expectedPacketDigest: x.task.packetDigest }, undefined, x.f.jwt);
-  req.headers.delete('idempotency-key');
-  const response = await installed.handle(req, () => new Response('shell')); assert.equal(response.status, 201);
-  const receipt = await response.json();
+  let writes = 0;
+  const client = createTaskSubmissionBrowserClient(async (path, options) => {
+    const req = webRequest(path, options.method, options.body ? JSON.parse(options.body) : undefined, undefined, x.f.jwt);
+    req.headers.delete('idempotency-key');
+    const response = await installed.handle(req, () => new Response('shell'));
+    if (options.method === 'POST') {
+      writes++; assert.equal(response.status, 201);
+      if (mode === 'lost browser response') throw new Error('synthetic lost response after commit');
+    }
+    return response;
+  });
+  const args = [x.task.projectId, x.task.jobId, x.task.inputDigest, x.task.packetDigest];
+  let receipt;
+  if (mode === 'lost browser response') {
+    await assert.rejects(client.submit(...args), { code: 'uncertain' });
+    await assert.rejects(client.submit(...args), { code: 'uncertain' });
+    receipt = (await client.read(...args)).receipt; assert.equal(client.hasPending(), false);
+  } else receipt = await client.submit(...args);
+  assert.equal(writes, 1);
   const ref = { schema: 'control-room.native-task-submission/v1', tenantId: x.f.scope.tenantId,
     projectId: receipt.projectId, jobId: receipt.jobId, attemptId: receipt.attemptId, queueId: receipt.queueId,
     inputDigest: x.task.inputDigest, packetDigest: receipt.packetDigest };
@@ -104,6 +120,8 @@ for (const offline of [false, true]) test(`fresh HTTP task traverses actual six-
   assert.equal((await admin.getJobById(spec.name, nativeTaskSubmissionId(ref))).state, 'failed',
     'late receipt/result must not relabel the original uncertain queue outcome');
   assert.deepEqual(await x.f.config.storage.read(counts.artifacts[0].id), new TextEncoder().encode(qualityText));
+  const historical = await client.read(...args);
+  assert.equal(historical.receipt.queueId, receipt.queueId); assert.equal(writes, 1);
   await host.close();
   for (const pool of [f.web, f.coordinator, ...Object.values(pools)]) assert.equal(pool.closes(), 1);
   assert.deepEqual(errors, []);

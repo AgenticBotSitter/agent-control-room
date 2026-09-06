@@ -8,6 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local acceptance — E36:** [Browser client/host reconciliation](research/REUSE_E36_BROWSER_CLIENT_HOST_RECONCILIATION.md)
+uses the real submission client through the complete disposable host, including a lost
+response after commit resolved by receipt readback without a second POST. Interactive UI
+testing is waiting for owner unlock of the Mac; other local plan work remains available.
+
 **Latest local acceptance — E35:** [Full-host task journey](research/REUSE_E35_FULL_HOST_TASK_JOURNEY.md)
 passes fresh protected HTTP submission through actual queue/worker and all six restricted
 roles to one signed dispatch, exact stored simulated result and pending review, online

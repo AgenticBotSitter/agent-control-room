@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E36 client/host reconciliation](research/REUSE_E36_BROWSER_CLIENT_HOST_RECONCILIATION.md)
+passes the actual browser client through the complete host for online, offline and lost
+commit-response journeys. Real browser interaction remains untested because the Mac is locked.
+
 [E35 full-host journey](research/REUSE_E35_FULL_HOST_TASK_JOURNEY.md) closes the local
 fresh-task composition gap: protected HTTP to actual six-role host/queue to signed delivery
 and exact result awaiting review, online and after reconnect. 65 package checks and both
