@@ -24,6 +24,9 @@ const states = { job: jobTransitions, attempt: attemptTransitions, lease: leaseT
 export class NativeTaskCompletionService {
   private readonly submission: NativeResultSubmissionService;
   private readonly key: Uint8Array;
+  private lastObserved = Number.NEGATIVE_INFINITY;
+  private time() { const now = this.clock(); if (!Number.isSafeInteger(now) || now < this.lastObserved) return deny();
+    this.lastObserved = now; return now; }
   constructor(private readonly db: DatabaseClient, config: NativeQualityConfiguration, private readonly clock: () => number = Date.now) {
     this.submission = new NativeResultSubmissionService(db, config); this.key = Uint8Array.from(config.integrityKey);
   }
@@ -60,8 +63,8 @@ export class NativeTaskCompletionService {
   }
   async complete(input: NativeQualityRequest, assertCurrent: () => void) {
     const request = nativeQualityRequestSchema.parse(input); assertNoSecretMaterial(request); assertCurrent();
-    const started = this.clock(); let last = started;
-    const current = () => { const now = this.clock(); if (!Number.isSafeInteger(started) || !Number.isSafeInteger(now) || now < last || now - started > 10_000) return deny(); last = now; assertCurrent(); return now; };
+    const started = this.time();
+    const current = () => { const now = this.time(); if (now - started > 10_000) return deny(); assertCurrent(); return now; };
     const result = await this.db.transactionWithPreCommitCheck(async tx => {
       current(); const context = await this.submission.inspectSubmitted(tx, request.tenantId, request.runId);
       const { run, snapshot, result: artifact } = context, native = run.nativeTask!;

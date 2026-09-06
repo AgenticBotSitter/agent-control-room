@@ -20,6 +20,9 @@ export type NativeQualityRequest = z.infer<typeof nativeQualityRequestSchema>;
 export class NativeResultVerificationService {
   private readonly descriptors: AutomaticDocumentScenario[];
   private readonly config: NativeQualityConfiguration;
+  private lastObserved = Number.NEGATIVE_INFINITY;
+  private time() { const now = this.clock(); if (!Number.isSafeInteger(now) || now < this.lastObserved) throw new Error("native_verification_unavailable");
+    this.lastObserved = now; return now; }
   constructor(private readonly db: DatabaseClient, config: NativeQualityConfiguration,
     scenarios: readonly AutomaticDocumentScenario[], private readonly clock: () => number = Date.now) {
     this.descriptors = z.array(descriptor).max(50).parse(scenarios); assertNoSecretMaterial(this.descriptors);
@@ -32,9 +35,9 @@ export class NativeResultVerificationService {
   }
   async verify(input: NativeQualityRequest, assertCurrent: () => void) {
     const request = nativeQualityRequestSchema.parse(input); assertNoSecretMaterial(request); assertCurrent();
-    const started = this.clock(), staged = stageCompletionCheckpoint(this.config.checkpoints, request.tenantId, 50); let last = started;
-    const current = () => { const now = this.clock(); if (!Number.isSafeInteger(started) || !Number.isSafeInteger(now) || now < last || now - started > 10_000)
-      throw new Error("native_verification_unavailable"); last = now; assertCurrent(); return now; };
+    const started = this.time(), staged = stageCompletionCheckpoint(this.config.checkpoints, request.tenantId, 50);
+    const current = () => { const now = this.time(); if (now - started > 10_000)
+      throw new Error("native_verification_unavailable"); assertCurrent(); return now; };
     const result = await this.db.transactionWithPreCommitCheck(async tx => {
       current();
       const context = await new NativeResultSubmissionService(this.db, { ...this.config, checkpoints: staged.checkpoints })
@@ -57,7 +60,8 @@ export class NativeResultVerificationService {
           scenarioId: scenario.scenarioId, outcome: verdict.outcome, verifier: { actorId: "service:document-structure-verifier", actorType: "service" },
           evidenceDigests, verifiedAt, grantsApproval: false, grantsExecutionAuthority: false };
         const prior = await context.gate.getRecord(request.tenantId, verificationId, "verification") as CompletionVerificationV1 | undefined;
-        if (prior && sha256Digest({ ...prior, verifiedAt }) !== sha256Digest(value)) throw new Error("native_verification_conflict");
+        if (prior && (Date.parse(prior.verifiedAt) > Date.parse(verifiedAt)
+          || sha256Digest({ ...prior, verifiedAt }) !== sha256Digest(value))) throw new Error("native_verification_conflict");
         const saved = await context.gate.recordVerification(prior ?? value); records.push(saved.verification); replayed &&= saved.replayed;
         if (!saved.replayed) await appendAuditWith(tx, { id: `audit:${verificationId}`, tenantId: request.tenantId, projectId: context.run.projectId,
           actorId: value.verifier.actorId, actorType: "service", action: "task.result.structure_verified", targetType: "completion_verification",
