@@ -84,6 +84,12 @@ pickup, reusing pg-boss startup rather than adding a checker. 41 package checks 
 Upstream drift diagnostics detect a missing index but can skip failed probes; full
 schema acceptance remains open. Continue worker identity/startup and real-PG acceptance.
 
+**E16 — worker database identity:** [Evidence](research/REUSE_E16_WORKER_DATABASE_IDENTITY.md)
+adds read-only worker LOGIN/session/database/settings verification using the shared
+application session gate plus E11 queue-only permissions. 42 package and 78 existing
+database/startup checks pass. Real PostgreSQL pool isolation and worker bootstrap
+mounting remain unproven; no native service or provider effects.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

@@ -106,6 +106,11 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E16 worker identity](research/REUSE_E16_WORKER_DATABASE_IDENTITY.md) verifies a dedicated
+worker LOGIN, database, session limits and fixed role membership using the existing
+application gate. 42 package and 78 role/startup regression checks pass. This is still
+PGlite with its documented TEMP exception, not real pool isolation or production startup.
+
 [E15 version/drift evaluation](research/REUSE_E15_QUEUE_VERSION_AND_DRIFT.md) proves
 upstream startup version rejection through both adapters. Reuse it; no new custom
 version checker needed. Drift diagnostics can skip failed probes, so an ok report is

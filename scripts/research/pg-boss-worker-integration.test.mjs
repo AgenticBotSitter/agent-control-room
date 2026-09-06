@@ -10,6 +10,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { startPgBossNativeTaskWorker } from '../../src/persistence/pg-boss-native-task-worker.ts';
 import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
 import { verifyPgBossNativeWorkerPermissions } from '../../src/persistence/pg-boss-native-task-permissions.ts';
+import { verifyNativeQueueWorkerDatabase } from '../../src/web/v1/private-database-preflight.ts';
 import { nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
 
@@ -212,6 +213,56 @@ test('effective worker preflight rejects missing and excessive privileges', { ti
     await assert.rejects(check(), /native_task_worker_permissions_invalid/);
     await f.raw.exec(restore); await check();
   }
+});
+
+test('dedicated worker login passes shared session gates and runs without canonical access', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  await f.raw.exec(await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8'));
+  await f.raw.exec(`CREATE ROLE queue_worker_test LOGIN INHERIT;
+    GRANT control_room_native_queue_worker TO queue_worker_test;
+    SET search_path=pg_catalog, public; SET statement_timeout='5s'; SET lock_timeout='2s';
+    SET transaction_timeout='10s'; SET idle_in_transaction_session_timeout='5s'`);
+  const config = { host: '127.0.0.1', port: 5432, database: 'template1', username: 'queue_worker_test', password: 'synthetic-only', majorVersion: 17 };
+  function database(setting, injectTemp = true) {
+    const db = { transaction: work => f.raw.transaction(async tx => {
+      await tx.exec('SET LOCAL SESSION AUTHORIZATION queue_worker_test');
+      if (setting) await tx.exec(setting);
+      return work({ async query(sql, values) {
+        const result = await tx.query(sql, values);
+        // Existing PGlite TEMP metadata limitation only; actual session/role/ACL queries run.
+        if (injectTemp && sql.includes('AS database_temp')) result.rows = result.rows.map(row => ({ ...row, database_temp: false }));
+        return result;
+      } });
+    }) };
+    return { ...db, query: (sql, values) => db.transaction(tx => tx.query(sql, values)) };
+  }
+  const db = database();
+  await assert.rejects(verifyNativeQueueWorkerDatabase(database(undefined, false), config), /preflight_failed/);
+  await verifyNativeQueueWorkerDatabase(db, config);
+  for (const override of [{ username: 'other_worker' }, { database: 'other_database' }])
+    await assert.rejects(verifyNativeQueueWorkerDatabase(db, { ...config, ...override }), /preflight_failed/);
+  for (const setting of ["SET LOCAL statement_timeout='0'", "SET LOCAL search_path=public", 'SET LOCAL ROLE control_room_native_queue_worker'])
+    await assert.rejects(verifyNativeQueueWorkerDatabase(database(setting), config), /preflight_failed/);
+  for (const [change, restore] of [
+    ['ALTER ROLE control_room_native_queue_worker LOGIN', 'ALTER ROLE control_room_native_queue_worker NOLOGIN'],
+    ['ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO queue_worker_test', 'ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM queue_worker_test'],
+    ['CREATE SCHEMA unexpected_worker_schema', 'DROP SCHEMA unexpected_worker_schema'],
+  ]) {
+    // Restore the administrator explicitly after the rejected SET ROLE fixture;
+    // this single-engine fixture does not certify connection-pool role isolation.
+    await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE');
+    await f.raw.exec(change);
+    await assert.rejects(verifyNativeQueueWorkerDatabase(db, config), /preflight_failed/);
+    await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE');
+    await f.raw.exec(restore); await verifyNativeQueueWorkerDatabase(db, config);
+  }
+  let closed = 0, delivered = 0;
+  const runtime = await startPgBossNativeTaskRuntime(PgBoss, { query: db.query, async close() { closed++; } }, {
+    backend: 'pglite', async deliver() { delivered++; return { disposition: 'held' }; },
+  });
+  f.workers.push(runtime);
+  const id = await f.send(91); await until(async () => (await f.get(id))?.state === 'completed');
+  await runtime.close(); assert.equal(closed, 1); assert.equal(delivered, 1);
 });
 
 test('candidate worker role setup rejects retry-enabled queue before creating a role', { timeout: 20000 }, async t => {

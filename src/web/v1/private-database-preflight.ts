@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { verifyPgBossApplicationPermissions } from "../../persistence/pg-boss-application-permissions";
+import { verifyPgBossNativeWorkerPermissions } from "../../persistence/pg-boss-native-task-permissions";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
@@ -129,6 +130,45 @@ export async function verifyNativeSessionDatabase(db: DatabaseClient, config: Pr
   return verifyDatabase(db, config, scope, now, "sessions", queue);
 }
 
+/** Dedicated operational worker: no canonical-owner reads or application writes.
+ * Caller validates connection topology and owns the pool. This check is read-only. */
+export async function verifyNativeQueueWorkerDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration) {
+  try {
+    await db.transaction(async tx => {
+      await verifySession(tx, config, "control_room_native_queue_worker");
+      await verifyPgBossNativeWorkerPermissions(tx);
+      const row = (await tx.query<{ unsafe: boolean }>(`SELECT
+        EXISTS(SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%'
+          AND nspname NOT IN ('information_schema','public','control_room_queue'))
+        OR EXISTS(SELECT 1 FROM pg_parameter_acl p CROSS JOIN LATERAL aclexplode(p.paracl) a
+          WHERE a.privilege_type='ALTER SYSTEM' AND (a.grantee=0 OR
+            a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER'))))
+        OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
+          WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
+        AS unsafe`)).rows[0];
+      if (row?.unsafe !== false) fail();
+    });
+  } catch { fail(); }
+}
+
+async function verifySession(tx: DatabaseSession, config: PrivatePostgresConfiguration, role: string) {
+  const settings = (await tx.query<{ valid: boolean; database_temp: boolean }>(`SELECT
+    current_user=session_user AND current_user=$1 AND current_database()=$2
+    AND current_setting('server_version_num')::integer BETWEEN 170000 AND 179999
+    AND current_setting('statement_timeout')='5s' AND current_setting('lock_timeout')='2s'
+    AND current_setting('transaction_timeout')='10s' AND current_setting('idle_in_transaction_session_timeout')='5s'
+    AND current_setting('search_path')='pg_catalog, public' AND current_setting('session_replication_role')='origin'
+    AND current_setting('transaction_read_only')='off' AND NOT pg_is_in_recovery()
+    AND NOT has_database_privilege(current_database(),'CREATE') AS valid,
+    has_database_privilege(current_database(),'TEMP') AS database_temp`, [config.username, config.database])).rows[0];
+  if (settings?.valid !== true || settings.database_temp !== false) fail();
+  const roles = (await tx.query<{ rolname: string; valid: boolean }>(`SELECT rolname,
+    NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) AND rolinherit
+    AND rolcanlogin=(rolname=current_user) AS valid FROM pg_roles WHERE pg_has_role(oid,'MEMBER') ORDER BY rolname`)).rows;
+  if (roles.length !== 2 || roles.some(r => !r.valid)
+    || !roles.some(r => r.rolname === config.username) || !roles.some(r => r.rolname === role)) fail();
+}
+
 async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
   scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions", queue?: NativeQueueDatabaseOption) {
   const withQueue = queue?.nativeQueue === true;
@@ -138,21 +178,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
   const allowedUpdates = kind === "sessions" ? sessionUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
   try {
     await db.transaction(async tx => {
-      const settings = (await tx.query<{ valid: boolean; database_temp: boolean }>(`SELECT
-        current_user=session_user AND current_user=$1 AND current_database()=$2
-        AND current_setting('server_version_num')::integer BETWEEN 170000 AND 179999
-        AND current_setting('statement_timeout')='5s' AND current_setting('lock_timeout')='2s'
-        AND current_setting('transaction_timeout')='10s' AND current_setting('idle_in_transaction_session_timeout')='5s'
-        AND current_setting('search_path')='pg_catalog, public' AND current_setting('session_replication_role')='origin'
-        AND current_setting('transaction_read_only')='off' AND NOT pg_is_in_recovery()
-        AND NOT has_database_privilege(current_database(),'CREATE') AS valid,
-        has_database_privilege(current_database(),'TEMP') AS database_temp`, [config.username, config.database])).rows[0];
-      if (settings?.valid !== true || settings.database_temp !== false) fail();
-      const roles = (await tx.query<{ rolname: string; valid: boolean }>(`SELECT rolname,
-        NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) AND rolinherit
-        AND rolcanlogin=(rolname=current_user) AS valid FROM pg_roles WHERE pg_has_role(oid,'MEMBER') ORDER BY rolname`)).rows;
-      if (roles.length !== 2 || roles.some(r => !r.valid)
-        || !roles.some(r => r.rolname === config.username) || !roles.some(r => r.rolname === role)) fail();
+      await verifySession(tx, config, role);
       const unsafe = (await tx.query<{ unsafe: boolean }>(`SELECT
         EXISTS(SELECT 1 FROM pg_auth_members WHERE pg_has_role(member,'MEMBER') AND admin_option)
         OR has_database_privilege(current_database(),'CREATE WITH GRANT OPTION')

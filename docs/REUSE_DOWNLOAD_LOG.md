@@ -329,3 +329,9 @@ credential operation or new retained temporary directory.
 Read retained E01 package source and used existing PGlite. All version/index changes
 were confined to disposable in-memory fixtures, closed after tests. No downloads,
 native database/server, additional retained directory or external mutation.
+
+### E16 — worker identity (no acquisition)
+
+Retained E01 package and existing repository dependencies only. Synthetic LOGIN/role
+changes occurred solely in disposable PGlite fixtures, closed after tests. No native
+credential, server, connection pool, downloads or new cleanup directory.
