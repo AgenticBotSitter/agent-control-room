@@ -65,6 +65,29 @@ Before publishing contributor setup:
 
 ## Review limits and next batch
 
+### Synthetic demo seams already available
+
+`tests/helpers/web-foundation.ts` creates temporary RSA keys, signs synthetic Access
+assertions and seeds an owner in disposable PGlite. Its `.invalid` origins and clock
+are test fixtures, not an operator login recipe. `tests/helpers/task-startup.ts` supplies
+restricted SQL identities and explicitly documents its PGlite TEMP-metadata injection;
+do not export that injection as production PostgreSQL qualification.
+
+`tests/helpers/web-node.ts` supplies in-memory Node request/response streams, without
+creating sockets. The compiled owner-revision interface test now uses this seam with
+the real compiled serving bridge and client assets. It rejects an unauthenticated
+review, renders a task page, saves owner feedback, prepares/replays one exact revision
+and verifies no new native execution or attempt occurred. Existing source job/evidence
+and checkpoint preservation assertions remain intact.
+
+This reuses authentication verification, SQL services, browser request construction
+and compiled routing rather than inventing a second demo task/review engine. It starts
+from a synthetic completed-result fixture: it does not establish a complete interactive
+project-to-result journey, browser hydration or a real agent run. A distributable demo
+still needs reviewed synthetic-only composition, visible labeling, coherent request/
+session handling and cleanup. It must not implicitly turn these fixture keys into a
+trusted public login or expose an assertion-minting endpoint on the operational server.
+
 This targeted filesystem-call search is not exhaustive detection of every runtime path.
 It located a real asset requirement and concrete SQL/test dependencies; aliased calls,
 framework-discovered files and complete asset provenance still need review.

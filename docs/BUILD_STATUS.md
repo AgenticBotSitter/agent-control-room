@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor demo reuse proven at the request bridge:** The compiled owner-review/
+revision test now traverses the real Node serving bridge using in-memory streams and
+temporary synthetic authentication. It rejects an unauthenticated review, renders a
+task page and preserves exact revision replay/no-execution assertions. Fresh standalone
+build, six adjacent compiled serving/launcher/revision tests and targeted lint pass.
+No sockets, owner credentials or provider calls. This starts from a synthetic result,
+not a complete interactive demo; [remaining setup](PUBLIC_RUNTIME_AND_TEST_INPUTS.md).
+
 **Protected-page content review advanced:** [Batch 02](research/public-source-content-review-02.json)
 adds 12 exact-file observations with verified hashes and no embedded private values
 observed. It records Cloudflare Access setup coupling and the legacy enrollment-only

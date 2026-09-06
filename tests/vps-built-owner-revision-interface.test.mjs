@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { realpath } from "node:fs/promises";
 import handler from "../dist-vps/server/index.js";
 import { createPrivateTaskBootstrap } from "../dist-vps/server/taskBootstrap.js";
 import { installPrivateApplication } from "../dist-vps/server/runtime.js";
@@ -10,6 +11,8 @@ import { nativeQualityCompletionFixture } from "./helpers/native-quality-complet
 import { taskStartupFixture } from "./helpers/task-startup.ts";
 import { request, origin } from "./helpers/web-foundation.ts";
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
+import { createPrivateNodeHandler, loadPrivateClientAssets } from "../dist-vps/server/serving.js";
+import { nodeExchange } from "./helpers/web-node.ts";
 
 test("compiled protected interface prepares and reconciles one exact saved owner revision without starting work", async t => {
   const x = await nativeQualityCompletionFixture(); t.after(x.close);
@@ -21,16 +24,31 @@ test("compiled protected interface prepares and reconciles one exact saved owner
     } });
   t.after(() => runtime.close());
   assert.equal(runtime.isReady(), true); assert.ok(runtime.revisions);
+  const bridge = createPrivateNodeHandler({ origin, application: runtime, handler,
+    assets: await loadPrivateClientAssets(await realpath("dist-vps/client")) });
+  t.after(() => bridge.close());
+  async function send(webRequest) {
+    const url = new URL(webRequest.url);
+    const exchange = nodeExchange({ path: `${url.pathname}${url.search}`, method: webRequest.method,
+      headers: [...webRequest.headers].flat(), body: webRequest.body ? await webRequest.text() : undefined });
+    await bridge.handle(exchange.input, exchange.output);
+    return new Response(exchange.body(), { status: exchange.output.statusCode, headers: exchange.headers });
+  }
 
   const projectId = x.registration.projectId, sourceJobId = x.registration.jobId;
   const reviewPath = `/api/v1/projects/${projectId}/tasks/${sourceJobId}/results/${x.artifact.artifactId}/reviews/${x.target.id}`;
   const feedback = "Prepare a clearer explanation of the recorded evidence.";
   const reviewDraft = { artifactId: x.artifact.artifactId, targetId: x.target.id, targetDigest: x.request.targetDigest,
     contentHash: x.request.contentHash, decision: "changes_requested", feedback };
-  const reviewed = await handler(request(reviewPath, "POST", reviewDraft, "compiled-owner-revision-review-001", x.f.jwt));
+  const denied = await send(new Request(`${origin}${reviewPath}`, { method: "POST",
+    headers: { origin, "content-type": "application/json" }, body: JSON.stringify(reviewDraft) }));
+  assert.equal(denied.status, 401);
+  const page = await send(request(`/projects/${projectId}/tasks/${sourceJobId}`, "GET", undefined, undefined, x.f.jwt));
+  assert.equal(page.status, 200); assert.match(await page.text(), /Task progress · Control Room/);
+  const reviewed = await send(request(reviewPath, "POST", reviewDraft, "compiled-owner-revision-review-001", x.f.jwt));
   assert.equal(reviewed.status, 201, await reviewed.clone().text());
   const reviewReceipt = (await reviewed.json()).receipt; assert.equal(reviewReceipt.startsRevision, false);
-  const optionsResponse = await handler(request(reviewPath, "GET", undefined, undefined, x.f.jwt));
+  const optionsResponse = await send(request(reviewPath, "GET", undefined, undefined, x.f.jwt));
   assert.equal(optionsResponse.status, 200, await optionsResponse.clone().text());
   const options = await optionsResponse.json();
   assert.equal(options.revisionPlanning, "configured"); assert.equal(options.ownReview.reviewId, reviewReceipt.reviewId);
@@ -49,7 +67,7 @@ test("compiled protected interface prepares and reconciles one exact saved owner
   const nativeCalls = [...x.local.calls], nativeEffects = x.local.effects.countFull();
   const plansBefore = (await startup.coordinator.client.query("SELECT job_id FROM control_task_execution_plans ORDER BY job_id")).rows;
   const revisionPath = `/api/v1/projects/${projectId}/tasks/${sourceJobId}/revisions`;
-  const callerKey = await handler(request(revisionPath, "POST", draft, "caller-selected-revision-key", x.f.jwt));
+  const callerKey = await send(request(revisionPath, "POST", draft, "caller-selected-revision-key", x.f.jwt));
   assert.equal(callerKey.status, 400); assert.equal((await startup.coordinator.client.query(
     "SELECT job_id FROM control_task_execution_plans")).rows.length, plansBefore.length);
   const statuses = [], bodies = [];
@@ -57,7 +75,7 @@ test("compiled protected interface prepares and reconciles one exact saved owner
     const browserHeaders = new Headers(init?.headers);
     assert.equal(browserHeaders.has("idempotency-key"), false); bodies.push(String(init?.body));
     browserHeaders.set("cf-access-jwt-assertion", x.f.jwt); browserHeaders.set("origin", origin);
-    const response = await handler(new Request(`${origin}${url}`, { ...init, headers: browserHeaders }));
+    const response = await send(new Request(`${origin}${url}`, { ...init, headers: browserHeaders }));
     statuses.push(response.status); return response;
   });
   const saved = await client.prepare(projectId, sourceJobId, draft);
