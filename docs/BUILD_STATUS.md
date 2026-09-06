@@ -38,6 +38,21 @@ server-trust-versus-owner-revocation assumption is preserved in the report. No p
 worker/client/startup wiring, native agent or new database-server attempt. Continue with
 package/role/bootstrap composition and current canonical authorization, not a custom poller.
 
+**E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
+identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
+#98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before
+custom transfer infrastructure. The owner's exact Twitter quote subsequently identified
+**merged #103600 remote-sandbox output retrieval**, a different and smaller first
+candidate for ordinary task outputs; see the correction at the top of E06. Evaluate it
+before the unmerged RoomLink stack. Subsequent [E07 evaluation](research/REUSE_E07_HERMES_REMOTE_FETCH.md)
+passes 11 offline tests of unmodified upstream retrieval methods. Native `/v1/runs`
+completion does not automatically expose the chat gateway's retrieved files; inspect
+the supported authenticated file API before integrating the canonical artifact bridge.
+Current native result intake is bounded UTF-8 text, not
+general binary files. E06/E07 source/head/hash inventory retained (712 KiB combined); no Hermes
+installation, live transfer, source adoption or runtime wiring. Keep canonical project
+authorization and harness-neutral artifact storage. No full gateway or live backend test yet.
+
 **Reuse validation progress:** The owner directed following the new plan until complete
 or blocked. See [`REUSE_FIRST_VALIDATION_PACKET.md`](REUSE_FIRST_VALIDATION_PACKET.md)
 for candidate acquisition scope, concrete integration/retirement points and host-package

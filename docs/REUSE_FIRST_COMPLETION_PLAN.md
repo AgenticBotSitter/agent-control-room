@@ -56,6 +56,20 @@ Effort bands are comparative integration estimates, not completion promises. A r
 
 ## Evaluation method and stopping rule
 
+**E06 addition — real cross-machine files:** [Hermes transfer assessment](research/REUSE_E06_HERMES_TRANSFER.md)
+maps this gap to R06/R07/R13 and the Idea Lab/ABS handoffs. Evaluate native RoomLink
+attachments and bot-generated file publication before inventing another file protocol.
+Cross-gateway chats are merged; file PRs #98072/#99159 were still open at inspection.
+Owner clarification identified merged #103600 as the quoted feature: retrieve output
+from a remote execution sandbox into the gateway's cache. Evaluate that smaller merged
+path first for ordinary task results; keep RoomLink for independent bot handoff.
+[E07](research/REUSE_E07_HERMES_REMOTE_FETCH.md) subsequently passed 11 offline tests of
+the original transport. Run completion still lacks a canonical file handoff; inspect
+the existing authenticated media API rather than silently widening the text-result path.
+Keep project/attempt authorization and a Codex-compatible artifact path in Control Room.
+Pinned offline tests precede adoption; no installed-fleet capability or live transfer is
+claimed. Prepare during B/C, use in D, and do not delay B's text-only task for rich files.
+
 1. Map each candidate to the inventory above. Search broadly once, shortlist at most three per infrastructure responsibility; add another only for a named gap. No endless repository census.
 2. Record exact source revision, package release, license/notice files, dependency boundaries, maintenance/release/security signals, implemented source and relevant upstream tests. Record inaccessible evidence explicitly. Upstream tests inspected is different from tests executed here.
 3. Apply pass/fail gates: permitted intended use and later redistribution plan; supported environment; no mandatory public DB/provider credentials in browser; compatible authorization boundaries; viable maintained deployment.
