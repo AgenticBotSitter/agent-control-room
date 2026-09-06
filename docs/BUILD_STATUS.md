@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Standalone build separated:** [Configuration implementation](PUBLIC_STANDALONE_BUILD_SEPARATION.md)
+removes hosting metadata/plugin imports from the direct VPS build entrypoint while
+reusing its configuration from the existing preview's explicit Node target. Build,
+52 combined checks, TypeScript and targeted lint pass; the final loaded-config
+regression also passes. No export, preview deployment or live resource was attempted.
+
 **Public extraction direction refined:** [Application dependency findings](PUBLIC_APPLICATION_DEPENDENCY_FINDINGS.md)
 trace the protected application's static imports to 286 paths, with only five shared
 legacy app files and no matched named project-adapter paths. Prefer this existing

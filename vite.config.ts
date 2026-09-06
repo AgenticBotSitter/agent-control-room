@@ -36,6 +36,7 @@ const localBindingConfig = {
 export default defineConfig(async ({ mode }) => {
   const target = selectBuildTarget(process.env.CONTROL_ROOM_BUILD_TARGET);
   const nodeTarget = target === "vps-node";
+  if (nodeTarget) return (await import("./vite.vps.config")).default;
   const localPilotRequested = mode === "development"
     && process.env.CONTROL_ROOM_LOCAL_PILOT_MODE === "repository_fake";
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
@@ -56,20 +57,11 @@ export default defineConfig(async ({ mode }) => {
 
   return {
     define: { "process.env.CONTROL_ROOM_BUILD_TARGET": JSON.stringify(target) },
-    ...(nodeTarget ? { environments: {
-      client: { build: { outDir: "dist-vps/client" } },
-      // Preserve pg-boss's installed package boundary so its own locked pg dependency resolves there.
-      rsc: { build: { rollupOptions: { external: ["pg-boss"], input: { runtime: "src/web/v1/private-process.ts", bootstrap: "src/web/v1/private-startup.ts",
-        serving: "src/web/v1/private-serving.ts", rehearsal: "src/web/v1/private-database-rehearsal.ts",
-        preparation: "src/web/v1/private-fixture-preparation.ts", taskApplication: "src/web/v1/private-task-application.ts",
-        taskBootstrap: "src/web/v1/private-task-startup.ts", nativeQueueFactories: "src/web/v1/installed-native-queue.ts",
-        nativeQueueInspection: "src/persistence/pg-boss-schema-inspection.ts", taskHost: "src/web/v1/private-task-host.ts" } } } },
-    } } : {}),
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
-      vinext(nodeTarget ? { appDir: "private-app", rscOutDir: "dist-vps/server", ssrOutDir: "dist-vps/server/ssr" } : {}),
+      vinext(),
       ...(nodeTarget ? [] : [sites()]),
       ...(cloudflarePlugin ? [cloudflarePlugin] : []),
     ],
