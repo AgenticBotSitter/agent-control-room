@@ -7,6 +7,7 @@ import { NativeDispatchIntakeHandler } from "../src/node-bridge/native-dispatch-
 import { prepareNativeExecutionHandoff } from "../src/harness/hermes-native-v1/execution-handoff";
 import { resolvePinnedApprovalKey } from "../src/node-policy/v1/pinned-approval-trust";
 import { sha256Digest } from "../src/security";
+import type { NativeTaskSnapshotBody } from "../src/harness/v1/native-observation";
 
 async function ready() {
   const f = await fixture(), local = await nativeStartAuthorityFixture(undefined, f.prepared.enrollment, f.assignmentFixture);
@@ -119,4 +120,53 @@ test("unresolved signing-trust lookup times out without a late execution handle 
   release(new Uint8Array(Buffer.from(x.s.spki, "base64url")));
   await new Promise<void>(resolve => setImmediate(resolve));
   assert.deepEqual(x.local.calls, []); assert.equal(x.local.journal.load(x.f.prepared.binding.runId), undefined);
+});
+
+test("optional handoff reporting captures its publisher and reads the saved observation after native work", async t => {
+  const x = await ready(); t.after(x.close);
+  const observations: NativeTaskSnapshotBody[] = [];
+  const reporting = { async publishNativeSnapshot(body: NativeTaskSnapshotBody) {
+    assert.equal(x.local.journal.load(body.runId)!.version, body.snapshotVersion);
+    observations.push(structuredClone(body)); return "recorded" as const;
+  } };
+  const pending = prepareNativeExecutionHandoff(x.config, { ...x.deps, reporting }, x.f.abort.signal);
+  reporting.publishNativeSnapshot = async () => { throw new Error("mutated publisher"); };
+  const handoff = await pending; t.after(handoff.close);
+  assert.equal(observations.length, 0); assert.deepEqual(x.local.calls, []);
+  await handoff.start(); await handoff.poll();
+  assert.deepEqual(observations.map(body => body.state), ["queued", "running"]);
+  assert.deepEqual(x.local.calls, ["capabilities", "start", "status"]);
+  assert.ok(observations.every(body => !Object.hasOwn(body, "resultText") && !Object.hasOwn(body, "nativeRunId")));
+});
+
+test("post-start reporting uncertainty closes the handoff without retrying provider work or clearing the journal", async t => {
+  const x = await ready(); t.after(x.close); let publications = 0;
+  const handoff = await prepareNativeExecutionHandoff(x.config, { ...x.deps, reporting: {
+    async publishNativeSnapshot() { publications++; throw new Error("synthetic reporting uncertainty"); },
+  } }, x.f.abort.signal); t.after(handoff.close);
+  await assert.rejects(handoff.start(), { message: "native_handoff_reporting_uncertain" });
+  const saved = x.local.journal.load(handoff.runId), calls = [...x.local.calls];
+  assert.equal(saved!.state, "queued"); assert.deepEqual(calls, ["capabilities", "start"]);
+  assert.throws(() => handoff.start()); assert.throws(() => handoff.poll()); assert.throws(() => handoff.observe());
+  assert.equal(publications, 1); assert.deepEqual(x.local.calls, calls);
+  assert.deepEqual(x.local.journal.load(handoff.runId), saved); assert.equal(x.local.effects.countFull(), 1);
+});
+
+test("pending observation publication blocks overlapping native work without poisoning the first operation", async t => {
+  const x = await ready(); t.after(x.close);
+  let entered!: () => void, release!: () => void;
+  const publishing = new Promise<void>(resolve => { entered = resolve; });
+  const pendingPublication = new Promise<void>(resolve => { release = resolve; });
+  let count = 0;
+  const handoff = await prepareNativeExecutionHandoff(x.config, { ...x.deps, reporting: {
+    async publishNativeSnapshot() { if (++count === 1) { entered(); await pendingPublication; } return "recorded" as const; },
+  } }, x.f.abort.signal); t.after(handoff.close);
+  const started = handoff.start(); await publishing;
+  const calls = [...x.local.calls];
+  await assert.rejects(handoff.poll(), { message: "native_handoff_busy" });
+  await assert.rejects(handoff.observe(), { message: "native_handoff_busy" });
+  assert.deepEqual(x.local.calls, calls); assert.equal(count, 1);
+  release(); assert.equal((await started).state, "queued");
+  assert.equal((await handoff.poll()).state, "running"); assert.equal(count, 2);
+  assert.deepEqual(x.local.calls, ["capabilities", "start", "status"]);
 });

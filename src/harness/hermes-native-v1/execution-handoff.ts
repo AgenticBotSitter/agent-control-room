@@ -85,11 +85,16 @@ export async function prepareNativeExecutionHandoff(config: { queueId: string; e
     // Reporting is historical evidence, not renewed execution authority.
     assertAvailable: () => { if (closed || signal.aborted || revision() !== before) throw new Error("native_handoff_unavailable"); },
   }) : undefined;
+  let operationBusy = false;
   const reportAfter = async <T>(operation: () => Promise<T>) => {
-    const value = await operation();
-    try { if (reporter) await reporter.report(signal); }
-    catch { closed = true; authority.close(); reporter?.close(); throw new Error("native_handoff_reporting_uncertain"); }
-    return value;
+    if (operationBusy) throw new Error("native_handoff_busy");
+    operationBusy = true;
+    try {
+      const value = await operation();
+      try { if (reporter) await reporter.report(signal); }
+      catch { closed = true; authority.close(); reporter?.close(); throw new Error("native_handoff_reporting_uncertain"); }
+      return value;
+    } finally { operationBusy = false; }
   };
   return Object.freeze({ queueId, runId,
     start: () => { guard(); return reportAfter(() => adapter.start(verified.start)); },
