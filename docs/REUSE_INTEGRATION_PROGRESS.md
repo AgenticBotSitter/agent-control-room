@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E23 recovery source-fit](research/REUSE_E23_OFFLINE_RECOVERY_PRIMITIVES.md) selects
+the public retry/update transaction, not internal restore or a custom queue reset.
+48 package checks pass. Never-staged canonical proof and reconnect wiring are not yet
+implemented; the current worker deliberately continues rejecting recovered metadata.
+
 [E22 host/worker composition](research/REUSE_E22_HOST_WORKER_STARTUP.md) now supplies
 the real delivery callback and all five application logins to an explicitly injected
 worker factory before joint installation. Production remains disabled. The offline

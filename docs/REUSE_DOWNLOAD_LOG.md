@@ -370,3 +370,9 @@ credential use or external publication.
 Existing repository dependencies and retained E01 package only. Fake worker factories,
 minimal queue ACL and in-memory actual-package fixtures close after tests. No new
 download or retained directory; no native service, credential or external effect.
+
+### E23 — recovery primitive evaluation (no acquisition)
+
+Read retained E01 package source and executed its public APIs against disposable
+in-memory fixtures. No new downloads, native server, credentials or external effects.
+The initial unsupported restore() call failed; corrected to test public API absence.

@@ -79,6 +79,43 @@ async function runtimeFixture(t, f, deliver, concurrency = 1) {
     fault: () => clients[0].emit('error', new Error('synthetic runtime fault')) };
 }
 
+test('internal restore is not exposed by the public package and is not selected for recovery', async t => {
+  const f = await fixture(t);
+  assert.equal(typeof f.boss.restore, 'undefined');
+});
+
+for (const rollback of [false, true]) test(`public retry plus zero-limit update is atomic under queue role: ${rollback ? 'rollback' : 'commit'}`, async t => {
+  const f = await fixture(t), id = await f.send(`retry-evaluation-${rollback}`);
+  await f.boss.fetch(spec.name); await f.boss.fail(spec.name, id, { reason: 'synthetic offline' });
+  const before = await f.get(id); assert.equal(before.state, 'failed');
+  await f.raw.exec(await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8'));
+  // Source-fit evaluation only. No canonical unsent proof or automatic recovery
+  // authority is supplied here, and this transaction is not a production adapter.
+  const recover = () => f.raw.transaction(async tx => {
+    await tx.exec('SET LOCAL ROLE control_room_native_queue_worker');
+    const db = { executeSql: (sql, values) => values?.length ? tx.query(sql, values) : tx.exec(sql).then(results => results.at(-1) ?? { rows: [] }) };
+    await f.boss.retry(spec.name, id, { db });
+    assert.equal((await tx.query(`SELECT retry_limit FROM ${spec.schema}.job WHERE id=$1`, [id])).rows[0].retry_limit, 1);
+    await f.boss.update(spec.name, undefined, { id, retryLimit: 0, db });
+    if (rollback) throw new Error('synthetic recovery rollback');
+  });
+  if (rollback) {
+    await assert.rejects(recover(), /synthetic recovery rollback/);
+    assert.deepEqual(await f.get(id), before); return;
+  }
+  await recover();
+  const recovered = await f.get(id);
+  assert.equal(recovered.state, 'retry'); assert.equal(recovered.retryLimit, 0);
+  assert.equal(recovered.completedOn, null); assert.deepEqual(recovered.data, before.data);
+  assert.deepEqual(recovered.keepUntil, before.keepUntil);
+  const fetched = await f.boss.fetch(spec.name, { includeMetadata: true });
+  assert.equal(fetched.length, 1); assert.equal(fetched[0].id, id);
+  assert.equal(fetched[0].retryCount, 1); assert.equal(fetched[0].retryLimit, 0);
+  await f.boss.fail(spec.name, id, { reason: 'synthetic uncertain delivery' });
+  assert.equal((await f.get(id)).state, 'failed');
+  assert.equal((await f.boss.fetch(spec.name)).length, 0);
+});
+
 for (const offline of [false, true]) test(offline
   ? 'actual offline-node pickup preserves unsent intent; reconnect does not silently retry'
   : 'actual queue pickup reaches managed signed receipt and completed result review without a browser identity', { timeout: 30000 }, async t => {

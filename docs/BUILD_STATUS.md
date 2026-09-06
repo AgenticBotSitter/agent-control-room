@@ -130,6 +130,12 @@ cleanup. All 45 actual-package checks pass, including proof that an offline task
 retained unsent but does not resume on reconnect. Automatic safe recovery, actual
 whole-host/exact-role acceptance and production activation remain unfinished.
 
+**E23 — offline recovery primitives:** [Evidence](research/REUSE_E23_OFFLINE_RECOVERY_PRIMITIVES.md)
+proves public pg-boss retry plus zero-limit update can atomically preserve the same job
+without enabling automatic retries. All 48 package checks pass. Internal restore is not
+a public API. Canonical never-staged proof, permissions, bounded recovery audit and
+reconnect integration remain required; current worker still rejects recovered metadata.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before
