@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
+import { boundedCheckpointCall, CheckpointCallError } from '../../src/completion-gate/v1/bounded-checkpoint-call.ts';
 
 const root = process.env.CR_ETCD_EVAL_ROOT;
 assert.ok(root, 'Set CR_ETCD_EVAL_ROOT to the logged evaluation directory');
@@ -91,4 +92,19 @@ test('upstream transaction codec preserves uint64 identity and byte comparisons'
   assert.equal(decoded.header.cluster_id, '18446744073709551615');
   assert.equal(decoded.header.revision, '9007199254740993');
   assert.equal(decoded.succeeded, false);
+});
+
+test('Control Room abort reaches actual generated unary cancellation', async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  try {
+    const pending = boundedCheckpointCall({ signal: controller.signal, timeoutMs: 1000,
+      dispatch: (deadline, callback) => f.client.txn({}, { deadline }, callback),
+    });
+    controller.abort();
+    await assert.rejects(pending, (error) => error instanceof CheckpointCallError && error.outcome === 'uncertain');
+    assert.equal(f.calls.length, 1);
+    assert.deepEqual(f.calls[0].cancellations, [grpc.status.CANCELLED]);
+    assert.equal(f.closed(), 0);
+  } finally { f.client.close(); }
 });

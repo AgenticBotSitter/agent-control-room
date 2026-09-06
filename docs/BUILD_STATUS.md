@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest adapter — E71:** [Bounded checkpoint call](research/REUSE_E71_BOUNDED_CHECKPOINT_CALL.md)
+connects explicit cancellation/deadline to an existing unary handle with one dispatch,
+sanitized uncertain outcomes and late-reply refusal. 33 unit/adjacent checks and six
+retained-package diagnostics pass; targeted lint and VPS build pass. No runtime wiring,
+new download or service. Exact checkpoint mapping and durable storage acceptance remain.
+Final TypeScript/full lint, 41 compiled regressions and four queue journeys also pass.
+
 **Latest transport candidate — E70:** [Existing gRPC bindings](research/REUSE_E70_ETCD_GRPC_EVALUATION.md)
 pass three offline generated-client/codec diagnostics: isolated request cancellation,
 no high-level invalid-token reissue and exact large identifiers. Combined E69/E70:
