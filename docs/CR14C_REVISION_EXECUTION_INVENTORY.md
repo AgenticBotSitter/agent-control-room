@@ -92,3 +92,14 @@ read projection/injection/privilege change and native review-plan writer mountin
 neither is supplied by a helper import or by the existing lifecycle configuration.
 Any role change must update exact role/preflight tests. Actual runtime activation must
 wait for the accepted revised-submission, read/review and assignment/binding path.
+
+## Refresh after revised-result integration
+
+Production `b4a29b7`, integrated regressions `5abdc5b`: the preceding sections remain
+historical inventory. The v2 native plan, same-subject submission, exact producer/target
+resolver and protected review path are now connected and independently reviewed; see
+`CR14C_REVISED_RESULT_ACCEPTANCE.md`. The private-web role gains only native-plan SELECT.
+The trusted executable reader now accepts v2 and binds its distinct registration path.
+No runtime native-plan writer or live scheduler is mounted. Source reservation retirement,
+browser revision planning and upstream outcomes remain; the current next-block inventory
+is `CR14C_RESERVATION_RETIREMENT_INVENTORY.md`.

@@ -325,7 +325,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 |---|---|---|
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
-| Real task -> agent -> progress -> result -> review in the website | Private task pages save proposals and optionally prepare execution plans through protected routes; owner planning and initial result submission connect in disposable tests; production coordinator composition, physical upload, actual admission/dispatch and revisions remain | CR14C |
+| Real task -> agent -> progress -> result -> review in the website | Protected proposals, planning, assignment, review and revised-result history connect to actual synthetic native lifecycles; child revisions require fresh quality evidence. Reservation turnover, browser revision planning, runtime activation/signing and real host acceptance remain | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Private view reads existing enrollments/signals; new native adapter is component-tested but unwired; no live fleet/dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
@@ -385,6 +385,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C revised-result execution and review | Independently accepted same-subject synthetic child execution, exact producer/file matching, protected review and child-only completion; source reservation turnover and runtime activation remain | `CR14C_REVISED_RESULT_ACCEPTANCE.md` |
 | CR14C quality coordinator mounting | Independently accepted optional internal reconciliation under exact coordinator role/startup; event routing, revisions and live activation remain | `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md` |
 | CR14C approval lifecycle/reconciliation | Independently accepted bounded trusted approval port and historical receipt readback; no HTTP/signer/dispatch | `CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md` |
 | CR14C canonical approval storage | Independently accepted immutable signed-packet evidence under current canonical/owner locks; no browser/signer/dispatch | `CR14C_CANONICAL_APPROVAL_STORAGE_ACCEPTANCE.md` |
@@ -2258,18 +2259,46 @@ zero failures/cancellations. This is durable planning only: executable v2 reader
 remain closed until revised-result submission and same-subject review are connected.
 No live agent, browser qualification, database service, merge or deployment is claimed.
 
+## Same-subject revised result and protected review
+
+Production `b4a29b7` and integrated regressions `5abdc5b` are independently reviewed.
+The executable v2 plan now binds a distinct child native run, whose actual returned bytes
+become the next target in the original task's review history. Protected reads and owner
+commands retain exact producer identity; all revised targets need fresh checks/review.
+The compiled optional quality coordinator completes only the child. Independent review
+found and verified a corrected same-hash cross-revision association bug. See
+`CR14C_REVISED_RESULT_ACCEPTANCE.md` for actual lifecycle proof and retained failures.
+No native/runtime writer, browser revision-planning command or scheduling service is
+mounted by this block. The synthetic fixture's explicit spare capacity is not reservation
+turnover proof; the original job remains unapproved and still holds its slot. See
+`CR14C_RESERVATION_RETIREMENT_INVENTORY.md` for the next real continuity gap.
+
+All six default local lanes passed: 2,474 tests, two existing platform skips, zero
+failures/cancellations. Final private compiled24, rendered4, both builds, migrations
+through0054/138 tables, TypeScript and full ESLint passed. Branch-head GitHub CI and
+dependency-order integration remain required.
+
+Prerequisite PR #333 head `8fa77f9` passed all checks and the aggregate gate in GitHub
+run `34009139614`. No merge, physical PostgreSQL rehearsal or deployment is claimed.
+
 ## Next block
 
 ```text
-Block: CR14C bounded revised-result execution and quality integration
+Block: CR14C evidence-backed execution reservation retirement
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Saved-result discovery and durable revision planning are connected locally. A planned follow-up still cannot run and submit revised bytes under the original logical review subject.
-Expected output: revised-result binding and staged submission preserving real producer identities, fresh review/checks, and corresponding read/review integration before opening v2 execution. PR #329 review remains a separate unresolved gate; runtime scheduling/registration/recovery and owner signing are still unconfigured.
+Why: Revised-result execution and fresh review now compose in disposable tests, but the unapproved original execution still holds a canonical slot and can block the next assignment.
+Expected output: truthful coordinated release of finished execution capacity with authenticated evidence, preserved quality history, exact replay and capacity-limited revision tests. Root must settle eligibility/order and canonical outcomes first. PR #329 remains a separate unresolved gate; browser revision planning, runtime scheduling/registration/recovery and owner signing remain unconfigured.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
 ```
+
+Model allocation refreshed against [official OpenAI guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra)
+on 2026-09-05. Preserve the effective current effort rather than increasing it by default.
+Astra Medium for root integration, Astra High for independent boundary review and Sol High
+for isolated protected-app tests remain project-specific allocations, not an official
+benchmark or a claim that Codex settings were changed programmatically.
 
 ## Update rule
 
