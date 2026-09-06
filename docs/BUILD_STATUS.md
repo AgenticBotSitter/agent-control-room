@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner-requested public-build pivot:** [Open-source transition plan](OPEN_SOURCE_TRANSITION_PLAN.md)
+preserves the private baseline and proposes a separately reviewed public community tree,
+then one shared development upstream with private configuration/project data downstream.
+Next work is a local export inventory and contributor-facing drafts, alongside generic
+integration work; no public repository, license grant, upload or CI is authorized here.
+The earlier public candidate is not the runnable app and retains release/license blockers.
+This changes delivery planning, not runtime readiness or existing security contracts.
+
 **Latest readiness correction — E83:** [Explicit launch mode](research/REUSE_E83_EXPLICIT_LAUNCH_MODE.md)
 requires website-only or agent-tasks intent before host creation. Website mode refuses
 worker/native serving; agent mode requires the complete task/result/review configuration.
