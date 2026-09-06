@@ -45,7 +45,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   let drained: (() => void) | undefined, force!: () => void;
   const stops = new Set<() => void>();
   const forced = new Promise<void>(resolve => { force = resolve; });
-  const check = () => { if (invalid || !pool.isAvailable()) throw new TaskCoordinatorInterruption("task_coordinator_unavailable"); };
+  const check = () => {
+    try { if (!invalid && pool.isAvailable()) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
+    throw new TaskCoordinatorInterruption("task_coordinator_unavailable");
+  };
   const db: DatabaseClient = {
     async query<T>(sql: string, params?: unknown[]) { check(); const value = await raw.query<T>(sql, params); check(); return value; },
     transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
