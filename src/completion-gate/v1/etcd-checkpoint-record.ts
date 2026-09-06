@@ -1,23 +1,23 @@
 import { z } from "zod";
 import { parseRollbackCheckpointV1 } from "../../security/rollback-checkpoint";
 
-const uint64 = z.string().regex(/^(0|[1-9][0-9]{0,19})$/)
+export const etcdUint64 = z.string().regex(/^(0|[1-9][0-9]{0,19})$/)
   .refine(value => BigInt(value) <= BigInt("18446744073709551615"));
-const positiveRevision = uint64.refine(value => BigInt(value) > BigInt(0) && BigInt(value) <= BigInt("9223372036854775807"));
+export const etcdPositiveRevision = etcdUint64.refine(value => BigInt(value) > BigInt(0) && BigInt(value) <= BigInt("9223372036854775807"));
 const bytes = z.custom<Buffer>(value => Buffer.isBuffer(value));
-const bindingSchema = z.object({
-  clusterId: uint64.refine(value => value !== "0"),
-  createRevision: positiveRevision,
+export const etcdCheckpointBindingSchema = z.object({
+  clusterId: etcdUint64.refine(value => value !== "0"),
+  createRevision: etcdPositiveRevision,
   key: bytes.refine(value => value.length > 0 && value.length <= 512),
   scope: z.string().min(3).max(240),
 });
 const responseSchema = z.object({
-  header: z.object({ cluster_id: uint64, revision: positiveRevision }),
+  header: z.object({ cluster_id: etcdUint64, revision: etcdPositiveRevision }),
   count: z.literal("1"), more: z.literal(false),
   kvs: z.array(z.object({
     key: bytes, value: bytes.refine(value => value.length > 0 && value.length <= 4096),
-    create_revision: positiveRevision, mod_revision: positiveRevision,
-    version: positiveRevision, lease: z.literal("0"),
+    create_revision: etcdPositiveRevision, mod_revision: etcdPositiveRevision,
+    version: etcdPositiveRevision, lease: z.literal("0"),
   })).length(1),
 });
 
@@ -30,7 +30,7 @@ export function parseEtcdCheckpointRecord(response: unknown, trustedBinding: {
   clusterId: string; createRevision: string; key: Buffer; scope: string;
 }) {
   try {
-    const binding = bindingSchema.parse(trustedBinding);
+    const binding = etcdCheckpointBindingSchema.parse(trustedBinding);
     const parsed = responseSchema.parse(response);
     const record = parsed.kvs[0];
     if (parsed.header.cluster_id !== binding.clusterId || record.create_revision !== binding.createRevision

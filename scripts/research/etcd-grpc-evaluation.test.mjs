@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { boundedCheckpointCall, CheckpointCallError } from '../../src/completion-gate/v1/bounded-checkpoint-call.ts';
 import { parseEtcdCheckpointRecord } from '../../src/completion-gate/v1/etcd-checkpoint-record.ts';
-import { prepareEtcdCheckpointAdvance } from '../../src/completion-gate/v1/etcd-checkpoint-advance.ts';
+import { parseEtcdCheckpointAdvanceReceipt, prepareEtcdCheckpointAdvance } from '../../src/completion-gate/v1/etcd-checkpoint-advance.ts';
 import { rollbackCheckpointDigestV1 } from '../../src/security/rollback-checkpoint.ts';
 
 const root = process.env.CR_ETCD_EVAL_ROOT;
@@ -138,4 +138,9 @@ test('checkpoint record parser accepts actual upstream Range decoding', () => {
   assert.equal(decoded.compare[3].lease, '0');
   assert.equal(decoded.failure.length, 0);
   assert.equal(JSON.parse(decoded.success[0].request_put.value.toString()).revision, 2);
+  const receipt = KV.service.Txn.responseDeserialize(KV.service.Txn.responseSerialize({
+    header: { cluster_id: binding.clusterId, revision: '9007199254740994' },
+    succeeded: true, responses: [{ response_put: {} }],
+  }));
+  assert.equal(parseEtcdCheckpointAdvanceReceipt(receipt, binding.clusterId, binding.createRevision), '9007199254740994');
 });

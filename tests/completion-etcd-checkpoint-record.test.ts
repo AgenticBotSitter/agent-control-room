@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseEtcdCheckpointRecord } from "../src/completion-gate/v1/etcd-checkpoint-record";
 import { ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1 } from "../src/security/rollback-checkpoint";
-import { prepareEtcdCheckpointAdvance } from "../src/completion-gate/v1/etcd-checkpoint-advance";
+import { parseEtcdCheckpointAdvanceReceipt, prepareEtcdCheckpointAdvance } from "../src/completion-gate/v1/etcd-checkpoint-advance";
+import { createEtcdCheckpointAccess } from "../src/completion-gate/v1/etcd-checkpoint-access";
 
 const binding = { clusterId: "18446744073709551615", createRevision: "9007199254740993",
   key: Buffer.from("synthetic/checkpoint"), scope: "completion-gate:synthetic" };
@@ -83,4 +84,74 @@ test("advance refuses stale digest, wrong scope, skipped and repeated revisions"
     { ...base, next: { ...base.next, revision: 3 } },
   ];
   for (const input of variants) assert.throws(() => prepareEtcdCheckpointAdvance(input), /^Error: checkpoint_advance_unavailable$/);
+});
+
+test("single-Put receipt requires correct cluster and strictly newer revision", () => {
+  const receipt = { header: { cluster_id: binding.clusterId, revision: "9007199254740995" },
+    succeeded: true, responses: [{ response: "response_put", response_put: {} }] };
+  assert.equal(parseEtcdCheckpointAdvanceReceipt(receipt, binding.clusterId, "9007199254740994"), "9007199254740995");
+  const invalid = [
+    { ...receipt, succeeded: false }, { ...receipt, responses: [] },
+    { ...receipt, responses: [...receipt.responses, ...receipt.responses] },
+    { ...receipt, header: { ...receipt.header, cluster_id: "1" } },
+    { ...receipt, header: { ...receipt.header, revision: "9007199254740994" } },
+    { ...receipt, header: { ...receipt.header, revision: 9007199254740996 } },
+    { ...receipt, responses: [{ response: "response_range", response_range: {} }] },
+    { ...receipt, responses: [{ ...receipt.responses[0], response_txn: {} }] },
+    { ...receipt, responses: [{ response: "response_put", response_put: null }] },
+  ];
+  for (const value of invalid) assert.throws(() => parseEtcdCheckpointAdvanceReceipt(value, binding.clusterId, "9007199254740994"),
+    /^Error: checkpoint_advance_uncertain$/);
+});
+
+test("access joins exact read, conditional update and receipt under one deadline", async () => {
+  const deadlines: number[] = [];
+  let writes = 0;
+  const access = createEtcdCheckpointAccess({ binding, timeoutMs: 1000,
+    range: (request, deadline, callback) => {
+      deadlines.push(deadline);
+      assert.deepEqual(request, { key: binding.key, limit: "1", serializable: false });
+      callback(null, fixture()); return { cancel() {} };
+    },
+    txn: (request, deadline, callback) => {
+      writes++; deadlines.push(deadline);
+      assert.deepEqual(request.failure, []);
+      assert.equal(JSON.parse(request.success[0].request_put.value.toString()).revision, 2);
+      callback(null, { header: { cluster_id: binding.clusterId, revision: "9007199254740995" },
+        succeeded: true, responses: [{ response: "response_put", response_put: {} }] });
+      return { cancel() {} };
+    },
+  });
+  await access.advance(rollbackCheckpointDigestV1(checkpoint), { ...checkpoint, revision: 2 }, new AbortController().signal);
+  assert.equal(writes, 1);
+  assert.ok(deadlines[1] <= deadlines[0]);
+});
+
+test("access refuses stale state before write and does not retry a failed comparison", async () => {
+  for (const stale of [true, false]) {
+    let writes = 0;
+    const access = createEtcdCheckpointAccess({ binding, timeoutMs: 1000,
+      range: (_request, _deadline, callback) => { callback(null, fixture()); return { cancel() {} }; },
+      txn: (_request, _deadline, callback) => {
+        writes++; callback(null, { succeeded: false, responses: [] }); return { cancel() {} };
+      },
+    });
+    await assert.rejects(access.advance(stale ? "stale" : rollbackCheckpointDigestV1(checkpoint),
+      { ...checkpoint, revision: 2 }, new AbortController().signal));
+    assert.equal(writes, stale ? 0 : 1);
+  }
+});
+
+test("canceled access cannot proceed from a late read into write", async () => {
+  const controller = new AbortController();
+  let writes = 0;
+  let cancels = 0;
+  const access = createEtcdCheckpointAccess({ binding, timeoutMs: 1000,
+    range: (_request, _deadline, callback) => {
+      controller.abort(); callback(null, fixture()); return { cancel() { cancels++; } };
+    },
+    txn: () => { writes++; return { cancel() {} }; },
+  });
+  await assert.rejects(access.advance(rollbackCheckpointDigestV1(checkpoint), { ...checkpoint, revision: 2 }, controller.signal));
+  assert.equal(writes, 0); assert.equal(cancels, 1);
 });

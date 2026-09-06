@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest access composition — E74:** [Joined checkpoint path](research/REUSE_E74_CHECKPOINT_ACCESS_COMPOSITION.md)
+joins exact read, conditional advance and single-Put receipt validation through supplied
+transport under one deadline. Negative/late responses cannot become a successful write
+or automatic retry. Targeted lint and VPS build pass. No initialization, real channel,
+trusted provisioning or durable-store acceptance is claimed.
+Final TypeScript, 42 focused/adjacent checks and seven package diagnostics pass.
+
 **Latest conditional mapping — E73:** [Checkpoint advance preparation](research/REUSE_E73_ETCD_CONDITIONAL_ADVANCE.md)
 prepares exact generation/revision/value/lease comparisons and an empty failure branch.
 38 focused/adjacent checks and seven package diagnostics pass; lint and VPS build pass.
