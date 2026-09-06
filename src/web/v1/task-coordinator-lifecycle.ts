@@ -8,6 +8,7 @@ import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepReque
 import { timingSafeEqual } from "node:crypto";
 import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
 import { taskRevisionRequestSchema } from "./task-revision-wire";
+import { TaskResultCoordinator, taskResultRequestSchema, type TaskResultOperation } from "./task-result-coordinator";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -22,6 +23,8 @@ export type TaskCoordinatorConfiguration = {
   revisionPlanning?: true;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
   database: TaskCoordinatorDatabase;
+  /** Optional fixed native-result writer, independently verified against the same primary. */
+  resultDatabase?: TaskCoordinatorDatabase;
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
 };
 
@@ -34,25 +37,30 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])
     if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error("task_coordinator_config_invalid");
   if (input.revisionPlanning !== undefined && (input.revisionPlanning !== true || !input.quality)) throw new Error("task_coordinator_config_invalid");
+  if (input.resultDatabase && (!input.quality || input.resultDatabase === input.database || input.resultDatabase.client === input.database.client))
+    throw new Error("task_coordinator_config_invalid");
   if (input.approvals && (!Array.isArray(input.approvals.enrollments)
     || typeof input.approvals.store?.acceptInSession !== "function" || typeof input.approvals.store?.readInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
-  const resource = input.database;
-  if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
-    || [resource.client?.query, resource.client?.transaction, resource.client?.transactionWithPreCommitCheck].some(fn => typeof fn !== "function"))
-    throw new Error("task_coordinator_config_invalid");
-  const pool = Object.freeze({ client: resource.client, close: resource.close.bind(resource), isAvailable: resource.isAvailable.bind(resource) });
-  const raw = Object.freeze({ query: pool.client.query.bind(pool.client), transaction: pool.client.transaction.bind(pool.client),
-    transactionWithPreCommitCheck: pool.client.transactionWithPreCommitCheck.bind(pool.client) });
+  const capture = (resource: TaskCoordinatorDatabase) => {
+    if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
+      || [resource.client?.query, resource.client?.transaction, resource.client?.transactionWithPreCommitCheck].some(fn => typeof fn !== "function"))
+      throw new Error("task_coordinator_config_invalid");
+    return Object.freeze({ client: resource.client, close: resource.close.bind(resource), isAvailable: resource.isAvailable.bind(resource) });
+  };
+  const pool = capture(input.database), resultPool = input.resultDatabase ? capture(input.resultDatabase) : undefined;
   let closing = false, invalid = false, interrupted = false, active = 0, closePromise: Promise<void> | undefined;
   let drained: (() => void) | undefined, force!: () => void;
   const stops = new Set<() => void>();
   const forced = new Promise<void>(resolve => { force = resolve; });
   const check = () => {
-    try { if (!invalid && pool.isAvailable()) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
+    try { if (!invalid && pool.isAvailable() && (!resultPool || resultPool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
     throw new TaskCoordinatorInterruption("task_coordinator_unavailable");
   };
-  const db: DatabaseClient = {
+  const guardedDatabase = (owned: TaskCoordinatorDatabase) => {
+    const raw = Object.freeze({ query: owned.client.query.bind(owned.client),
+      transactionWithPreCommitCheck: owned.client.transactionWithPreCommitCheck.bind(owned.client) });
+    const db: DatabaseClient = {
     async query<T>(sql: string, params?: unknown[]) { check(); const value = await raw.query<T>(sql, params); check(); return value; },
     transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
     transactionWithPreCommitCheck: (work, precommit) => {
@@ -67,7 +75,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         try { return await work(Object.freeze(session)); } finally { usable = false; }
       }, () => { check(); precommit(); check(); });
     },
+    }; return db;
   };
+  const db = guardedDatabase(pool);
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
@@ -76,6 +86,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
   const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock) : undefined;
+  const resultCoordinator = resultPool ? new TaskResultCoordinator(guardedDatabase(resultPool), scope, input.planning, input.quality!, input.clock) : undefined;
   async function run<T>(work: () => Promise<T>): Promise<T> {
     if (closing || active >= maxActive) throw new Error("task_coordinator_unavailable");
     check(); active++;
@@ -122,9 +133,14 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return run(() => qualityCoordinator.reconcile(snapshot, signal, check));
     },
   }) : undefined;
+  const results: TaskResultOperation | undefined = resultCoordinator ? Object.freeze({ ...scope,
+    register: (value, signal) => { const request = taskResultRequestSchema.parse(value); return run(() => resultCoordinator.register(request, signal)); },
+    submit: (value, signal) => { const request = taskResultRequestSchema.parse(value); return run(() => resultCoordinator.submit(request, signal)); },
+  }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(revisions ? { revisions } : {}),
-    isReady: () => !closing && !invalid && pool.isAvailable(),
+    ...(results ? { results } : {}),
+    isReady: () => !closing && !invalid && pool.isAvailable() && (!resultPool || resultPool.isAvailable()),
     close(): Promise<void> {
       if (closePromise) return closePromise;
       closing = true;
@@ -136,7 +152,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
             new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; interrupted = true; resolve(); }, drainMs); })]);
           clearTimeout(drainTimer);
           invalid = true;
-          await Promise.race([Promise.resolve().then(pool.close), new Promise<never>((_, reject) => {
+          await Promise.race([Promise.all([Promise.resolve().then(pool.close), ...(resultPool ? [Promise.resolve().then(resultPool.close)] : [])]), new Promise<never>((_, reject) => {
             closeTimer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);
           })]);
           if (timedOut) throw new Error("task_coordinator_close_uncertain");

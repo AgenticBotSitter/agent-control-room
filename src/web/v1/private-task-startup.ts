@@ -1,7 +1,7 @@
 import { assertNoSecretMaterial } from "../../security";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
-import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase } from "./private-database-preflight";
+import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase } from "./private-database-preflight";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
@@ -12,7 +12,8 @@ import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning"> & { database: PrivatePostgresConfiguration };
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning"> & {
+    database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration };
 };
 function configuration(input: PrivateTaskStartupConfiguration) {
   try {
@@ -34,14 +35,17 @@ function configuration(input: PrivateTaskStartupConfiguration) {
     const approvals = a ? { enrollments: validateNativeApprovalEnrollments(a.enrollments, web.tenantId, routes), store: a.store } : undefined;
     const quality = input.coordinator.quality ? captureTaskQualityConfiguration(input.coordinator.quality) : undefined;
     if (quality) validateTaskQualityKeys(quality, planning.reviewIntegrityKey, web.tasks);
+    const resultDatabase = input.coordinator.resultDatabase ? validatePrivatePostgresConfiguration(input.coordinator.resultDatabase) : undefined;
+    if (resultDatabase && (!quality || resultDatabase.host !== database.host || resultDatabase.port !== database.port
+      || resultDatabase.database !== database.database || [database.username, web.database.username].includes(resultDatabase.username))) throw new Error();
     const revisionPlanning = input.coordinator.revisionPlanning;
     if (revisionPlanning !== undefined && (revisionPlanning !== true || !quality)) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning };
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
 /** Trusted server-only startup. Import is inert; explicit start is the first possible pool effect.
- * Both logins must independently pass their fixed gate against one primary before shared mounting.
+ * All configured logins must pass their independent fixed gates against one primary before mounting.
  * Never opens a listener, provisions SQL, loads credentials or starts agent work.
  */
 export function createPrivateTaskBootstrap(dependencies: {
@@ -83,18 +87,24 @@ export function createPrivateTaskBootstrap(dependencies: {
       const coordinator = open(config.database);
       if (web.client === coordinator.client) throw new Error();
       await verifyTaskCoordinatorDatabase(coordinator.client, config.database, config.web, now);
-      if (!web.isAvailable() || !coordinator.isAvailable()) throw new Error();
+      const resultDatabase = config.resultDatabase ? open(config.resultDatabase) : undefined;
+      if (resultDatabase) {
+        if ([web.client, coordinator.client].includes(resultDatabase.client)) throw new Error();
+        await verifyNativeResultDatabase(resultDatabase.client, config.resultDatabase!, config.web, now);
+      }
+      if (!web.isAvailable() || !coordinator.isAvailable() || resultDatabase && !resultDatabase.isAvailable()) throw new Error();
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
-        revisionPlanning: config.revisionPlanning, clock,
+        revisionPlanning: config.revisionPlanning, resultDatabase, clock,
       });
       if (!application.isReady()) throw new Error();
       dependencies.install(application);
-      // Only the optional scoped quality command is exposed to trusted server composition, never HTTP or raw SQL/keys.
+      // Optional narrow commands reach only trusted server composition, never raw SQL/keys.
       return Object.freeze({ isReady: application.isReady, close: application.close,
         ...(application.quality ? { quality: application.quality } : {}),
-        ...(application.revisions ? { revisions: application.revisions } : {}) });
+        ...(application.revisions ? { revisions: application.revisions } : {}),
+        ...(application.results ? { results: application.results } : {}) });
     } catch {
       const results = await Promise.allSettled(application ? [application.close()] : acquired.map(pool => pool.close()));
       if (results.some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");

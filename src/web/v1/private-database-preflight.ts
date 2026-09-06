@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0054 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "ae17c98eb3dda970e2666a022e78cb8acf6a89672af8e93a5604485c43cd0fca";
+// Generated from migrations 0001-0055 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "1123996d2266e2304a3bb70077eaab86b669540e116fb1aaa9814b7df6b2cc6e";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
@@ -41,6 +41,18 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_harness_runs: ["coordinator_lock"], control_completion_gate_records: ["web_lock"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
 };
+const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
+  "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
+  "control_harness_runs", "control_harness_run_events", "control_native_review_plans",
+  "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
+  "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads"];
+const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads"]);
+const resultUpdates: Record<string, readonly string[]> = {
+  control_jobs: ["result_lock"], control_harness_runs: ["coordinator_lock"], projects: ["coordinator_lock"],
+  control_completion_gate_records: ["web_lock"],
+  control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
+  control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+};
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
  * Effective permissions are checked separately. Any migrated schema change needs a new reviewed digest.
@@ -71,21 +83,27 @@ export async function readPrivateWebSchemaDigest(db: DatabaseSession) {
 /** Read-only setup gate; never grants, migrates, creates an owner, or repairs a failed prerequisite. */
 export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
   scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, false);
+  return verifyDatabase(db, config, scope, now, "web");
 }
 
 /** Exact task-coordinator profile. No request-selected role or caller-supplied permission policy. */
 export async function verifyTaskCoordinatorDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
   scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, true);
+  return verifyDatabase(db, config, scope, now, "coordinator");
+}
+
+/** Fixed, separately owned native-result writer. It cannot plan, dispatch or accept quality. */
+export async function verifyNativeResultDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
+  return verifyDatabase(db, config, scope, now, "results");
 }
 
 async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, coordinator: boolean) {
-  const role = coordinator ? "control_room_task_coordinator" : "control_room_private_web";
-  const allowedReads = coordinator ? coordinatorReads : privateWebReadTables;
-  const allowedInserts = coordinator ? coordinatorInserts : inserts;
-  const allowedUpdates = coordinator ? coordinatorUpdates : updates;
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results") {
+  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results" }[kind];
+  const allowedReads = kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
+  const allowedInserts = kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
+  const allowedUpdates = kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
   try {
     await db.transaction(async tx => {
       const settings = (await tx.query<{ valid: boolean; database_temp: boolean }>(`SELECT

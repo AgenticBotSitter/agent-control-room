@@ -9,6 +9,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   coordinator: TaskCoordinatorConfiguration) {
   if ("planning" in web || "assignment" in web || "approvals" in web || "revisions" in web || web.tenantId !== coordinator.scope.tenantId
     || web.workspaceId !== coordinator.scope.workspaceId || web.database.client === coordinator.database.client
+    || coordinator.resultDatabase?.client === web.database.client
     || typeof web.database.isAvailable !== "function" || typeof web.database.close !== "function")
     throw new Error("private_task_application_config_invalid");
   // Until construction succeeds, the caller retains both resources.
@@ -36,6 +37,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   return Object.freeze({
     ...(tasks.quality ? { quality: tasks.quality } : {}),
     ...(tasks.revisions ? { revisions: tasks.revisions } : {}),
+    ...(tasks.results ? { results: tasks.results } : {}),
     isReady: () => !closing && available() && tasks.isReady(),
     handle: app.handle.bind(app),
     close(): Promise<void> {
