@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest lifecycle composition — E79:** [Signal lifetime](research/REUSE_E79_HOST_SIGNAL_LIFETIME.md)
+registers supplied stop events before one startup attempt, carries startup cancellation
+into normal shutdown and closes late hosts without erasing timeout uncertainty. Uses
+existing E77/E78 components, not a new supervisor. No real process handler or service.
+Final eight lifecycle/shutdown tests, 42 compiled checks and four queue journeys pass;
+TypeScript, targeted lint and VPS build pass. Full default lifecycle not rerun.
+
 **Latest startup cancellation — E78:** [Startup ownership](research/REUSE_E78_STARTUP_CANCELLATION.md)
 propagates an explicit signal through bootstrap and listener setup, preventing later
 steps/ready return and reusing once-only resource cleanup after cancellation. In-flight

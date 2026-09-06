@@ -1,5 +1,6 @@
 import { createPrivateTaskBootstrap, type PrivateTaskStartupConfiguration } from "./private-task-startup";
 export { bindPrivateHostShutdown } from "./private-host-shutdown";
+export { startPrivateHostLifecycle } from "./private-host-lifecycle";
 import { createPrivateNodeService } from "./private-serving";
 import { createInstalledNativeQueueFactories } from "./installed-native-queue";
 import { createPrivatePostgresDatabase } from "./private-postgres";

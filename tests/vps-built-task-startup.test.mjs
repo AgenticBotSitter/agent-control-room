@@ -14,7 +14,7 @@ import { sha256Digest } from "../src/security/index.ts";
 import { createPrivateNodeHandler, loadPrivateClientAssets } from "../dist-vps/server/serving.js";
 import { nodeExchange } from "./helpers/web-node.ts";
 import { EventEmitter, once } from "node:events";
-import { bindPrivateHostShutdown, createPrivateTaskHost, createInstalledPrivateTaskHost } from "../dist-vps/server/taskHost.js";
+import { startPrivateHostLifecycle, createPrivateTaskHost, createInstalledPrivateTaskHost } from "../dist-vps/server/taskHost.js";
 
 test("compiled two-pool bootstrap mounts protected planning, assignment and page rendering under shared logout", async t => {
   assert.equal(typeof startPrivateTaskApplication, "function");
@@ -31,11 +31,11 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
   const host = createPrivateTaskHost({ openDatabase: f.openDatabase, install: installPrivateApplication,
     clock: () => instant + 8000, createServer: () => server });
   assert.equal(binds, 0);
-  const app = await host.start({ configuration: f.config, port: 3210, handler,
-    assets });
-  t.after(() => app.close()); assert.equal(app.isReady(), true); assert.equal(binds, 1);
   const signals = new EventEmitter();
-  const shutdown = bindPrivateHostShutdown(app, signals);
+  const shutdown = startPrivateHostLifecycle({ signals, start: signal => host.start({
+    configuration: f.config, port: 3210, handler, assets, signal }) });
+  const app = await shutdown.ready;
+  t.after(() => app.close()); assert.equal(app.isReady(), true); assert.equal(binds, 1);
   t.after(() => shutdown.stop());
   const project = `/api/v1/projects/${f.profile.projectId}`;
   const req = (path, method = "GET", body) => request(path, method, body, "built-task-startup-001", f.jwt);
