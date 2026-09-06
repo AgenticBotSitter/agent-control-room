@@ -2403,7 +2403,7 @@ PR #340 (`bc8074a`) passed all nine GitHub checks; it remains open and unmerged.
 Production `46d1188` passed independent static review after correcting result transaction
 fences, facade privacy, pre-write attempt binding and delayed ACK handling. The runtime
 now owns the initial and reconnect input sequence previously coordinated by tests.
-Final combined checks passed85, existing helper/managed/revised/reconnect/compiled
+Final combined checks passed88, existing helper/managed/revised/reconnect/compiled
 regressions passed46, and types/full lint/private build passed. See
 `CR14C_MANAGED_NATIVE_INPUT_ACCEPTANCE.md` for retained failures and precise evidence.
 Prerequisite #341 at `cea6084` passed all nine checks in `34017958371`; it remains unmerged.

@@ -11,14 +11,16 @@ See `CR14C_MANAGED_NATIVE_INPUT_CONTRACT.md`.
 Independent production review accepted `46d1188` against `cea6084` with no remaining
 actionable findings. Earlier findings and fixes are retained below. This is static
 acceptance plus separately executed tests, not live fleet acceptance.
+Independent test re-review accepted `f0df8de`, closing its requested evidence corrections.
 
 ## Executed evidence
 
 - Stage zero: exit 0, `ready_for_runtime_check`; no setup or native qualification run.
 - New actual input integrations: 3 passed (receipt/progress, offline retained journal,
   lost acknowledgement replay). Wrong-attempt and actual replacement-precommit tests:
-  2 passed. Fake-handle queue suite: 18 passed.
-- Final combined run: 85 passed, zero failed/skipped. It includes the three new files,
+  2 passed. Fake-handle queue suite: 21 passed, including fake-clock expiry while
+  waiting and after dequeuing without a renewed budget.
+- Final combined run: 88 passed, zero failed/skipped. It includes the three new files,
   signed ACK regressions, result coordinator, evidence receiver, startup/facade, compiled
   managed-session tests and eight test-inventory checks.
 - Existing managed/revised/reconnect/reporting/compiled regression run: 46 passed.
@@ -52,6 +54,10 @@ acceptance plus separately executed tests, not live fleet acceptance.
 8. The first 11-entry ACK run passed 10: a synthetic ACK had not consumed its durable
    node sequence, causing a subsequent genuine receipt collision. The fixture now stages
    that signed ACK in the real node journal. Final combined checks include the correction.
+9. Independent test review requested exact reconnect frame order/body and unchanged
+   protocol/delivery/audit state after old-generation progress denial. The author added
+   those assertions in `f0df8de`; the result-review title now explicitly says pending
+   review, not completed owner review.
 
 Workers used two isolated source-only checkouts. Stage zero correctly returned
 `setup_required` (missing dependencies); they performed no installation or runtime tests.
