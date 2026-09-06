@@ -6038,3 +6038,25 @@ from becoming automatic retries. Product `194aa08c8617ca6f43dae5fbeec767e307d56c
 reviewed; see `CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md` for corrected findings and full641-check
 integration evidence. Exact deployment coordinator resources/privileges and revisions remain separate;
 no new SQL grants, production database or live native run is authorized by this decision.
+
+## ADR-250 — mount exact quality completion under the bounded coordinator role
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Expose an optional scope-bound quality reconciliation command through trusted coordinator/application
+startup, not a new HTTP route or worker mutation endpoint. Recheck and lock current project scope in
+every constituent transaction, preserve existing authenticated run/result/profile/target checks, and
+complete only a ready gate through the accepted atomic native completion service. Earlier verification
+may persist after a later failure; uncertainty must never imply a rollback or repeated execution.
+
+Snapshot keys/rules/capabilities before asynchronous startup and requests before admission. Require
+quality/planner/private-view integrity keys to agree before pools open. Use the existing bounded drain,
+precommit cancellation and invalidation semantics. No configuration means no quality capability.
+
+Migration0054 narrowly extends the coordinator role with authenticated-evidence reads, inert locking,
+fixed service-verification INSERT and integrity CAS fields; a role-specific guard denies human/agent
+reviews and all other completion-record kinds. Private web permissions do not change. Exact catalog
+and privilege preflight precede mounting. Production `274d2738872959c4d4766379159940824312f786` passed
+independent63-check review; see `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md` for actual evidence and limits.
+The compiled-application follow-up adds two independent checks (65 total), without production changes.
+Event routing, revisions, upstream workflow completion and live provisioning remain separate work.

@@ -385,6 +385,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C quality coordinator mounting | Independently accepted optional internal reconciliation under exact coordinator role/startup; event routing, revisions and live activation remain | `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md` |
 | CR14C approval lifecycle/reconciliation | Independently accepted bounded trusted approval port and historical receipt readback; no HTTP/signer/dispatch | `CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md` |
 | CR14C canonical approval storage | Independently accepted immutable signed-packet evidence under current canonical/owner locks; no browser/signer/dispatch | `CR14C_CANONICAL_APPROVAL_STORAGE_ACCEPTANCE.md` |
 | CR14C canonical approval preparation | Independently accepted locked owner-authorized unsigned preparation; shared contracts preserve native isolation; no storage/signing/dispatch | `CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` |
@@ -2165,14 +2166,28 @@ Both builds, private18/rendered4, migrations0053/138, types and lint passed. No 
 This is a tested supplied-database operation: deployment coordinator mounting, upstream workflow
 completion and bounded revisions remain. No live fleet, installation, merge or deployment is claimed.
 
+## Scoped quality coordinator mounting
+
+Production `274d2738872959c4d4766379159940824312f786` is independently reviewed with65 passing checks,
+including the later compiled-application test-only follow-up.
+The bounded coordinator and verified two-pool startup now expose optional internal quality reconciliation:
+exact-result structural evidence, waiting/changes status, and ready-gate canonical completion/lease release.
+Each transaction rechecks locked project scope; failed later stages preserve previously committed evidence.
+Migration0054 adds narrowly guarded coordinator service-verification permission and inert native locking;
+web permissions stay unchanged, still138 tables. See `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md`.
+No HTTP quality command, background event routing, live runtime or deployment is implied.
+Final CR14C665 and main1,160 with two existing platform skips passed. Preparation770/post392 passed
+before the final defensive clock-only correction. Both final builds, private20/rendered4, migrations0054/138,
+types and lint passed. Current-head GitHub CI and dependency-order integration remain; no merge is claimed.
+
 ## Next block
 
 ```text
-Block: CR14C quality/completion coordinator mounting and bounded revisions
+Block: CR14C bounded revisions, upstream completion and quality-event routing
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Exact structural checks and ready quality evidence now complete canonical jobs and release leases in disposable integration. The running coordinator still needs exact verified SQL/resource composition, revision submission and upstream workflow completion.
-Expected output: scoped coordinator mounting and bounded revision/workflow integration, then runtime registration/recovery and owner signing composition. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Exact quality/completion now has verified scoped coordinator composition. Result/review events still need explicit routing, and revision submission plus upstream workflow/request completion remain.
+Expected output: bounded revision/workflow and quality-event integration, then runtime registration/recovery and owner signing composition. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

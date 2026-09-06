@@ -6,8 +6,10 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — exact quality/completion coordinator mounting, bounded revisions and
-upstream workflow completion, then runtime registration/recovery and owner signing, on Astra Medium.
+**Next block:** CR14C C-WORK — bounded revisions, upstream workflow completion and quality-event
+routing, then runtime registration/recovery and owner signing, on Astra Medium. Exact optional
+quality/completion coordinator mounting is independently reviewed in
+`CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md`; it is not a background event router or live fleet.
 The supplied-database native quality/completion operation is independently reviewed in
 `CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md`; no running fleet is inferred. Optional human result checks are
 independently reviewed in `CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`; they are not a mandatory owner
