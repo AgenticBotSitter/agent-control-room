@@ -31,7 +31,7 @@ these three lists, non-test paths or missing/non-file inputs. No shell evaluatio
 environment-selected path, implicit discovery or retry. `pre`/`post` retain their full lists; main is
 split by deterministic sorted-file round-robin across four nonempty shards. The union is exactly the
 default lifecycle inventory, with no overlap. Run selected files using the current Node executable,
-`--import tsx --test --test-concurrency=2`, inherited test stdio/environment and exact argument arrays.
+`--import tsx --test --test-concurrency=1`, inherited test stdio/environment and exact argument arrays.
 Nonzero exit, launch failure or terminated child must fail the lane. Importing the runner is inert.
 
 The canonical package test script will additionally include four already-existing CR14C tests that
@@ -43,3 +43,9 @@ behavior. Root authors runner, package registrations, checks the workflow and pe
 Validate whole inventory equality/coverage, malformed inputs and real process exit propagation using
 fake child capability and bounded synthetic local tests; execute actual repository lanes once complete.
 No changes to product behavior, permissions, deployment or the unfinished product-review gate.
+
+Amendment after run34005397761 attempts1/2: both main-3 runners reported shutdown during
+the same overlapping database-heavy files. Each lane now executes one file at a time;
+four GitHub lanes remain parallel. This is a coverage-preserving contention reduction,
+not a confirmed diagnosis of memory exhaustion. Intratest concurrency cases and every
+test remain unchanged. No further blind rerun of the unchanged configuration is requested.

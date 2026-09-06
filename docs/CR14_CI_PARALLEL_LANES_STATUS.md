@@ -18,7 +18,7 @@ work while retaining the complete test inventory and both build commands.
   cache, stage-zero probes and read-only repository permission.
 - Separate type/lint, build/migration, and six test lanes. The four main shards use
   sorted round-robin filenames; preparation and post lists remain intact. Each test
-  process uses concurrency two. At most four matrix lanes run together.
+  process now uses one file at a time. At most four matrix lanes run together.
 - The default lifecycle now includes four previously focused-only result-checking
   test files and the new runner regression file. No existing test was removed.
 - `Verify build` remains the final aggregate check and requires every dependency
@@ -50,7 +50,7 @@ found no evident lifecycle dependency on another lane's generated artifacts.
 
 Both application builds, 20 compiled private tests, four rendered tests, TypeScript,
 ESLint and migrations 0001–0054 (138 tables) passed locally. Every actual runner lane
-exited zero on the final runner/package configuration:
+exited zero on initial configuration `6d4d6be` (two test files per process group):
 
 | Lane | Passed | Existing skips | Local duration |
 | --- | ---: | ---: | ---: |
@@ -70,6 +70,22 @@ PR #328 rather than pending PR #329. The first GitHub run `34005325019` started
 the checks/build and four matrix jobs, with two matrix jobs queued as designed.
 The final current-head GitHub result remains pending; no timing improvement or green
 GitHub check is claimed here. No merge is claimed.
+
+Follow-up: attempt 2 also terminated, again reporting a runner shutdown while the
+same database-heavy receipt/quality files overlapped. This is not a third blind retry.
+The runner is amended to execute one test file at a time, retaining four parallel
+GitHub lanes, all 264 files and the tests' own concurrency scenarios. This lowers
+possible per-runner contention but does not establish the shutdown's cause. A separate
+local run of the receipt test passed 20/20, exit 0, in 23.39 seconds. Peak memory was
+unavailable because the host rejected the timing utility's system metadata read; that
+instrumentation was not repeated. No assertion defect was identified by those runs.
+
+Eight amended runner tests, scoped lint and diff checks passed. The amended actual
+main-3 lane exited zero: 298 passed, one existing platform skip, zero failures or
+cancellations, 167.97 seconds locally. New-head GitHub checks remain required.
+Independent read-only mechanical review confirmed that only file-level concurrency
+and its exact argv assertion changed: inventory, per-test concurrency scenarios,
+matrix, all-success gate, setup, permissions, builds and timeouts are unchanged.
 
 No product runtime, SQL permission, agent connection, credential, listener, provider,
 production database, deployment or public release changed. Real PostgreSQL and fleet

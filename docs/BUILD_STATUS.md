@@ -2194,6 +2194,14 @@ Published in [PR #330](https://github.com/MarvinAi5/control-room/pull/330), base
 PR #328. All six actual local lanes passed: 2,419 tests, two existing platform skips,
 zero failures/cancellations. Both builds, private20/rendered4, migrations0054/138,
 types and lint passed. Final current-head GitHub CI remains pending; no merge.
+Both attempts of run `34005397761` at `6d4d6be` failed after main-3 reported a runner
+shutdown during the same overlapping database-heavy test files. All other lanes and
+checks/build jobs passed, and the aggregate gate correctly failed. The runner is now
+amended to one file at a time inside each lane, retaining four parallel GitHub lanes
+and every test; this reduces possible contention without claiming a confirmed cause.
+Eight amended runner regressions pass. Amended main-3 passed 298 with one existing
+platform skip, zero failures/cancellations, in 167.97 seconds locally. Independent
+mechanical review confirms unchanged coverage/gates. New-head GitHub CI remains required.
 
 ## Next block
 
