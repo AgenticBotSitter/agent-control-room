@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Exact-file content review started:** [Batch 01](research/public-source-content-review-01.json)
+records full-text inspection of eight generic UI/build files and matching hashes; no
+embedded private values were observed. It is primary-assistant evidence, not independent
+clearance, dependency review or publication authority. Original license/asset and final
+candidate decisions remain. No application source changed in this batch.
+
 **Core/module map grounded in source:** [Agent Control Room roadmap](AGENT_CONTROL_ROOM_MODULE_ROADMAP.md)
 maps essential services and optional workflows to existing code and real acceptance
 scenarios. Content generalization preserves capabilities, not personal identities.

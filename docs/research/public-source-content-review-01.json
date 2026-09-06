@@ -1,0 +1,114 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "baseline": "cdad5eb29dd469a740b1904360cf60252576a5ab",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full source text of listed files inspected for embedded personal project data, credentials and private infrastructure locators. Not an exhaustive security audit or licensing clearance.",
+  "entries": [
+    {
+      "path": "app/components/project-catalog.tsx",
+      "sha256": "18156030f058110ad7da3ce75acee506f856056e46dae142424ac06a3fda92f4",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic supplied project data; encoded relative links; no embedded personal projects or deployment locators.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "app/components/project-create-form.tsx",
+      "sha256": "2a8ef15ef05f7f46d7b64ec8b15dbe4a7ea40f8f0bb88d0b6072166fd4719dd7",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic bounded title/summary form; imports shared validation; no credentials or personal defaults.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "app/components/project-catalog-navigation.tsx",
+      "sha256": "3a77bb629151537565fd3c49021534beadd2856fd675f6b063a340e7b65ac5ea",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic relative pagination links and supplied counts/cursors; no private locator constants.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/layout.tsx",
+      "sha256": "d34f921176cb73320a868c4ae73dac46968c24d7d643dd2366005d2fe029c15a",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic metadata and shared CSS imports; working product heading may be updated separately.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/page.tsx",
+      "sha256": "c910d43d7e572cc42c9f00b62ab6b4e434c093b1b322f4b6b0f4571805487213",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Relative projects link only; no personal data or configured service.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/projects/page.tsx",
+      "sha256": "dcad9ff189b76452a32a7d8ec3fd8edfc1965647950f812cbef9416eca9af304",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic server-page composition using supplied pagination; imported workspace needs separate review.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "vite.vps.config.ts",
+      "sha256": "b0ef850cd6a472bb9b6f0f875888ba44a9ede922aff79deceb6f7d2b4368e87e",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Standalone build inputs and output paths; no hosting identities or secret configuration. Referenced favicon rights remain unresolved.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "scripts/build-vps.mjs",
+      "sha256": "0aa8746ae262eba1703eef667d0cf5483a440eb8a4dcc841d8f5b05ee32d12ae",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Explicit standalone build invocation; no deploy or credential access. Build dependencies require separate review.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    }
+  ]
+}
