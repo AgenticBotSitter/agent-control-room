@@ -10,10 +10,10 @@ export function TaskPlanningPanel({ options, receipt, error, pending, uncertain,
   options?: TaskPlanningOptions; receipt?: TaskPlanningReceipt; error?: BrowserRequestError;
   pending: boolean; uncertain: boolean; onPrepare: () => void; onRetry: () => void;
 }) {
-  return <section className="private-panel" aria-label="Prepare task"><h2>Prepare task</h2>
+  return <section id="task-planning" className="private-panel" aria-label="Prepare task"><h2>Prepare task</h2>
     <p>Preparation saves a separate execution plan. It does not approve work, assign an agent or start a run.</p>
     {error && <p role="alert">{planningErrorMessage[error.code]}</p>}
-    {receipt ? <p role="status">Plan saved. <a href={taskUrl(receipt.projectId, receipt.jobId)}>Open the prepared task</a>. No agent has started.</p>
+    {receipt ? <p role="status">Plan saved. <a href={taskUrl(receipt.projectId, receipt.jobId)}>Open the prepared task</a>. Saving this plan did not start an agent. Check the prepared task for current progress.</p>
       : uncertain ? <button type="button" disabled={pending} onClick={onRetry}>Check this exact preparation again</button>
       : options?.availability === "available" ? <button type="button" disabled={pending} onClick={onPrepare}>Prepare saved task</button>
       : <p className="private-note">{options?.availability === "not_configured" ? "Task preparation is not connected in this installation."

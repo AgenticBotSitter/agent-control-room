@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E45 task workflow guidance](research/REUSE_E45_TASK_WORKFLOW_GUIDANCE.md) improves the
+existing panel flow and confirmed-assignment refresh without new commands. Local UI
+tests pass; browser interaction remains unproven while the Mac is locked.
+
 [E44 delivery attention](research/REUSE_E44_DELIVERY_ATTENTION.md) connects verified
 historical delivery records to task and inbox views. It distinguishes pending intent,
 unconfirmed transmission and authenticated receipt/rejection without new grants or

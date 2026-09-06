@@ -11,6 +11,7 @@ import { createTaskVerificationWorkspace, type TaskVerificationWorkspace } from 
 import { PrivateTaskPlanning } from "./task-planning";
 import { PrivateTaskAssignment } from "./task-assignment";
 import { PrivateTaskApproval } from "./task-approval";
+import { TaskWorkflowGuide } from "./task-workflow-guide";
 
 /** Read-gated child; command memory is owned by the stable keyed task page, not this subtree. */
 export function TaskDetailResults({ detail, projectId, reviewWorkspace, verificationWorkspace }: {
@@ -31,13 +32,15 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   const [draft, setDraft] = useState<TaskDraft>({ title: "", instructions: "" });
   const [error, setError] = useState<BrowserRequestError>();
   const [loading, setLoading] = useState(true), [pending, setPending] = useState(false), [refresh, setRefresh] = useState(0);
-  const generation = useRef(0), busy = useRef(false), readBusy = useRef(false), alive = useRef(true);
+  const generation = useRef(0), busy = useRef(false), alive = useRef(true);
   const failure = (reason: unknown) => reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
   useEffect(() => {
-    let live = true; alive.current = true;
+    // Busy belongs to this effect generation: a retired request must not suppress
+    // the new refresh. Old results remain fenced by live/current below.
+    let live = true, readBusy = false; alive.current = true;
     const load = async () => {
-      if (busy.current || readBusy.current) return;
-      readBusy.current = true; const current = ++generation.current;
+      if (busy.current || readBusy) return;
+      readBusy = true; const current = ++generation.current;
       try {
         const value = jobId ? await client.detail(projectId, jobId) : await client.list(projectId, after);
         if (live && current === generation.current) {
@@ -46,7 +49,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
         }
       } catch (reason) {
         if (live && current === generation.current) { setPage(undefined); setDetail(undefined); setError(failure(reason)); }
-      } finally { readBusy.current = false; if (live && current === generation.current) setLoading(false); }
+      } finally { readBusy = false; if (live && current === generation.current) setLoading(false); }
     };
     void load();
     // Refresh only reads. Closing a browser tab, reconnecting or focusing cannot start/retry a task.
@@ -69,6 +72,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     } finally { busy.current = false; if (alive.current) setPending(false); }
   }
   const project = detail?.project ?? page?.project;
+  const refreshSaved = () => { setLoading(true); setRefresh(value => value + 1); };
   const uncertain = client.hasPending();
   return <div className="private-shell"><PrivateHeader /><main id="private-main">
     <a className="private-back" href={jobId ? taskUrl(projectId) : "/projects"}>{jobId ? "← Project tasks" : "← All projects"}</a>
@@ -79,6 +83,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
         : <div className="private-actions"><button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved tasks</button>
           {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div>}</div>}
     {loading && <p role="status">Loading protected tasks…</p>}
+    {project && <button type="button" disabled={loading || pending} onClick={refreshSaved}>Check latest saved status</button>}
     {project && <><div className="private-heading"><span className="private-state">{project.lifecycle}</span><h1>{project.title}</h1></div>
       <nav className="private-tabs" aria-label="Project pages"><a href={`/projects/${encodeURIComponent(projectId)}`}>Overview</a>
         <a href={taskUrl(projectId)} aria-current="page">Tasks</a><a href={`/projects/${encodeURIComponent(projectId)}/settings`}>Settings</a></nav></>}
@@ -86,10 +91,11 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       {page.canPropose ? <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} uncertain={uncertain} onSave={() => { void save(); }} />
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
+    {detail && <TaskWorkflowGuide />}
     {jobId && <PrivateTaskPlanning detail={detail} />}
-    {jobId && <PrivateTaskAssignment detail={detail} />}
+    {jobId && <PrivateTaskAssignment detail={detail} onRecorded={refreshSaved} />}
     {jobId && <PrivateTaskApproval detail={detail} />}
-    <TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} />
+    <div id="task-results"><TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /></div>
     {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Use the task’s submission controls to queue signed work when configured. Refreshing this page does not submit a task.</p>}
   </main></div>;
 }

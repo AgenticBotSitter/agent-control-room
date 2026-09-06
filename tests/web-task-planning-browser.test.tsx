@@ -99,7 +99,8 @@ test("planning panels distinguish preparation from approval and never expose a s
   const uncertain = renderToStaticMarkup(<TaskPlanningPanel {...props} uncertain error={new BrowserRequestError("uncertain")} />);
   assert.match(uncertain, /Check this exact preparation again/); assert.doesNotMatch(uncertain, /Prepare saved task/);
   const saved = renderToStaticMarkup(<TaskPlanningPanel {...props} receipt={receipt} />);
-  assert.match(saved, /Open the prepared task/); assert.match(saved, /No agent has started/); assert.doesNotMatch(saved, /<button/);
+  assert.match(saved, /Open the prepared task/); assert.match(saved, /Saving this plan did not start an agent/);
+  assert.match(saved, /Check the prepared task for current progress/); assert.doesNotMatch(saved, /No agent has started|<button/);
   for (const availability of ["not_configured", "not_eligible"] as const)
     assert.doesNotMatch(renderToStaticMarkup(<TaskPlanningPanel {...props} options={{ ...options, availability }} />), /<button/);
   assert.equal(renderToStaticMarkup(<PrivateTaskPlanning />), "");

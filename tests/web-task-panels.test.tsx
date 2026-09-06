@@ -3,12 +3,21 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm } from "../private-app/app/task-panels";
 import { PrivateTaskWorkspace } from "../private-app/app/task-workspace";
+import { TaskWorkflowGuide } from "../private-app/app/task-workflow-guide";
 import type { TaskDetail, TaskPage } from "../src/web/v1/task-wire";
 
 const project = { projectId: "project:test", title: "Business ideas", summary: "", lifecycle: "active" as const, version: 1,
   createdAt: "2026-09-05T00:00:00.000Z", updatedAt: "2026-09-05T00:00:00.000Z", origin: "ordinary" as const, lifecycleEditable: true };
 const task = { jobId: "job:test", projectId: project.projectId, requestId: "request:test", title: "Compare ideas <script>", state: "leased" as const,
   version: 2, createdAt: project.createdAt, updatedAt: project.updatedAt };
+test("workflow guide links the required stages without claiming readiness or adding commands", () => {
+  const html = renderToStaticMarkup(<TaskWorkflowGuide />);
+  for (const id of ["task-planning", "task-assignment", "task-approval", "task-results"])
+    assert.ok(html.includes(`href="#${id}"`), id);
+  for (const phrase of ["separate prepared task", "Signing is not connected", "Queuing can allow execution", "refreshing only reads status"])
+    assert.ok(html.includes(phrase), phrase);
+  assert.doesNotMatch(html, /<button|<input|<form/);
+});
 test("task catalog is concrete, escaped and links each job to its own project page", () => {
   const page: TaskPage = { project, tasks: [task], nextCursor: null, canPropose: true, observedAt: project.updatedAt, dispatch: "not_connected" };
   const html = renderToStaticMarkup(<TaskCatalogPanel page={page} />);

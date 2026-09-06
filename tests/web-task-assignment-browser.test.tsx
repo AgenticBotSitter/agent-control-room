@@ -91,6 +91,7 @@ test("assignment panel names configured platforms and separates reservations fro
   assert.match(select, /Availability and capacity are checked/); assert.match(select, /for="task-assignment-node"/);
   const assigned = renderToStaticMarkup(<TaskAssignmentPanel {...props} receipt={receipt} />);
   assert.match(assigned, /not proof that an agent started or stopped/); assert.doesNotMatch(assigned, /<button/);
+  assert.match(assigned, /href="#task-approval"/); assert.match(assigned, /reservation alone is not permission/);
   const expired = renderToStaticMarkup(<TaskAssignmentPanel {...props} receipt={{ ...receipt, leaseCurrent: false }} />);
   assert.match(expired, /Reconcile expired reservation/);
   const uncertain = renderToStaticMarkup(<TaskAssignmentPanel {...props} uncertain />);

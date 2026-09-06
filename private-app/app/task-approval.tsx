@@ -10,7 +10,7 @@ export function TaskApprovalPanel({ state, review, error, pending, uncertain, fi
   state?: TaskApprovalRead; review?: TaskApprovalReview; error?: BrowserRequestError; pending: boolean; uncertain: boolean;
   fileName: string; onReview: () => void; onCheck: () => void; onFile: (file?: File) => void; onSave: () => void;
 }) {
-  return <section className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
+  return <section id="task-approval" className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
     <p>Review the task before giving it permission to run. Saving signed permission does not start an agent.</p>
     {error && <p role="alert">{approvalErrorMessage[error.code]}</p>}
     {state && <>
@@ -79,7 +79,7 @@ export function PrivateTaskApproval({ detail }: { detail?: TaskDetail }) {
     } catch { if (alive.current && current === generation.current) setError(new BrowserRequestError("invalid_request")); }
   }
   if (!detail) return null;
-  if (!detail.attempts.length) return <section className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
+  if (!detail.attempts.length) return <section id="task-approval" className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
     <p>Execution approval is available after task preparation and assignment. No agent starts from this page automatically.</p></section>;
   const current = checked === detail;
   return <><TaskApprovalPanel state={current ? state : undefined} review={current ? review : undefined} error={current ? error : undefined}

@@ -10,11 +10,12 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
   nodeId: string; setNodeId: (value: string) => void; pending: boolean; uncertain: boolean;
   onChange: (action: "assign" | "expire") => void; onRetry: () => void;
 }) {
-  return <section className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
+  return <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
     <p>Assignment reserves time on a machine. It does not start an agent. Execution approval and local checks are still required.</p>
     {error && <p role="alert">{assignmentErrorMessage[error.code]}</p>}
     {receipt && <div><p>Recorded reservation: {receipt.leaseState}. Ends {receipt.expiresAt}.</p>
       <p>{receipt.leaseCurrent ? "The reservation was current at the last check." : "The reservation is not current."} This is not proof that an agent started or stopped.</p></div>}
+    {receipt?.leaseCurrent && !uncertain && <p>Next, <a href="#task-approval">check execution approval</a>. A reservation alone is not permission to run.</p>}
     {options && (uncertain ? <button type="button" disabled={pending} onClick={onRetry}>Check this exact assignment change</button>
       : receipt ? receipt.leaseState === "active" && !receipt.leaseCurrent
         ? <button type="button" disabled={pending} onClick={() => onChange("expire")}>Reconcile expired reservation</button> : null
@@ -27,7 +28,7 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
 }
 
 /** Stable keyed page owns pending command memory; failed detail/option reads hide data and actions. */
-export function PrivateTaskAssignment({ detail }: { detail?: TaskDetail }) {
+export function PrivateTaskAssignment({ detail, onRecorded }: { detail?: TaskDetail; onRecorded?: () => void }) {
   const [client] = useState(() => createTaskAssignmentBrowserClient());
   const [options, setOptions] = useState<TaskAssignmentOptions>(), [checkedDetail, setCheckedDetail] = useState<TaskDetail>();
   const [receipt, setReceipt] = useState<TaskAssignmentReceipt>();
@@ -49,7 +50,7 @@ export function PrivateTaskAssignment({ detail }: { detail?: TaskDetail }) {
     try {
       const value = retry ? await client.retrySave() : await client.change(detail.task.projectId, detail.task.jobId,
         { action, expectedInputDigest: detail.inputDigest, ...(action === "assign" ? { nodeId } : {}) });
-      if (alive.current) setReceipt(previous => reconcileAssignmentReceipt(previous, value));
+      if (alive.current) { setReceipt(previous => reconcileAssignmentReceipt(previous, value)); onRecorded?.(); }
     } catch (reason) {
       if (alive.current && current === generation.current) {
         const error = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); setError(error);

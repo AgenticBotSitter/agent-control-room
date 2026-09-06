@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E45:** [Task workflow guidance](research/REUSE_E45_TASK_WORKFLOW_GUIDANCE.md)
+adds stage navigation, immediate read refresh after confirmed assignment, and correct
+historical-plan wording. 46 UI/client checks, typecheck, lint, production build and all
+35 compiled regressions pass. Mac remains locked for interactive testing. Approval edit preservation,
+live PostgreSQL/agent and broader product acceptance remain open.
+
 **Latest local implementation — E44:** [Delivery attention](research/REUSE_E44_DELIVERY_ATTENTION.md)
 shows task-specific pending/unconfirmed/rejected delivery in Needs Me and the task page.
 It reuses verified historical records and never equates receipt with execution. 74 related
