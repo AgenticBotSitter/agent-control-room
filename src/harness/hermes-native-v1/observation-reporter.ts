@@ -56,6 +56,7 @@ export class NativeObservationReporter {
     if (frame.type !== "harness.native.dispatch" || frame.direction !== "server_to_node"
       || frame.actorId !== this.config.serverId || frame.keyId !== this.config.serverKeyId
       || frame.tenantId !== this.config.enrollment.tenantId || frame.body.queueId !== this.config.queueId
+      || frame.bodyDigest !== sha256Digest(frame.body)
       || !verifyNodeFrameSignature(frame, this.config.serverPublicKeySpki)) return fail();
     const receipt = matchNativeTaskDispatchReceipt(saved.receipt, frame);
     if (receipt.disposition !== "recorded" || Date.parse(receipt.recordedAt) > now
@@ -84,11 +85,13 @@ export class NativeObservationReporter {
     try {
       const { body, now } = this.read(signal);
       // Capture into the existing durable bridge outbox; publication is not a server ACK.
-      const disposition = await Promise.race([this.publish(body, new Date(now).toISOString()),
+      const disposition = await Promise.race([this.publish(structuredClone(body), new Date(now).toISOString()),
         new Promise<never>((_, reject) => { timer = setTimeout(() => {
           this.closed = true; reject(new Error("native_observation_reporter_uncertain"));
         }, 5000); })]);
-      this.current(signal); this.last = body;
+      this.current(signal);
+      if (disposition !== "recorded" && disposition !== "duplicate") return fail();
+      this.last = body;
       return { runId: body.runId, snapshotVersion: body.snapshotVersion, disposition,
         serverAccepted: false as const, grantsExecutionAuthority: false as const };
     } catch { this.closed = true; return fail(); }
