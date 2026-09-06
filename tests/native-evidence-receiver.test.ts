@@ -8,6 +8,8 @@ import { TaskResultCoordinator } from "../src/web/v1/task-result-coordinator";
 import { verifyNativeEvidenceDatabase, verifyNativeResultDatabase } from "../src/web/v1/private-database-preflight";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { sha256Digest } from "../src/security";
+import { signNodeFrame, signedNodeFrameSchema } from "../src/node-protocol/v1";
+import { nativeResultId, type NativeResultConfiguration } from "../src/artifacts/v1/native-results";
 
 const signal = () => new AbortController().signal;
 async function fixture() {
@@ -116,8 +118,19 @@ test("restricted receiver derives initial run from accepted delivery then record
   const calls = [...x.local.calls], counts = await x.counts(), cp = x.f.checkpoints.read(`completion-gate:${x.registration.tenantId}`);
   assert.equal(counts.artifacts.length, 1); assert.equal(counts.receipts.length, 1);
   assert.deepEqual(await x.f.config.storage.read(counts.artifacts[0].id as string), bytes);
-  const replayWire = await x.admin(x.queueSnapshot); // Fresh signed protocol frame, same recorded native snapshot; no native poll/start.
-  const replay = await x.receive(replayWire.raw, bytes); await x.acknowledge();
+  // The bridge deduplicates an acknowledged snapshot, so queueSnapshot cannot emit it again.
+  // Synthetic sender seam: re-envelope the actual body with the same node key and connection,
+  // reserving the next journal sequence. No native start/poll or new observation is involved.
+  const previous = signedNodeFrameSchema.parse(JSON.parse(wire.raw));
+  assert.equal(previous.type, "harness.native.snapshot");
+  const { signature, bodyDigest, ...unsigned } = previous; void signature; void bodyDigest;
+  const now = new Date(x.f.clock()).toISOString();
+  const replayFrame = signNodeFrame({ ...unsigned, sequence: x.journal.nextOutboundSequence(previous.connectionId),
+    messageId: "message:evidence-completed-replay", nonce: "evidence_completed_replay_1234567890123456", sentAt: now }, x.f.keys.privateKey);
+  assert.equal(x.journal.stageOutbound(replayFrame, true, now), "staged");
+  x.journal.markSent(replayFrame.messageId, now);
+  assert.deepEqual(replayFrame.body, previous.body);
+  const replay = await x.receive(JSON.stringify(replayFrame), bytes); await x.acknowledge();
   assert.equal(replay.replayed, true); assert.deepEqual(replay.submission, saved.submission);
   assert.deepEqual(await x.receiver.register(x.request, signal()), { ...bound, replayed: true });
   assert.deepEqual(await x.counts(), counts); assert.deepEqual(await x.state(), before); assert.deepEqual(x.local.calls, calls);
@@ -156,6 +169,33 @@ test("wrong completed bytes leave recorded progress but no captured artifact or 
   await assert.rejects(x.receive(wire.raw, new TextEncoder().encode("Wrong output bytes")));
   const counts = await x.counts(); assert.equal(counts.runs[0].state, "succeeded"); assert.equal(counts.artifacts.length, 0);
   assert.equal(counts.receipts.length, 0); assert.deepEqual(x.f.checkpoints.read(`completion-gate:${x.registration.tenantId}`), cp);
+});
+
+test("caller abort during completed-byte put retains progress and bytes but prevents readback, metadata, submission and acknowledgement", async t => {
+  const x = await fixture(); t.after(x.close); await x.receiver.register(x.request, signal());
+  for (const phase of ["start", "running"] as const) { const wire = await x.produce(phase); await x.receive(wire.raw); await x.acknowledge(); }
+  const wire = await x.produce("completed"), bytes = new TextEncoder().encode(qualityText);
+  const before = await x.state(), countsBefore = await x.counts();
+  const cp = x.f.checkpoints.read(`completion-gate:${x.registration.tenantId}`), calls = [...x.local.calls];
+  assert.equal(x.outgoing.length, 0);
+  const abort = new AbortController(); let puts = 0, reads = 0, submissions = 0;
+  const storage: NativeResultConfiguration = { ...x.f.config, storage: {
+    async put(input) { puts++; const stored = await x.f.config.storage.put(input); abort.abort(); return stored; },
+    async read(artifactId, ioSignal) { reads++; return x.f.config.storage.read(artifactId, ioSignal); },
+  } };
+  const receiver = x.create(x.evidence, { storage, results: { ...x.results,
+    async submit(input, currentSignal) { submissions++; return x.results.submit(input, currentSignal); },
+  } });
+  await assert.rejects(x.receive(wire.raw, bytes, abort.signal, receiver));
+  assert.equal(puts, 1); assert.equal(reads, 0); assert.equal(submissions, 0); assert.equal(x.outgoing.length, 0);
+  const counts = await x.counts(); assert.equal(counts.runs[0].state, "succeeded");
+  assert.equal(counts.events.length, countsBefore.events.length + 1);
+  assert.equal(counts.artifacts.length, 0); assert.equal(counts.receipts.length, 0);
+  assert.deepEqual(counts.plans, countsBefore.plans);
+  assert.deepEqual(x.f.checkpoints.read(`completion-gate:${x.registration.tenantId}`), cp);
+  // Observer read only, after proving the receiver never performed storage readback.
+  assert.deepEqual(await x.f.config.storage.read(nativeResultId(x.registration.tenantId, x.registration.id)), bytes);
+  assert.deepEqual(await x.state(), before); assert.deepEqual(x.local.calls, calls);
 });
 
 test("aborted receive consumes no new evidence, and wrong workspace prevents run registration", async t => {
