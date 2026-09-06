@@ -18,6 +18,8 @@ document. Current readiness is in BUILD_STATUS.md, not inferred from a compiled 
 The output is **not a standalone installed service**. E80 supplies
 `scripts/run-private-vps.mjs` as an explicit compiled-release launcher, but reviewed
 operator configuration and successful resource-backed startup remain unqualified.
+E81 verifies the launcher's compiled composition using injected disposable resources
+and fake signals/listeners; direct CLI startup against real resources is still unqualified.
 Its safe help command is `node scripts/run-private-vps.mjs --help`. Do not invoke its
 configuration/start mode until the setup below is authorized and complete. See
 [E80's operator contract](research/REUSE_E80_PRIVATE_VPS_LAUNCHER.md).

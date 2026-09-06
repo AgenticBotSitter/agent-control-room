@@ -23,23 +23,33 @@ export async function validatePrivateVpsConfigurationPath(path) {
   }
 }
 
-export async function runPrivateVps(args) {
+const installedRuntime = Object.freeze({
+  signals: process,
+  report: message => console.log(message),
+  reportError: message => console.error(message),
+  loadOperator: path => import(pathToFileURL(path).href),
+  loadRelease: () => Promise.all([
+    import('../dist-vps/server/taskHost.js'), import('../dist-vps/server/serving.js'),
+    import('../dist-vps/server/index.js'),
+  ]),
+});
+
+// Explicit in-process dependency injection supports offline tests. The CLI never
+// accepts runtime factories, import overrides or a test-mode flag from arguments.
+export async function runPrivateVps(args, runtime = installedRuntime) {
   const parsed = parsePrivateVpsArguments(args);
   if (parsed.help) {
-    console.log('Usage: node scripts/run-private-vps.mjs --configuration /absolute/operator-config.mjs');
-    console.log('Starts real resources. Requires approved operator setup; never use test credentials.');
+    runtime.report('Usage: node scripts/run-private-vps.mjs --configuration /absolute/operator-config.mjs');
+    runtime.report('Starts real resources. Requires approved operator setup; never use test credentials.');
     return 0;
   }
   await validatePrivateVpsConfigurationPath(parsed.configurationPath);
   // Fixed paths in this release, not cwd or a request-supplied module search path.
-  const [{ createInstalledPrivateTaskHost, startPrivateHostLifecycle }, serving, renderer] = await Promise.all([
-    import('../dist-vps/server/taskHost.js'), import('../dist-vps/server/serving.js'),
-    import('../dist-vps/server/index.js'),
-  ]);
-  const lifecycle = startPrivateHostLifecycle({ signals: process, async start(signal) {
+  const [{ createInstalledPrivateTaskHost, startPrivateHostLifecycle }, serving, renderer] = await runtime.loadRelease();
+  const lifecycle = startPrivateHostLifecycle({ signals: runtime.signals, async start(signal) {
     const active = () => { if (signal.aborted) throw new Error('private_vps_start_canceled'); };
     active();
-    const operator = await import(pathToFileURL(parsed.configurationPath).href);
+    const operator = await runtime.loadOperator(parsed.configurationPath);
     active();
     if (operator.schema !== 'control-room.private-vps-configuration/v1'
       || typeof operator.createConfiguration !== 'function') throw new Error('private_vps_configuration_invalid');
@@ -54,18 +64,18 @@ export async function runPrivateVps(args) {
   } });
   try {
     await lifecycle.ready;
-    console.log('Control Room private host ready.');
+    runtime.report('Control Room private host ready.');
   } catch {
     await lifecycle.stop();
-    console.error('Control Room startup failed; cleanup may require operator attention.');
+    runtime.reportError('Control Room startup failed; cleanup may require operator attention.');
     return 1;
   }
   const result = await lifecycle.completed;
   if (result.status !== 'closed') {
-    console.error('Control Room cleanup uncertain; operator attention required.');
+    runtime.reportError('Control Room cleanup uncertain; operator attention required.');
     return 1;
   }
-  console.log('Control Room private host closed.');
+  runtime.report('Control Room private host closed.');
   return 0;
 }
 

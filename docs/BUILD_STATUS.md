@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest launcher journey — E81:** [Compiled composition](research/REUSE_E81_LAUNCHER_COMPILED_JOURNEY.md)
+tests launcher success with actual compiled renderer/assets/host/lifecycle and supplied
+disposable resources, plus sanitized operator failure before host creation. Direct CLI
+retains fixed production factories; no test-mode argument or live service was added.
+All 47 combined compiled/launcher checks and targeted lint pass. Full default lifecycle
+not rerun; real configuration, storage and fleet acceptance remain unfinished.
+
 **Latest executable — E80:** [Private VPS launcher](research/REUSE_E80_PRIVATE_VPS_LAUNCHER.md)
 adds an explicit operator-configured launcher using existing compiled host/rendering/
 assets and signal lifetime. Three help/refusal/path tests and targeted lint pass.
