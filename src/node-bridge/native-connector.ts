@@ -35,7 +35,8 @@ export function createNativeConnector(runtime: Runtime, client: NativeHttpClient
   function close() {
     if (closing) return closing; closed = true; lifetime.abort();
     closing = (async () => { let timer: ReturnType<typeof setTimeout> | undefined;
-      try { await Promise.race([Promise.all([host.close(), closeRuntime(), Promise.allSettled([...pending])]),
+      const cleanup = (async () => { try { await host.close(); } finally { await closeRuntime(); } })();
+      try { await Promise.race([Promise.all([cleanup, Promise.allSettled([...pending])]),
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("native_connector_close_uncertain")), 10_000); })]);
       } catch { throw new Error("native_connector_close_uncertain"); } finally { clearTimeout(timer); }
     })(); return closing;
