@@ -34,11 +34,23 @@ export class NativeTaskCompletionService {
     return hmacSha256Tag(this.key, { purpose: "native-task-completion/v1", receipt, requestDigest });
   }
   private async record(tx: DatabaseSession, tenantId: string, kind: keyof typeof tables, entityId: string) {
-    const row = (await tx.query<{ payload: unknown; state: string; version: number }>(
-      `SELECT payload,state,version FROM ${tables[kind]} WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, entityId])).rows[0];
+    const row = (await tx.query<{ payload: unknown; state: string; version: number; indexed: { [key: string]: unknown } }>(
+      `SELECT payload,state,version,to_jsonb(record) AS indexed FROM ${tables[kind]} record WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, entityId])).rows[0];
     if (!row) return deny();
     const entity = domainEntitySchema.parse(row.payload);
     if (entity.kind !== kind || entity.tenantId !== tenantId || entity.id !== entityId || entity.state !== row.state || entity.version !== Number(row.version)) return deny();
+    const stored = row.indexed;
+    const sameTime = (column: string, value: string) => new Date(stored[column] as string).toISOString() === value;
+    if (!sameTime("created_at", entity.createdAt) || !sameTime("updated_at", entity.updatedAt)) return deny();
+    if (entity.kind === "job" && (stored.project_id !== entity.projectId || stored.workflow_id !== entity.workflowId
+      || stored.authority_digest !== entity.authority.digest || stored.required_capability !== entity.requiredCapability
+      || Number(stored.priority) !== entity.priority)) return deny();
+    if (entity.kind === "attempt" && (stored.job_id !== entity.jobId || stored.node_id !== (entity.nodeId ?? null)
+      || stored.worker_id !== (entity.workerId ?? null) || Number(stored.lease_epoch) !== entity.leaseEpoch
+      || Number(stored.attempt_number) !== entity.attemptNumber)) return deny();
+    if (entity.kind === "lease" && (stored.job_id !== entity.jobId || stored.attempt_id !== entity.attemptId
+      || stored.node_id !== entity.nodeId || Number(stored.epoch) !== entity.epoch
+      || !sameTime("acquired_at", entity.acquiredAt) || !sameTime("expires_at", entity.expiresAt))) return deny();
     return entity as Record;
   }
   private async transition(tx: DatabaseSession, entity: Record, toState: string, suffix: string, key: string,
@@ -107,6 +119,8 @@ export class NativeTaskCompletionService {
           || receipt.jobId !== job.id || receipt.attemptId !== attempt.id || receipt.leaseId !== lease.id || receipt.nodeId !== run.nodeId
           || receipt.projectId !== run.projectId || receipt.artifactId !== artifact.receipt.artifactId || receipt.leaseEpoch !== lease.epoch
           || receipt.completedAt !== run.finishedAt || receipt.jobVersion !== job.version || receipt.attemptVersion !== attempt.version || receipt.leaseVersion !== lease.version
+          || job.updatedAt !== receipt.recordedAt || attempt.updatedAt !== receipt.recordedAt || lease.updatedAt !== receipt.recordedAt
+          || attempt.startedAt !== run.startedAt || attempt.finishedAt !== run.finishedAt
           || sha256Digest(nativeQualityRequestSchema.parse({ tenantId: receipt.tenantId, runId: receipt.runId, targetDigest: receipt.targetDigest, contentHash: receipt.contentHash })) !== requestDigest) return deny();
         current(); return { receipt, replayed: true };
       }
