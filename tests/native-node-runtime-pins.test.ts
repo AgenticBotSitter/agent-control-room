@@ -45,7 +45,10 @@ test("two abort-ignoring raw status calls consume retained slots and prevent a t
   try {
     for (let i = 0; i < 2; i++) {
       const ready = new Promise<void>(resolve => { entered = resolve; });
-      const poll = f.x.admin(() => node.poll(currentSignal())); await ready;
+      const poll = f.x.admin(() => node.poll(currentSignal()));
+      await Promise.race([ready, poll.then(() => {
+        throw new Error("status settled before synthetic transport entry");
+      })]);
       t.mock.timers.tick(10_000);
       const snapshot = await poll; assert.equal(snapshot.availability, "offline");
     }
