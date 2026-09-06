@@ -34,7 +34,7 @@ export function nativeTaskSubmissionId(value: NativeTaskSubmissionReference): st
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${((parseInt(hex[16], 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-function validateQueue(value: unknown): void {
+export function assertPgBossNativeQueue(value: unknown): void {
   if (!value || typeof value !== "object") unavailable();
   const q = value as Record<string, unknown>;
   if (q.name !== PG_BOSS_NATIVE_SUBMISSION.name || q.table !== PG_BOSS_NATIVE_SUBMISSION.table
@@ -63,7 +63,7 @@ export async function preparePgBossNativeTaskSubmission(
   boss.on("error", () => { faulted = true; });
   try {
     await boss.start();
-    validateQueue(await boss.getQueue(PG_BOSS_NATIVE_SUBMISSION.name));
+    assertPgBossNativeQueue(await boss.getQueue(PG_BOSS_NATIVE_SUBMISSION.name));
     assertAvailable();
   } catch {
     closed = true;
@@ -81,7 +81,7 @@ export async function preparePgBossNativeTaskSubmission(
           // This prevents a concurrent queue edit enabling retries/dead letters.
           const locked = await tx.query("SELECT name FROM control_room_queue.queue WHERE name=$1 FOR SHARE", [PG_BOSS_NATIVE_SUBMISSION.name]);
           if (locked.rows.length !== 1) unavailable();
-          validateQueue(await boss.getQueue(PG_BOSS_NATIVE_SUBMISSION.name));
+          assertPgBossNativeQueue(await boss.getQueue(PG_BOSS_NATIVE_SUBMISSION.name));
           // Both the explicit INSERT override and any cold-cache library query use
           // the exact caller session; no live fetch is needed to prime metadata.
           const result = await boss.send(PG_BOSS_NATIVE_SUBMISSION.name, reference, { id, retryLimit: 0, db: sql });

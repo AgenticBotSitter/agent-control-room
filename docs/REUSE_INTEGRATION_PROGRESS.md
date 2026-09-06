@@ -12,6 +12,7 @@ The completed E02 database authorization is not reusable standing authority.
 |---|---|---|
 | Approved-task queue submission | Thin pg-boss adapter and optional trusted coordinator composition. Fresh immutable intent, queue INSERT and audit share one checked transaction. Canonical replay never re-enqueues, including after operational history pruning. | 13 actual-package/PGlite integration tests passed. 131 related tests passed. Not wired to app startup, no consuming worker/native dispatch, no app dependency adoption or production schema change. |
 | ABS duplicate-event selection | Adapted MIT Control Center title/event helpers now run in existing digest selection. Near-duplicate headlines from distinct clusters defer lower-ranked entries, without merging canonical records. | All 61 ABS tests passed; four comparisons against the exact upstream file passed. No feed fetch, LLM ranking, score rewrite, identity migration or publishing. |
+| Continuous queue pickup | Thin adapter to pg-boss public worker API: library polling/concurrency, single-item callbacks, zero automatic retry, group drain and coarse dispositions. | [E05](research/REUSE_E05_PG_BOSS_WORKER.md): 26 combined actual-package checks pass, including seven canonical delivery-path cases and six worker cases; 16 new unit checks pass. Source opt-in only, no startup/production worker or genuine provider run. |
 
 ## Queue adapter design and cutover
 

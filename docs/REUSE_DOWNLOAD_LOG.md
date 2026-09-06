@@ -137,3 +137,10 @@ Disposition: [E04 source-fit report](research/REUSE_E04_HERMES_PRESENTATION.md).
 MIT source is retained for a later focused project-tab/onboarding adaptation; none
 was incorporated yet. Cleanup status: retained, not deleted. Only this exact E04
 directory is eligible for later cleanup after preserving needed provenance.
+
+## E05 continuation — no acquisition
+
+The continuous-worker and canonical delivery tests reused E01's pinned installed package
+and existing application test dependencies. No downloads, package updates or native
+database-server startups. In-memory PGlite/SQLite fixtures were closed by completed test
+processes; no new evaluation directory or cleanup target. E01–E04 retention is unchanged.

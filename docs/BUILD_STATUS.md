@@ -29,6 +29,15 @@ The subsequent [E04 source-fit review](research/REUSE_E04_HERMES_PRESENTATION.md
 a focused Hermes Desktop navigation candidate and documented exact Electron/cache/
 close-versus-cancel mismatches. Source retained with hashes/license; no E04 code adopted.
 
+**Latest continuation — E05 queue worker:** [E05 evidence](research/REUSE_E05_PG_BOSS_WORKER.md)
+adds actual continuous pickup through pg-boss, plus canonical staging/transmission tests
+using an in-memory signed node session. 26 combined actual-package tests and 16 new unit
+checks pass. Expiry, owner/pin/node changes, project completion and tampered packet block
+delivery; uncertain receipt stays unresolved without retry. The first test's mistaken
+server-trust-versus-owner-revocation assumption is preserved in the report. No production
+worker/client/startup wiring, native agent or new database-server attempt. Continue with
+package/role/bootstrap composition and current canonical authorization, not a custom poller.
+
 **Reuse validation progress:** The owner directed following the new plan until complete
 or blocked. See [`REUSE_FIRST_VALIDATION_PACKET.md`](REUSE_FIRST_VALIDATION_PACKET.md)
 for candidate acquisition scope, concrete integration/retirement points and host-package

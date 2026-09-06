@@ -7,6 +7,9 @@ import { pathToFileURL } from 'node:url';
 import { canonicalApprovalStorageFixture } from '../../tests/helpers/canonical-approval-storage.ts';
 import { preparePgBossNativeTaskSubmission, nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
+import { startPgBossNativeTaskWorker } from '../../src/persistence/pg-boss-native-task-worker.ts';
+import { nativeEnvelopeSession } from '../../tests/helpers/native-envelope-session.ts';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const root = process.env.CR_REUSE_EVAL_ROOT;
 assert.ok(root && isAbsolute(root), 'Explicit existing acquisition root required');
@@ -25,16 +28,85 @@ async function fixture(t) {
   let submission;
   const instances = [];
   const errors = [];
+  const workers = [];
   const admin = new PgBoss({ db: { async executeSql(sql, values) {
     if (values?.length) return f.raw.query(sql, values);
     return (await f.raw.exec(sql)).at(-1) ?? { rows: [] };
   } }, schema: spec.schema, backend: 'pglite', schedule: false, supervise: false });
   admin.on('error', error => errors.push(error));
-  t.after(async () => { if (submission) await submission.close(); await admin.stop({ graceful: false }); await f.close(); });
+  t.after(async () => {
+    await Promise.allSettled(workers.map(worker => worker.close()));
+    if (submission) await submission.close(); await admin.stop({ graceful: false }); await f.close();
+  });
   await admin.start(); await admin.createQueue(spec.name, { retryLimit: 0 });
   class ObservedPgBoss extends PgBoss { constructor(options) { super(options); instances.push(this); } }
   submission = await preparePgBossNativeTaskSubmission(ObservedPgBoss, f.db, { backend: 'pglite' });
-  return { ...f, admin, submission, client: instances[0], errors, c: f.create(f.db, submission) };
+  return { ...f, admin, submission, client: instances[0], errors, c: f.create(f.db, submission),
+    async startWorker(deliver) {
+      const worker = await startPgBossNativeTaskWorker(admin, { deliver }); workers.push(worker); return worker;
+    } };
+}
+
+async function settled(f, id) {
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    const value = await f.admin.getJobById(spec.name, id);
+    if (['completed', 'failed', 'cancelled'].includes(value?.state)) return value;
+    await delay(15);
+  }
+  assert.fail('Synthetic canonical worker observation timed out');
+}
+
+test('actual package worker reaches canonical staging and transmission once; absent receipt stays unresolved', { timeout: 30000 }, async t => {
+  const f = await fixture(t); await f.save();
+  const receipt = await enqueue(f), ref = reference(f, receipt), id = nativeTaskSubmissionId(ref);
+  const session = await nativeEnvelopeSession(f); t.after(session.close);
+  let calls = 0;
+  const worker = await f.startWorker(async (value, signal) => {
+    calls++; assert.deepEqual(value, ref);
+    // Test-only composition supplies this synthetic verified owner identity. Production
+    // must resolve current authorization; serialized web credentials are never queued.
+    await f.c.stageQueuedNativeDelivery(f.args[0], value.projectId, value.jobId, value.inputDigest,
+      value.packetDigest, session.session, signal, value.attemptId);
+    const sent = await f.c.transmitQueuedNativeDelivery(f.args[0], value.projectId, value.jobId,
+      value.inputDigest, value.packetDigest, session.session, signal, value.attemptId);
+    assert.equal(sent.deliveryConfirmed, false);
+    throw new Error('synthetic-awaiting-authenticated-receipt');
+  });
+  const result = await settled(f, id);
+  assert.equal(result.state, 'failed'); assert.equal(result.retryCount, 0);
+  assert.equal(await count(f, 'control_native_transmission_intents'), 1);
+  assert.equal(await count(f, 'control_native_delivery_receipts'), 0);
+  assert.equal(session.sent.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch').length, 1);
+  assert.equal((await enqueue(f)).replayed, true);
+  await delay(1100); assert.equal(calls, 1);
+  await worker.close(); assert.deepEqual(f.errors, []);
+});
+
+for (const mode of ['expired', 'owner-revoked', 'pins-closed', 'node-retired', 'project-completed', 'tampered-packet']) {
+  test(`operational pickup cannot bypass canonical ${mode} approval`, { timeout: 30000 }, async t => {
+    const f = await fixture(t); await f.save();
+    const receipt = await enqueue(f), ref = reference(f, receipt), id = nativeTaskSubmissionId(ref);
+    const session = await nativeEnvelopeSession(f); t.after(session.close);
+    if (mode === 'expired') f.setNow(f.prepared.start.deadline);
+    if (mode === 'owner-revoked') await f.db.query("UPDATE control_role_grants SET role_key='operator' WHERE tenant_id=$1", [f.scope.tenantId]);
+    if (mode === 'pins-closed') f.approvals.close();
+    if (mode === 'node-retired') await f.db.query("UPDATE control_node_keys SET state='retired' WHERE tenant_id=$1", [f.scope.tenantId]);
+    if (mode === 'project-completed') await f.db.query("UPDATE control_manual_project_heads SET lifecycle='completed' WHERE tenant_id=$1", [f.scope.tenantId]);
+    if (mode === 'tampered-packet') await f.raw.query('UPDATE control_room_queue.job SET data=$1 WHERE id=$2',
+      [{ ...ref, packetDigest: sha256Digest('synthetic-wrong-packet') }, id]);
+    const worker = await f.startWorker(async (value, signal) => {
+      await f.c.stageQueuedNativeDelivery(f.args[0], value.projectId, value.jobId, value.inputDigest,
+        value.packetDigest, session.session, signal, value.attemptId);
+      assert.fail('Canonical rejection should precede staging');
+    });
+    const result = await settled(f, id);
+    assert.equal(result.state, 'failed'); assert.equal(result.retryCount, 0);
+    assert.equal(await count(f, 'control_native_delivery_envelopes'), 0);
+    assert.equal(await count(f, 'control_native_transmission_intents'), 0);
+    assert.equal(session.sent.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch').length, 0);
+    await worker.close(); assert.deepEqual(f.errors, []);
+  });
 }
 
 test('approved task, immutable intent, audit and actual pg-boss job commit together', { timeout: 30000 }, async t => {
