@@ -221,6 +221,25 @@ test("lost acknowledgement of register or submit reconciles one durable binding 
   });
 });
 
+test("source generation invalidation at result precommit rolls back registration and submission", async t => {
+  for (const operation of ["register", "submit"] as const) await t.test(operation, async t => {
+    const x = await initialFixture(); t.after(x.close);
+    if (operation === "submit") { await x.owner.results!.register(x.request, signal()); await x.capture(); }
+    const beforePlans = await plans(x), beforeGate = await gateRows(x), cp = checkpoint(x), calls = [...x.local.calls];
+    let current = true, reachedCommit = false;
+    const db: DatabaseClient = { ...x.results.client,
+      transactionWithPreCommitCheck: (work, check) => x.results.client.transactionWithPreCommitCheck(work, () => {
+        reachedCommit = true; current = false; check();
+      }) };
+    await assert.rejects(x.direct(db)[operation](x.request, signal(), () => {
+      if (!current) throw new Error("synthetic_source_generation_replaced");
+    }), /synthetic_source_generation_replaced/);
+    assert.equal(reachedCommit, true);
+    assert.deepEqual(await plans(x), beforePlans); assert.deepEqual(await gateRows(x), beforeGate);
+    assert.deepEqual(checkpoint(x), cp); assert.deepEqual(x.local.calls, calls);
+  });
+});
+
 test("input capture, cancellation and writer health/close invalidate only bounded owner operations", async t => {
   const x = await initialFixture(); t.after(x.close);
   const abort = new AbortController(); abort.abort(); await assert.rejects(x.owner.results!.register(x.request, abort.signal));

@@ -123,7 +123,7 @@ export class NativeEvidenceReceiver {
       return { run, replayed: saved.replayed, deadline: binding.deadline };
     }, () => { if (freshDeadline !== undefined && current() >= freshDeadline) return fail(); current(); });
     current();
-    const bound = await this.results.register({ projectId: input.projectId, jobId: input.jobId, runId: registration.run.id }, signal);
+    const bound = await this.results.register({ projectId: input.projectId, jobId: input.jobId, runId: registration.run.id }, signal, current);
     current(); return { receipt: bound.receipt, replayed: registration.replayed && bound.replayed };
   }
   /** Reattach only existing, authenticated evidence. No registration, planning or writes. */
@@ -185,13 +185,13 @@ export class NativeEvidenceReceiver {
         || content !== undefined && (frame.body.state !== "completed" || !frame.body.result)) return fail();
       await db.transaction(tx => this.project(tx, frame.body.projectId)); check();
       // Before the first progress write, reconcile the actual saved review binding.
-      await this.results.register({ projectId: frame.body.projectId, jobId: frame.body.jobId, runId: frame.body.runId }, signal); check();
+      await this.results.register({ projectId: frame.body.projectId, jobId: frame.body.jobId, runId: frame.body.runId }, signal, check); check();
       const observed = await new HarnessRunStoreV1(db, this.harnessKey)
         .recordNativeSnapshot(frame.tenantId, frame.actorId, frame.body, check); check();
       let submitted: Awaited<ReturnType<TaskResultOperation["submit"]>> | undefined;
       if (content !== undefined) {
         await this.artifacts.capture(frame.tenantId, frame.actorId, frame.body, content, new Date(current()).toISOString(), check); check();
-        submitted = await this.results.submit({ projectId: frame.body.projectId, jobId: frame.body.jobId, runId: frame.body.runId }, signal); check();
+        submitted = await this.results.submit({ projectId: frame.body.projectId, jobId: frame.body.jobId, runId: frame.body.runId }, signal, check); check();
       }
       return { runId: observed.run.id, state: observed.run.state, replayed: observed.replayed,
         ...(submitted ? { submission: submitted.receipt } : {}), executionAuthorized: false as const };

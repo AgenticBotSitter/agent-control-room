@@ -32,11 +32,12 @@ export class TaskResultCoordinator {
   }
   private async run<T>(value: TaskResultRequest, signal: AbortSignal,
     work: (db: DatabaseClient, input: TaskResultRequest, check: () => void, now: () => number,
-      beforeCommit: (check: () => void) => void) => Promise<T>) {
+      beforeCommit: (check: () => void) => void) => Promise<T>, assertSourceCurrent: () => void = () => {}) {
     const input = taskResultRequestSchema.parse(value);
     if (!(signal instanceof AbortSignal)) return deny();
     const started = this.clock();
     const current = () => {
+      assertSourceCurrent();
       const now = this.clock();
       if (signal.aborted || !Number.isSafeInteger(started) || started < 0 || !Number.isSafeInteger(now)
         || now < started || now < this.highWater || now - started > 10_000) return deny();
@@ -62,7 +63,7 @@ export class TaskResultCoordinator {
     }, () => { current(); for (const check of checks) { current(); check(); } current(); });
     current(); return result;
   }
-  async register(value: TaskResultRequest, signal: AbortSignal) {
+  async register(value: TaskResultRequest, signal: AbortSignal, assertSourceCurrent?: () => void) {
     return this.run(value, signal, async (db, input, check, now, beforeCommit) => {
       const planner = new TaskExecutionPlanner(db, this.scope, this.planning, this.clock);
       const submission = new NativeResultSubmissionService(db, this.quality);
@@ -78,9 +79,9 @@ export class TaskResultCoordinator {
       return { receipt: { projectId: input.projectId, jobId: input.jobId, runId: input.runId,
         targetId: bound.plan.targetId, planDigest: sha256Digest(bound.plan), inputDigest: bound.plan.inputDigest,
         registeredAt: bound.plan.plannedAt, startsWork: false as const, grantsExecutionAuthority: false as const }, replayed: bound.replayed };
-    });
+    }, assertSourceCurrent);
   }
-  async submit(value: TaskResultRequest, signal: AbortSignal) {
+  async submit(value: TaskResultRequest, signal: AbortSignal, assertSourceCurrent?: () => void) {
     return this.run(value, signal, async (db, input, check, now) => {
       const planner = new TaskExecutionPlanner(db, this.scope, this.planning, this.clock);
       const submission = new NativeResultSubmissionService(db, this.quality);
@@ -94,6 +95,6 @@ export class TaskResultCoordinator {
         targetId: result.target.id, targetDigest: sha256Digest(result.target), contentHash: result.target.subjectDigest,
         rootSubjectId: result.target.subjectId, rootTargetId: result.target.rootTargetId, revisionNumber: result.target.revisionNumber,
         submittedAt: result.target.submittedAt, qualityAccepted: false as const, grantsExecutionAuthority: false as const }, replayed: result.replayed };
-    });
+    }, assertSourceCurrent);
   }
 }

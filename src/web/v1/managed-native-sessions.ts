@@ -119,9 +119,14 @@ export class ManagedNativeSessions {
   attachInput(nodeId: string, input: NativeSessionTransport, configuration: NativeInputConfiguration) {
     const config = nativeInputConfigurationSchema.parse(configuration);
     if (!this.routes.register || !this.routes.recover) return Promise.reject(new Error("native_input_unavailable"));
-    return this.attachOwned(nodeId, input).then(({ handle, record }) => new ManagedNativeInput(handle, config,
-      (value, signal) => this.operation(record, signal, async () => this.routes.register!(value, signal, () => this.current(record))),
-      () => this.current(record)));
+    return this.attachOwned(nodeId, input).then(({ handle, record }) => {
+      const owner = new ManagedNativeInput(handle, config,
+        (value, signal) => this.operation(record, signal, async () => this.routes.register!(value, signal, () => this.current(record))),
+        () => this.current(record));
+      return Object.freeze({ nodeId, grantsExecutionAuthority: false as const,
+        receive: owner.receive.bind(owner), stage: owner.stage.bind(owner),
+        transmit: owner.transmit.bind(owner), close: owner.close.bind(owner) });
+    });
   }
   private attachOwned(nodeId: string, input: NativeSessionTransport) {
     this.current(); localId.parse(nodeId);
