@@ -1,6 +1,6 @@
 # Control Room build status
 
-**Updated:** 2026-09-05
+**Updated:** 2026-09-06
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Current delivery order is `CONTROL_ROOM_COMPLETION_PROGRAM.md`; integration direction is
 `CR14A_INTEGRATION_DIRECTION.md` / ADR-202. `CR3_BUILD_PLAN.md` and detailed reviews preserve historical
@@ -2364,21 +2364,33 @@ tests, the rebuilt VPS artifact and disposable migrations 0056/138 passed.
 Prerequisite PR #337 at `6dac246` now has all nine GitHub checks successful in run
 `34013914346`; it remains open and unmerged.
 
+## Managed native sessions: accepted locally
+
+Production `e194154` plus `dbcc08a` passed independent static review. The runtime
+now owns supplied transport sessions, restricted key/replay authentication, replacement,
+shutdown, and initial/revised receipt/progress/file routing. Thirty-three new checks
+passed, plus 68 existing regressions, 32 existing compiled checks, the private build,
+types, full lint, inventory checks and disposable migrations 0057/138. See
+`CR14C_MANAGED_NATIVE_SESSIONS_ACCEPTANCE.md` for the retained fixture corrections
+and precise limits. No listener, live agent, owner signer or deployment is activated.
+Prerequisite #338 had a CI isolation failure; reviewed correction `cb32295` is pushed
+and awaiting its own current-head CI. No GitHub merge is claimed.
+
 ## Next block
 
 ```text
-Block: CR14C authenticated session ownership and runtime evidence routing
+Block: CR14C reconnect to recorded native work without re-execution
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: The runtime now owns run/progress evidence, verified capture and review submission; its authenticated ServerNodeSession and transport resources still come from external fixture composition.
-Expected output: connect existing session authentication and transport lifecycle to the owned receiver with explicit resource ownership, bounded recovery and independent initial/revised routing tests. Preserve the existing protocol, fixed-role boundaries and separate quality approval. No listener or live dispatch activation. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
+Why: The runtime owns initial and revised task connections, but a fresh connection correctly refuses progress for a task delivered on an old session. Recorded-work recovery must be explicit and must never resend or restart that task.
+Expected output: root-owned recovery of evidence routing from exact authenticated saved delivery/run records after a fresh signed handshake, with current identity and scope checks, bounded failure handling and independent replay/replacement tests. Preserve separate native start/stop authority and quality approval. No listener or live agent activation. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
 ```
 
 Model allocation refreshed against [official OpenAI guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra)
-on 2026-09-05. Preserve the effective current effort rather than increasing it by default.
+on 2026-09-06. Preserve the effective current effort rather than increasing it by default.
 Astra Medium for root integration, Astra High for independent boundary review and Sol High
 for isolated protected-app tests remain project-specific allocations, not an official
 benchmark or a claim that Codex settings were changed programmatically.

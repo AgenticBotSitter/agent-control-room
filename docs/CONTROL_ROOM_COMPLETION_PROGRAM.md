@@ -1,13 +1,16 @@
 # Control Room completion program — private daily use
 
-**Updated:** 2026-09-05
+**Updated:** 2026-09-06
 
 **Owner direction:** Implement the Astra reassessment; resume repository building.
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — authenticated session ownership and runtime evidence
-routing, then recovery and owner signing, on Astra Medium. Result registration
+**Next block:** CR14C C-WORK — reconnect to recorded native work without re-execution,
+then runtime recovery and owner signing, on Astra Medium. Managed session ownership
+and initial/revised evidence routing are locally accepted in
+`CR14C_MANAGED_NATIVE_SESSIONS_ACCEPTANCE.md`; no listener or live fleet is activated.
+Result registration
 and submission ownership is accepted in PR #337; the initial owned evidence receiver
 is independently statically reviewed and locally integration-tested.
 See `CR14C_NATIVE_EVIDENCE_RECEIVER_ACCEPTANCE.md`. Upstream workflow
