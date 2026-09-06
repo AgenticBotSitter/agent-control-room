@@ -11,7 +11,4 @@ export const taskRevisionRequestSchema = z.object({ runId: id, targetId: id, tar
   if (!checked.success || checked.data.feedback !== value.feedback) ctx.addIssue({ code: "custom", message: "invalid revision feedback" });
 });
 export type TaskRevisionRequest = z.infer<typeof taskRevisionRequestSchema>;
-export const taskRevisionContextSchema = z.object({ rootSubjectId: id, rootTargetId: id, fromJobId: id, fromRunId: id,
-  fromTargetId: id, fromTargetDigest: digest, fromContentHash: digest, reviewId: id, reviewDigest: digest,
-  findingIds: z.array(id).min(1).max(100), feedbackDigest: digest, sourcePlanDigest: digest,
-  revisionNumber: z.number().int().min(1).max(100), originalPrompt: z.string().min(1).max(4000) }).strict();
+export { nativeRevisionContextSchema as taskRevisionContextSchema } from "../../completion-gate/v1/native-revision-context";

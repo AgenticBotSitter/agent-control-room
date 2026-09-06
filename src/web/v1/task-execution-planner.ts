@@ -292,7 +292,7 @@ export class TaskExecutionPlanner {
   private revisionReceipt(plan: z.infer<typeof revisionPlanSchema>) { return { ...this.receipt(plan),
     rootSubjectId: plan.revision.rootSubjectId, rootTargetId: plan.revision.rootTargetId,
     fromTargetId: plan.revision.fromTargetId, revisionNumber: plan.revision.revisionNumber,
-    executionAvailability: "revision_submission_not_connected" as const }; }
+    executionAvailability: "requires_separate_assignment_and_approval" as const }; }
   private receipt(plan: Plan) { return { projectId: plan.projectId, sourceJobId: plan.sourceJobId, jobId: plan.job.id,
     sourceInputDigest: plan.sourceInputDigest, inputDigest: plan.job.inputDigest, plannedAt: plan.plannedAt,
     startsWork: false as const, grantsExecutionAuthority: false as const }; }
@@ -329,19 +329,22 @@ export class TaskExecutionPlanner {
     const row = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND job_id=$2", [this.scope.tenantId, jobId])).rows[0];
     if (!row) return undefined;
     const plan = this.verify(row);
-    // A v2 revision must not be launched through revision-zero submission. The next
-    // integration block must supply and verify the distinct revised-result path.
-    if (plan.schema !== "control-room.task-execution-plan/v1") throw new Error("task_revision_execution_not_connected");
     await this.checkedJob(tx, plan); return plan;
   }
   /** After separately accepted admission/registration, carry the saved profile to the existing
    * submission service. Neither helper constructs an attempt nor fabricates native-start evidence. */
-  async bindReview(jobId: string, runId: string, harnessIntegrityKey: Uint8Array, submission: Pick<NativeResultSubmissionService, "register">) {
+  async bindReview(jobId: string, runId: string, harnessIntegrityKey: Uint8Array,
+    submission: Pick<NativeResultSubmissionService, "register"> & Partial<Pick<NativeResultSubmissionService, "registerRevision">>) {
     const plan = await this.read(jobId); if (!plan) return fail();
     const inspected = await new HarnessRunStoreV1(this.db, harnessIntegrityKey).inspect(plan.tenantId, runId);
     if (!inspected?.run.nativeTask || inspected.run.jobId !== jobId || inspected.run.projectId !== plan.projectId
       || inspected.run.nativeTask.inputDigest !== plan.job.inputDigest || Date.parse(inspected.run.createdAt) < Date.parse(plan.plannedAt)) return fail();
-    return submission.register({ tenantId: plan.tenantId, runId, acceptanceProfileId: plan.acceptanceProfileId,
-      acceptanceProfileDigest: plan.acceptanceProfileDigest, plannedAt: inspected.run.createdAt });
+    const request = { tenantId: plan.tenantId, runId, acceptanceProfileId: plan.acceptanceProfileId,
+      acceptanceProfileDigest: plan.acceptanceProfileDigest, plannedAt: inspected.run.createdAt };
+    if (plan.schema === "control-room.task-execution-plan/v2") {
+      if (!submission.registerRevision) return fail();
+      return submission.registerRevision({ ...request, revision: plan.revision });
+    }
+    return submission.register(request);
   }
 }

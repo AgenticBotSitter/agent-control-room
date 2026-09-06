@@ -9,7 +9,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
   "control_jobs", "control_attempts", "control_harness_runs", "control_harness_run_events", "control_web_task_commands",
-  "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands"] as const;
+  "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands"]);

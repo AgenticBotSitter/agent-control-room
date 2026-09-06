@@ -4,6 +4,7 @@ import { jobRecordSchema } from "../../domain/v1";
 import { NativeResultStore, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionVerificationV1, type CompletionRiskV1 } from "../../completion-gate/v1";
 import { stageCompletionCheckpoint } from "../../completion-gate/v1/staged-checkpoint";
+import { readNativeReviewPlan, verifyNativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest, type RollbackCheckpointStoreV1 } from "../../security";
 import { appendAuditWith } from "../../audit/audit-store";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
@@ -64,11 +65,13 @@ export class WebTaskVerificationService {
       || job.version !== Number(row.version) || job.authority.projectId !== projectId || computeAuthorityDigest(job.authority) !== job.authority.digest)
       throw new Error("verification_task_unavailable");
     const snapshot = await gate.snapshot(this.scope.tenantId, targetId), target = snapshot.target;
-    if (target.projectId !== projectId || target.subjectId !== jobId || target.kind !== "document") throw new WebAccessError("not_found");
+    if (target.projectId !== projectId || target.kind !== "document") throw new WebAccessError("not_found");
     const profile = await gate.getRecord(this.scope.tenantId, target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
     const result = await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
     if (!result || result.receipt.contentHash !== target.subjectDigest || result.receipt.nodeId !== target.producer.actorId
       || target.producer.actorType !== "agent") throw new WebAccessError("conflict");
+    const lineage = await readNativeReviewPlan(tx, this.key, this.scope.tenantId, projectId, jobId);
+    verifyNativeReviewTarget(lineage, target, result.receipt);
     const descriptors = this.descriptors.filter(value => value.acceptanceProfileId === profile.id
       && value.acceptanceProfileDigest === sha256Digest(profile) && profile.requiredVerificationScenarioIds.includes(value.scenarioId));
     return { project, snapshot, profile, result, descriptors, gate,
