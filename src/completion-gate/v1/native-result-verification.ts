@@ -3,7 +3,7 @@ import type { DatabaseClient } from "../../persistence/database";
 import { appendAuditWith } from "../../audit/audit-store";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { NativeResultSubmissionService } from "./native-result-submission";
-import { stageCompletionCheckpoint } from "./staged-checkpoint";
+import { stageAsyncCompletionCheckpoint } from "./async-staged-checkpoint";
 import { documentStructureRulesSchema } from "./document-structure-contract";
 import { verifyDocumentStructure } from "./document-structure-verifier";
 import type { CompletionVerificationV1 } from "./types";
@@ -35,7 +35,7 @@ export class NativeResultVerificationService {
   }
   async verify(input: NativeQualityRequest, assertCurrent: () => void) {
     const request = nativeQualityRequestSchema.parse(input); assertNoSecretMaterial(request); assertCurrent();
-    const started = this.time(), staged = stageCompletionCheckpoint(this.config.checkpoints, request.tenantId, 50);
+    const started = this.time(), staged = stageAsyncCompletionCheckpoint(this.config.checkpoints, request.tenantId, 50);
     const current = () => { const now = this.time(); if (now - started > 10_000)
       throw new Error("native_verification_unavailable"); assertCurrent(); return now; };
     const result = await this.db.transactionWithPreCommitCheck(async tx => {
@@ -69,7 +69,7 @@ export class NativeResultVerificationService {
           safeMetadata: { scenarioId: scenario.scenarioId, contentHash: request.contentHash, outcome: verdict.outcome, verdictDigest: sha256Digest(verdict) } });
       }
       current(); return { verifications: records, replayed, completesJob: false as const, grantsExecutionAuthority: false as const };
-    }, () => { current(); staged.flush(); });
+    }, async () => { current(); await staged.flush(() => { current(); }); current(); });
     current(); return result;
   }
 }

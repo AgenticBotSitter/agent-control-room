@@ -1,11 +1,59 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { stageCompletionCheckpoint } from "../src/completion-gate/v1/staged-checkpoint";
+import { stageAsyncCompletionCheckpoint } from "../src/completion-gate/v1/async-staged-checkpoint";
 import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { InMemoryRollbackCheckpointStoreV1, ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1 } from "../src/security/rollback-checkpoint";
 const initial = { schema: ROLLBACK_CHECKPOINT_SCHEMA_V1, scope: "completion-gate:tenant:test", revision: 1,
   recordCount: 0, stateDigest: `sha256:${"a".repeat(64)}`, stateAuthTag: `hmac-sha256:${"b".repeat(64)}` };
 function fixture() { const store = new InMemoryRollbackCheckpointStoreV1({ testOnly: true }); store.initialize(initial); return store; }
+
+test("awaitable stage reads lazily once and flushes the existing exact CAS sequence", async () => {
+  const store = fixture(); let reads = 0, writes = 0;
+  const stage = stageAsyncCompletionCheckpoint({ async read(scope) { reads++; return store.read(scope); }, initialize() {},
+    async advance(expected, next) { await Promise.resolve(); writes++; store.advance(expected, next); } }, "tenant:test");
+  assert.equal(reads, 0);
+  const first = await stage.checkpoints.read(initial.scope); assert.deepEqual(first, initial);
+  await stage.checkpoints.advance(rollbackCheckpointDigestV1(initial), { ...initial, revision: 2 });
+  const next = (await stage.checkpoints.read(initial.scope))!;
+  await stage.checkpoints.advance(rollbackCheckpointDigestV1(next), { ...next, revision: 3 });
+  assert.equal(reads, 1); assert.equal(writes, 0); assert.deepEqual(store.read(initial.scope), initial);
+  await stage.flush(); assert.equal(writes, 2); assert.equal(store.read(initial.scope)!.revision, 3);
+  await assert.rejects(stage.flush()); await assert.rejects(stage.checkpoints.read(initial.scope));
+});
+
+test("awaitable stage rejects partial failure without retry or further writes", async () => {
+  const store = fixture(); let calls = 0;
+  const stage = stageAsyncCompletionCheckpoint({ async read(scope) { return store.read(scope); }, initialize() {},
+    async advance(expected, next) { calls++; if (calls === 2) throw new Error("synthetic_lost_reply"); store.advance(expected, next); } }, "tenant:test", 3);
+  for (let revision = 2; revision <= 4; revision++) {
+    const prior = (await stage.checkpoints.read(initial.scope))!;
+    await stage.checkpoints.advance(rollbackCheckpointDigestV1(prior), { ...prior, revision });
+  }
+  await assert.rejects(stage.flush(), /review_checkpoint_unavailable/);
+  assert.equal(calls, 2); assert.equal(store.read(initial.scope)!.revision, 2);
+  await assert.rejects(stage.flush()); assert.equal(calls, 2);
+});
+
+test("awaitable stage cannot flush an unawaited read as an empty successful transaction", async () => {
+  let release!: () => void, writes = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const stage = stageAsyncCompletionCheckpoint({ async read() { await gate; return initial; }, initialize() {},
+    async advance() { writes++; } }, "tenant:test");
+  const reading = assert.rejects(stage.checkpoints.read(initial.scope), /review_checkpoint_unavailable/);
+  await assert.rejects(stage.flush(), /review_checkpoint_unavailable/); release(); await reading;
+  assert.equal(writes, 0); await assert.rejects(stage.flush());
+});
+
+test("awaitable stage refuses wrong-scope storage and leaves unused stages effect-free", async () => {
+  let reads = 0, writes = 0;
+  const port = { async read() { reads++; return { ...initial, scope: "completion-gate:other" }; }, initialize() {}, async advance() { writes++; } };
+  const unused = stageAsyncCompletionCheckpoint(port, "tenant:test"); await unused.flush();
+  assert.equal(reads, 0); assert.equal(writes, 0);
+  const stage = stageAsyncCompletionCheckpoint(port, "tenant:test");
+  await assert.rejects(stage.checkpoints.read(initial.scope)); await assert.rejects(stage.flush());
+  assert.equal(reads, 1); assert.equal(writes, 0);
+});
 
 test("staged review checkpoints keep the durable anchor unchanged until one-use flush", () => {
   const store = fixture(), stage = stageCompletionCheckpoint(store, "tenant:test");

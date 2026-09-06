@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { effectIntentRecordSchema, jobRecordSchema, type EffectIntentRecord, type JobRecord } from "../../domain/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { assertNoSecretMaterial, computeAuthorityDigest, computeEffectOperationDigest, hmacSha256Tag, sha256Digest } from "../../security";
-import { ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1, type RollbackCheckpointStoreV1, type RollbackCheckpointV1 } from "../../security/rollback-checkpoint";
+import { ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1, type AwaitableRollbackCheckpointStoreV1, type RollbackCheckpointV1 } from "../../security/rollback-checkpoint";
 import {
   completionAcceptanceProfileSchemaV1,
   completionFindingSchemaV1,
@@ -97,18 +97,18 @@ function recordIdentity(record:CompletionGateRecordV1):{id:string;tenantId:strin
 
 export class CompletionGateStoreV1 {
   private readonly integrityKey:Uint8Array;
-  private readonly checkpointRead:RollbackCheckpointStoreV1["read"];private readonly checkpointInitialize:RollbackCheckpointStoreV1["initialize"];private readonly checkpointAdvance:RollbackCheckpointStoreV1["advance"];
-  constructor(private readonly db:DatabaseClient,integrityKey:Uint8Array,checkpointStore:RollbackCheckpointStoreV1,private readonly clock:()=>string=()=>new Date().toISOString()){
+  private readonly checkpointRead:AwaitableRollbackCheckpointStoreV1["read"];private readonly checkpointInitialize:AwaitableRollbackCheckpointStoreV1["initialize"];private readonly checkpointAdvance:AwaitableRollbackCheckpointStoreV1["advance"];
+  constructor(private readonly db:DatabaseClient,integrityKey:Uint8Array,checkpointStore:AwaitableRollbackCheckpointStoreV1,private readonly clock:()=>string=()=>new Date().toISOString()){
     try{hmacSha256Tag(integrityKey,{purpose:"completion-gate-key-check"});this.integrityKey=new Uint8Array(integrityKey);this.checkpointRead=checkpointStore.read.bind(checkpointStore);this.checkpointInitialize=checkpointStore.initialize.bind(checkpointStore);this.checkpointAdvance=checkpointStore.advance.bind(checkpointStore);}catch{throw new CompletionGateErrorV1("integrity_failed");}
   }
 
   async provisionTenant(tenantId:string):Promise<void>{
     await this.db.transaction(async(tx)=>{const tenant=await tx.query<{id:string}>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE",[tenantId]);if(!tenant.rows[0])throw new CompletionGateErrorV1("scope_mismatch");
       const existing=await tx.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);const computed=await this.computedTenantState(tx,tenantId);
-      if(existing.rows[0]||computed.recordCount!==0||this.readCheckpoint(tenantId))throw new CompletionGateErrorV1("integrity_failed");
+      if(existing.rows[0]||computed.recordCount!==0||await this.readCheckpoint(tenantId))throw new CompletionGateErrorV1("integrity_failed");
       const revision=1,stateAuthTag=this.tenantStateTag(tenantId,revision,computed.recordCount,computed.stateDigest),checkpoint=this.checkpoint(tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag);
       await tx.query(`INSERT INTO control_completion_gate_integrity(tenant_id,revision,record_count,state_digest,state_auth_tag) VALUES($1,$2,$3,$4,$5)`,[tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag]);
-      try{this.checkpointInitialize(checkpoint);}catch{throw new CompletionGateErrorV1("integrity_failed");}});
+      try{await this.checkpointInitialize(checkpoint);}catch{throw new CompletionGateErrorV1("integrity_failed");}});
   }
 
   async registerProfile(input:unknown):Promise<{profile:CompletionAcceptanceProfileV1;replayed:boolean}>{
@@ -349,13 +349,13 @@ export class CompletionGateStoreV1 {
   private checkpointScope(tenantId:string){return `completion-gate:${tenantId}`;}
   private tenantStateTag(tenantId:string,revision:number,recordCount:number,stateDigest:string){return hmacSha256Tag(this.integrityKey,{module:"completion-gate",tenantId,revision,recordCount,stateDigest});}
   private checkpoint(tenantId:string,revision:number,recordCount:number,stateDigest:string,stateAuthTag:string):RollbackCheckpointV1{return{schema:ROLLBACK_CHECKPOINT_SCHEMA_V1,scope:this.checkpointScope(tenantId),revision,recordCount,stateDigest,stateAuthTag};}
-  private readCheckpoint(tenantId:string){try{return this.checkpointRead(this.checkpointScope(tenantId));}catch{throw new CompletionGateErrorV1("integrity_failed");}}
-  private assertCheckpoint(tenantId:string,row:CompletionIntegrityRow){try{const expected=this.checkpoint(tenantId,Number(row.revision),Number(row.record_count),row.state_digest,row.state_auth_tag),known=this.readCheckpoint(tenantId);if(!known||rollbackCheckpointDigestV1(known)!==rollbackCheckpointDigestV1(expected))throw new Error("mismatch");return expected;}catch{throw new CompletionGateErrorV1("integrity_failed");}}
+  private async readCheckpoint(tenantId:string){try{return await this.checkpointRead(this.checkpointScope(tenantId));}catch{throw new CompletionGateErrorV1("integrity_failed");}}
+  private async assertCheckpoint(tenantId:string,row:CompletionIntegrityRow){try{const expected=this.checkpoint(tenantId,Number(row.revision),Number(row.record_count),row.state_digest,row.state_auth_tag),known=await this.readCheckpoint(tenantId);if(!known||rollbackCheckpointDigestV1(known)!==rollbackCheckpointDigestV1(expected))throw new Error("mismatch");return expected;}catch{throw new CompletionGateErrorV1("integrity_failed");}}
   private async computedTenantState(source:QuerySource,tenantId:string){const result=await source.query<CompletionRow>(`SELECT ${columns} FROM control_completion_gate_records WHERE tenant_id=$1 ORDER BY kind,id`,[tenantId]);for(const row of result.rows)this.verifiedRow(row);const records=result.rows.map((row)=>({id:row.id,projectId:row.project_id,kind:row.kind,recordKey:row.record_key,subjectId:row.subject_id,parentId:row.parent_id,recordDigest:row.record_digest,recordAuthTag:row.record_auth_tag,occurredAt:iso(row.occurred_at)}));return{recordCount:records.length,stateDigest:sha256Digest({tenantId,records})};}
   private async lockAndVerifyTenantState(source:DatabaseSession,tenantId:string){const result=await source.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);
-    const row=result.rows[0],computed=await this.computedTenantState(source,tenantId);if(!row||Number(row.revision)<1||Number(row.record_count)!==computed.recordCount||row.state_digest!==computed.stateDigest||!sameTag(row.state_auth_tag,this.tenantStateTag(tenantId,Number(row.revision),computed.recordCount,computed.stateDigest)))throw new CompletionGateErrorV1("integrity_failed");this.assertCheckpoint(tenantId,row);}
-  private async refreshTenantState(source:DatabaseSession,tenantId:string){const priorResult=await source.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);const prior=priorResult.rows[0];if(!prior)throw new CompletionGateErrorV1("integrity_failed");const expected=this.assertCheckpoint(tenantId,prior),computed=await this.computedTenantState(source,tenantId),revision=Number(prior.revision)+1,stateAuthTag=this.tenantStateTag(tenantId,revision,computed.recordCount,computed.stateDigest),next=this.checkpoint(tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag);
+    const row=result.rows[0],computed=await this.computedTenantState(source,tenantId);if(!row||Number(row.revision)<1||Number(row.record_count)!==computed.recordCount||row.state_digest!==computed.stateDigest||!sameTag(row.state_auth_tag,this.tenantStateTag(tenantId,Number(row.revision),computed.recordCount,computed.stateDigest)))throw new CompletionGateErrorV1("integrity_failed");await this.assertCheckpoint(tenantId,row);}
+  private async refreshTenantState(source:DatabaseSession,tenantId:string){const priorResult=await source.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);const prior=priorResult.rows[0];if(!prior)throw new CompletionGateErrorV1("integrity_failed");const expected=await this.assertCheckpoint(tenantId,prior),computed=await this.computedTenantState(source,tenantId),revision=Number(prior.revision)+1,stateAuthTag=this.tenantStateTag(tenantId,revision,computed.recordCount,computed.stateDigest),next=this.checkpoint(tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag);
     const result=await source.query<{tenant_id:string}>(`UPDATE control_completion_gate_integrity SET revision=$2,record_count=$3,state_digest=$4,state_auth_tag=$5 WHERE tenant_id=$1 AND revision=$6 RETURNING tenant_id`,[tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag,Number(prior.revision)]);if(!result.rows[0])throw new CompletionGateErrorV1("integrity_failed");
-    try{this.checkpointAdvance(rollbackCheckpointDigestV1(expected),next);}catch{throw new CompletionGateErrorV1("integrity_failed");}}
+    try{await this.checkpointAdvance(rollbackCheckpointDigestV1(expected),next);}catch{throw new CompletionGateErrorV1("integrity_failed");}}
   private currentTime():string{const value=this.clock();if(typeof value!=="string"||!Number.isFinite(Date.parse(value)))throw new CompletionGateErrorV1("approval_binding_invalid");return value;}
 }

@@ -5,10 +5,10 @@ import { NativeResultStore, nativeResultId, type NativeResultReadConfiguration }
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { appendAuditWith } from "../../audit/audit-store";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest,
-  type RollbackCheckpointStoreV1 } from "../../security";
+  type AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import { CompletionGateStoreV1 } from "./store";
 import { completionAcceptanceProfileSchemaV1, completionReviewSchemaV1, completionFindingSchemaV1 } from "./schemas";
-import { stageCompletionCheckpoint } from "./staged-checkpoint";
+import { stageAsyncCompletionCheckpoint } from "./async-staged-checkpoint";
 import { nativeRevisionContextSchema } from "./native-revision-context";
 import { nativeReviewRequestSchema as requestSchema, nativeReviewPlanTag, verifyNativeReviewPlan,
   nativeReviewTarget, nativeReviewRevision, type NativeReviewPlan as Plan, type NativeReviewPlanRow as Row } from "./native-review-plan";
@@ -26,7 +26,7 @@ export class NativeResultSubmissionService {
   private readonly harnessKey: Uint8Array;
   private readonly results: NativeResultStore;
   constructor(private readonly db: DatabaseClient, config: { integrityKey: Uint8Array; harnessIntegrityKey: Uint8Array;
-    checkpoints: RollbackCheckpointStoreV1; results: NativeResultReadConfiguration }) {
+    checkpoints: AwaitableRollbackCheckpointStoreV1; results: NativeResultReadConfiguration }) {
     if (config.integrityKey.length !== 32 || config.harnessIntegrityKey.length !== 32) reject();
     this.key = Uint8Array.from(config.integrityKey); this.harnessKey = Uint8Array.from(config.harnessIntegrityKey);
     this.checkpoints = Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints),
@@ -34,7 +34,7 @@ export class NativeResultSubmissionService {
     this.results = new NativeResultStore(db, this.harnessKey, { ...config.results,
       storage: { read: config.results.storage.read.bind(config.results.storage) } });
   }
-  private readonly checkpoints: RollbackCheckpointStoreV1;
+  private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private tag(plan: Plan) { return nativeReviewPlanTag(this.key, plan); }
   private verify(row: Row) { return verifyNativeReviewPlan(this.key, row); }
   private async bound(tx: DatabaseSession, tenantId: string, runId: string) {
@@ -162,7 +162,7 @@ export class NativeResultSubmissionService {
   async submit(tenantId: string, runId: string) {
     try {
       id.parse(tenantId); id.parse(runId);
-      const staged = stageCompletionCheckpoint(this.checkpoints, tenantId);
+      const staged = stageAsyncCompletionCheckpoint(this.checkpoints, tenantId);
       return await this.db.transactionWithPreCommitCheck(async tx => {
         const { run, job } = await this.bound(tx, tenantId, runId);
         const row = (await tx.query<Row>("SELECT * FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [tenantId, runId])).rows[0];

@@ -5,10 +5,10 @@ import { jobRecordSchema } from "../../domain/v1";
 import { NativeResultStore, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, CompletionGateErrorV1, type CompletionAcceptanceProfileV1, type CompletionReviewV1,
   type CompletionFindingV1, type CompletionRiskV1 } from "../../completion-gate/v1";
-import { stageCompletionCheckpoint } from "../../completion-gate/v1/staged-checkpoint";
+import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
 import { readNativeReviewPlan, verifyNativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
 import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest } from "../../security";
-import type { RollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
+import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import { appendAuditWith } from "../../audit/audit-store";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { WebProjectService } from "./project-service";
@@ -17,7 +17,7 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { taskReviewDraftSchema, taskReviewReceiptSchema, taskReviewNoteSchema, taskReviewOptionsSchema,
   type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
 
-export interface WebTaskReviewConfiguration { integrityKey: Uint8Array; checkpoints: RollbackCheckpointStoreV1 }
+export interface WebTaskReviewConfiguration { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 }
 type Row = { tenant_id: string; identity_id: string; idempotency_key: string; project_id: string; job_id: string;
   artifact_id: string; target_id: string; review_id: string; request_digest: string; command: unknown;
   auth_tag: string; occurred_at: string | Date };
@@ -29,7 +29,7 @@ const risks: CompletionRiskV1[] = ["low", "medium", "high", "critical"];
 /** Owner quality decisions only. No acceptance policy bootstrap, effect approval, revision dispatch or agent port. */
 export class WebTaskReviewService {
   private readonly integrityKey: Uint8Array;
-  private readonly checkpoints: RollbackCheckpointStoreV1;
+  private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly results: NativeResultStore;
   private readonly projects: WebProjectService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
@@ -141,11 +141,11 @@ export class WebTaskReviewService {
     this.ids(projectId, jobId); const parsed = taskReviewDraftSchema.safeParse(value);
     if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(key)) throw new WebAccessError("invalid_request");
     const draft = parsed.data; try { assertNoSecretMaterial(draft); } catch { throw new WebAccessError("invalid_request"); }
-    const staged = stageCompletionCheckpoint(this.checkpoints, this.scope.tenantId);
+    const staged = stageAsyncCompletionCheckpoint(this.checkpoints, this.scope.tenantId);
     // Wrap the existing final session/grant check, not the SQL callback. No external anchor changes
     // until all ordinary writes and authorization checks have succeeded.
     const guarded: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
-      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); staged.flush(); }) };
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); await staged.flush(check); await check(); }) };
     return new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       const context = await this.context(tx, actor, projectId, jobId, draft.artifactId, draft.targetId, this.gate(tx, staged.checkpoints));
       actor.require("tasks.reviews.record", projectId, true, context.risk);

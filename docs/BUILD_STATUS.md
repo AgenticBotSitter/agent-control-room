@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest checkpoint path — E67:** [Asynchronous integration](research/REUSE_E67_ASYNC_CHECKPOINT_PATH.md)
+connects awaited checkpoint reads/writes to Completion Gate and active result/review
+configuration, reusing the existing staging checks. New tests prove delayed storage,
+initialization refusal and expiry after an external write without a false saved review.
+243 focused/regression tests, TypeScript, lint, the VPS build, 41 compiled checks and
+four queue/schema journeys pass. Durable storage, shared transport cancellation and
+restore acceptance remain unfinished. No live resource or deployment is claimed.
+
 **Latest database integration — E66:** [Awaited pre-commit](research/REUSE_E66_ASYNC_PRECOMMIT.md)
 updates database adapters and application wrappers to await external pre-commit work,
 retain deadlines and recheck authority. Final phase evidence: 3,082 pass, zero fail,

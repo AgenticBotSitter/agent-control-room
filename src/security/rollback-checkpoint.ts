@@ -23,6 +23,15 @@ export interface RollbackCheckpointStoreV1 {
   advance(expectedCheckpointDigest: string, checkpoint: RollbackCheckpointV1): void;
 }
 
+/** Awaitable integration port for active database-backed consumers. This does not
+ * certify durability or relax the independent-storage requirement above. Historical
+ * exact in-memory simulation bindings continue to use the synchronous port. */
+export interface AwaitableRollbackCheckpointStoreV1 {
+  read(scope: string): RollbackCheckpointV1 | undefined | Promise<RollbackCheckpointV1 | undefined>;
+  initialize(checkpoint: RollbackCheckpointV1): void | Promise<void>;
+  advance(expectedCheckpointDigest: string, checkpoint: RollbackCheckpointV1): void | Promise<void>;
+}
+
 export function parseRollbackCheckpointV1(value: unknown): RollbackCheckpointV1 {
   const keys = ["recordCount", "revision", "schema", "scope", "stateAuthTag", "stateDigest"];
   const item = exactHostDataSnapshotV1(value, keys);

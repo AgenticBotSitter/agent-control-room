@@ -5,7 +5,7 @@ import { DOMAIN_CONTRACT_VERSION, authorityEnvelopeSchema, jobRecordSchema, requ
 import { CanonicalStore } from "../../persistence/canonical-store";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { appendAuditWith } from "../../audit/audit-store";
-import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest, type RollbackCheckpointStoreV1 } from "../../security";
+import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest, type AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import { CompletionGateStoreV1, completionAcceptanceProfileSchemaV1, completionReviewSchemaV1,
   completionFindingSchemaV1 } from "../../completion-gate/v1";
 import { NativeResultSubmissionService } from "../../completion-gate/v1/native-result-submission";
@@ -62,12 +62,12 @@ export class TaskExecutionPlanner {
   private readonly template: NativeTaskTemplate;
   private readonly key: Uint8Array;
   private readonly reviewKey: Uint8Array;
-  private readonly checkpoints: RollbackCheckpointStoreV1;
+  private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly projects: WebProjectService;
   private readonly revisionSource?: NativeResultSubmissionService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: { template: NativeTaskTemplate; integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
-      checkpoints: RollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array }, private readonly clock: () => number = Date.now,
+      checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array }, private readonly clock: () => number = Date.now,
     revisionResults?: ConstructorParameters<typeof NativeResultSubmissionService>[1]) {
     this.template = nativeTaskTemplateSchema.parse(config.template); assertNoSecretMaterial(this.template);
     if (!(config.integrityKey instanceof Uint8Array) || config.integrityKey.length !== 32

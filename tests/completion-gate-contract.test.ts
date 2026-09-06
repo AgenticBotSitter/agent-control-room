@@ -45,6 +45,27 @@ function profile(overrides:Partial<CompletionAcceptanceProfileV1>={}):Completion
   minimumRisk:"medium",maximumRevisionRounds:1,automaticLowRiskDisposition:false,createdBy:{actorId:"human:owner",actorType:"human"},
   createdAt:"2026-08-28T13:00:00.000Z",...overrides};}
 
+test("Completion Gate awaits asynchronous initialization and refuses failed external storage", async t => {
+  for (const refuses of [false, true]) await t.test(String(refuses), async t => {
+    const f = await setup(); t.after(() => f.raw.close());
+    const freshTenant = "tenant:async-provision";
+    await f.raw.query("INSERT INTO tenants(id,display_name) VALUES($1,'Synthetic async tenant')", [freshTenant]);
+    let entered!: () => void, release!: () => void, settled = false;
+    const started = new Promise<void>(resolve => { entered = resolve; }), pending = new Promise<void>(resolve => { release = resolve; });
+    const store = new CompletionGateStoreV1(adaptPglite(f.raw), integrityKey, {
+      async read(scope) { return f.checkpoints.read(scope); },
+      async initialize(checkpoint) { entered(); await pending; if (refuses) throw new Error("synthetic_init_refused"); f.checkpoints.initialize(checkpoint); },
+      async advance(expected, next) { f.checkpoints.advance(expected, next); },
+    });
+    const running = store.provisionTenant(freshTenant);
+    void running.then(() => { settled = true; }, () => { settled = true; });
+    const observed = refuses ? assert.rejects(running, error => error instanceof CompletionGateErrorV1 && error.safeCode === "integrity_failed") : running;
+    await started; assert.equal(settled, false); release(); await observed;
+    assert.equal((await f.raw.query("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1", [freshTenant])).rows.length, refuses ? 0 : 1);
+    assert.equal(f.checkpoints.read(`completion-gate:${freshTenant}`)?.revision, refuses ? undefined : 1);
+  });
+});
+
 function target(item:CompletionAcceptanceProfileV1,overrides:Partial<CompletionReviewTargetV1>={}):CompletionReviewTargetV1{return{
   schemaVersion:COMPLETION_GATE_SCHEMA_VERSION_V1,id:"target:cr8b:0",tenantId,projectId,kind:"code",subjectId:"artifact:cr8b",
   subjectDigest:digest("artifact-v0"),acceptanceProfileId:item.id,acceptanceProfileDigest:sha256Digest(item),producer,rootTargetId:"target:cr8b:0",

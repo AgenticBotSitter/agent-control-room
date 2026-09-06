@@ -9,7 +9,7 @@ import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { NativeResultStore, type NativeResultReadConfiguration, type NativeResultReceipt } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { readNativeReviewPlan, verifyNativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
-import type { RollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
+import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { WebTaskReviewConfiguration } from "./task-review-service";
 import type { ManualVerificationScenario } from "./task-verification-service";
 import { taskResultMetadataSchema, boundedTaskResultsPage, taskResultContentSchema, taskReviewEvidenceSchema } from "./task-result-wire";
@@ -55,7 +55,7 @@ export interface WebTaskKeys {
   harnessIntegrityKey?: Uint8Array;
   ideaIntegrityKey?: Uint8Array;
   results?: NativeResultReadConfiguration;
-  reviews?: { integrityKey: Uint8Array; checkpoints: RollbackCheckpointStoreV1 };
+  reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
   manualVerificationScenarios?: readonly ManualVerificationScenario[];
 }

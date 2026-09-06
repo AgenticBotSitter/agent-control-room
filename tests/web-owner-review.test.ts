@@ -14,6 +14,43 @@ import { request, origin } from "./helpers/web-foundation";
 const key = "owner-review-command-001";
 const scope = `completion-gate:${binding.tenantId}`;
 
+test("owner review awaits storage and rechecks permission after the external reply", async t => {
+  for (const mode of ["success", "refused", "expired"] as const) await t.test(mode, async t => {
+    const f = await ownerReviewFixture(); t.after(f.close);
+    const checkpoint = f.checkpoints.read(scope), before = (await f.db.query("SELECT id FROM control_completion_gate_records")).rows.length;
+    let entered!: () => void, release!: () => void, writes = 0, locked = false, now = instant + 6000;
+    const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
+    const db = intercept(f.db, sql => { if (sql.includes("control_completion_gate_integrity") && sql.includes("FOR UPDATE")) locked = true; });
+    const reviews = f.createReviews(db, () => now, { checkpoints: {
+      async read(requested) { assert.equal(locked, true); return f.checkpoints.read(requested); },
+      initialize() { throw new Error("unexpected_provisioning"); },
+      async advance(expected, next) {
+        writes++; entered(); await wait;
+        if (mode === "refused") throw new Error("synthetic_storage_refusal");
+        f.checkpoints.advance(expected, next);
+      },
+    } });
+    let settled = false;
+    const draft = mode === "expired" ? { ...f.draft, decision: "changes_requested" as const, feedback: "Synthetic revision needed." } : f.draft;
+    const running = reviews.record(f.identity, binding.projectId, binding.jobId, draft, key);
+    void running.then(() => { settled = true; }, () => { settled = true; });
+    const observed = mode === "success" ? running : assert.rejects(running);
+    await started; assert.equal(settled, false); assert.equal(writes, 1);
+    if (mode === "expired") now = Date.parse(f.identity.expiresAt) + 1;
+    release(); await observed; assert.equal(writes, 1);
+    if (mode === "success") assert.equal((await f.reviewStore.snapshot(binding.tenantId, f.target.id)).acceptedReviewIds.length, 1);
+    else {
+      assert.equal((await f.db.query("SELECT id FROM control_completion_gate_records")).rows.length, before);
+      assert.equal((await f.db.query("SELECT * FROM control_web_task_review_commands")).rows.length, 0);
+      if (mode === "refused") assert.deepEqual(f.checkpoints.read(scope), checkpoint);
+      else { // External advance plus SQL rollback is unresolved, never reset into a pass.
+        assert.equal(f.checkpoints.read(scope)!.revision, checkpoint!.revision + 1);
+        await assert.rejects(f.reviewStore.snapshot(binding.tenantId, f.target.id));
+      }
+    }
+  });
+});
+
 test("owner quality acceptance records one immutable review and waits for existing required verification", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
   assert.equal((await f.reviews.options(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId, f.target.id)).canReview, true);

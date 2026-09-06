@@ -3,9 +3,9 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { jobRecordSchema } from "../../domain/v1";
 import { NativeResultStore, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionVerificationV1, type CompletionRiskV1 } from "../../completion-gate/v1";
-import { stageCompletionCheckpoint } from "../../completion-gate/v1/staged-checkpoint";
+import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
 import { readNativeReviewPlan, verifyNativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
-import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest, type RollbackCheckpointStoreV1 } from "../../security";
+import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest, type AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import { appendAuditWith } from "../../audit/audit-store";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { WebProjectService } from "./project-service";
@@ -18,7 +18,7 @@ const descriptorSchema = z.object({ scenarioId: id, label: z.string().trim().min
   acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
 export type ManualVerificationScenario = z.infer<typeof descriptorSchema>;
 export interface WebTaskVerificationConfiguration {
-  integrityKey: Uint8Array; harnessIntegrityKey: Uint8Array; checkpoints: RollbackCheckpointStoreV1;
+  integrityKey: Uint8Array; harnessIntegrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1;
   results: NativeResultReadConfiguration; ideaIntegrityKey?: Uint8Array;
   manualVerificationScenarios: readonly ManualVerificationScenario[];
 }
@@ -29,7 +29,7 @@ const risks: CompletionRiskV1[] = ["low", "medium", "high", "critical"];
 /** Optional human evidence for explicitly configured scenarios, not an automated verifier or finish command. */
 export class WebTaskVerificationService {
   private readonly key: Uint8Array;
-  private readonly checkpoints: RollbackCheckpointStoreV1;
+  private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly descriptors: readonly ManualVerificationScenario[];
   private readonly results: NativeResultStore;
   private readonly projects: WebProjectService;
@@ -117,9 +117,9 @@ export class WebTaskVerificationService {
     this.ids(projectId, jobId); const parsed = taskVerificationDraftSchema.safeParse(input);
     if (!parsed.success) throw new WebAccessError("invalid_request");
     const draft = parsed.data; try { assertNoSecretMaterial(draft); } catch { throw new WebAccessError("invalid_request"); }
-    const staged = stageCompletionCheckpoint(this.checkpoints, this.scope.tenantId);
+    const staged = stageAsyncCompletionCheckpoint(this.checkpoints, this.scope.tenantId);
     const guarded: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
-      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); staged.flush(); }) };
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); await staged.flush(check); await check(); }) };
     return new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       const context = await this.context(tx, actor, projectId, jobId, draft.artifactId, draft.targetId, this.gate(tx, staged.checkpoints));
       actor.require("tasks.reviews.record", projectId, true, context.risk);
