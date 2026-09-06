@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { verifyPgBossApplicationPermissions } from "../../persistence/pg-boss-application-permissions";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
@@ -97,36 +98,40 @@ export async function readPrivateWebSchemaDigest(db: DatabaseSession) {
   return createHash("sha256").update(JSON.stringify(result.rows)).digest("hex");
 }
 
+/** Trusted bootstrap choice, never an HTTP permission policy. Omitted stays queue-free. */
+export type NativeQueueDatabaseOption = { nativeQueue: true };
+
 /** Read-only setup gate; never grants, migrates, creates an owner, or repairs a failed prerequisite. */
 export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, "web");
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "web", queue);
 }
 
 /** Exact task-coordinator profile. No request-selected role or caller-supplied permission policy. */
 export async function verifyTaskCoordinatorDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, "coordinator");
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "coordinator", queue);
 }
 
 /** Fixed, separately owned native-result writer. It cannot plan, dispatch or accept quality. */
 export async function verifyNativeResultDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, "results");
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "results", queue);
 }
 
 export async function verifyNativeEvidenceDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, "evidence");
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "evidence", queue);
 }
 
 export async function verifyNativeSessionDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, "sessions");
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "sessions", queue);
 }
 
 async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions") {
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions", queue?: NativeQueueDatabaseOption) {
+  const withQueue = queue?.nativeQueue === true;
   const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", sessions: "control_room_native_sessions" }[kind];
   const allowedReads = kind === "sessions" ? sessionReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
   const allowedInserts = kind === "sessions" ? sessionInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
@@ -156,7 +161,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           WHERE a.privilege_type='ALTER SYSTEM' AND (a.grantee=0 OR
             a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER'))))
         OR EXISTS(SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema'
-          AND (nspname<>'public' OR has_schema_privilege(oid,'CREATE') OR pg_has_role(nspowner,'MEMBER')))
+          AND ((nspname<>'public' AND NOT ($1 AND nspname='control_room_queue')) OR has_schema_privilege(oid,'CREATE') OR pg_has_role(nspowner,'MEMBER')))
         OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
           AND (pg_has_role(c.relowner,'MEMBER') OR c.relkind='S' AND
             (has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE') OR has_sequence_privilege(c.oid,'USAGE'))))
@@ -164,8 +169,9 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           AND (has_function_privilege(p.oid,'EXECUTE') OR pg_has_role(p.proowner,'MEMBER') OR p.prosecdef))
         OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
-        OR NOT has_schema_privilege('public','USAGE') AS unsafe`)).rows[0];
+        OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue])).rows[0];
       if (unsafe?.unsafe !== false) fail();
+      if (withQueue) await verifyPgBossApplicationPermissions(tx, kind === "coordinator");
       const columns = (await tx.query<{ table_name: string; column_name: string; read: boolean; insert: boolean; update: boolean; extra: boolean }>(`
         SELECT c.relname AS table_name,a.attname AS column_name,
           has_column_privilege(c.oid,a.attnum,'SELECT') AS read,

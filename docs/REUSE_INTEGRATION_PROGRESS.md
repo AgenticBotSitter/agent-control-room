@@ -106,6 +106,12 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E13 queue coexistence](research/REUSE_E13_APPLICATION_QUEUE_ROLES.md) adds the offline
+producer grant script and explicit combined database-preflight option. Default gates
+remain queue-free; opt-in requires producer-only coordinator privileges and no queue
+access for web/other application roles. 32 package and 25 database/startup checks pass.
+Actual startup selection and real PostgreSQL qualification remain unfinished.
+
 [E12 coordinator submission](research/REUSE_E12_COORDINATOR_SUBMISSION.md) wires the
 prepared port through owned admission/transaction/drain checks. Default actual-package
 submission tests now use that lifecycle (20 pass); lifecycle/startup suites pass 28.

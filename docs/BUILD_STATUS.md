@@ -66,6 +66,12 @@ transaction/drain fences. The private app exposes it only to trusted server comp
 20 package checks and 28 lifecycle/startup checks pass. No browser route or production
 startup activation; queue-schema/grant preflight and bootstrap ownership remain next.
 
+**E13 — application queue permissions:** [Evidence](research/REUSE_E13_APPLICATION_QUEUE_ROLES.md)
+records offline producer grants and adds explicit queue-schema coexistence to database
+preflight without granting web queue access. 32 package checks and 25 existing
+database/startup checks pass. Startup still does not select this option; worker identity,
+schema/version acceptance, lifecycle composition and real-PG evidence remain open.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

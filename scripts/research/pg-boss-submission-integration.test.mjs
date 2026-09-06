@@ -10,6 +10,8 @@ import { sha256Digest } from '../../src/security/index.ts';
 import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
 import { createTaskCoordinatorLifecycle } from '../../src/web/v1/task-coordinator-lifecycle.ts';
 import { enrollment } from '../../tests/hermes-native-fixture.ts';
+import { verifyPgBossApplicationPermissions } from '../../src/persistence/pg-boss-application-permissions.ts';
+import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase } from '../../src/web/v1/private-database-preflight.ts';
 import { nativeEnvelopeSession } from '../../tests/helpers/native-envelope-session.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -234,15 +236,45 @@ test('coordinator role can submit with exact queue grants; private web role rema
   const f = await fixture(t); await f.save();
   await f.raw.exec(await readFile('db/roles/task_coordinator_roles.sql', 'utf8'));
   await f.raw.exec(await readFile('db/roles/private_web_roles.sql', 'utf8'));
-  await f.raw.exec(`GRANT USAGE ON SCHEMA control_room_queue TO control_room_task_coordinator;
-    GRANT SELECT ON control_room_queue.version,control_room_queue.queue TO control_room_task_coordinator;
-    GRANT UPDATE(name) ON control_room_queue.queue TO control_room_task_coordinator;
-    GRANT SELECT,INSERT ON control_room_queue.job,control_room_queue.job_common TO control_room_task_coordinator;`);
+  await f.raw.exec(await readFile('db/roles/native_queue_producer_roles.sql', 'utf8'));
   await f.raw.exec('SET ROLE control_room_task_coordinator');
-  try { assert.equal((await enqueue(f)).replayed, false); }
+  try { await verifyPgBossApplicationPermissions(f.db, true); assert.equal((await enqueue(f)).replayed, false); }
   finally { await f.raw.exec('RESET ROLE'); }
   await f.raw.exec('SET ROLE control_room_private_web');
-  try { await assert.rejects(f.db.query('SELECT * FROM control_room_queue.job_common')); }
+  try { await verifyPgBossApplicationPermissions(f.db, false); await assert.rejects(f.db.query('SELECT * FROM control_room_queue.job_common')); }
   finally { await f.raw.exec('RESET ROLE'); }
+  await f.raw.exec(`CREATE ROLE queue_coordinator_test LOGIN INHERIT;
+    GRANT control_room_task_coordinator TO queue_coordinator_test;
+    CREATE ROLE queue_web_test LOGIN INHERIT;
+    GRANT control_room_private_web TO queue_web_test;
+    SET search_path=pg_catalog, public; SET statement_timeout='5s'; SET lock_timeout='2s';
+    SET transaction_timeout='10s'; SET idle_in_transaction_session_timeout='5s'`);
+  // Existing PGlite limitation: TEMP metadata only is injected. All ACL, schema,
+  // owner, session identity and role checks execute against actual catalogs.
+  const checked = { ...f.db, transaction: work => f.db.transaction(tx => work({ async query(sql, values) {
+    const result = await tx.query(sql, values);
+    if (sql.includes('AS database_temp')) result.rows = result.rows.map(row => ({ ...row, database_temp: false }));
+    return result;
+  } })) };
+  const scope = { ...f.scope, ownerIdentityId: 'identity:test', issuer: f.accessTrust.issuer };
+  const config = { host: '127.0.0.1', port: 5432, database: 'template1', username: 'queue_coordinator_test', password: 'synthetic-only', majorVersion: 17 };
+  await f.raw.exec('SET SESSION AUTHORIZATION queue_coordinator_test');
+  try {
+    await assert.rejects(verifyTaskCoordinatorDatabase(checked, config, scope, f.clock()), /preflight_failed/);
+    await verifyTaskCoordinatorDatabase(checked, config, scope, f.clock(), { nativeQueue: true });
+  } finally { await f.raw.exec('SET SESSION AUTHORIZATION postgres'); }
+  for (const [change, restore] of [
+    ['GRANT UPDATE(retry_limit) ON control_room_queue.queue TO control_room_task_coordinator', 'REVOKE UPDATE(retry_limit) ON control_room_queue.queue FROM control_room_task_coordinator'],
+    ['REVOKE UPDATE(name) ON control_room_queue.queue FROM control_room_task_coordinator', 'GRANT UPDATE(name) ON control_room_queue.queue TO control_room_task_coordinator'],
+    ['GRANT DELETE ON control_room_queue.job_common TO control_room_task_coordinator', 'REVOKE DELETE ON control_room_queue.job_common FROM control_room_task_coordinator'],
+    ['CREATE SCHEMA synthetic_unapproved', 'DROP SCHEMA synthetic_unapproved'],
+  ]) {
+    await f.raw.exec(change); await f.raw.exec('SET SESSION AUTHORIZATION queue_coordinator_test');
+    try { await assert.rejects(verifyTaskCoordinatorDatabase(checked, config, scope, f.clock(), { nativeQueue: true }), /preflight_failed/); }
+    finally { await f.raw.exec('SET SESSION AUTHORIZATION postgres'); await f.raw.exec(restore); }
+  }
+  await f.raw.exec('SET SESSION AUTHORIZATION queue_web_test');
+  try { await verifyPrivateDatabase(checked, { ...config, username: 'queue_web_test' }, scope, f.clock(), { nativeQueue: true }); }
+  finally { await f.raw.exec('SET SESSION AUTHORIZATION postgres'); }
   assert.equal((await f.admin.fetch(spec.name)).length, 1);
 });
