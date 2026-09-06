@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor verification separated:** Preview-only metadata assertions now have their
+own test, retained in default verification; standalone checks no longer require hosting
+files. [Test dependency follow-up](PUBLIC_RUNTIME_AND_TEST_INPUTS.md) records 23 seeds,
+377 tracked paths and only expected generated imports. All 53 combined compiled/profile/
+launcher checks, two inventory diagnostics, TypeScript and targeted lint pass. No
+full default lifecycle or isolated public-copy build is claimed.
+
 **Runtime/test input review:** [Filesystem dependencies](PUBLIC_RUNTIME_AND_TEST_INPUTS.md)
 identifies required client assets, migration/role SQL, private runtime-data boundaries
 and a remaining preview-specific assertion in contributor test preparation. Inventory

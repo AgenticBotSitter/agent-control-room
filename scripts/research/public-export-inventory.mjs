@@ -6,6 +6,9 @@ import path from 'node:path';
 import ts from 'typescript';
 
 const root = process.cwd();
+const args = process.argv.slice(2);
+if (args.length > 1 || args.length === 1 && args[0] !== '--with-compiled-tests') throw new Error('Unknown inventory option');
+const includeCompiledTests = args.length === 1;
 const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 const baseline = git(['rev-parse', 'HEAD']).trim();
 const files = git(['ls-files', '-z']).split('\0').filter(Boolean).sort();
@@ -20,6 +23,11 @@ seeds.push('vite.vps.config.ts', 'scripts/build-vps.mjs', 'scripts/run-private-v
   'src/web/v1/private-task-application.ts', 'src/web/v1/private-task-startup.ts',
   'src/web/v1/installed-native-queue.ts', 'src/persistence/pg-boss-schema-inspection.ts',
   'src/web/v1/private-task-host.ts');
+const testSeeds = includeCompiledTests ? [...new Set([
+  ...(JSON.parse(readFileSync('package.json', 'utf8')).scripts['test:build:vps'].match(/tests\/[A-Za-z0-9_./-]+\.test\.[cm]?[jt]sx?/g) ?? []),
+  'tests/vps-build-profile.test.ts', 'tests/private-vps-launcher.test.mjs',
+])] : [];
+seeds.push(...testSeeds);
 const pending = [...seeds], closure = new Set(), unresolved = [], dynamic = [], external = new Set();
 while (pending.length) {
   const file = pending.pop();
@@ -82,4 +90,4 @@ console.log(JSON.stringify({ schema: 'control-room.public-export-planning-invent
     'Built-output imports from the launcher are expected outside tracked source; builds must supply them.',
     'Untracked and ignored files are not inventoried; never copy them implicitly.',
     'Private planning report; contains internal paths and must not be published.'],
-  closureCount: closure.size, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));
+  closureCount: closure.size, testSeeds, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));

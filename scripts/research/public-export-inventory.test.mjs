@@ -24,3 +24,14 @@ test('planning inventory covers current tracked inputs without approving their p
   assert.ok(report.unresolved.every(entry => entry.file.startsWith('dist-vps/')));
   assert.ok(report.dynamic.some(entry => entry.file === 'scripts/run-private-vps.mjs'));
 });
+
+test('compiled-test inventory follows selected tests and helpers without executing package commands', () => {
+  const report = JSON.parse(execFileSync(process.execPath, ['scripts/research/public-export-inventory.mjs', '--with-compiled-tests'],
+    { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
+  assert.ok(report.testSeeds.includes('tests/vps-built-task-startup.test.mjs'));
+  assert.ok(report.testSeeds.includes('tests/vps-built-launcher.test.mjs'));
+  assert.ok(!report.testSeeds.includes('tests/sites-preview-build-profile.test.ts'));
+  for (const file of ['tests/helpers/task-startup.ts', 'tests/helpers/web-foundation.ts'])
+    assert.equal(report.entries.find(entry => entry.path === file).reason, 'application_or_build_import');
+  assert.equal(report.publicationApproved, false);
+});

@@ -1,5 +1,20 @@
 # Non-import inputs for the public contributor candidate
 
+## Follow-up: preview assertions separated and test closure traced
+
+The hosting-metadata and preview-delegation assertions now live in
+`tests/sites-preview-build-profile.test.ts`, registered alongside the standalone profile
+in both the default `test` and `test:cr14b` scripts. They were moved, not waived.
+Standalone profile checks no longer read `.openai/hosting.json` or `vite.config.ts`.
+
+The inventory's optional `--with-compiled-tests` mode reads (does not execute) the
+explicit test paths in `test:build:vps`, adds standalone-profile/launcher tests and
+traces their imports. At this follow-up it covers 23 test seeds and 377 tracked paths.
+All unresolved static paths are nine distinct expected generated server outputs; no
+unexpected missing source path was observed. SQL/CSS/runtime reads still need the
+manual accounting below. Two inventory diagnostics and seven focused profile/script
+checks pass, as does targeted lint. The baseline JSON snapshot remains unchanged.
+
 2026-09-06. Local review findings, not license clearance or a deployment recipe.
 
 ## Required files and data boundaries
