@@ -11,6 +11,7 @@ import { taskRevisionRequestSchema } from "./task-revision-wire";
 import { TaskResultCoordinator, taskResultRequestSchema, type TaskResultOperation } from "./task-result-coordinator";
 import { NativeEvidenceReceiver, captureNativeEvidenceInput, captureNativeEvidenceSettings, nativeEvidenceRegistrationSchema, type NativeEvidenceSettings } from "./native-evidence-receiver";
 import { ManagedNativeSessions, captureManagedNativeSessionSettings, type ManagedNativeSessionSettings } from "./managed-native-sessions";
+import { createNativeHttpHost, captureNativeHttpSettings, type NativeHttpSettings } from "./native-http-host";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -29,6 +30,7 @@ export type TaskCoordinatorConfiguration = {
   resultDatabase?: TaskCoordinatorDatabase;
   evidence?: NativeEvidenceSettings & { database: TaskCoordinatorDatabase };
   sessions?: ManagedNativeSessionSettings & { database: TaskCoordinatorDatabase };
+  nativeHttp?: NativeHttpSettings;
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
 };
 
@@ -62,6 +64,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   const evidencePool = input.evidence ? capture(input.evidence.database) : undefined;
   const sessionSettings = input.sessions ? captureManagedNativeSessionSettings(input.sessions) : undefined;
+  const httpSettings = input.nativeHttp ? captureNativeHttpSettings(input.nativeHttp) : undefined;
+  if (httpSettings && (!sessionSettings || httpSettings.peers.some(peer => !sessionSettings.nodes.some(node => node.nodeId === peer.nodeId))))
+    throw new Error("task_coordinator_config_invalid");
   if (input.sessions && (!input.approvals || !evidencePool || !receiverDependenciesValid()
     || [input.database, input.resultDatabase, input.evidence?.database].some(pool => pool === input.sessions!.database || pool?.client === input.sessions!.database.client)))
     throw new Error("task_coordinator_config_invalid");
@@ -142,6 +147,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     register: receiver!.register.bind(receiver),
   }, run, check, input.clock) : undefined;
   sessionState.manager = sessions;
+  const nativeHttp = httpSettings ? createNativeHttpHost({ ...httpSettings, connections: sessions!,
+    isReady: () => !closing && !invalid && pool.isAvailable() && sessions!.isAvailable(), clock: input.clock }) : undefined;
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)) });
   const revisions = input.revisionPlanning ? Object.freeze({ ...scope,
     plan: (identity: Parameters<TaskExecutionPlanner["revise"]>[0], projectId: string, sourceJobId: string,
@@ -191,7 +198,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     ...(ownedEvidence ? { evidence: ownedEvidence } : {}),
     ...(sessions ? { connections: Object.freeze({ ...scope, attach: sessions.attach.bind(sessions),
       attachInput: sessions.attachInput.bind(sessions), attachWire: sessions.attachWire.bind(sessions) }) } : {}),
-    isReady: () => !closing && !invalid && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable()),
+    ...(nativeHttp ? { nativeHttp } : {}),
+    isReady: () => !closing && !invalid && (!nativeHttp || nativeHttp.isReady()) && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable()),
     close(): Promise<void> {
       if (closePromise) return closePromise;
       closing = true;
@@ -199,6 +207,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         let drainTimer: ReturnType<typeof setTimeout> | undefined, closeTimer: ReturnType<typeof setTimeout> | undefined;
         let timedOut = false;
         try {
+          const httpClose = nativeHttp ? await Promise.allSettled([nativeHttp.close()]) : [];
+          if (httpClose.some(result => result.status === "rejected")) timedOut = true;
           if (active) await Promise.race([new Promise<void>(resolve => { drained = resolve; }),
             new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; interrupted = true; resolve(); }, drainMs); })]);
           clearTimeout(drainTimer);

@@ -42,6 +42,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     ...(tasks.results ? { results: tasks.results } : {}),
     ...(tasks.evidence ? { evidence: tasks.evidence } : {}),
     ...(tasks.connections ? { connections: tasks.connections } : {}),
+    ...(tasks.nativeHttp ? { nativeHttp: tasks.nativeHttp } : {}),
     isReady: () => !closing && available() && tasks.isReady(),
     handle: app.handle.bind(app),
     close(): Promise<void> {

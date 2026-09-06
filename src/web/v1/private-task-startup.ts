@@ -12,10 +12,11 @@ import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task
 import { captureNativeEvidenceSettings, type NativeEvidenceSettings } from "./native-evidence-receiver";
 import { timingSafeEqual } from "node:crypto";
 import { captureManagedNativeSessionSettings, type ManagedNativeSessionSettings } from "./managed-native-sessions";
+import { captureNativeHttpSettings } from "./native-http-host";
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning"> & {
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
     evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration };
     sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration } };
@@ -58,7 +59,9 @@ function configuration(input: PrivateTaskStartupConfiguration) {
       || sessions.database.host !== database.host || sessions.database.port !== database.port || sessions.database.database !== database.database
       || [web.database.username, database.username, resultDatabase!.username, evidence.database.username].includes(sessions.database.username)
       || sessions.nodes.some(node => node.tenantId !== web.tenantId || !evidence.enrollments.some(e => e.nodeId === node.nodeId)))) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions };
+    const nativeHttp = input.coordinator.nativeHttp ? captureNativeHttpSettings(input.coordinator.nativeHttp) : undefined;
+    if (nativeHttp && (!sessions || nativeHttp.peers.some(peer => !sessions.nodes.some(node => node.nodeId === peer.nodeId)))) throw new Error();
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -129,6 +132,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
         evidence: evidenceDatabase ? { ...config.evidence!, database: evidenceDatabase } : undefined,
         sessions: sessionDatabase ? { ...config.sessions!, database: sessionDatabase } : undefined,
+        nativeHttp: config.nativeHttp,
       });
       if (!application.isReady()) throw new Error();
       dependencies.install(application);
@@ -138,6 +142,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(application.revisions ? { revisions: application.revisions } : {}),
         ...(application.results ? { results: application.results } : {}),
         ...(application.evidence ? { evidence: application.evidence } : {}),
+        ...(application.nativeHttp ? { nativeHttp: application.nativeHttp } : {}),
         ...(application.connections ? { connections: application.connections } : {}) });
     } catch {
       const results = await Promise.allSettled(application ? [application.close()] : acquired.map(pool => pool.close()));
