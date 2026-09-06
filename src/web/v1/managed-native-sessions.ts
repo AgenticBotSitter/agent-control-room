@@ -133,7 +133,8 @@ export class ManagedNativeSessions {
           if (frame.tenantId !== config.tenantId || frame.actorId !== config.nodeId || frame.keyId !== config.nodeKeyId) return fail();
           return replay.consume(frame, now);
         } }, this.limiter);
-        record.session = new ServerNodeSession(config, { authentication, clock: this.clock,
+        record.session = new ServerNodeSession(config, { authentication,
+          clock: () => { this.current(record); return this.clock(); },
           sign: async frame => { this.current(record); const result = await this.settings.sign(frame); this.current(record); return result; },
           send: async raw => { this.current(record); await transport.send(raw); this.current(record); },
         });
