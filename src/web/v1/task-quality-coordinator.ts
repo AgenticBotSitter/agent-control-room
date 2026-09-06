@@ -14,6 +14,15 @@ import { catalogProjectIdSchema } from "./project-wire";
 export type TaskQualityConfiguration = NativeQualityConfiguration & { scenarios: readonly AutomaticDocumentScenario[] };
 export const taskQualityRequestSchema = nativeQualityRequestSchema.extend({ projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict();
 export type TaskQualityRequest = z.infer<typeof taskQualityRequestSchema>;
+export const taskQualitySweepRequestSchema = z.object({ projectId: catalogProjectIdSchema,
+  afterRunId: catalogProjectIdSchema.optional() }).strict();
+export type TaskQualitySweepRequest = z.infer<typeof taskQualitySweepRequestSchema>;
+export type TaskQualitySweepItem = { runId: string; jobId: string; status: "reconciled";
+  result: Awaited<ReturnType<TaskQualityCoordinator["reconcile"]>> }
+  | { runId: string; jobId: string; status: "unavailable"; requiresReconciliation: true };
+export type TaskQualitySweepResult = { tenantId: string; workspaceId: string; projectId: string;
+  items: TaskQualitySweepItem[]; nextRunId: string | null; grantsApproval: false; grantsExecutionAuthority: false };
+const candidateRowsSchema = z.array(z.object({ run_id: catalogProjectIdSchema, job_id: catalogProjectIdSchema }).strict()).max(6);
 const scenariosSchema = z.array(z.object({ scenarioId: catalogProjectIdSchema, acceptanceProfileId: catalogProjectIdSchema,
   acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), rules: documentStructureRulesSchema }).strict()).max(50);
 const deny = (): never => { throw new Error("task_quality_unavailable"); };
@@ -48,7 +57,7 @@ export class TaskQualityCoordinator {
     this.scope = Object.freeze({ tenantId: catalogProjectIdSchema.parse(scope.tenantId), workspaceId: catalogProjectIdSchema.parse(scope.workspaceId) });
     this.config = captureTaskQualityConfiguration(config);
   }
-  private async scopeIn(tx: DatabaseSession, request: TaskQualityRequest) {
+  private async scopeIn(tx: DatabaseSession, request: Pick<TaskQualityRequest, "projectId" | "jobId" | "runId">) {
     const rows = await tx.query(`SELECT p.id FROM control_harness_runs r
       JOIN control_jobs j ON j.tenant_id=r.tenant_id AND j.id=r.job_id AND j.project_id=r.project_id
       JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
@@ -56,12 +65,67 @@ export class TaskQualityCoordinator {
     [this.scope.tenantId, request.runId, request.jobId, request.projectId, this.scope.workspaceId]);
     if (rows.rows.length !== 1) return deny();
   }
-  async reconcile(input: TaskQualityRequest, signal: AbortSignal, assertCurrent: () => void) {
-    const request = taskQualityRequestSchema.parse(input); assertNoSecretMaterial(request);
-    if (request.tenantId !== this.scope.tenantId || !(signal instanceof AbortSignal)) return deny();
+  private operation(signal: AbortSignal, assertCurrent: () => void) {
+    if (!(signal instanceof AbortSignal)) return deny();
     const time = () => { const now = this.clock(); if (!Number.isSafeInteger(now) || now < 0 || now < this.highWater) return deny(); this.highWater = now; return now; };
     const started = time(), current = () => { if (signal.aborted || time() - started > 10_000) return deny(); assertCurrent(); };
     current();
+    return { time, current };
+  }
+  /** One supplied-runtime tick over canonical saved results. No daemon, new queue or native effect.
+   * Candidate indexes are hints only; exact bindings/bytes are verified again before reconciliation.
+   * Earlier candidates may commit even if a later failure invalidates this whole call. */
+  async sweep(input: TaskQualitySweepRequest, signal: AbortSignal, assertCurrent: () => void): Promise<TaskQualitySweepResult> {
+    const request = taskQualitySweepRequestSchema.parse(input); assertNoSecretMaterial(request);
+    const { current } = this.operation(signal, assertCurrent);
+    const rows = await this.db.transactionWithPreCommitCheck(async tx => {
+      current();
+      const project = await tx.query("SELECT id FROM projects WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3 FOR SHARE",
+        [this.scope.tenantId, this.scope.workspaceId, request.projectId]);
+      current(); if (project.rows.length !== 1) return deny();
+      const selected = await tx.query(`SELECT r.id AS run_id,j.id AS job_id FROM control_harness_runs r
+        JOIN control_jobs j ON j.tenant_id=r.tenant_id AND j.project_id=r.project_id AND j.id=r.job_id
+        JOIN control_native_review_plans p ON p.tenant_id=r.tenant_id AND p.project_id=r.project_id AND p.job_id=j.id AND p.run_id=r.id
+        JOIN control_native_artifact_receipts a ON a.tenant_id=r.tenant_id AND a.project_id=r.project_id AND a.job_id=j.id AND a.run_id=r.id
+        WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.state='succeeded' AND j.state IN ('leased','running')
+          AND r.id COLLATE "C" > $3::text COLLATE "C"
+        ORDER BY r.id COLLATE "C" LIMIT 6`, [this.scope.tenantId, request.projectId, request.afterRunId ?? ""]);
+      current();
+      const candidates = candidateRowsSchema.parse(selected.rows);
+      if (candidates.some((row, index) => row.run_id <= (index ? candidates[index - 1].run_id : request.afterRunId ?? ""))) return deny();
+      return candidates;
+    }, current);
+    current();
+    const submission = new NativeResultSubmissionService(this.db, this.config), items: TaskQualitySweepItem[] = [];
+    for (const row of rows.slice(0, 5)) {
+      current();
+      try {
+        const exact = await this.db.transactionWithPreCommitCheck(async tx => {
+          current();
+          await this.scopeIn(tx, { projectId: request.projectId, jobId: row.job_id, runId: row.run_id });
+          current();
+          const context = await submission.inspectSubmitted(tx, this.scope.tenantId, row.run_id);
+          current();
+          if (context.run.projectId !== request.projectId || context.job.id !== row.job_id) return deny();
+          return taskQualityRequestSchema.parse({ tenantId: this.scope.tenantId, projectId: request.projectId,
+            runId: row.run_id, jobId: row.job_id, targetDigest: context.snapshot.targetDigest, contentHash: context.result.receipt.contentHash });
+        }, current);
+        current();
+        const result = await this.reconcile(exact, signal, current);
+        current(); items.push({ runId: row.run_id, jobId: row.job_id, status: "reconciled", result });
+      } catch {
+        // Do not convert cancellation, a stale lifecycle or an expired budget into a normal item.
+        current(); items.push({ runId: row.run_id, jobId: row.job_id, status: "unavailable", requiresReconciliation: true });
+      }
+    }
+    current();
+    return { ...this.scope, projectId: request.projectId, items, nextRunId: rows.length > 5 ? rows[4].run_id : null,
+      grantsApproval: false, grantsExecutionAuthority: false };
+  }
+  async reconcile(input: TaskQualityRequest, signal: AbortSignal, assertCurrent: () => void) {
+    const request = taskQualityRequestSchema.parse(input); assertNoSecretMaterial(request);
+    if (request.tenantId !== this.scope.tenantId) return deny();
+    const { time, current } = this.operation(signal, assertCurrent);
     const db: DatabaseClient = { query: () => { throw new Error("task_quality_transaction_required"); },
       transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
       transactionWithPreCommitCheck: (work, precommit) => { current(); return this.db.transactionWithPreCommitCheck(async tx => {
@@ -102,4 +166,5 @@ export class TaskQualityCoordinator {
   }
 }
 export type TaskQualityOperation = Readonly<{ tenantId: string; workspaceId: string;
-  reconcile: (input: TaskQualityRequest, signal: AbortSignal) => ReturnType<TaskQualityCoordinator["reconcile"]> }>;
+  reconcile: (input: TaskQualityRequest, signal: AbortSignal) => ReturnType<TaskQualityCoordinator["reconcile"]>;
+  sweep: (input: TaskQualitySweepRequest, signal: AbortSignal) => Promise<TaskQualitySweepResult> }>;

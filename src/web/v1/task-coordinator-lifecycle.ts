@@ -4,7 +4,7 @@ import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-executi
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment } from "./task-assignment-coordinator";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
-import { TaskQualityCoordinator, taskQualityRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
+import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
 import { timingSafeEqual } from "node:crypto";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
@@ -99,6 +99,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   const quality: TaskQualityOperation | undefined = qualityCoordinator ? Object.freeze({ ...scope,
+    sweep: (input, signal) => {
+      const snapshot = taskQualitySweepRequestSchema.parse(input);
+      return run(() => qualityCoordinator.sweep(snapshot, signal, check));
+    },
     reconcile: (input, signal) => {
       const snapshot = taskQualityRequestSchema.parse(input);
       return run(() => qualityCoordinator.reconcile(snapshot, signal, check));
