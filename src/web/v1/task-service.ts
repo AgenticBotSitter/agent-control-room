@@ -8,7 +8,7 @@ import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "..
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { NativeResultStore, type NativeResultReadConfiguration, type NativeResultReceipt } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
-import { readNativeReviewPlan, nativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
+import { readNativeReviewPlan, verifyNativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
 import type { RollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { WebTaskReviewConfiguration } from "./task-review-service";
 import type { ManualVerificationScenario } from "./task-verification-service";
@@ -263,10 +263,10 @@ export class WebTaskService {
       const reviews = review.targets.map(({ snapshot, reviews, verifications, findings, additionalEvidenceOmitted }) => taskReviewEvidenceSchema.parse({
         targetId: snapshot.target.id, kind: snapshot.target.kind, targetDigest: snapshot.targetDigest,
         contentHash: snapshot.target.subjectDigest, revision: snapshot.revisionNumber, supersedesTargetId: snapshot.target.supersedesTargetId ?? null,
-        status: snapshot.status, matchingArtifactIds: snapshot.target.kind === "document" ? items.filter(item => item.contentHash === snapshot.target.subjectDigest
-          && (lineage?.schema !== "control-room.native-review-plan/v2" || result.receipts.some(receipt => receipt.artifactId === item.artifactId
-            && sha256Digest(nativeReviewTarget(lineage, receipt)) === snapshot.targetDigest)))
-          .map(item => item.artifactId) : [], additionalEvidenceOmitted,
+        status: snapshot.status, matchingArtifactIds: snapshot.target.kind === "document" ? result.receipts.filter(receipt => {
+          if (receipt.contentHash !== snapshot.target.subjectDigest) return false;
+          try { verifyNativeReviewTarget(lineage, snapshot.target, receipt); return true; } catch { return false; }
+        }).map(receipt => receipt.artifactId) : [], additionalEvidenceOmitted,
         reviews: reviews.map(value => ({ id: value.id, decision: value.decision, authority: value.authority, reviewedAt: value.reviewedAt })),
         verifications: verifications.map(value => ({ id: value.id, scenarioId: value.scenarioId, outcome: value.outcome, verifiedAt: value.verifiedAt })),
         findings: findings.map(value => ({ id: value.id, code: value.code, severity: value.severity, statementDigest: value.statementDigest, raisedAt: value.raisedAt })),

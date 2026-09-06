@@ -57,7 +57,7 @@ export function nativeReviewRevision(plan: Extract<NativeReviewPlan, { schema: "
 }
 export function verifyNativeReviewTarget(plan: NativeReviewPlan | undefined, target: CompletionReviewTargetV1,
   receipt: NativeResultReceipt) {
-  if (plan?.schema === "control-room.native-review-plan/v2") {
+  if (plan) {
     if (sha256Digest(nativeReviewTarget(plan, receipt)) !== sha256Digest(target)) throw new Error("native_review_target_unavailable");
-  } else if (target.subjectId !== receipt.jobId) throw new Error("native_review_target_unavailable");
+  } else if (target.revisionNumber !== 0 || target.subjectId !== receipt.jobId) throw new Error("native_review_target_unavailable");
 }
