@@ -2432,18 +2432,18 @@ two skips and zero failures; compiled private tests35, rendered routes4, types/l
 preview build and migrations0057/138tables also passed. See
 `CR14C_NODE_RUNTIME_LOCAL_LIFECYCLE.md`. GitHub CI remains deferred under the owner pause.
 
-The wire handoff is now in progress on local branch `codex/cr14c-native-wire-handoff`:
-`cd2fc0a` adds the bounded packet codec and optional node/server wire ports; `02c2148`
-updates existing facade evidence. The new contract is
-`CR14C_NATIVE_WIRE_HANDOFF_CONTRACT.md`. Independent production review and new
-opaque-packet journey/denial tests are pending; this block is not yet accepted.
+The wire handoff is accepted locally on branch `codex/cr14c-native-wire-handoff`:
+production `cd2fc0a`, journey evidence `5bc08ff` and corrected denials `08bebff` passed
+independent review. Final combined checks passed72, with types/full lint/private build
+also passing. See `CR14C_NATIVE_WIRE_HANDOFF_ACCEPTANCE.md`. The fixture now shuttles
+opaque packets without selecting result bytes; no physical transport was activated.
 
 ```text
-Block: CR14C signed-frame and saved-result transport handoff
+Block: CR14C native-wire HTTPS host composition and startup mounting
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Node execution/reporting and server ordered input are accepted, but the fixture still selects completed snapshots and supplies their saved result bytes. Production needs ownership of that handoff before a physical transport can be qualified.
-Expected output: bounded supplied transport ports joining signed frames to exact saved result bytes, preserving ordering, cancellation, reconnect and cleanup without application-aware fixture pumping. Keep node and web adapter isolation, no scheduler or implicit start. No physical listener/provider/credential operations. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
+Why: The node and server now own exact packet/result transfer. An operational connection host must join these ports through the selected outbound HTTPS topology and startup before live qualification.
+Expected output: one coherent node/server HTTPS host composition using supplied network ports: bounded body collection, ordered packet delivery, replacement/reconnect, cancellation and cleanup through startup. Prove initial result and retained-journal recovery in injected-network tests. Keep machine identity separate from browser Access and do not widen the human HTTP adapter. No actual network/listener/provider/credential operations. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped local implementation, verification and local commits. GitHub activity and publication are paused until the owner explicitly resumes them. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

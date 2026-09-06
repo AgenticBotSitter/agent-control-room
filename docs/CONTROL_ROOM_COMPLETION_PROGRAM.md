@@ -11,13 +11,14 @@ verification and Git commits continue. Remote integration/CI remain deferred, no
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — signed-frame and saved-result transport handoff,
+**Next block:** CR14C C-WORK — native-wire HTTPS host composition and startup mounting,
 then separately gated live activation and owner signing, on Astra Medium.
 The supplied-resource node execution/reporting runtime is independently accepted in
 `CR14C_NODE_RUNTIME_ACCEPTANCE.md`, including explicit start, retained-journal reporting,
-separate recovery permissions and bounded uncertain cleanup. The fixture still performs
-the application-aware completed-snapshot/result-byte transfer; production ownership of
-that step remains. This does not activate a host, provider or listener.
+separate recovery permissions and bounded uncertain cleanup. Exact packet/result transfer
+is now independently accepted in `CR14C_NATIVE_WIRE_HANDOFF_ACCEPTANCE.md`; its fixture
+shuttles opaque packets without application-aware result injection. Physical HTTPS host
+composition and activation remain. This does not activate a host, provider or listener.
 Bounded server input ordering is accepted in `CR14C_MANAGED_NATIVE_INPUT_ACCEPTANCE.md`:
 initial receipt registration and recorded-work recovery now precede queued progress
 without a test driver choosing server operations. Node-owned saved
