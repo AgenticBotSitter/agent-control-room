@@ -111,6 +111,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       transmit: (...args) => admin(() => f.coordinator.transmitQueuedNativeDelivery(...args)),
       receipt: (session, raw, signal) => f.store.receiveDeliveryReceipt(canonicalSetupDb, session, raw, signal),
       progress: receiver.receive.bind(receiver),
+      recover: receiver.recover.bind(receiver),
     };
     const manager = new ManagedNativeSessions(authDb, settings, f.scope, routes,
       async work => { admitted++; return work(); }, () => { if (!healthy) throw new Error("synthetic_pool_unavailable"); }, f.clock);
