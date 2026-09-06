@@ -29,6 +29,10 @@ export async function nativeNodeRuntimeFixture() {
         state: "active", principalState: "active", validFrom: new Date(x.f.clock() - 60_000).toISOString() };
     } }, journal, new FixedWindowProtocolRateLimiter(120, 60)),
     transport: { ...x.local.transport, async json(wire) {
+      if (wire.operation === "stop") {
+        await wire.authorize(); x.local.calls.push(wire.operation);
+        return response({ run_id: wire.nativeRunId, status: "stopping" });
+      }
       if (wire.operation === "status" && resultText !== undefined) {
         await wire.authorize(); x.local.calls.push(wire.operation);
         return response(statusBody("completed", { session_id: x.f.prepared.binding.sessionId,

@@ -13,8 +13,9 @@ export class NativeDispatchIntakeHandler {
   private busy = false;
   private closed = false;
   private highWater = -1;
-  constructor(enrollment: unknown, private readonly journal: SqliteBridgeJournal, trust: Trust, private readonly clock: () => number) {
+  constructor(enrollment: unknown, private readonly journal: Pick<SqliteBridgeJournal, "recordNativeDelivery">, trust: Trust, private readonly clock: () => number) {
     this.enrollment = enrollmentSchema.parse(enrollment);
+    this.journal = Object.freeze({ recordNativeDelivery: journal.recordNativeDelivery.bind(journal) });
     this.trust = { approvals: trust.approvals, security: { currentServerTrustRevision: trust.security.currentServerTrustRevision.bind(trust.security) } };
   }
   close() { this.closed = true; }

@@ -29,7 +29,17 @@ const fail = (): never => { throw new Error("native_node_runtime_unavailable"); 
  * scheduling or implicit execution. Supplied journals remain owned by the host. */
 export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, dependencies: NativeNodeRuntimeDependencies) {
   const config = configuration.parse(input), clock = dependencies.clock.bind(dependencies);
-  const journal = dependencies.journal, runs = dependencies.runs;
+  const journal = dependencies.journal;
+  const deliveries = Object.freeze({ acceptedNativeDelivery: journal.acceptedNativeDelivery.bind(journal) });
+  const runs = Object.freeze({ reserve: dependencies.runs.reserve.bind(dependencies.runs),
+    load: dependencies.runs.load.bind(dependencies.runs), update: dependencies.runs.update.bind(dependencies.runs) });
+  const source = dependencies.local;
+  const stores = {
+    admissions: Object.freeze({ record: source.admissions.record.bind(source.admissions), findEquivalent: source.admissions.findEquivalent.bind(source.admissions) }),
+    executions: Object.freeze({ create: source.executions.create.bind(source.executions), load: source.executions.load.bind(source.executions), apply: source.executions.apply.bind(source.executions) }),
+    effects: Object.freeze({ claim: source.effects.claim.bind(source.effects), load: source.effects.load.bind(source.effects),
+      commitPreEffectMarker: source.effects.commitPreEffectMarker.bind(source.effects), recover: source.effects.recover.bind(source.effects) }),
+  };
   const revision = dependencies.security.currentServerTrustRevision.bind(dependencies.security), trustRevision = revision();
   const resolve = dependencies.security.resolveServerKey.bind(dependencies.security);
   const lifetime = new AbortController(), pending = new Set<Promise<unknown>>();
@@ -37,6 +47,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
   let handoff: Handoff | undefined, recovery: ReturnType<typeof createNativeRecoveryAuthority> | undefined;
   let recoveryAdapter: HermesNativeRunAdapter | undefined, recoveryRunId: string | undefined;
   let recoveryDeliveryDigest: string | undefined;
+  let sourceDigest: string | undefined;
   let operation: { kind: string; cancel: AbortController; interrupted: boolean; settled: Promise<void> } | undefined;
   const current = () => {
     const now = clock();
@@ -44,7 +55,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
     highWater = now; return now;
   };
   const recoveryDependencies: NativeRecoveryDependencies = { ...dependencies.recovery, clock, journal: runs,
-    effects: dependencies.local.effects, executions: dependencies.local.executions,
+    effects: stores.effects, executions: stores.executions,
     readCurrent: async signal => { current(); const value = await readRecovery(signal); current(); return value; },
     assertProfileCurrent: async (enrollment, now, signal) => {
       current(); const check = await profileRecovery(enrollment, now, signal); current();
@@ -62,19 +73,19 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
   dependencies.serverAuthenticator, undefined, undefined, intake);
   const reporter = new NativeObservationReporter({ queueId: config.queueId, enrollment: config.enrollment,
     serverId: config.serverId, serverKeyId: config.serverKeyId, serverPublicKeySpki: config.serverPublicKeySpki },
-  { deliveries: journal, runs, bridge, clock, assertAvailable: current });
+  { deliveries, runs, bridge, clock, assertAvailable: current });
 
   function track<T>(work: Promise<T>): Promise<T> {
     pending.add(work); void work.then(() => pending.delete(work), () => pending.delete(work)); return work;
   }
   function bounded<T>(work: () => Promise<T>, signal: AbortSignal, milliseconds: number): Promise<T> {
     current(); if (!(signal instanceof AbortSignal) || signal.aborted) return Promise.reject(new Error("native_node_runtime_unavailable"));
-    let timer: ReturnType<typeof setTimeout> | undefined, rejectCancelled!: (reason: Error) => void;
+    let rejectCancelled!: (reason: Error) => void;
     const cancelled = new Promise<never>((_, reject) => { rejectCancelled = reject; });
     const abort = () => { rejectCancelled(new Error("native_node_runtime_uncertain")); void close().catch(() => {}); };
     const stopped = () => rejectCancelled(new Error("native_node_runtime_uncertain"));
     signal.addEventListener("abort", abort, { once: true }); lifetime.signal.addEventListener("abort", stopped, { once: true });
-    timer = setTimeout(abort, milliseconds);
+    const timer = setTimeout(abort, milliseconds);
     const active = track(Promise.resolve().then(() => { current(); return work(); }).then(value => { current(); return value; }));
     return Promise.race([active, cancelled]).finally(() => {
       clearTimeout(timer); signal.removeEventListener("abort", abort); lifetime.signal.removeEventListener("abort", stopped);
@@ -97,7 +108,10 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
       const owned = { ...request, signal: cancel.signal, authorize: async () => {
         current(); if (cancel.signal.aborted) return fail(); await request.authorize(); current(); if (cancel.signal.aborted) return fail();
       } };
-      const result = await Promise.race([work(owned), stopped]); current(); return result;
+      const raw = track(Promise.resolve().then(() => {
+        current(); if (cancel.signal.aborted) return fail(); return work(owned);
+      }));
+      const result = await Promise.race([raw, stopped]); current(); return result;
     } finally { cancel.abort(); lifetime.signal.removeEventListener("abort", abort); request.signal?.removeEventListener("abort", abort);
       operationSignal?.removeEventListener("abort", abort); }
   }
@@ -108,27 +122,35 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
     })),
   };
   const readLocal = dependencies.local.readCurrent.bind(dependencies.local), profileLocal = dependencies.local.assertProfileCurrent.bind(dependencies.local);
-  const local = { ...dependencies.local, clock,
+  const local = { ...dependencies.local, ...stores, clock,
     readCurrent: async (signal: AbortSignal) => { current(); const value = await readLocal(signal); current(); return value; },
     assertProfileCurrent: async (...args: Parameters<typeof profileLocal>) => {
       current(); const check = await profileLocal(...args); current(); return () => { current(); check?.(); };
     },
   };
   const approvals = dependencies.approvals;
+  function savedSource() {
+    current(); const saved = deliveries.acceptedNativeDelivery(config.queueId); if (!saved) return fail();
+    const frame = signedNodeFrameSchema.parse(saved.frame);
+    if (frame.type !== "harness.native.dispatch" || frame.direction !== "server_to_node"
+      || frame.actorId !== config.serverId || frame.keyId !== config.serverKeyId
+      || frame.tenantId !== config.enrollment.tenantId || frame.body.queueId !== config.queueId
+      || !verifyNodeFrameSignature(frame, config.serverPublicKeySpki)) return fail();
+    matchNativeTaskDispatchReceipt(saved.receipt, frame);
+    const material = prepareNativeTaskDispatchIntake(frame.body, config.enrollment), digest = sha256Digest(saved);
+    if (sourceDigest !== undefined && sourceDigest !== digest) return fail(); sourceDigest = digest;
+    return { saved, material };
+  }
   async function prepared() {
+    savedSource();
     if (!handoff) handoff = await prepareNativeExecutionHandoff({ queueId: config.queueId, enrollment: config.enrollment,
-      serverActorId: config.serverId }, { deliveries: journal, runs, approvals,
+      serverActorId: config.serverId }, { deliveries, runs, approvals,
       security: { currentServerTrustRevision: revision, resolveServerKey: resolve }, local, transport: nativeTransport,
       clock, recovery: recoveryDependencies }, lifetime.signal);
     current(); return handoff;
   }
   function recover() {
-    current(); const saved = journal.acceptedNativeDelivery(config.queueId); if (!saved) return fail();
-    const frame = signedNodeFrameSchema.parse(saved.frame);
-    if (frame.type !== "harness.native.dispatch" || frame.actorId !== config.serverId || frame.keyId !== config.serverKeyId
-      || !verifyNodeFrameSignature(frame, config.serverPublicKeySpki)) return fail();
-    matchNativeTaskDispatchReceipt(saved.receipt, frame);
-    const material = prepareNativeTaskDispatchIntake(frame.body, config.enrollment);
+    const { saved, material } = savedSource();
     const { binding } = verifyNativeTaskApprovalBinding(material.enrollment, material.request, material.start);
     const digest = sha256Digest(saved);
     if (recoveryDeliveryDigest !== undefined && digest !== recoveryDeliveryDigest) return fail();
@@ -169,11 +191,11 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
     wireTail = active.catch(() => {});
     return active.finally(() => { wireCount--; wireBytes -= bytes; });
   }
-  const transports = new WeakSet<object>();
+  const transports = new WeakSet<object>(), ownedTransports = new Set<() => Promise<void>>();
   function close(): Promise<void> {
     if (closing) return closing;
     closed = true; lifetime.abort(); intake.close(); handoff?.close(); recovery?.close(); reporter.close();
-    const cleanup = bridge.close();
+    const cleanup = Promise.all([bridge.close(), ...[...ownedTransports].map(dispose => dispose())]);
     closing = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try { await Promise.race([Promise.all([cleanup, Promise.allSettled([...pending])]), new Promise<never>((_, reject) => {
@@ -189,8 +211,10 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
       if (!transport || transports.has(transport) || typeof transport.send !== "function" || typeof transport.close !== "function") return fail();
       transports.add(transport); const send = transport.send.bind(transport), dispose = transport.close.bind(transport);
       let closingTransport: Promise<void> | undefined;
+      const closeTransport = () => closingTransport ??= Promise.resolve().then(dispose).then(() => { ownedTransports.delete(closeTransport); });
+      ownedTransports.add(closeTransport);
       return wire(0, signal, () => bridge.open({ send: async raw => { current(); await send(raw); current(); },
-        close: () => closingTransport ??= Promise.resolve().then(dispose) }, { now: new Date(current()).toISOString(), transportIdentity }));
+        close: closeTransport }, { now: new Date(current()).toISOString(), transportIdentity }));
     },
     receive(raw: string | Uint8Array, signal: AbortSignal) {
       let frame: z.infer<typeof signedNodeFrameSchema>, copy: string | Uint8Array, size: number;

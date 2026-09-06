@@ -84,12 +84,13 @@ export class PortableNodeBridge {
     private readonly identity: BridgeIdentity,
     private readonly journal: SqliteBridgeJournal,
     private readonly signer: BridgeFrameSigner,
-    private readonly serverAuthenticator: NodeProtocolAuthenticator,
+    private readonly serverAuthenticator: Pick<NodeProtocolAuthenticator, "verify">,
     private readonly idFactory: () => string = randomUUID,
     private readonly commandHandler?: BridgeCommandHandler,
     private readonly nativeHandler?: NativeDispatchIntakeHandler,
   ) {
     this.identity = Object.freeze({ ...identity, features: Object.freeze([...identity.features]) });
+    this.serverAuthenticator = Object.freeze({ verify: serverAuthenticator.verify.bind(serverAuthenticator) });
   }
 
   nativeDeliveryChannel(): NativeDeliveryChannel | undefined {
