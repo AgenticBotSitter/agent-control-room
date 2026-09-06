@@ -2239,14 +2239,33 @@ Final sweep/inventory checks 26 and existing coordinator/startup checks 50 also 
 along with both builds, private20/rendered4, migrations0054/138, types and full lint.
 Current-head GitHub evidence remains required; no merge or deployment.
 
+Prerequisite refresh: PR #332 head `0e46c2a` passed all jobs and the final aggregate
+gate in GitHub run `34007915844`. No merge or deployment is claimed.
+
+## Durable owner-requested revision planning
+
+Production `0ced7d12232faec639761149bde69dfc86d013d3` and integrated tests `3eb546d`
+are independently reviewed. The optional internal two-role startup now creates one
+distinct proposed revision bundle from exact recorded owner feedback and actual
+previous result bytes, retaining the original review subject and predecessor identity.
+It never changes the old job/result/lease or starts an agent. A corrected late-commit
+acknowledgement fence rejects cancellation/expiry without losing the replayable saved
+job. See `CR14C_REVISION_PLANNING_ACCEPTANCE.md` for the retained finding and evidence.
+New regressions plus CI inventory: 28 passed; existing planner/lifecycle/startup: 39.
+Both builds, private22/rendered4, migrations0054/138, final types and full lint passed.
+All six actual local default lanes passed: 2,458 tests, two existing platform skips,
+zero failures/cancellations. This is durable planning only: executable v2 readers
+remain closed until revised-result submission and same-subject review are connected.
+No live agent, browser qualification, database service, merge or deployment is claimed.
+
 ## Next block
 
 ```text
 Block: CR14C bounded revised-result execution and quality integration
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Saved-result discovery is connected locally and prerequisite CI now passes. A change request still cannot produce a new bound execution/result while preserving the original review subject.
-Expected output: a durable revision/execution relationship, bounded planning and result submission, fresh review/checks, and corresponding regressions. Finish current sweep CI evidence first. PR #329 review remains a separate unresolved gate; runtime scheduling/registration/recovery and owner signing are still unconfigured.
+Why: Saved-result discovery and durable revision planning are connected locally. A planned follow-up still cannot run and submit revised bytes under the original logical review subject.
+Expected output: revised-result binding and staged submission preserving real producer identities, fresh review/checks, and corresponding read/review integration before opening v2 execution. PR #329 review remains a separate unresolved gate; runtime scheduling/registration/recovery and owner signing are still unconfigured.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

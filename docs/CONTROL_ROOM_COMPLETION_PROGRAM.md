@@ -13,6 +13,12 @@ quality/completion coordinator mounting is independently reviewed in
 Bounded project-scoped saved-result discovery is also independently reviewed in
 `CR14C_QUALITY_SWEEP_ACCEPTANCE.md`: the optional internal tick reuses exact quality
 reconciliation, but periodic scheduling and live runtime activation remain unconfigured.
+Durable owner-requested revision planning is independently reviewed in
+`CR14C_REVISION_PLANNING_ACCEPTANCE.md`: optional two-role startup creates one linked
+proposed successor from exact result/review evidence. Revised-result submission is
+not connected yet, so executable readers deliberately refuse that successor.
+The next connection must preserve the original review subject and actual producing
+job/run/artifact identities before enabling revision admission and fresh review.
 The supplied-database native quality/completion operation is independently reviewed in
 `CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md`; no running fleet is inferred. Optional human result checks are
 independently reviewed in `CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`; they are not a mandatory owner

@@ -56,3 +56,39 @@ parts and independent tests after that contract is frozen.
   omitted history, without inventing a received replacement file/run.
 - Coordinator quality sweep tests: exact validation, scope, interruption, replay and
   completion exclusion must survive the addition of a distinct revision path.
+
+## Refresh after durable revision planning
+
+Source `0ced7d12232faec639761149bde69dfc86d013d3`, independently inventoried and key
+submission/store/web/role constraints checked by root on 2026-09-05. No live test or
+normative privilege decision is implied by this inventory. The durable v2 execution
+plan now exists; `CR14C_REVISION_PLANNING_CONTRACT.md` defines its accepted boundary.
+
+`NativeResultSubmissionService` still accepts only v1 native review plans. Its
+`register`, `submit` and `inspectSubmitted` all reconstruct a producing-job subject
+at revision zero. The next implementation needs a separately authenticated v2 native
+review-plan branch retaining logical subject/predecessor and actual child producer
+bindings, then `recordRevision` with staged checkpoints rather than `registerTarget`.
+Simply removing the executable planner's v2 refusal would incorrectly create a new
+logical task instead of revising the original one.
+
+Automatic verification and native canonical completion consume `inspectSubmitted`.
+They already use the returned target for quality while completing the actual producing
+run/job. Their regression coverage must prove fresh revised-target checks and exclusion
+of the superseded original; this is not acceptance of the excluded PR #329.
+
+Protected result, owner review and manual verification paths still assume the route
+job is both artifact producer and logical review subject. Original-job routes cannot
+read a child artifact, while child routes do not find the original subject's history.
+A checked resolver must retain the actual producer job in result/command receipts and
+separately verify the original subject through authenticated lineage. Matching content
+hashes or node IDs alone does not establish that relationship.
+
+The private web configuration has the review/harness/result verification keys, but
+deliberately not the execution-plan key. The private-web SQL role has no read privilege
+on either plan table. The task coordinator can read both tables, but currently cannot
+insert native review plans. Therefore root must explicitly decide the minimal scoped
+read projection/injection/privilege change and native review-plan writer mounting;
+neither is supplied by a helper import or by the existing lifecycle configuration.
+Any role change must update exact role/preflight tests. Actual runtime activation must
+wait for the accepted revised-submission, read/review and assignment/binding path.
