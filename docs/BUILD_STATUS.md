@@ -2180,15 +2180,26 @@ Final CR14C665 and main1,160 with two existing platform skips passed. Preparatio
 before the final defensive clock-only correction. Both final builds, private20/rendered4, migrations0054/138,
 types and lint passed. Current-head GitHub CI and dependency-order integration remain; no merge is claimed.
 
+## Coverage-preserving CI maintenance
+
+The existing single GitHub job again exceeded its 35-minute budget on PR #328
+(`34002739429`); cancellation is not a pass. A separate maintenance branch based on
+reviewed `6b2a727` now keeps every default test, adds four previously focused-only
+result-checking files, and splits verification into six test lanes plus checks/builds.
+The aggregate `Verify build` check requires every dependency to succeed. See
+`CR14_CI_PARALLEL_LANES_STATUS.md` for the shell correction, isolated agent checks and
+full local/GitHub evidence. This branch does not include PR #329's product changes:
+that draft's upstream-completion correction review remains incomplete and unmerged.
+
 ## Next block
 
 ```text
-Block: CR14C bounded revisions, upstream completion and quality-event routing
+Block: CR14 CI validation and dependency-order integration readiness
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Exact quality/completion now has verified scoped coordinator composition. Result/review events still need explicit routing, and revision submission plus upstream workflow/request completion remain.
-Expected output: bounded revision/workflow and quality-event integration, then runtime registration/recovery and owner signing composition. No physical listener, real connection, setup, provider or deployment run implied.
-Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
+Why: GitHub's sequential job timed out even though earlier suites passed. Complete parallel-lane evidence is required before claiming the CI repair works.
+Expected output: all six complete test lanes, both builds, migrations and final aggregate CI result, without omitting coverage. PR #329 review remains a separate unresolved gate; bounded revisions/event routing and runtime registration/recovery remain future product work.
+Owner action: none for scoped CI verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
 ```
