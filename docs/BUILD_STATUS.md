@@ -2305,6 +2305,8 @@ No live node, PostgreSQL service, scheduler, provider call or deployment is clai
 PR #334 head `ef2a2ff` passed all jobs and the aggregate gate in GitHub run `34010550899`.
 This capacity-release branch still requires its own current-head CI and dependency-order
 integration. No merge authority is inferred.
+Published as [PR #335](https://github.com/MarvinAi5/control-room/pull/335), targeting
+the PR #334 branch. Its current-head GitHub checks remain pending verification.
 
 ## Next block
 

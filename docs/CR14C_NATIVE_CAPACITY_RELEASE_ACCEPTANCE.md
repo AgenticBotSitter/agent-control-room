@@ -77,6 +77,8 @@ None of these setup corrections repeats a native effect or changes production po
 Prerequisite PR #334 head `ef2a2ff` passed all nine GitHub jobs, including the aggregate
 gate, in run `34010550899`. Earlier documentation-predecessor run `34010528234` was
 superseded/cancelled; it is not counted as a pass. This branch needs its own current-head CI.
+Published as [PR #335](https://github.com/MarvinAi5/control-room/pull/335), stacked on
+PR #334. No merge or live deployment is included.
 
 The local fixtures use synthetic signed native events, stored bytes, real disposable
 PGlite permissions and fake transport. They do not establish physical process cessation,
