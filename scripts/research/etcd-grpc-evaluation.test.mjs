@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { boundedCheckpointCall, CheckpointCallError } from '../../src/completion-gate/v1/bounded-checkpoint-call.ts';
+import { parseEtcdCheckpointRecord } from '../../src/completion-gate/v1/etcd-checkpoint-record.ts';
 
 const root = process.env.CR_ETCD_EVAL_ROOT;
 assert.ok(root, 'Set CR_ETCD_EVAL_ROOT to the logged evaluation directory');
@@ -107,4 +108,19 @@ test('Control Room abort reaches actual generated unary cancellation', async () 
     assert.deepEqual(f.calls[0].cancellations, [grpc.status.CANCELLED]);
     assert.equal(f.closed(), 0);
   } finally { f.client.close(); }
+});
+
+test('checkpoint record parser accepts actual upstream Range decoding', () => {
+  const binding = { key: Buffer.from('synthetic/checkpoint'), scope: 'completion-gate:synthetic',
+    clusterId: '18446744073709551615', createRevision: '9007199254740993' };
+  const checkpoint = { schema: 'control-room-rollback-checkpoint/v1', scope: binding.scope,
+    revision: 1, recordCount: 0, stateDigest: `sha256:${'a'.repeat(64)}`,
+    stateAuthTag: `hmac-sha256:${'b'.repeat(64)}` };
+  const codec = KV.service.Range;
+  const response = codec.responseDeserialize(codec.responseSerialize({
+    header: { cluster_id: binding.clusterId, revision: binding.createRevision }, count: '1',
+    kvs: [{ key: binding.key, value: Buffer.from(JSON.stringify(checkpoint)),
+      create_revision: binding.createRevision, mod_revision: binding.createRevision, version: '1' }],
+  }));
+  assert.deepEqual(parseEtcdCheckpointRecord(response, binding).checkpoint, checkpoint);
 });

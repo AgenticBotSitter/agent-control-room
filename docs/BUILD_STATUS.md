@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest record mapping — E72:** [Exact checkpoint read](research/REUSE_E72_ETCD_RECORD_MAPPING.md)
+validates upstream decoded records against supplied cluster/key generation, exact scope
+and integer bounds, preserving original bytes for conditional writes. 36 focused/adjacent
+checks and seven retained-package diagnostics pass; targeted lint passes. This is not
+a provisioned durable store. Conditional advance, trusted setup and real restore tests remain.
+Final TypeScript and VPS build pass; no new full-lifecycle or compiled-suite claim.
+
 **Latest adapter — E71:** [Bounded checkpoint call](research/REUSE_E71_BOUNDED_CHECKPOINT_CALL.md)
 connects explicit cancellation/deadline to an existing unary handle with one dispatch,
 sanitized uncertain outcomes and late-reply refusal. 33 unit/adjacent checks and six
