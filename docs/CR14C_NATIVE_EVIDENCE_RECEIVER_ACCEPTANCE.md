@@ -65,3 +65,14 @@ remain covered by the earlier result writer tests, not a new owned-receiver revi
 job run in this block. Physical concurrency, session authentication resource ownership,
 transport routing/recovery, owner signing and real deployment remain unconfigured.
 Current-head GitHub CI and dependency-order integration remain required before merge.
+
+## Retained CI isolation correction
+
+PR #338 at `1dcbd95` failed the existing native-adapter isolation check in main-2
+of run `34015087088`: the receiver imported the pure registration converter from
+the adapter directory. Earlier static review verified purity but missed this stricter
+directory boundary. The converter is moved unchanged into the neutral harness/v1
+contract layer, with a compatible re-export at its old location and no change to the
+isolation test. Independent review accepted the correction. The unchanged isolation,
+observation and receiver tests passed **11** on the dependent integration checkout.
+The corrected PR head still requires its own full CI; this failure is not erased.

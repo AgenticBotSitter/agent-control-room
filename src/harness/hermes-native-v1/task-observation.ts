@@ -1,25 +1,9 @@
 import { sha256Digest } from "../../security/canonical-digest";
 import { createHash } from "node:crypto";
-import { snapshotSchema, bindingSchema, type NativeBinding, type NativeSnapshot } from "./contracts";
-import { nativeTaskRegistrationSchema, nativeTaskSnapshotBodySchema, NATIVE_HERMES_ADAPTER_ID, NATIVE_HERMES_VERSION,
-  nativeTaskProtocolId, type NativeTaskRegistration, type NativeTaskSnapshotBody } from "../v1/native-observation";
-import type { HarnessRunV1 } from "../v1/types";
-
-/** Trusted coordinator registration after admission, not authority. The receiving store checks the
- * canonical job/input/attempt/lease. Creating this value does not start a run. */
-export function nativeTaskRegistration(bindingInput: NativeBinding, inputDigest: string,
-  leaseId: string, leaseEpoch: number, createdAt: string): HarnessRunV1 {
-  const binding = bindingSchema.parse(bindingInput);
-  for (const id of [binding.tenantId, binding.nodeId, binding.projectId, binding.jobId, binding.attemptId, binding.runId]) nativeTaskProtocolId.parse(id);
-  const registration = nativeTaskRegistrationSchema.parse({ bindingDigest: sha256Digest(binding), inputDigest,
-    leaseId, leaseEpoch, deadline: new Date(binding.deadline).toISOString() });
-  if (Date.parse(createdAt) >= binding.deadline) throw new Error("native_registration_expired");
-  return { schemaVersion: "control-room-harness/v1", id: binding.runId, tenantId: binding.tenantId,
-    projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId, nodeId: binding.nodeId,
-    adapterId: NATIVE_HERMES_ADAPTER_ID, adapterVersion: "1.0.0", harness: "hermes", harnessVersion: NATIVE_HERMES_VERSION,
-    nativeSessionKeyDigest: sha256Digest(binding.sessionId), state: "discovered", resumable: false,
-    cancelState: "not_requested", createdAt, updatedAt: createdAt, lastObservedAt: createdAt, nativeTask: registration };
-}
+import { snapshotSchema, type NativeSnapshot } from "./contracts";
+import { nativeTaskRegistrationSchema, nativeTaskSnapshotBodySchema,
+  type NativeTaskRegistration, type NativeTaskSnapshotBody } from "../v1/native-observation";
+export { nativeTaskRegistration } from "../v1/native-task-registration";
 
 /** Strip native handles, prompt/output text and configuration before the signed node protocol.
  * Final text stays in the node-private journal/artifact path. Its hash is only a producer claim. */
