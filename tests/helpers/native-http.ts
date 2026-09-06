@@ -26,7 +26,7 @@ export async function nativeHttpFixture() {
     return server.handle(new Request(`${origin}${nativeHttpLimits.path}`, { method: "POST", signal,
       headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) }, body }), peer);
   }
-  function create(node = f.runtime) {
+  function createClient() {
     const commands: NativeHttpRequest[] = [], responses: { status: number; body: string }[] = [];
     let closed = false, closes = 0, loseNextResponse = false;
     const client: NativeHttpClient = {
@@ -42,15 +42,19 @@ export async function nativeHttpFixture() {
       },
       async close() { if (!closed) { closed = true; closes++; } },
     };
-    const host = createNativeHttpNodeHost(node, client, () => {}); nodeHosts.push(host);
-    return { host, node, commands, responses, closes: () => closes,
+    return { client, commands, responses, closes: () => closes,
       loseResponse: () => { loseNextResponse = true; },
       connection: () => {
         assert.ok(responses.length); return nativeHttpResponseSchema.parse(JSON.parse(responses[0].body)).connection;
       },
     };
   }
-  return { f, server, create, request, socket,
+  function create(node = f.runtime) {
+    const fixture = createClient();
+    const host = createNativeHttpNodeHost(node, fixture.client, () => {}); nodeHosts.push(host);
+    return { ...fixture, host, node };
+  }
+  return { f, server, create, createClient, request, socket,
     close: async () => {
       let failed = false;
       for (const host of nodeHosts) { try { await host.close(); } catch { failed = true; } }
