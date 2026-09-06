@@ -23,12 +23,13 @@ export function captureNativeEvidenceInput(raw: string | Uint8Array, bytes: Uint
     || bytes !== undefined && (!(bytes instanceof Uint8Array) || bytes.byteLength > 65_536)) return fail();
   return { raw: typeof raw === "string" ? raw : Uint8Array.from(raw), bytes: bytes === undefined ? undefined : Uint8Array.from(bytes) };
 }
-export type NativeEvidenceSettings = { enrollments: readonly NativeEnrollment[]; storage: NativeResultConfiguration };
+export type NativeEvidenceSettings = { integrityKey: Uint8Array; enrollments: readonly NativeEnrollment[]; storage: NativeResultConfiguration };
 export function captureNativeEvidenceSettings(value: NativeEvidenceSettings): NativeEvidenceSettings {
   if (!Array.isArray(value.enrollments) || !value.enrollments.length || value.enrollments.length > 32
+    || !(value.integrityKey instanceof Uint8Array) || value.integrityKey.length !== 32
     || !(value.storage.integrityKey instanceof Uint8Array) || value.storage.integrityKey.length !== 32
     || typeof value.storage.storage.put !== "function" || typeof value.storage.storage.read !== "function") return fail();
-  return { enrollments: value.enrollments.map(entry => enrollmentSchema.parse(entry)), storage: {
+  return { integrityKey: Uint8Array.from(value.integrityKey), enrollments: value.enrollments.map(entry => enrollmentSchema.parse(entry)), storage: {
     ...value.storage, integrityKey: Uint8Array.from(value.storage.integrityKey),
     storage: { put: value.storage.storage.put.bind(value.storage.storage), read: value.storage.storage.read.bind(value.storage.storage) },
   } };

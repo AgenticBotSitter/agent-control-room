@@ -100,7 +100,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock) : undefined;
   const resultCoordinator = resultPool ? new TaskResultCoordinator(guardedDatabase(resultPool), scope, input.planning, input.quality!, input.clock) : undefined;
   const receiver = evidencePool ? new NativeEvidenceReceiver(guardedDatabase(evidencePool), {
-    ...evidenceSettings!, scope, integrityKey: input.planning.integrityKey, harnessIntegrityKey: input.quality!.harnessIntegrityKey,
+    ...evidenceSettings!, scope, harnessIntegrityKey: input.quality!.harnessIntegrityKey,
     results: { ...scope, register: resultCoordinator!.register.bind(resultCoordinator), submit: resultCoordinator!.submit.bind(resultCoordinator) },
     clock: input.clock, assertAvailable: check,
   }) : undefined;
