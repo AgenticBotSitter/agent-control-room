@@ -228,7 +228,7 @@ export class CanonicalStore {
     });
     this.#transaction = (<T>(callback: (session: DatabaseSession) => Promise<T>) =>
       transaction.call(db, callback) as Promise<T>) as DatabaseClient["transaction"];
-    this.#transactionWithPreCommitCheck = (<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void) =>
+    this.#transactionWithPreCommitCheck = (<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void | Promise<void>) =>
       transactionWithPreCommitCheck.call(db, callback, preCommitCheck) as Promise<T>) as DatabaseClient["transactionWithPreCommitCheck"];
     canonicalStores.add(this);
     if (isRepositorySimulationDatabaseClientV1(db)) repositorySimulationCanonicalStores.add(this);

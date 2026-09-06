@@ -67,8 +67,8 @@ export function buildPrivateRehearsalFixture(nowMs: number) {
     // All accepted stores join the ONE outer transaction owned by preparation. They cannot commit it.
     const joined: DatabaseClient = Object.freeze({ query: tx.query.bind(tx),
       transaction: async <T>(callback: (session: DatabaseSession) => Promise<T>) => callback(tx),
-      transactionWithPreCommitCheck: async <T>(callback: (session: DatabaseSession) => Promise<T>, check: () => void) => {
-        const result = await callback(tx); check(); return result;
+      transactionWithPreCommitCheck: async <T>(callback: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) => {
+        const result = await callback(tx); await check(); return result;
       },
     });
     await tx.query("INSERT INTO tenants(id,display_name) VALUES($1,'Synthetic rehearsal tenant')", [rehearsalScope.tenantId]);

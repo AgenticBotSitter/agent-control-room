@@ -444,7 +444,7 @@ export class ConnectionEnrollmentIntakeServiceV1 {
       query: session.query,
       transaction: <T>(callback: (databaseSession: DatabaseSession) => Promise<T>) => callback(session),
       transactionWithPreCommitCheck: async <T>(callback: (databaseSession: DatabaseSession) => Promise<T>,
-        preCommitCheck: () => void) => { const result = await callback(session); preCommitCheck(); return result; },
+        preCommitCheck: () => void | Promise<void>) => { const result = await callback(session); await preCommitCheck(); return result; },
     });
   }
 

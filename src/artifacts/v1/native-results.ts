@@ -34,7 +34,7 @@ const selection = `r.tenant_id,r.project_id,r.job_id,r.attempt_id,r.run_id,r.art
   ON m.tenant_id=r.tenant_id AND m.id=r.artifact_id AND m.project_id=r.project_id
     AND m.job_id=r.job_id AND m.attempt_id=r.attempt_id`;
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
-  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } });
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 export const nativeResultId = (tenantId: string, runId: string) => `artifact:native:${sha256Digest({ tenantId, runId }).slice(7)}`;
 export const resultBytesHash = (bytes: Uint8Array) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 

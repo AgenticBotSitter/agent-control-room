@@ -154,7 +154,7 @@ export class NativeTaskCompletionService {
         safeMetadata: { runId: run.id, leaseId: lease.id, leaseEpoch: lease.epoch, targetDigest: request.targetDigest,
           qualityAccepted: false, grantsExecutionAuthority: false } });
       current(); return { receipt, replayed: false };
-    }, current);
+    }, () => { current(); });
     current(); return result;
   }
   async complete(input: NativeQualityRequest, assertCurrent: () => void) {
@@ -232,7 +232,7 @@ export class NativeTaskCompletionService {
         occurredAt: recordedAt, idempotencyKey: requestDigest,
         safeMetadata: { runId: run.id, attemptId: attempt.id, artifactId: receipt.artifactId, targetDigest: request.targetDigest, contentHash: request.contentHash, grantsExecutionAuthority: false } });
       current(); return { receipt, replayed: false };
-    }, current);
+    }, () => { current(); });
     current(); return result;
   }
 }

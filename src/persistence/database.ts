@@ -13,8 +13,11 @@ export interface DatabaseSession {
 
 export interface DatabaseClient extends DatabaseSession {
   transaction<T>(callback: (session: DatabaseSession) => Promise<T>): Promise<T>;
+  /** Runs the check inside the transaction and awaits it before COMMIT. Wrappers
+   * must return/await the check too; rejection must prevent commit. Production
+   * callers use the bounded driver to retain a whole-transaction deadline. */
   transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>,
-    preCommitCheck: () => void): Promise<T>;
+    preCommitCheck: () => void | Promise<void>): Promise<T>;
 }
 
 const repositorySimulationDatabaseClients = new WeakSet<object>();
@@ -68,9 +71,9 @@ export async function createRepositorySimulationDatabaseV1(options: { testOnly: 
       return transaction<T>((tx) => callback(session(tx)));
     },
     transactionWithPreCommitCheck<T>(callback: (databaseSession: DatabaseSession) => Promise<T>,
-      preCommitCheck: () => void): Promise<T> {
+      preCommitCheck: () => void | Promise<void>): Promise<T> {
       return transaction<T>(async (tx) => {
-        const result = await callback(session(tx)); preCommitCheck(); return result;
+        const result = await callback(session(tx)); await preCommitCheck(); return result;
       });
     },
   });
@@ -107,10 +110,10 @@ export function createPostgresClient(connectionString: string): {
       transaction<T>(callback: (session: DatabaseSession) => Promise<T>) {
         return sql.begin((transaction) => callback(adapt(transaction as typeof sql))) as Promise<T>;
       },
-      transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void) {
+      transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void | Promise<void>) {
         return sql.begin(async (transaction) => {
           const result = await callback(adapt(transaction as typeof sql));
-          preCommitCheck();
+          await preCommitCheck();
           return result;
         }) as Promise<T>;
       },
@@ -132,12 +135,12 @@ export function adaptPglite(db: {
         query: <U = Record<string, unknown>>(statement: string, params: unknown[] = []) => tx.query<U>(statement, params),
       })));
     },
-    transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void): Promise<T> {
+    transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void | Promise<void>): Promise<T> {
       return transaction<T>(async (tx) => {
       const result = await callback(Object.freeze({
         query: <U = Record<string, unknown>>(statement: string, params: unknown[] = []) => tx.query<U>(statement, params),
       }));
-      preCommitCheck();
+      await preCommitCheck();
       return result;
       });
     },

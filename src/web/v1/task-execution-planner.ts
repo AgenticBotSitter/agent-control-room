@@ -50,7 +50,7 @@ export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: st
   readSaved?: TaskExecutionPlanner["readSaved"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
-  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } });
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const fail = (): never => { throw new Error("task_execution_plan_unavailable"); };
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
 
@@ -148,8 +148,8 @@ export class TaskExecutionPlanner {
         throw new WebAccessError("conflict");
     };
     const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
-      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, () => {
-        check(); if (materializing) requireTemplateTime();
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => {
+        await check(); if (materializing) requireTemplateTime();
       }) };
     return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.plan", projectId, true);
@@ -220,7 +220,7 @@ export class TaskExecutionPlanner {
         current(); return work({ async query<T>(sql: string, params?: unknown[]) {
           current(); const result = await tx.query<T>(sql, params); current(); return result;
         } });
-      }, () => { current(); check(); current(); }) };
+      }, async () => { current(); await check(); current(); }) };
     const result = await new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
       actor.require("tasks.plan", projectId, true); actor.require("tasks.reviews.record", projectId, true);

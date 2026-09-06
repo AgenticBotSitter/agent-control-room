@@ -96,7 +96,7 @@ test("receiver carries source invalidation through the separate result registrat
   let available = true, reached = false;
   const transaction = x.resultsDb.transactionWithPreCommitCheck.bind(x.resultsDb);
   x.resultsDb.transactionWithPreCommitCheck = (work, check) => transaction(work, () => {
-    reached = true; available = false; check();
+    reached = true; available = false; return check();
   });
   await assert.rejects(x.receiver.register(x.request, signal(), () => {
     if (!available) throw new Error("synthetic_source_replaced");

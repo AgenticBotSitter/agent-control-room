@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest database integration — E66:** [Awaited pre-commit](research/REUSE_E66_ASYNC_PRECOMMIT.md)
+updates database adapters and application wrappers to await external pre-commit work,
+retain deadlines and recheck authority. Final phase evidence: 3,082 pass, zero fail,
+two Windows-only skips; posttest was rerun separately after correcting a stale E62
+inventory assertion. TypeScript, lint, VPS build, 41 compiled regressions and four
+queue/schema journeys pass. Historical fixture/inventory failures remain documented.
+The checkpoint port itself is still synchronous; its asynchronous migration and
+durable external storage remain next. No live service or deployment occurred.
+
 **Latest checkpoint integration work — E65:** [Findings and false-success fix](research/REUSE_E65_CHECKPOINT_INTEGRATION_FINDINGS.md)
 rejects unfinished asynchronous checkpoint writes at the synchronous staged flush,
 preventing SQL commit and further advances. 58 focused tests, TypeScript and targeted

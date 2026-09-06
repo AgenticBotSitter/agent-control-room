@@ -122,7 +122,7 @@ test("SQL failure and actual precommit cancellation roll back all completion sta
       const db = mode === "sql" ? interceptNativeQualityDatabase(x.f.db, sql => {
         if (sql.includes("INSERT INTO audit_events")) { reached = true; throw new Error("synthetic_quality_sql_failure"); }
       }) : { ...x.f.db, transactionWithPreCommitCheck: (work, check) => x.f.db.transactionWithPreCommitCheck(work, () => {
-        reached = true; cancelled = true; check();
+        reached = true; cancelled = true; return check();
       }) } satisfies DatabaseClient;
       const guard = () => { if (cancelled) throw new Error("synthetic_quality_cancelled"); };
       await assert.rejects(operation === "verification" ? x.createVerification(db).verify(x.request, guard)
@@ -201,7 +201,7 @@ test("clock rollback after observed forward time at precommit rejects verificati
       now = started + 100; advanced = true;
     } });
     const db: DatabaseClient = { ...observed, transactionWithPreCommitCheck: (work, check) => observed.transactionWithPreCommitCheck(work, () => {
-      fenced = true; now = started + 50; check();
+      fenced = true; now = started + 50; return check();
     }) };
     await assert.rejects(operation === "verification" ? x.createVerification(db, [x.scenario], x.f.ownerConfig, () => now).verify(x.request, () => {})
       : x.createCompletion(db, x.f.ownerConfig, () => now).complete(x.request, () => {}));

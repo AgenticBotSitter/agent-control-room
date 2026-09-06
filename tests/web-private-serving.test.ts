@@ -80,7 +80,7 @@ test("only the reviewed private HTTP module owns native HTTP imports; legacy net
   const owners: string[] = [], consumers: string[] = [];
   for (const path of await files("src")) {
     const source = await readFile(path, "utf8");
-    if (/from\s+["'][^"']*private-serving["']/.test(source)) consumers.push(path);
+    if (/from\s+["'][^"']*private-serving["']/.test(source)) consumers.push(path.replaceAll("\\", "/"));
     if (!source.includes("node:http")) continue;
     const tree = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
     let ownsHttp = false;
@@ -93,7 +93,11 @@ test("only the reviewed private HTTP module owns native HTTP imports; legacy net
     visit(tree); if (ownsHttp) owners.push(path.replaceAll("\\", "/"));
   }
   assert.deepEqual(owners, ["src/web/v1/private-serving.ts"]);
-  assert.deepEqual(consumers, []); // No source auto-starts or consumes this service yet.
+  // E60/E63 explicitly compose serving in the supplied-resource host. No other
+  // consumer or additional native HTTP owner is admitted by this inventory.
+  assert.deepEqual(consumers, ["src/web/v1/private-task-host.ts"]);
+  const host = await readFile("src/web/v1/private-task-host.ts", "utf8");
+  assert.doesNotMatch(host, /from ["']node:(?:http|net)["']|process\.env|process\.on\(|private-loopback-physical-native-driver/);
   const service = await readFile("src/web/v1/private-serving.ts", "utf8");
   assert.doesNotMatch(service, /from ["']node:net["']|process\.env|process\.on\(|private-loopback-physical-native-driver/);
   assert.match(service, /host: "127\.0\.0\.1"/);

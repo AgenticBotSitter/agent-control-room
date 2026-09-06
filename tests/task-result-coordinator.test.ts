@@ -155,7 +155,7 @@ test("new registration retains its native deadline through the final outer preco
   const x = await initialFixture(); t.after(x.close); const deadline = Date.parse(x.registration.nativeTask!.deadline);
   let now = deadline - 1, reached = false;
   const db: DatabaseClient = { ...x.results.client, transactionWithPreCommitCheck: (work, check) =>
-    x.results.client.transactionWithPreCommitCheck(work, () => { reached = true; now = deadline; check(); }) };
+    x.results.client.transactionWithPreCommitCheck(work, async () => { reached = true; now = deadline; await check(); }) };
   const gate = await gateRows(x), cp = checkpoint(x);
   await assert.rejects(x.direct(db, x.quality, () => now).register(x.request, signal()));
   assert.equal(reached, true); assert.deepEqual(await plans(x), []);
@@ -199,7 +199,7 @@ test("SQL errors and final-precommit cancellation or time rollback leave no targ
       }
     });
     const db: DatabaseClient = { ...observed, transactionWithPreCommitCheck: (work, check) => observed.transactionWithPreCommitCheck(work, () => {
-      if (mode === "cancel") abort.abort(); if (mode === "clock") now = start + 50; check();
+      if (mode === "cancel") abort.abort(); if (mode === "clock") now = start + 50; return check();
     }) };
     await assert.rejects(x.direct(db, x.quality, () => now).submit(x.request, abort.signal));
     assert.equal(wrote, true); assert.deepEqual(await gateRows(x), before); assert.deepEqual(checkpoint(x), cp);
@@ -229,7 +229,7 @@ test("source generation invalidation at result precommit rolls back registration
     let current = true, reachedCommit = false;
     const db: DatabaseClient = { ...x.results.client,
       transactionWithPreCommitCheck: (work, check) => x.results.client.transactionWithPreCommitCheck(work, () => {
-        reachedCommit = true; current = false; check();
+        reachedCommit = true; current = false; return check();
       }) };
     await assert.rejects(x.direct(db)[operation](x.request, signal(), () => {
       if (!current) throw new Error("synthetic_source_generation_replaced");

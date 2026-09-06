@@ -84,7 +84,7 @@ test("expiry and audit failure roll back the canonical bundle and task receipt t
       f.client.transactionWithPreCommitCheck(tx => run({ query: async <U>(sql: string, args?: unknown[]) => {
         if (mode === "audit" && sql.startsWith("INSERT INTO audit_events")) throw new Error("injected rollback");
         return tx.query<U>(sql, args);
-      } }), () => { if (mode === "expiry") clock = now + 301_000; check(); }) };
+      } }), () => { if (mode === "expiry") clock = now + 301_000; return check(); }) };
     await assert.rejects(new WebTaskService(client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, () => clock)
       .propose(f.identity, f.project.projectId, taskDraft, "rolled-back-task-0001"));
     for (const table of ["control_requests", "control_workflows", "control_jobs", "control_web_task_commands"])

@@ -45,7 +45,7 @@ export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRout
 export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: string;
   assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"]; options: TaskAssignmentCoordinator["options"] }>;
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
-  transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); check(); return value; } });
+  transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); await check(); return value; } });
 function conflict(): never { throw new WebAccessError("conflict"); }
 function unavailable(): never { throw new Error("task_assignment_unavailable"); }
 
@@ -357,8 +357,8 @@ export class TaskAssignmentCoordinator {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     let deadline: number | undefined, preparedAt: number | undefined, assertFresh: (() => void) | undefined;
     const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
-      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, () => {
-        check(); const now = this.clock();
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => {
+        await check(); const now = this.clock();
         if (!Number.isSafeInteger(now) || preparedAt === undefined || now < preparedAt || deadline === undefined || now >= deadline) conflict();
         assertFresh?.();
       }) };
@@ -474,8 +474,8 @@ export class TaskAssignmentCoordinator {
     for (const id of [projectId, jobId, nodeId]) localId.parse(id); digestSchema.parse(expectedInputDigest);
     let commitDeadline: number | undefined;
     const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
-      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, () => {
-        check(); if (commitDeadline !== undefined && this.clock() >= commitDeadline) conflict();
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => {
+        await check(); if (commitDeadline !== undefined && this.clock() >= commitDeadline) conflict();
       }) };
     return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);

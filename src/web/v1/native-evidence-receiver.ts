@@ -84,7 +84,7 @@ export class NativeEvidenceReceiver {
     const db: DatabaseClient = { query: (sql, params) => db.transaction(tx => tx.query(sql, params)),
       transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
       transactionWithPreCommitCheck: async (work, check) => {
-        current(); const value = await this.db.transactionWithPreCommitCheck(tx => work(wrap(tx)), () => { current(); check(); current(); });
+        current(); const value = await this.db.transactionWithPreCommitCheck(tx => work(wrap(tx)), async () => { current(); await check(); current(); });
         current(); return value;
       } };
     return db;
@@ -117,7 +117,7 @@ export class NativeEvidenceReceiver {
       // Node intake precedes possible execution; receipt network arrival can be later than progress.
       const run = nativeTaskRegistration(binding, body.inputDigest, body.request.leaseId, body.request.leaseEpoch, receipt.recordedAt);
       const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: async work => work(tx),
-        transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } };
+        transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } };
       const saved = await new HarnessRunStoreV1(joined, this.harnessKey).create(run);
       if (!saved.replayed) { freshDeadline = binding.deadline; if (current() >= freshDeadline) return fail(); }
       return { run, replayed: saved.replayed, deadline: binding.deadline };
@@ -152,7 +152,7 @@ export class NativeEvidenceReceiver {
         const { binding } = verifyNativeTaskApprovalBinding(prepared.enrollment, prepared.request, prepared.start);
         const expected = nativeTaskRegistration(binding, body.inputDigest, body.request.leaseId, body.request.leaseEpoch, receipt.recordedAt);
         const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: async work => work(tx),
-          transactionWithPreCommitCheck: async (work, commitCheck) => { const result = await work(tx); commitCheck(); return result; } };
+          transactionWithPreCommitCheck: async (work, commitCheck) => { const result = await work(tx); await commitCheck(); return result; } };
         const saved = await new HarnessRunStoreV1(joined, this.harnessKey).get(scope.tenantId, expected.id);
         if (!saved) return fail();
         const initial = { ...saved, state: "discovered", cancelState: "not_requested",

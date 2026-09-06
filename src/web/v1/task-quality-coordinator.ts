@@ -142,7 +142,7 @@ export class TaskQualityCoordinator {
       transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
       transactionWithPreCommitCheck: (work, precommit) => { current(); return this.db.transactionWithPreCommitCheck(async tx => {
         current(); await this.scopeIn(tx, request); current(); return work(tx);
-      }, () => { current(); precommit(); current(); }); } };
+      }, async () => { current(); await precommit(); current(); }); } };
     const native = nativeQualityRequestSchema.parse({ tenantId: request.tenantId, runId: request.runId,
       targetDigest: request.targetDigest, contentHash: request.contentHash });
     const submission = new NativeResultSubmissionService(db, this.config);

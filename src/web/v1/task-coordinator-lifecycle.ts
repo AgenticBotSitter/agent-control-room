@@ -117,7 +117,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
           if (!usable) throw new TaskCoordinatorInterruption("task_coordinator_session_closed"); return value;
         } };
         try { return await work(Object.freeze(session)); } finally { usable = false; }
-      }, () => { check(); precommit(); check(); });
+      }, async () => { check(); await precommit(); check(); });
       try { check(); } catch { throw new TaskCoordinatorInterruption("task_coordinator_save_uncertain"); }
       return result;
     },

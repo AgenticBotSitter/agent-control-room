@@ -23,7 +23,7 @@ export interface WebTaskVerificationConfiguration {
   manualVerificationScenarios: readonly ManualVerificationScenario[];
 }
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
-  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } });
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const risks: CompletionRiskV1[] = ["low", "medium", "high", "critical"];
 
 /** Optional human evidence for explicitly configured scenarios, not an automated verifier or finish command. */
@@ -119,7 +119,7 @@ export class WebTaskVerificationService {
     const draft = parsed.data; try { assertNoSecretMaterial(draft); } catch { throw new WebAccessError("invalid_request"); }
     const staged = stageCompletionCheckpoint(this.checkpoints, this.scope.tenantId);
     const guarded: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
-      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, () => { check(); staged.flush(); }) };
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); staged.flush(); }) };
     return new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       const context = await this.context(tx, actor, projectId, jobId, draft.artifactId, draft.targetId, this.gate(tx, staged.checkpoints));
       actor.require("tasks.reviews.record", projectId, true, context.risk);

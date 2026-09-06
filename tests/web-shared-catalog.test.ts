@@ -139,7 +139,7 @@ test("Idea read permission expiry is rechecked before the shared transaction com
   let current = now; const f = await setup(); t.after(() => f.db.close());
   await f.db.query("UPDATE control_role_grants SET expires_at=$1 WHERE id='grant:web'", [new Date(now + 1000).toISOString()]);
   const client = { ...f.client, transactionWithPreCommitCheck: <T>(run: Parameters<typeof f.client.transaction<T>>[0], check: () => void) =>
-    f.client.transactionWithPreCommitCheck(run, () => { current = now + 2000; check(); }) };
+    f.client.transactionWithPreCommitCheck(run, async () => { current = now + 2000; await check(); }) };
   const service = new WebProjectService(client, scope, () => current, webIdeaKey);
   await assert.rejects(service.getView(proof(), f.project.projectId), /access_denied/);
   current = now; await assert.rejects(service.listPage(proof()), /access_denied/);

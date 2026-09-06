@@ -23,7 +23,7 @@ type Row = { tenant_id: string; identity_id: string; idempotency_key: string; pr
   auth_tag: string; occurred_at: string | Date };
 const commandSchema = z.object({ draft: taskReviewDraftSchema, receipt: taskReviewReceiptSchema }).strict();
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
-  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } });
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const risks: CompletionRiskV1[] = ["low", "medium", "high", "critical"];
 
 /** Owner quality decisions only. No acceptance policy bootstrap, effect approval, revision dispatch or agent port. */
@@ -145,7 +145,7 @@ export class WebTaskReviewService {
     // Wrap the existing final session/grant check, not the SQL callback. No external anchor changes
     // until all ordinary writes and authorization checks have succeeded.
     const guarded: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
-      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, () => { check(); staged.flush(); }) };
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); staged.flush(); }) };
     return new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       const context = await this.context(tx, actor, projectId, jobId, draft.artifactId, draft.targetId, this.gate(tx, staged.checkpoints));
       actor.require("tasks.reviews.record", projectId, true, context.risk);

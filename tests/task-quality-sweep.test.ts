@@ -133,7 +133,7 @@ test("cancellation at a verification-writing precommit rejects the sweep and pre
   const db: DatabaseClient = { ...x.f.db, transactionWithPreCommitCheck: (work, check) => x.f.db.transactionWithPreCommitCheck(tx => work({
     async query<T>(sql: string, params?: unknown[]) { const result = await tx.query<T>(sql, params);
       if (sql.includes("INSERT INTO control_completion_gate_records")) wrote = true; return result; },
-  }), () => { if (wrote) abort.abort(); check(); }) };
+  }), () => { if (wrote) abort.abort(); return check(); }) };
   const owner = x.createOwner({ database: { ...x.config.database, client: db } }); t.after(() => owner.close());
   await assert.rejects(owner.quality!.sweep({ projectId: x.request.projectId }, abort.signal)); assert.equal(wrote, true);
   assert.deepEqual(await verifications(x), []); assert.deepEqual(x.f.checkpoints.read(`completion-gate:${x.request.tenantId}`), before);

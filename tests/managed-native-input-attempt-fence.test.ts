@@ -88,7 +88,7 @@ test("actual generation replacement at result-registration final precommit rolls
           replacement.promise = x.manager.attachInput(x.f.prepared.request.nodeId, replacementPeer.transport,
             { mode: "initial", task: x.request });
         }
-        check();
+        return check();
       });
     },
   };

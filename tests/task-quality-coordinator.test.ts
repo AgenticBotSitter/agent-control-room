@@ -81,7 +81,7 @@ test("quality request is captured before asynchronous admission and signal abort
   await entered.promise; release.resolve(); const saved = await pending;
   assert.equal(saved.disposition, "waiting_review"); assert.equal((await verificationRows(x)).length, 1);
   const abort = new AbortController();
-  const cancelledDb: DatabaseClient = { ...x.f.db, transactionWithPreCommitCheck: (work, check) => x.f.db.transactionWithPreCommitCheck(work, () => { abort.abort(); check(); }) };
+  const cancelledDb: DatabaseClient = { ...x.f.db, transactionWithPreCommitCheck: (work, check) => x.f.db.transactionWithPreCommitCheck(work, async () => { abort.abort(); await check(); }) };
   const cancelled = x.createOwner({ database: { ...x.config.database, client: cancelledDb } }); t.after(() => cancelled.close());
   await assert.rejects(cancelled.quality!.reconcile(x.request, abort.signal));
   assert.deepEqual(await completionRows(x), []); assert.equal((await x.states()).job.state, "leased");
@@ -113,7 +113,7 @@ test("cancellation at the verification-writing precommit leaves both gate record
       if (sql.includes("INSERT INTO control_completion_gate_records")) wroteVerification = true;
       return result;
     },
-  }), () => { if (wroteVerification) { fenced = true; abort.abort(); } check(); }) };
+  }), () => { if (wroteVerification) { fenced = true; abort.abort(); } return check(); }) };
   const owner = x.createOwner({ database: { ...x.config.database, client: db } }); t.after(() => owner.close());
   await assert.rejects(owner.quality!.reconcile(x.request, abort.signal));
   assert.equal(wroteVerification, true); assert.equal(fenced, true); assert.deepEqual(await verificationRows(x), []);

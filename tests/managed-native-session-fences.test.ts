@@ -25,7 +25,7 @@ test("cancellation or replacement at replay precommit rolls back written authent
         if (mode === "cancel") abort.abort();
         else replacement = x.manager.attach(x.registration.nodeId, nextPeer!.transport);
       }
-      check();
+      return check();
     });
     await assert.rejects(c.handle.hello(c.hello, abort.signal));
     assert.equal(connectionsWritten, true); assert.equal(replayWritten, true); assert.equal(injected, true);

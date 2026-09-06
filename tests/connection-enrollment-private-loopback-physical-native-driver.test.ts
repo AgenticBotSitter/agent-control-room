@@ -419,7 +419,17 @@ test("CR13A allowlists only the isolated node:net server modules with no runtime
   const nativeServerAuthorityFiles: string[] = [];
   for (const file of allSourceFiles) {
     const source = await readFile(file, "utf8");
-    if (/from ["']node:net["']/.test(source) && /\bcreateServer\b|\.listen\s*\(/.test(source)) {
+    // E62's TLS service owns an HTTPS server, not a net server. Exclude only its
+    // exact pure address validator/type import; any additional net import still
+    // enters the original inventory and fails its unchanged two-owner limit.
+    let serverSource = source;
+    if (file === resolve("src/web/v1/native-https-service.ts")) {
+      const addressImport = /^import \{ isIP, type Socket \} from "node:net";$/m;
+      assert.match(source, addressImport);
+      assert.match(source, /import \{ createServer, type Server \} from "node:https"/);
+      serverSource = source.replace(addressImport, "");
+    }
+    if (/from ["']node:net["']/.test(serverSource) && /\bcreateServer\b|\.listen\s*\(/.test(serverSource)) {
       nativeServerAuthorityFiles.push(file);
     }
     if (file !== implementationPath) {

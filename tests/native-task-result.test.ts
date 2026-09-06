@@ -102,7 +102,7 @@ test("invalidated capture at metadata precommit retains bytes but rolls back art
       return value;
     } }), () => {
       if (wrote) { reached = true; current = false; }
-      check();
+      return check();
     });
   } };
   await assert.rejects(new NativeResultStore(db, f.harnessKey, f.config).capture(

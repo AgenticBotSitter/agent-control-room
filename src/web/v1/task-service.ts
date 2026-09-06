@@ -27,8 +27,8 @@ import { taskPlanningOptionsSchema } from "./task-planning-wire";
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
 function joined(tx: DatabaseSession): DatabaseClient {
   return Object.freeze({ query: tx.query.bind(tx), transaction: async <T>(run: (session: DatabaseSession) => Promise<T>) => run(tx),
-    transactionWithPreCommitCheck: async <T>(run: (session: DatabaseSession) => Promise<T>, check: () => void) => {
-      const result = await run(tx); check(); return result;
+    transactionWithPreCommitCheck: async <T>(run: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) => {
+      const result = await run(tx); await check(); return result;
     } });
 }
 type TaskRow = { id: string; state: string; version: number; project_id: string; workflow_id: string;

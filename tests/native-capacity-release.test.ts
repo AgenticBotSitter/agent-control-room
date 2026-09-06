@@ -200,7 +200,7 @@ test("SQL failure, precommit cancellation and clock rollback roll back the lease
     const db: DatabaseClient = { ...observed, transactionWithPreCommitCheck: (work, check) => observed.transactionWithPreCommitCheck(work, () => {
       if (mode === "clock") now = started + 50;
       if (mode === "cancel") cancelled = true;
-      check();
+      return check();
     }) };
     await assert.rejects(x.createCompletion(db, x.f.ownerConfig, () => now).releaseCapacity(x.request, () => {
       if (cancelled) throw new Error("synthetic_capacity_cancelled");

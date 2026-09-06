@@ -94,7 +94,7 @@ test("connection authorization and source reads use one transaction and recheck 
   const client = { ...f.client,
     transaction: async () => { throw new Error("unexpected nested transaction"); },
     transactionWithPreCommitCheck: async <T>(run: Parameters<typeof f.client.transaction<T>>[0], check: () => void) => {
-      transactions++; return f.client.transactionWithPreCommitCheck(run, () => { current += 60_000; check(); });
+      transactions++; return f.client.transactionWithPreCommitCheck(run, async () => { current += 60_000; await check(); });
     },
   };
   await f.db.query("UPDATE control_role_grants SET expires_at=$1 WHERE id='grant:web'", [new Date(now + 30_000).toISOString()]);

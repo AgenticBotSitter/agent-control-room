@@ -146,7 +146,7 @@ test("cancellation or replacement at recovery proof precommit invalidates the ex
         if (mode === "cancel") abort.abort();
         else replacement = x.manager.attach(x.registration.nodeId, replacementPeer!.transport);
       }
-      check();
+      return check();
     });
     await assert.rejects(fresh.handle.recover(x.request, abort.signal), { message: "native_session_operation_uncertain" });
     assert.equal(reachedProof, true); assert.equal(injected, true); expectReadOnly(x, observed);

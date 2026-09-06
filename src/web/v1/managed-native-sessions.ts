@@ -88,7 +88,7 @@ export class ManagedNativeSessions {
       transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
       transactionWithPreCommitCheck: async (work, check) => {
         this.current(record); const value = await this.db.transactionWithPreCommitCheck(tx => work(wrap(tx)),
-          () => { this.current(record); check(); this.current(record); });
+          async () => { this.current(record); await check(); this.current(record); });
         this.current(record); return value;
       } };
     return db;

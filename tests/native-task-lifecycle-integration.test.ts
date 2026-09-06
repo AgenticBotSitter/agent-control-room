@@ -90,7 +90,7 @@ test("disconnect or expiry at the actual progress-store precommit fence rolls ba
         fences++;
         if (mode === "disconnect") x.session.disconnect();
         else x.f.setNow(Date.parse(signed.expiresAt));
-        check();
+        return check();
       }) };
     const runs = new HarnessRunStoreV1(database, x.f.harnessKey);
     await assert.rejects(x.session.acceptNativeSnapshot(raw, (frame, assertCurrent) =>

@@ -83,7 +83,7 @@ test("simultaneous duplicate creates persist one project and expiry rolls a muta
   assert.deepEqual(responses.map(r => r.status).sort(), [200, 200, 201]);
   assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM projects")).rows[0].n, 1);
   const client = { ...f.client, transactionWithPreCommitCheck: <T>(run: Parameters<typeof f.client.transaction<T>>[0], check: () => void) =>
-    f.client.transactionWithPreCommitCheck(run, () => { current = now + 301_000; check(); }) };
+    f.client.transactionWithPreCommitCheck(run, async () => { current = now + 301_000; await check(); }) };
   const service = new WebProjectService(client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, () => current);
   await assert.rejects(() => service.create(createAccessVerifier(trust)(request(), now), { title: "Expired", summary: "" }, "expired-create-0001"), /authentication_required/);
   assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM projects")).rows[0].n, 1);
@@ -111,7 +111,7 @@ test("grant expiry during a save rolls back both the project and audit", async t
   const f = await fixture(() => current); t.after(() => f.db.close());
   await f.db.query("UPDATE control_role_grants SET expires_at=$1 WHERE id='grant:web'", [new Date(now + 1000).toISOString()]);
   const client = { ...f.client, transactionWithPreCommitCheck: <T>(run: Parameters<typeof f.client.transaction<T>>[0], check: () => void) =>
-    f.client.transactionWithPreCommitCheck(run, () => { current = now + 2000; check(); }) };
+    f.client.transactionWithPreCommitCheck(run, async () => { current = now + 2000; await check(); }) };
   const service = new WebProjectService(client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, () => current);
   await assert.rejects(() => service.create(createAccessVerifier(trust)(request(), now), { title: "Expired grant", summary: "" }, "grant-expiry-0001"), /access_denied/);
   assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM projects")).rows[0].n, 0);

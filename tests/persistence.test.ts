@@ -5,7 +5,7 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { CONTRACT_VERSION } from "../src/contracts/v1/index.ts";
 import { contentBloomsFixture, websiteOperationsFixture, wayfarerFixture } from "../src/fixtures/data.ts";
-import { adaptPglite } from "../src/persistence/database.ts";
+import { adaptPglite, createRepositorySimulationDatabaseV1 } from "../src/persistence/database.ts";
 import { ProjectionStore } from "../src/persistence/projection-store.ts";
 
 async function migratedDatabase() {
@@ -14,6 +14,31 @@ async function migratedDatabase() {
   for (const file of files) await db.exec(await readFile(resolve("db/migrations", file), "utf8"));
   return db;
 }
+
+test("PGlite adapters await asynchronous precommit and roll back rejection", async t => {
+  for (const exact of [false, true]) await t.test(exact ? "repository simulation" : "generic adapter", async () => {
+    const raw = exact ? undefined : new PGlite();
+    const simulation = exact ? await createRepositorySimulationDatabaseV1({ testOnly: true }) : undefined;
+    const db = simulation?.client ?? adaptPglite(raw!);
+    try {
+      await db.query("CREATE TABLE async_commit_test(value integer)");
+      for (const refuses of [false, true]) {
+        let entered!: () => void, release!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        let settled = false;
+        const running = db.transactionWithPreCommitCheck(async tx => {
+          await tx.query("INSERT INTO async_commit_test VALUES ($1)", [refuses ? 2 : 1]); return 42;
+        }, async () => { entered(); await gate; if (refuses) throw new Error("synthetic_check_refused"); });
+        void running.then(() => { settled = true; }, () => { settled = true; });
+        const outcome = refuses ? assert.rejects(running, /synthetic_check_refused/) : running;
+        await started; await new Promise<void>(resolve => setImmediate(resolve));
+        assert.equal(settled, false); release(); await outcome;
+      }
+      assert.deepEqual((await db.query("SELECT value FROM async_commit_test")).rows, [{ value: 1 }]);
+    } finally { if (simulation) await simulation.close(); else await raw!.close(); }
+  });
+});
 
 function pageFor(pack: typeof wayfarerFixture) {
   return {

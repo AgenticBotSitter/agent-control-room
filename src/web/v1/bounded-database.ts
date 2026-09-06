@@ -42,7 +42,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
     void closing.catch(() => {});
     return closing;
   }
-  async function run<T>(transaction: boolean, callback: (session: DatabaseSession) => Promise<T>, check: () => void): Promise<T> {
+  async function run<T>(transaction: boolean, callback: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>): Promise<T> {
     if (stopped || active >= limits.connections) throw new PrivateDatabaseError("database_unavailable");
     active++;
     let valid = true, busy = false, queryFailed = false;
@@ -80,7 +80,8 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         const result = await callback(Object.freeze({ query }));
         assertActive();
         if (busy || queryFailed) throw new PrivateDatabaseError("database_outcome_uncertain");
-        check(); assertActive();
+        await check(); assertActive();
+        if (busy || queryFailed) throw new PrivateDatabaseError("database_outcome_uncertain");
         if (transaction) { commitAttempted = true; await query("COMMIT"); began = false; }
         return result;
       } catch (error) {
@@ -109,7 +110,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
   const client = Object.freeze<DatabaseClient>({
     query: <T>(statement: string, params?: unknown[]) => run(false, session => session.query<T>(statement, params), () => {}),
     transaction: <T>(callback: (session: DatabaseSession) => Promise<T>) => run(true, callback, () => {}),
-    transactionWithPreCommitCheck: <T>(callback: (session: DatabaseSession) => Promise<T>, check: () => void) => run(true, callback, check),
+    transactionWithPreCommitCheck: <T>(callback: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) => run(true, callback, check),
   });
   return Object.freeze({ client, close: stop, isAvailable: () => !stopped });
 }

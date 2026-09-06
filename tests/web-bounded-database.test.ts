@@ -6,6 +6,46 @@ import { startupConfig } from "./helpers/web-startup";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 const tick = () => new Promise<void>(r => setTimeout(r, 0));
+
+test("async precommit waits before COMMIT and rejected checks roll back", async () => {
+  for (const refuses of [false, true]) {
+    const entered = deferred<void>(), release = deferred<void>(), f = fake();
+    const pool = boundPrivateDatabase(f.driver);
+    const running = pool.client.transactionWithPreCommitCheck(async tx => { await tx.query("TEST WORK"); return 42; }, async () => {
+      entered.resolve(); await release.promise; if (refuses) throw new Error("synthetic_check_refused");
+    });
+    const observed = refuses ? assert.rejects(running, /synthetic_check_refused/) : running;
+    await entered.promise; assert.deepEqual(f.statements, ["BEGIN", "TEST WORK"]);
+    release.resolve(); const result = await observed;
+    if (!refuses) assert.equal(result, 42);
+    assert.deepEqual(f.statements, ["BEGIN", "TEST WORK", refuses ? "ROLLBACK" : "COMMIT"]);
+    assert.equal(f.releases(), 1); await pool.close();
+  }
+});
+
+test("async precommit timeout quarantines the pool and late completion cannot commit", async () => {
+  const entered = deferred<void>(), release = deferred<void>(), f = fake();
+  const pool = boundPrivateDatabase(f.driver, { ...privateDatabaseLimits, transactionMs: 20 });
+  const running = pool.client.transactionWithPreCommitCheck(async () => 42, async () => {
+    entered.resolve(); await release.promise;
+  });
+  const observed = assert.rejects(running, /database_outcome_uncertain/);
+  await entered.promise; await observed;
+  assert.equal(pool.isAvailable(), false); assert.equal(f.closes(), 1);
+  release.resolve(); await tick();
+  assert.deepEqual(f.statements, ["BEGIN"]); assert.equal(f.releases(), 1);
+  await pool.close(); assert.equal(f.closes(), 1);
+});
+
+test("a swallowed query failure during async precommit cannot commit", async () => {
+  const f = fake(async statement => { if (statement === "FAIL CHECK QUERY") throw new Error("synthetic_query_failure"); return { rows: [] }; });
+  const pool = boundPrivateDatabase(f.driver); let retained!: PrivateDatabaseLease;
+  await assert.rejects(pool.client.transactionWithPreCommitCheck(async tx => { retained = tx as PrivateDatabaseLease; }, async () => {
+    await retained.query("FAIL CHECK QUERY").catch(() => {});
+  }), /database_outcome_uncertain/);
+  assert.deepEqual(f.statements, ["BEGIN", "FAIL CHECK QUERY"]);
+  assert.equal(pool.isAvailable(), false); await pool.close();
+});
 function fake(query: (statement: string) => Promise<{ rows: never[] }> = async () => ({ rows: [] })) {
   const statements: string[] = []; let releases = 0, closes = 0;
   const lease: PrivateDatabaseLease = { async query<T>(statement: string) { statements.push(statement); return await query(statement) as { rows: T[] }; },

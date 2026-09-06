@@ -94,7 +94,7 @@ test("worker startup timeout closes once and fences late preflight SQL", async t
   const db: DatabaseClient = {
     async query<T>() { queries++; return { rows: [] as T[] }; },
     async transaction(work) { enter(); await released; try { return await work(db); } finally { finish(); } },
-    async transactionWithPreCommitCheck(work, check) { const result = await db.transaction(work); check(); return result; },
+    async transactionWithPreCommitCheck(work, check) { return db.transaction(async tx => { const result = await work(tx); await check(); return result; }); },
   };
   const f = fixture();
   const config = { host: "127.0.0.1" as const, port: 5432, database: "synthetic", username: "worker_test", password: "synthetic-only", majorVersion: 17 as const };

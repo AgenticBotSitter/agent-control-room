@@ -16,7 +16,7 @@ import { nativeReviewRequestSchema as requestSchema, nativeReviewPlanTag, verify
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const revisionRequestSchema = requestSchema.extend({ revision: nativeRevisionContextSchema });
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
-  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } });
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const reject = (): never => { throw new Error("native_review_submission_unavailable"); };
 
 /** Trusted, explicitly injected control-plane composition. No public endpoint, dispatch, profile

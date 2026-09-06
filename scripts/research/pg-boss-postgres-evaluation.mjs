@@ -132,7 +132,7 @@ try {
         await client.query('BEGIN');
         try {
           const value = await work({ query: (sql, values) => client.query(sql, values) });
-          beforeCommit(); await client.query('COMMIT'); return value;
+          await beforeCommit(); await client.query('COMMIT'); return value;
         } catch (error) { await client.query('ROLLBACK'); throw error; }
       };
       const database = { query: (sql, values) => owner.query(sql, values), transaction, transactionWithPreCommitCheck: transaction };

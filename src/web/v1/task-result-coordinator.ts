@@ -43,7 +43,7 @@ export class TaskResultCoordinator {
         || now < started || now < this.highWater || now - started > 10_000) return deny();
       this.highWater = now; return now;
     };
-    current(); const checks: (() => void)[] = [];
+    current(); const checks: (() => void | Promise<void>)[] = [];
     const result = await this.db.transactionWithPreCommitCheck(async tx => {
       const session: DatabaseSession = { async query<T>(sql: string, params?: unknown[]) {
         current(); const result = await tx.query<T>(sql, params); current(); return result;
@@ -60,7 +60,7 @@ export class TaskResultCoordinator {
       await new TaskExecutionPlanner(joined, this.scope, this.planning, this.clock)
         .lockReviewPredecessorInSession(session, input.projectId, input.jobId);
       return work(joined, input, current, current, check => checks.push(check));
-    }, () => { current(); for (const check of checks) { current(); check(); } current(); });
+    }, async () => { current(); for (const check of checks) { current(); await check(); } current(); });
     current(); return result;
   }
   async register(value: TaskResultRequest, signal: AbortSignal, assertSourceCurrent?: () => void) {
