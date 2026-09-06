@@ -143,6 +143,13 @@ and transaction rollback are tested. 52 package and 42 related checks pass. Perm
 lifecycle exposure, audit-bound recovered pickup and reconnect triggering remain open;
 automatic recovery is not enabled.
 
+**E25 — recovery permissions:** [Evidence](research/REUSE_E25_RECOVERY_PERMISSIONS.md)
+adds offline exact-column coordinator grants and an explicit recovery permission profile.
+Restricted-role/LOGIN recovery and full preflight pass without table-wide UPDATE or web
+queue access; excess/missing permissions are rejected. 53 package and 39 startup checks
+pass. Normal startup does not select this profile. Lifecycle recovery exposure,
+audit-bound pickup and authenticated reconnect triggering remain next.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

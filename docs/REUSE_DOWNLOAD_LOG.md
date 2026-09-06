@@ -382,3 +382,9 @@ The initial unsupported restore() call failed; corrected to test public API abse
 Existing E01 package and repository dependencies only. Disposable PGlite canonical,
 queue and signed-session fixtures closed after tests. No new retained acquisition,
 native process, credential access, deployment or external publication.
+
+### E25 — recovery permission profile (no acquisition)
+
+Existing E01 package and repository dependencies only. Column grants and temporary
+LOGIN identities exist only inside closed in-memory fixtures. No downloaded files,
+new retained directory, production database changes or external publication.

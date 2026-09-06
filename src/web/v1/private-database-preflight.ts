@@ -100,7 +100,7 @@ export async function readPrivateWebSchemaDigest(db: DatabaseSession) {
 }
 
 /** Trusted bootstrap choice, never an HTTP permission policy. Omitted stays queue-free. */
-export type NativeQueueDatabaseOption = { nativeQueue: true };
+export type NativeQueueDatabaseOption = { nativeQueue: true; nativeQueueRecovery?: true };
 
 /** Read-only setup gate; never grants, migrates, creates an owner, or repairs a failed prerequisite. */
 export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
@@ -197,7 +197,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
         OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue])).rows[0];
       if (unsafe?.unsafe !== false) fail();
-      if (withQueue) await verifyPgBossApplicationPermissions(tx, kind === "coordinator");
+      if (withQueue) await verifyPgBossApplicationPermissions(tx, kind === "coordinator", kind === "coordinator" && queue?.nativeQueueRecovery === true);
       const columns = (await tx.query<{ table_name: string; column_name: string; read: boolean; insert: boolean; update: boolean; extra: boolean }>(`
         SELECT c.relname AS table_name,a.attname AS column_name,
           has_column_privilege(c.oid,a.attnum,'SELECT') AS read,

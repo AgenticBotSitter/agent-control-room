@@ -353,6 +353,70 @@ test('upstream producer version check refuses incompatible versions without migr
   }
 });
 
+test('recovery has exact column grants and canonical recovery works without table-wide queue UPDATE', async t => {
+  const f = await fixture(t); await f.save();
+  const receipt = await enqueue(f), ref = reference(f, receipt), id = nativeTaskSubmissionId(ref);
+  await f.admin.fetch(spec.name); await f.admin.fail(spec.name, id, { reason: 'synthetic offline' });
+  await f.raw.exec(await readFile('db/roles/task_coordinator_roles.sql', 'utf8'));
+  await f.raw.exec(await readFile('db/roles/private_web_roles.sql', 'utf8'));
+  await f.raw.exec(await readFile('db/roles/native_queue_producer_roles.sql', 'utf8'));
+  const recovery = await preparePgBossNativeTaskSubmission(PgBoss, f.db, { backend: 'pglite', recovery: true });
+  t.after(recovery.close);
+  const coordinator = f.create(f.db, recovery);
+  const asCoordinator = async work => {
+    await f.raw.exec('SET ROLE control_room_task_coordinator');
+    try { return await work(); } finally { await f.raw.exec('RESET ROLE'); }
+  };
+  await asCoordinator(async () => {
+    await verifyPgBossApplicationPermissions(f.db, true);
+    await assert.rejects(verifyPgBossApplicationPermissions(f.db, true, true));
+    await assert.rejects(coordinator.recoverNeverStagedQueueDelivery(ref, f.abort.signal));
+  });
+  assert.equal((await f.admin.getJobById(spec.name, id)).state, 'failed');
+  await f.raw.exec(await readFile('db/roles/native_queue_recovery_roles.sql', 'utf8'));
+  await asCoordinator(async () => {
+    await assert.rejects(verifyPgBossApplicationPermissions(f.db, true));
+    await verifyPgBossApplicationPermissions(f.db, true, true);
+    assert.deepEqual(await coordinator.recoverNeverStagedQueueDelivery(ref, f.abort.signal), { recovered: true, ordinal: 1 });
+    for (const sql of ['UPDATE control_room_queue.job SET id=id', 'UPDATE control_room_queue.job SET retry_count=retry_count',
+      'DELETE FROM control_room_queue.job', 'UPDATE control_room_queue.queue SET retry_limit=1']) await assert.rejects(f.db.query(sql));
+  });
+  assert.equal((await f.admin.getJobById(spec.name, id)).retryLimit, 0);
+  await f.raw.exec(`CREATE ROLE recovery_coordinator_test LOGIN INHERIT;
+    GRANT control_room_task_coordinator TO recovery_coordinator_test;
+    SET search_path=pg_catalog, public; SET statement_timeout='5s'; SET lock_timeout='2s';
+    SET transaction_timeout='10s'; SET idle_in_transaction_session_timeout='5s'`);
+  const checked = { ...f.db, transaction: work => f.db.transaction(tx => work({ async query(sql, values) {
+    const result = await tx.query(sql, values);
+    // Known PGlite TEMP metadata limitation only; identity and ACL gates are real.
+    if (sql.includes('AS database_temp')) result.rows = result.rows.map(row => ({ ...row, database_temp: false }));
+    return result;
+  } })) };
+  const config = { host: '127.0.0.1', port: 5432, database: 'template1', username: 'recovery_coordinator_test', password: 'synthetic-only', majorVersion: 17 };
+  const scope = { ...f.scope, ownerIdentityId: 'identity:test', issuer: f.accessTrust.issuer };
+  await f.admin.fetch(spec.name); await f.admin.fail(spec.name, id, { reason: 'synthetic offline again' });
+  await f.raw.exec('SET SESSION AUTHORIZATION recovery_coordinator_test');
+  try {
+    await assert.rejects(verifyTaskCoordinatorDatabase(checked, config, scope, f.clock(), { nativeQueue: true }));
+    await verifyTaskCoordinatorDatabase(checked, config, scope, f.clock(), { nativeQueue: true, nativeQueueRecovery: true });
+    assert.deepEqual(await coordinator.recoverNeverStagedQueueDelivery(ref, f.abort.signal), { recovered: true, ordinal: 2 });
+  } finally { await f.raw.exec('SET SESSION AUTHORIZATION postgres'); }
+  for (const [grant, revoke] of [
+    ['GRANT UPDATE(id) ON control_room_queue.job TO control_room_task_coordinator', 'REVOKE UPDATE(id) ON control_room_queue.job FROM control_room_task_coordinator'],
+    ['GRANT UPDATE ON control_room_queue.job_common TO control_room_task_coordinator', 'REVOKE UPDATE ON control_room_queue.job_common FROM control_room_task_coordinator'],
+  ]) {
+    await f.raw.exec(grant);
+    await asCoordinator(() => assert.rejects(verifyPgBossApplicationPermissions(f.db, true, true)));
+    await f.raw.exec(revoke);
+    await f.raw.exec(await readFile('db/roles/native_queue_recovery_roles.sql', 'utf8'));
+  }
+  await f.raw.exec('REVOKE UPDATE(data) ON control_room_queue.job_common FROM control_room_task_coordinator');
+  await asCoordinator(() => assert.rejects(verifyPgBossApplicationPermissions(f.db, true, true)));
+  await f.raw.exec('SET ROLE control_room_private_web');
+  try { await verifyPgBossApplicationPermissions(f.db, false); await assert.rejects(f.db.query('SELECT * FROM control_room_queue.job')); }
+  finally { await f.raw.exec('RESET ROLE'); }
+});
+
 test('coordinator role can submit with exact queue grants; private web role remains excluded', { timeout: 30000 }, async t => {
   const f = await fixture(t); await f.save();
   await f.raw.exec(await readFile('db/roles/task_coordinator_roles.sql', 'utf8'));

@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E25 recovery permissions](research/REUSE_E25_RECOVERY_PERMISSIONS.md) verifies the
+offline coordinator column-grant candidate and opt-in full database profile with actual
+canonical recovery under a restricted LOGIN. 53 package and 39 startup checks pass.
+No production grants or automatic recovery are enabled.
+
 [E24](research/REUSE_E24_NEVER_STAGED_RECOVERY.md) implements the canonical never-staged
 gate and opt-in upstream recovery port, with audit in the same transaction. 52 package
 and 42 related checks pass. Recovery permission/profile, lifecycle command and
