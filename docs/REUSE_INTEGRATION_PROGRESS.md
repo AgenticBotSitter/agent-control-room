@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E29 six-role coexistence](research/REUSE_E29_SIX_ROLE_COEXISTENCE.md) passes the real
+database gates for all six application/worker identities on one actual-package PGlite
+schema and rejects incompatible role memberships. 62 package checks pass. This is not
+physical PostgreSQL pool or whole-host/browser acceptance; protected web submission is next.
+
 [E28 automatic recovery](research/REUSE_E28_AUTOMATIC_READY_RECOVERY.md) now runs after
 signed-ready reconciliation with bounded discovery and generation/deadline checks.
 The actual package test reaches review from offline pickup without a manual recovery

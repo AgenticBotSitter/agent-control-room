@@ -11,7 +11,7 @@ import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-nati
 import { createTaskCoordinatorLifecycle } from '../../src/web/v1/task-coordinator-lifecycle.ts';
 import { enrollment } from '../../tests/hermes-native-fixture.ts';
 import { verifyPgBossApplicationPermissions } from '../../src/persistence/pg-boss-application-permissions.ts';
-import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase } from '../../src/web/v1/private-database-preflight.ts';
+import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyNativeQueueWorkerDatabase } from '../../src/web/v1/private-database-preflight.ts';
 import { createPrivateTaskBootstrap } from '../../src/web/v1/private-task-startup.ts';
 import { taskStartupFixture } from '../../tests/helpers/task-startup.ts';
 import { WebSessionAuthority } from '../../src/web/v1/session-authority.ts';
@@ -30,6 +30,49 @@ const audit = async f => (await f.db.query("SELECT * FROM audit_events WHERE act
 const reference = (f, receipt) => ({ schema: 'control-room.native-task-submission/v1', tenantId: f.scope.tenantId,
   projectId: receipt.projectId, jobId: receipt.jobId, attemptId: receipt.attemptId, queueId: receipt.queueId,
   inputDigest: f.args[3], packetDigest: sha256Digest(f.packet) });
+
+test('all six database identities coexist with actual queue and recovery grants', { timeout: 30000 }, async t => {
+  const f = await fixture(t);
+  await taskStartupFixture(f);
+  for (const file of ['native_results_roles.sql', 'native_evidence_roles.sql', 'native_session_roles.sql',
+    'native_queue_producer_roles.sql', 'native_queue_recovery_roles.sql', 'native_queue_worker_roles.sql'])
+    await f.raw.exec(await readFile(`db/roles/${file}`, 'utf8'));
+  const roles = [
+    ['web_test', 'control_room_private_web', verifyPrivateDatabase],
+    ['coordinator_test', 'control_room_task_coordinator', verifyTaskCoordinatorDatabase],
+    ['result_test', 'control_room_native_results', verifyNativeResultDatabase],
+    ['evidence_test', 'control_room_native_evidence', verifyNativeEvidenceDatabase],
+    ['session_test', 'control_room_native_sessions', verifyNativeSessionDatabase],
+    ['worker_test', 'control_room_native_queue_worker', verifyNativeQueueWorkerDatabase],
+  ];
+  for (const [login, role] of roles.slice(2)) await f.raw.exec(`CREATE ROLE ${login} LOGIN INHERIT
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; GRANT ${role} TO ${login}`);
+  const checked = { ...f.db, transaction: work => f.db.transaction(tx => work({ async query(sql, values) {
+    const result = await tx.query(sql, values);
+    // Known PGlite TEMP catalog limitation only; all other identity/ACL checks are real.
+    if (sql.includes('AS database_temp')) result.rows = result.rows.map(row => ({ ...row, database_temp: false }));
+    return result;
+  } })) };
+  const scope = { ...f.scope, ownerIdentityId: 'identity:test', issuer: f.accessTrust.issuer };
+  for (const [login, role, verify] of roles) await t.test(login, async () => {
+    const config = { host: '127.0.0.1', port: 5432, database: 'template1', username: login,
+      password: 'synthetic-only', majorVersion: 17 };
+    await f.raw.exec(`SET SESSION AUTHORIZATION ${login}`);
+    try {
+      await verify(checked, config, scope, f.clock(), { nativeQueue: true, nativeQueueRecovery: true });
+      if (!['coordinator_test', 'worker_test'].includes(login))
+        await assert.rejects(f.db.query('SELECT * FROM control_room_queue.job_common'));
+      if (login === 'worker_test') await assert.rejects(f.db.query('SELECT * FROM control_native_task_queue'));
+    } finally { await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE'); }
+    // A mistaken role membership must fail startup, not silently broaden access.
+    const extra = login === 'worker_test' ? 'control_room_private_web' : 'control_room_native_queue_worker';
+    assert.notEqual(extra, role);
+    await f.raw.exec(`GRANT ${extra} TO ${login}; SET SESSION AUTHORIZATION ${login}`);
+    try {
+      await assert.rejects(verify(checked, config, scope, f.clock(), { nativeQueue: true, nativeQueueRecovery: true }), /preflight_failed/);
+    } finally { await f.raw.exec(`SET SESSION AUTHORIZATION postgres; RESET ROLE; REVOKE ${extra} FROM ${login}`); }
+  });
+});
 
 async function fixture(t) {
   const f = await canonicalApprovalStorageFixture();

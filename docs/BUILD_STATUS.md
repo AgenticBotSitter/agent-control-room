@@ -8,6 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local evidence — E29:** [Six-role coexistence](research/REUSE_E29_SIX_ROLE_COEXISTENCE.md)
+passes all six database identity gates with actual queue/recovery grants and rejects
+cross-role contamination. 62 package checks pass. Browser dispatch remains explicitly
+unconnected; wire the existing protected approval/submission path next. No deployment.
+
 **Latest owner direction — reuse-first integration (2026-09-06):** The owner approved
 local implementation of sensible reused components and directed continuing the new plan
 before making custom infrastructure. Public GitHub research/downloads are authorized with
