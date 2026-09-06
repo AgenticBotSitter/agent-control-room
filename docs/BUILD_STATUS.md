@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Explicit standalone asset packaging:** [Asset review](PUBLIC_ASSET_REVIEW.md) found
+the old preview PNG in the built client directory despite the server refusing it.
+Standalone Vite now emits only the required favicon rather than copying all public
+assets. Original preview files remain intact; both assets' public rights remain unresolved.
+Standalone build, 52 combined checks, TypeScript and targeted lint pass. No visual or
+live hosting validation is claimed.
+
 **Contributor verification separated:** Preview-only metadata assertions now have their
 own test, retained in default verification; standalone checks no longer require hosting
 files. [Test dependency follow-up](PUBLIC_RUNTIME_AND_TEST_INPUTS.md) records 23 seeds,

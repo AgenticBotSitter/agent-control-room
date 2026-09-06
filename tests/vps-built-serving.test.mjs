@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { realpath } from "node:fs/promises";
+import { realpath, access, readFile } from "node:fs/promises";
 import test from "node:test";
 import handler from "../dist-vps/server/index.js";
 import { createPrivateWebBootstrap } from "../dist-vps/server/bootstrap.js";
@@ -15,6 +15,8 @@ test("compiled serving entry stays inert and snapshots only the built browser as
   assert.ok(assets.count > 2); assert.match(assets.digest, /^sha256:[a-f0-9]{64}$/);
   assert.equal(assets.respond("/vinext-client-entry-manifest.json", "GET"), undefined);
   assert.equal(assets.respond("/control-room-preview.png", "GET"), undefined);
+  await assert.rejects(access("dist-vps/client/control-room-preview.png"), { code: "ENOENT" });
+  assert.deepEqual(await readFile("dist-vps/client/favicon.svg"), await readFile("public/favicon.svg"));
   assert.equal(assets.respond("/../server/bootstrap.js", "GET"), undefined);
   assert.equal(assets.respond("/favicon.svg", "GET").status, 200);
   assert.equal((await handler(request())).status, 503);

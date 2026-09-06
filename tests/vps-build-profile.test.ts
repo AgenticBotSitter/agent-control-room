@@ -32,6 +32,7 @@ test("standalone build selects a configuration without private hosting dependenc
   assert.match(readFileSync("scripts/build-vps.mjs", "utf8"), /configFile: "vite\.vps\.config\.ts"/);
   const loaded = await loadConfigFromFile({ command: "build", mode: "production" }, "vite.vps.config.ts");
   assert.ok(loaded);
+  assert.equal(loaded.config.publicDir, false);
   assert.equal(loaded.dependencies.some(path => /hosting\.json|sites-vite-plugin/.test(path)), false);
   assert.equal(loaded.config.define?.["process.env.CONTROL_ROOM_BUILD_TARGET"], '"vps-node"');
 });
