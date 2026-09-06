@@ -9,7 +9,7 @@ import { OwnerTaskVerification } from "./task-owner-verification";
 import type { TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
 
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
-  verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Superseded" };
+  verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Replaced by a newer revision" };
 
 export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
   pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;
@@ -17,10 +17,13 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
-        {page.items.map((item, index) => <li key={item.artifactId}><div><h3>Agent result {index + 1}</h3>
+        {page.items.map((item, index) => <li key={item.artifactId}><div><h3>Saved result file {index + 1}</h3>
           <p>File ID: <code>{item.artifactId}</code></p>
           <p>{item.sizeBytes.toLocaleString()} bytes · Received {new Date(item.receivedAt).toLocaleString()}</p>
           <p>Received bytes matched the agent’s recorded fingerprint. This is not a quality approval.</p>
+          {page.reviews.filter(review => review.kind === "document" && review.contentHash === item.contentHash
+            && review.matchingArtifactIds.includes(item.artifactId)).map(review => <p key={review.targetId}>
+              Matches Revision {review.revision} · {reviewLabel[review.status]}</p>)}
           <details><summary>File fingerprint</summary><code>{item.contentHash}</code></details></div>
           {page.canReadContent ? <button type="button" disabled={pending} onClick={() => onOpen(item.artifactId)}>Read result</button>
             : <p>Your access permits metadata, not reading this file.</p>}</li>)}</ul>}
@@ -35,7 +38,8 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
       <p className="private-note">Bytes checked again {new Date(content.contentVerifiedAt).toLocaleString()}.</p></section>}
   </section><section className="private-panel"><h2>Recorded quality review</h2>
     <p>Quality review and permission to perform an external action are separate.
-      {page.reviewCommands === "not_connected" ? " Review and revision commands are not connected yet." : " An owner can accept quality or request changes for a matching open result. Revision dispatch remains separate."}</p>
+      {page.reviewCommands === "not_connected" ? " Owner review commands are not connected yet." : " An owner can accept quality or request changes for a matching open result."}</p>
+    <p>Requesting changes records feedback only. Starting a revised agent task is not connected yet.</p>
     {page.reviewSource === "not_configured" ? <p className="private-notice">Protected review history is not configured for this app.</p>
       : !page.reviews.length ? <p>No review targets are recorded for this task.</p> : <ol className="private-review-list">
         {page.reviews.map(review => <li key={review.targetId}><h3>Revision {review.revision} · {reviewLabel[review.status]}</h3>
@@ -51,11 +55,19 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
             {item.decision.replaceAll("_", " ")} · {item.authority === "advisory" ? "Advisory only" : "Completion review"} · {new Date(item.reviewedAt).toLocaleString()}</li>)}</ul>}
           <h4>Verification</h4>{!review.verifications.length ? <p>No verification results recorded.</p> : <ul>{review.verifications.map(item => <li key={item.id}>
             {item.scenarioId} · {item.outcome}</li>)}</ul>}
-          {!!review.missingVerificationScenarioIds.length && <p>Checks still needed: {review.missingVerificationScenarioIds.join(", ")}</p>}
-          {!!review.openFindingCount && <p>{review.openFindingCount} finding(s) require resolution in a bounded revision.</p>}
+          {!!review.missingVerificationScenarioIds.length && <p>{review.status === "superseded"
+            ? "Checks not recorded on this earlier revision: " : "Checks still needed: "}{review.missingVerificationScenarioIds.join(", ")}</p>}
+          {!!review.openFindingCount && (review.status === "superseded"
+            ? <p>This earlier revision had {review.openFindingCount} finding(s). These findings are historical, not current instructions.</p>
+            : <p>{review.openFindingCount} finding(s) require resolution in a bounded revision.</p>)}
           {!!review.findings.length && <ul>{review.findings.map(item => <li key={item.id}>{item.severity} · {item.code}
             <details><summary>Finding statement fingerprint</summary><code>{item.statementDigest}</code></details></li>)}</ul>}
-          {review.supersedesTargetId && <p>This revision supersedes an earlier immutable target.</p>}
+          {review.supersedesTargetId && <p>{page.reviews.some(prior => prior.targetId === review.supersedesTargetId)
+            ? `Replaces Revision ${page.reviews.find(prior => prior.targetId === review.supersedesTargetId)!.revision}.`
+            : "Replaces an earlier revision outside this displayed history."}</p>}
+          {review.status === "superseded" && <p>{page.reviews.some(next => next.supersedesTargetId === review.targetId)
+            ? `Replaced by Revision ${page.reviews.find(next => next.supersedesTargetId === review.targetId)!.revision}.`
+            : "The replacement revision is outside this displayed history."}</p>}
           {review.additionalEvidenceOmitted && <p>Only recent review evidence is displayed; the recorded quality status uses the full verified history.</p>}
           {page.reviewCommands === "configured" && content && review.kind === "document"
             && review.matchingArtifactIds.includes(content.artifact.artifactId) && review.contentHash === content.artifact.contentHash

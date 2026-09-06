@@ -53,7 +53,8 @@ test("result panel displays escaped selectable content and truthful independent 
   const html = renderToStaticMarkup(createElement(TaskResultsPanel, { page, content, pending: false, onOpen() {}, onClose() {} }));
   assert.match(html, /Read result/); assert.match(html, /readOnly=""/); assert.match(html, /&lt;b&gt;not rendered HTML&lt;\/b&gt;/);
   assert.doesNotMatch(html, /<b>not rendered HTML<\/b>|memory:\/\/|node:test|<button[^>]*>Accept/);
-  assert.match(html, /does not match any result file/); assert.match(html, /Review and revision commands are not connected/);
+  assert.match(html, /does not match any result file/); assert.match(html, /Owner review commands are not connected/);
+  assert.match(html, /Starting a revised agent task is not connected/);
   assert.match(html, /not instructions for Control Room/);
 });
 
@@ -122,4 +123,78 @@ test("maximum-width valid review projections stay within the shared reader capac
   const html = renderToStaticMarkup(createElement(TaskResultsPanel, { page: bounded, pending: false, onOpen() {}, onClose() {} }));
   assert.ok(html.includes(`Only the ${bounded.reviews.length} most recent review targets`));
   assert.match(html, /Additional history remains saved/);
+});
+
+test("saved revision lineage reaches the protected result page without treating historical findings as current work", async t => {
+  const f = await webNativeResultFixture(); t.after(f.close);
+  const input = f.complete("Original document");
+  const { receipt } = await f.resultService.ingest(input.raw, input.bytes, f.options(at(2000)));
+  const { profile, target } = await f.reviewTarget(receipt.contentHash);
+  const base = { schemaVersion: "control-room-completion-gate/v1", tenantId: binding.tenantId,
+    projectId: binding.projectId, targetId: target.id, targetDigest: sha256Digest(target) };
+  await f.reviewStore.recordReview({ ...base, id: "review:revision-history", authority: "completion_gate",
+    decision: "changes_requested", acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    reviewer: { actorId: "identity:test", actorType: "human" }, assessedRisk: "low", effectiveRisk: "low",
+    evidenceDigests: [receipt.contentHash], findingIds: ["finding:revision-history"], reviewedAt: at(3000),
+    grantsApproval: false, grantsExecutionAuthority: false }, [{ ...base, id: "finding:revision-history",
+    reviewId: "review:revision-history", code: "document:missing-section", severity: "low",
+    statementDigest: sha256Digest("Add the missing section"), evidenceDigests: [receipt.contentHash], raisedAt: at(3000) }]);
+  // Real generic revision storage; no new native run or delivered replacement file is fabricated.
+  const next = { ...target, id: "target:result:1", revisionNumber: 1, supersedesTargetId: target.id,
+    subjectDigest: resultBytesHash(new TextEncoder().encode("Revised document")), submittedAt: at(4000) };
+  await f.reviewStore.recordRevision({ schemaVersion: base.schemaVersion, id: "revision:result:1", tenantId: binding.tenantId,
+    projectId: binding.projectId, rootTargetId: target.rootTargetId, fromTargetId: target.id,
+    fromTargetDigest: sha256Digest(target), toTargetId: next.id, toTargetDigest: sha256Digest(next), revisionNumber: 1,
+    resolvedFindingIds: ["finding:revision-history"], revisedBy: next.producer, revisedAt: next.submittedAt,
+    grantsApproval: false, grantsExecutionAuthority: false }, next);
+  const checkpoint = f.checkpoints.read(`completion-gate:${binding.tenantId}`);
+  const handler = createTaskHttpHandler({ origin, trust: f.accessTrust, service: f.tasks, clock: () => instant + 6000 });
+  const client = createTaskBrowserClient(async (url, init) => {
+    assert.equal(init?.method, "GET");
+    return handler(request(String(url), "GET", undefined, undefined, f.jwt));
+  });
+  const page = await client.results(binding.projectId, binding.jobId);
+  const old = page.reviews.find(value => value.targetId === target.id)!;
+  const revised = page.reviews.find(value => value.targetId === next.id)!;
+  assert.equal(old.status, "superseded"); assert.equal(old.openFindingCount, 1);
+  assert.deepEqual(old.matchingArtifactIds, [receipt.artifactId]);
+  assert.equal(revised.status, "pending"); assert.equal(revised.supersedesTargetId, target.id);
+  assert.deepEqual(revised.reviews, []); assert.deepEqual(revised.verifications, []);
+  assert.deepEqual(revised.matchingArtifactIds, []);
+  const before = structuredClone(page);
+  const render = (value = page) => renderToStaticMarkup(createElement(TaskResultsPanel,
+    { page: value, pending: false, onOpen() {}, onClose() {} }));
+  const html = render();
+  assert.match(html, /Matches Revision 0 · Replaced by a newer revision/);
+  assert.doesNotMatch(html, /Matches Revision 1|Agent result 1|Quality review complete/);
+  assert.match(html, /Revision 1 · Review in progress/);
+  assert.match(html, /This earlier revision had 1 finding/);
+  assert.doesNotMatch(html, /1 finding\(s\) require resolution/);
+  assert.match(html, /Checks not recorded on this earlier revision/);
+  assert.match(html, /Replaces Revision 0\./); assert.match(html, /Replaced by Revision 1\./);
+  assert.match(html, /does not match any result file/);
+  assert.match(html, /Starting a revised agent task is not connected/);
+  assert.doesNotMatch(html, /<button[^>]*>(?:Start|Submit|Request) revision/);
+  const missingPrior = render({ ...page, reviews: [revised], additionalTargetsOmitted: true });
+  assert.match(missingPrior, /earlier revision outside this displayed history/);
+  assert.doesNotMatch(missingPrior, /Replaces Revision 0/);
+  const missingNext = render({ ...page, reviews: [old], additionalTargetsOmitted: true });
+  assert.match(missingNext, /replacement revision is outside this displayed history/);
+  assert.doesNotMatch(missingNext, /Replaced by Revision 1\./);
+  // Presentation-only permutations: unrelated display order must never create revision lineage.
+  const unrelated = { ...revised, targetId: "target:unrelated", revision: 7, supersedesTargetId: null };
+  const reordered = render({ ...page, reviews: [old, unrelated, revised] });
+  assert.match(reordered, /Replaces Revision 0\./); assert.match(reordered, /Replaced by Revision 1\./);
+  assert.doesNotMatch(reordered, /Replaces Revision 7\.|Replaced by Revision 7\./);
+  assert.match(reordered, /These findings are historical, not current instructions/);
+  // A matching fingerprint alone does not put an unassociated file in this review.
+  const sameBytes = { ...page.items[0], artifactId: "artifact:unassociated", runId: "run:unassociated" };
+  const twoFiles = render({ ...page, items: [...page.items, sameBytes] });
+  const resultList = twoFiles.slice(twoFiles.indexOf('<ul class="private-result-list">')).split("</ul>")[0];
+  const cards = resultList.split("<li>");
+  assert.equal(cards.length, 3); assert.match(cards[1], /Matches Revision 0/);
+  assert.match(cards[2], /artifact:unassociated/); assert.doesNotMatch(cards[2], /Matches Revision/);
+  assert.deepEqual(page, before);
+  assert.deepEqual(f.checkpoints.read(`completion-gate:${binding.tenantId}`), checkpoint);
+  assert.equal((await f.tasks.detail(f.identity, binding.projectId, binding.jobId)).task.state, "leased");
 });
