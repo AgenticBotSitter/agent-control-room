@@ -1,0 +1,84 @@
+// Read-only planning inventory. No copying, deletion, license grant or publication.
+import { execFileSync } from 'node:child_process';
+import { readFileSync, lstatSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import ts from 'typescript';
+
+const root = process.cwd();
+const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+const baseline = git(['rev-parse', 'HEAD']).trim();
+const files = git(['ls-files', '-z']).split('\0').filter(Boolean).sort();
+// The report is a derived artifact, never an input to its own inventory.
+const reportPath = 'docs/research/public-export-inventory.json';
+const tracked = new Set(files.filter(file => file !== reportPath));
+const options = ts.parseJsonConfigFileContent(ts.readConfigFile('tsconfig.json', ts.sys.readFile).config, ts.sys, root).options;
+const seeds = [...tracked].filter(file => file.startsWith('private-app/') && /\.[jt]sx?$/.test(file));
+seeds.push('vite.vps.config.ts', 'scripts/build-vps.mjs', 'scripts/run-private-vps.mjs',
+  'src/web/v1/private-process.ts', 'src/web/v1/private-startup.ts', 'src/web/v1/private-serving.ts',
+  'src/web/v1/private-database-rehearsal.ts', 'src/web/v1/private-fixture-preparation.ts',
+  'src/web/v1/private-task-application.ts', 'src/web/v1/private-task-startup.ts',
+  'src/web/v1/installed-native-queue.ts', 'src/persistence/pg-boss-schema-inspection.ts',
+  'src/web/v1/private-task-host.ts');
+const pending = [...seeds], closure = new Set(), unresolved = [], dynamic = [], external = new Set();
+while (pending.length) {
+  const file = pending.pop();
+  if (closure.has(file)) continue;
+  if (!tracked.has(file)) { unresolved.push({ file, reason: 'not_tracked_source' }); continue; }
+  closure.add(file);
+  if (!/\.[cm]?[jt]sx?$/.test(file)) continue;
+  if (!lstatSync(file).isFile()) { unresolved.push({ file, reason: 'not_regular_file' }); continue; }
+  const ast = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  const imports = [];
+  function visit(node) {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier
+      && ts.isStringLiteral(node.moduleSpecifier)) imports.push(node.moduleSpecifier.text);
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+      || ts.isIdentifier(node.expression) && node.expression.text === 'require')) {
+      if (node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) imports.push(node.arguments[0].text);
+      else dynamic.push({ file, line: ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1 });
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  for (const specifier of imports) {
+    if (specifier.endsWith('.css')) {
+      pending.push(path.relative(root, path.resolve(path.dirname(path.resolve(file)), specifier))); continue;
+    }
+    const resolved = ts.resolveModuleName(specifier, path.resolve(file), options, ts.sys).resolvedModule;
+    if (!resolved) {
+      if (specifier.startsWith('.') || specifier.startsWith('@/')) unresolved.push({ file, specifier, reason: 'unresolved_local_import' });
+      else external.add(specifier);
+      continue;
+    }
+    const relative = path.relative(root, resolved.resolvedFileName);
+    if (relative.startsWith('node_modules/')) external.add(specifier);
+    else pending.push(relative);
+  }
+}
+
+function proposal(file) {
+  if (closure.has(file)) return ['review', 'application_or_build_import'];
+  if (/^(docs|coordination|reviews|\.agents|\.github|\.openai|release)\//.test(file))
+    return ['exclude', 'private_history_or_configuration_default'];
+  if (/^(tests|db|contracts|schemas|third_party)\//.test(file)) return ['review', 'supporting_tests_schema_or_attribution'];
+  if (/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.json|eslint\.config\.mjs|postcss\.config\.mjs|next-env\.d\.ts|next\.config\.ts|middleware\.ts)$/.test(file))
+    return ['adapt', 'root_build_or_verification_scope'];
+  return ['unresolved', 'manual_scope_decision_required'];
+}
+const counts = {};
+const entries = [...tracked].map(file => {
+  const stat = lstatSync(file), regular = stat.isFile();
+  const [disposition, reason] = regular ? proposal(file) : ['unresolved', 'nonregular_path'];
+  counts[disposition] = (counts[disposition] ?? 0) + 1;
+  return { path: file, disposition, reason, review: 'pending',
+    sha256: regular ? createHash('sha256').update(readFileSync(file)).digest('hex') : null };
+});
+console.log(JSON.stringify({ schema: 'control-room.public-export-planning-inventory/v1', baseline,
+  source: 'tracked_working_tree_bytes', publicationApproved: false, counts,
+  limitations: ['Proposals are not content review or an export allowlist.',
+    'CSS dependencies, runtime file reads, type-only import expressions and framework discovery require review.',
+    'Built-output imports from the launcher are expected outside tracked source; builds must supply them.',
+    'Untracked and ignored files are not inventoried; never copy them implicitly.',
+    'Private planning report; contains internal paths and must not be published.'],
+  closureCount: closure.size, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));

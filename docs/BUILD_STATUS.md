@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Tracked export checklist saved:** [Inventory status](PUBLIC_EXPORT_INVENTORY_STATUS.md)
+records 2,292 baseline paths with matching hashes and proposed dispositions; every
+content review remains pending. The expanded static closure covers 294 tracked paths,
+with generated launcher imports and dynamic imports explicitly flagged. Coverage,
+repeatability, counts and targeted lint pass. This private report is not an export allowlist.
+
 **Standalone build separated:** [Configuration implementation](PUBLIC_STANDALONE_BUILD_SEPARATION.md)
 removes hosting metadata/plugin imports from the direct VPS build entrypoint while
 reusing its configuration from the existing preview's explicit Node target. Build,
