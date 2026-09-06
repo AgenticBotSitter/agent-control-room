@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E37 pinned dependency](research/REUSE_E37_PINNED_APPLICATION_DEPENDENCY.md) removes the
+temporary evaluation-folder requirement. All 66 queue integration checks pass against the
+application's locked pg-boss installation. pnpm run precheck diagnosis remains separate;
+direct Node test execution is verified. No production startup enabled.
+
 [E36 client/host reconciliation](research/REUSE_E36_BROWSER_CLIENT_HOST_RECONCILIATION.md)
 passes the actual browser client through the complete host for online, offline and lost
 commit-response journeys. Real browser interaction remains untested because the Mac is locked.

@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local adoption — E37:** [Pinned queue dependency](research/REUSE_E37_PINNED_APPLICATION_DEPENDENCY.md)
+adds pg-boss 12.30.0 and its exact tested closure to the application lockfile. All 66 package
+checks pass using repository node_modules, no temporary root. pnpm's script precheck reports
+a workspace metadata mismatch despite frozen install succeeding; direct Node tests pass.
+No runtime activation; browser interaction still awaits owner unlock.
+
 **Latest local acceptance — E36:** [Browser client/host reconciliation](research/REUSE_E36_BROWSER_CLIENT_HOST_RECONCILIATION.md)
 uses the real submission client through the complete disposable host, including a lost
 response after commit resolved by receipt readback without a second POST. Interactive UI

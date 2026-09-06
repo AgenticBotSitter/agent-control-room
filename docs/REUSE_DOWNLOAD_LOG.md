@@ -1,8 +1,38 @@
 # Reuse evaluation download and cleanup ledger
 
-Started 2026-09-06. Owner authorized needed downloads for the reuse plan, with a storage check and a complete acquisition/cleanup record. This does not authorize provider calls, persistent services or production deployment. Application dependency declarations and lockfile remain unchanged; test scripts have been extended.
+Started 2026-09-06. Owner authorized needed downloads for the reuse plan, with a storage check and a complete acquisition/cleanup record. This does not authorize provider calls, persistent services or production deployment. E01–E36 preserved application dependencies; E37 adds the pinned tested queue dependency locally.
 
 ## Storage before acquisition
+
+### E37 local application dependency preparation (2026-09-06)
+
+Precheck: shared APFS volume reports 104 GiB available, 312 GiB used, 76% capacity.
+Following E35/E36 complete local integration tests, pin pg-boss 12.30.0 as an application
+dependency without enabling runtime startup. First attempt: pnpm 11.19.0 offline lockfile
+resolution with lifecycle scripts disabled. Record success/failure, resolved dependencies,
+storage and cleanup disposition after the command. E01 acquisition is retained unchanged.
+Application installation is package-manager-owned node_modules, not a copied evaluation
+tree. Removing it later requires a dependency/lockfile change and normal package-manager
+reconciliation, not deleting shared caches or unrelated folders.
+
+Outcome: offline metadata resolution failed (ERR_PNPM_NO_OFFLINE_META). Authorized npm
+registry lockfile resolution then succeeded; frozen installation with scripts disabled
+downloaded/added 21 packages. All 21 versions and integrity hashes match retained E01's
+package-lock; see the existing E01 package/license table below. No old dependency versions
+changed; registry refreshed an eslint deprecation metadata entry. Lock SHA256:
+`51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0`.
+Installed pg-boss directory: `node_modules/.pnpm/pg-boss@12.30.0` (1.0 MiB); all package
+locations/integrities are in pnpm-lock.yaml. Shared package cache:
+`/Users/alastairfraser/Library/pnpm/store/v11` (do not delete wholesale). Storage remains
+104 GiB available. E01 remains retained for comparison; no cleanup performed.
+
+All 66 actual-package checks pass against repository node_modules with no evaluation-root
+environment variable. Typecheck/lint/stage-zero pass. A normal pnpm run attempted an
+automatic reinstall and refused without a TTY. Read-only fail-on-mismatch checks identified
+global-virtual-store/CI setting and workspace-state differences; a second frozen install
+reported already up to date but the workspace precheck still refused. No force/purge used.
+Direct Node test commands work and are the verified fallback; pnpm runtime precheck
+diagnosis remains open. This is not a failed package install or waived queue test.
 
 `df -h . /private/tmp`: shared APFS Data volume, 460 GiB capacity, 311 GiB used, **105 GiB available**, reported 75% capacity. Rounded filesystem figures need not sum due to APFS accounting. Stop acquisition and reassess if available space falls below 20 GiB or this evaluation exceeds 1 GiB; those are conservative evaluation limits, not requested permanent policies.
 
