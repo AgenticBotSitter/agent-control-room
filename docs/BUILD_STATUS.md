@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Public extraction direction refined:** [Application dependency findings](PUBLIC_APPLICATION_DEPENDENCY_FINDINGS.md)
+trace the protected application's static imports to 286 paths, with only five shared
+legacy app files and no matched named project-adapter paths. Prefer this existing
+application over rewriting the demo dashboard. Shared CSS and static hosting-config
+imports remain; the trace is not a complete export manifest or privacy clearance.
+
 **Public preparation first pass:** [Export findings](PUBLIC_EXPORT_INVENTORY_FIRST_PASS.md)
 identify fixture/project coupling in the homepage, workspace and routes; simply copying
 the old public packages will not yield a runnable app. A [project brief draft](PUBLIC_PROJECT_BRIEF_DRAFT.md)
