@@ -89,9 +89,13 @@ test("compiled three-role startup registers and submits separately captured synt
   const registered = await runtime.results.register(input, new AbortController().signal);
   assert.equal(registered.replayed, false); assert.equal(registered.receipt.projectId, input.projectId);
   assert.equal(registered.receipt.jobId, input.jobId); assert.equal(registered.receipt.runId, input.runId);
-  assert.equal(registered.receipt.inputDigest, x.f.prepared.receipt.inputDigest);
+  assert.equal(registered.receipt.inputDigest, x.f.assignmentFixture.prepared.receipt.inputDigest);
   assert.equal(registered.receipt.startsWork, false); assert.equal(registered.receipt.grantsExecutionAuthority, false);
   assert.deepEqual(x.local.calls, callsBeforeRegister); assert.equal(x.local.effects.countFull(), effectsBeforeRegister);
+  // PGlite does not restore current_user after SET LOCAL SESSION AUTHORIZATION.
+  // Reset only at this labelled privileged fixture boundary; writer calls above and below
+  // still establish and observe result_test independently inside their own transactions.
+  await startup.raw.exec("SET SESSION AUTHORIZATION postgres");
   assert.equal((await x.f.reviewStore.inspectSubject(x.registration.tenantId,
     x.registration.projectId, x.registration.jobId)).targets.length, 0);
 
@@ -117,10 +121,11 @@ test("compiled three-role startup registers and submits separately captured synt
   const submissionReplay = await runtime.results.submit(input, new AbortController().signal);
   assert.equal(registrationReplay.replayed, true); assert.deepEqual(registrationReplay.receipt, registered.receipt);
   assert.equal(submissionReplay.replayed, true); assert.deepEqual(submissionReplay.receipt, submitted.receipt);
-  assert.equal((await startup.coordinator.client.query(
-    "SELECT id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [x.registration.tenantId, input.runId])).rows.length, 1);
+  await startup.raw.exec("SET SESSION AUTHORIZATION postgres");
   const subject = await x.f.reviewStore.inspectSubject(x.registration.tenantId, input.projectId, input.jobId);
   assert.equal(subject.targets.length, 1); assert.equal(subject.targets[0].id, submitted.receipt.targetId);
+  assert.equal((await startup.coordinator.client.query(
+    "SELECT id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [x.registration.tenantId, input.runId])).rows.length, 1);
   assert.equal((await startup.coordinator.client.query(
     "SELECT id FROM control_native_artifact_receipts WHERE tenant_id=$1 AND artifact_id=$2", [x.registration.tenantId, artifact.artifactId])).rows.length, 1);
   assert.deepEqual(x.local.calls, nativeCalls); assert.equal(x.local.effects.countFull(), nativeEffects);
