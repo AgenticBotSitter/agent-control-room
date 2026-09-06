@@ -96,7 +96,7 @@ workflows; private self-hosting and reliable reconnect/update/recovery.
 ## GitHub ownership and connection
 
 Use a GitHub Free organization with a brand chosen by the owner, and a proposed
-`control-room` repository. An organization is a shared project identity managed through
+`agent-control-room` repository. An organization is a shared project identity managed through
 personal accounts, not another shared login. The existing personal account can own it;
 that does not automatically expose the personal account's private repositories. Brand,
 organization handle, public maintainer identity and account linkage still need approval.
@@ -165,6 +165,10 @@ application code, document and review a successor source-distribution policy; pr
 historical contracts and evidence, and do not silently weaken their checks. Distinguish
 publishing reviewed pre-alpha source from signing/certifying a production distribution.
 Do not create another release engine merely to host development source on GitHub.
+
+The [developer-preview policy draft](PUBLIC_DEVELOPER_PREVIEW_POLICY_DRAFT.md) now
+defines that separate proposed scope and its exact-source review/rehearsal checklist.
+It is not accepted export authority and does not modify the old SDK contract.
 
 ## Community work lanes
 

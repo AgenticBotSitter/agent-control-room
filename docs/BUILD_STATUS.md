@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Runnable-source policy drafted:** [Developer preview scope](PUBLIC_DEVELOPER_PREVIEW_POLICY_DRAFT.md)
+separates a useful synthetic application preview from the old observation-only SDK
+and a future operational release. It specifies exact content/rights review, clean
+setup/demo proof, independent review and owner publication approval without creating
+another release engine. Draft only; old contracts and the disabled publisher are
+unchanged. Assembly/publication and live acceptance have not been approved by this draft.
+
 **Inventory framework-hook omission fixed:** The public planning inventory now derives
 its entry points from the standalone compiler configuration, including previously
 omitted middleware. This removes a duplicate manually maintained list. Compiled-test
