@@ -42,7 +42,7 @@ function structure(text: string) {
       if (hiddenMarkup === "comment" ? line.includes("-->") : line.toLowerCase().includes(`</${hiddenMarkup}`)) hiddenMarkup = undefined;
       continue;
     }
-    const angleOpener = /<\/?[A-Za-z!]/.exec(line);
+    const angleOpener = /<\/?[A-Za-z!?]/.exec(line);
     if (angleOpener) {
       unsupportedMarkup = true;
       const suffix = line.slice(angleOpener.index);

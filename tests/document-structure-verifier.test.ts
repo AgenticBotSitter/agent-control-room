@@ -53,6 +53,12 @@ test("rejects unsupported angle markup even when a matching heading exists elsew
     { outcome: "passed", reasonCodes: [] });
 });
 
+test("processing-instruction markup cannot receive a structural pass", () => {
+  const result = verifyDocumentStructure("<?processing\n# Required\n?>", { version: "document-structure/v1",
+    minUtf8Bytes: 1, maxUtf8Bytes: 65_536, requiredHeadings: ["Required"], forbiddenTerms: [] });
+  assert.equal(result.outcome, "failed"); assert.ok(result.reasonCodes.includes("unsupported_markup"));
+});
+
 test("ignores HTML examples inside fences without accepting their pseudo-headings", () => {
   const input = rules({ requiredHeadings: ["Required"] });
   const fenced = "```html\n<script>\n# Required\n</script>\n```";
