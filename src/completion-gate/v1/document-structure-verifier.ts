@@ -26,9 +26,10 @@ function marker(line: string): { character: "`" | "~"; length: number; rest: str
   return end - offset >= 3 ? { character, length: end - offset, rest: line.slice(end) } : undefined;
 }
 
-function headings(text: string) {
+function structure(text: string) {
   const found = new Set<string>();
   let fence: { character: "`" | "~"; length: number } | undefined;
+  let hiddenMarkup: "comment" | string | undefined, unsupportedMarkup = false;
   for (const rawLine of text.split("\n")) {
     const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     const candidate = marker(line);
@@ -37,10 +38,28 @@ function headings(text: string) {
       continue;
     }
     if (candidate) { fence = { character: candidate.character, length: candidate.length }; continue; }
-    const match = /^(?:#{1,6}) +(.+)$/.exec(line);
-    if (match) found.add(match[1]!.trim());
+    if (hiddenMarkup) {
+      if (hiddenMarkup === "comment" ? line.includes("-->") : line.toLowerCase().includes(`</${hiddenMarkup}`)) hiddenMarkup = undefined;
+      continue;
+    }
+    const angleOpener = /<\/?[A-Za-z!]/.exec(line);
+    if (angleOpener) {
+      unsupportedMarkup = true;
+      const suffix = line.slice(angleOpener.index);
+      if (suffix.startsWith("<!--") && !suffix.includes("-->")) hiddenMarkup = "comment";
+      else if (!suffix.startsWith("</")) {
+        const tag = /^<([A-Za-z][A-Za-z0-9-]*)/.exec(suffix)?.[1]?.toLowerCase();
+        if (tag && !suffix.toLowerCase().includes(`</${tag}`) && !suffix.trimEnd().endsWith("/>")) hiddenMarkup = tag;
+      }
+      continue;
+    }
+    const match = /^ {0,3}(?:#{1,6}) +(.+)$/.exec(line);
+    if (match) {
+      const normalized = match[1]!.trim().replace(/ +#+$/, "").trim();
+      if (normalized) found.add(normalized);
+    }
   }
-  return found;
+  return { found, unsupportedMarkup };
 }
 
 export function verifyDocumentStructure(text: string, input: DocumentStructureRules): DocumentStructureVerdict {
@@ -49,15 +68,16 @@ export function verifyDocumentStructure(text: string, input: DocumentStructureRu
   const utf8Bytes = new TextEncoder().encode(text).byteLength;
   if (utf8Bytes > MAX_EVALUATED_UTF8_BYTES) return { outcome: "failed", reasonCodes: ["too_long"] };
 
-  const foundHeadings = headings(text);
+  const scanned = structure(text);
   const tooShort = utf8Bytes < rules.minUtf8Bytes;
   const tooLong = utf8Bytes > rules.maxUtf8Bytes;
-  const missingHeading = rules.requiredHeadings.some(required => !foundHeadings.has(required));
+  const missingHeading = rules.requiredHeadings.some(required => !scanned.found.has(required));
   const forbiddenTerm = rules.forbiddenTerms.some(term => text.includes(term));
   const reasonCodes: DocumentStructureVerdict["reasonCodes"] = [];
   if (tooShort) reasonCodes.push("too_short");
   if (tooLong) reasonCodes.push("too_long");
   if (missingHeading) reasonCodes.push("missing_heading");
   if (forbiddenTerm) reasonCodes.push("forbidden_term");
+  if (scanned.unsupportedMarkup) reasonCodes.push("unsupported_markup");
   return { outcome: reasonCodes.length ? "failed" : "passed", reasonCodes };
 }

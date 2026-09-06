@@ -36,6 +36,40 @@ test("ignores headings inside backtick and tilde fences while accepting CRLF hea
   assert.deepEqual(verifyDocumentStructure(outside, input), { outcome: "passed", reasonCodes: [] });
 });
 
+test("does not count headings hidden in HTML comments or script elements", () => {
+  const input = rules({ requiredHeadings: ["Required"] });
+  for (const text of ["<!--\n# Required\n-->", "<script>\n# Required\n</script>"])
+    assert.deepEqual(verifyDocumentStructure(text, input),
+      { outcome: "failed", reasonCodes: ["missing_heading", "unsupported_markup"] });
+});
+
+test("rejects unsupported angle markup even when a matching heading exists elsewhere", () => {
+  const input = rules({ requiredHeadings: ["Required"] });
+  assert.deepEqual(verifyDocumentStructure("# Required\n<div>unsupported</div>", input),
+    { outcome: "failed", reasonCodes: ["unsupported_markup"] });
+  assert.deepEqual(verifyDocumentStructure("# Required\n\\<script>", input),
+    { outcome: "failed", reasonCodes: ["unsupported_markup"] });
+  assert.deepEqual(verifyDocumentStructure("# Required\n&lt;script&gt; and 1 < 3", input),
+    { outcome: "passed", reasonCodes: [] });
+});
+
+test("ignores HTML examples inside fences without accepting their pseudo-headings", () => {
+  const input = rules({ requiredHeadings: ["Required"] });
+  const fenced = "```html\n<script>\n# Required\n</script>\n```";
+  assert.deepEqual(verifyDocumentStructure(fenced, input),
+    { outcome: "failed", reasonCodes: ["missing_heading"] });
+  assert.deepEqual(verifyDocumentStructure(fenced + "\n# Required", input),
+    { outcome: "passed", reasonCodes: [] });
+});
+
+test("normalizes closing ATX hashes and accepts at most three leading spaces", () => {
+  const input = rules({ requiredHeadings: ["Required", "Indented"] });
+  assert.deepEqual(verifyDocumentStructure("# Required #\n   #### Indented ###   ", input),
+    { outcome: "passed", reasonCodes: [] });
+  assert.deepEqual(verifyDocumentStructure("# Required#\n    #### Indented", input),
+    { outcome: "failed", reasonCodes: ["missing_heading"] });
+});
+
 test("uses inclusive UTF-8 byte bounds and literal case-sensitive Unicode terms", () => {
   const exact = "é界"; // two plus three UTF-8 bytes
   assert.deepEqual(verifyDocumentStructure(exact, rules({ minUtf8Bytes: 5, maxUtf8Bytes: 5, forbiddenTerms: ["É"] })),
@@ -76,4 +110,10 @@ test("recognizes only one-to-six hash headings and keeps forbidden terms active 
     { outcome: "failed", reasonCodes: ["missing_heading", "forbidden_term"] });
   assert.deepEqual(verifyDocumentStructure("###### Exact\nordinary blocked", input),
     { outcome: "passed", reasonCodes: [] });
+});
+
+test("places unsupported markup last in the fixed unique reason order", () => {
+  const input = rules({ minUtf8Bytes: 100, maxUtf8Bytes: 120, requiredHeadings: ["Required"], forbiddenTerms: ["BAD"] });
+  assert.deepEqual(verifyDocumentStructure("<script>BAD</script>", input),
+    { outcome: "failed", reasonCodes: ["too_short", "missing_heading", "forbidden_term", "unsupported_markup"] });
 });
