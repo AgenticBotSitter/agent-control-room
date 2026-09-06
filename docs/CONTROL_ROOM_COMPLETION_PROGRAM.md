@@ -6,8 +6,11 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — trusted runtime result registration and submission
-composition, then runtime recovery/owner signing, on Astra Medium. Upstream workflow
+**Active block:** CR14C C-WORK — trusted native evidence receiver ownership,
+then runtime routing/recovery and owner signing, on Astra Medium. Result registration
+and submission ownership is accepted in PR #337; the evidence receiver is implemented
+and independently statically reviewed, with integrated verification still in progress.
+See `CR14C_NATIVE_EVIDENCE_RECEIVER_ACCEPTANCE.md`. Upstream workflow
 completion remains a separate unresolved gate; draft PR #329 is excluded. Exact optional
 quality/completion coordinator mounting is independently reviewed in
 `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md`; it is not a background event router or live fleet.

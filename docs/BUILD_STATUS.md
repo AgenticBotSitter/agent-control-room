@@ -2351,6 +2351,18 @@ PR #336 at `8e3247e` passed all nine GitHub checks in run `34012452533`.
 The new block still requires its own current-head CI and dependency-order integration.
 No merge, native/provider call, database service or deployment is claimed.
 
+## Active verification: native evidence receiver
+
+The optional fourth-role receiver is implemented through `ff5d542` and independently
+statically reviewed with no remaining production findings. It derives saved runs,
+records authenticated progress and passes verified result bytes to the existing review
+writer. Integrated startup and receiver replay verification is still pending; this block
+is not yet accepted. See `CR14C_NATIVE_EVIDENCE_RECEIVER_ACCEPTANCE.md` for retained
+findings, test failures and corrections. Existing 91 role/startup tests, 30 compiled
+tests, the rebuilt VPS artifact and disposable migrations 0056/138 passed.
+Prerequisite PR #337 at `6dac246` now has all nine GitHub checks successful in run
+`34013914346`; it remains open and unmerged.
+
 ## Next block
 
 ```text

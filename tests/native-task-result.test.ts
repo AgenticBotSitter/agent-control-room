@@ -62,12 +62,12 @@ test("failed readback leaves no accepted metadata and exact reconciliation can r
 test("lost SQL acknowledgement recovers the original result receipt without duplicate metadata or native work", async t => {
   const f = await webNativeResultFixture(); t.after(f.close); const input = f.complete("Lost acknowledgement");
   await f.service.ingest(input.raw, f.options(at(2000))); let lose = true;
-  const db: DatabaseClient = { ...f.db, transaction: async work => {
+  const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: async (work, check) => {
     let wrote = false;
-    const result = await f.db.transaction(tx => work({ query: async (sql, params) => {
+    const result = await f.db.transactionWithPreCommitCheck(tx => work({ query: async (sql, params) => {
       if (sql.includes("INSERT INTO control_native_artifact_receipts")) wrote = true;
       return tx.query(sql, params);
-    } }));
+    } }), check);
     if (wrote && lose) { lose = false; throw new Error("synthetic lost response"); }
     return result;
   } };
@@ -81,10 +81,10 @@ test("lost SQL acknowledgement recovers the original result receipt without dupl
 test("audit failure rolls back artifact metadata together while retaining the exact file for reconciliation", async t => {
   const f = await webNativeResultFixture(); t.after(f.close); const input = f.complete("Atomic metadata");
   await f.service.ingest(input.raw, f.options(at(2000)));
-  const db: DatabaseClient = { ...f.db, transaction: work => f.db.transaction(tx => {
+  const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => {
     const guarded: DatabaseSession = { query: async (sql, params) => { if (sql.includes("INSERT INTO audit_events")) throw new Error("synthetic failure"); return tx.query(sql, params); } };
     return work(guarded);
-  }) };
+  }, check) };
   await assert.rejects(new NativeResultStore(db, f.harnessKey, f.config).capture(binding.tenantId, binding.nodeId, input.body, input.bytes, at(2000)));
   assert.equal((await f.db.query("SELECT * FROM control_native_artifact_receipts")).rows.length, 0);
   assert.equal((await f.db.query("SELECT * FROM control_artifact_manifests")).rows.length, 0); assert.equal(f.storage.count(), 1);
