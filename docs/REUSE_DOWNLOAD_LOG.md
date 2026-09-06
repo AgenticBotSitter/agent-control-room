@@ -441,3 +441,33 @@ No download, credentials, native service or external publication.
 Existing repository dependencies and retained E01 package only. In-memory fixtures and
 synthetic transports closed after tests. No download, new retained directory, native
 database/provider, credential access, deployment or external publication.
+
+## E55 — isolated ssh2 signing compatibility
+
+Pre-download disk check: 102 GiB available on the workspace/temp filesystem.
+Exact evaluation root: `/private/tmp/cr-e55.x7lWXA`. Candidate: `ssh2@1.17.0`
+from the public npm registry. Owner's logged-download authority applies; no native
+agent, real credentials, listener or SSH service is authorized or used.
+Install only here, with lifecycle scripts disabled and optional dependencies omitted;
+cache and configuration files stay in this root. Acquisition result, lock integrity,
+license inventory and retained size will be appended after verification. Status: planned.
+
+Acquisition completed: npm installed five packages, exit 0, with `--ignore-scripts
+--omit=optional --no-audit --no-fund`, explicit local prefix/cache/config and a 30-second
+fetch timeout/no retry. No application manifest/lockfile or global package changed.
+Retained evaluation lock: `docs/research/reuse-e55-package-lock.json`, SHA256
+`8bbce62b2b395f941ac07533fe3a5cd4c59e9c03641432ff8ad0d46277bf3805`.
+It records exact registry tarballs and SHA512 integrities. Original candidate agent.js
+SHA256: `cc6987488bf45f73e0ac5d8bbe59912b70a144cd73b53c83919f188f4cc3f2be`.
+
+Installed license files inspected: ssh2 1.17.0 (MIT), asn1 0.2.6 (MIT), safer-buffer
+2.1.2 (MIT), tweetnacl 0.14.5 (Unlicense), bcrypt-pbkdf 1.0.2 (BSD-3-Clause Blowfish
+plus ISC-style notices for bcrypt/Javascript portions). Preserve all notices if adopted.
+Optional cpu-features/buildcheck/nan entries remain in npm's lock but were not installed;
+their presence is not an assertion of license clearance or native-build execution.
+
+Post-acquisition size: 2.9 MiB total, 1.8 MiB node_modules and 1.1 MiB cache; 102 GiB
+still available. Cleanup status: retained for the next offline adapter evaluation,
+not deleted. Exact cleanup candidate remains `/private/tmp/cr-e55.x7lWXA`; keep this
+ledger and the committed lock after eventual cleanup. Tests close their in-memory
+protocols and disposable fixtures. No standing process/socket/key store was created.

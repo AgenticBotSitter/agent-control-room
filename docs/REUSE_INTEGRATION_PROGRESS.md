@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E55 offline signing](research/REUSE_E55_SSH_SIGNING_EVALUATION.md) verifies the pinned
+candidate's bytes through existing intake and identifies a callback/closure limitation.
+Three final diagnostics pass; two earlier cancelled diagnostics remain documented.
+Candidate dependencies stay isolated and logged, not adopted into the application.
+
 [E54 signer candidate](research/REUSE_E54_OWNER_SIGNER_CANDIDATE.md) narrows the custody
 access gap to an existing agent protocol implementation for offline evaluation. It does
 not select an installed key, provide owner consent or adopt another transport system.

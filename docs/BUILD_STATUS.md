@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest offline evaluation — E55:** [Pinned SSH signing](research/REUSE_E55_SSH_SIGNING_EVALUATION.md)
+confirms ssh2 1.17.0 signatures fit existing approval intake using in-memory streams
+and synthetic keys. Three final diagnostic tests and lint pass. Malformed replies can
+close the protocol without resolving its callback or emitting error; adapter closure/
+deadline handling remains required. Logged isolated download: 2.9 MiB retained, 102 GiB
+available. No application adoption, real agent/key access or runtime activation.
+
 **Focused reuse research — E54:** [Owner signer candidate](research/REUSE_E54_OWNER_SIGNER_CANDIDATE.md)
 identifies ssh2's existing agent-signing interface for a pinned, in-memory compatibility
 evaluation. It is not adopted or connected to an SSH agent. Separate owner consent,
