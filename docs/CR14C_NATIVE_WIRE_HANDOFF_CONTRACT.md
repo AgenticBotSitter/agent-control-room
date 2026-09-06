@@ -15,9 +15,10 @@ A versioned transport packet carries one unchanged signed raw JSON frame and opt
 canonical base64 result bytes. This outer packet is not new authority: the receiving
 existing runtime/input must still verify signature, identity, connection, replay and
 canonical task binding. Bytes must match the completed snapshot's exact size and SHA-256
-claim. They are forbidden on any other frame or on the server-to-node direction.
+claim. They are required when a completed snapshot carries a result descriptor and
+forbidden on any other frame or on the server-to-node direction.
 Parsing/encoding must preserve the raw signed frame, not silently normalize its contents.
-The packet is limited before JSON parsing; raw frames retain the existing 128KiB ceiling,
+The packet is limited to 256KiB before JSON parsing; raw frames retain the existing 128KiB ceiling,
 native snapshots 16KiB, and result bytes 64KiB. Transport endpoints must enforce packet
 limits while collecting physical input too; a bounded decoder alone does not bound a
 future HTTP body's buffering.

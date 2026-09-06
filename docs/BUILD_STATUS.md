@@ -2427,6 +2427,17 @@ for retained failures, exact evidence and limits. This is not a live agent or de
 Published as [PR #343](https://github.com/MarvinAi5/control-room/pull/343), stacked on
 #342. Current-head CI is required; no merge is claimed.
 
+Local full lifecycle verification of that source subsequently passed2,735 tests with
+two skips and zero failures; compiled private tests35, rendered routes4, types/lint,
+preview build and migrations0057/138tables also passed. See
+`CR14C_NODE_RUNTIME_LOCAL_LIFECYCLE.md`. GitHub CI remains deferred under the owner pause.
+
+The wire handoff is now in progress on local branch `codex/cr14c-native-wire-handoff`:
+`cd2fc0a` adds the bounded packet codec and optional node/server wire ports; `02c2148`
+updates existing facade evidence. The new contract is
+`CR14C_NATIVE_WIRE_HANDOFF_CONTRACT.md`. Independent production review and new
+opaque-packet journey/denial tests are pending; this block is not yet accepted.
+
 ```text
 Block: CR14C signed-frame and saved-result transport handoff
 Set model: gpt-6-astra (Astra)
