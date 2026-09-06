@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import { createPrivateTaskBootstrap } from "../dist-vps/server/taskBootstrap.js"
 import { installPrivateApplication } from "../dist-vps/server/runtime.js";
 import { NATIVE_DELIVERY_FEATURE } from "../src/harness/v1/native-delivery.ts";
 import { nativeTaskSnapshotBodySchema } from "../src/harness/v1/native-observation.ts";
+import { decodeNativeWire, encodeNativeWire } from "../src/harness/v1/native-wire.ts";
 import { PortableNodeBridge, SqliteBridgeJournal } from "../src/node-bridge/index.ts";
 import { FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator, signNodeFrame } from "../src/node-protocol/v1/index.ts";
 import { sha256Digest } from "../src/security/index.ts";
@@ -96,9 +97,24 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
     return { ...pool, client: { ...db, transaction: work => db.transaction(observe(work)),
       transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(observe(work), check) } };
   };
+  const certificate = Buffer.from("synthetic compiled machine certificate bytes");
+  const certificateDigest = `sha256:${createHash("sha256").update(certificate).digest("hex")}`;
+  const nativeHttp = mode === "progress" ? { origin: "https://machine.example.test",
+    peers: [{ nodeId: x.registration.nodeId, certificateDigest, task: { projectId: x.registration.projectId,
+      jobId: x.registration.jobId, attemptId: x.registration.attemptId,
+      inputDigest: x.registration.nativeTask.inputDigest } }], isPeerCurrent: () => true } : undefined;
+  const machineSocket = { encrypted: true, authorized: true, destroyed: false,
+    getPeerCertificate: () => ({ raw: certificate }) };
+  const machineRequest = command => {
+    const body = JSON.stringify(command);
+    return new Request("https://machine.example.test/v1/control-room/native", { method: "POST", body,
+      headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) } });
+  };
+  let installed;
   const starting = createPrivateTaskBootstrap({ clock: x.f.clock, openDatabase,
     install: value => {
       assert.equal(preflights.length, 5);
+      installed = value;
       // The process installation is deliberately one-shot. The second case tests
       // the compiled supplied-resource factory, not a second process installation.
       if (mode === "progress") installPrivateApplication(value);
@@ -106,7 +122,7 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
     ...startup.config, coordinator: { ...startup.config.coordinator,
       approvals: { enrollments: [{ enrollment: x.f.prepared.enrollment, nodeClass: "personal-compute" }], store: x.f.store },
       quality: { ...x.f.ownerConfig, scenarios: [scenario] }, resultDatabase,
-      evidence: evidenceSettings, sessions: sessionSettings },
+      evidence: evidenceSettings, sessions: sessionSettings, nativeHttp },
   });
   // All caller-owned settings are captured before startup's first asynchronous preflight.
   sessionSettings.database.username = "mutated_session_login"; sessionSettings.nodes[0].nodeId = "node:mutated";
@@ -123,7 +139,14 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
     { current_user: "evidence_test", session_user: "evidence_test", rolsuper: false },
     { current_user: "session_test", session_user: "session_test", rolsuper: false },
   ]);
-  assert.deepEqual(Object.keys(runtime).sort(), ["close", "connections", "evidence", "isReady", "quality", "results"]);
+  assert.deepEqual(Object.keys(runtime).sort(), ["close", "connections", "evidence", "isReady",
+    ...(mode === "progress" ? ["nativeHttp"] : []), "quality", "results"]);
+  if (mode === "progress") {
+    assert.ok(runtime.nativeHttp); assert.equal(runtime.nativeHttp, installed.nativeHttp);
+    assert.equal(typeof runtime.nativeHttp.handleNode, "function");
+  } else {
+    assert.equal("nativeHttp" in runtime, false); assert.equal("nativeHttp" in installed, false);
+  }
 
   const journal = new SqliteBridgeJournal(":memory:");
   const outgoing = [], incoming = [], serverFrames = [];
@@ -135,6 +158,41 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
     state: "active", principalState: "active", validFrom: new Date(x.f.clock() - 60_000).toISOString() }; } }, journal,
   new FixedWindowProtocolRateLimiter(100, 60)));
   t.after(async () => { await bridge.close(); journal.close(); });
+  if (mode === "progress") {
+    const beforeWrites = writes.length, beforeCalls = [...x.local.calls], beforeEffects = x.local.effects.countFull();
+    const nodePackets = [], receivedPackets = [];
+    const opened = await runtime.nativeHttp.handle(machineRequest({ schema: "control-room.native-http/v1",
+      operation: "open", mode: "initial" }), machineSocket);
+    assert.equal(opened.status, 200);
+    const generation = await opened.json(); assert.deepEqual(generation.packets, []); assert.equal(generation.more, false);
+    await bridge.open({ async send(raw) { nodePackets.push(encodeNativeWire(raw, "node_to_server")); }, async close() {} },
+      { now: new Date(x.f.clock()).toISOString(), transportIdentity: "transport:compiled-http-node" });
+    let more = false;
+    for (let count = 0; count < 20 && (nodePackets.length || more); count++) {
+      const response = await runtime.nativeHttp.handle(machineRequest({ schema: "control-room.native-http/v1",
+        operation: "exchange", connection: generation.connection, packet: nodePackets.shift() ?? null }), machineSocket);
+      assert.equal(response.status, 200); const value = await response.json();
+      assert.equal(value.connection, generation.connection); more = value.more;
+      for (const packet of value.packets) {
+        receivedPackets.push(packet);
+        // Directional codec only: no packet-type routing or saved result reader in this pump.
+        await bridge.receive(decodeNativeWire(packet, "server_to_node").raw, new Date(x.f.clock()).toISOString());
+      }
+    }
+    assert.equal(nodePackets.length, 0); assert.equal(more, false);
+    // Inspect only after routing, to establish the signed handshake and absence of dispatch.
+    const receivedTypes = receivedPackets.map(packet => JSON.parse(JSON.parse(packet).raw).type);
+    assert.deepEqual(receivedTypes, ["connection.accepted", "node.reconciliation.request", "protocol.ack"]);
+    const httpWrites = writes.slice(beforeWrites);
+    assert.ok(httpWrites.some(row => row.table === "node_protocol_connections"));
+    assert.ok(httpWrites.some(row => row.table === "node_protocol_replay"));
+    assert.ok(httpWrites.every(row => row.current_user === "session_test" && row.session_user === "session_test" && row.rolsuper === false));
+    assert.deepEqual(x.local.calls, beforeCalls); assert.equal(x.local.effects.countFull(), beforeEffects);
+    const closed = await runtime.nativeHttp.handle(machineRequest({ schema: "control-room.native-http/v1",
+      operation: "close", connection: generation.connection }), machineSocket);
+    assert.equal(closed.status, 200); await bridge.disconnected();
+  }
+  // Preserve the original direct-session missing-history negative proof independently.
   const handle = await runtime.connections.attach(x.registration.nodeId, {
     async send(raw) { outgoing.push(raw); serverFrames.push(JSON.parse(raw)); },
     async close() { transportCloses++; transportAvailable = false; }, isAvailable: () => transportAvailable,
@@ -188,6 +246,8 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
 
   const retained = handle;
   await runtime.close(); assert.equal(runtime.isReady(), false); assert.equal(transportCloses, 1);
+  if (mode === "progress") assert.equal((await runtime.nativeHttp.handle(machineRequest({
+    schema: "control-room.native-http/v1", operation: "open", mode: "initial" }), machineSocket)).status, 503);
   assert.equal(startup.web.closes(), 1); assert.equal(startup.coordinator.closes(), 1); assert.equal(result.closes(), 1);
   assert.equal(evidence.closes(), 1); assert.equal(sessions.closes(), 1);
   await assert.rejects(async () => retained.reconcile("{}", new AbortController().signal), { message: "task_coordinator_unavailable" });
@@ -200,5 +260,5 @@ test("compiled browser assets exclude managed session implementation and restric
   const javascript = files("dist-vps/client").filter(file => file.endsWith(".js"));
   assert.ok(javascript.length > 0);
   for (const file of javascript) assert.doesNotMatch(readFileSync(file, "utf8"),
-    /ManagedNativeSessions|recoverNativeDelivery|native_recovery_unavailable|control_room_native_sessions|native_session_unavailable|native_session_operation_uncertain|node_protocol_replay|DatabaseNodeKeyResolver/);
+    /ManagedNativeSessions|recoverNativeDelivery|native_recovery_unavailable|control_room_native_sessions|native_session_unavailable|native_session_operation_uncertain|node_protocol_replay|DatabaseNodeKeyResolver|native_http_unavailable|native_http_close_uncertain/);
 });
