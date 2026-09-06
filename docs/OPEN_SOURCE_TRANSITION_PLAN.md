@@ -5,6 +5,67 @@ public community build. Not a publication, licensing grant or production authori
 
 ## Decision in plain English
 
+### Owner clarification: product, umbrella brand and contribution structure
+
+The owner's preferred working product name is now **Agent Control Room**, emphasizing
+multiple agent runtimes rather than a generic dashboard. The website/organization brand
+is still undecided; do not infer a spelling or domain from dictated names. Personal
+founder attribution and a modest website link are welcome. Do not create an organization,
+rename packages, reserve a handle or publish a license based on this working preference.
+
+Recommended account structure: the existing personal GitHub account owns a new Free
+organization under the chosen umbrella brand. That organization owns a proposed
+`agent-control-room` public repository. The private repository stays where it is;
+organization membership neither moves it nor shares it with public contributors.
+Personal paid subscriptions and organization plans are distinct. The reported $48
+payment does not establish plan, billing interval, product or remaining allowance;
+check the account's Billing & Licensing page before changing any subscription.
+
+The public profile/README can say “Created by [approved founder name], a project from
+[approved website brand]” and link to guides/news, with an About/contact section.
+No required website login, marketing signup, tracking or private-dashboard links should
+be introduced as a condition of using or contributing to the application.
+
+Remove Content Blooms branding and personal project identity from the public experience,
+but preserve reusable capabilities as generic content workflows. Keep the original
+private configuration, records and history intact. This is not permission to publish
+renamed private data. Other personal demo brands follow the same rule.
+
+| Shared product layer | Initial responsibility |
+|---|---|
+| Essential core | Login and permissions; projects/pages; tasks and eligible pickup; worker registration/capabilities; bounded execution; progress, artifacts, review/revision; offline/uncertain state handling |
+| First connector | One proven end-to-end agent runtime, then additional Hermes/Codex routes through the same interface |
+| Optional workflow modules | Idea Lab, news-to-research, generic content production, specialized media workflows and extra integrations |
+| Operator capabilities | Backups, restore, secure installation and update/drain/recovery, required for reliable use even if hidden from everyday project UI |
+
+“Core first” changes delivery order, not the full promised scope. Security and recovery
+are not optional paid add-ons. Start with modules in one repository and one application,
+not a marketplace, arbitrary in-process plugins or a separate service for every feature.
+Optional features must use the same project/task/review contracts and must not introduce
+their own global scheduler, database authority or permission bypass.
+
+Contribution validation proposal: issue acceptance criteria first; contributor branch
+and PR; automatic build/tests on disposable hosted runners without private secrets;
+review by an accountable maintainer other than the author; additional independent
+technical review for security/data/connector changes; integration tests; maintainer
+merge; and separately authorized private canary deployment. Contributors retain
+responsibility for AI-assisted code. Automated checks and assistant analysis are
+evidence, not a substitute for accountable GitHub reviewers or proof of live behavior.
+Initially the owner is the accountable maintainer, assisted by this development process;
+trusted community maintainers can take defined areas over time. Do not claim reviewers
+have been recruited or that multiple instances of one account provide independent
+GitHub approvals. Small UI/docs PRs need proportionate review, not production ceremonies.
+
+GitHub Free supports protected public branches. Configure required checks and PR review,
+block force pushes/direct contributions to the protected branch, and apply appropriate
+code ownership when maintainers exist. Decide emergency bypass policy explicitly rather
+than promising settings that have not been configured. No such settings changed here.
+
+Sources checked: [organizations](https://docs.github.com/en/organizations/collaborating-with-groups-in-organizations/about-organizations),
+[plans](https://docs.github.com/en/get-started/learning-about-github/githubs-plans),
+[protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches),
+[billing overview](https://docs.github.com/en/billing/how-tos/products/estimate-spending).
+
 Keep the private project and its history intact. Prepare a separate, reviewed public
 source tree under a new GitHub organization. Make that public tree the home of shared
 product development after cutover; keep personal projects, deployment configuration,

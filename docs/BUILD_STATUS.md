@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner structure clarification:** Working product name is Agent Control Room; umbrella
+brand remains undecided. The [transition plan](OPEN_SOURCE_TRANSITION_PLAN.md) now records
+core versus optional workflow modules, removal of personal branding from public examples,
+founder/site attribution and accountable contribution review. No account, subscription,
+package name, licensing or public visibility change was made.
+
 **Direct license inventory recorded:** [License observations](PUBLIC_DEPENDENCY_LICENSE_STATUS.md)
 cover 28 installed direct dependencies with version/manifest/notice hashes. All declare
 MIT, Apache-2.0, Unlicense or MIT/Apache alternatives; five lack a matched root notice
