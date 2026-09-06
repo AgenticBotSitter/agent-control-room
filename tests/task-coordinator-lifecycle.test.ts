@@ -16,7 +16,9 @@ function deferred() { let resolve!: () => void; const promise = new Promise<void
 test("trusted submission is opt-in, snapshots its port and drains before pool close", async t => {
   const f = await canonicalApprovalStorageFixture(); t.after(f.close); await f.save();
   const entered = deferred(), release = deferred(); let closes = 0, calls = 0;
-  const nativeSubmission = { async enqueueInSession() { calls++; entered.resolve(); await release.promise; } };
+  let producerCloses = 0;
+  const nativeSubmission = { async enqueueInSession() { calls++; entered.resolve(); await release.promise; },
+    async close() { assert.equal(closes, 0); producerCloses++; } };
   const owner = createTaskCoordinatorLifecycle({ scope: f.scope, planning: f.plannerConfig, routes: [f.route],
     database: { client: f.db, close: async () => { closes++; }, isAvailable: () => true }, clock: f.clock,
     approvals: { enrollments: [{ enrollment, nodeClass: "personal-compute" }], store: f.store }, nativeSubmission });
@@ -25,7 +27,7 @@ test("trusted submission is opt-in, snapshots its port and drains before pool cl
   await entered.promise; const closing = owner.close(); assert.equal(closes, 0);
   await assert.rejects(owner.submission!.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal), /unavailable/);
   release.resolve(); assert.equal((await pending).replayed, false); await closing;
-  assert.equal(calls, 1); assert.equal(closes, 1);
+  assert.equal(calls, 1); assert.equal(closes, 1); assert.equal(producerCloses, 1);
 });
 
 test("submission failure rolls back canonical intent through the owned lifecycle", async t => {

@@ -106,6 +106,12 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E14 producer startup](research/REUSE_E14_PRODUCER_STARTUP.md) now permits explicit
+queue-enabled composition only with approvals and a trusted supplied producer factory.
+Database checks precede preparation; drain/stop/pool cleanup and late preparation are
+tested. 38 package and 28 lifecycle/startup checks pass. There is no production default
+factory, worker startup activation or browser submission endpoint yet.
+
 [E13 queue coexistence](research/REUSE_E13_APPLICATION_QUEUE_ROLES.md) adds the offline
 producer grant script and explicit combined database-preflight option. Default gates
 remain queue-free; opt-in requires producer-only coordinator privileges and no queue

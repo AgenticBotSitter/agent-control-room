@@ -12,6 +12,8 @@ import { createTaskCoordinatorLifecycle } from '../../src/web/v1/task-coordinato
 import { enrollment } from '../../tests/hermes-native-fixture.ts';
 import { verifyPgBossApplicationPermissions } from '../../src/persistence/pg-boss-application-permissions.ts';
 import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase } from '../../src/web/v1/private-database-preflight.ts';
+import { createPrivateTaskBootstrap } from '../../src/web/v1/private-task-startup.ts';
+import { taskStartupFixture } from '../../tests/helpers/task-startup.ts';
 import { nativeEnvelopeSession } from '../../tests/helpers/native-envelope-session.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -230,6 +232,48 @@ test('preexisting operational collision is not accepted as a fresh canonical enq
   await assert.rejects(enqueue(f), /native_task_submission_unavailable/);
   assert.equal(await count(f, 'control_native_task_queue'), 0); assert.equal(await audit(f), 0);
   assert.deepEqual((await f.admin.getJobById(spec.name, id)).data, { synthetic: 'orphan' });
+});
+
+test('explicit startup prepares actual producer after database gates and closes it before the pool', { timeout: 30000 }, async t => {
+  for (const mode of ['success', 'install', 'prepare', 'close', 'late']) await t.test(mode, async t => {
+    const f = await fixture(t); await f.save();
+    const host = await taskStartupFixture(f);
+    await f.raw.exec(await readFile('db/roles/native_queue_producer_roles.sql', 'utf8'));
+    let prepared = 0, closed = 0, releaseLate;
+    const bootstrap = createPrivateTaskBootstrap({ clock: f.clock, openDatabase: host.openDatabase,
+      install: () => { if (mode === 'install') throw new Error('synthetic install failure'); },
+      prepareNativeSubmission: async db => {
+        prepared++;
+        if (mode === 'prepare') throw new Error('synthetic preparation failure');
+        if (mode === 'late') return new Promise(resolve => { releaseLate = () => resolve({
+          async enqueueInSession() { assert.fail('late producer must never be installed'); }, async close() { closed++; },
+        }); });
+        const producer = await preparePgBossNativeTaskSubmission(PgBoss, db, { backend: 'pglite' });
+        return { enqueueInSession: producer.enqueueInSession, async close() {
+          assert.equal(host.coordinator.closes(), 0); closed++; await producer.close();
+          if (mode === 'close') throw new Error('synthetic close failure');
+        } };
+      } });
+    const config = { ...host.config, coordinator: { ...host.config.coordinator, nativeQueue: true,
+      approvals: { enrollments: [{ enrollment, nodeClass: 'personal-compute' }], store: f.store } } };
+    if (mode === 'install') await assert.rejects(bootstrap.start(config), /prerequisites_failed/);
+    else if (mode === 'prepare') await assert.rejects(bootstrap.start(config), /cleanup_uncertain/);
+    else if (mode === 'late') {
+      await assert.rejects(bootstrap.start(config), /cleanup_uncertain/);
+      releaseLate(); await delay(10);
+    }
+    else {
+      const runtime = await bootstrap.start(config);
+      t.after(() => mode === 'close' ? assert.rejects(runtime.close(), /cleanup_uncertain/) : runtime.close());
+      assert.equal((await runtime.submission.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal)).replayed, false);
+      if (mode === 'close') {
+        await assert.rejects(runtime.close(), /cleanup_uncertain/); await assert.rejects(runtime.close(), /cleanup_uncertain/);
+      } else { await runtime.close(); await runtime.close(); }
+      await assert.rejects(runtime.submission.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal), /unavailable/);
+    }
+    assert.equal(prepared, 1); assert.equal(closed, mode === 'prepare' ? 0 : 1);
+    assert.equal(host.coordinator.closes(), 1); assert.equal(host.web.closes(), 1);
+  });
 });
 
 test('coordinator role can submit with exact queue grants; private web role remains excluded', { timeout: 30000 }, async t => {

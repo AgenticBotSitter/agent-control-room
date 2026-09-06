@@ -31,6 +31,7 @@ test("two real restricted roles pass startup and serve assignment without wideni
 test("invalid topology, planning and route configuration cannot open any resource", async t => {
   const f = await taskStartupFixture(); t.after(f.close); let calls = 0;
   const invalid: PrivateTaskStartupConfiguration[] = [
+    { ...f.config, coordinator: { ...f.config.coordinator, nativeQueue: true } },
     { ...f.config, coordinator: { ...f.config.coordinator, database: f.config.web.database } },
     ...[{ database: "another" }, { port: 5433 }, { host: "remote.invalid" }].map(patch => ({ ...f.config,
       coordinator: { ...f.config.coordinator, database: { ...f.config.coordinator.database, ...patch } } } as PrivateTaskStartupConfiguration)),

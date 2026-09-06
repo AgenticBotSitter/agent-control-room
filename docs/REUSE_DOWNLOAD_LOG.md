@@ -317,3 +317,9 @@ service or additional cleanup target.
 Reused E01 and repository dependencies. Candidate grants and preflight exercised only
 in in-memory PGlite fixtures, closed after tests. No additional retained files outside
 the repository, downloads, installation, PostgreSQL service or GitHub publication.
+
+### E14 — producer startup (no acquisition)
+
+Existing E01 package and repository dependencies only. In-memory fixtures and late
+synthetic resources cleaned after tests. No download, installation, native service,
+credential operation or new retained temporary directory.

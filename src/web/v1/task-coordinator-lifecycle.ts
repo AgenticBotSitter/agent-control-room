@@ -23,10 +23,10 @@ export type TaskCoordinatorConfiguration = {
   scope: { tenantId: string; workspaceId: string };
   planning: ConstructorParameters<typeof TaskExecutionPlanner>[2]; routes: readonly TaskAssignmentRoute[];
   approvals?: { enrollments: readonly NativeApprovalEnrollment[]; store: NativeApprovalPacketStore };
-  /** Trusted, already prepared submission port. Bootstrap retains its lifecycle;
-   * close it after coordinator drain and before closing its underlying resources.
+  /** Trusted, already prepared submission port. Optional close transfers ownership
+   * after construction; drained and stopped before the underlying pool closes.
    * Never derived from an HTTP request or enabled implicitly by approval storage. */
-  nativeSubmission?: NativeTaskSubmission;
+  nativeSubmission?: NativeTaskSubmission & { close?: () => Promise<void> };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
@@ -61,6 +61,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const nativeSubmission = input.nativeSubmission ? Object.freeze({
     enqueueInSession: input.nativeSubmission.enqueueInSession.bind(input.nativeSubmission),
   }) : undefined;
+  const closeSubmission = input.nativeSubmission?.close?.bind(input.nativeSubmission);
   const capture = (resource: TaskCoordinatorDatabase) => {
     if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
       || [resource.client?.query, resource.client?.transaction, resource.client?.transactionWithPreCommitCheck].some(fn => typeof fn !== "function"))
@@ -231,6 +232,12 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
             new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; interrupted = true; resolve(); }, drainMs); })]);
           clearTimeout(drainTimer);
           invalid = true;
+          if (closeSubmission) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try { await Promise.race([Promise.resolve().then(closeSubmission), new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);
+            })]); } catch { timedOut = true; } finally { clearTimeout(timer); }
+          }
           const sessionClose = sessions ? await Promise.allSettled([sessions.close()]) : [];
           await Promise.race([Promise.all([Promise.resolve().then(pool.close), ...(resultPool ? [Promise.resolve().then(resultPool.close)] : []),
             ...(evidencePool ? [Promise.resolve().then(evidencePool.close)] : []),

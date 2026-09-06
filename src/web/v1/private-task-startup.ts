@@ -13,10 +13,13 @@ import { captureNativeEvidenceSettings, type NativeEvidenceSettings } from "./na
 import { timingSafeEqual } from "node:crypto";
 import { captureManagedNativeSessionSettings, type ManagedNativeSessionSettings } from "./managed-native-sessions";
 import { captureNativeHttpSettings } from "./native-http-host";
+import type { DatabaseSession } from "../../persistence/database";
+import type { NativeTaskSubmission } from "../../persistence/native-task-submission";
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
+    nativeQueue?: true;
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
     evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration };
     sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration } };
@@ -39,6 +42,8 @@ function configuration(input: PrivateTaskStartupConfiguration) {
     const routes = validateTaskAssignmentRoutes(input.coordinator.routes), a = input.coordinator.approvals;
     if (a && (typeof a.store?.acceptInSession !== "function" || typeof a.store?.readInSession !== "function")) throw new Error();
     const approvals = a ? { enrollments: validateNativeApprovalEnrollments(a.enrollments, web.tenantId, routes), store: a.store } : undefined;
+    const nativeQueue = input.coordinator.nativeQueue;
+    if (nativeQueue !== undefined && (nativeQueue !== true || !approvals)) throw new Error();
     const quality = input.coordinator.quality ? captureTaskQualityConfiguration(input.coordinator.quality) : undefined;
     if (quality) validateTaskQualityKeys(quality, planning.reviewIntegrityKey, web.tasks);
     const resultDatabase = input.coordinator.resultDatabase ? validatePrivatePostgresConfiguration(input.coordinator.resultDatabase) : undefined;
@@ -61,7 +66,7 @@ function configuration(input: PrivateTaskStartupConfiguration) {
       || sessions.nodes.some(node => node.tenantId !== web.tenantId || !evidence.enrollments.some(e => e.nodeId === node.nodeId)))) throw new Error();
     const nativeHttp = input.coordinator.nativeHttp ? captureNativeHttpSettings(input.coordinator.nativeHttp) : undefined;
     if (nativeHttp && (!sessions || nativeHttp.peers.some(peer => !sessions.nodes.some(node => node.nodeId === peer.nodeId)))) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp };
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -72,12 +77,19 @@ function configuration(input: PrivateTaskStartupConfiguration) {
 export function createPrivateTaskBootstrap(dependencies: {
   openDatabase: (config: PrivatePostgresConfiguration) => TaskCoordinatorDatabase;
   install: typeof installPrivateApplication; clock?: () => number;
+  /** Trusted pinned-package factory; no default implementation or package loading. */
+  prepareNativeSubmission?: (db: DatabaseSession) => Promise<NativeTaskSubmission & { close(): Promise<void> }>;
 }) {
+  const prepareSubmission = dependencies.prepareNativeSubmission?.bind(dependencies);
   let started = false;
   return Object.freeze({ async start(input: PrivateTaskStartupConfiguration) {
     if (started) throw new Error("private_task_startup_already_attempted");
     started = true;
     const config = configuration(input);
+    if (config.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
+    const queue = config.nativeQueue ? { nativeQueue: true as const } : undefined;
+    let submission: (NativeTaskSubmission & { close(): Promise<void> }) | undefined;
+    let abandoned = false, preparationUncertain = false;
     const acquired: TaskCoordinatorDatabase[] = [];
     const resources = new Set<TaskCoordinatorDatabase>();
     let application: Awaited<ReturnType<typeof createPrivateTaskApplication>> | undefined;
@@ -104,28 +116,57 @@ export function createPrivateTaskBootstrap(dependencies: {
       const clock = dependencies.clock ?? Date.now;
       const now = clock(); if (!Number.isSafeInteger(now) || now < 0) throw new Error();
       const web = open(config.web.database);
-      await verifyPrivateDatabase(web.client, config.web.database, config.web, now);
+      await verifyPrivateDatabase(web.client, config.web.database, config.web, now, queue);
       const coordinator = open(config.database);
       if (web.client === coordinator.client) throw new Error();
-      await verifyTaskCoordinatorDatabase(coordinator.client, config.database, config.web, now);
+      await verifyTaskCoordinatorDatabase(coordinator.client, config.database, config.web, now, queue);
       const resultDatabase = config.resultDatabase ? open(config.resultDatabase) : undefined;
       if (resultDatabase) {
         if ([web.client, coordinator.client].includes(resultDatabase.client)) throw new Error();
-        await verifyNativeResultDatabase(resultDatabase.client, config.resultDatabase!, config.web, now);
+        await verifyNativeResultDatabase(resultDatabase.client, config.resultDatabase!, config.web, now, queue);
       }
       const evidenceDatabase = config.evidence ? open(config.evidence.database) : undefined;
       if (evidenceDatabase) {
         if ([web.client, coordinator.client, resultDatabase!.client].includes(evidenceDatabase.client)) throw new Error();
-        await verifyNativeEvidenceDatabase(evidenceDatabase.client, config.evidence!.database, config.web, now);
+        await verifyNativeEvidenceDatabase(evidenceDatabase.client, config.evidence!.database, config.web, now, queue);
       }
       if (!web.isAvailable() || !coordinator.isAvailable() || resultDatabase && !resultDatabase.isAvailable()
         || evidenceDatabase && !evidenceDatabase.isAvailable()) throw new Error();
       const sessionDatabase = config.sessions ? open(config.sessions.database) : undefined;
       if (sessionDatabase) {
         if ([web.client, coordinator.client, resultDatabase!.client, evidenceDatabase!.client].includes(sessionDatabase.client)) throw new Error();
-        await verifyNativeSessionDatabase(sessionDatabase.client, config.sessions!.database, config.web, now);
+        await verifyNativeSessionDatabase(sessionDatabase.client, config.sessions!.database, config.web, now, queue);
       }
       if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase].some(pool => pool && !pool.isAvailable())) throw new Error();
+      if (queue) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const pending = Promise.resolve().then(() => prepareSubmission!({ query: async (sql, values) => {
+          if (abandoned || !coordinator.isAvailable()) throw new Error("native_task_submission_unavailable");
+          return coordinator.client.query(sql, values);
+        } })).then(async raw => {
+          if (!raw || typeof raw.close !== "function") { preparationUncertain = true; throw new Error(); }
+          let closing: Promise<void> | undefined;
+          const closeRaw = raw.close.bind(raw);
+          const close = () => closing ??= (async () => {
+            let closeTimer: ReturnType<typeof setTimeout> | undefined;
+            try { await Promise.race([Promise.resolve().then(closeRaw), new Promise<never>((_, reject) => {
+              closeTimer = setTimeout(() => reject(new Error("private_task_startup_cleanup_uncertain")), 5000);
+            })]); } finally { clearTimeout(closeTimer); }
+          })();
+          // Acquire cleanup before validating the operation, even for a malformed factory result.
+          submission = { enqueueInSession: raw.enqueueInSession?.bind(raw), close };
+          if (abandoned || typeof submission.enqueueInSession !== "function") { await close(); throw new Error(); }
+          return submission;
+        }).catch(error => {
+          // A rejected factory may have acquired a client internally; without a
+          // returned cleanup handle its disposition cannot be proven here.
+          if (!submission) preparationUncertain = true;
+          throw error;
+        });
+        try { await Promise.race([pending, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => { abandoned = true; preparationUncertain = true; reject(new Error()); }, 5000);
+        })]); } finally { clearTimeout(timer); }
+      }
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
@@ -133,11 +174,13 @@ export function createPrivateTaskBootstrap(dependencies: {
         evidence: evidenceDatabase ? { ...config.evidence!, database: evidenceDatabase } : undefined,
         sessions: sessionDatabase ? { ...config.sessions!, database: sessionDatabase } : undefined,
         nativeHttp: config.nativeHttp,
+        nativeSubmission: submission,
       });
       if (!application.isReady()) throw new Error();
       dependencies.install(application);
       // Optional narrow commands reach only trusted server composition, never raw SQL/keys.
       return Object.freeze({ isReady: application.isReady, close: application.close,
+        ...(application.submission ? { submission: application.submission } : {}),
         ...(application.quality ? { quality: application.quality } : {}),
         ...(application.revisions ? { revisions: application.revisions } : {}),
         ...(application.results ? { results: application.results } : {}),
@@ -145,8 +188,11 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(application.nativeHttp ? { nativeHttp: application.nativeHttp } : {}),
         ...(application.connections ? { connections: application.connections } : {}) });
     } catch {
-      const results = await Promise.allSettled(application ? [application.close()] : acquired.map(pool => pool.close()));
-      if (results.some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
+      abandoned = true;
+      const appCleanup = application ? await Promise.allSettled([application.close()]) : [];
+      const producerCleanup = submission ? await Promise.allSettled([submission.close()]) : [];
+      const results = application ? [] : await Promise.allSettled(acquired.map(pool => pool.close()));
+      if (preparationUncertain || [...appCleanup, ...producerCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
       throw new Error("private_task_startup_prerequisites_failed");
     }
   } });

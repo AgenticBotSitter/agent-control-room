@@ -72,6 +72,12 @@ preflight without granting web queue access. 32 package checks and 25 existing
 database/startup checks pass. Startup still does not select this option; worker identity,
 schema/version acceptance, lifecycle composition and real-PG evidence remain open.
 
+**E14 — producer startup ownership:** [Evidence](research/REUSE_E14_PRODUCER_STARTUP.md)
+adds explicit queue-enabled startup with an injected producer factory after all role
+checks, bounded preparation, late-resource cleanup and producer-before-pool shutdown.
+38 package checks and 28 lifecycle/startup checks pass. Production has no default
+factory; worker bootstrap, schema/version and real-PG evidence remain unfinished.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before
