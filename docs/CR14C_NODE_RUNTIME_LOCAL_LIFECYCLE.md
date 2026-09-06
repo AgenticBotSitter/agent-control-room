@@ -28,9 +28,9 @@ the six existing lifecycle lanes with installed dependencies. Stage zero returne
 |---|---:|---:|---:|---:|---:|
 | pre | 770 | 770 | 0 | 0 | 0 |
 | main-1 | 350 | 350 | 0 | 0 | 0 |
-| main-2 | pending | pending | pending | pending | pending |
+| main-2 | 457 | 457 | 0 | 0 | 0 |
 | main-3 | 383 | 382 | 0 | 1 | 0 |
-| main-4 | pending | pending | pending | pending | pending |
+| main-4 | 385 | 384 | 0 | 1 | 0 |
 | post | 392 | 392 | 0 | 0 | 0 |
 
 The root also verified TypeScript, full ESLint, the preview build and four rendered
@@ -38,5 +38,6 @@ route tests, 35 compiled private-app tests against the previously rebuilt unchan
 production artifact, and migrations through0057 with138 tables. All completed checks
 exited0. The real PostgreSQL service and live fleet remain unconfigured and untested.
 
-Active agent-owned main lanes must be observed to terminal completion, not restarted
-because a status poll or conversation turn ends. Final counts will replace pending cells.
+All six original agent-owned lane processes completed without restart: 2,737 entries,
+2,735 passing and two skipped, with zero failures/cancellations. The source/test/package
+files remained unchanged; local-only handoff documentation was recorded during execution.
