@@ -11,14 +11,18 @@ verification and Git commits continue. Remote integration/CI remain deferred, no
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — native-wire HTTPS host composition and startup mounting,
+**Next block:** CR14C C-WORK — supplied-resource connector lifecycle and bounded run loop,
 then separately gated live activation and owner signing, on Astra Medium.
+The HTTPS host composition is accepted locally in `CR14C_NATIVE_HTTPS_HOST_ACCEPTANCE.md`:
+bounded machine exchanges, private DNS pinning, physical-response ordering and verified
+startup pass injected/compiled tests. Production connector lifecycle, explicit central
+dispatch composition and actual activation remain; tests currently drive operations manually.
 The supplied-resource node execution/reporting runtime is independently accepted in
 `CR14C_NODE_RUNTIME_ACCEPTANCE.md`, including explicit start, retained-journal reporting,
 separate recovery permissions and bounded uncertain cleanup. Exact packet/result transfer
 is now independently accepted in `CR14C_NATIVE_WIRE_HANDOFF_ACCEPTANCE.md`; its fixture
-shuttles opaque packets without application-aware result injection. Physical HTTPS host
-composition and activation remain. This does not activate a host, provider or listener.
+shuttles opaque packets without application-aware result injection. Physical activation
+remains. This does not activate a host, provider or listener.
 Bounded server input ordering is accepted in `CR14C_MANAGED_NATIVE_INPUT_ACCEPTANCE.md`:
 initial receipt registration and recorded-work recovery now precede queued progress
 without a test driver choosing server operations. Node-owned saved
