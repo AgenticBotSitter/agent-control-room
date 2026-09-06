@@ -6,7 +6,6 @@ import test from "node:test";
 import handler from "../dist-vps/server/index.js";
 import { createPrivateTaskBootstrap } from "../dist-vps/server/taskBootstrap.js";
 import { installPrivateApplication } from "../dist-vps/server/runtime.js";
-import { nativeResultId, resultBytesHash } from "../src/artifacts/v1/native-results.ts";
 import { NATIVE_DELIVERY_FEATURE } from "../src/harness/v1/native-delivery.ts";
 import { nativeTaskObservation } from "../src/harness/hermes-native-v1/task-observation.ts";
 import { PortableNodeBridge, SqliteBridgeJournal } from "../src/node-bridge/index.ts";
@@ -47,7 +46,7 @@ async function installRestrictedPools(startup) {
     sessions: restrictedPool(startup, "session_test") };
 }
 
-test("compiled five-role startup owns a signed session and routes authenticated progress without dispatch", async t => {
+test("compiled five-role startup owns a signed session and refuses progress without same-session dispatch", async t => {
   const x = await nativeTaskLifecycleFixture(); t.after(x.close);
   assert.equal((await x.f.db.query("SELECT 1 AS present FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
     [x.registration.tenantId, x.registration.id])).rows.length, 0);
@@ -147,42 +146,31 @@ test("compiled five-role startup owns a signed session and routes authenticated 
 
   const input = { projectId: x.registration.projectId, jobId: x.registration.jobId,
     attemptId: x.registration.attemptId, inputDigest: x.f.assignmentFixture.prepared.receipt.inputDigest };
-  const nativeCallsBefore = [...x.local.calls], nativeEffectsBefore = x.local.effects.countFull();
-  const registered = await runtime.evidence.register(input, new AbortController().signal);
-  assert.equal(registered.replayed, false); assert.equal(registered.receipt.runId, x.registration.id);
-  assert.deepEqual(x.local.calls, nativeCallsBefore); assert.equal(x.local.effects.countFull(), nativeEffectsBefore);
+  const nativeCalls = [...x.local.calls], nativeEffects = x.local.effects.countFull();
+  const body = nativeTaskObservation(x.handoff.snapshot(), x.registration.nativeTask);
+  await bridge.publishNativeSnapshot(body, new Date(x.f.clock()).toISOString());
+  const serverFrameCount = serverFrames.length;
+  await assert.rejects(handle.progress(incoming.shift(), undefined, new AbortController().signal),
+    { message: "native_session_operation_uncertain" });
+  assert.equal(outgoing.length, 0); assert.equal(serverFrames.length, serverFrameCount);
+  assert.equal(transportCloses, 1); assert.deepEqual(x.local.calls, nativeCalls);
+  assert.equal(x.local.effects.countFull(), nativeEffects);
   await startup.raw.exec("SET SESSION AUTHORIZATION postgres");
-
-  const receive = async (bytes = undefined) => {
-    const body = nativeTaskObservation(x.handoff.snapshot(), x.registration.nativeTask);
-    await bridge.publishNativeSnapshot(body, new Date(x.f.clock()).toISOString());
-    const value = await handle.progress(incoming.shift(), bytes, new AbortController().signal);
-    await startup.raw.exec("SET SESSION AUTHORIZATION postgres");
-    await bridge.receive(outgoing.shift(), new Date(x.f.clock()).toISOString());
-    return value;
-  };
-  await x.handoff.start(); let received = await receive();
-  assert.equal(received.state, "starting"); assert.equal(received.executionAuthorized, false); assert.equal("submission" in received, false);
-  x.advance(); await x.handoff.poll(); received = await receive();
-  assert.equal(received.state, "running"); assert.equal(received.executionAuthorized, false);
-  const text = "# Result\nA managed synthetic native result.\n# Evidence\nAuthenticated session evidence.\n";
-  const bytes = new TextEncoder().encode(text);
-  x.advance(); x.setResult(text); await x.handoff.poll(); received = await receive(bytes);
-  assert.equal(received.state, "succeeded"); assert.equal(received.executionAuthorized, false); assert.ok(received.submission);
-  assert.equal(received.submission.runId, x.registration.id); assert.equal(received.submission.contentHash, resultBytesHash(bytes));
-  const artifactId = nativeResultId(x.registration.tenantId, x.registration.id);
-  assert.deepEqual(await x.f.config.storage.read(artifactId), bytes);
-  assert.equal(serverFrames.some(frame => frame.type === "harness.native.dispatch"), false);
+  assert.equal((await startup.raw.query("SELECT 1 AS present FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
+    [x.registration.tenantId, x.registration.id])).rows.length, 0);
+  assert.equal((await x.f.reviewStore.inspectSubject(x.registration.tenantId,
+    x.registration.projectId, x.registration.jobId)).targets.length, 0);
 
   const sessionTables = new Set(writes.filter(row => row.current_user === "session_test").map(row => row.table));
   assert.equal(sessionTables.has("node_protocol_connections"), true);
   assert.equal(sessionTables.has("node_protocol_replay"), true);
   assert.ok(writes.filter(row => ["node_protocol_connections", "node_protocol_replay"].includes(row.table))
     .every(row => row.current_user === "session_test" && row.session_user === "session_test" && row.rolsuper === false));
+  assert.equal(writes.some(row => row.current_user === "evidence_test" || row.current_user === "result_test"), false);
   const hiddenPath = `/api/v1/projects/${input.projectId}/tasks/${input.jobId}/native-sessions`;
   assert.equal((await handler(request(hiddenPath, "POST", input, undefined, x.f.jwt))).status, 404);
 
-  const nativeCalls = [...x.local.calls], nativeEffects = x.local.effects.countFull(), retained = handle;
+  const retained = handle;
   await runtime.close(); assert.equal(runtime.isReady(), false); assert.equal(transportCloses, 1);
   assert.equal(startup.web.closes(), 1); assert.equal(startup.coordinator.closes(), 1); assert.equal(result.closes(), 1);
   assert.equal(evidence.closes(), 1); assert.equal(sessions.closes(), 1);
