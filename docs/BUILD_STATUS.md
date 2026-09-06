@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor workflow guide drafted:** [Guide](PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md)
+covers ready/assigned work, platform prerequisites, scoped changes, reuse attribution,
+test evidence, multiple independent PRs, blocked handoff and maintainer review. It
+uses delegation-review guidance without requiring the private worker queue. Public
+repository, license/sign-off, contact and clean setup are still prerequisites; no jobs
+dispatched, account settings changed or contributions solicited.
+
 **Inventory cross-checked against the compiler:** All 291 standalone application source
 files resolved by TypeScript are present in the planning closure. The inventory test
 now checks this independently of the custom import traversal, catching future missing

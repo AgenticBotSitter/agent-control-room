@@ -172,6 +172,11 @@ It is not accepted export authority and does not modify the old SDK contract.
 
 ## Community work lanes
 
+The [contributor guide draft](PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md) translates the workflow
+below into contributor-facing instructions. It has no private queue dependency, permits
+multiple independent PRs and includes blocked-work handoff. Publication prerequisites
+remain explicit; no issue or contribution channel has been opened.
+
 Keep us responsible for architecture, security boundaries, integration and final review.
 Use GitHub issues and PRs for community work; contributors need not install Control Room
 or obtain access to our existing private serialized worker queue just to contribute.
