@@ -9,6 +9,7 @@ import { HermesNativeRunAdapter } from "./adapter";
 import type { NativeRunJournal, NativeRunTransport } from "./contracts";
 import type { PortableNodeBridge } from "../../node-bridge/bridge";
 import { NativeObservationReporter } from "./observation-reporter";
+import { composeNativeRunAuthority, createNativeRecoveryAuthority, type NativeRecoveryDependencies } from "./recovery-authority";
 
 type Trust = Parameters<typeof createNativeApprovalIntake>[1];
 type Dependencies = {
@@ -20,6 +21,7 @@ type Dependencies = {
   transport: NativeRunTransport;
   clock: () => number;
   reporting?: Pick<PortableNodeBridge, "publishNativeSnapshot">;
+  recovery?: NativeRecoveryDependencies;
 };
 
 /** Inert supplied-resource composition. Preparation performs no provider calls or native journal
@@ -34,6 +36,9 @@ export async function prepareNativeExecutionHandoff(config: { queueId: string; e
   const approvals = dependencies.approvals, runs = dependencies.runs, transport = dependencies.transport;
   const local = { ...dependencies.local };
   const reporting = dependencies.reporting ? { publishNativeSnapshot: dependencies.reporting.publishNativeSnapshot.bind(dependencies.reporting) } : undefined;
+  const recoveryDependencies = dependencies.recovery ? { ...dependencies.recovery,
+    readCurrent: dependencies.recovery.readCurrent.bind(dependencies.recovery),
+    assertProfileCurrent: dependencies.recovery.assertProfileCurrent.bind(dependencies.recovery) } : undefined;
   const security = { currentServerTrustRevision: revision };
   const queueId = config.queueId, actor = config.serverActorId;
   const saved = load(queueId);
@@ -77,7 +82,10 @@ export async function prepareNativeExecutionHandoff(config: { queueId: string; e
     const policyFresh = policy.assertFresh;
     return { ...policy, assertFresh: () => { policyFresh?.(); guard(); } };
   } });
-  const adapter = new HermesNativeRunAdapter(verified.enrollment, runs, authority.authority, transport, clock);
+  const recovery = recoveryDependencies ? createNativeRecoveryAuthority({ enrollment: verified.enrollment,
+    binding: verified.binding, permission: verified.recoveryPermission }, recoveryDependencies) : undefined;
+  const adapter = new HermesNativeRunAdapter(verified.enrollment, runs,
+    recovery ? composeNativeRunAuthority(authority.authority, recovery.authority) : authority.authority, transport, clock);
   const runId = verified.binding.runId;
   const reporter = reporting ? new NativeObservationReporter({ queueId, enrollment: verified.enrollment,
     serverId: actor, serverKeyId: saved.frame.keyId, serverPublicKeySpki: serverPublicKeySpki! }, {
@@ -92,7 +100,7 @@ export async function prepareNativeExecutionHandoff(config: { queueId: string; e
     try {
       const value = await operation();
       try { if (reporter) await reporter.report(signal); }
-      catch { closed = true; authority.close(); reporter?.close(); throw new Error("native_handoff_reporting_uncertain"); }
+      catch { closed = true; authority.close(); recovery?.close(); reporter?.close(); throw new Error("native_handoff_reporting_uncertain"); }
       return value;
     } finally { operationBusy = false; }
   };
@@ -101,7 +109,7 @@ export async function prepareNativeExecutionHandoff(config: { queueId: string; e
     poll: () => { guard(); return reportAfter(() => adapter.poll(runId)); },
     observe: () => { guard(); return reportAfter(() => adapter.observe(runId)); },
     snapshot: () => adapter.snapshot(runId),
-    close: () => { closed = true; authority.close(); reporter?.close(); },
+    close: () => { closed = true; authority.close(); recovery?.close(); reporter?.close(); },
     // Closing is not a physical stop; separately signed recovery remains required.
   });
 }
