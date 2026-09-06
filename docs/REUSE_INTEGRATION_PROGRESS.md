@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E51 project save recovery](research/REUSE_E51_PROJECT_SAVE_RECOVERY.md) connects the
+existing idempotent retry protocol to an explicit page control, preserving the original
+request through data refresh and avoiding display of historical receipts as current state.
+
 [E50 lifecycle verification](research/REUSE_E50_DEFAULT_SUITE_RECONCILIATION.md) repairs
 two integration-test mismatches and completes a full default lifecycle rerun: 3,063
 passed, no failures, two platform skips. Exact CI path and native import boundaries

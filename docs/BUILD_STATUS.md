@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E51:** [Project save recovery](research/REUSE_E51_PROJECT_SAVE_RECOVERY.md)
+adds an explicit original-save retry that survives routine data refreshes without
+changing request identity. Other project writes stay paused until resolution; current
+state is read after lifecycle reconciliation. Focused project/client/UI tests, TypeScript,
+lint, production build and all 35 compiled regressions pass.
+Pending state is tab-memory only, not durable across reloads; live browser acceptance remains open.
+
 **Latest local verification — E50:** [Default lifecycle reconciliation](research/REUSE_E50_DEFAULT_SUITE_RECONCILIATION.md)
 found and repaired the queue-path test-lane restriction and stale zero-consumer Hermes
 isolation expectation, preserving exact import/path boundaries. Full `pnpm test` rerun

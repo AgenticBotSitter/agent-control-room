@@ -17,7 +17,7 @@ export const browserErrorMessage: Record<BrowserFailureCode, string> = {
 };
 
 export function createProjectBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID()) {
-  let pending: { path: string; body: string; key: string } | undefined;
+  let pending: { path: string; body: string; key: string; matches: (project: WebProject) => boolean } | undefined;
   let busy = false;
   async function call(path: string, method = "GET", body?: string, key?: string): Promise<Response> {
     try {
@@ -37,7 +37,7 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
     if (busy) throw new BrowserRequestError("uncertain");
     const body = JSON.stringify(value);
     if (pending && (pending.path !== path || pending.body !== body)) throw new BrowserRequestError("uncertain");
-    pending ??= { path, body, key: makeKey() };
+    pending ??= { path, body, key: makeKey(), matches };
     busy = true;
     try {
       const response = await call(path, "POST", body, pending.key);
@@ -46,7 +46,7 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
         throw new BrowserRequestError("uncertain");
       }
       const result = z.object({ project: webProjectSchema, replayed: z.boolean() }).strict().parse(await response.json());
-      if (!matches(result.project)) throw new BrowserRequestError("uncertain");
+      if (!pending.matches(result.project)) throw new BrowserRequestError("uncertain");
       pending = undefined;
       return result.project;
     } catch (error) {
@@ -54,6 +54,12 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
     } finally { busy = false; }
   }
   return {
+    hasPending: () => !!pending,
+    retryPending(): Promise<WebProject> {
+      if (!pending) return Promise.reject(new BrowserRequestError("invalid_request"));
+      const original = pending;
+      return command(original.path, JSON.parse(original.body), original.matches);
+    },
     async list(after?: string): Promise<ProjectCatalogPage> {
       try {
         if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new BrowserRequestError("invalid_request");

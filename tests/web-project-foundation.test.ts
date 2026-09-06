@@ -23,7 +23,7 @@ test("browser reconciles a lost create receipt after another tab changes the sav
   const saved = catalog.projects[0];
   assert.equal((await f.handler(request(`/api/v1/projects/${encodeURIComponent(saved.projectId)}/lifecycle`, "POST",
     { lifecycle: "archived", expectedVersion: 1 }, "other-tab-archive-key"))).status, 200);
-  const receipt = await browser.create(draft);
+  const receipt = await browser.retryPending();
   assert.equal(receipt.projectId, saved.projectId); assert.equal(receipt.version, 1);
   assert.equal((await browser.get(saved.projectId)).lifecycle, "archived", "receipt is historical, fresh GET owns current state");
   assert.equal(writes, 2);

@@ -3,7 +3,17 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectCatalog } from "../app/components/project-catalog.tsx";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation.tsx";
-import { PrivateProjectWorkspace } from "../private-app/app/workspace.tsx";
+import { PrivateProjectWorkspace, ProjectSaveRecovery } from "../private-app/app/workspace.tsx";
+
+test("unconfirmed project save offers one explicit original retry and no alternate mutation", () => {
+  let calls = 0;
+  const html = renderToStaticMarkup(<ProjectSaveRecovery pending={false} onRetry={() => { calls++; }} />);
+  assert.match(html, /Retry original save/); assert.match(html, /original request key/);
+  assert.match(html, /Keep this tab open/); assert.equal(calls, 0);
+  assert.equal((html.match(/<button/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /<form|<input|<textarea|Archive project|Create project/);
+  assert.match(renderToStaticMarkup(<ProjectSaveRecovery pending onRetry={() => { calls++; }} />), /disabled=""/);
+});
 
 test("separate project tabs use isolated native links without project mutations", () => {
   const projects = [

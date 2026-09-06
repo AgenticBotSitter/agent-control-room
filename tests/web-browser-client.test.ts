@@ -19,6 +19,27 @@ test("project creation rejects a different result and retains the original expli
     assert.deepEqual(keys, ["fixed-create-key", "fixed-create-key"]);
   }
 });
+test("explicit pending retry survives refresh and caller mutation without replacing the original request", async () => {
+  let attempts = 0; const bodies: string[] = [], keys: string[] = [];
+  const expected = { ...project, lifecycle: "archived", version: 2 };
+  const client = createProjectBrowserClient((async (_, init) => {
+    if (init?.method === "GET") return Response.json({ project: { ...project, version: 3, origin: "ordinary", lifecycleEditable: true } });
+    bodies.push(String(init?.body)); keys.push(new Headers(init?.headers).get("idempotency-key")!);
+    if (++attempts === 1) throw new Error("lost response");
+    return Response.json({ project: expected, replayed: true });
+  }) as typeof fetch, () => "original-lifecycle-retry-key");
+  await assert.rejects(client.retryPending(), /invalid_request/);
+  const original = { ...project };
+  await assert.rejects(client.transition(original as never, "archived"), /uncertain/);
+  assert.equal(client.hasPending(), true);
+  original.title = "Changed caller";
+  assert.equal((await client.get(project.projectId)).version, 3);
+  assert.equal(client.hasPending(), true, "a newer GET does not resolve an uncertain command");
+  assert.deepEqual(await client.retryPending(), expected);
+  assert.equal(client.hasPending(), false);
+  assert.deepEqual(bodies, [JSON.stringify({ lifecycle: "archived", expectedVersion: 1 }), JSON.stringify({ lifecycle: "archived", expectedVersion: 1 })]);
+  assert.deepEqual(keys, ["original-lifecycle-retry-key", "original-lifecycle-retry-key"]);
+});
 test("lifecycle receipts must match the original project, fields and requested successor version", async () => {
   const expected = { ...project, lifecycle: "archived", version: 2, updatedAt: "2026-09-04T12:01:00.000Z" };
   for (const mismatch of [{ projectId: "project:other" }, { lifecycle: "paused" }, { version: 1 },

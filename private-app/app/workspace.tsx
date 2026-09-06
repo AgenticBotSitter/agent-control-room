@@ -7,6 +7,14 @@ import type { ProjectCatalogPage, ProjectView, WebProject } from "../../src/web/
 import { ProjectCatalogNavigation } from "../../app/components/project-catalog-navigation";
 import { PrivateHeader } from "./private-header";
 
+export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; onRetry: () => void }) {
+  return <section className="private-notice" aria-label="Unconfirmed project save">
+    <p>A previous project save is still unconfirmed. Other changes are paused until it is resolved.</p>
+    <p>Retry sends only the original save with its original request key. It does not start an agent. Keep this tab open until the save is resolved.</p>
+    <button type="button" disabled={pending} onClick={onRetry}>Retry original save</button>
+  </section>;
+}
+
 export function PrivateProjectWorkspace({ projectId, section = "overview", after }: { projectId?: string; section?: string; after?: string }) {
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -56,7 +64,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   }, [client, projectId, refresh, after]);
 
   async function create(draft: { title: string; summary: string }) {
-    if (writeBusy.current) return;
+    if (writeBusy.current || client.hasPending()) return;
     writeBusy.current = true; generation.current++;
     setPending(true); setError(undefined);
     try {
@@ -66,15 +74,26 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     finally { writeBusy.current = false; setPending(false); }
   }
   async function transition(lifecycle: WebProject["lifecycle"]) {
-    if (!project || !project.lifecycleEditable || project.origin !== "ordinary" || writeBusy.current) return;
+    if (!project || !project.lifecycleEditable || project.origin !== "ordinary" || writeBusy.current || client.hasPending()) return;
     writeBusy.current = true; setPending(true); setError(undefined); generation.current++;
     try { setProject({ ...project, ...await client.transition(project, lifecycle) }); }
     catch (reason) { showError(reason); }
     finally { writeBusy.current = false; setPending(false); }
   }
+  async function retryOriginal() {
+    if (writeBusy.current || !client.hasPending() || state !== "ready") return;
+    writeBusy.current = true; setPending(true); setError(undefined); generation.current++;
+    try {
+      const receipt = await client.retryPending();
+      if (!projectId) { setResult("created"); window.location.assign(`/projects/${encodeURIComponent(receipt.projectId)}`); }
+      else setProject(await client.get(projectId)); // A replay receipt is historical, not the current project state.
+    } catch (reason) { showError(reason); }
+    finally { writeBusy.current = false; setPending(false); }
+  }
   return <div className="private-shell">
     <PrivateHeader />
     <main id="private-main">
+      {state === "ready" && client.hasPending() && <ProjectSaveRecovery pending={pending} onRetry={() => { void retryOriginal(); }} />}
       {error && <div className="private-notice" role="alert"><p>{browserErrorMessage[error.code]}</p>
         {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
           : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved state</button>}</div>}
@@ -88,7 +107,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             {catalog.sources.ordinary === "not_authorized" && <p className="private-note">Ordinary projects are not included with your current access.</p>}
           </>}
           <p className="private-note">Each project has its own Tasks page for preparation, assignment, approval and results. That page shows which services are configured; opening a project does not start an agent.</p></div>
-          {catalog?.canCreate ? <ProjectCreateForm pending={pending || state !== "ready"} result={result} onCreate={draft => { void create(draft); }} />
+          {catalog?.canCreate ? <ProjectCreateForm pending={pending || client.hasPending() || state !== "ready"} result={result} onCreate={draft => { void create(draft); }} />
             : state === "ready" && <p className="private-note">Your current access does not allow creating ordinary projects.</p>}</div>
       </> : <>
         <a href="/projects" className="private-back">← All projects</a>
@@ -105,7 +124,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             {section === "settings" ? <>
               {project.lifecycleEditable && project.origin === "ordinary" ? <div className="private-actions">{(["active", "paused", "completed", "archived"] as const)
                 .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
-                .map(value => <button type="button" key={value} disabled={pending} onClick={() => { void transition(value); }}>
+                .map(value => <button type="button" key={value} disabled={pending || client.hasPending()} onClick={() => { void transition(value); }}>
                   {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>
                 : <p className="private-note">{project.origin === "idea_lab" ? "Idea Lab status is read-only here. Its existing history is preserved; lifecycle controls are not connected to this private view yet."
                   : "Your current access allows viewing this project, not changing its status."}</p>}
