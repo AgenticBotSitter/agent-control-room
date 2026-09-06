@@ -32,6 +32,9 @@ async function requireRegularFile(path) {
 function hasPinnedBuildPolicy(value) {
   const normalized = value.replaceAll("\r\n", "\n").trim();
   return normalized === [
+    "packages:",
+    '  - "."',
+    "enableGlobalVirtualStore: false",
     "allowBuilds:",
     "  esbuild: false",
     "  sharp: false",

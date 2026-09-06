@@ -95,7 +95,7 @@ test("CR10B-PUB-060/070 public workspace descriptor includes all five candidates
   assert.equal(descriptor.localCandidateOnly, true);
   assert.equal(descriptor.usesRepositoryDependencyInstallation || descriptor.archiveCreationAllowed || descriptor.packageInstallationAllowed
     || descriptor.registryContactAllowed || descriptor.publicationAllowed, false);
-  assert.equal(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"), "allowBuilds:\n  esbuild: false\n  sharp: false\n  workerd: false\n");
+  assert.equal(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"), 'packages:\n  - "."\nenableGlobalVirtualStore: false\nallowBuilds:\n  esbuild: false\n  sharp: false\n  workerd: false\n');
 });
 
 test("CR10B-PUB-070 release plan is deterministic, exact, ordered, and effect-free", () => {

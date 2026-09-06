@@ -34,6 +34,10 @@ reported already up to date but the workspace precheck still refused. No force/p
 Direct Node test commands work and are the verified fallback; pnpm runtime precheck
 diagnosis remains open. This is not a failed package install or waived queue test.
 
+E38 follow-up: the pnpm mismatch is resolved by explicit root-only workspace discovery
+and local virtual-store configuration. Error-only prechecks and the normal pnpm command
+pass (66 queue tests). No additional download, install, purge or cache cleanup was needed.
+
 `df -h . /private/tmp`: shared APFS Data volume, 460 GiB capacity, 311 GiB used, **105 GiB available**, reported 75% capacity. Rounded filesystem figures need not sum due to APFS accounting. Stop acquisition and reassess if available space falls below 20 GiB or this evaluation exceeds 1 GiB; those are conservative evaluation limits, not requested permanent policies.
 
 ## Evaluation E01 — pg-boss

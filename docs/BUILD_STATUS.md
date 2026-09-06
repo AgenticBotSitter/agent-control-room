@@ -8,6 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local fix — E38:** [pnpm workspace configuration](research/REUSE_E38_PNPM_WORKSPACE_CONFIGURATION.md)
+resolves the dependency precheck mismatch with explicit root-only/local-store settings.
+The normal pnpm queue command passes all 66 checks; stage-zero and 14 release-tooling
+checks pass. No reinstall, force/purge, build-script enabling or deployment.
+
 **Latest local adoption — E37:** [Pinned queue dependency](research/REUSE_E37_PINNED_APPLICATION_DEPENDENCY.md)
 adds pg-boss 12.30.0 and its exact tested closure to the application lockfile. All 66 package
 checks pass using repository node_modules, no temporary root. pnpm's script precheck reports

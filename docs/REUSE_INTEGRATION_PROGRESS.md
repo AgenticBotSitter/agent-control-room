@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E38 pnpm configuration](research/REUSE_E38_PNPM_WORKSPACE_CONFIGURATION.md) resolves
+E37's local precheck mismatch without bypassing verification or reinstalling packages.
+Normal pnpm execution passes all 66 queue checks; preparation and release-tooling checks pass.
+
 [E37 pinned dependency](research/REUSE_E37_PINNED_APPLICATION_DEPENDENCY.md) removes the
 temporary evaluation-folder requirement. All 66 queue integration checks pass against the
 application's locked pg-boss installation. pnpm run precheck diagnosis remains separate;
