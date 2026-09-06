@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E62 native HTTPS service](research/REUSE_E62_NATIVE_HTTPS_SERVICE.md) supplies a
+standard Node TLS lifecycle around the existing native callback. Fake server tests
+cover options, delivery, private binds and bounded cleanup. It remains unwired; real
+certificate provisioning, TLS validation and host acceptance are not claimed.
+
 [E61 full serving journey](research/REUSE_E61_FULL_HOST_SERVING_JOURNEY.md) verifies
 the E60 host with six logical SQL roles and installed queue pickup through result/review,
 including reconnect and lost browser response. Actual native TLS serving remains separate.

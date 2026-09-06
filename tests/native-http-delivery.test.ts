@@ -8,6 +8,8 @@ import test from "node:test";
 import { nativeHttpJson, nativeHttpLimits, type NativeHttpRequest } from "../src/harness/v1/native-http-exchange";
 import { createNativeHttpHost } from "../src/web/v1/native-http-host";
 import type { NativeSessionTransport } from "../src/web/v1/managed-native-sessions";
+import { createNativeHttpsService } from "../src/web/v1/native-https-service";
+import type { Server, ServerOptions, createServer } from "node:https";
 
 const origin = "https://native-control.example.test";
 const certificate = Buffer.from("synthetic delivery client certificate");
@@ -87,6 +89,78 @@ function connection(output: FakeServerResponse) {
   const value = JSON.parse(output.body()) as { connection: string };
   assert.match(value.connection, /^connection:http:/); return value.connection;
 }
+
+test("native HTTPS service supplies strict TLS settings and forwards the actual socket to existing intake", async t => {
+  const f = fixture();
+  let made = 0, binds = 0, closes = 0;
+  const server = new EventEmitter() as Server;
+  server.listen = ((options: { host: string }, callback: () => void) => {
+    assert.equal(options.host, "100.64.0.1"); binds++; queueMicrotask(callback); return server;
+  }) as typeof server.listen;
+  server.close = callback => { closes++; queueMicrotask(() => callback?.()); return server; };
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const material = new Uint8Array([1, 2, 3]);
+  const service = createNativeHttpsService({ host: "100.64.0.1", port: 443, key: material, cert: material, ca: material,
+    application: f.host, createServer: ((options: ServerOptions) => {
+      made++; assert.equal(options.requestCert, true); assert.equal(options.rejectUnauthorized, true);
+      assert.equal(options.minVersion, "TLSv1.2"); assert.deepEqual(options.ALPNProtocols, ["http/1.1"]);
+      assert.deepEqual(options.key, Buffer.from([1, 2, 3])); return server;
+    }) as typeof createServer });
+  t.after(() => service.close()); material.fill(9);
+  assert.equal(made, 0); assert.equal(binds, 0); assert.equal(service.isReady(), false);
+  await service.start(); assert.equal(service.isReady(), true);
+  const incoming = exchange(openCommand()); server.emit("request", incoming.input, incoming.output);
+  await incoming.output.ended.promise;
+  assert.equal(incoming.output.statusCode, 200); connection(incoming.output);
+  await service.close(); await service.close();
+  assert.equal(closes, 1); assert.equal(f.handles[0].closes, 1); assert.equal(service.isReady(), false);
+  await assert.rejects(service.start(), /already_attempted/);
+});
+
+test("native HTTPS service refuses public/default binds and retains startup cleanup failures", async () => {
+  const material = new Uint8Array([1]);
+  for (const host of ["0.0.0.0", "::", "example.test", "8.8.8.8", "100.128.0.1", "172.32.0.1"])
+    assert.throws(() => createNativeHttpsService({ host, port: 443, key: material, cert: material, ca: material,
+      application: { isReady: () => true, async close() {}, async handleNode() {} } }), /config_invalid/);
+  for (const cleanupFails of [false, true]) for (const bindFails of [false, true]) {
+    let closes = 0, made = 0, listenerCloses = 0;
+    const server = new EventEmitter() as Server;
+    server.listen = (() => { queueMicrotask(() => server.emit("error", new Error("synthetic bind failure"))); return server; }) as typeof server.listen;
+    server.close = callback => { listenerCloses++; queueMicrotask(() => callback?.()); return server; };
+    server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+    const service = createNativeHttpsService({ host: "127.0.0.1", port: 443, key: material, cert: material, ca: material,
+      application: { isReady: () => true, async close() { closes++; if (cleanupFails) throw new Error("synthetic close error"); }, async handleNode() {} },
+      createServer: (() => { made++; if (bindFails) return server; throw new Error("synthetic invalid TLS material"); }) as typeof createServer });
+    await assert.rejects(service.start(), new RegExp(cleanupFails ? "cleanup_uncertain" : "start_failed"));
+    assert.equal(closes, 1); assert.equal(made, 1); assert.equal(service.isReady(), false);
+    assert.equal(listenerCloses, bindFails ? 1 : 0);
+    await assert.rejects(service.start(), /already_attempted/);
+  }
+});
+
+for (const mode of ["stalled-bind", "stalled-close"] as const) test(`native HTTPS bounds ${mode} and cannot restart`, async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let appCloses = 0, forced = 0;
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: unknown, callback: () => void) => {
+    if (mode !== "stalled-bind") callback(); return server;
+  }) as typeof server.listen;
+  server.close = callback => { if (mode !== "stalled-close") callback?.(); return server; };
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => { forced++; };
+  const material = new Uint8Array([1]);
+  const service = createNativeHttpsService({ host: "127.0.0.1", port: 443, key: material, cert: material, ca: material,
+    application: { isReady: () => true, async close() { appCloses++; }, async handleNode() {} },
+    createServer: (() => server) as typeof createServer });
+  if (mode === "stalled-bind") {
+    const failed = assert.rejects(service.start(), /start_failed/); t.mock.timers.tick(5000); await failed;
+  } else {
+    await service.start(); const failed = assert.rejects(service.close(), /cleanup_uncertain/);
+    await Promise.resolve(); t.mock.timers.tick(nativeHttpLimits.closeMs); await failed;
+  }
+  assert.equal(appCloses, 1); assert.equal(service.isReady(), false);
+  assert.equal(forced, mode === "stalled-close" ? 1 : 0);
+  await assert.rejects(service.start(), /already_attempted/);
+});
 
 test("failed output after a successful host exchange closes that exact generation and denies its token", async t => {
   const f = fixture(); t.after(() => f.host.close());

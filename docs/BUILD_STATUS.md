@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local transport implementation — E62:** [Native HTTPS service](research/REUSE_E62_NATIVE_HTTPS_SERVICE.md)
+uses standard Node TLS with required client certificates and the existing peer-pinned
+callback. Private explicit IPv4 binding and bounded startup/cleanup are fake-tested;
+31 service/delivery/denial/isolation checks, TypeScript and lint pass. No real certificates
+or listener were used. The service is unwired; compiled/combined host ownership and
+trusted certificate configuration remain next, followed by authorized real rehearsal.
+
 **Latest full-host verification — E61:** [Serving/queue journey](research/REUSE_E61_FULL_HOST_SERVING_JOURNEY.md)
 tests the E60 host through actual in-memory Node requests, six logical SQL roles and
 installed queue delivery to one exact result/pending review. Online, reconnect and lost
