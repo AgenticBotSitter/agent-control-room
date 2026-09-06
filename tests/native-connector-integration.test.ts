@@ -122,8 +122,8 @@ test("lost HTTP response after result commit stops the connector without retry; 
       lostAt = wire.commands.length; throw new Error("synthetic_lost_committed_http_response");
     }
   }), settings, { assertCurrent() {}, wait: completeOnSecondWait(x) });
-  let replacement: ReturnType<typeof createNativeConnector> | undefined;
-  t.after(async () => { try { await connector.close(); await replacement?.close(); } finally { await x.close(); } });
+  const cleanup: { replacement?: ReturnType<typeof createNativeConnector> } = {};
+  t.after(async () => { try { await connector.close(); await cleanup.replacement?.close(); } finally { await x.close(); } });
   await x.f.x.verify();
   await assert.rejects(x.f.x.admin(() => connector.run("initial", currentSignal())), { message: "native_connector_unavailable" });
   assert.ok(lostAt); assert.equal(wire.commands.length, lostAt); assert.equal(wire.closes(), 1);
@@ -132,9 +132,10 @@ test("lost HTTP response after result commit stops the connector without retry; 
   const checkpoint = x.f.x.f.checkpoints.read(`completion-gate:${x.f.x.f.scope.tenantId}`);
   assert.deepEqual(x.f.x.local.calls, ["capabilities", "start", "status"]);
   const recoveredWire = x.createClient(), node = x.f.create();
-  replacement = createNativeConnector(node, fixtureClient(x, recoveredWire), settings,
+  const replacement = createNativeConnector(node, fixtureClient(x, recoveredWire), settings,
     { assertCurrent() {}, async wait() { assert.fail("saved terminal recovery must not wait for a new native execution"); } });
-  const recovered = await x.f.x.admin(() => replacement!.run("recover", currentSignal()));
+  cleanup.replacement = replacement;
+  const recovered = await x.f.x.admin(() => replacement.run("recover", currentSignal()));
   assert.deepEqual(recovered, { disposition: "terminal", state: "completed", cycles: 1 });
   assert.notEqual(recoveredWire.connection(), wire.connection());
   assert.deepEqual(frames(recoveredWire).map(frame => frame.type), ["connection.hello", "protocol.ack", "node.reconciliation.report",
