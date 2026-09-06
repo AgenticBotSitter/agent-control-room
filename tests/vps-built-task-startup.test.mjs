@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync, readdirSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import handler from "../dist-vps/server/index.js";
 import { createPrivateTaskBootstrap, startPrivateTaskApplication } from "../dist-vps/server/taskBootstrap.js";
@@ -10,9 +11,9 @@ import { taskDraft } from "./helpers/web-task.ts";
 import { instant } from "./hermes-native-fixture.ts";
 import { request } from "./helpers/web-foundation.ts";
 import { sha256Digest } from "../src/security/index.ts";
-import { createPrivateNodeHandler } from "../dist-vps/server/serving.js";
+import { createPrivateNodeHandler, loadPrivateClientAssets } from "../dist-vps/server/serving.js";
 import { nodeExchange } from "./helpers/web-node.ts";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { createPrivateTaskHost, createInstalledPrivateTaskHost } from "../dist-vps/server/taskHost.js";
 
 test("compiled two-pool bootstrap mounts protected planning, assignment and page rendering under shared logout", async t => {
@@ -22,6 +23,7 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
   assert.equal(typeof createPrivateTaskBootstrap, "function");
   assert.equal(typeof createInstalledPrivateTaskHost().start, "function");
   let binds = 0, listenerCloses = 0;
+  const assets = await loadPrivateClientAssets(await realpath("dist-vps/client"));
   const server = new EventEmitter();
   server.listen = (options, callback) => { binds++; assert.equal(options.host, "127.0.0.1"); queueMicrotask(callback); return server; };
   server.close = callback => { listenerCloses++; queueMicrotask(() => callback?.()); return server; };
@@ -30,7 +32,7 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
     clock: () => instant + 8000, createServer: () => server });
   assert.equal(binds, 0);
   const app = await host.start({ configuration: f.config, port: 3210, handler,
-    assets: { count: 0, digest: "synthetic-no-assets", respond: () => undefined } });
+    assets });
   t.after(() => app.close()); assert.equal(app.isReady(), true); assert.equal(binds, 1);
   const project = `/api/v1/projects/${f.profile.projectId}`;
   const req = (path, method = "GET", body) => request(path, method, body, "built-task-startup-001", f.jwt);
@@ -56,6 +58,24 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
   assert.equal(saved.status, 201, await saved.clone().text()); assert.equal((await saved.json()).receipt.startsWork, false);
   const page = await handler(req(`/projects/${f.profile.projectId}/tasks/${plan.jobId}`));
   assert.equal(page.status, 200); assert.match(await page.text(), /<html/);
+  async function throughHost(webRequest) {
+    const x = nodeExchange({ path: new URL(webRequest.url).pathname, method: webRequest.method,
+      headers: [...webRequest.headers].flat() });
+    const completed = once(x.output, "finish", { signal: AbortSignal.timeout(5000) });
+    assert.equal(server.emit("request", x.input, x.output), true);
+    await completed;
+    return x;
+  }
+  const served = await throughHost(req(`/projects/${f.profile.projectId}/tasks/${plan.jobId}`));
+  assert.equal(served.output.statusCode, 200);
+  const references = [...served.body().matchAll(/(?:src|href)="(\/_next\/static\/[^"?#]+)"/g)].map(match => match[1]);
+  assert.ok(references.some(path => path.endsWith(".js")));
+  assert.ok(references.some(path => path.endsWith(".css")));
+  for (const path of new Set(references)) {
+    const resource = await throughHost(req(path));
+    assert.equal(resource.output.statusCode, 200, path);
+    assert.ok(resource.body().length > 0, path);
+  }
   assert.throws(() => installPrivateWebProcess({}), /already_configured/);
   assert.equal((await handler(req("/api/v1/session/logout", "POST"))).status, 204);
   assert.equal((await handler(req(path))).status, 401);

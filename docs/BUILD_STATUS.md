@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest full-host evidence — E76:** [Compiled task page/assets](research/REUSE_E76_COMPILED_HOST_ASSETS.md)
+uses real built browser assets through the task host's installed request listener,
+checking page JavaScript/CSS delivery after task planning/assignment. Eight focused
+checks and lint pass. Server/streams remain simulated, not live browser/fleet evidence.
+Final complete compiled regression suite: 41 pass.
+
 **Latest deployment audit — E75:** [Checkpoint placement and acceptance](research/REUSE_E75_CHECKPOINT_DEPLOYMENT_DECISION.md)
 records the independent restore boundary, a consolidated setup/rehearsal packet and
 explicit unresolved custody/recovery decisions. Ten record/access tests pass, including
