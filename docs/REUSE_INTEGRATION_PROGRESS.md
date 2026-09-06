@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E53 owner approval material](research/REUSE_E53_OWNER_APPROVAL_MATERIAL.md) supplies
+unsigned domain bodies using existing verification and cryptography, tested through
+actual signed intake with synthetic keys. Real custody and owner consent remain separate.
+
 [E51 project save recovery](research/REUSE_E51_PROJECT_SAVE_RECOVERY.md) connects the
 existing idempotent retry protocol to an explicit page control, preserving the original
 request through data refresh and avoiding display of historical receipts as current state.

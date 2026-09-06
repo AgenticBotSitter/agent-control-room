@@ -5,6 +5,29 @@ import { binding, instant } from "./hermes-native-fixture";
 import { sha256Digest } from "../src/security";
 import type { DatabaseClient } from "../src/persistence/database";
 import { canonicalApprovalStorageFixture as fixture } from "./helpers/canonical-approval-storage";
+import { prepareNativeOwnerApprovalMaterial } from "../src/harness/v1/native-owner-approval-material";
+
+test("unsigned owner material uses existing signatures and exact intake without starting work", async t => {
+  const f = await fixture(); t.after(f.close);
+  const input = { enrollment: f.prepared.enrollment, request: f.prepared.request, start: f.prepared.start,
+    approvalKeyId: f.packet.approval.body.approvalKeyId, issuedAt: f.clock(),
+    recoveryExpiresAt: f.prepared.start.deadline + 120_000,
+    approvalNonce: "synthetic-owner-material", recoveryNonce: "synthetic-recovery-material" };
+  const before = structuredClone(input), material = prepareNativeOwnerApprovalMaterial(input);
+  assert.deepEqual(input, before); assert.equal(material.signatureStatus, "unsigned");
+  assert.equal(material.startsWork, false); assert.equal(material.grantsExecutionAuthority, false);
+  assert.equal("signature" in material.approval, false);
+  const packet = { schema: "control-room.native-task-approval-packet/v1", approval: f.sign(material.approval), recovery: f.sign(material.recovery) };
+  assert.equal((await f.save(packet)).startsWork, false); assert.equal(await f.count(), 1);
+  for (const changes of [
+    { issuedAt: f.prepared.start.deadline }, { issuedAt: Date.parse(f.prepared.request.occurredAt) - 1 },
+    { recoveryExpiresAt: f.prepared.start.deadline }, { recoveryExpiresAt: f.prepared.start.deadline + 300_001 },
+    { approvalNonce: "!invalid" }, { recoveryNonce: "short" }, { approvalKeyId: "bad/key" },
+    { start: { ...f.prepared.start, jobId: "job:other" } },
+    { request: { ...f.prepared.request, approval: packet.approval } },
+  ]) assert.throws(() => prepareNativeOwnerApprovalMaterial({ ...input, ...changes }), /native_owner_approval_material_invalid/);
+  assert.equal(await f.count(), 1, "preparation and rejected material do not store or dispatch anything");
+});
 
 test("owner saves exact signed packet once; replay preserves receipt without dispatch", async t => {
   const f = await fixture(); t.after(f.close);

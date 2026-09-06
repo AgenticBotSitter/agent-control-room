@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E53:** [Unsigned owner material](research/REUSE_E53_OWNER_APPROVAL_MATERIAL.md)
+reuses existing binding, schema and crypto primitives to prepare exact task/recovery
+approval bodies. All 11 storage checks pass, including signing with a synthetic key and
+actual intake/storage without execution. Another 29 adjacent checks, TypeScript and
+targeted lint pass. No owner
+key custody, consent UI, live signer or runtime activation is claimed.
+
 **Current critical path — E52:** [Completion handoff](CURRENT_COMPLETION_HANDOFF.md)
 reconciles actual implementation against remaining owner outcomes. Next substantive
 work is owner-signing integration and complete executable host configuration, alongside
