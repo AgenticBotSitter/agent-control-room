@@ -130,9 +130,10 @@ export class ServerNodeSession {
   }
 
   async receive(raw: string | Uint8Array): Promise<void> {
-    // A retained node outbox can place progress between the reconciliation report
-    // and its final protocol ACK. Recovery must not discard that sequenced ACK.
-    if (this.state !== "reconciling" && this.state !== "ready" && this.state !== "recovered") throw new Error("Server node session is not accepting reconciliation");
+    // A delayed handshake ACK may follow explicit staging or receipt, and a retained
+    // outbox may place progress before its final ACK. Only ACKs are allowed outside
+    // reconciliation; accepting one never changes delivery or execution state.
+    if (!["reconciling", "ready", "prepared", "sent", "receipted", "recovered"].includes(this.state)) throw new Error("Server node session is not accepting reconciliation");
     await this.bounded(async () => {
       const frame = await this.authenticate(raw);
       this.now();

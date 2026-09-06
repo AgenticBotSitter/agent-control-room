@@ -164,12 +164,13 @@ export class TaskAssignmentCoordinator {
     });
   }
   async stageQueuedNativeDelivery(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
-    expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal) {
+    expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal, expectedAttemptId?: string) {
     digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
     return session.stageNativeDispatch((sign, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
       async (tx, prepared, actorId, nodeKeyId, deadline) => {
+        if (expectedAttemptId !== undefined && prepared.request.attemptId !== expectedAttemptId) conflict();
         if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId) conflict();
         const saved = await store.stageDeliveryEnvelopeInSession(tx, prepared, expectedPacketDigest, actorId, signal, sign, channel, deadline);
         await appendAuditWith(tx, { id: `audit:envelope:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
@@ -179,12 +180,13 @@ export class TaskAssignmentCoordinator {
       }));
   }
   async transmitQueuedNativeDelivery(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
-    expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal) {
+    expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal, expectedAttemptId?: string) {
     digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
     return session.sendPreparedNativeDispatch((frame, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
       async (tx, prepared, actorId, nodeKeyId, deadline, assertAuthorizationTime) => {
+        if (expectedAttemptId !== undefined && prepared.request.attemptId !== expectedAttemptId) conflict();
         if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId
             || Date.parse(frame.expiresAt) > deadline) conflict();
         const saved = await store.recordTransmissionInSession(tx, prepared, expectedPacketDigest, actorId, signal, frame, channel);

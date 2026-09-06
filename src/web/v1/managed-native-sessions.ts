@@ -119,7 +119,7 @@ export class ManagedNativeSessions {
   attachInput(nodeId: string, input: NativeSessionTransport, configuration: NativeInputConfiguration) {
     const config = nativeInputConfigurationSchema.parse(configuration);
     if (!this.routes.register || !this.routes.recover) return Promise.reject(new Error("native_input_unavailable"));
-    return this.attachOwned(nodeId, input).then(({ handle, record }) => {
+    return this.attachOwned(nodeId, input, config.task.attemptId).then(({ handle, record }) => {
       const owner = new ManagedNativeInput(handle, config,
         (value, signal) => this.operation(record, signal, async () => this.routes.register!(value, signal, () => this.current(record))),
         () => this.current(record));
@@ -128,7 +128,7 @@ export class ManagedNativeSessions {
         transmit: owner.transmit.bind(owner), close: owner.close.bind(owner) });
     });
   }
-  private attachOwned(nodeId: string, input: NativeSessionTransport) {
+  private attachOwned(nodeId: string, input: NativeSessionTransport, expectedAttemptId?: string) {
     this.current(); localId.parse(nodeId);
     const config = this.settings.nodes.find(node => node.nodeId === nodeId);
     if (!config || !input || this.transports.has(input)
@@ -165,7 +165,7 @@ export class ManagedNativeSessions {
         const task = (mode: "stage" | "transmit", identity: VerifiedWebIdentity, value: Task, signal: AbortSignal) => {
           const actor = { ...identity }, request = taskSchema.parse(value);
           return this.operation(record, signal, async session => this.routes[mode](actor, request.projectId, request.jobId,
-            request.inputDigest, request.packetDigest, session, signal));
+            request.inputDigest, request.packetDigest, session, signal, expectedAttemptId));
         };
         const handle = Object.freeze({ nodeId, grantsExecutionAuthority: false as const,
           hello: (raw: string | Uint8Array, signal: AbortSignal) => { const copy = frame(raw); return this.operation(record, signal, session => session.acceptHello(copy)); },

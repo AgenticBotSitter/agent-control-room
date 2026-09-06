@@ -126,7 +126,7 @@ test("managed native sessions verify five roles before install and capture confi
   assert.deepEqual(Object.keys(runtime).sort(), ["close", "connections", "evidence", "isReady", "quality", "results"]);
   assert.deepEqual(Object.keys(app).sort(), ["close", "connections", "evidence", "handle", "isReady", "quality", "results"]);
   assert.ok(runtime.connections);
-  assert.deepEqual(Object.keys(runtime.connections).sort(), ["attach", "tenantId", "workspaceId"]);
+  assert.deepEqual(Object.keys(runtime.connections).sort(), ["attach", "attachInput", "tenantId", "workspaceId"]);
   for (const forbidden of ["client", "database", "password", "integrityKey", "privateKey", "session_test"])
     assert.equal(JSON.stringify(runtime).includes(forbidden), false, forbidden);
 
@@ -141,6 +141,18 @@ test("managed native sessions verify five roles before install and capture confi
   assert.equal(handle.nodeId, f.x.registration.nodeId); assert.equal(handle.grantsExecutionAuthority, false);
   assert.equal(JSON.stringify(handle).includes("transport"), false);
   await handle.close(); assert.equal(originalCloses, 1); assert.equal(mutatedCloses, 0);
+
+  let inputCloses = 0;
+  const input = await runtime.connections.attachInput(f.x.registration.nodeId,
+    { send: async () => {}, close: async () => { inputCloses++; }, isAvailable: () => true },
+    { mode: "initial", task: { projectId: f.x.registration.projectId, jobId: f.x.registration.jobId,
+      attemptId: f.x.registration.attemptId, inputDigest: f.x.registration.nativeTask!.inputDigest } });
+  assert.equal(Object.isFrozen(input), true);
+  assert.deepEqual(Object.keys(input).sort(), ["close", "grantsExecutionAuthority", "nodeId", "receive", "stage", "transmit"]);
+  for (const internal of ["handle", "config", "register", "tail", "state", "pending"])
+    assert.equal(internal in input, false);
+  assert.equal(input.grantsExecutionAuthority, false);
+  await input.close(); await input.close(); assert.equal(inputCloses, 1);
 
   const closing = runtime.close(); assert.equal(runtime.close(), closing); assert.equal(runtime.isReady(), false); await closing;
   assert.equal(f.startup.web.closes(), 1); assert.equal(f.startup.coordinator.closes(), 1); assert.equal(f.result.closes(), 1);

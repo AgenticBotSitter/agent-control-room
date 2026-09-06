@@ -91,6 +91,22 @@ async function fixture() {
   } catch (error) { await x.close(); throw error; }
 }
 
+test("receiver carries source invalidation through the separate result registration precommit", async t => {
+  const x = await fixture(); t.after(x.close);
+  let available = true, reached = false;
+  const transaction = x.resultsDb.transactionWithPreCommitCheck.bind(x.resultsDb);
+  x.resultsDb.transactionWithPreCommitCheck = (work, check) => transaction(work, () => {
+    reached = true; available = false; check();
+  });
+  await assert.rejects(x.receiver.register(x.request, signal(), () => {
+    if (!available) throw new Error("synthetic_source_replaced");
+  }), /synthetic_source_replaced/);
+  assert.equal(reached, true);
+  const rows = await x.counts();
+  assert.equal(rows.runs.length, 1, "earlier run transaction remains durable, not rolled back by a later failure");
+  assert.equal(rows.plans.length, 0); assert.equal(rows.events.length, 0); assert.equal(rows.artifacts.length, 0);
+});
+
 test("restricted receiver derives initial run from accepted delivery then records signed progress, captures bytes and submits the exact result", async t => {
   const x = await fixture(); t.after(x.close); await x.verify(); const before = await x.state();
   assert.equal((await x.counts()).runs.length, 0);
