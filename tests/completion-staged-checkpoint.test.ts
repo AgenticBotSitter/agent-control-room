@@ -48,3 +48,16 @@ test("an empty stage never initializes or advances durable storage", () => {
   const stage = stageCompletionCheckpoint({ read: () => undefined, initialize() { writes++; }, advance() { writes++; } }, "tenant:test");
   assert.equal(stage.checkpoints.read(initial.scope), undefined); stage.flush(); assert.equal(writes, 0);
 });
+
+test("explicit automated batches permit fifty sequential advances but never widen the default bound", () => {
+  const store = fixture(), stage = stageCompletionCheckpoint(store, "tenant:test", 50);
+  for (let n = 0; n < 50; n++) {
+    const current = stage.checkpoints.read(initial.scope)!;
+    stage.checkpoints.advance(rollbackCheckpointDigestV1(current), { ...current, revision: current.revision + 1, recordCount: current.recordCount + 1 });
+  }
+  const current = stage.checkpoints.read(initial.scope)!;
+  assert.equal(current.revision, 51); assert.deepEqual(store.read(initial.scope), initial);
+  assert.throws(() => stage.checkpoints.advance(rollbackCheckpointDigestV1(current), { ...current, revision: 52 }));
+  stage.flush(); assert.deepEqual(store.read(initial.scope), current);
+  for (const value of [0, -1, 51, 1.5, NaN, Infinity]) assert.throws(() => stageCompletionCheckpoint(store, "tenant:test", value));
+});
