@@ -60,7 +60,8 @@ test("lane inventory rejects unsupported command syntax, paths, duplicate entrie
     `${prefix}tests/a.test.ts;echo`, `${prefix}$TEST_FILE`, `${prefix}tests/a.test.ts\nnode evil.mjs`])
     assert.throws(() => createTestLanePlan({ ...scripts(), pretest: value }), String(value));
   for (const path of ["../tests/escape.test.ts", "/tmp/escape.test.ts", "tests/../escape.test.ts", "tests\\escape.test.ts",
-    "src/a.test.ts", "tests/helper.ts", "tests/a.test.ts/child", "tests/a.test.ts?query", "tests/$(echo).test.ts"])
+    "src/a.test.ts", "scripts/research/unregistered.test.mjs", "scripts/research/pg-boss-postgres-evaluation.mjs",
+    "scripts/research/../pg-boss-worker-integration.test.mjs", "tests/helper.ts", "tests/a.test.ts/child", "tests/a.test.ts?query", "tests/$(echo).test.ts"])
     assert.throws(() => createTestLanePlan({ ...scripts(), pretest: command([path]) }), path);
   assert.throws(() => createTestLanePlan({ ...scripts(), pretest: command(["tests/pre.test.ts", "tests/pre.test.ts"]) }));
   assert.throws(() => createTestLanePlan({ ...scripts(), posttest: command([main[0]]) }));

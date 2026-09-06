@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const testLaneNames = Object.freeze(["pre", "main-1", "main-2", "main-3", "main-4", "post"]);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const invalid = () => { throw new Error("ci_test_lane_configuration_invalid"); };
+const reuseTests = new Set(["scripts/research/pg-boss-submission-integration.test.mjs",
+  "scripts/research/pg-boss-worker-integration.test.mjs"]);
 
 function parseScript(command) {
   if (typeof command !== "string") return invalid();
@@ -13,7 +15,7 @@ function parseScript(command) {
   if (tokens.slice(0, 4).join(" ") !== "node --import tsx --test" || tokens.length <= 4) return invalid();
   const files = tokens.slice(4);
   for (const file of files) {
-    if (!/^tests\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.test\.(?:ts|tsx|mjs)$/.test(file)
+    if ((!/^tests\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.test\.(?:ts|tsx|mjs)$/.test(file) && !reuseTests.has(file))
       || file.split("/").some(part => part === "." || part === "..")) return invalid();
   }
   return files;

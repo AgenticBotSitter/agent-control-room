@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E50 lifecycle verification](research/REUSE_E50_DEFAULT_SUITE_RECONCILIATION.md) repairs
+two integration-test mismatches and completes a full default lifecycle rerun: 3,063
+passed, no failures, two platform skips. Exact CI path and native import boundaries
+remain enforced. This is local regression evidence, not daily-use acceptance.
+
 [E49 project receipts](research/REUSE_E49_PROJECT_RECEIPT_MATCHING.md) checks save responses
 against the original request before clearing pending state. It reuses existing explicit
 idempotent retry and current-state reads, with no new workflow engine or automatic write.

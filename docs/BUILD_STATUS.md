@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local verification — E50:** [Default lifecycle reconciliation](research/REUSE_E50_DEFAULT_SUITE_RECONCILIATION.md)
+found and repaired the queue-path test-lane restriction and stale zero-consumer Hermes
+isolation expectation, preserving exact import/path boundaries. Full `pnpm test` rerun
+exited 0: 3,063 passed, zero failed, two Windows-only skips across all three phases.
+The original two failures remain documented. No real agent, browser or deployment
+acceptance is implied; the main product outcomes remain open.
+
 **Latest local implementation — E49:** [Project receipt matching](research/REUSE_E49_PROJECT_RECEIPT_MATCHING.md)
 rejects save responses that do not match the requested creation or lifecycle change,
 retaining the original explicit retry identity. A handler/SQL test verifies a lost

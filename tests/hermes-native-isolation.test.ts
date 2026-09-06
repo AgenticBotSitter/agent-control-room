@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import ts from "typescript";
 
-test("only the unwired native HTTPS module owns its network imports; no application imports this adapter", async () => {
+test("native HTTPS imports stay isolated and only the accepted node bridge consumes runtime types and contracts", async () => {
   async function files(directory: string): Promise<string[]> {
     const entries = await readdir(directory, { withFileTypes: true });
     return (await Promise.all(entries.map(entry => entry.isDirectory() ? files(join(directory, entry.name))
@@ -26,5 +26,27 @@ test("only the unwired native HTTPS module owns its network imports; no applicat
     assert.doesNotMatch(source, /process\.env|child_process|private-loopback-physical-native-driver|\.listen\s*\(|createServer\s*\(|fetch\s*\(/);
   }
   assert.deepEqual([...owners], ["src/harness/hermes-native-v1/https-transport.ts"]);
-  assert.deepEqual(consumers, []);
+  assert.deepEqual(consumers.sort(), ["src/node-bridge/native-connector.ts", "src/node-bridge/native-http-host.ts"]);
+  // CR14C connector acceptance permits supplied runtime ownership, not constructing
+  // an adapter, journal or native transport from application code.
+  for (const path of consumers) {
+    const tree = ts.createSourceFile(path, await readFile(path, "utf8"), ts.ScriptTarget.Latest, true);
+    const imports: string[] = [];
+    for (const statement of tree.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)
+        || !statement.moduleSpecifier.text.includes("hermes-native-v1")) continue;
+      const specifier = statement.moduleSpecifier.text;
+      imports.push(specifier);
+      if (specifier.endsWith("/node-runtime")) assert.equal(statement.importClause?.isTypeOnly, true);
+      else {
+        assert.equal(path, "src/node-bridge/native-connector.ts");
+        assert.equal(specifier, "../harness/hermes-native-v1/contracts");
+        const bindings = statement.importClause?.namedBindings;
+        assert.ok(bindings && ts.isNamedImports(bindings));
+        assert.deepEqual(bindings.elements.filter(element => !element.isTypeOnly).map(element => element.name.text).sort(),
+          ["snapshotSchema", "terminalNativeState"]);
+      }
+    }
+    assert.ok(imports.includes("../harness/hermes-native-v1/node-runtime"));
+  }
 });
