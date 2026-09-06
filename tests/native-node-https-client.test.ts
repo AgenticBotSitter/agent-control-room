@@ -5,7 +5,7 @@ import type { ClientRequest, IncomingMessage } from "node:http";
 import type { RequestOptions } from "node:https";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import test from "node:test";
-import { createNativeNodeHttpsClient, type NativeNodeHttpsPorts } from "../src/node-bridge/native-https-client";
+import { createNativeNodeHttpsClient, type NativeNodeHttpsConfiguration, type NativeNodeHttpsPorts } from "../src/node-bridge/native-https-client";
 import { nativeHttpLimits, type NativeHttpRequest, type NativeHttpResponse } from "../src/harness/v1/native-http-exchange";
 
 const now = Date.parse("2026-09-06T18:00:00.000Z");
@@ -16,15 +16,17 @@ const validResponse: NativeHttpResponse = { schema: "control-room.native-http/v1
 type Mode = "normal" | "private_address" | "wrong_address" | "wrong_hostname" | "wrong_digest" | "unauthorized"
   | "redirect" | "compressed" | "cookie" | "wrong_type" | "oversize" | "incomplete" | "invalid_json" | "invalid_shape" | "hang";
 
-function fixture(mode: Mode = "normal") {
-  const order: string[] = [], config = { canonicalDestination: "https://native.example.test:443",
+function fixture(mode: Mode = "normal", privateOptions: { pinnedPrivateAddress?: string; answers?: string[]; peerAddress?: string } = {}) {
+  const order: string[] = [], config: NativeNodeHttpsConfiguration = { canonicalDestination: "https://native.example.test:443",
+    ...(privateOptions.pinnedPrivateAddress ? { pinnedPrivateAddress: privateOptions.pinnedPrivateAddress } : {}),
     connectorCredentialRef: "credential:native-mtls", serverCertificateDigest: certificateDigest,
     serverCa: "synthetic server CA material" };
   const counts = { resolves: 0, credentials: 0, connects: 0, requests: 0 };
   let requestOptions: RequestOptions | undefined, tlsOptions: ConnectionOptions | undefined, sentBody: string | undefined;
+  let answers = privateOptions.answers;
   class FakeSocket extends EventEmitter {
     authorized = mode !== "unauthorized"; destroyed = false;
-    remoteAddress = mode === "wrong_address" ? "8.8.4.4" : "8.8.8.8"; remotePort = 443;
+    remoteAddress = privateOptions.peerAddress ?? privateOptions.pinnedPrivateAddress ?? (mode === "wrong_address" ? "8.8.4.4" : "8.8.8.8"); remotePort = 443;
     getPeerCertificate() { return { subjectaltname: mode === "wrong_hostname" ? "DNS:other.example.test" : "DNS:native.example.test",
       raw: mode === "wrong_digest" ? Buffer.from("other certificate") : certificateRaw }; }
     destroy() { if (!this.destroyed) { this.destroyed = true; queueMicrotask(() => this.emit("close")); } return this; }
@@ -59,7 +61,7 @@ function fixture(mode: Mode = "normal") {
   const request = new FakeRequest();
   const ports: NativeNodeHttpsPorts = {
     resolver: { async resolve(host) { counts.resolves++; order.push("resolve"); assert.equal(host, "native.example.test");
-      return [mode === "private_address" ? "10.0.0.1" : "8.8.8.8"]; } },
+      return answers ?? [mode === "private_address" ? "10.0.0.1" : "8.8.8.8"]; } },
     connect(options) { counts.connects++; order.push("connect"); tlsOptions = options;
       queueMicrotask(() => socket.emit("secureConnect")); return socket as unknown as TLSSocket; },
     request(options, handler) { counts.requests++; order.push("request"); requestOptions = options; receive = handler;
@@ -74,8 +76,59 @@ function fixture(mode: Mode = "normal") {
     schema: "control-room.native-http/v1", operation: "open", mode: "initial", ...patch,
   } as NativeHttpRequest, new AbortController().signal);
   return { client, config, source, ports, socket, response, request, counts, order, exchange,
+    setAnswers: (value: string[]) => { answers = value; },
     observed: () => ({ requestOptions, tlsOptions, sentBody }) };
 }
+
+test("explicit private connector pins flow into one TLS dial while DNS hostname, SNI, CA and leaf checks remain intact", async t => {
+  for (const pin of ["10.12.34.56", "fd12:3456::7", "100.100.10.20"]) await t.test(pin, async () => {
+    const f = fixture("normal", { pinnedPrivateAddress: pin, answers: [pin, pin] });
+    assert.deepEqual(f.counts, { resolves: 0, credentials: 0, connects: 0, requests: 0 });
+    // The connector captures its configuration before any asynchronous resolver or credential call.
+    f.config.pinnedPrivateAddress = "10.9.9.9";
+    assert.deepEqual(await f.exchange(), validResponse);
+    assert.deepEqual(f.counts, { resolves: 1, credentials: 1, connects: 1, requests: 1 });
+    assert.deepEqual(f.order.filter(value => value !== "current"), ["resolve", "credential", "connect", "request"]);
+    const { tlsOptions, requestOptions } = f.observed();
+    assert.equal(tlsOptions?.host, pin); assert.equal(tlsOptions?.port, 443);
+    assert.equal(tlsOptions?.servername, "native.example.test"); assert.equal(tlsOptions?.rejectUnauthorized, true);
+    assert.equal(tlsOptions?.ca, "synthetic server CA material"); assert.equal(tlsOptions?.minVersion, "TLSv1.2");
+    assert.equal(requestOptions?.hostname, "native.example.test");
+    assert.equal((requestOptions?.headers as Record<string, string>).Host, "native.example.test:443");
+    assert.equal(f.socket.destroyed, true); assert.equal(f.request.destroyed, true); assert.equal(f.response.destroyed, true);
+    await f.client.close();
+  });
+});
+
+test("mismatched private DNS is rejected before credentials or TLS with no fallback", async t => {
+  for (const answers of [["10.1.2.4"], ["10.1.2.3", "8.8.8.8"], [], Array(17).fill("10.1.2.3"), ["not-an-address"]])
+    await t.test(JSON.stringify(answers), async () => {
+      const f = fixture("normal", { pinnedPrivateAddress: "10.1.2.3", answers });
+      await assert.rejects(f.exchange(), { message: "native_node_https_unavailable" });
+      assert.deepEqual(f.counts, { resolves: 1, credentials: 0, connects: 0, requests: 0 });
+      await assert.rejects(f.exchange(), { message: "native_node_https_unavailable" });
+      assert.equal(f.counts.resolves, 1); await f.client.close();
+    });
+});
+
+test("a later changed DNS answer cannot reuse the prior private connection or reread credentials", async () => {
+  const f = fixture("normal", { pinnedPrivateAddress: "192.168.2.3", answers: ["192.168.2.3"] });
+  await f.exchange(); f.setAnswers(["192.168.2.4"]);
+  await assert.rejects(f.exchange(), { message: "native_node_https_unavailable" });
+  assert.deepEqual(f.counts, { resolves: 2, credentials: 1, connects: 1, requests: 1 });
+  await f.client.close();
+});
+
+test("private pins do not waive actual peer, hostname, certificate fingerprint or authorization checks", async t => {
+  for (const failure of ["peer", "wrong_hostname", "wrong_digest", "unauthorized"] as const) await t.test(failure, async () => {
+    const pin = "172.20.1.2";
+    const f = fixture(failure === "peer" ? "normal" : failure, { pinnedPrivateAddress: pin, answers: [pin],
+      ...(failure === "peer" ? { peerAddress: "172.20.1.3" } : {}) });
+    await assert.rejects(f.exchange(), { message: "native_node_https_unavailable" });
+    assert.deepEqual(f.counts, { resolves: 1, credentials: 1, connects: 1, requests: 0 });
+    assert.equal(f.socket.destroyed, true); await f.client.close();
+  });
+});
 
 test("client construction is inert and one exchange uses only the exact pinned destination and mTLS credential", async () => {
   const f = fixture(); assert.deepEqual(f.counts, { resolves: 0, credentials: 0, connects: 0, requests: 0 });
