@@ -34,12 +34,32 @@ test("readiness recovery waits for signed reconciliation and ignores later fresh
     sequence: c.peer.journal.nextOutboundSequence(previous.connectionId) }, x.f.keys.privateKey);
   await c.handle.reconcile(JSON.stringify(frame), currentSignal());
   assert.equal(calls, 1); assert.equal(x.manager.queueRecoveryStatus(c.handle.nodeId).state, "complete");
+  const attention = x.manager.queueAttention();
+  assert.equal(attention.completeNodes, 1); assert.equal(attention.held, 0);
+  assert.equal(JSON.stringify(attention).includes(c.handle.nodeId), false);
+  assert.equal(calls, 1);
+});
+
+test("attention snapshot reports held and limited checks without rerunning them or retaining closed observations", async t => {
+  let calls = 0;
+  const { x } = await queued(async () => { calls++; return { examined: 32, recovered: 30, held: 2, truncated: true }; });
+  t.after(x.close);
+  assert.equal(x.manager.queueAttention().unavailableNodes, 1);
+  const c = await x.attach(); assert.equal(x.manager.queueAttention().notAttemptedNodes, 1);
+  await x.handshake(c);
+  for (let i = 0; i < 2; i++) {
+    const value = x.manager.queueAttention(); assert.equal(value.held, 2); assert.equal(value.truncatedNodes, 1);
+  }
+  assert.equal(calls, 1);
+  await c.handle.close();
+  const closed = x.manager.queueAttention(); assert.equal(closed.unavailableNodes, 1); assert.equal(closed.held, 0);
 });
 
 test("recovery failure does not close an otherwise healthy signed session", async t => {
   const { x, ref } = await queued(async () => { throw new Error("synthetic discovery failure"); }); t.after(x.close);
   const c = await x.attach(); await x.handshake(c);
   assert.equal(x.manager.queueRecoveryStatus(c.handle.nodeId).state, "uncertain");
+  assert.equal(x.manager.queueAttention().uncertainNodes, 1);
   assert.equal(c.peer.state.closes, 0);
   assert.equal((await x.manager.deliverApproved(ref, currentSignal())).deliveryConfirmed, false);
 });

@@ -14,6 +14,7 @@ import type { TaskPlanningOperation } from "./task-execution-planner";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
+import type { QueueAttentionSource } from "./queue-attention-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -34,6 +35,7 @@ export interface PrivateWebProcessOptions {
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
+  queueAttention?: QueueAttentionSource;
   clock?: () => number;
   /** Tests may shorten the production drain ceiling; never extend it. */
   drainMs?: number;
@@ -49,6 +51,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
+  if (options.queueAttention && (options.queueAttention.tenantId !== options.tenantId
+    || options.queueAttention.workspaceId !== options.workspaceId || typeof options.queueAttention.read !== "function"))
+    throw new Error("invalid_private_app_config");
+  const queueAttention = options.queueAttention ? Object.freeze({ tenantId: options.tenantId,
+    workspaceId: options.workspaceId, read: options.queueAttention.read.bind(options.queueAttention) }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
     || typeof options.planning.plan !== "function")) throw new Error("invalid_private_app_config");
   const planning = options.planning ? Object.freeze({ plan: options.planning.plan.bind(options.planning) }) : undefined;
@@ -104,6 +111,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = await keys.get();
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          if (url.pathname === "/api/v1/needs-me") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            return Response.json(await connections.readQueueAttention(identity, queueAttention), { headers: privateResponseHeaders });
+          }
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
             return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, submission, revisions, clock })(request);
           if (url.pathname === "/api/v1/connections") {
@@ -143,7 +154,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
             throw new WebAccessError("invalid_request");
           await service.authorizeCatalog(identity);
-        } else if (url.pathname === "/connections") {
+        } else if (["/connections", "/needs-me"].includes(url.pathname)) {
           if (url.search) throw new WebAccessError("invalid_request");
           await connections.authorize(identity);
         } else if (url.pathname !== "/session") throw new WebAccessError("not_found");

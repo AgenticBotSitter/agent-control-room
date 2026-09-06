@@ -4,6 +4,7 @@ import { ConnectionCenterReadServiceV1 } from "../../connection-center/v1/servic
 import { AuthenticatedFleetTelemetryFreshnessSourceV1 } from "../../connection-center/v1/authenticated-freshness";
 import type { VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
+import { queueAttentionSchema, type QueueAttentionSource } from "./queue-attention-wire";
 
 export interface WebConnectionKeys {
   registryIntegrityKey: Uint8Array;
@@ -39,6 +40,13 @@ export class WebConnectionService {
         this.freshness ? { read: input => this.freshness!.readInSession(tx, input) } : undefined);
       const projection = await source.read({ tenantId: this.scope.tenantId, now: actor.now });
       return { projection, telemetry: this.freshness ? "configured" as const : "not_configured" as const };
+    });
+  }
+  async readQueueAttention(identity: VerifiedWebIdentity, source?: QueueAttentionSource) {
+    return this.authority.authenticated(identity, async (_, actor) => {
+      actor.require("connections.read", undefined, true);
+      if (!source) throw new Error("queue_attention_not_configured");
+      return queueAttentionSchema.parse(source.read());
     });
   }
 }

@@ -135,6 +135,12 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
       return job?.retryCount === 1 && job.state === 'failed'; });
   }
   const { peer, handle } = connection;
+  const attentionResponse = await installed.handle(webRequest('/api/v1/needs-me', 'GET', undefined, undefined, x.f.jwt), () => new Response('shell'));
+  assert.equal(attentionResponse.status, 200);
+  const attention = await attentionResponse.json();
+  assert.equal(attention.source, 'current_process_recovery'); assert.equal(attention.completeNodes, 1);
+  assert.equal(attention.startsWork, false); assert.equal(JSON.stringify(attention).includes(handle.nodeId), false);
+  assert.equal(writes, 1);
   const frames = peer.outgoing.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch'); assert.equal(frames.length, 1);
   await peer.acknowledge(); await handle.receipt(peer.incoming.shift(), currentSignal());
   const native = await x.prepareNode(peer, JSON.parse(frames[0]));

@@ -235,6 +235,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return { disposition: "delivered" as const };
     } } : {}),
     ...(submission ? { submission } : {}),
+    ...(sessions && nativeSubmission?.recoverUnsentInSession ? {
+      queueAttention: Object.freeze({ ...scope, read: sessions.queueAttention.bind(sessions) }),
+    } : {}),
     ...(queueRecovery ? { queueRecovery } : {}),
     ...(revisions ? { revisions } : {}),
     ...(results ? { results } : {}),

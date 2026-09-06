@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E41 recovery attention](research/REUSE_E41_RECOVERY_ATTENTION.md) connects the first
+owner-only Needs Me section to current runtime recovery observations. It reuses session
+authorization, exposes no raw machine identities or command port, and passes source/
+compiled full-host checks. Durable task-level inbox and interactive acceptance remain.
+
 [E40 schema inspection](research/REUSE_E40_SCHEMA_INSPECTION.md) adds a read-only strict
 wrapper around upstream schema detection, covering swallowed probe failures and
 cancellation without granting operational roles more access. Physical PostgreSQL

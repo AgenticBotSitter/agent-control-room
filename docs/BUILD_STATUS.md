@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E41:** [Recovery attention](research/REUSE_E41_RECOVERY_ATTENTION.md)
+mounts an owner-only Needs Me recovery summary from the configured session runtime.
+Source and compiled full-host journeys, 35 compiled regressions, focused access/client/UI
+checks, typecheck and lint pass. This is explicitly a process-local summary, not the
+unfinished durable task-specific inbox. No live services, deployment or GitHub publication.
+
 **Latest local implementation — E40:** [Schema inspection](research/REUSE_E40_SCHEMA_INSPECTION.md)
 reuses the installed upstream detector but refuses acceptance after any failed probe,
 drift, pending index build or extra index. Focused actual-package checks, TypeScript

@@ -11,6 +11,7 @@ import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { ManagedNativeInput, nativeInputConfigurationSchema, type NativeInputConfiguration } from "./managed-native-input";
 import { encodeNativeWire, decodeNativeWire } from "../../harness/v1/native-wire";
 import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmissionReference } from "../../persistence/native-task-submission";
+import { queueAttentionSchema } from "./queue-attention-wire";
 
 export type ManagedNativeSessionSettings = {
   nodes: readonly ServerNodeSessionConfig[];
@@ -158,6 +159,27 @@ export class ManagedNativeSessions {
     const record = this.records.get(localId.parse(nodeId)); if (!record) return Object.freeze({ state: "unavailable" as const });
     return Object.freeze({ state: record.readinessState ?? "not_attempted" as const,
       ...(record.readinessResult ? { result: Object.freeze({ ...record.readinessResult }) } : {}) });
+  }
+  /** Owner-facing aggregate only. Never triggers recovery or exposes node identities. */
+  queueAttention() {
+    this.current();
+    const value = { source: "current_process_recovery" as const, configuredNodes: this.settings.nodes.length,
+      unavailableNodes: 0, notAttemptedNodes: 0, runningNodes: 0, completeNodes: 0,
+      uncertainNodes: 0, held: 0, truncatedNodes: 0, startsWork: false as const };
+    for (const node of this.settings.nodes) {
+      const record = this.records.get(node.nodeId);
+      if (!record || record.closed) { value.unavailableNodes++; continue; }
+      switch (record.readinessState) {
+        case "running": value.runningNodes++; break;
+        case "uncertain": value.uncertainNodes++; break;
+        case "complete":
+          value.completeNodes++; value.held += record.readinessResult!.held;
+          if (record.readinessResult!.truncated) value.truncatedNodes++;
+          break;
+        default: value.notAttemptedNodes++;
+      }
+    }
+    return Object.freeze(queueAttentionSchema.parse(value));
   }
   attach(nodeId: string, input: NativeSessionTransport) {
     return this.attachOwned(nodeId, input).then(value => value.handle);
