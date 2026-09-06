@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Runtime/test input review:** [Filesystem dependencies](PUBLIC_RUNTIME_AND_TEST_INPUTS.md)
+identifies required client assets, migration/role SQL, private runtime-data boundaries
+and a remaining preview-specific assertion in contributor test preparation. Inventory
+generation now flags the required favicon for rights review; the earlier snapshot is
+preserved. A current-tree inventory regression checks coverage/hashes and pending status.
+
 **Tracked export checklist saved:** [Inventory status](PUBLIC_EXPORT_INVENTORY_STATUS.md)
 records 2,292 baseline paths with matching hashes and proposed dispositions; every
 content review remains pending. The expanded static closure covers 294 tracked paths,
