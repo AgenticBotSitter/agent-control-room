@@ -14,7 +14,7 @@ import { sha256Digest } from "../src/security/index.ts";
 import { createPrivateNodeHandler, loadPrivateClientAssets } from "../dist-vps/server/serving.js";
 import { nodeExchange } from "./helpers/web-node.ts";
 import { EventEmitter, once } from "node:events";
-import { createPrivateTaskHost, createInstalledPrivateTaskHost } from "../dist-vps/server/taskHost.js";
+import { bindPrivateHostShutdown, createPrivateTaskHost, createInstalledPrivateTaskHost } from "../dist-vps/server/taskHost.js";
 
 test("compiled two-pool bootstrap mounts protected planning, assignment and page rendering under shared logout", async t => {
   assert.equal(typeof startPrivateTaskApplication, "function");
@@ -34,6 +34,9 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
   const app = await host.start({ configuration: f.config, port: 3210, handler,
     assets });
   t.after(() => app.close()); assert.equal(app.isReady(), true); assert.equal(binds, 1);
+  const signals = new EventEmitter();
+  const shutdown = bindPrivateHostShutdown(app, signals);
+  t.after(() => shutdown.stop());
   const project = `/api/v1/projects/${f.profile.projectId}`;
   const req = (path, method = "GET", body) => request(path, method, body, "built-task-startup-001", f.jwt);
   const bridge = createPrivateNodeHandler({ origin: f.config.web.origin, application: app, handler,
@@ -79,7 +82,9 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
   assert.throws(() => installPrivateWebProcess({}), /already_configured/);
   assert.equal((await handler(req("/api/v1/session/logout", "POST"))).status, 204);
   assert.equal((await handler(req(path))).status, 401);
-  const closing = app.close(); assert.equal(app.isReady(), false); await closing;
+  signals.emit("SIGTERM"); signals.emit("SIGINT");
+  assert.deepEqual(await shutdown.completed, { status: "closed" });
+  assert.equal(app.isReady(), false);
   assert.equal((await handler(req(path))).status, 503); assert.equal(f.web.closes(), 1); assert.equal(f.coordinator.closes(), 1);
   assert.equal(listenerCloses, 1);
   await assert.rejects(host.start({}), /already_attempted/);

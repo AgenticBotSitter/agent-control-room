@@ -76,6 +76,11 @@ as described in [E63](research/REUSE_E63_COMBINED_NATIVE_HOST.md). It does not p
 certificates or install/start itself. Real TLS and fleet acceptance remain outstanding.
 
 The inspection entry is available to the future preparation runner; it is not invoked
+automatically. E77 also exports `bindPrivateHostShutdown` from `taskHost.js` for explicit
+operator-entrypoint use after startup. It calls existing host cleanup once for stop
+signals and reports uncertainty on failure/timeout; it does not install a supervisor,
+call process.exit, handle startup cancellation or register real handlers on import.
+The inspection entry is not invoked
 automatically by application startup. No new service manager, SSH copy protocol,
 database authority or Hermes fork is introduced. Real installation commands and
 host-specific secret provisioning remain gated work, not missing steps for a worker

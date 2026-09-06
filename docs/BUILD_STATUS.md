@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest shutdown integration — E77:** [Host shutdown bridge](research/REUSE_E77_HOST_SHUTDOWN.md)
+connects explicitly supplied stop signals to existing host cleanup once, with bounded
+uncertain outcomes and owned-listener removal. Three unit tests, 41 compiled checks,
+TypeScript, targeted lint and VPS build pass. No real signal handler/service installed;
+startup cancellation and trusted executable configuration remain open.
+
 **Latest full-host evidence — E76:** [Compiled task page/assets](research/REUSE_E76_COMPILED_HOST_ASSETS.md)
 uses real built browser assets through the task host's installed request listener,
 checking page JavaScript/CSS delivery after task planning/assignment. Eight focused
