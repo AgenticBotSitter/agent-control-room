@@ -198,7 +198,7 @@ export class TaskExecutionPlanner {
           current(); const result = await tx.query<T>(sql, params); current(); return result;
         } });
       }, () => { current(); check(); current(); }) };
-    return new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+    const result = await new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
       actor.require("tasks.plan", projectId, true); actor.require("tasks.reviews.record", projectId, true);
       const project = await this.projects.getViewInSession(tx, actor, projectId); current();
@@ -285,6 +285,9 @@ export class TaskExecutionPlanner {
         safeMetadata: { sourceJobId, fromTargetId: input.targetId, sourceDigest, templateDigest, inputDigest: plan.job.inputDigest, startsWork: false } });
       current(); return { receipt: this.revisionReceipt(plan), replayed: false };
     });
+    // Commit acknowledgement may arrive after cancellation or the operation budget.
+    // Preserve the durable bundle for exact reconciliation, but do not report timely success.
+    current(); return result;
   }
   private revisionReceipt(plan: z.infer<typeof revisionPlanSchema>) { return { ...this.receipt(plan),
     rootSubjectId: plan.revision.rootSubjectId, rootTargetId: plan.revision.rootTargetId,
