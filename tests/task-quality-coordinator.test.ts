@@ -131,6 +131,25 @@ test("quality configuration is optional and absent configuration exposes no inte
   assert.deepEqual(await verificationRows(x), []); assert.deepEqual(await completionRows(x), []);
 });
 
+test("quality coordinator rejects invalid clocks before SQL and retains high-water across calls", async t => {
+  const x = await taskQualityCoordinatorFixture(); t.after(x.close);
+  let queries = 0;
+  const db: DatabaseClient = { ...x.f.db, transactionWithPreCommitCheck: (...args) => {
+    queries++; return x.f.db.transactionWithPreCommitCheck(...args);
+  } };
+  for (const time of [-1, NaN, Infinity, 0.5]) {
+    const owner = x.createOwner({ clock: () => time, database: { ...x.config.database, client: db } });
+    t.after(() => owner.close());
+    await assert.rejects(owner.quality!.reconcile(x.request, new AbortController().signal));
+  }
+  assert.equal(queries, 0);
+  let now = x.f.clock();
+  const owner = x.createOwner({ clock: () => now }); t.after(() => owner.close());
+  await owner.quality!.reconcile(x.request, new AbortController().signal); now--;
+  await assert.rejects(owner.quality!.reconcile(x.request, new AbortController().signal));
+  assert.equal((await verificationRows(x)).length, 1); assert.deepEqual(await completionRows(x), []);
+});
+
 test("project reassignment after committed verification blocks completion and preserves the already-recorded evidence", async t => {
   const x = await taskQualityCoordinatorFixture(); t.after(x.close); await x.ownerReview();
   await x.asMigrator(() => x.f.db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:quality:other',$1,'Other synthetic workspace')", [x.request.tenantId]));

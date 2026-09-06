@@ -59,7 +59,7 @@ export class TaskQualityCoordinator {
   async reconcile(input: TaskQualityRequest, signal: AbortSignal, assertCurrent: () => void) {
     const request = taskQualityRequestSchema.parse(input); assertNoSecretMaterial(request);
     if (request.tenantId !== this.scope.tenantId || !(signal instanceof AbortSignal)) return deny();
-    const time = () => { const now = this.clock(); if (!Number.isSafeInteger(now) || now < this.highWater) return deny(); this.highWater = now; return now; };
+    const time = () => { const now = this.clock(); if (!Number.isSafeInteger(now) || now < 0 || now < this.highWater) return deny(); this.highWater = now; return now; };
     const started = time(), current = () => { if (signal.aborted || time() - started > 10_000) return deny(); assertCurrent(); };
     current();
     const db: DatabaseClient = { query: () => { throw new Error("task_quality_transaction_required"); },
