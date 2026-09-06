@@ -8,6 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Core/module map grounded in source:** [Agent Control Room roadmap](AGENT_CONTROL_ROOM_MODULE_ROADMAP.md)
+maps essential services and optional workflows to existing code and real acceptance
+scenarios. Content generalization preserves capabilities, not personal identities.
+The public brief uses the owner's working product name; no package or account renamed.
+
 **Owner structure clarification:** Working product name is Agent Control Room; umbrella
 brand remains undecided. The [transition plan](OPEN_SOURCE_TRANSITION_PLAN.md) now records
 core versus optional workflow modules, removal of personal branding from public examples,

@@ -1,11 +1,11 @@
-# Control Room
+# Agent Control Room
 
 Local public-facing draft. Not published. Project name, license, maintainer contact and
 repository address await confirmation. Remove this drafting note only after review.
 
 ## One place for projects and the agents working on them
 
-Control Room is being built as a self-hosted workspace for coordinating AI agents
+Agent Control Room is being built as a self-hosted workspace for coordinating AI agents
 across projects and machines. Give each project its own page, assign work to suitable
 agents, follow progress, collect results and decide what happens next.
 
