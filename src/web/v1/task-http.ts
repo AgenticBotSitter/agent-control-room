@@ -27,7 +27,7 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
       const url = new URL(request.url);
       const revisionRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/revisions$/.exec(url.pathname);
       if (revisionRoute) {
-        if (url.search) throw new WebAccessError("invalid_request");
+        if (url.search || request.headers.has("idempotency-key")) throw new WebAccessError("invalid_request");
         let ids: string[];
         try { ids = revisionRoute.slice(1).map(decodeURIComponent); } catch { throw new WebAccessError("invalid_request"); }
         if (ids.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new WebAccessError("invalid_request");
