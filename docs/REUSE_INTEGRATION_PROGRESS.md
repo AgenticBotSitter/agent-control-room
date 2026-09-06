@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E44 delivery attention](research/REUSE_E44_DELIVERY_ATTENTION.md) connects verified
+historical delivery records to task and inbox views. It distinguishes pending intent,
+unconfirmed transmission and authenticated receipt/rejection without new grants or
+retry behavior. Operational triage and real-service acceptance remain separate.
+
 [E43 saved-plan readback](research/REUSE_E43_SAVED_PLAN_READBACK.md) reuses trusted plan
 verification to restore task links and remove already-planned proposal inbox entries.
 Separate authorized transactions avoid nested identity locks across pools; reads never

@@ -20,11 +20,13 @@ async function ready(options: Parameters<typeof nativeEnvelopeSession>[1] = {}) 
 test("exact stored frame enters transport once and only after intent and audit commit", async t => {
   let committed = false;
   const { f, s } = await ready({ async send() { assert.equal(committed, true); assert.equal(await count(f), 1); } });
+  assert.equal((await f.coordinator.readNativeDeliveryStatus(...f.args)).state, "staged");
   t.after(async () => { await s.close(); await f.close(); });
   const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: async (work, check) => {
     const value = await f.db.transactionWithPreCommitCheck(work, check); committed = true; return value;
   } };
   const result = await transmit(f, s, f.create(db));
+  assert.equal((await f.coordinator.readNativeDeliveryStatus(...f.args)).state, "transmission_unconfirmed");
   assert.equal(result.deliveryConfirmed, false); assert.equal(result.transportResult, "returned_without_receipt");
   assert.equal(result.receipt.evidence, "stored_transmission_intent");
   assert.equal(sends(s).length, 1);

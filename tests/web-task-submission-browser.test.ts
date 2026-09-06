@@ -7,6 +7,19 @@ const receipt = { projectId: args[0], jobId: args[1], attemptId: "attempt:test",
   packetDigest: digest, operationDigest: digest, queuedAt: "2026-09-06T00:00:00.000Z", evidence: "recorded_delivery_intent",
   startsWork: false, grantsExecutionAuthority: false };
 const read = (value: unknown = receipt) => ({ projectId: args[0], jobId: args[1], inputDigest: digest, receipt: value });
+test("delivery read remains scoped and never claims execution", async () => {
+  const delivery = { projectId: args[0], jobId: args[1], attemptId: receipt.attemptId,
+    state: "transmission_unconfirmed", observedAt: receipt.queuedAt, startsWork: false, executionConfirmed: false };
+  const client = createTaskSubmissionBrowserClient(async (_url, init) => {
+    assert.equal(init?.method, "GET"); return Response.json({ ...read(), delivery });
+  });
+  assert.equal((await client.read(...args)).delivery?.state, "transmission_unconfirmed");
+  for (const patch of [{ projectId: "project:other" }, { jobId: "job:other" }, { attemptId: "attempt:other" },
+    { executionConfirmed: true }, { nodeId: "private" }]) {
+    const invalid = createTaskSubmissionBrowserClient(async () => Response.json({ ...read(), delivery: { ...delivery, ...patch } }));
+    await assert.rejects(invalid.read(...args), { code: "unavailable" });
+  }
+});
 test("lost submission response is resolved only by matching readback, never another POST", async () => {
   const calls: string[] = []; let value: unknown = null;
   const client = createTaskSubmissionBrowserClient(async (_url, init) => {

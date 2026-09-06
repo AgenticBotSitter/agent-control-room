@@ -17,6 +17,7 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
 import { taskPlanningReceiptSchema } from "./task-planning-wire";
 import { taskAttentionPageSchema } from "./task-attention-wire";
+import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -77,9 +78,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     || [options.approvals.prepare, options.approvals.store, options.approvals.read].some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
   if (options.submission && (options.submission.tenantId !== options.tenantId || options.submission.workspaceId !== options.workspaceId
-    || typeof options.submission.enqueue !== "function" || typeof options.submission.read !== "function")) throw new Error("private_submission_config_invalid");
+    || typeof options.submission.enqueue !== "function" || typeof options.submission.read !== "function"
+    || options.submission.readDelivery !== undefined && typeof options.submission.readDelivery !== "function")) throw new Error("private_submission_config_invalid");
   const submission = options.submission ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
-    enqueue: options.submission.enqueue.bind(options.submission), read: options.submission.read.bind(options.submission) }) : undefined;
+    enqueue: options.submission.enqueue.bind(options.submission), read: options.submission.read.bind(options.submission),
+    readDelivery: options.submission.readDelivery?.bind(options.submission) }) : undefined;
   const approvals = options.approvals ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     prepare: options.approvals.prepare.bind(options.approvals), store: options.approvals.store.bind(options.approvals),
     read: options.approvals.read.bind(options.approvals) }) : undefined;
@@ -130,7 +133,18 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
                 item.reasons = item.reasons.filter(reason => reason !== "proposal");
               }
             }
+            if (submission?.readDelivery) for (const item of page.items) {
+              if (!item.reasons.includes("delivery_check")) continue;
+              const status = taskDeliveryStatusSchema.parse(await submission.readDelivery(identity, item.task.projectId, item.task.jobId, item.inputDigest));
+              if (status.projectId !== item.task.projectId || status.jobId !== item.task.jobId) throw new Error("delivery_status_scope_mismatch");
+              item.reasons = item.reasons.filter(reason => reason !== "delivery_check");
+              if (status.state === "not_queued") item.reasons.push("submission_needed");
+              else if (status.state === "transmission_unconfirmed") item.reasons.push("delivery_uncertain");
+              else if (status.state === "receipt_rejected") item.reasons.push("delivery_rejected");
+              else if (status.state !== "receipt_recorded") item.reasons.push("delivery_pending");
+            }
             return Response.json(taskAttentionPageSchema.parse({ ...page, planningSource: planning?.readSaved ? "configured" : "not_configured",
+              deliverySource: submission?.readDelivery ? "configured" : "not_configured",
               items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me") {

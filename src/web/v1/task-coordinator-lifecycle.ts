@@ -18,7 +18,8 @@ export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: st
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
   read: TaskAssignmentCoordinator["readNativeApproval"] }>;
 export type TaskSubmissionOperation = Readonly<{ tenantId: string; workspaceId: string;
-  enqueue: TaskAssignmentCoordinator["enqueueNativeTask"]; read: TaskAssignmentCoordinator["readNativeTaskQueue"] }>;
+  enqueue: TaskAssignmentCoordinator["enqueueNativeTask"]; read: TaskAssignmentCoordinator["readNativeTaskQueue"];
+  readDelivery?: TaskAssignmentCoordinator["readNativeDeliveryStatus"] }>;
 
 export type TaskCoordinatorDatabase = Readonly<{ client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean }>;
 export type TaskCoordinatorConfiguration = {
@@ -191,6 +192,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   const submission = nativeSubmission ? Object.freeze({ ...scope,
+    readDelivery: (identity: Parameters<TaskAssignmentCoordinator["readNativeDeliveryStatus"]>[0], projectId: string, jobId: string, digest: string) => {
+      const actor = { ...identity };
+      return run(() => assignment.readNativeDeliveryStatus(actor, projectId, jobId, digest));
+    },
     read: (...args: Parameters<TaskAssignmentCoordinator["readNativeTaskQueue"]>) => run(() => assignment.readNativeTaskQueue(...args)),
     enqueue: (...args: Parameters<TaskAssignmentCoordinator["enqueueNativeTask"]>) => {
       const [identity, projectId, jobId, inputDigest, packetDigest, signal] = args;

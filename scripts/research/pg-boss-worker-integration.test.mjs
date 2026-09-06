@@ -135,6 +135,11 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
       return job?.retryCount === 1 && job.state === 'failed'; });
   }
   const { peer, handle } = connection;
+  const beforeAck = await client.read(...args);
+  assert.equal(beforeAck.delivery.state, 'transmission_unconfirmed');
+  const pendingInboxResponse = await installed.handle(webRequest('/api/v1/needs-me/tasks', 'GET', undefined, undefined, x.f.jwt), () => new Response('shell'));
+  assert.equal(pendingInboxResponse.status, 200);
+  assert.ok((await pendingInboxResponse.json()).items.some(item => item.task.jobId === x.task.jobId && item.reasons.includes('delivery_uncertain')));
   const attentionResponse = await installed.handle(webRequest('/api/v1/needs-me', 'GET', undefined, undefined, x.f.jwt), () => new Response('shell'));
   assert.equal(attentionResponse.status, 200);
   const attention = await attentionResponse.json();
@@ -159,6 +164,7 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
   const inbox = await inboxResponse.json();
   assert.ok(inbox.items.some(item => item.task.jobId === x.task.jobId && item.reasons.includes('review')));
   assert.equal(inbox.startsWork, false);
+  assert.ok(!inbox.items.some(item => item.task.jobId === x.task.jobId && item.reasons.includes('delivery_uncertain')));
   const counts = await x.counts(); assert.equal(counts.runs.length, 1); assert.equal(counts.artifacts.length, 1);
   assert.equal(counts.events.length, 3); assert.equal(counts.receipts.length, 1);
   assert.deepEqual(await x.states(), beforeCompletion);
@@ -166,6 +172,7 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
     'late receipt/result must not relabel the original uncertain queue outcome');
   assert.deepEqual(await x.f.config.storage.read(counts.artifacts[0].id), new TextEncoder().encode(qualityText));
   const historical = await client.read(...args);
+  assert.equal(historical.delivery.state, 'receipt_recorded'); assert.equal(historical.delivery.executionConfirmed, false);
   assert.equal(historical.receipt.queueId, receipt.queueId); assert.equal(writes, 1);
   await host.close();
   for (const pool of [f.web, f.coordinator, ...Object.values(pools)]) assert.equal(pool.closes(), 1);

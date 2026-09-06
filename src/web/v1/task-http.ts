@@ -41,7 +41,9 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
           if (!digest.success) throw new WebAccessError("invalid_request");
           if (!options.submission) throw new Error("task_submission_not_configured");
           const receipt = await options.submission.read(identity, projectId, jobId, digest.data);
-          const value = taskSubmissionReadSchema.parse({ projectId, jobId, inputDigest: digest.data, receipt });
+          const delivery = await options.submission.readDelivery?.(identity, projectId, jobId, digest.data);
+          const value = taskSubmissionReadSchema.parse({ projectId, jobId, inputDigest: digest.data, receipt,
+            ...(delivery ? { delivery } : {}) });
           if (receipt && (receipt.projectId !== projectId || receipt.jobId !== jobId)) throw new Error("task_submission_scope_mismatch");
           return Response.json(value, { headers: privateResponseHeaders });
         }

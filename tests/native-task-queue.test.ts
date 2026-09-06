@@ -15,10 +15,12 @@ test("approved task and audit queue once atomically, replay preserves the origin
   const f = await fixture(); t.after(f.close); await f.save();
   const before = (await f.db.query("SELECT * FROM control_outbox")).rows;
   assert.equal(await f.coordinator.readNativeTaskQueue(...f.args), null);
+  assert.equal((await f.coordinator.readNativeDeliveryStatus(...f.args)).state, "not_queued");
   const a = await queue(f); f.setNow(f.clock() + 1000);
   assert.deepEqual(await queue(f), { ...a, replayed: true });
   const { replayed: _replayed, ...receipt } = a; void _replayed;
   assert.deepEqual(await f.coordinator.readNativeTaskQueue(...f.args), receipt);
+  assert.equal((await f.coordinator.readNativeDeliveryStatus(...f.args)).state, "queued");
   assert.equal(a.startsWork, false); assert.equal(a.grantsExecutionAuthority, false);
   assert.equal(a.evidence, "recorded_delivery_intent"); assert.equal((await rows(f)).rows.length, 1);
   assert.equal((await audit(f)).rows.length, 1); assert.deepEqual((await f.db.query("SELECT * FROM control_outbox")).rows, before);

@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E44:** [Delivery attention](research/REUSE_E44_DELIVERY_ATTENTION.md)
+shows task-specific pending/unconfirmed/rejected delivery in Needs Me and the task page.
+It reuses verified historical records and never equates receipt with execution. 74 related
+checks, source/compiled journeys and 35 compiled regressions pass, including the final
+identity-refinement compiled rerun. No live services, GitHub activity or deployment.
+
 **Latest local implementation — E43:** [Saved-plan readback](research/REUSE_E43_SAVED_PLAN_READBACK.md)
 recovers verified historical plan links on page reload without another preparation POST.
 Needs Me excludes verified already-planned proposals and distinguishes prepared tasks.

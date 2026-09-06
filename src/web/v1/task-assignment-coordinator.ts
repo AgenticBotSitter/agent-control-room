@@ -94,6 +94,26 @@ export class TaskAssignmentCoordinator {
   async readNativeDeliveryReceipt(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
     return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, (store, tx, scope) => store.readReceiptInSession(tx, scope));
   }
+  async readNativeDeliveryStatus(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    return this.readNativeEvidence(identity, projectId, jobId, expectedInputDigest, async (store, tx, scope) => {
+      const queue = await store.readQueueInSession(tx, scope);
+      const prepared = await store.readDeliveryPreparationInSession(tx, scope);
+      const envelope = await store.readDeliveryEnvelopeInSession(tx, scope);
+      const intent = await store.readTransmissionInSession(tx, scope);
+      const receipt = await store.readReceiptInSession(tx, scope);
+      if (prepared && !queue || envelope && !prepared || intent && !envelope || receipt && !intent) conflict();
+      for (const record of [prepared, envelope, intent, receipt]) if (record && queue
+        && (record.queueId !== queue.queueId || record.packetDigest !== queue.packetDigest)) conflict();
+      if (prepared && envelope && prepared.bodyDigest !== envelope.bodyDigest
+        || intent && envelope && (intent.frameDigest !== envelope.frameDigest || intent.messageId !== envelope.messageId)
+        || receipt && intent && receipt.dispatchMessageId !== intent.messageId) conflict();
+      const state = receipt ? receipt.nodeReportedDisposition === "recorded" ? "receipt_recorded" as const : "receipt_rejected" as const
+        : intent ? "transmission_unconfirmed" as const : envelope ? "staged" as const : prepared ? "prepared" as const
+          : queue ? "queued" as const : "not_queued" as const;
+      return { projectId, jobId, attemptId: scope.attemptId, state, observedAt: new Date(this.clock()).toISOString(),
+        startsWork: false as const, executionConfirmed: false as const };
+    });
+  }
   private async readNativeEvidence<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     read: (store: NativeApprovalPacketStore, tx: DatabaseSession, scope: NativeTaskQueueScope) => Promise<T>) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);

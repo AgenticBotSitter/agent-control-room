@@ -44,6 +44,9 @@ test("signed exact receipt and audit commit together; history is metadata and no
   assert.equal(await x.count(), 1);
   assert.equal((await x.f.db.query("SELECT * FROM audit_events WHERE action='native.delivery.receipt_recorded'")).rows.length, 1);
   assert.deepEqual(await x.f.coordinator.readNativeDeliveryReceipt(...x.f.args), result);
+  const status = await x.f.coordinator.readNativeDeliveryStatus(...x.f.args);
+  assert.equal(status.state, "receipt_recorded"); assert.equal(status.executionConfirmed, false);
+  for (const field of ["frame", "packet", "connectionId", "nodeId"]) assert.equal(field in status, false);
   await assert.rejects(x.receive(raw)); assert.equal(await x.count(), 1);
   assert.equal(x.s.sent.filter(raw => JSON.parse(raw).type === "harness.native.dispatch").length, 1);
 });
@@ -52,6 +55,7 @@ test("signed rejection after task expiry is retained as rejection, not a renewed
   const x = await ready(); t.after(x.close); x.f.setNow(x.f.prepared.start.deadline + 1);
   const result = await x.receive(await x.make(frame => { frame.body.disposition = "rejected"; frame.body.safeReason = "expired"; }));
   assert.equal(result.nodeReportedDisposition, "rejected"); assert.equal(result.safeReason, "expired");
+  assert.equal((await x.f.coordinator.readNativeDeliveryStatus(...x.f.args)).state, "receipt_rejected");
   assert.equal(result.grantsExecutionAuthority, false);
   assert.deepEqual(await x.f.coordinator.readNativeDeliveryReceipt(...x.f.args), result);
 });
@@ -134,6 +138,7 @@ test("HMAC corruption is denied on current-owner historical readback", async t =
     },
   }), check) };
   await assert.rejects(x.f.create(db).readNativeDeliveryReceipt(...x.f.args));
+  await assert.rejects(x.f.create(db).readNativeDeliveryStatus(...x.f.args));
 });
 
 test("revocation after protocol authentication is observed under receipt transaction locks", async t => {

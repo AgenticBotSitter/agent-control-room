@@ -14,6 +14,7 @@ test("queued canonical task produces one immutable protocol body and audit with 
   const f = await fixture(); t.after(f.close); await f.save(); await queue(f);
   assert.equal(await f.coordinator.readNativeDeliveryPreparation(...f.args), null);
   const receipt = await prepare(f); assert.equal(receipt.startsWork, false); assert.equal(receipt.evidence, "stored_unsigned_delivery_body");
+  assert.equal((await f.coordinator.readNativeDeliveryStatus(...f.args)).state, "prepared");
   const record = (await f.db.query<{record:{body:unknown}}>("SELECT record FROM control_native_delivery_preparations")).rows[0].record;
   const body = nativeTaskDispatchBodySchema.parse(record.body); assert.equal(sha256Digest(body), receipt.bodyDigest);
   assert.deepEqual(prepareNativeTaskDispatchIntake(body, f.prepared.enrollment).packet, f.packet);

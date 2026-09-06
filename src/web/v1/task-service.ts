@@ -306,7 +306,8 @@ export class WebTaskService {
         WHERE j.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C")
           AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
             WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))
-          AND (j.state IN ('proposed','waiting_approval','failed','orphaned') OR EXISTS(
+          AND (j.state IN ('proposed','waiting_approval','failed','orphaned')
+            OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running')) OR EXISTS(
             SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id))
         ORDER BY j.id COLLATE "C" LIMIT 26`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
         `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, ordinary, sources.ideas === "included"])).rows;
@@ -319,6 +320,8 @@ export class WebTaskService {
         if (summary.state === "proposed") reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
         if (summary.state === "waiting_approval") reasons.push("approval");
         if (summary.state === "failed" || summary.state === "orphaned") reasons.push(summary.state);
+        if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
+          reasons.push("delivery_check");
         if (row.has_artifacts) {
           const result = await this.resultPage(tx, actor, row.project_id, row.id);
           if (result.resultSource === "not_configured" || result.reviewSource === "not_configured") {
@@ -337,7 +340,7 @@ export class WebTaskService {
               reasons.push("result_checks_unavailable");
           }
         }
-        if (reasons.length) items.push({ task: summary, reasons: [...new Set(reasons)] });
+        if (reasons.length) items.push({ task: summary, inputDigest: job.inputDigest, reasons: [...new Set(reasons)] });
       }
       return taskAttentionPageSchema.parse({ items, sources, examined: Math.min(rows.length, 25),
         nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false });
