@@ -333,6 +333,25 @@ export class TaskExecutionPlanner {
     const plan = this.verify(row);
     await this.checkedJob(tx, plan); return plan;
   }
+  /** Joined result transactions must lock the authenticated predecessor before any profile
+   * read takes the tenant Gate lock. This only acquires locks; bindReview still verifies
+   * the complete plan, canonical records, profile and predecessor result afterward. */
+  async lockReviewPredecessorInSession(tx: DatabaseSession, projectId: string, jobId: string) {
+    localId.parse(projectId); localId.parse(jobId);
+    const row = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND job_id=$2",
+      [this.scope.tenantId, jobId])).rows[0];
+    if (!row) return fail();
+    const plan = this.verify(row);
+    if (plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId || plan.job.id !== jobId) return fail();
+    if (plan.schema === "control-room.task-execution-plan/v1") return;
+    const { fromRunId, fromJobId } = plan.revision;
+    const run = await tx.query(`SELECT id FROM control_harness_runs
+      WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND job_id=$4 FOR UPDATE`,
+    [this.scope.tenantId, projectId, fromRunId, fromJobId]);
+    const job = await tx.query(`SELECT id FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE`,
+      [this.scope.tenantId, projectId, fromJobId]);
+    if (run.rows.length !== 1 || job.rows.length !== 1) return fail();
+  }
   /** After separately accepted admission/registration, carry the saved profile to the existing
    * submission service. Neither helper constructs an attempt nor fabricates native-start evidence. */
   async bindReview(jobId: string, runId: string, harnessIntegrityKey: Uint8Array,

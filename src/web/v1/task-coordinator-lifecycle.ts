@@ -63,9 +63,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     const db: DatabaseClient = {
     async query<T>(sql: string, params?: unknown[]) { check(); const value = await raw.query<T>(sql, params); check(); return value; },
     transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
-    transactionWithPreCommitCheck: (work, precommit) => {
+    transactionWithPreCommitCheck: async (work, precommit) => {
       check();
-      return raw.transactionWithPreCommitCheck(async tx => {
+      const result = await raw.transactionWithPreCommitCheck(async tx => {
         let usable = true;
         const session: DatabaseSession = { async query<T>(sql: string, params?: unknown[]) {
           check(); if (!usable) throw new TaskCoordinatorInterruption("task_coordinator_session_closed");
@@ -74,6 +74,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         } };
         try { return await work(Object.freeze(session)); } finally { usable = false; }
       }, () => { check(); precommit(); check(); });
+      try { check(); } catch { throw new TaskCoordinatorInterruption("task_coordinator_save_uncertain"); }
+      return result;
     },
     }; return db;
   };

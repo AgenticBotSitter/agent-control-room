@@ -31,7 +31,8 @@ export class TaskResultCoordinator {
     new TaskExecutionPlanner(db, this.scope, this.planning, clock);
   }
   private async run<T>(value: TaskResultRequest, signal: AbortSignal,
-    work: (db: DatabaseClient, input: TaskResultRequest, check: () => void, now: () => number) => Promise<T>) {
+    work: (db: DatabaseClient, input: TaskResultRequest, check: () => void, now: () => number,
+      beforeCommit: (check: () => void) => void) => Promise<T>) {
     const input = taskResultRequestSchema.parse(value);
     if (!(signal instanceof AbortSignal)) return deny();
     const started = this.clock();
@@ -55,19 +56,25 @@ export class TaskResultCoordinator {
       if (scoped.rows.length !== 1) return deny();
       const joined: DatabaseClient = { query: session.query.bind(session), transaction: async fn => fn(session),
         transactionWithPreCommitCheck: async (fn, check) => { const result = await fn(session); checks.push(check); return result; } };
-      return work(joined, input, current, current);
+      await new TaskExecutionPlanner(joined, this.scope, this.planning, this.clock)
+        .lockReviewPredecessorInSession(session, input.projectId, input.jobId);
+      return work(joined, input, current, current, check => checks.push(check));
     }, () => { current(); for (const check of checks) { current(); check(); } current(); });
     current(); return result;
   }
   async register(value: TaskResultRequest, signal: AbortSignal) {
-    return this.run(value, signal, async (db, input, check, now) => {
+    return this.run(value, signal, async (db, input, check, now, beforeCommit) => {
       const planner = new TaskExecutionPlanner(db, this.scope, this.planning, this.clock);
       const submission = new NativeResultSubmissionService(db, this.quality);
       const bound = await planner.bindReview(input.jobId, input.runId, this.quality.harnessIntegrityKey, submission); check();
       if (bound.plan.projectId !== input.projectId) return deny();
       const inspected = await new HarnessRunStoreV1(db, this.quality.harnessIntegrityKey).inspect(this.scope.tenantId, input.runId); check();
       if (!inspected?.run.nativeTask || Date.parse(inspected.run.createdAt) > now()) return deny();
-      if (!bound.replayed && now() >= Date.parse(inspected.run.nativeTask.deadline)) return deny();
+      if (!bound.replayed) {
+        const deadline = Date.parse(inspected.run.nativeTask.deadline);
+        const unexpired = () => { if (now() >= deadline) return deny(); };
+        unexpired(); beforeCommit(unexpired);
+      }
       return { receipt: { projectId: input.projectId, jobId: input.jobId, runId: input.runId,
         targetId: bound.plan.targetId, planDigest: sha256Digest(bound.plan), inputDigest: bound.plan.inputDigest,
         registeredAt: bound.plan.plannedAt, startsWork: false as const, grantsExecutionAuthority: false as const }, replayed: bound.replayed };
