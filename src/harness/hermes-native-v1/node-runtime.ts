@@ -43,6 +43,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
   const revision = dependencies.security.currentServerTrustRevision.bind(dependencies.security), trustRevision = revision();
   const resolve = dependencies.security.resolveServerKey.bind(dependencies.security);
   const lifetime = new AbortController(), pending = new Set<Promise<unknown>>();
+  const rawNative = new Set<Promise<unknown>>();
   let closed = false, closing: Promise<void> | undefined, highWater = -1, nativeBusy = false;
   let handoff: Handoff | undefined, recovery: ReturnType<typeof createNativeRecoveryAuthority> | undefined;
   let recoveryAdapter: HermesNativeRunAdapter | undefined, recoveryRunId: string | undefined;
@@ -93,7 +94,11 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
   }
   const json = dependencies.transport.json.bind(dependencies.transport), events = dependencies.transport.events.bind(dependencies.transport);
   async function nativeRequest<T>(request: NativeWireRequest, work: (owned: NativeWireRequest) => Promise<T>) {
-    current(); const cancel = new AbortController();
+    current();
+    // Retain an interrupted observation while admitting its separately authorized stop,
+    // but never accumulate more unresolved physical transport calls behind timeouts.
+    if (rawNative.size >= 2) { void close().catch(() => {}); return fail(); }
+    const cancel = new AbortController();
     const operationSignal = operation?.cancel.signal;
     const abort = () => cancel.abort();
     lifetime.signal.addEventListener("abort", abort, { once: true }); request.signal?.addEventListener("abort", abort, { once: true });
@@ -111,6 +116,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
       const raw = track(Promise.resolve().then(() => {
         current(); if (cancel.signal.aborted) return fail(); return work(owned);
       }));
+      rawNative.add(raw); void raw.then(() => rawNative.delete(raw), () => rawNative.delete(raw));
       const result = await Promise.race([raw, stopped]); current(); return result;
     } finally { cancel.abort(); lifetime.signal.removeEventListener("abort", abort); request.signal?.removeEventListener("abort", abort);
       operationSignal?.removeEventListener("abort", abort); }
