@@ -112,5 +112,8 @@ test("compiled browser assets exclude internal revision planning", () => {
   const javascript = files("dist-vps/client").filter(file => file.endsWith(".js"));
   assert.ok(javascript.length > 0);
   for (const file of javascript) assert.doesNotMatch(readFileSync(file, "utf8"),
-    /TaskExecutionPlanner|control-room\.task-execution-plan\/v2|tasks\.revisions\.plan|revision_submission_not_connected|requires_separate_assignment_and_approval/);
+    /TaskExecutionPlanner|control-room\.task-execution-plan\/v2|tasks\.revisions\.plan|revision_submission_not_connected/);
+  // The protected revision UI now consumes this public receipt flag. Planner implementation
+  // and private execution-plan records must still stay out of browser assets.
+  assert.ok(javascript.some(file => readFileSync(file, "utf8").includes("requires_separate_assignment_and_approval")));
 });
