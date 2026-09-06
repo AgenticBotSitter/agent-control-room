@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Direct license inventory recorded:** [License observations](PUBLIC_DEPENDENCY_LICENSE_STATUS.md)
+cover 28 installed direct dependencies with version/manifest/notice hashes. All declare
+MIT, Apache-2.0, Unlicense or MIT/Apache alternatives; five lack a matched root notice
+file and need upstream/bundled-text review. This is not transitive license clearance
+or a license grant for Control Room. No dependencies changed or files published.
+
 **Community handoff drafted:** [First work queue](COMMUNITY_FIRST_WORK_DRAFT.md) defines
 four independent UI/documentation jobs with paths, prerequisites, acceptance evidence
 and review boundaries. All are drafts pending an exact reviewed public base; no worker

@@ -1,0 +1,408 @@
+{
+  "schema": "control-room.direct-license-observations/v1",
+  "baseline": "5e424f67c977c039d52809dd59afa1fa54e08018",
+  "lockSha256": "51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0",
+  "publicationApproved": false,
+  "scope": "Direct installed packages only; root notice filenames and hashes, not full legal or transitive review",
+  "entries": [
+    {
+      "group": "dependencies",
+      "name": "pg-boss",
+      "declared": "12.30.0",
+      "installedVersion": "12.30.0",
+      "declaredLicense": "MIT",
+      "manifestSha256": "72f89c78727d3bb15c535f8eef148aee6dbf78eaeaedcc1f9825840e7c31a2f0",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "dependencies",
+      "name": "postgres",
+      "declared": "3.4.7",
+      "installedVersion": "3.4.7",
+      "declaredLicense": "Unlicense",
+      "manifestSha256": "7324573388770786378751cf5e4267587261e694319be41924dcd2420262eb85",
+      "rootNoticeFiles": [],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "dependencies",
+      "name": "react",
+      "declared": "19.2.6",
+      "installedVersion": "19.2.6",
+      "declaredLicense": "MIT",
+      "manifestSha256": "e631b6ac066fa758d9b36f226d96e8fc05425d1e8993ffcc99c6de2d6aa7268c",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "dependencies",
+      "name": "react-dom",
+      "declared": "19.2.6",
+      "installedVersion": "19.2.6",
+      "declaredLicense": "MIT",
+      "manifestSha256": "2c195b9bfa1b4f7dee5dd6f955c0fbb716e83c3e9c2e7a80b5e19c5a18507718",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "dependencies",
+      "name": "zod",
+      "declared": "4.1.12",
+      "installedVersion": "4.1.12",
+      "declaredLicense": "MIT",
+      "manifestSha256": "8fafce7fd929141a91d78d66fa4b275415ac68cd9c81f9e3160868a5fab4122f",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@cloudflare/vite-plugin",
+      "declared": "1.37.1",
+      "installedVersion": "1.37.1",
+      "declaredLicense": "MIT",
+      "manifestSha256": "1b70071cd6a59ef353716d16bc136ab41e87078d5a21d870a997aa45483797ce",
+      "rootNoticeFiles": [],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@electric-sql/pglite",
+      "declared": "0.3.14",
+      "installedVersion": "0.3.14",
+      "declaredLicense": "Apache-2.0",
+      "manifestSha256": "a540c379fd1d820810793681d25fa7ad5dadfcee2b190d14a6553fdb469cfe3c",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@eslint/js",
+      "declared": "9.39.4",
+      "installedVersion": "9.39.4",
+      "declaredLicense": "MIT",
+      "manifestSha256": "c68baf2c859b03e43de607b9f1e392008e678a982baed3c93ab52f89843af260",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "3b6be04f862a077a4b97929dbf247299360824d9365f8603c263769303ace18c"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@next/eslint-plugin-next",
+      "declared": "16.2.6",
+      "installedVersion": "16.2.6",
+      "declaredLicense": "MIT",
+      "manifestSha256": "1cf80a11fcaf678a33a75ee4fccb734f2ffa8bc67f5142591ec46fb98a515e69",
+      "rootNoticeFiles": [],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@tailwindcss/postcss",
+      "declared": "4.2.1",
+      "installedVersion": "4.2.1",
+      "declaredLicense": "MIT",
+      "manifestSha256": "4f2b5b05374a5b37795dac2adc2a2880d92ba34869e3df1e50a3cdf67c26d6a4",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@types/node",
+      "declared": "22.19.19",
+      "installedVersion": "22.19.19",
+      "declaredLicense": "MIT",
+      "manifestSha256": "ba8f6326a685af9e7dce89a99f55e0dc3cef450046acf00a20f7cb673562f581",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@types/react",
+      "declared": "19.2.14",
+      "installedVersion": "19.2.14",
+      "declaredLicense": "MIT",
+      "manifestSha256": "e8beff67b2575112eff5757dc8e9310a78fc6e7d2d44d9d7a8204026f4ab81b7",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@types/react-dom",
+      "declared": "19.2.3",
+      "installedVersion": "19.2.3",
+      "declaredLicense": "MIT",
+      "manifestSha256": "bf90986beaec5f757c164bf1d374f3038dc41b0b06673de4a55fd975d1e5deca",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@vitejs/plugin-react",
+      "declared": "6.0.2",
+      "installedVersion": "6.0.2",
+      "declaredLicense": "MIT",
+      "manifestSha256": "4cd7456c1d01b92b6a983ccec4916d55ae21a512608ea4087d8acf96c5327699",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "29b68325fe026047d13e187b44c33b2acacf7dc647dec4583702e59f235e13b5"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "@vitejs/plugin-rsc",
+      "declared": "0.5.26",
+      "installedVersion": "0.5.26",
+      "declaredLicense": "MIT",
+      "manifestSha256": "e12b4bf4c33982738d1b5bdc68fa7bc496f26253f64a79d5f0c207a93ca900c5",
+      "rootNoticeFiles": [],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "eslint",
+      "declared": "9.39.4",
+      "installedVersion": "9.39.4",
+      "declaredLicense": "MIT",
+      "manifestSha256": "80a7caf2adf34963e47b32a1e75157de6d6814c3ae5a9d90358ddd9364833fe7",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "3b6be04f862a077a4b97929dbf247299360824d9365f8603c263769303ace18c"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "eslint-plugin-jsx-a11y",
+      "declared": "6.10.2",
+      "installedVersion": "6.10.2",
+      "declaredLicense": "MIT",
+      "manifestSha256": "952fc60d13cacdc35cef8234832187672822a10b6767da4f8596b97eb3f2cecc",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE.md",
+          "sha256": "82b19019e25e266a310ef46800b3af726136a3cee79af8812dc83ca0b045afae"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "eslint-plugin-react",
+      "declared": "7.37.5",
+      "installedVersion": "7.37.5",
+      "declaredLicense": "MIT",
+      "manifestSha256": "f6cf43d8467c9a7777ccf4b779ad03c594a3203c83bdf3506741a58db66a3b62",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "d500a9547fec26f52544f5f2fe52dec4b0c9bdf78177c79f202c98bd13d7c37c"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "eslint-plugin-react-hooks",
+      "declared": "7.1.1",
+      "installedVersion": "7.1.1",
+      "declaredLicense": "MIT",
+      "manifestSha256": "c745f6ec0ce838f395eb5da17e3f907094fcd14c87c30b94810f217fe5e7b476",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "globals",
+      "declared": "16.4.0",
+      "installedVersion": "16.4.0",
+      "declaredLicense": "MIT",
+      "manifestSha256": "1c67d55add77bbddaf7ae6c193d36f1574ebafbe9b39a4aa6de218689f229234",
+      "rootNoticeFiles": [
+        {
+          "file": "license",
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "react-server-dom-webpack",
+      "declared": "19.2.6",
+      "installedVersion": "19.2.6",
+      "declaredLicense": "MIT",
+      "manifestSha256": "6fb9e471e91790f5c674aa319b24a538a18e72074392882d35e61987dff48bef",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "tailwindcss",
+      "declared": "4.2.1",
+      "installedVersion": "4.2.1",
+      "declaredLicense": "MIT",
+      "manifestSha256": "ac2d41af33338d2d0a96190ab84b5419187da9f1fc6d2c91fb5b83238e746b46",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "tsx",
+      "declared": "4.23.1",
+      "installedVersion": "4.23.1",
+      "declaredLicense": "MIT",
+      "manifestSha256": "116662201c06041c63de8837cf7bf6743f79a10187d0a210b377476071550a40",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "8dded67841a9261a622c739fb61c81785e93765de852828ceeb9403d20a74581"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "typescript",
+      "declared": "5.9.3",
+      "installedVersion": "5.9.3",
+      "declaredLicense": "Apache-2.0",
+      "manifestSha256": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE.txt",
+          "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47"
+        },
+        {
+          "file": "ThirdPartyNoticeText.txt",
+          "sha256": "1af3c68039c57e539422da82a4faada506ce6d0ea6f90e0b699d02dbcdb7a90c"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "typescript-eslint",
+      "declared": "8.59.3",
+      "installedVersion": "8.59.3",
+      "declaredLicense": "MIT",
+      "manifestSha256": "cd6eb4e5a24404c7c383e49c81a4a301be730ad7fa3f769670987af7af3e56b3",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "2eb5c7a0bba9deb77a98c81bf6b9d3fb1c67118eebf968b6b1a787b3f8928ee0"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "vinext",
+      "declared": "1.0.0-beta.2",
+      "installedVersion": "1.0.0-beta.2",
+      "declaredLicense": "MIT",
+      "manifestSha256": "8a0c8727b7570e324cb92abad784f90bb9a0264e25ef3ba16dd2f62e6ec8119e",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE",
+          "sha256": "19a7b85046eb77c8ab308c68569abbbb59235814297b9c95dc90480f71ec7198"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "vite",
+      "declared": "8.0.13",
+      "installedVersion": "8.0.13",
+      "declaredLicense": "MIT",
+      "manifestSha256": "5d084b8d09cedc0206adeea4096e9aaa5f9489efb919b4dc55486c5ee790a7d2",
+      "rootNoticeFiles": [
+        {
+          "file": "LICENSE.md",
+          "sha256": "40501d82eb20f60d031aaaa3291a103d72551ebd49e11e73ba94ea34589e7bdd"
+        }
+      ],
+      "review": "metadata_observed_not_cleared"
+    },
+    {
+      "group": "devDependencies",
+      "name": "wrangler",
+      "declared": "4.92.0",
+      "installedVersion": "4.92.0",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "manifestSha256": "b659402d435053012c1843c226a701964abbeb4ce8a9a560d57c5be0ced4916d",
+      "rootNoticeFiles": [],
+      "review": "metadata_observed_not_cleared"
+    }
+  ]
+}
