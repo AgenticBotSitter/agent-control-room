@@ -6,6 +6,22 @@ import { taskStartupFixture } from "./helpers/task-startup";
 import { instant } from "./hermes-native-fixture";
 import { request } from "./helpers/web-foundation";
 
+test("canceled startup opens nothing or closes the just-acquired resource before continuing", async t => {
+  for (const early of [true, false]) {
+    const f = await taskStartupFixture(); t.after(f.close);
+    const controller = new AbortController();
+    let opens = 0, installs = 0;
+    if (early) controller.abort();
+    const bootstrap = createPrivateTaskBootstrap({ clock: () => instant + 8000,
+      openDatabase: config => { opens++; const pool = f.openDatabase(config); controller.abort(); return pool; },
+      install: () => { installs++; },
+    });
+    await assert.rejects(bootstrap.start(f.config, controller.signal), /canceled|prerequisites_failed/);
+    assert.equal(opens, early ? 0 : 1); assert.equal(installs, 0);
+    assert.equal(f.web.closes(), early ? 0 : 1); assert.equal(f.coordinator.closes(), 0);
+  }
+});
+
 test("two real restricted roles pass startup and serve assignment without widening web writes", async t => {
   const f = await taskStartupFixture(); t.after(f.close);
   let app!: PrivateApplication, installs = 0, opens = 0, loads = 0;
@@ -25,6 +41,15 @@ test("two real restricted roles pass startup and serve assignment without wideni
   await assert.rejects(bootstrap.start(f.config), /already_attempted/);
   const closing = runtime.close(); assert.equal(runtime.close(), closing); assert.equal(runtime.isReady(), false);
   assert.equal((await handle()).status, 503); await closing;
+  assert.equal(f.web.closes(), 1); assert.equal(f.coordinator.closes(), 1);
+});
+
+test("cancellation at installation refuses ready result and closes both acquired pools", async t => {
+  const f = await taskStartupFixture(); t.after(f.close);
+  const controller = new AbortController();
+  const bootstrap = createPrivateTaskBootstrap({ clock: () => instant + 8000,
+    openDatabase: f.openDatabase, install: () => controller.abort() });
+  await assert.rejects(bootstrap.start(f.config, controller.signal), /prerequisites_failed/);
   assert.equal(f.web.closes(), 1); assert.equal(f.coordinator.closes(), 1);
 });
 

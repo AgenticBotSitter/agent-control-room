@@ -101,9 +101,10 @@ export function createPrivateTaskBootstrap(dependencies: {
   const prepareSubmission = dependencies.prepareNativeSubmission?.bind(dependencies);
   const startWorker = dependencies.startNativeWorker?.bind(dependencies);
   let started = false;
-  return Object.freeze({ async start(input: PrivateTaskStartupConfiguration) {
+  return Object.freeze({ async start(input: PrivateTaskStartupConfiguration, signal?: AbortSignal) {
     if (started) throw new Error("private_task_startup_already_attempted");
     started = true;
+    if (signal?.aborted) throw new Error("private_task_startup_canceled");
     const config = configuration(input);
     if (config.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
     if (config.queueWorker && !startWorker) throw new Error("private_task_startup_config_invalid");
@@ -117,9 +118,13 @@ export function createPrivateTaskBootstrap(dependencies: {
     let worker: OwnedQueueWorker | undefined;
     let workerUncertain = false;
     const startupAbort = new AbortController();
+    const cancelStartup = () => { abandoned = true; startupAbort.abort(); };
+    const requireActive = () => { if (abandoned || signal?.aborted) throw new Error("private_task_startup_canceled"); };
+    signal?.addEventListener("abort", cancelStartup, { once: true });
     // Own every returned resource immediately; memoized bounded close tolerates construction failure
     // before or after ownership transfers to the combined application, without a second pool close.
     function open(database: PrivatePostgresConfiguration) {
+      requireActive();
       const raw = dependencies.openDatabase(database);
       if (resources.has(raw)) throw new Error("private_task_startup_shared_resource");
       resources.add(raw);
@@ -134,25 +139,29 @@ export function createPrivateTaskBootstrap(dependencies: {
         })();
         return closing;
       } });
-      acquired.push(owned); return owned;
+      acquired.push(owned); requireActive(); return owned;
     }
     try {
       const clock = dependencies.clock ?? Date.now;
       const now = clock(); if (!Number.isSafeInteger(now) || now < 0) throw new Error();
       const web = open(config.web.database);
       await verifyPrivateDatabase(web.client, config.web.database, config.web, now, queue);
+      requireActive();
       const coordinator = open(config.database);
       if (web.client === coordinator.client) throw new Error();
       await verifyTaskCoordinatorDatabase(coordinator.client, config.database, config.web, now, queue);
+      requireActive();
       const resultDatabase = config.resultDatabase ? open(config.resultDatabase) : undefined;
       if (resultDatabase) {
         if ([web.client, coordinator.client].includes(resultDatabase.client)) throw new Error();
         await verifyNativeResultDatabase(resultDatabase.client, config.resultDatabase!, config.web, now, queue);
+        requireActive();
       }
       const evidenceDatabase = config.evidence ? open(config.evidence.database) : undefined;
       if (evidenceDatabase) {
         if ([web.client, coordinator.client, resultDatabase!.client].includes(evidenceDatabase.client)) throw new Error();
         await verifyNativeEvidenceDatabase(evidenceDatabase.client, config.evidence!.database, config.web, now, queue);
+        requireActive();
       }
       if (!web.isAvailable() || !coordinator.isAvailable() || resultDatabase && !resultDatabase.isAvailable()
         || evidenceDatabase && !evidenceDatabase.isAvailable()) throw new Error();
@@ -160,14 +169,15 @@ export function createPrivateTaskBootstrap(dependencies: {
       if (sessionDatabase) {
         if ([web.client, coordinator.client, resultDatabase!.client, evidenceDatabase!.client].includes(sessionDatabase.client)) throw new Error();
         await verifyNativeSessionDatabase(sessionDatabase.client, config.sessions!.database, config.web, now, queue);
+        requireActive();
       }
       if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase].some(pool => pool && !pool.isAvailable())) throw new Error();
       if (queue) {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const pending = Promise.resolve().then(() => prepareSubmission!({ query: async (sql, values) => {
+        const pending = Promise.resolve().then(() => { requireActive(); return prepareSubmission!({ query: async (sql, values) => {
           if (abandoned || !coordinator.isAvailable()) throw new Error("native_task_submission_unavailable");
           return coordinator.client.query(sql, values);
-        } })).then(async raw => {
+        } }); }).then(async raw => {
           if (!raw || typeof raw.close !== "function") { preparationUncertain = true; throw new Error(); }
           let closing: Promise<void> | undefined;
           const closeRaw = raw.close.bind(raw);
@@ -196,6 +206,7 @@ export function createPrivateTaskBootstrap(dependencies: {
           timer = setTimeout(() => { abandoned = true; preparationUncertain = true; reject(new Error()); }, 5000);
         })]); } finally { clearTimeout(timer); }
       }
+      requireActive();
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
@@ -205,12 +216,13 @@ export function createPrivateTaskBootstrap(dependencies: {
         nativeHttp: config.nativeHttp,
         nativeSubmission: submission,
       });
+      requireActive();
       if (!application.isReady()) throw new Error();
       if (config.queueWorker) {
         if (!application.queueDelivery) throw new Error();
         const workerConfig = config.queueWorker, deliver = application.queueDelivery, verifyRecovery = application.queueRecovery?.verify;
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const pending = Promise.resolve().then(() => startWorker!({ ...workerConfig,
+        const pending = Promise.resolve().then(() => { requireActive(); return startWorker!({ ...workerConfig,
           application: { host: config.database.host, port: config.database.port, database: config.database.database,
             loginNames: [config.web.database.username, config.database.username, config.resultDatabase!.username,
               config.evidence!.database.username, config.sessions!.database.username] },
@@ -223,7 +235,7 @@ export function createPrivateTaskBootstrap(dependencies: {
             await verifyRecovery(reference, ordinal, AbortSignal.any([signal, startupAbort.signal]));
             if (abandoned) throw new Error("native_task_delivery_unresolved");
           } } : {}),
-        })).then(async raw => {
+        }); }).then(async raw => {
           if (!raw || typeof raw.close !== "function") { workerUncertain = true; throw new Error(); }
           const closeRaw = raw.close.bind(raw); let closing: Promise<void> | undefined;
           const close = () => closing ??= (async () => {
@@ -244,8 +256,10 @@ export function createPrivateTaskBootstrap(dependencies: {
         })]); } finally { clearTimeout(timer); }
       }
       const installed = worker ? composePrivateTaskWorkerApplication(application, worker) : application;
+      requireActive();
       if (!installed.isReady()) throw new Error();
       dependencies.install(installed);
+      requireActive();
       // Optional narrow commands reach only trusted server composition, never raw SQL/keys.
       return Object.freeze({ isReady: installed.isReady, close: installed.close,
         ...(application.queueDelivery ? { queueDelivery: application.queueDelivery } : {}),
@@ -266,7 +280,7 @@ export function createPrivateTaskBootstrap(dependencies: {
       const results = application ? [] : await Promise.allSettled(acquired.map(pool => pool.close()));
       if (preparationUncertain || workerUncertain || [...workerCleanup, ...appCleanup, ...producerCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
       throw new Error("private_task_startup_prerequisites_failed");
-    }
+    } finally { signal?.removeEventListener("abort", cancelStartup); }
   } });
 }
 const production = createPrivateTaskBootstrap({ openDatabase: createPrivatePostgresDatabase, install: installPrivateApplication });

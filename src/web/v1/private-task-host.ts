@@ -23,10 +23,11 @@ export function createPrivateTaskHost(dependencies: Parameters<typeof createPriv
     configuration: PrivateTaskStartupConfiguration; port: number;
     handler: Serving["handler"]; assets: Serving["assets"];
     nativeHttps?: NativeHttpsConfiguration;
+    signal?: AbortSignal;
   }) {
     if (attempted) throw new Error("private_task_host_already_attempted");
     attempted = true;
-    const { port, handler, assets } = input, origin = input.configuration.web.origin;
+    const { port, handler, assets, signal } = input, origin = input.configuration.web.origin;
     if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || typeof handler !== "function"
       || !assets || typeof assets.respond !== "function") throw new Error("private_task_host_config_invalid");
     if (input.nativeHttps && (!input.configuration.coordinator.nativeHttp
@@ -35,7 +36,7 @@ export function createPrivateTaskHost(dependencies: Parameters<typeof createPriv
     const tls = input.nativeHttps ? captureNativeHttpsConfiguration(input.nativeHttps) : undefined;
     const erase = () => { tls?.key.fill(0); tls?.cert.fill(0); tls?.ca.fill(0); };
     let application: Awaited<ReturnType<typeof bootstrap.start>>;
-    try { application = await bootstrap.start(input.configuration); } catch (error) { erase(); throw error; }
+    try { application = await bootstrap.start(input.configuration, signal); } catch (error) { erase(); throw error; }
     let closing: Promise<void> | undefined;
     let service: ReturnType<typeof createPrivateNodeService> | undefined;
     let native: ReturnType<typeof createNativeHttpsService> | undefined;
@@ -44,22 +45,28 @@ export function createPrivateTaskHost(dependencies: Parameters<typeof createPriv
       if (results.some(result => result.status === "rejected")) throw new Error("private_task_host_cleanup_uncertain");
     });
     const ready = () => !closing && application.isReady() && (!native || native.isReady());
+    const cancelStartup = () => { void (service ? service.close() : closeApplication()).catch(() => {}); };
+    const requireActive = () => { if (signal?.aborted) throw new Error("private_task_host_start_canceled"); };
+    signal?.addEventListener("abort", cancelStartup, { once: true });
     try {
+      requireActive();
       if (tls) {
         if (!application.nativeHttp) throw new Error();
         native = createNativeHttpsService({ ...tls, application: application.nativeHttp, createServer: createNativeServer,
           onUnavailable: () => { void (service ? service.close() : closeApplication()).catch(() => {}); } });
         await native.start();
+        requireActive();
       }
       service = createPrivateNodeService({ origin, port, handler, assets, createServer,
         application: { isReady: ready, close: closeApplication } });
       await service.start();
+      requireActive();
       return Object.freeze({ ...application, isReady: service.isReady, close: service.close });
     } catch {
       const results = await Promise.allSettled([service?.close(), closeApplication()]);
       if (results.some(result => result.status === "rejected")) throw new Error("private_task_host_cleanup_uncertain");
       throw new Error("private_task_host_start_failed");
-    } finally { erase(); }
+    } finally { signal?.removeEventListener("abort", cancelStartup); erase(); }
   } });
 }
 

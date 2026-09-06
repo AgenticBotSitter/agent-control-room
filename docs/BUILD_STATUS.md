@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest startup cancellation — E78:** [Startup ownership](research/REUSE_E78_STARTUP_CANCELLATION.md)
+propagates an explicit signal through bootstrap and listener setup, preventing later
+steps/ready return and reusing once-only resource cleanup after cancellation. In-flight
+operations still rely on their existing deadlines. No physical startup or process
+handlers installed; executable signal ownership/configuration remain unfinished.
+Final verification: 14 startup tests, 42 compiled tests and four queue journeys pass;
+TypeScript, targeted lint and VPS build pass. Full default lifecycle not rerun.
+
 **Latest shutdown integration — E77:** [Host shutdown bridge](research/REUSE_E77_HOST_SHUTDOWN.md)
 connects explicitly supplied stop signals to existing host cleanup once, with bounded
 uncertain outcomes and owned-listener removal. Three unit tests, 41 compiled checks,
