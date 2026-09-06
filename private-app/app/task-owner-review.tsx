@@ -4,6 +4,8 @@ import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { reviewErrorMessage } from "../../src/web/v1/task-review-browser-client";
 import type { TaskReviewDraft, TaskReviewOptions } from "../../src/web/v1/task-review-wire";
 import { createTaskReviewWorkspace, type TaskReviewWorkspace, type TaskReviewSession, type ReviewWorkspaceBinding } from "../../src/web/v1/task-review-workspace";
+import { revisionErrorMessage, revisionRequestFromReview } from "../../src/web/v1/task-revision-browser-client";
+import { OwnerRevisionPanel } from "./task-owner-revision";
 
 const availability: Record<TaskReviewOptions["availability"], string> = {
   available: "Review this exact result", not_configured: "Owner review is not configured.",
@@ -31,9 +33,10 @@ export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback,
   </section>;
 }
 
-export function OwnerTaskReview({ projectId, jobId, artifactId, targetId, targetDigest, contentHash, onSaved, workspace }: {
+export function OwnerTaskReview({ projectId, jobId, artifactId, targetId, targetDigest, contentHash, onSaved, workspace, runId, revisionEligible = false }: {
   projectId: string; jobId: string; artifactId: string; targetId: string; targetDigest: string; contentHash: string; onSaved: () => void;
   workspace?: TaskReviewWorkspace;
+  runId?: string; revisionEligible?: boolean;
 }) {
   const [fallbackWorkspace] = useState(() => createTaskReviewWorkspace());
   let session: TaskReviewSession;
@@ -42,12 +45,13 @@ export function OwnerTaskReview({ projectId, jobId, artifactId, targetId, target
     Existing drafts and pending saves are retained. Finish those reviews before leaving or reloading this page.</p>; }
   return <OwnerTaskReviewController key={JSON.stringify([projectId, jobId, artifactId, targetId, targetDigest, contentHash])}
     projectId={projectId} jobId={jobId} artifactId={artifactId} targetId={targetId} targetDigest={targetDigest}
-    contentHash={contentHash} session={session} onSaved={onSaved} />;
+    contentHash={contentHash} session={session} onSaved={onSaved} runId={runId} revisionEligible={revisionEligible} />;
 }
 
-function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, targetDigest, contentHash, session, onSaved }:
-  ReviewWorkspaceBinding & { session: TaskReviewSession; onSaved: () => void }) {
+function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, targetDigest, contentHash, session, onSaved, runId, revisionEligible }:
+  ReviewWorkspaceBinding & { session: TaskReviewSession; onSaved: () => void; runId?: string; revisionEligible: boolean }) {
   const { client } = session, { feedback, pending, receipt, error: saveError } = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
+  const { revisionPending, revisionError } = session.getSnapshot();
   const [options, setOptions] = useState<TaskReviewOptions>();
   const [error, setError] = useState<BrowserRequestError>(), [refresh, setRefresh] = useState(0);
   useEffect(() => {
@@ -69,6 +73,12 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
     setError(undefined);
     if (await session.save(decision)) { setRefresh(value => value + 1); onSaved(); }
   };
+  const revisionRequest = options ? revisionRequestFromReview(runId, options) : undefined;
+  const revisionReceipt = revisionRequest ? session.revisionClient.savedReceipt(projectId, jobId, revisionRequest) : undefined;
+  const prepareRevision = async (retry = false) => {
+    if (!options || !retry && (!revisionRequest || !revisionEligible || options.revisionPlanning !== "configured")) return;
+    if (await session.prepareRevision(retry ? undefined : revisionRequest)) { setRefresh(value => value + 1); onSaved(); }
+  };
   return <>
     {!options && !error && <p role="status">Loading owner review…</p>}
     {options && <OwnerReviewPanel options={options} feedback={feedback} pending={pending} held={client.hasPending() || !!receipt}
@@ -77,9 +87,15 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
     {options && receipt && <p role="status">Saved: {receipt.decision === "accepted" ? "quality acceptance" : "changes requested"}. No new work has been started.</p>}
     {error && <p role="alert">{reviewErrorMessage[error.code]}</p>}
     {saveError && <p role="alert">{reviewErrorMessage[saveError.code]}</p>}
+    {options && <OwnerRevisionPanel options={options} request={revisionRequest} eligible={revisionEligible} pending={revisionPending}
+      held={session.revisionClient.hasPending()} receipt={revisionReceipt}
+      onPrepare={() => { void prepareRevision(); }} onCheck={() => { void prepareRevision(true); }} />}
+    {options && revisionError && <p role="alert">{revisionErrorMessage[revisionError.code]}</p>}
+    {!options && session.revisionClient.hasPending() && <p className="private-notice">An exact revision preparation is retained in this task page.
+      Restore access to its recorded review before checking it. No agent has been started.</p>}
     {client.hasPending() && <div className="private-notice"><p>An earlier save is unresolved. Keep this task page open to retain its exact check key.</p>
       <button type="button" disabled={pending} onClick={() => { void save(); }}>Check this exact review save</button></div>}
     {error && <button type="button" disabled={pending} onClick={() => { setError(undefined); setRefresh(value => value + 1); }}>Refresh recorded review</button>}
-    <p className="private-note">Closing a result keeps unfinished reviews in this task page’s memory. Leaving or reloading the task page discards unsaved text and pending check keys, not saved decisions. Reopen its recorded review before submitting again.</p>
+    <p className="private-note">Closing a result keeps unfinished reviews and revision preparations in this task page’s memory. Leaving or reloading the task page discards unsaved text and pending checks, not saved decisions or tasks. Reopen its recorded review before submitting again; preparing that exact review again finds its saved revision.</p>
   </>;
 }

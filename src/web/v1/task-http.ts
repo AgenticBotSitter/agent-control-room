@@ -12,16 +12,42 @@ import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import { taskAssignmentDraftSchema, taskAssignmentCommandSchema, taskAssignmentOptionsSchema } from "./task-assignment-wire";
 import type { TaskApprovalOperation } from "./task-coordinator-lifecycle";
 import { taskApprovalHttp } from "./task-approval-http";
+import type { TaskRevisionOperation } from "./task-revision-operation";
+import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-revision-wire";
+import { sha256Digest } from "../../security";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
   ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskExecutionPlanner, "plan">;
-  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; clock?: () => number }) {
+  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
     try {
       requireSameOrigin(request, options.origin);
       const identity = verify(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const revisionRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/revisions$/.exec(url.pathname);
+      if (revisionRoute) {
+        if (url.search) throw new WebAccessError("invalid_request");
+        let ids: string[];
+        try { ids = revisionRoute.slice(1).map(decodeURIComponent); } catch { throw new WebAccessError("invalid_request"); }
+        if (ids.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new WebAccessError("invalid_request");
+        const [projectId, sourceJobId] = ids;
+        await options.service.authorize(identity, projectId);
+        if (request.method !== "POST") throw new WebAccessError("not_found");
+        if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
+          throw new WebAccessError("invalid_request");
+        const parsed = taskRevisionRequestSchema.safeParse(await readBoundedJson(request.body, 16_384));
+        if (!parsed.success) throw new WebAccessError("invalid_request");
+        if (!options.revisions) throw new Error("revision_planning_not_configured");
+        const draft = Object.freeze(parsed.data);
+        const result = taskRevisionCommandSchema.parse(await options.revisions.plan(identity, projectId, sourceJobId, draft, request.signal));
+        const receipt = result.receipt;
+        if (receipt.projectId !== projectId || receipt.sourceJobId !== sourceJobId || receipt.jobId === sourceJobId
+          || receipt.fromRunId !== draft.runId || receipt.fromTargetId !== draft.targetId || receipt.fromTargetDigest !== draft.targetDigest
+          || receipt.fromContentHash !== draft.contentHash || receipt.reviewId !== draft.reviewId
+          || receipt.feedbackDigest !== sha256Digest(draft.feedback)) throw new Error("revision_plan_scope_mismatch");
+        return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+      }
       const verificationRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/results\/([^/]+)\/verifications\/([^/]+)$/.exec(url.pathname);
       if (verificationRoute) {
         if (url.search) throw new WebAccessError("invalid_request");
@@ -117,7 +143,8 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
         let artifactId: string, targetId: string;
         try { artifactId = decodeURIComponent(route[4]); targetId = decodeURIComponent(route[5]); } catch { throw new WebAccessError("invalid_request"); }
         if (!options.ownerReviews) throw new Error("owner_review_not_configured");
-        if (request.method === "GET") return Response.json(await options.ownerReviews.options(identity, projectId, jobId, artifactId, targetId), { headers: privateResponseHeaders });
+        if (request.method === "GET") return Response.json({ ...await options.ownerReviews.options(identity, projectId, jobId, artifactId, targetId),
+          revisionPlanning: options.revisions ? "configured" : "not_connected" }, { headers: privateResponseHeaders });
         if (request.method !== "POST") throw new WebAccessError("not_found");
         if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body) throw new WebAccessError("invalid_request");
         const draft = taskReviewDraftSchema.safeParse(await readBoundedJson(request.body, 16_384));

@@ -1,20 +1,23 @@
 import { BrowserRequestError } from "./browser-client";
 import { createTaskReviewBrowserClient } from "./task-review-browser-client";
 import type { TaskReviewDraft, TaskReviewReceipt } from "./task-review-wire";
+import { createTaskRevisionBrowserClient } from "./task-revision-browser-client";
+import type { TaskRevisionRequest, TaskRevisionReceipt } from "./task-revision-wire";
 
 export type ReviewWorkspaceBinding = Pick<TaskReviewDraft, "artifactId" | "targetId" | "targetDigest" | "contentHash">
   & { projectId: string; jobId: string };
-type Snapshot = { feedback: string; pending: boolean; receipt?: TaskReviewReceipt; error?: BrowserRequestError };
+type Snapshot = { feedback: string; pending: boolean; receipt?: TaskReviewReceipt; error?: BrowserRequestError;
+  revisionPending: boolean; revisionReceipt?: TaskRevisionReceipt; revisionError?: BrowserRequestError };
 
 /** Page-owned, memory-only command state. Protected read failures must not destroy an unresolved save. */
-export function createTaskReviewWorkspace(makeClient = createTaskReviewBrowserClient) {
+export function createTaskReviewWorkspace(makeClient = createTaskReviewBrowserClient, makeRevisionClient = createTaskRevisionBrowserClient) {
   const sessions = new Map<string, ReturnType<typeof createSession>>();
   function createSession(binding: ReviewWorkspaceBinding) {
-    const bound = Object.freeze({ ...binding }), client = makeClient(), listeners = new Set<() => void>();
-    let snapshot: Snapshot = { feedback: "", pending: false };
+    const bound = Object.freeze({ ...binding }), client = makeClient(), revisionClient = makeRevisionClient(), listeners = new Set<() => void>();
+    let snapshot: Snapshot = { feedback: "", pending: false, revisionPending: false };
     const update = (patch: Partial<Snapshot>) => { snapshot = { ...snapshot, ...patch }; for (const listener of listeners) listener(); };
     return {
-      client, getSnapshot: () => snapshot,
+      client, revisionClient, getSnapshot: () => snapshot,
       subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
       setFeedback(feedback: string) { if (!snapshot.pending && !client.hasPending()) update({ feedback }); },
       async save(decision?: TaskReviewDraft["decision"]) {
@@ -27,6 +30,17 @@ export function createTaskReviewWorkspace(makeClient = createTaskReviewBrowserCl
           update({ receipt, feedback: "" }); return receipt;
         } catch (reason) { update({ error: reason instanceof BrowserRequestError ? reason : new BrowserRequestError("uncertain") }); }
         finally { update({ pending: false }); }
+      },
+      async prepareRevision(input?: TaskRevisionRequest) {
+        if (snapshot.revisionPending) return undefined;
+        update({ revisionPending: true, revisionError: undefined });
+        try {
+          if (input && (input.targetId !== bound.targetId || input.targetDigest !== bound.targetDigest || input.contentHash !== bound.contentHash))
+            throw new BrowserRequestError("invalid_request");
+          const revisionReceipt = input ? await revisionClient.prepare(bound.projectId, bound.jobId, input) : await revisionClient.retrySave();
+          update({ revisionReceipt }); return revisionReceipt;
+        } catch (reason) { update({ revisionError: reason instanceof BrowserRequestError ? reason : new BrowserRequestError("uncertain") }); }
+        finally { update({ revisionPending: false }); }
       },
     };
   }

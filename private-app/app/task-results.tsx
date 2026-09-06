@@ -39,7 +39,7 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
   </section><section className="private-panel"><h2>Recorded quality review</h2>
     <p>Quality review and permission to perform an external action are separate.
       {page.reviewCommands === "not_connected" ? " Owner review commands are not connected yet." : " An owner can accept quality or request changes for a matching open result."}</p>
-    <p>Requesting changes records feedback only. Starting a revised agent task is not connected yet.</p>
+    <p>Requesting changes records feedback only. Where revision preparation is connected, use the saved review to prepare a linked follow-up task. Assignment and approval remain separate.</p>
     {page.reviewSource === "not_configured" ? <p className="private-notice">Protected review history is not configured for this app.</p>
       : !page.reviews.length ? <p>No review targets are recorded for this task.</p> : <ol className="private-review-list">
         {page.reviews.map(review => <li key={review.targetId}><h3>Revision {review.revision} · {reviewLabel[review.status]}</h3>
@@ -73,7 +73,8 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
             && review.matchingArtifactIds.includes(content.artifact.artifactId) && review.contentHash === content.artifact.contentHash
             && <OwnerTaskReview key={`${review.targetId}:${content.artifact.artifactId}:${content.artifact.contentHash}`}
               projectId={page.projectId} jobId={page.jobId} artifactId={content.artifact.artifactId} targetId={review.targetId}
-              targetDigest={review.targetDigest} contentHash={review.contentHash} workspace={reviewWorkspace} onSaved={() => onReviewSaved?.()} />}
+              targetDigest={review.targetDigest} contentHash={review.contentHash} workspace={reviewWorkspace} onSaved={() => onReviewSaved?.()}
+              runId={content.artifact.runId} revisionEligible={review.status === "changes_requested"} />}
           {page.verificationCommands === "configured" && content && review.kind === "document"
             && review.matchingArtifactIds.includes(content.artifact.artifactId) && review.contentHash === content.artifact.contentHash
             && <OwnerTaskVerification key={`verification:${review.targetId}:${content.artifact.artifactId}:${content.artifact.contentHash}`}

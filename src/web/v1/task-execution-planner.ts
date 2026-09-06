@@ -291,6 +291,8 @@ export class TaskExecutionPlanner {
   }
   private revisionReceipt(plan: z.infer<typeof revisionPlanSchema>) { return { ...this.receipt(plan),
     rootSubjectId: plan.revision.rootSubjectId, rootTargetId: plan.revision.rootTargetId,
+    fromRunId: plan.revision.fromRunId, fromTargetDigest: plan.revision.fromTargetDigest,
+    fromContentHash: plan.revision.fromContentHash, reviewId: plan.revision.reviewId, feedbackDigest: plan.revision.feedbackDigest,
     fromTargetId: plan.revision.fromTargetId, revisionNumber: plan.revision.revisionNumber,
     executionAvailability: "requires_separate_assignment_and_approval" as const }; }
   private receipt(plan: Plan) { return { projectId: plan.projectId, sourceJobId: plan.sourceJobId, jobId: plan.job.id,

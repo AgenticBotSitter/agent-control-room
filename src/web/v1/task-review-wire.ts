@@ -21,5 +21,6 @@ export const taskReviewNoteSchema = z.object({ reviewId: id, findingId: id.nulla
 export const taskReviewOptionsSchema = z.object({ projectId: id, jobId: id, targetId: id, targetDigest: digest,
   contentHash: digest, artifactId: id, canReview: z.boolean(),
   availability: z.enum(["available", "not_configured", "access_denied", "project_inactive", "already_reviewed", "target_closed", "independence_required"]),
-  ownReview: taskReviewNoteSchema.nullable(), grantsExecutionAuthority: z.literal(false) }).strict();
+  ownReview: taskReviewNoteSchema.nullable(), grantsExecutionAuthority: z.literal(false),
+  revisionPlanning: z.enum(["configured", "not_connected"]).optional() }).strict();
 export type TaskReviewOptions = z.infer<typeof taskReviewOptionsSchema>;
