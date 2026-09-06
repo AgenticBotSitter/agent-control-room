@@ -1,5 +1,28 @@
 # Complete tracked-path planning inventory
 
+## Exact-content batch 02
+
+[Batch 02](research/public-source-content-review-02.json) records full-text review of
+12 further protected UI files at `4f44ff8`: project/section/task route wrappers,
+project workspace/settings, session controls, connection pages, header and Needs Me.
+No embedded personal project records, credential values or private host constants were
+observed. All 12 hashes verified; this is primary-assistant evidence, not independent
+privacy clearance, imported-code security review or a license grant.
+
+The review identified real contributor-setup dependencies: session/reauthentication
+links assume Cloudflare Access, and Connections explicitly presents the Hermes 0.21
+enrollment inventory rather than the newer fleet runner. Keep those statements honest.
+The synthetic demo must use a reviewed authentication seam, not require our Access
+account or remove production checks. Do not describe the existing Connections page as
+live fleet integration. Project creation/lifecycle behavior also depends on imported
+browser and server code that this batch does not independently clear.
+
+The connection/recovery/browser and existing project-navigation test selection passes
+12 tests. That selection includes legacy navigation coverage; it does not exercise
+every reviewed route or establish a live/browser-attended acceptance result. Combined
+with batch 01, 20 distinct file contents have recorded observations, not 20 approved
+exports. The much larger candidate and dependency/asset review remain unfinished.
+
 ## Standalone compiler roots follow-up
 
 At `502f034`, the planning inventory's separate entry-point list was found to omit

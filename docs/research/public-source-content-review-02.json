@@ -1,0 +1,166 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "baseline": "4f44ff80feb7cbcae3ffd84b14bf1099df6727f1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full source text of listed files inspected for embedded personal project data, credentials and private infrastructure locators. No exhaustive security, imported-dependency or licensing clearance.",
+  "entries": [
+    {
+      "path": "private-app/app/private-header.tsx",
+      "sha256": "ecf3818c6e313bbd9a789e2fbc667db46f33dcfb3428aadcf5f51ae27307a292",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic product navigation; only relative application links. Working header remains Control Room.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/projects/[projectId]/page.tsx",
+      "sha256": "c840e5362071f94a938411bfa65a06a652e9615d02b681751c6e941a1cbc1763",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied project route parameter forwarded to the workspace; no private defaults.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/projects/[projectId]/[sectionId]/page.tsx",
+      "sha256": "3096a701f0a2a5a6069fa0a680ef775647edfad206b7e25ba6a7e36bfeb904e6",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied project/section route parameters forwarded to the workspace; section behavior requires imported workspace review.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/projects/[projectId]/tasks/page.tsx",
+      "sha256": "356d584ef46c8197e17fd01fd9df7990141a3ea1e4ea42f17efea85bf521bbf5",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied project and pagination parameters; generic task metadata, no embedded project records.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/projects/[projectId]/tasks/[jobId]/page.tsx",
+      "sha256": "80e466c54b6fa2b1155481b30b9c9c6fafe155d431670576251067c93e5ad58f",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied project/task parameters; generic task progress metadata.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/session/page.tsx",
+      "sha256": "b294618610293c3b17c6cc0a16ea368237af123eb7ebcb1144628002cbef8513",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Explicit Cloudflare Access logout coupling and cross-application logout warning. Provider name is not private data; synthetic demo needs a separately scoped authentication seam.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/session/session-controls.tsx",
+      "sha256": "30fab7c3ae95fdd2d59774d6d42d093756dc79909e7130cd2dae25d095edb297",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Logout through shared browser client and returned redirect. Destination validation and authorization are imported behavior, not established by this file review.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/connections/page.tsx",
+      "sha256": "d65d6423832ca4c4433cf4c5fb0d278ff2192575ec872d1ba49b57abaec16dbf",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic connection metadata and workspace composition.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/connections/workspace.tsx",
+      "sha256": "f7515b4470c746a44768d46743f405e646e7769328323e9c6b8d9c570ff1c692",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Explicitly labels Hermes 0.21 enrollment inventory rather than live fleet. Relative Access logout path and supplied snapshot; no host/address constants. Rendering dependency remains separately reviewed.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/workspace.tsx",
+      "sha256": "68eae22eb4d44ee4b7e7052546dc6da44630162a66c4d756c78643b7f4a306f6",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic persisted projects and lifecycle UI, original-save recovery and relative encoded links. No personal fixture imports. Cloudflare Access reauthentication path is fixed; live authority remains server-side.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/needs-me/page.tsx",
+      "sha256": "57726ec8c337503881ce0873702a340c3039a9be93d529ce2fef3388ca19f4fc",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic owner-attention route metadata.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/needs-me/workspace.tsx",
+      "sha256": "7757f3e0102e87d8f87de3012b9f9cf43fc5d2ce54022922b027828345502326",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied recovery counts and owner task-attention composition. Warns observations are process snapshots rather than durable inbox or proof of completion.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    }
+  ]
+}

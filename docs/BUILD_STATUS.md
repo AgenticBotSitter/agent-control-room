@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Protected-page content review advanced:** [Batch 02](research/public-source-content-review-02.json)
+adds 12 exact-file observations with verified hashes and no embedded private values
+observed. It records Cloudflare Access setup coupling and the legacy enrollment-only
+Connections view as demo/integration limits, not private secrets. Twelve selected
+connection/recovery/navigation checks pass; no full-route or independent clearance.
+Twenty distinct files now have observations across both batches; no export approved.
+
 **Runnable-source policy drafted:** [Developer preview scope](PUBLIC_DEVELOPER_PREVIEW_POLICY_DRAFT.md)
 separates a useful synthetic application preview from the old observation-only SDK
 and a future operational release. It specifies exact content/rights review, clean
