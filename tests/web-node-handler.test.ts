@@ -61,6 +61,23 @@ test("Node bridge rejects excessive input and mismatched lengths without dispatc
   ]) { const x = await send(f, options); assert.ok(x.output.statusCode >= 400); assert.match(x.body(), /invalid_request/); }
   assert.equal(f.requests.length, 0);
 });
+test("task transport admits bounded larger bodies without widening unrelated routes", async () => {
+  const f = fixture();
+  for (const path of ["/api/v1/projects/project:one/tasks", "/api/v1/projects/project:one/tasks/job:one/approval"]) {
+    const body = "é".repeat(16384);
+    for (const headers of [[], ["Content-Length", "32768"], ["Transfer-Encoding", "chunked"]]) {
+      assert.equal((await send(f, { path, method: "POST", body, headers })).output.statusCode, 200);
+      assert.equal(await f.requests.at(-1)!.text(), body);
+    }
+    const before = f.requests.length;
+    for (const headers of [[], ["Content-Length", "32770"]])
+      assert.equal((await send(f, { path, method: "POST", body: body + "é", headers })).output.statusCode, 413);
+    assert.equal(f.requests.length, before);
+  }
+  for (const path of ["/api/v1/projects", "/api/v1/projects/project:one/tasks-other", "/projects/project:one/tasks"])
+    assert.equal((await send(f, { path, method: "POST", body: "a".repeat(8193) })).output.statusCode, 413);
+  await f.server.close();
+});
 test("Node bridge serves only the startup asset snapshot, with HEAD and no server fallback", async () => {
   const f = fixture();
   const js = await send(f, { path: "/_next/static/app.js" }); assert.equal(js.body(), "compiled fixture");

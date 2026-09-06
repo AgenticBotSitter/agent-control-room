@@ -23,6 +23,11 @@ packages to make an installation pass. Retain third-party licenses/notices.
 
 ## Local verification available now
 
+Do not substitute plain `vinext start`: its installed CLI defaults to `dist` and an
+all-interface production bind. This private build uses `dist-vps` and the existing
+loopback-only serving entry. The complete startup composition remains unfinished;
+see [E59 startup findings](research/REUSE_E59_TASK_TRANSPORT_LIMIT.md).
+
 From the repository root with already prepared dependencies:
 
 ```sh

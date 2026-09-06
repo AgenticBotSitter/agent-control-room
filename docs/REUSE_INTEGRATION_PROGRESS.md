@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E59 task transport](research/REUSE_E59_TASK_TRANSPORT_LIMIT.md) corrects the VPS bridge
+body ceiling to carry existing valid task inputs and verifies the compiled route/store
+journey. Existing serving code will be reused; no new listener or deployment was added.
+
 [E58 shared review](research/REUSE_E58_SHARED_OWNER_REVIEW.md) uses one verified
 human-readable projection for protected website preparation and the local issuer.
 This connects review semantics, not a live signer or a new credential channel.

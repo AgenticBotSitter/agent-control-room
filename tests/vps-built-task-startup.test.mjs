@@ -10,6 +10,8 @@ import { taskDraft } from "./helpers/web-task.ts";
 import { instant } from "./hermes-native-fixture.ts";
 import { request } from "./helpers/web-foundation.ts";
 import { sha256Digest } from "../src/security/index.ts";
+import { createPrivateNodeHandler } from "../dist-vps/server/serving.js";
+import { nodeExchange } from "./helpers/web-node.ts";
 
 test("compiled two-pool bootstrap mounts protected planning, assignment and page rendering under shared logout", async t => {
   assert.equal(typeof startPrivateTaskApplication, "function");
@@ -19,6 +21,16 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
   const app = await bootstrap.start(f.config); t.after(() => app.close());
   const project = `/api/v1/projects/${f.profile.projectId}`;
   const req = (path, method = "GET", body) => request(path, method, body, "built-task-startup-001", f.jwt);
+  const bridge = createPrivateNodeHandler({ origin: f.config.web.origin, application: app, handler,
+    assets: { count: 0, digest: "synthetic-no-assets", respond: () => undefined } });
+  t.after(() => bridge.close());
+  const longDraft = { ...taskDraft, instructions: "中".repeat(3000) };
+  const longRequest = request(`${project}/tasks`, "POST", longDraft, "built-large-task-001", f.jwt);
+  const body = await longRequest.text(); assert.ok(Buffer.byteLength(body) > 8192);
+  const exchange = nodeExchange({ path: new URL(longRequest.url).pathname, method: "POST", body,
+    headers: [...longRequest.headers].flat() });
+  await bridge.handle(exchange.input, exchange.output);
+  assert.equal(exchange.output.statusCode, 201, exchange.body());
   const created = await handler(req(`${project}/tasks`, "POST", taskDraft));
   assert.equal(created.status, 201, await created.clone().text());
   const proposal = await created.json();

@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest deployment-path fix — E59:** [Task transport compatibility](research/REUSE_E59_TASK_TRANSPORT_LIMIT.md)
+removes the outer 8 KiB mismatch for existing larger task envelopes, retaining bounded
+32 KiB task-only intake and smaller unrelated-route limits. A valid >8 KiB proposal now
+passes through the compiled Node bridge, protected task route and SQL store. Fourteen
+transport checks, all 35 compiled regressions, TypeScript, lint and build pass. Runnable
+host configuration and real deployment remain unfinished; no physical listener ran.
+
 **Latest local integration — E58:** [Shared owner review](research/REUSE_E58_SHARED_OWNER_REVIEW.md)
 unifies protected website review and signer review using verified task binding. The
 issuer exposes immutable human-readable details and binds them into its consent digest.

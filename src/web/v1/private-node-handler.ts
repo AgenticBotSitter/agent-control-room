@@ -7,6 +7,7 @@ import type { PrivateClientAssets } from "./private-assets";
 
 export const privateHttpLimits = Object.freeze({ headersBytes: 24_576, headerCount: 64, urlBytes: 4096,
   bodyBytes: 8192, responseBytes: 4 * 1024 * 1024, activeRequests: 64,
+  taskBodyBytes: 32_768,
   bodyMs: 5000, requestMs: 30_000, drainMs: 30_000 });
 export interface PrivateServingApplication { isReady(): boolean; close(): Promise<void> }
 export type PrivateBuiltHandler = (request: Request) => Promise<Response> | Response;
@@ -46,12 +47,16 @@ function requestHead(input: IncomingMessage, origin: string) {
   if (length !== undefined && (!/^(0|[1-9][0-9]{0,8})$/.test(length) || transfer !== undefined)
     || transfer !== undefined && transfer !== "chunked") throw new RequestFailure(400);
   const expectedLength = length === undefined ? undefined : Number(length);
-  if (expectedLength !== undefined && expectedLength > privateHttpLimits.bodyBytes) throw new RequestFailure(413);
+  // Task endpoints have existing 16/24/32 KiB parsers. The outer transport must not
+  // truncate valid task input; endpoint-specific limits and authentication still apply.
+  const bodyLimit = method === "POST" && /^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)
+    ? privateHttpLimits.taskBodyBytes : privateHttpLimits.bodyBytes;
+  if (expectedLength !== undefined && expectedLength > bodyLimit) throw new RequestFailure(413);
   if (method !== "POST" && (transfer || expectedLength && expectedLength > 0)) throw new RequestFailure(400);
-  return { url, method, headers, expectedLength };
+  return { url, method, headers, expectedLength, bodyLimit };
 }
 
-function consumeBody(input: IncomingMessage, signal: AbortSignal, expectedLength: number | undefined, bodyMs: number) {
+function consumeBody(input: IncomingMessage, signal: AbortSignal, expectedLength: number | undefined, bodyMs: number, bodyLimit: number) {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = []; let size = 0;
     const timer = setTimeout(() => finish(new RequestFailure(408)), bodyMs);
@@ -63,7 +68,7 @@ function consumeBody(input: IncomingMessage, signal: AbortSignal, expectedLength
     }
     function data(chunk: Buffer) {
       size += chunk.length;
-      if (size > privateHttpLimits.bodyBytes) finish(new RequestFailure(413)); else chunks.push(chunk);
+      if (size > bodyLimit) finish(new RequestFailure(413)); else chunks.push(chunk);
     }
     function end() {
       finish(!input.complete || input.rawTrailers.length || expectedLength !== undefined && size !== expectedLength
@@ -134,7 +139,7 @@ export function createPrivateNodeHandler(options: {
       try {
         if (!admitted) throw new RequestFailure(503);
         const head = requestHead(input, options.origin);
-        const body = await consumeBody(input, signal, head.expectedLength, limits.bodyMs);
+        const body = await consumeBody(input, signal, head.expectedLength, limits.bodyMs, head.bodyLimit);
         if (signal.aborted) return;
         if (head.method !== "POST" && body.length) throw new RequestFailure(400);
         if (head.headers.get("sec-fetch-site") === "cross-site") throw new RequestFailure(403);
