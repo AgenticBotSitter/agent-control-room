@@ -10,6 +10,9 @@
 routing, then runtime registration/recovery and owner signing, on Astra Medium. Exact optional
 quality/completion coordinator mounting is independently reviewed in
 `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md`; it is not a background event router or live fleet.
+Bounded project-scoped saved-result discovery is also independently reviewed in
+`CR14C_QUALITY_SWEEP_ACCEPTANCE.md`: the optional internal tick reuses exact quality
+reconciliation, but periodic scheduling and live runtime activation remain unconfigured.
 The supplied-database native quality/completion operation is independently reviewed in
 `CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md`; no running fleet is inferred. Optional human result checks are
 independently reviewed in `CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`; they are not a mandatory owner

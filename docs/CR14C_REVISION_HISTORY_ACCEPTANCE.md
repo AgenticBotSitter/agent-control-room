@@ -42,6 +42,12 @@ real PostgreSQL, native agent or deployed fleet evidence. The full default lifec
 was not rerun locally for this presentation-only patch; its CI prerequisite has separate
 complete local coverage and a retained GitHub interruption/retry record.
 
+The final published PR #331 head `87d84d81fee554181a07d5a362c3c1376663800e`
+passed all GitHub jobs in run `34006424682`, including the full default test inventory
+and final aggregate gate. Its PR #330 prerequisite also passed its amended-head run
+`34006354114`. This completes the previously pending CI evidence, not a merge or
+deployment, and does not accept the separate pending PR #329.
+
 ## Remaining functional work
 
 The source inventory confirmed a real execution gap, not just a missing button:

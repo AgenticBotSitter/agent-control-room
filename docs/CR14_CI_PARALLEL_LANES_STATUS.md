@@ -96,6 +96,14 @@ Independent read-only mechanical review confirmed that only file-level concurren
 and its exact argv assertion changed: inventory, per-test concurrency scenarios,
 matrix, all-success gate, setup, permissions, builds and timeouts are unchanged.
 
+Current-head GitHub verification is now complete: run `34006354114` at
+`5cd965b8cfdd7d2a0d3d93d714b8b205282e3592` succeeded, including all six test lanes,
+checks, both builds/migrations and the final `Verify build` gate. The dependent
+revision-history PR #331 also passed every job in run `34006424682` at
+`87d84d81fee554181a07d5a362c3c1376663800e`. These observed results supersede the
+pending status above; they do not erase either earlier shutdown or establish its
+cause. Neither PR is merged or deployed by this verification.
+
 No product runtime, SQL permission, agent connection, credential, listener, provider,
 production database, deployment or public release changed. Real PostgreSQL and fleet
 acceptance remain separate owner-authorized work. Next model remains Astra Medium

@@ -2218,15 +2218,36 @@ GitHub CI and dependency-order integration remain required; no merge or deployme
 Published as [PR #331](https://github.com/MarvinAi5/control-room/pull/331), based on #330.
 The CI-only amendment is integrated locally without changing the reviewed display product.
 
+Final CI refresh: PR #330 head `5cd965b` passed every job in run `34006354114`;
+PR #331 head `87d84d8` passed every job in run `34006424682`. Both include the final
+aggregate gate. The earlier shutdowns remain recorded negative evidence. No merge
+or deployment is claimed.
+
+## Bounded saved-result discovery
+
+Production `cf9541cc20cedda20b7c1f2817f08dfe2a695075` and integrated tests
+`df2395f4e0e0c5cb3ddea8a13b21e24ac2f9db5e` are independently reviewed. The optional
+coordinator can now discover and reconcile up to five saved results per explicit
+project tick, rechecking scope, exact bytes and existing review requirements. The
+compiled two-role startup exposes it; no caller-supplied digest is needed. Transient
+clock/currentness/database interruptions cannot be downgraded into normal candidate
+failures. See `CR14C_QUALITY_SWEEP_ACCEPTANCE.md` for review corrections and evidence.
+This advances quality-event processing but does not activate a timer, live runtime,
+revised-agent task or PR #329's unaccepted upstream completion. All six final local
+default lanes passed: 2,438 tests, two existing platform skips, zero failures/cancellations.
+Final sweep/inventory checks 26 and existing coordinator/startup checks 50 also passed,
+along with both builds, private20/rendered4, migrations0054/138, types and full lint.
+Current-head GitHub evidence remains required; no merge or deployment.
+
 ## Next block
 
 ```text
-Block: CR14 CI validation and dependency-order integration readiness
+Block: CR14C bounded revised-result execution and quality integration
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: GitHub's sequential job timed out even though earlier suites passed. Complete parallel-lane evidence is required before claiming the CI repair works.
-Expected output: all six complete test lanes, both builds, migrations and final aggregate CI result, without omitting coverage. PR #329 review remains a separate unresolved gate; bounded revisions/event routing and runtime registration/recovery remain future product work.
-Owner action: none for scoped CI verification and PR publication. No new merge, native qualification or deployment authority is inferred.
+Why: Saved-result discovery is connected locally and prerequisite CI now passes. A change request still cannot produce a new bound execution/result while preserving the original review subject.
+Expected output: a durable revision/execution relationship, bounded planning and result submission, fresh review/checks, and corresponding regressions. Finish current sweep CI evidence first. PR #329 review remains a separate unresolved gate; runtime scheduling/registration/recovery and owner signing are still unconfigured.
+Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
 ```
