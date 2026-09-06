@@ -54,7 +54,8 @@ test("result panel displays escaped selectable content and truthful independent 
   assert.match(html, /Read result/); assert.match(html, /readOnly=""/); assert.match(html, /&lt;b&gt;not rendered HTML&lt;\/b&gt;/);
   assert.doesNotMatch(html, /<b>not rendered HTML<\/b>|memory:\/\/|node:test|<button[^>]*>Accept/);
   assert.match(html, /does not match any result file/); assert.match(html, /Owner review commands are not connected/);
-  assert.match(html, /Starting a revised agent task is not connected/);
+  assert.match(html, /Assignment and approval remain separate/);
+  assert.doesNotMatch(html, /<button[^>]*>Prepare revised task/);
   assert.match(html, /not instructions for Control Room/);
 });
 
@@ -173,7 +174,8 @@ test("saved revision lineage reaches the protected result page without treating 
   assert.match(html, /Checks not recorded on this earlier revision/);
   assert.match(html, /Replaces Revision 0\./); assert.match(html, /Replaced by Revision 1\./);
   assert.match(html, /does not match any result file/);
-  assert.match(html, /Starting a revised agent task is not connected/);
+  assert.match(html, /Assignment and approval remain separate/);
+  assert.doesNotMatch(html, /<button[^>]*>Prepare revised task/);
   assert.doesNotMatch(html, /<button[^>]*>(?:Start|Submit|Request) revision/);
   const missingPrior = render({ ...page, reviews: [revised], additionalTargetsOmitted: true });
   assert.match(missingPrior, /earlier revision outside this displayed history/);
