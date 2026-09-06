@@ -5,6 +5,7 @@ import { createTaskApprovalBrowserClient, approvalErrorMessage } from "../../src
 import type { TaskApprovalRead, TaskApprovalReview } from "../../src/web/v1/task-approval-wire";
 import type { TaskDetail } from "../../src/web/v1/task-wire";
 import { PrivateTaskSubmission } from "./task-submission";
+import { createApprovalEditor, retainApprovalEditor, attachApprovalFile, type TaskApprovalEditor } from "../../src/web/v1/task-approval-editor";
 
 export function TaskApprovalPanel({ state, review, error, pending, uncertain, fileName, onReview, onCheck, onFile, onSave }: {
   state?: TaskApprovalRead; review?: TaskApprovalReview; error?: BrowserRequestError; pending: boolean; uncertain: boolean;
@@ -27,7 +28,7 @@ export function TaskApprovalPanel({ state, review, error, pending, uncertain, fi
       <p>This request is unsigned. Secure owner signing is not connected here yet. If you already have the separately signed approval file for this task, you can save it below. Never upload a private key or password.</p>
       <label>Signed approval file<input type="file" accept="application/json,.json" disabled={pending}
         onChange={event => { onFile(event.target.files?.[0]); event.target.value = ""; }} /></label>
-      {fileName && <p>Selected: {fileName}</p>}
+      {fileName && <p>Selected: {fileName}. Kept only in this tab during matching status refreshes; not uploaded until you save.</p>}
       <button type="button" disabled={pending || !fileName} onClick={onSave}>Save signed approval without starting</button>
     </div>}
   </section>;
@@ -36,46 +37,53 @@ export function TaskApprovalPanel({ state, review, error, pending, uncertain, fi
 export function PrivateTaskApproval({ detail }: { detail?: TaskDetail }) {
   const [client] = useState(() => createTaskApprovalBrowserClient());
   const [checked, setChecked] = useState<TaskDetail>(), [state, setState] = useState<TaskApprovalRead>();
-  const [review, setReview] = useState<TaskApprovalReview>(), [error, setError] = useState<BrowserRequestError>();
-  const [file, setFile] = useState<{ name: string; text: string }>(), [pending, setPending] = useState(false);
+  const [editor, setEditor] = useState<TaskApprovalEditor>(), [error, setError] = useState<BrowserRequestError>();
+  const [pending, setPending] = useState(false);
+  const review = editor?.review, file = editor?.file;
   const generation = useRef(0), fileGeneration = useRef(0), busy = useRef(false), alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const current = ++generation.current; let live = true;
     if (detail?.attempts.length) void client.read(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
-      if (live && current === generation.current) { setChecked(detail); setState(value); setReview(undefined); setFile(undefined);
+      if (live && current === generation.current) { setChecked(detail); setState(value);
+        setEditor(previous => client.hasPending() ? undefined : retainApprovalEditor(previous, detail, value));
         setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
     }).catch(reason => { if (live && current === generation.current) {
-      setChecked(detail); setState(undefined); setReview(undefined); setFile(undefined);
+      setChecked(detail); setState(undefined); setEditor(undefined);
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"));
     } });
     return () => { live = false; };
   }, [client, detail]);
   async function action(kind: "review" | "check" | "save") {
     if (!detail || checked !== detail || kind !== "check" && !state || busy.current || kind === "save" && !file) return;
+    if (kind === "save" && (!state || !retainApprovalEditor(editor, detail, state))) return;
     busy.current = true; setPending(true); setError(undefined); const current = ++generation.current;
     try {
       const args = [detail.task.projectId, detail.task.jobId, detail.inputDigest] as const;
       if (kind === "review") {
-        const value = await client.prepare(...args); if (alive.current && current === generation.current) setReview(value);
+        const value = await client.prepare(...args);
+        if (alive.current && current === generation.current) setEditor(createApprovalEditor(detail, value));
       } else {
         if (kind === "save") await client.store(...args, file!.text);
         const value = await client.read(...args);
-        if (alive.current && current === generation.current) { setState(value); setReview(undefined); setFile(undefined);
+        if (alive.current && current === generation.current) { setState(value);
+          setEditor(previous => kind === "save" || client.hasPending() ? undefined : retainApprovalEditor(previous, detail, value));
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
       }
     } catch (reason) {
       if (alive.current && current === generation.current) {
-        const next = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); setError(next); setReview(undefined); setFile(undefined);
+        const next = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); setError(next); setEditor(undefined);
         if (["authentication_required", "access_denied", "not_found", "unavailable"].includes(next.code)) setState(undefined);
       }
     } finally { busy.current = false; if (alive.current) setPending(false); }
   }
   async function choose(selected?: File) {
-    const current = generation.current, selection = ++fileGeneration.current; setFile(undefined);
-    if (!selected || !detail || checked !== detail || !review || busy.current) return;
+    const current = generation.current, selection = ++fileGeneration.current, selectedEditor = editor;
+    setEditor(previous => previous ? { ...previous, file: undefined } : undefined);
+    if (!selected || !detail || checked !== detail || !review || busy.current || !selectedEditor) return;
     try { if (selected.size > 24_576) throw new Error(); const text = await selected.text();
-      if (alive.current && current === generation.current && selection === fileGeneration.current) setFile({ name: selected.name.slice(0, 180), text });
+      if (new TextEncoder().encode(text).byteLength > 24_576) throw new Error();
+      if (alive.current && selection === fileGeneration.current) setEditor(previous => attachApprovalFile(previous, selectedEditor, { name: selected.name, text }));
     } catch { if (alive.current && current === generation.current) setError(new BrowserRequestError("invalid_request")); }
   }
   if (!detail) return null;

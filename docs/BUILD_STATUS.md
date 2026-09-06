@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E46:** [Approval editing continuity](research/REUSE_E46_APPROVAL_EDITING.md)
+preserves a selected approval file across matching authorized refreshes and rejects stale
+file reads into a replacement review. 15 focused checks, typecheck, lint, production
+build and 35 compiled regressions pass. Duplicate `posttest` keys were combined so the
+new queue coverage is no longer silently hidden; all 479 combined checks pass.
+Interactive browser and real-service acceptance remain open; signing is not connected.
+
 **Latest local implementation — E45:** [Task workflow guidance](research/REUSE_E45_TASK_WORKFLOW_GUIDANCE.md)
 adds stage navigation, immediate read refresh after confirmed assignment, and correct
 historical-plan wording. 46 UI/client checks, typecheck, lint, production build and all

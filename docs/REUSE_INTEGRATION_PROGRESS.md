@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E46 approval editing](research/REUSE_E46_APPROVAL_EDITING.md) preserves matching local
+review/file state without restoring old files into a replacement review or changing
+server approval validation. Focused checks and compiled regressions pass. The duplicate
+test-script keys are repaired; all 479 combined follow-up checks pass.
+
 [E45 task workflow guidance](research/REUSE_E45_TASK_WORKFLOW_GUIDANCE.md) improves the
 existing panel flow and confirmed-assignment refresh without new commands. Local UI
 tests pass; browser interaction remains unproven while the Mac is locked.
