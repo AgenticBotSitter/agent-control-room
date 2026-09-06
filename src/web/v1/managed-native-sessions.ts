@@ -28,6 +28,7 @@ const taskSchema = z.object({ projectId: localId, jobId: localId, inputDigest: d
 type Task = z.infer<typeof taskSchema>;
 type Routes = {
   queue?: { locate: TaskAssignmentCoordinator["locateApprovedQueueDelivery"];
+    ready?: TaskAssignmentCoordinator["recoverForReadyNode"];
     stage: TaskAssignmentCoordinator["stageApprovedQueueDelivery"]; transmit: TaskAssignmentCoordinator["transmitApprovedQueueDelivery"] };
   stage: TaskAssignmentCoordinator["stageQueuedNativeDelivery"];
   transmit: TaskAssignmentCoordinator["transmitQueuedNativeDelivery"];
@@ -37,6 +38,9 @@ type Routes = {
   register?: NativeEvidenceReceiver["register"];
 };
 type Record = {
+  readinessAttempted?: boolean; readinessAbort?: AbortController;
+  readinessState?: "running" | "complete" | "uncertain";
+  readinessResult?: Awaited<ReturnType<TaskAssignmentCoordinator["recoverForReadyNode"]>>;
   expectedAttemptId?: string;
   nodeId: string; session?: ServerNodeSession; transport: NativeSessionTransport;
   closed: boolean; busy: boolean; signal?: AbortSignal; closing?: Promise<void>;
@@ -63,7 +67,7 @@ export class ManagedNativeSessions {
     if (this.settings.nodes.some(node => node.tenantId !== scope.tenantId)) throw new Error("native_sessions_config_invalid");
     this.routes = Object.freeze({ stage: routes.stage.bind(routes), transmit: routes.transmit.bind(routes),
       queue: routes.queue ? Object.freeze({ locate: routes.queue.locate.bind(routes.queue), stage: routes.queue.stage.bind(routes.queue),
-        transmit: routes.queue.transmit.bind(routes.queue) }) : undefined,
+        transmit: routes.queue.transmit.bind(routes.queue), ready: routes.queue.ready?.bind(routes.queue) }) : undefined,
       receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes), recover: routes.recover?.bind(routes),
       register: routes.register?.bind(routes) });
   }
@@ -91,6 +95,7 @@ export class ManagedNativeSessions {
   private closeRecord(record: Record): Promise<void> {
     if (record.closing) return record.closing;
     record.closed = true; record.session?.disconnect();
+    record.readinessAbort?.abort();
     if (this.records.get(record.nodeId) === record) this.records.delete(record.nodeId);
     record.closing = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -133,6 +138,26 @@ export class ManagedNativeSessions {
       await routes!.stage(ref, session, signal); this.current(record);
       return routes!.transmit(ref, session, signal);
     });
+  }
+  private async notifyReady(record: Record, callerSignal: AbortSignal) {
+    const ready = this.routes.queue?.ready, channel = record.session?.nativeDeliveryChannel();
+    if (!ready || !channel || record.readinessAttempted) return;
+    this.current(record); record.readinessAttempted = true; record.readinessState = "running";
+    const abort = new AbortController(); record.readinessAbort = abort;
+    const signal = AbortSignal.any([callerSignal, abort.signal]);
+    const current = () => { this.current(record); if (signal.aborted) fail(); channel.assertCurrent(); };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([this.admit(() => ready({ nodeId: record.nodeId, attemptId: record.expectedAttemptId }, signal, current)),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => { abort.abort(); reject(new Error()); }, 5000); })]);
+      current(); record.readinessResult = Object.freeze({ ...result }); record.readinessState = "complete";
+    } catch { record.readinessState = "uncertain"; }
+    finally { clearTimeout(timer); }
+  }
+  queueRecoveryStatus(nodeId: string) {
+    const record = this.records.get(localId.parse(nodeId)); if (!record) return Object.freeze({ state: "unavailable" as const });
+    return Object.freeze({ state: record.readinessState ?? "not_attempted" as const,
+      ...(record.readinessResult ? { result: Object.freeze({ ...record.readinessResult }) } : {}) });
   }
   attach(nodeId: string, input: NativeSessionTransport) {
     return this.attachOwned(nodeId, input).then(value => value.handle);
@@ -206,7 +231,10 @@ export class ManagedNativeSessions {
         };
         const handle = Object.freeze({ nodeId, grantsExecutionAuthority: false as const,
           hello: (raw: string | Uint8Array, signal: AbortSignal) => { const copy = frame(raw); return this.operation(record, signal, session => session.acceptHello(copy)); },
-          reconcile: (raw: string | Uint8Array, signal: AbortSignal) => { const copy = frame(raw); return this.operation(record, signal, session => session.receive(copy)); },
+          reconcile: async (raw: string | Uint8Array, signal: AbortSignal) => {
+            const copy = frame(raw); await this.operation(record, signal, session => session.receive(copy));
+            await this.notifyReady(record, signal);
+          },
           stage: (identity: VerifiedWebIdentity, value: Task, signal: AbortSignal) => task("stage", identity, value, signal),
           transmit: (identity: VerifiedWebIdentity, value: Task, signal: AbortSignal) => task("transmit", identity, value, signal),
           receipt: (raw: string | Uint8Array, signal: AbortSignal) => { const copy = frame(raw); return this.operation(record, signal, session => this.routes.receipt(session, copy, signal)); },

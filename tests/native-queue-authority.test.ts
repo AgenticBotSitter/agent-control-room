@@ -103,6 +103,28 @@ test("recovered pickup requires the exact current recovery sequence and current 
   assert.equal((await f.db.query("SELECT * FROM audit_events WHERE action='native.queue.unsent_recovered'")).rows.length, 2);
 });
 
+test("ready-node discovery respects node and attempt scope and reports ineligible work as held", async t => {
+  const f = await fixture(); t.after(f.close); let calls = 0;
+  const coordinator = f.create(f.db, { enqueueInSession: async () => {}, recoverUnsentInSession: async () => { calls++; return true; } });
+  for (const node of [{ nodeId: "node:other" }, { nodeId: f.route.nodeId, attemptId: "attempt:other" }])
+    assert.deepEqual(await coordinator.recoverForReadyNode(node, f.abort.signal, () => {}), { examined: 0, recovered: 0, held: 0, truncated: false });
+  await f.db.query("UPDATE control_role_grants SET revoked_at=created_at");
+  assert.deepEqual(await coordinator.recoverForReadyNode({ nodeId: f.route.nodeId }, f.abort.signal, () => {}),
+    { examined: 1, recovered: 0, held: 1, truncated: false });
+  assert.equal(calls, 0);
+});
+
+test("readiness generation change before commit rolls back the recovery and audit", async t => {
+  const f = await fixture(); t.after(f.close); let current = true;
+  await f.db.query("CREATE TABLE synthetic_ready_recovery(id int)");
+  const coordinator = f.create(f.db, { enqueueInSession: async () => {}, recoverUnsentInSession: async tx => {
+    await tx.query("INSERT INTO synthetic_ready_recovery VALUES(1)"); current = false; return true;
+  } });
+  await assert.rejects(coordinator.recoverForReadyNode({ nodeId: f.route.nodeId }, f.abort.signal, () => { if (!current) throw new Error("synthetic replaced session"); }));
+  assert.equal((await f.db.query("SELECT * FROM synthetic_ready_recovery")).rows.length, 0);
+  assert.equal((await f.db.query("SELECT * FROM audit_events WHERE action='native.queue.unsent_recovered'")).rows.length, 0);
+});
+
 for (const failure of ["expiry", "abort", "throw", "revoked"] as const) test(`recovery ${failure} preserves operational and audit rollback`, async t => {
   const f = await fixture(); t.after(f.close); let calls = 0;
   await f.db.query("CREATE TABLE synthetic_unsent_recovery(id int)");

@@ -189,12 +189,15 @@ export class TaskAssignmentCoordinator {
   }
   /** Optional trusted recovery composition only, never a browser endpoint. Recovery
    * changes operational eligibility, not the original attempt, lease or approval. */
-  async recoverNeverStagedQueueDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal) {
+  async recoverNeverStagedQueueDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal,
+    ready?: { nodeId: string; assertCurrent(): void }) {
     const ref = nativeTaskSubmissionReferenceSchema.parse(input);
     const recover = this.nativeTaskSubmission?.recoverUnsentInSession?.bind(this.nativeTaskSubmission);
     if (!recover || !this.approvalStore || !(signal instanceof AbortSignal) || signal.aborted || ref.tenantId !== this.scope.tenantId) conflict();
     return this.withNativeApproval(undefined, ref.projectId, ref.jobId, ref.inputDigest, async (tx, prepared, actorId) => {
       if (prepared.request.attemptId !== ref.attemptId || signal.aborted) conflict();
+      if (ready && prepared.request.nodeId !== ready.nodeId) conflict();
+      ready?.assertCurrent();
       const verified = await this.approvalStore!.revalidateInSession(tx, prepared, ref.packetDigest, signal);
       // Canonical tenant/job/attempt locks are retained through commit. A missing
       // receipt alone is not proof of non-execution: even an envelope is too late.
@@ -212,9 +215,38 @@ export class TaskAssignmentCoordinator {
         idempotencyKey: `queue-recovery:${ref.queueId}:${ordinal}`, safeMetadata: { ordinal, packetDigest: ref.packetDigest },
         occurredAt: new Date(this.clock()).toISOString() });
       return { value: { recovered, ordinal: recovered ? ordinal : null }, assertFresh: () => {
-        if (signal.aborted) conflict(); verified.assertFresh();
+        if (signal.aborted) conflict(); ready?.assertCurrent(); verified.assertFresh();
       } };
     }, ref);
+  }
+  /** Called only by the trusted signed-ready session hook. Discovery is bounded
+   * and is not authority: every candidate is independently authenticated and checked. */
+  async recoverForReadyNode(input: { nodeId: string; attemptId?: string }, signal: AbortSignal, assertCurrent: () => void) {
+    const nodeId = localId.parse(input.nodeId), attemptId = input.attemptId === undefined ? undefined : localId.parse(input.attemptId);
+    if (!this.nativeTaskSubmission?.recoverUnsentInSession || !(signal instanceof AbortSignal) || signal.aborted) conflict();
+    const current = () => { if (signal.aborted) conflict(); assertCurrent(); };
+    current();
+    const rows = (await this.db.query<{ project_id: string; job_id: string; attempt_id: string; record: { inputDigest?: string; packetDigest?: string } }>(
+      `SELECT q.project_id,q.job_id,q.attempt_id,q.record FROM control_native_task_queue q
+       JOIN control_attempts a ON a.tenant_id=q.tenant_id AND a.job_id=q.job_id AND a.id=q.attempt_id
+       JOIN control_leases l ON l.tenant_id=q.tenant_id AND l.job_id=q.job_id AND l.attempt_id=q.attempt_id
+       WHERE q.tenant_id=$1 AND a.node_id=$2 AND l.state='active' AND l.expires_at>$3
+         AND ($4::text IS NULL OR q.attempt_id=$4)
+         AND NOT EXISTS(SELECT 1 FROM control_native_delivery_envelopes e WHERE e.tenant_id=q.tenant_id AND e.job_id=q.job_id AND e.attempt_id=q.attempt_id)
+       ORDER BY q.job_id,q.attempt_id LIMIT 33`, [this.scope.tenantId, nodeId, new Date(this.clock()).toISOString(), attemptId ?? null])).rows;
+    current();
+    let recovered = 0, held = 0;
+    for (const row of rows.slice(0, 32)) {
+      current();
+      try {
+        const ref = nativeTaskSubmissionReferenceSchema.parse({ schema: "control-room.native-task-submission/v1", tenantId: this.scope.tenantId,
+          projectId: row.project_id, jobId: row.job_id, attemptId: row.attempt_id,
+          queueId: `native-queue:${sha256Digest({ tenantId: this.scope.tenantId, jobId: row.job_id, attemptId: row.attempt_id }).slice(7)}`,
+          inputDigest: row.record?.inputDigest, packetDigest: row.record?.packetDigest });
+        if ((await this.recoverNeverStagedQueueDelivery(ref, signal, { nodeId, assertCurrent: current })).recovered) recovered++;
+      } catch { current(); held++; }
+    }
+    return { examined: Math.min(rows.length, 32), recovered, held, truncated: rows.length > 32 };
   }
   /** Verify recovered pickup against the canonical recovery sequence, not queue
    * retry metadata alone. Does not stage, transmit, recover or create an audit. */

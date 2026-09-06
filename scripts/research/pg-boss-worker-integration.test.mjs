@@ -117,9 +117,11 @@ for (const rollback of [false, true]) test(`public retry plus zero-limit update 
 });
 
 for (const offline of [false, true]) test(offline
-  ? 'actual offline task reaches pending review after reconnect and explicit audited recovery'
+  ? 'actual offline task automatically recovers after signed reconciliation and reaches pending review'
   : 'actual queue pickup reaches managed signed receipt and completed result review without a browser identity', { timeout: 30000 }, async t => {
-  const x = await managedNativeSessionFixture(undefined, { queue: true });
+  let readyCoordinator;
+  const x = await managedNativeSessionFixture(undefined, { queue: true, stopHandshakeAtDispatch: offline,
+    ...(offline ? { onQueueReady: (...args) => readyCoordinator.recoverForReadyNode(...args) } : {}) });
   let worker, producer, admin;
   t.after(async () => { try { await worker?.close(); await producer?.close(); await admin?.stop({ graceful: false }); } finally { await x.close(); } });
   admin = new PgBoss({ db: { executeSql: (sql, values) => x.admin(async () =>
@@ -132,6 +134,7 @@ for (const offline of [false, true]) test(offline
     transactionWithPreCommitCheck: (work, check) => x.admin(() => x.f.db.transactionWithPreCommitCheck(work, check)) };
   producer = await preparePgBossNativeTaskSubmission(PgBoss, canonical, { backend: 'pglite', ...(offline ? { recovery: true } : {}) });
   const coordinator = x.f.create(canonical, producer);
+  readyCoordinator = coordinator;
   const workerRole = await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8');
   await x.admin(() => x.f.raw.exec(workerRole));
   const query = (sql, values) => x.f.raw.transaction(async tx => {
@@ -159,12 +162,7 @@ for (const offline of [false, true]) test(offline
     assert.equal(await x.admin(async () => (await x.f.db.query('SELECT * FROM control_native_transmission_intents')).rows.length), 0);
     assert.equal(await x.admin(async () => (await x.f.db.query('SELECT * FROM control_native_task_queue')).rows.length), 1);
     const connected = await x.attach(); await x.handshake(connected);
-    await delay(1200); // Observe a subsequent upstream polling interval after reconnect.
-    assert.equal(connected.peer.outgoing.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch').length, 0);
-    assert.equal(deliveries, 1); assert.equal((await admin.getJobById(spec.name, id)).state, 'failed');
-    assert.equal((await x.counts()).runs.length, 0); assert.deepEqual(errors, []);
     c = connected;
-    assert.deepEqual(await coordinator.recoverNeverStagedQueueDelivery(ref, currentSignal()), { recovered: true, ordinal: 1 });
     await until(async () => deliveries === 2 && (await admin.getJobById(spec.name, id))?.state === 'failed');
     assert.equal((await admin.getJobById(spec.name, id)).retryCount, 1);
   }

@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E28 automatic recovery](research/REUSE_E28_AUTOMATIC_READY_RECOVERY.md) now runs after
+signed-ready reconciliation with bounded discovery and generation/deadline checks.
+The actual package test reaches review from offline pickup without a manual recovery
+call. Full-host/browser/live acceptance and attention-view integration remain open.
+
 [E27 recovery startup](research/REUSE_E27_RECOVERY_STARTUP.md) selects the exact
 permission profile and captured recovery/verification ports through explicit startup
 configuration. 55 package and 54 startup/runtime checks pass. Signed-reconciliation

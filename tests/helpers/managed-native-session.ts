@@ -32,7 +32,8 @@ export type ManagedNativePreparedContext = { f: Base; local: Local; providerRunI
 /** Real signed node protocol and restricted server SQL, entirely in disposable fake-native fixtures.
  * Canonical assignment/approval/dispatch and producer policy reads remain labelled privileged setup.
  * Never constructs a server session or supplies f.auth to the managed server. */
-export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean; queue?: boolean } = {}) {
+export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean; queue?: boolean; stopHandshakeAtDispatch?: boolean;
+  onQueueReady?: import("../../src/web/v1/task-assignment-coordinator").TaskAssignmentCoordinator["recoverForReadyNode"] } = {}) {
   const f = context?.f ?? await canonicalApprovalStorageFixture();
   const cleanup: (() => void | Promise<void>)[] = [f.close];
   const admin = async <T>(work: () => Promise<T>): Promise<T> => {
@@ -110,6 +111,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
     const queueCoordinator = f.create(canonicalSetupDb, { async enqueueInSession() { throw new Error("fixture queue submission not used"); } });
     const routes: ConstructorParameters<typeof ManagedNativeSessions>[3] = {
       queue: options.queue ? {
+        ready: options.onQueueReady,
         locate: (...args) => admin(() => queueCoordinator.locateApprovedQueueDelivery(...args)),
         stage: async (...args) => {
           const value = await admin(() => queueCoordinator.stageApprovedQueueDelivery(...args));
@@ -165,8 +167,9 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
     const handshake = async (x: Connection, hello: string | Uint8Array = x.hello) => {
       await x.handle.hello(hello, currentSignal());
       for (let count = 0; count < 20 && (x.peer.outgoing.length || x.peer.incoming.length); count++) {
-        while (x.peer.outgoing.length) await x.peer.acknowledge();
+        while (x.peer.outgoing.length && !(options.stopHandshakeAtDispatch && JSON.parse(x.peer.outgoing[0]).type === "harness.native.dispatch")) await x.peer.acknowledge();
         while (x.peer.incoming.length) await x.handle.reconcile(x.peer.incoming.shift()!, currentSignal());
+        if (options.stopHandshakeAtDispatch && x.peer.outgoing.length && JSON.parse(x.peer.outgoing[0]).type === "harness.native.dispatch") return;
       }
       assert.equal(x.peer.outgoing.length + x.peer.incoming.length, 0);
     };

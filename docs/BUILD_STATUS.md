@@ -164,6 +164,13 @@ default startup stays unchanged. 55 package and 54 startup/runtime checks pass.
 Automatic recovery after signed reconciliation, candidate discovery and stale/duplicate
 reconnect handling remain next. No production activation.
 
+**E28 — automatic signed-ready recovery:** [Evidence](research/REUSE_E28_AUTOMATIC_READY_RECOVERY.md)
+adds bounded assigned-node discovery and a one-per-generation recovery hook after
+signed reconciliation. The actual-package offline task reaches pending review without
+an explicit recovery call, with one dispatch. 55 package checks, 55 related checks and
+one focused timeout check pass. Full-host/exact-role/schema, browser enqueue, attention
+view, real-PG/live-owner acceptance and deployment remain unfinished.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

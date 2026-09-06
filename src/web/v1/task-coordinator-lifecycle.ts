@@ -155,6 +155,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const receipt = input.sessions ? input.approvals!.store.receiveDeliveryReceipt.bind(input.approvals!.store) : undefined;
   const sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
     queue: nativeSubmission ? { locate: assignment.locateApprovedQueueDelivery.bind(assignment),
+      ...(nativeSubmission.recoverUnsentInSession ? { ready: assignment.recoverForReadyNode.bind(assignment) } : {}),
       stage: assignment.stageApprovedQueueDelivery.bind(assignment), transmit: assignment.transmitApprovedQueueDelivery.bind(assignment) } : undefined,
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
@@ -236,6 +237,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     ...(results ? { results } : {}),
     ...(ownedEvidence ? { evidence: ownedEvidence } : {}),
     ...(sessions ? { connections: Object.freeze({ ...scope, attach: sessions.attach.bind(sessions),
+      ...(nativeSubmission?.recoverUnsentInSession ? { queueRecoveryStatus: sessions.queueRecoveryStatus.bind(sessions) } : {}),
       attachInput: sessions.attachInput.bind(sessions), attachWire: sessions.attachWire.bind(sessions) }) } : {}),
     ...(nativeHttp ? { nativeHttp } : {}),
     isReady: () => !closing && !invalid && (!nativeHttp || nativeHttp.isReady()) && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable()),

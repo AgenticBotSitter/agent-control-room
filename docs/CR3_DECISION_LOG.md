@@ -6118,3 +6118,10 @@ Default workers still reject retryCount greater than zero. E26 adds explicit opt
 admission only through the current canonical recovery verifier, exact audit sequence
 and repeated never-staged/approval checks. This is not a claim that an authenticated
 reconnect automatically triggers recovery; that startup/event integration remains open.
+
+E28 local continuation: explicit recovery-enabled composition may request bounded
+candidate recovery once after a signed reconciliation reaches ready state. Scope it to
+the assigned node/optional attempt and retain generation checks through canonical commit.
+No trigger on raw hello or duplicate ACK. Timeout/replacement aborts the hook; per-task
+ineligibility does not close a healthy connection. Preserve held/truncated/uncertain
+outcomes. This is local simulated acceptance, not production or live-provider authority.

@@ -401,3 +401,9 @@ Retained E01 package and repository dependencies only. Disposable in-memory fixt
 closed after tests. Initial administrative fixture pickup used the wrong retained
 logical identity and failed; fixed in test setup without expanding coordinator grants.
 No download, credentials, native service or external publication.
+
+### E28 — automatic readiness recovery (no acquisition)
+
+Existing repository dependencies and retained E01 package only. In-memory fixtures and
+synthetic transports closed after tests. No download, new retained directory, native
+database/provider, credential access, deployment or external publication.
