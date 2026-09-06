@@ -68,14 +68,14 @@ test("lane inventory rejects unsupported command syntax, paths, duplicate entrie
   assert.throws(() => createTestLanePlan({ ...scripts(), test: command([]) }));
 });
 
-test("selected lane runs exact current-node arguments with concurrency two and inherited process context", async t => {
+test("selected lane runs exact current-node arguments with one file at a time and inherited process context", async t => {
   const configured = scripts(), directory = syntheticTree(t, configured), calls = [];
   const code = await runTestLane({ scripts: configured, lane: "main-2", root: directory,
     spawn: (...args) => { calls.push(args); return { status: 0, signal: null }; } });
   assert.equal(code, 0); assert.equal(calls.length, 1);
   const [executable, args, options] = calls[0];
   assert.equal(executable, process.execPath);
-  assert.deepEqual(args, ["--import", "tsx", "--test", "--test-concurrency=2", ...createTestLanePlan(configured)["main-2"]]);
+  assert.deepEqual(args, ["--import", "tsx", "--test", "--test-concurrency=1", ...createTestLanePlan(configured)["main-2"]]);
   assert.equal(options.cwd, realpathSync(directory)); assert.equal(options.stdio, "inherit");
   assert.ok(options.env === undefined || options.env === process.env);
   assert.ok(options.shell === undefined || options.shell === false);

@@ -42,7 +42,7 @@ export async function runTestLane({ scripts, lane, root = repositoryRoot, spawn 
   }
   let result;
   try {
-    result = spawn(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=2", ...plan[lane]],
+    result = spawn(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", ...plan[lane]],
       { cwd: directory, stdio: "inherit", shell: false });
   } catch { return 1; }
   if (!result || result.error || result.signal || !Number.isInteger(result.status) || result.status < 0 || result.status > 255) return 1;
