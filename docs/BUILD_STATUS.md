@@ -2418,6 +2418,13 @@ No live agent, database, listener, owner signer or deployment has been activated
 
 ## Next block
 
+**Supplied-resource connector lifecycle is accepted locally** at production `eec386d`,
+final test correction `19c7201`. Independent review accepted the cleanup-order repair
+and explicit same-generation dispatch. Combined checks passed 86 entries, compiled
+startup passed 3, final actual-runtime journeys passed 3 again, and types/full lint/
+private build passed. See `CR14C_CONNECTOR_LIFECYCLE_ACCEPTANCE.md` for retained test
+corrections and the boundary between local composition and live operation.
+
 **Native HTTPS host composition is accepted locally** at production `8c3ea47`,
 final test checkpoint `a74968e`. Independent review accepted the ordering and scoped
 private-address repairs; final combined checks passed 134 entries and compiled
@@ -2469,11 +2476,11 @@ also passing. See `CR14C_NATIVE_WIRE_HANDOFF_ACCEPTANCE.md`. The fixture now shu
 opaque packets without selecting result bytes; no physical transport was activated.
 
 ```text
-Block: CR14C supplied-resource connector lifecycle and bounded run loop
+Block: CR14C protected owner task-dispatch interface and startup mounting
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: The HTTPS host and runtime are locally accepted but tests still drive their operations manually. A production lifecycle must join them before real host qualification.
-Expected output: one node-private supplied-resource owner joining runtime and HTTP client/host, bounded receive/start/observe/report sequencing for an already-authorized exact task, retained-journal recovery and drain. Add explicit exports and prove the actual lifecycle through injected network/native ports. Define the central stage/transmit caller without inventing new approval authority. Continuous multi-task queue discovery remains CR14D. No actual network/listener/provider/credential operations. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
+Why: The connector drives one admitted task locally, and the server has an explicit authorized dispatch operation. The owner still needs that operation connected to the protected task workflow.
+Expected output: optional project-scoped owner dispatch operation, protected route/client/page controls and verified startup mounting. Reuse current session/CSRF and canonical approval/lease checks; preserve missing-configuration, failed transmission and uncertain outcomes. Successful transmission is not native start or review completion. Tests use injected connections; no actual network/listener/provider/credential operations. Continuous queue discovery remains CR14D. Owner signing remains unconfigured; PR #329 remains separate.
 Owner action: none for scoped local implementation, verification and local commits. GitHub activity and publication are paused until the owner explicitly resumes them. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

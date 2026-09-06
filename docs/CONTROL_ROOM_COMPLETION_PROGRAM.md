@@ -11,12 +11,16 @@ verification and Git commits continue. Remote integration/CI remain deferred, no
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — supplied-resource connector lifecycle and bounded run loop,
+**Next block:** CR14C C-WORK — protected owner task-dispatch interface and startup mounting,
 then separately gated live activation and owner signing, on Astra Medium.
+The supplied-resource connector lifecycle is accepted locally in
+`CR14C_CONNECTOR_LIFECYCLE_ACCEPTANCE.md`: actual-runtime tests now drive the one-task
+execution/reporting loop and retained-journal recovery without manual native start/poll.
+The explicit same-generation server dispatch operation still needs protected owner UI
+mounting. Operator bootstrapping and live activation remain unconfigured.
 The HTTPS host composition is accepted locally in `CR14C_NATIVE_HTTPS_HOST_ACCEPTANCE.md`:
 bounded machine exchanges, private DNS pinning, physical-response ordering and verified
-startup pass injected/compiled tests. Production connector lifecycle, explicit central
-dispatch composition and actual activation remain; tests currently drive operations manually.
+startup pass injected/compiled tests. Actual activation remains separately gated.
 The supplied-resource node execution/reporting runtime is independently accepted in
 `CR14C_NODE_RUNTIME_ACCEPTANCE.md`, including explicit start, retained-journal reporting,
 separate recovery permissions and bounded uncertain cleanup. Exact packet/result transfer
