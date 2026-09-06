@@ -2190,6 +2190,10 @@ The aggregate `Verify build` check requires every dependency to succeed. See
 `CR14_CI_PARALLEL_LANES_STATUS.md` for the shell correction, isolated agent checks and
 full local/GitHub evidence. This branch does not include PR #329's product changes:
 that draft's upstream-completion correction review remains incomplete and unmerged.
+Published in [PR #330](https://github.com/MarvinAi5/control-room/pull/330), based on
+PR #328. All six actual local lanes passed: 2,419 tests, two existing platform skips,
+zero failures/cancellations. Both builds, private20/rendered4, migrations0054/138,
+types and lint passed. Final current-head GitHub CI remains pending; no merge.
 
 ## Next block
 

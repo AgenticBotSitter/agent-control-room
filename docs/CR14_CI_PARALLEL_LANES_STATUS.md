@@ -49,9 +49,27 @@ repeated this check; only the all-success combination returned zero. Static revi
 found no evident lifecycle dependency on another lane's generated artifacts.
 
 Both application builds, 20 compiled private tests, four rendered tests, TypeScript,
-ESLint and migrations 0001–0054 (138 tables) passed locally. All six actual runner
-lanes and the final GitHub workflow run are pending completion at this record's first
-write; no CI timing improvement or green GitHub check is claimed yet.
+ESLint and migrations 0001–0054 (138 tables) passed locally. Every actual runner lane
+exited zero on the final runner/package configuration:
+
+| Lane | Passed | Existing skips | Local duration |
+| --- | ---: | ---: | ---: |
+| pre | 770 | 0 | 49.6 s |
+| main-1 | 273 | 0 | 68.6 s |
+| main-2 | 384 | 1 | 66.0 s |
+| main-3 | 298 | 1 | 84.2 s |
+| main-4 | 302 | 0 | 73.2 s |
+| post | 392 | 0 | 31.9 s |
+
+Total: 2,419 passed, two existing platform skips, zero failures/cancellations. The
+lanes ran sequentially on the local host; these durations are not GitHub timing
+evidence. All 259 original test files remain; exactly five files were added.
+
+Published as [PR #330](https://github.com/MarvinAi5/control-room/pull/330), based on
+PR #328 rather than pending PR #329. The first GitHub run `34005325019` started
+the checks/build and four matrix jobs, with two matrix jobs queued as designed.
+The final current-head GitHub result remains pending; no timing improvement or green
+GitHub check is claimed here. No merge is claimed.
 
 No product runtime, SQL permission, agent connection, credential, listener, provider,
 production database, deployment or public release changed. Real PostgreSQL and fleet
