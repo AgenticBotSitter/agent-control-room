@@ -32,7 +32,15 @@ async function fixture() {
     const config = { host: "127.0.0.1" as const, port: 5432, database: "template1", username: "result_database_test",
       password: "synthetic-only", majorVersion: 17 as const };
     const scope = { ...x.f.scope, ownerIdentityId: "identity:test", issuer: x.f.accessTrust.issuer };
-    return { ...x, client, checked, config, scope, verify: () => verifyNativeResultDatabase(checked, config, scope, x.f.clock()) };
+    const fixtureAdmin = async <T>(work: () => Promise<T>): Promise<T> => {
+      // PGlite retains the restricted session identity after commit. This explicit boundary
+      // restores only synthetic administrative fault setup/readback, never tested SQL operations.
+      await x.f.raw.exec("SET SESSION AUTHORIZATION postgres; RESET ROLE");
+      assert.equal((await x.f.db.query<{ current_user: string }>("SELECT current_user")).rows[0].current_user, "postgres");
+      return work();
+    };
+    return { ...x, client, checked, config, scope, fixtureAdmin,
+      states: () => fixtureAdmin(x.states), verify: () => verifyNativeResultDatabase(checked, config, scope, x.f.clock()) };
   } catch (error) { await x.close(); throw error; }
 }
 
@@ -108,6 +116,6 @@ test("result preflight rejects extra/missing rights, mixed membership and disabl
   ]) await t.test(change, async t => {
     const x = await fixture(); t.after(x.close); await x.verify();
     // Exact disposable administrative mutation models a misconfigured pool; no repository role file changes.
-    await x.f.raw.exec(change); await assert.rejects(x.verify(), /preflight_failed/);
+    await x.fixtureAdmin(() => x.f.raw.exec(change)); await assert.rejects(x.verify(), /preflight_failed/);
   });
 });

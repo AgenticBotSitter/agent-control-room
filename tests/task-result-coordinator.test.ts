@@ -13,6 +13,14 @@ import type { DatabaseClient, DatabaseSession } from "../src/persistence/databas
 
 const signal = () => new AbortController().signal;
 type Base = Awaited<ReturnType<typeof nativeTaskLifecycleFixture>>["f"];
+async function fixtureAdmin<T>(f: Base, work: () => Promise<T>): Promise<T> {
+  // PGlite retains SET LOCAL SESSION AUTHORIZATION after commit. Restore the synthetic
+  // administrator only for labelled setup/capture/readback; every writer pool call below
+  // independently re-enters its actual restricted identity before running test operations.
+  await f.raw.exec("SET SESSION AUTHORIZATION postgres; RESET ROLE");
+  assert.equal((await f.db.query<{ current_user: string }>("SELECT current_user")).rows[0].current_user, "postgres");
+  return work();
+}
 async function writer(f: Base, wrapResults: (db: DatabaseClient) => DatabaseClient = db => db) {
   await f.raw.exec(await readFile("db/roles/native_results_roles.sql", "utf8"));
   await f.raw.exec(await readFile("db/roles/task_coordinator_roles.sql", "utf8"));
@@ -55,12 +63,12 @@ async function initialFixture(wrapResults?: (db: DatabaseClient) => DatabaseClie
     // Run registration and fake progress/capture are fixture preparation, not writer authority.
     await x.f.runs.create(x.registration); const w = await writer(x.f, wrapResults);
     const request = { projectId: x.registration.projectId, jobId: x.registration.jobId, runId: x.registration.id };
-    const capture = async () => {
+    const capture = () => fixtureAdmin(x.f, async () => {
       await x.handoff.start(); await x.publish(); x.advance(); await x.handoff.poll(); await x.publish();
       x.advance(); x.setResult(qualityText); await x.handoff.poll(); const completed = await x.publish();
       // Deliberately no submission dependency: only the separately restricted owner may create the target.
       return new NativeTaskResultService(x.f.auth, x.f.runs, x.f.results).ingest(completed.raw, new TextEncoder().encode(qualityText), x.options());
-    };
+    });
     return { ...x, ...w, request, capture, close: async () => { await w.owner.close(); await x.close(); } };
   } catch (error) { await x.close(); throw error; }
 }
@@ -69,9 +77,9 @@ const gateRows = async (x: Fixture) => (await x.results.client.query("SELECT * F
 const plans = async (x: Fixture) => (await x.results.client.query("SELECT * FROM control_native_review_plans WHERE run_id=$1", [x.request.runId])).rows;
 const checkpoint = (x: Fixture) => x.f.checkpoints.read(`completion-gate:${x.registration.tenantId}`);
 async function sourceState(x: Fixture) {
-  return { job: await x.f.canonical.get(x.registration.tenantId, "job", x.request.jobId),
+  return fixtureAdmin(x.f, async () => ({ job: await x.f.canonical.get(x.registration.tenantId, "job", x.request.jobId),
     attempt: await x.f.canonical.get(x.registration.tenantId, "attempt", x.registration.attemptId),
-    lease: await x.f.canonical.get(x.registration.tenantId, "lease", x.registration.nativeTask!.leaseId) };
+    lease: await x.f.canonical.get(x.registration.tenantId, "lease", x.registration.nativeTask!.leaseId) }));
 }
 function intercept(db: DatabaseClient, after: (sql: string) => void): DatabaseClient {
   const wrap = (tx: DatabaseSession): DatabaseSession => ({ async query<T>(sql: string, params?: unknown[]) {
@@ -109,7 +117,8 @@ test("restricted writer binds and submits an actual revised child; original gene
     async query<T>(sql: string, params?: unknown[]) { queries.push({ sql, params: params ?? [] }); return tx.query<T>(sql, params); },
   }), check) })); t.after(() => w.owner.close()); await w.verify();
   const request = { projectId: x.plan.projectId, jobId: x.plan.job.id, runId: x.registration.id };
-  const source = await x.sourceStates(), child = await x.childStates(), before = x.f.checkpoints.read(`completion-gate:${x.plan.tenantId}`)!;
+  const states = () => fixtureAdmin(x.f, async () => ({ source: await x.sourceStates(), child: await x.childStates() }));
+  const priorStates = await states(), before = x.f.checkpoints.read(`completion-gate:${x.plan.tenantId}`)!;
   const registered = await w.owner.results!.register(request, signal()); assert.equal(registered.replayed, false);
   const firstGate = queries.findIndex(value => value.sql.includes("control_completion_gate_integrity") && value.sql.includes("FOR UPDATE"));
   const sourceRun = queries.findIndex(value => value.sql.includes("control_harness_runs") && value.sql.includes("FOR UPDATE") && value.params.includes(x.source.runId));
@@ -117,7 +126,7 @@ test("restricted writer binds and submits an actual revised child; original gene
     && (value.params.includes(x.source.jobId) || value.params.includes(x.source.runId)));
   assert.ok(firstGate >= 0 && sourceRun >= 0 && sourceRun < firstGate && sourceJob >= 0 && sourceJob < firstGate,
     "actual predecessor native run and job locks must precede the first gate lock");
-  const delivered = await x.deliver(revisedText, false), calls = x.counters();
+  const delivered = await fixtureAdmin(x.f, () => x.deliver(revisedText, false)), calls = x.counters();
   const saved = await w.owner.results!.submit(request, signal()); assert.equal(saved.replayed, false);
   assert.equal(saved.receipt.contentHash, delivered.artifact.contentHash); assert.equal(saved.receipt.rootSubjectId, x.source.target.subjectId);
   assert.equal(saved.receipt.revisionNumber, 1); assert.equal(saved.receipt.jobId, x.plan.job.id);
@@ -126,7 +135,7 @@ test("restricted writer binds and submits an actual revised child; original gene
   const target = (await x.f.reviewStore.snapshot(x.plan.tenantId, saved.receipt.targetId)).target;
   assert.equal(target.producer.actorId, x.registration.nodeId); assert.equal(target.supersedesTargetId, x.source.target.id);
   assert.deepEqual(await w.owner.results!.submit(request, signal()), { ...saved, replayed: true });
-  assert.deepEqual(await x.sourceStates(), source); assert.deepEqual(await x.childStates(), child); assert.deepEqual(x.counters(), calls);
+  assert.deepEqual(await states(), priorStates); assert.deepEqual(x.counters(), calls);
 });
 
 test("writer refuses wrong scope, caller profile/context, unavailable bytes and invalid saved-plan signing key", async t => {
@@ -172,7 +181,7 @@ test("fresh registration refuses expired deadlines, but exact registered binding
     const saved = registered ? await x.owner.results!.register(x.request, signal()) : undefined;
     x.f.setNow(Date.parse(x.registration.nativeTask!.deadline) + 1);
     // Privileged fixture preparation models closure only; the writer is never given project mutation rights.
-    await x.f.db.query("UPDATE control_manual_project_heads SET lifecycle='archived' WHERE project_id=$1", [x.request.projectId]);
+    await fixtureAdmin(x.f, () => x.f.db.query("UPDATE control_manual_project_heads SET lifecycle='archived' WHERE project_id=$1", [x.request.projectId]));
     if (saved) assert.deepEqual(await x.owner.results!.register(x.request, signal()), { ...saved, replayed: true });
     else { await assert.rejects(x.owner.results!.register(x.request, signal())); assert.deepEqual(await plans(x), []); }
   });
