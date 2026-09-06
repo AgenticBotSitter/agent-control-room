@@ -29,6 +29,20 @@ test("successful submission validates receipt and denial permits a later explici
   response = Response.json({ ...receipt, replayed: false }, { status: 201 });
   assert.equal((await client.submit(...args)).queueId, receipt.queueId); assert.equal(client.hasPending(), false);
 });
+test("overlapping clicks send once and another task cannot clear pending identity", async () => {
+  let release!: () => void, writes = 0;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const client = createTaskSubmissionBrowserClient(async (_url, init) => {
+    if (init?.method === "POST") { writes++; await waiting; throw new Error("lost response"); }
+    return Response.json({ ...read(), jobId: "job:other", receipt: { ...receipt, jobId: "job:other" } });
+  });
+  const first = client.submit(...args);
+  await assert.rejects(client.submit(...args), { code: "uncertain" });
+  await client.read(args[0], "job:other", digest, digest);
+  assert.equal(client.hasPending(), true);
+  release(); await assert.rejects(first, { code: "uncertain" });
+  assert.equal(writes, 1); assert.equal(client.hasPending(), true);
+});
 for (const response of [Response.json({}, { status: 503 }), Response.json({ ...receipt, replayed: false, packetDigest: `sha256:${"b".repeat(64)}` }),
   new Response("x".repeat(20_000), { headers: { "content-type": "application/json" } })])
   test("unavailable, mismatched or oversized success stays uncertain", async () => {

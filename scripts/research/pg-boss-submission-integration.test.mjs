@@ -386,6 +386,10 @@ test('explicit startup prepares actual producer after database gates and closes 
         req.headers.delete('idempotency-key'); return req;
       };
       const handle = req => installed.handle(req, () => new Response('shell'));
+      for (const taskPath of [path.replace(/\/submission$/, ''), path.replace(/\/tasks\/[^/]+\/submission$/, '/tasks')]) {
+        const view = await handle(request(taskPath, 'GET', undefined, undefined, f.jwt));
+        assert.equal(view.status, 200); assert.equal((await view.json()).dispatch, 'configured');
+      }
       const readSubmission = suffix => {
         const req = request(path + (suffix ?? `?inputDigest=${encodeURIComponent(f.args[3])}`), 'GET', undefined, undefined, f.jwt);
         req.headers.delete('idempotency-key'); return handle(req);

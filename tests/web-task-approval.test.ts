@@ -29,6 +29,8 @@ test("stored approval without a configured queue does not enable HTTP submission
   }, undefined, f.jwt);
   req.headers.delete("idempotency-key");
   assert.equal((await f.handle(req)).status, 503);
+  const view = await f.handle(request(f.path.replace(/\/approval$/, ""), "GET", undefined, undefined, f.jwt));
+  assert.equal(view.status, 200); assert.equal((await view.json()).dispatch, "not_connected");
   await f.raw.exec("SET SESSION AUTHORIZATION postgres");
   assert.equal((await f.db.query("SELECT * FROM control_native_task_queue")).rows.length, 0);
 });

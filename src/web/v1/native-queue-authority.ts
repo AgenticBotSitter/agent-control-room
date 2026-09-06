@@ -47,11 +47,11 @@ export class NativeQueueAuthority {
       const can: WebActor["can"] = (action, projectId, _ownerOnly, risk = "low") => projectId === ref.projectId
         && evaluatePolicy(principal, grants, { tenantId: ref.tenantId, action, resourceType: "task", resourceId: projectId,
           projectId, risk, externalEffect: false, occurredAt: new Date(this.clock()).toISOString() }).allowed;
-      const require: WebActor["require"] = (action, projectId, ownerOnly, risk) => {
+      const requirePermission: WebActor["require"] = (action, projectId, ownerOnly, risk) => {
         const check = () => { if (!can(action, projectId, ownerOnly, risk)) deny(); }; check(); checks.push(check);
       };
-      require("tasks.read", ref.projectId, true); require("tasks.approve", ref.projectId, true);
-      return operation(tx, { id: actor.id, now: new Date(started).toISOString(), can, require, assertTimeCurrent: assertFresh });
+      requirePermission("tasks.read", ref.projectId, true); requirePermission("tasks.approve", ref.projectId, true);
+      return operation(tx, { id: actor.id, now: new Date(started).toISOString(), can, require: requirePermission, assertTimeCurrent: assertFresh });
     }, () => { if (!assertFresh) return deny(); assertFresh(); });
   }
 }

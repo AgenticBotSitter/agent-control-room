@@ -18,7 +18,7 @@ export const taskReceiptSchema = z.object({ jobId: id, projectId: id, requestId:
 export type TaskReceipt = z.infer<typeof taskReceiptSchema>;
 export const taskCommandSchema = z.object({ receipt: taskReceiptSchema, replayed: z.boolean() }).strict();
 export const taskPageSchema = z.object({ project: projectViewSchema, tasks: z.array(taskSummarySchema).max(50),
-  nextCursor: id.nullable(), canPropose: z.boolean(), dispatch: z.literal("not_connected"), observedAt: z.string().datetime() }).strict();
+  nextCursor: id.nullable(), canPropose: z.boolean(), dispatch: z.enum(["not_connected", "configured"]), observedAt: z.string().datetime() }).strict();
 export type TaskPage = z.infer<typeof taskPageSchema>;
 const nativeState = z.enum(["prepared", "dispatching", "queued", "running", "waiting_approval", "stopping", "completed",
   "failed", "cancelled", "interrupted", "ambiguous"]);
@@ -40,5 +40,5 @@ export const taskDetailSchema = z.object({ project: projectViewSchema, task: tas
   attempts: z.array(z.object({ attemptId: id, attemptNumber: count, state: z.enum(attemptStates),
     runs: z.array(taskRunSchema).max(10), additionalRunsOmitted: z.boolean() }).strict()).max(10),
   earlierAttemptsOmitted: z.boolean(), progressSource: z.enum(["configured", "not_configured"]),
-  dispatch: z.literal("not_connected"), artifacts: z.enum(["not_connected", "configured"]), review: z.enum(["not_connected", "recorded"]) }).strict();
+  dispatch: z.enum(["not_connected", "configured"]), artifacts: z.enum(["not_connected", "configured"]), review: z.enum(["not_connected", "recorded"]) }).strict();
 export type TaskDetail = z.infer<typeof taskDetailSchema>;

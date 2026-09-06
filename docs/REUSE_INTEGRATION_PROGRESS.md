@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E32 status/build](research/REUSE_E32_DISPATCH_STATUS_AND_BUILD.md) replaces hardcoded
+unconnected task projections with composition-derived configuration and adds overlapping
+submission coverage. A real build failure from a local `require` binding is fixed without
+changing policy. VPS build and three compiled checks pass; no live-system acceptance.
+
 [E31 submission controls](research/REUSE_E31_SUBMISSION_READBACK_AND_CONTROLS.md) adds
 read-only canonical receipt reconciliation and a bounded browser client that refuses
 another send after uncertainty. The approval page exposes explicit queue/check controls.

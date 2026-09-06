@@ -70,6 +70,9 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
       <p className="private-note">Saved {date(detail.task.createdAt)} · Job record updated {date(detail.task.updatedAt)}</p>
       {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}</section>
     <section className="private-panel"><h2>Agent progress</h2>
+      <p>{detail.dispatch === "configured"
+        ? "Task submission is configured. A recorded submission is not proof that an agent is online or has started."
+        : "Task submission is not configured for this app."}</p>
       {detail.progressSource === "not_configured" && <p className="private-notice">Agent evidence is not configured for this app. Missing progress does not mean no agent work exists.</p>}
       {!detail.attempts.length && <p>No assignment attempts are recorded for this task.</p>}
       {detail.attempts.map(attempt => <section key={attempt.attemptId} className="private-attempt"><h3>Attempt {attempt.attemptNumber} · {attempt.state.replaceAll("_", " ")}</h3>

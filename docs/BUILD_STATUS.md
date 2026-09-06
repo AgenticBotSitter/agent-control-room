@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E32:** [Status and compiled build](research/REUSE_E32_DISPATCH_STATUS_AND_BUILD.md)
+reports configured submission truthfully in task views, covers overlapping browser calls,
+and fixes a bundler collision in the local permission helper. VPS build, three compiled
+application checks and 15 queue-authority checks pass. Full-host/browser/live acceptance
+remains open; nothing deployed.
+
 **Latest local implementation — E31:** [Submission readback and controls](research/REUSE_E31_SUBMISSION_READBACK_AND_CONTROLS.md)
 adds protected historical queue readback and explicit browser submission/check controls
 after saved approval. Eight package startup and 17 browser/approval checks pass. Real browser
