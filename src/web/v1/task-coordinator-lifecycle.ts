@@ -152,6 +152,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }
   const receipt = input.sessions ? input.approvals!.store.receiveDeliveryReceipt.bind(input.approvals!.store) : undefined;
   const sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
+    queue: nativeSubmission ? { locate: assignment.locateApprovedQueueDelivery.bind(assignment),
+      stage: assignment.stageApprovedQueueDelivery.bind(assignment), transmit: assignment.transmitApprovedQueueDelivery.bind(assignment) } : undefined,
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
     recover: receiver!.recover.bind(receiver),
@@ -211,6 +213,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
+    ...(nativeSubmission && sessions ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+      const result = await sessions.deliverApproved(ref, signal);
+      if (!result.deliveryConfirmed) throw new Error("native_task_delivery_unresolved");
+      return { disposition: "delivered" as const };
+    } } : {}),
     ...(submission ? { submission } : {}),
     ...(revisions ? { revisions } : {}),
     ...(results ? { results } : {}),

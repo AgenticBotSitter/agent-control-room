@@ -106,6 +106,12 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E20 managed routing](research/REUSE_E20_MANAGED_QUEUE_ROUTING.md) connects the approved
+node locator to one current managed-session generation and exposes a server-only
+queueDelivery callback under the configured lifecycle. 49 related checks pass. Missing
+receipt stays unresolved while later receipt intake remains available. Next: whole-host
+composition and exact-role/full-path tests, not claims of a live fleet.
+
 [E19 approval-bound server delivery](research/REUSE_E19_SERVER_DELIVERY_AUTHORITY.md)
 implements ADR-251's separate server entry points. Background delivery no longer needs
 a fabricated browser identity; exact canonical/signature/current-owner checks still run.

@@ -110,6 +110,12 @@ revocation and expiry still deny delivery. 44 regression and 43 package checks p
 (42 combined plus one focused post-commit grant-expiry check). Not mounted; managed-session
 routing, independent review and real-PG/live acceptance remain open.
 
+**E20 — managed queue routing:** [Evidence](research/REUSE_E20_MANAGED_QUEUE_ROUTING.md)
+resolves the approved assigned node and retains one managed session generation across
+stage/transmit. Replacement, missing connection and owner revocation prevent delivery;
+later signed receipt intake still works. 49 related checks pass. Host composition,
+exact-role/full-path acceptance, browser enqueue and real-PG/live acceptance remain open.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

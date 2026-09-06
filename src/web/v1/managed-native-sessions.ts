@@ -10,6 +10,7 @@ import { captureNativeEvidenceInput, nativeEvidenceRegistrationSchema } from "./
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { ManagedNativeInput, nativeInputConfigurationSchema, type NativeInputConfiguration } from "./managed-native-input";
 import { encodeNativeWire, decodeNativeWire } from "../../harness/v1/native-wire";
+import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmissionReference } from "../../persistence/native-task-submission";
 
 export type ManagedNativeSessionSettings = {
   nodes: readonly ServerNodeSessionConfig[];
@@ -26,6 +27,8 @@ export type NativeSessionTransport = { send(raw: string): Promise<void>; close()
 const taskSchema = z.object({ projectId: localId, jobId: localId, inputDigest: digestSchema, packetDigest: digestSchema }).strict();
 type Task = z.infer<typeof taskSchema>;
 type Routes = {
+  queue?: { locate: TaskAssignmentCoordinator["locateApprovedQueueDelivery"];
+    stage: TaskAssignmentCoordinator["stageApprovedQueueDelivery"]; transmit: TaskAssignmentCoordinator["transmitApprovedQueueDelivery"] };
   stage: TaskAssignmentCoordinator["stageQueuedNativeDelivery"];
   transmit: TaskAssignmentCoordinator["transmitQueuedNativeDelivery"];
   receipt: (session: ServerNodeSession, raw: string | Uint8Array, signal: AbortSignal) => ReturnType<NativeApprovalPacketStore["receiveDeliveryReceipt"]>;
@@ -34,6 +37,7 @@ type Routes = {
   register?: NativeEvidenceReceiver["register"];
 };
 type Record = {
+  expectedAttemptId?: string;
   nodeId: string; session?: ServerNodeSession; transport: NativeSessionTransport;
   closed: boolean; busy: boolean; signal?: AbortSignal; closing?: Promise<void>;
 };
@@ -58,6 +62,8 @@ export class ManagedNativeSessions {
     this.settings = captureManagedNativeSessionSettings(settings);
     if (this.settings.nodes.some(node => node.tenantId !== scope.tenantId)) throw new Error("native_sessions_config_invalid");
     this.routes = Object.freeze({ stage: routes.stage.bind(routes), transmit: routes.transmit.bind(routes),
+      queue: routes.queue ? Object.freeze({ locate: routes.queue.locate.bind(routes.queue), stage: routes.queue.stage.bind(routes.queue),
+        transmit: routes.queue.transmit.bind(routes.queue) }) : undefined,
       receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes), recover: routes.recover?.bind(routes),
       register: routes.register?.bind(routes) });
   }
@@ -114,6 +120,20 @@ export class ManagedNativeSessions {
       } finally { clearTimeout(timer); }
     }).finally(() => { record.busy = false; record.signal = undefined; signal.removeEventListener("abort", aborted); });
   }
+  /** Trusted queue handler. Resolve the assigned node canonically, then retain one
+   * session generation across stage/transmit. No identity, endpoint or fallback node input. */
+  async deliverApproved(input: NativeTaskSubmissionReference, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input), routes = this.routes.queue;
+    if (!routes || ref.tenantId !== this.scope.tenantId || !(signal instanceof AbortSignal) || signal.aborted) fail();
+    this.current();
+    const target = await this.admit(() => routes!.locate(ref, signal));
+    const record = this.records.get(target.nodeId);
+    if (!record || record.expectedAttemptId !== undefined && record.expectedAttemptId !== ref.attemptId) return fail();
+    return this.operation(record, signal, async session => {
+      await routes!.stage(ref, session, signal); this.current(record);
+      return routes!.transmit(ref, session, signal);
+    });
+  }
   attach(nodeId: string, input: NativeSessionTransport) {
     return this.attachOwned(nodeId, input).then(value => value.handle);
   }
@@ -152,7 +172,7 @@ export class ManagedNativeSessions {
     const transport = Object.freeze({ send: (raw: string) => send(packet ? encodeNativeWire(raw, "server_to_node") : raw),
       close: input.close.bind(input), isAvailable: input.isAvailable.bind(input) });
     this.transports.add(input);
-    const prior = this.records.get(nodeId), record: Record = { nodeId, transport, closed: false, busy: false };
+    const prior = this.records.get(nodeId), record: Record = { nodeId, expectedAttemptId, transport, closed: false, busy: false };
     // Replace immediately, before any asynchronous cleanup: retained old handles cannot act.
     prior?.session?.disconnect(); this.records.set(nodeId, record); this.owned.add(record);
     return this.admit(async () => {

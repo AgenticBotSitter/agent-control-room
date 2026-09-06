@@ -32,7 +32,7 @@ export type ManagedNativePreparedContext = { f: Base; local: Local; providerRunI
 /** Real signed node protocol and restricted server SQL, entirely in disposable fake-native fixtures.
  * Canonical assignment/approval/dispatch and producer policy reads remain labelled privileged setup.
  * Never constructs a server session or supplies f.auth to the managed server. */
-export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean } = {}) {
+export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean; queue?: boolean } = {}) {
   const f = context?.f ?? await canonicalApprovalStorageFixture();
   const cleanup: (() => void | Promise<void>)[] = [f.close];
   const admin = async <T>(work: () => Promise<T>): Promise<T> => {
@@ -57,7 +57,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       SET search_path=pg_catalog, public; SET statement_timeout='5s'; SET lock_timeout='2s';
       SET transaction_timeout='10s'; SET idle_in_transaction_session_timeout='5s'`);
     const observed: { login: Login; sql: string }[] = [];
-    const hooks: { afterQuery?: (login: Login, sql: string) => void } = {};
+    const hooks: { afterQuery?: (login: Login, sql: string) => void; afterQueueStage?: () => Promise<void> } = {};
     let healthy = true, admitted = 0;
     const pool = (login: Login): DatabaseClient => {
       const db: DatabaseClient = { query: (sql, params) => db.transaction(tx => tx.query(sql, params)),
@@ -106,7 +106,17 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       transaction: work => admin(() => f.db.transaction(work)),
       transactionWithPreCommitCheck: (work, check) => admin(() => f.db.transactionWithPreCommitCheck(work, check)) };
     let inputRegistrations = 0;
+    // This fixture proves routing/authority, not package submission (covered separately).
+    const queueCoordinator = f.create(canonicalSetupDb, { async enqueueInSession() { throw new Error("fixture queue submission not used"); } });
     const routes: ConstructorParameters<typeof ManagedNativeSessions>[3] = {
+      queue: options.queue ? {
+        locate: (...args) => admin(() => queueCoordinator.locateApprovedQueueDelivery(...args)),
+        stage: async (...args) => {
+          const value = await admin(() => queueCoordinator.stageApprovedQueueDelivery(...args));
+          await hooks.afterQueueStage?.(); return value;
+        },
+        transmit: (...args) => admin(() => queueCoordinator.transmitApprovedQueueDelivery(...args)),
+      } : undefined,
       // Canonical approval/envelope/intent/receipt work is privileged fixture composition, not
       // evidence of new coordinator grants. Server authentication is always the manager's pool.
       stage: (...args) => admin(() => f.coordinator.stageQueuedNativeDelivery(...args)),

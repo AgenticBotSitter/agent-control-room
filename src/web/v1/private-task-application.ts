@@ -37,6 +37,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   }
   let closing = false, closePromise: Promise<void> | undefined;
   return Object.freeze({
+    ...(tasks.queueDelivery ? { queueDelivery: tasks.queueDelivery } : {}),
     // Server-side bootstrap only; never passed to the browser request router.
     ...(tasks.submission ? { submission: tasks.submission } : {}),
     ...(tasks.quality ? { quality: tasks.quality } : {}),

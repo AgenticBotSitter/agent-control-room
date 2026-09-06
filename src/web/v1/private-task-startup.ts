@@ -180,6 +180,7 @@ export function createPrivateTaskBootstrap(dependencies: {
       dependencies.install(application);
       // Optional narrow commands reach only trusted server composition, never raw SQL/keys.
       return Object.freeze({ isReady: application.isReady, close: application.close,
+        ...(application.queueDelivery ? { queueDelivery: application.queueDelivery } : {}),
         ...(application.submission ? { submission: application.submission } : {}),
         ...(application.quality ? { quality: application.quality } : {}),
         ...(application.revisions ? { revisions: application.revisions } : {}),

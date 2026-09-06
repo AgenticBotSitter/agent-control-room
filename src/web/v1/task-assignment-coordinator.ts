@@ -178,6 +178,15 @@ export class TaskAssignmentCoordinator {
     return this.stageNativeDelivery(identity, projectId, jobId, expectedInputDigest, expectedPacketDigest, session, signal, expectedAttemptId);
   }
   /** Explicit server queue path; never accepts a caller-supplied browser identity. */
+  async locateApprovedQueueDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || !this.approvalStore || signal.aborted || ref.tenantId !== this.scope.tenantId) conflict();
+    return this.withNativeApproval(undefined, ref.projectId, ref.jobId, ref.inputDigest, async (tx, prepared) => {
+      if (prepared.request.attemptId !== ref.attemptId) conflict();
+      const verified = await this.approvalStore!.revalidateInSession(tx, prepared, ref.packetDigest, signal);
+      return { value: { nodeId: prepared.request.nodeId }, assertFresh: verified.assertFresh };
+    }, ref);
+  }
   async stageApprovedQueueDelivery(input: NativeTaskSubmissionReference, session: ServerNodeSession, signal: AbortSignal) {
     const ref = nativeTaskSubmissionReferenceSchema.parse(input);
     if (!this.nativeTaskSubmission || ref.tenantId !== this.scope.tenantId) conflict();

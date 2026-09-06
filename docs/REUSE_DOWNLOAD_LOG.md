@@ -353,3 +353,8 @@ service or external publication.
 Existing repository dependencies and retained E01 package only. PGlite and synthetic
 signed-session fixtures closed after tests; no native provider, credentials, downloads
 or new retained temporary directories.
+
+### E20 — managed-session queue routing (no acquisition)
+
+Repository dependencies only. Disposable signed-session/PGlite fixtures closed after
+tests; no package acquisition, native provider, credential access or external changes.
