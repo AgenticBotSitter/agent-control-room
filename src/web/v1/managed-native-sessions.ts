@@ -8,6 +8,7 @@ import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import type { NativeEvidenceReceiver } from "./native-evidence-receiver";
 import { captureNativeEvidenceInput, nativeEvidenceRegistrationSchema } from "./native-evidence-receiver";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
+import { ManagedNativeInput, nativeInputConfigurationSchema, type NativeInputConfiguration } from "./managed-native-input";
 
 export type ManagedNativeSessionSettings = {
   nodes: readonly ServerNodeSessionConfig[];
@@ -29,6 +30,7 @@ type Routes = {
   receipt: (session: ServerNodeSession, raw: string | Uint8Array, signal: AbortSignal) => ReturnType<NativeApprovalPacketStore["receiveDeliveryReceipt"]>;
   progress: NativeEvidenceReceiver["receive"];
   recover?: NativeEvidenceReceiver["recover"];
+  register?: NativeEvidenceReceiver["register"];
 };
 type Record = {
   nodeId: string; session?: ServerNodeSession; transport: NativeSessionTransport;
@@ -55,7 +57,8 @@ export class ManagedNativeSessions {
     this.settings = captureManagedNativeSessionSettings(settings);
     if (this.settings.nodes.some(node => node.tenantId !== scope.tenantId)) throw new Error("native_sessions_config_invalid");
     this.routes = Object.freeze({ stage: routes.stage.bind(routes), transmit: routes.transmit.bind(routes),
-      receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes), recover: routes.recover?.bind(routes) });
+      receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes), recover: routes.recover?.bind(routes),
+      register: routes.register?.bind(routes) });
   }
   private current(record?: Record) {
     this.available();
@@ -111,6 +114,16 @@ export class ManagedNativeSessions {
     }).finally(() => { record.busy = false; record.signal = undefined; signal.removeEventListener("abort", aborted); });
   }
   attach(nodeId: string, input: NativeSessionTransport) {
+    return this.attachOwned(nodeId, input).then(value => value.handle);
+  }
+  attachInput(nodeId: string, input: NativeSessionTransport, configuration: NativeInputConfiguration) {
+    const config = nativeInputConfigurationSchema.parse(configuration);
+    if (!this.routes.register || !this.routes.recover) return Promise.reject(new Error("native_input_unavailable"));
+    return this.attachOwned(nodeId, input).then(({ handle, record }) => new ManagedNativeInput(handle, config,
+      (value, signal) => this.operation(record, signal, async () => this.routes.register!(value, signal, () => this.current(record))),
+      () => this.current(record)));
+  }
+  private attachOwned(nodeId: string, input: NativeSessionTransport) {
     this.current(); localId.parse(nodeId);
     const config = this.settings.nodes.find(node => node.nodeId === nodeId);
     if (!config || !input || this.transports.has(input)
@@ -149,7 +162,7 @@ export class ManagedNativeSessions {
           return this.operation(record, signal, async session => this.routes[mode](actor, request.projectId, request.jobId,
             request.inputDigest, request.packetDigest, session, signal));
         };
-        return Object.freeze({ nodeId, grantsExecutionAuthority: false as const,
+        const handle = Object.freeze({ nodeId, grantsExecutionAuthority: false as const,
           hello: (raw: string | Uint8Array, signal: AbortSignal) => { const copy = frame(raw); return this.operation(record, signal, session => session.acceptHello(copy)); },
           reconcile: (raw: string | Uint8Array, signal: AbortSignal) => { const copy = frame(raw); return this.operation(record, signal, session => session.receive(copy)); },
           stage: (identity: VerifiedWebIdentity, value: Task, signal: AbortSignal) => task("stage", identity, value, signal),
@@ -165,6 +178,7 @@ export class ManagedNativeSessions {
           },
           close: () => this.closeRecord(record),
         });
+        return { handle, record };
       } catch { await this.closeRecord(record); throw new Error("native_session_attach_failed"); }
     }).catch(async () => {
       const cleanup = await Promise.allSettled([this.closeRecord(record), ...(prior ? [this.closeRecord(prior)] : [])]);

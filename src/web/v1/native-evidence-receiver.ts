@@ -94,8 +94,9 @@ export class NativeEvidenceReceiver {
       [this.scope.tenantId, projectId, this.scope.workspaceId]);
     if (value.rows.length !== 1) return fail();
   }
-  async register(value: z.infer<typeof nativeEvidenceRegistrationSchema>, signal: AbortSignal) {
-    const input = nativeEvidenceRegistrationSchema.parse(value), current = this.guard(signal), db = this.guarded(current);
+  async register(value: z.infer<typeof nativeEvidenceRegistrationSchema>, signal: AbortSignal, assertSessionCurrent: () => void = () => {}) {
+    const input = nativeEvidenceRegistrationSchema.parse(value), guard = this.guard(signal);
+    const current = () => { assertSessionCurrent(); return guard(); }, db = this.guarded(current);
     let freshDeadline: number | undefined;
     const registration = await db.transactionWithPreCommitCheck(async tx => {
       await this.project(tx, input.projectId);

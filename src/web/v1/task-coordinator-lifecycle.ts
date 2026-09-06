@@ -139,6 +139,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
     recover: receiver!.recover.bind(receiver),
+    register: receiver!.register.bind(receiver),
   }, run, check, input.clock) : undefined;
   sessionState.manager = sessions;
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)) });
@@ -188,7 +189,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     ...(revisions ? { revisions } : {}),
     ...(results ? { results } : {}),
     ...(ownedEvidence ? { evidence: ownedEvidence } : {}),
-    ...(sessions ? { connections: Object.freeze({ ...scope, attach: sessions.attach.bind(sessions) }) } : {}),
+    ...(sessions ? { connections: Object.freeze({ ...scope, attach: sessions.attach.bind(sessions), attachInput: sessions.attachInput.bind(sessions) }) } : {}),
     isReady: () => !closing && !invalid && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable()),
     close(): Promise<void> {
       if (closePromise) return closePromise;
