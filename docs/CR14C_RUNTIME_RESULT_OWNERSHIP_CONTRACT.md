@@ -27,6 +27,9 @@ No new HTTP/browser route or automatic callback/timer is introduced.
   supplied keys/methods before asynchronous work. Guard every SQL await, final precommit and
   acknowledgement against cancellation, non-monotonic time and a ten-second operation limit.
   Nested checkpoint advances flush only at the outer transaction's final precommit boundary.
+  For a v2 binding, authenticate the saved execution plan and lock its predecessor run/job
+  before the first profile read. Fresh-registration expiry is also a final precommit fence;
+  historical exact replay remains exempt. Pool health is rechecked after commit acknowledgement.
 - Shared coordinator admission/drain bounds cover the optional writer. Health loss or close
   invalidates retained handles and in-flight sessions; every owned pool closes at most once.
   Lost acknowledgement is uncertainty; explicit exact replay can reconcile durable records.
@@ -42,6 +45,20 @@ only gate integrity, audit heads and inert lock columns. A role-specific insert 
 profiles, reviews, findings, verifications, approvals and unlinked/native-producer mismatches.
 No run/progress/artifact capture, job/attempt/lease transition, outbox write or provisioning grant.
 Database privileges supplement, not replace, application HMAC, checkpoint and lineage verification.
+
+## Later operator preparation (not performed by this block)
+
+After separately authorized private PostgreSQL rehearsal, an operator applies the complete
+migration sequence through0055 using the migration owner. On that same primary, the offline
+`db/roles/native_results_roles.sql` script prepares only the fixed NOLOGIN group role; it
+does not create login credentials, open network access or configure the application.
+A separately provisioned non-owner LOGIN must inherit only that group and use the existing
+bounded private-PostgreSQL settings. Do not reuse either existing web/coordinator login.
+Pass its private configuration as `coordinator.resultDatabase` together with matching
+quality/readback configuration. Startup rejects missing/extra privileges, altered guards,
+schema drift, mixed role membership, cross-primary topology and aliased pool resources.
+Omitting this option retains the two-pool application. No deployment bootstrap currently
+supplies it, and no automatic scheduling or progress/result callback is implied.
 
 ## Evidence and authority
 

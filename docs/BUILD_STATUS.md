@@ -325,7 +325,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 |---|---|---|
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
-| Real task -> agent -> progress -> result -> review in the website | Protected proposals, planning, assignment, review, revision preparation and revised-result history connect to synthetic native lifecycles; verified finished runs release capacity without quality approval. Runtime registration/activation/signing and real host acceptance remain | CR14C |
+| Real task -> agent -> progress -> result -> review in the website | Protected proposals, planning, assignment, review, revision preparation and revised-result history connect to synthetic native lifecycles; a separately restricted runtime writer now owns initial/revised result submission. Canonical run/progress/capture ownership, activation/signing and real host acceptance remain | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Private view reads existing enrollments/signals; new native adapter is component-tested but unwired; no live fleet/dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
@@ -385,6 +385,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C runtime result ownership | Independently reviewed three-role startup and initial/revised result writer; no canonical job transitions, owner approval or live runtime activation | `CR14C_RUNTIME_RESULT_OWNERSHIP_ACCEPTANCE.md` |
 | CR14C verified native capacity release | Independently reviewed lease-only release before quality approval, preserved source history and later completion; unchanged-limit revision assignment proven in disposable integration | `CR14C_NATIVE_CAPACITY_RELEASE_ACCEPTANCE.md` |
 | CR14C revised-result execution and review | Independently accepted same-subject synthetic child execution, exact producer/file matching, protected review and child-only completion; source reservation turnover and runtime activation remain | `CR14C_REVISED_RESULT_ACCEPTANCE.md` |
 | CR14C quality coordinator mounting | Independently accepted optional internal reconciliation under exact coordinator role/startup; event routing, revisions and live activation remain | `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md` |
@@ -2329,14 +2330,35 @@ PR #335 at `1c6b5d4` passed all nine GitHub jobs in run `34011391526`.
 This new block still needs current-head CI and dependency-order integration; no merge
 or deployment is claimed.
 
+## Trusted runtime result ownership
+
+Production `9324d5d` plus correction `9857e42` and integrated evidence `31e3d7a`
+are independently reviewed. An optional third restricted pool now registers initial
+and revised review bindings against the actual execution plan and submits re-read
+authenticated saved bytes. It neither approves results nor changes canonical job state.
+All three configured roles are verified before application installation; without the
+option, the existing two-pool behavior remains unchanged. See
+`CR14C_RUNTIME_RESULT_OWNERSHIP_ACCEPTANCE.md` for retained findings and fixture corrections.
+
+New backend26, startup13 and compiled2 tests passed. Existing role/startup/lifecycle52,
+compiled28, rendered4, both builds, types, full lint and disposable migrations0055/138
+passed. Final integrated41 passed; six prior272-file default lanes passed2,518 with two
+existing platform skips. The expanded275-file inventory and eight inventory checks passed;
+new files were tested separately before registration. Details are recorded in acceptance.
+Original-generation v2 setup remains privileged fixture work; the revised child uses the
+actual restricted writer. This is not physical PostgreSQL concurrency or a live bot.
+PR #336 at `8e3247e` passed all nine GitHub checks in run `34012452533`.
+The new block still requires its own current-head CI and dependency-order integration.
+No merge, native/provider call, database service or deployment is claimed.
+
 ## Next block
 
 ```text
-Block: CR14C trusted runtime result registration and submission composition
+Block: CR14C trusted native evidence receiver ownership
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: The protected website can now prepare a revision from recorded feedback, but actual runtime ownership of native review-plan registration and result submission still relies on trusted fixture setup rather than a configured restricted writer.
-Expected output: root-owned bounded composition for the existing native plan/result operations, with exact initial/revision producer binding, explicit resource/privilege ownership, and independent disposable startup/recovery tests. Reuse current protocols; do not activate live dispatch or widen the web role. Runtime scheduling/recovery and owner signing remain unconfigured; PR #329 remains a separate unresolved gate.
+Why: The runtime now owns review binding and submission, but canonical run/progress registration and authenticated file capture still depend on privileged fixture preparation.
+Expected output: root-owned bounded receiver composition using existing authenticated admission, server-session progress and result-capture services; register review bindings before progress and submit only after verified capture. Define exact resource/SQL ownership with independent disposable initial/revised and uncertainty tests. Do not activate a listener, live dispatch or widen the existing web/result roles. Runtime routing/recovery and owner signing remain unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

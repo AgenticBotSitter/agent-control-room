@@ -354,7 +354,7 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **CR14C protected owner revision-planning interface**, using
+block is **CR14C trusted native evidence receiver ownership**, using
 **Astra Medium (`gpt-6-astra`, `medium`)**. Planned initial result submission and owner-authorized execution
 planning are accepted in their separate records; neither dispatches tasks or revisions. Protected page/API
 planning and canonical assignment/expiry are now optionally mounted without changing web SQL privileges;
@@ -362,6 +362,14 @@ supplied-resource ownership is accepted in `CR14C_TASK_COORDINATOR_LIFECYCLE_ACC
 The coordinator role/schema gate is accepted in `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`.
 Verified two-pool bootstrap mounting is accepted in `CR14C_VERIFIED_TASK_STARTUP_ACCEPTANCE.md`.
 Actual signed admission/dispatch and real deployment configuration remain; no live startup is claimed.
+Protected owner revision preparation and the optional three-role result writer are now
+independently reviewed in `CR14C_OWNER_REVISION_INTERFACE_ACCEPTANCE.md` and
+`CR14C_RUNTIME_RESULT_OWNERSHIP_ACCEPTANCE.md`. The writer registers actual initial/v2
+review bindings and submits verified saved bytes, without job transitions or quality approval.
+Migration0055 retains138 tables and adds a narrow native-result role/guard; existing
+web/coordinator grants remain unchanged. Next, give the existing authenticated run,
+progress and capture services bounded receiver ownership so tests no longer need
+privileged fixture preparation for those steps. Physical services remain separately gated.
 Exact native payload/approval/effect binding is accepted in `CR14C_NATIVE_TASK_APPROVAL_BINDING_ACCEPTANCE.md`.
 Node-side NativeAuthority, current-policy checks, durable claim/marker ordering, paired signature intake
 and canonical unsigned preparation are now independently accepted. Owner HTTP/page signed-file intake
