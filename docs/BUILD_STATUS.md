@@ -385,6 +385,7 @@ ready queue. Never turn negative/native-blocked evidence into a pass when adopti
 
 | Milestone | Status | Evidence |
 |---|---|---|
+| CR14C verified native capacity release | Independently reviewed lease-only release before quality approval, preserved source history and later completion; unchanged-limit revision assignment proven in disposable integration | `CR14C_NATIVE_CAPACITY_RELEASE_ACCEPTANCE.md` |
 | CR14C revised-result execution and review | Independently accepted same-subject synthetic child execution, exact producer/file matching, protected review and child-only completion; source reservation turnover and runtime activation remain | `CR14C_REVISED_RESULT_ACCEPTANCE.md` |
 | CR14C quality coordinator mounting | Independently accepted optional internal reconciliation under exact coordinator role/startup; event routing, revisions and live activation remain | `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md` |
 | CR14C approval lifecycle/reconciliation | Independently accepted bounded trusted approval port and historical receipt readback; no HTTP/signer/dispatch | `CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md` |
@@ -2283,14 +2284,36 @@ run `34009139614`. No merge, physical PostgreSQL rehearsal or deployment is clai
 Published as [PR #334](https://github.com/MarvinAi5/control-room/pull/334), stacked on
 PR #333. Its current-head CI remains required; this stack is not merged.
 
+## Verified finished-execution capacity release
+
+Production `657fab2` and integrated evidence `9db47b8` are independently reviewed.
+The optional quality coordinator now releases only a verified completed run's current
+lease while its file awaits review or changes. It retains the exact job/attempt/quality
+history; later approved completion verifies the recorded release without rewriting it.
+Tests prove unchanged-limit assignment both when revisions are planned before release
+and when pending release precedes owner feedback and planning. See
+`CR14C_NATIVE_CAPACITY_RELEASE_ACCEPTANCE.md` for proof and retained review corrections.
+
+Final combined persistence/coordinator/sweep tests passed102; compiled26, rendered4,
+both builds, types and full lint passed. The prior default268-file lane inventory passed
+2,474 with two existing platform skips; its run began before the final integrity correction,
+so the final102 and isolated32 new tests separately establish that correction's coverage.
+All new files are now registered (270 default lifecycle files), with eight inventory checks.
+Database schema/roles are unchanged; disposable migration verification remains0054/138.
+No live node, PostgreSQL service, scheduler, provider call or deployment is claimed.
+
+PR #334 head `ef2a2ff` passed all jobs and the aggregate gate in GitHub run `34010550899`.
+This capacity-release branch still requires its own current-head CI and dependency-order
+integration. No merge authority is inferred.
+
 ## Next block
 
 ```text
-Block: CR14C evidence-backed execution reservation retirement
+Block: CR14C protected owner revision-planning interface
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Revised-result execution and fresh review now compose in disposable tests, but the unapproved original execution still holds a canonical slot and can block the next assignment.
-Expected output: truthful coordinated release of finished execution capacity with authenticated evidence, preserved quality history, exact replay and capacity-limited revision tests. Root must settle eligibility/order and canonical outcomes first. PR #329 remains a separate unresolved gate; browser revision planning, runtime scheduling/registration/recovery and owner signing remain unconfigured.
+Why: Verified finished runs can now free their canonical slots without approving the output, and revision planning/assignment works afterward at unchanged capacity. The website still needs to expose the existing bounded revision-planning operation.
+Expected output: protected owner command and task/result controls that create and reconcile the exact linked revision job from recorded feedback, preserve uncertainty, and show the new task without implying a native start. Runtime scheduling/registration/recovery and owner signing remain unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

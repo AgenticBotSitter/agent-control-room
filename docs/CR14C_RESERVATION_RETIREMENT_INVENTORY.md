@@ -48,3 +48,12 @@ Required new proof includes a real disposable capacity-limited assignment lifecy
 unchanged source quality history, no repeated native effect, precise replay and refusals
 for unavailable evidence, newer epochs, expiry races and uncertain commit acknowledgements.
 Root owns protocol/state/SQL decisions; isolated agents can test the settled contract.
+
+## Settled execution-capacity direction
+
+`CR14C_NATIVE_CAPACITY_RELEASE_CONTRACT.md` separates execution occupancy from result
+quality. Verified native completion can release only the current lease while preserving
+job, attempt and review evidence. No successor is required for eligibility. This avoids
+the earlier ordering loop and lets later review/planning occur after capacity is free.
+`CR14C_NATIVE_CAPACITY_RELEASE_ACCEPTANCE.md` tracks implementation and proof; the earlier
+inventory remains historical, not a claim that a new terminal job outcome was introduced.

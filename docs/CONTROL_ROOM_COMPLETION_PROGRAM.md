@@ -6,8 +6,8 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — evidence-backed execution reservation retirement, then protected
-revision planning and runtime registration/recovery/owner signing, on Astra Medium. Upstream workflow
+**Next block:** CR14C C-WORK — protected owner revision-planning interface, then
+runtime registration/recovery/owner signing, on Astra Medium. Upstream workflow
 completion remains a separate unresolved gate; draft PR #329 is excluded. Exact optional
 quality/completion coordinator mounting is independently reviewed in
 `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md`; it is not a background event router or live fleet.
@@ -20,9 +20,11 @@ proposed successor from exact result/review evidence. Revised-result binding, su
 protected reads/review and child-only quality completion are now independently reviewed in
 `CR14C_REVISED_RESULT_ACCEPTANCE.md`. The executable reader accepts the authenticated v2
 plan; actual producer identities remain distinct from the shared logical review subject.
-This is a synthetic two-job lifecycle, not an activated runtime. The old execution still
-holds its canonical reservation; `CR14C_RESERVATION_RETIREMENT_INVENTORY.md` records why
-capacity-limited continuous revisions need a new truthful coordinated operation.
+This is a synthetic two-job lifecycle, not an activated runtime. Verified lease-only release
+before quality approval is now independently reviewed in `CR14C_NATIVE_CAPACITY_RELEASE_ACCEPTANCE.md`.
+It preserves old job/attempt/result evidence while freeing canonical capacity. Later quality
+completion verifies the recorded release rather than rewriting it; revision planning and
+assignment after pending release fit the unchanged capacity in disposable tests.
 The supplied-database native quality/completion operation is independently reviewed in
 `CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md`; no running fleet is inferred. Optional human result checks are
 independently reviewed in `CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`; they are not a mandatory owner
@@ -347,7 +349,7 @@ No fresh calendar/percentage completion claim is made until the first real conne
 CR14A is accepted for planning and coordination tooling; see `CR14A_ACCEPTANCE.md`. The CR14B foundation is
 accepted for component/in-process integration; see `CR14B_FOUNDATION_ACCEPTANCE.md`. The ordinary-project
 private application is also accepted; see `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`. The next architect
-block is **CR14C evidence-backed execution reservation retirement**, using
+block is **CR14C protected owner revision-planning interface**, using
 **Astra Medium (`gpt-6-astra`, `medium`)**. Planned initial result submission and owner-authorized execution
 planning are accepted in their separate records; neither dispatches tasks or revisions. Protected page/API
 planning and canonical assignment/expiry are now optionally mounted without changing web SQL privileges;
