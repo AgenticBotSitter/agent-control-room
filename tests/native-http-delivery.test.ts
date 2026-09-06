@@ -104,6 +104,37 @@ test("failed output after a successful host exchange closes that exact generatio
   assert.equal(f.handles[0].closes, 1); assert.deepEqual(f.handles[0].receives, []);
 });
 
+test("same-generation commands wait for successful response settlement without draining queued packets", async t => {
+  const f = fixture(); t.after(() => f.host.close());
+  const first = exchange(openCommand(), false), pending = f.host.handleNode(first.input, first.output as unknown as ServerResponse);
+  await first.output.ended.promise; const token = connection(first.output);
+  assert.equal(f.handles.length, 1); assert.equal(f.handles[0].closes, 0);
+  await f.transports[0].send("packet:first"); await f.transports[0].send("packet:second");
+
+  const overlapping = exchange({ schema: "control-room.native-http/v1", operation: "exchange",
+    connection: token, packet: "packet:inbound" });
+  await f.host.handleNode(overlapping.input, overlapping.output as unknown as ServerResponse);
+  assert.equal(overlapping.output.statusCode, 503);
+  assert.deepEqual(JSON.parse(overlapping.output.body()), { error: "native_http_unavailable" });
+  assert.deepEqual(f.handles[0].receives, []); assert.equal(f.handles[0].closes, 0);
+
+  const closing = exchange({ schema: "control-room.native-http/v1", operation: "close", connection: token });
+  await f.host.handleNode(closing.input, closing.output as unknown as ServerResponse);
+  assert.equal(closing.output.statusCode, 503); assert.equal(f.handles[0].closes, 0);
+  assert.equal(f.transports[0].isAvailable(), true); assert.equal(f.host.isReady(), true);
+
+  first.output.complete(); await pending;
+  assert.equal(first.output.writableFinished, true); assert.equal(first.output.destroyed, false);
+  assert.equal(f.handles[0].closes, 0); assert.equal(f.transports[0].isAvailable(), true);
+
+  const next = exchange({ schema: "control-room.native-http/v1", operation: "exchange", connection: token, packet: null });
+  await f.host.handleNode(next.input, next.output as unknown as ServerResponse);
+  assert.equal(next.output.statusCode, 200);
+  assert.deepEqual(JSON.parse(next.output.body()), { schema: "control-room.native-http/v1", connection: token,
+    packets: ["packet:first", "packet:second"], more: false });
+  assert.deepEqual(f.handles[0].receives, []); assert.equal(f.handles[0].closes, 0);
+});
+
 test("a replacement opened before late old-response failure stays current and ready", async t => {
   const f = fixture(); t.after(() => f.host.close());
   const first = exchange(openCommand(), false), oldPending = f.host.handleNode(first.input, first.output as unknown as ServerResponse);
