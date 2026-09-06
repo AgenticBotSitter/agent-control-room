@@ -6,8 +6,10 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — reconnect to recorded native work without re-execution,
-then runtime recovery and owner signing, on Astra Medium. Managed session ownership
+**Next block:** CR14C C-WORK — node-owned saved-observation reporting across replacement,
+then runtime activation and owner signing, on Astra Medium. Server-side recorded-work
+recovery is accepted in `CR14C_RECORDED_NATIVE_RECONNECT_ACCEPTANCE.md`; tests preserve
+saved results and revisions without redispatch or native restart. Managed session ownership
 and initial/revised evidence routing are locally accepted in
 `CR14C_MANAGED_NATIVE_SESSIONS_ACCEPTANCE.md`; no listener or live fleet is activated.
 Result registration

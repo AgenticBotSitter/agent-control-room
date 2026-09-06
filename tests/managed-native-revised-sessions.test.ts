@@ -159,9 +159,12 @@ test("new managed child connection registers and delivers the actual v2 result u
   assert.equal(next.peer.journal.stageOutbound(recovered, true, now), "staged");
   next.peer.journal.markSent(recovered.messageId, now);
   const recoveredResult = await next.handle.progress(JSON.stringify(recovered), bytes, currentSignal());
+  assert.equal(next.peer.outgoing.length, 1);
+  const recoveredAck = JSON.parse(next.peer.outgoing[0]);
+  assert.equal(recoveredAck.type, "protocol.ack");
+  assert.equal(recoveredAck.causationId, recovered.messageId);
   await next.peer.acknowledge();
   assert.equal(recoveredResult.replayed, true); assert.deepEqual(recoveredResult.submission, result.submission);
-  assert.equal(next.peer.sent.some(frame => frame.type === "harness.native.dispatch"), false);
   assert.deepEqual(await x.counts(), counts); assert.deepEqual(x.local.calls, calls);
   assert.deepEqual(await x.states(), childBefore); assert.deepEqual(await sourceEvidence(), evidenceBefore);
   assert.deepEqual(await x.admin(original.states), sourceBefore);

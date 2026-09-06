@@ -2376,14 +2376,25 @@ and precise limits. No listener, live agent, owner signer or deployment is activ
 Prerequisite #338 had a CI isolation failure; reviewed correction `cb32295` is pushed
 and awaiting its own current-head CI. No GitHub merge is claimed.
 
+## Recorded native reconnect: accepted locally
+
+Production `4fa5d9c` restores reporting for exact authenticated historical delivery/run
+evidence without dispatch, registration, lease renewal or native restart. Independent
+production and test reviews accepted the implementation and corrected evidence.
+Final reconnect/denial/revised/compiled checks passed28; the overlapping existing
+managed/startup/compiled suite passed30. Types, full lint, inventory, adapter isolation
+and the private build passed. See `CR14C_RECORDED_NATIVE_RECONNECT_ACCEPTANCE.md`
+for the retained failures, corrections and limits. Prerequisites #338 (`cb32295`) and
+#339 (`1f62ec0`) now each have all nine GitHub checks successful; neither is merged.
+
 ## Next block
 
 ```text
-Block: CR14C reconnect to recorded native work without re-execution
+Block: CR14C node-owned saved-observation reporting across replacement
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: The runtime owns initial and revised task connections, but a fresh connection correctly refuses progress for a task delivered on an old session. Recorded-work recovery must be explicit and must never resend or restart that task.
-Expected output: root-owned recovery of evidence routing from exact authenticated saved delivery/run records after a fresh signed handshake, with current identity and scope checks, bounded failure handling and independent replay/replacement tests. Preserve separate native start/stop authority and quality approval. No listener or live agent activation. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
+Why: Server-side recovery is tested, but its successful fixture currently explicitly republishes a saved observation. The node runtime must own that reporting path without starting, polling or stopping a provider merely because its transport changed.
+Expected output: bounded node-side ownership of existing recorded observations and fresh-session reporting, connected to the accepted bridge and server recovery path in disposable tests. Preserve original native identity, exact evidence replay, uncertainty and separate start/stop authority. No listener or live agent activation. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

@@ -46,7 +46,7 @@ async function installRestrictedPools(startup) {
     sessions: restrictedPool(startup, "session_test") };
 }
 
-for (const mode of ["progress", "recover"]) test(`compiled five-role startup owns a signed session and refuses ${mode} without recorded delivery`, async t => {
+for (const mode of ["progress", "recover"]) test(`compiled five-role startup owns a signed session and refuses ${mode} without complete matching historical proof`, async t => {
   const x = await nativeTaskLifecycleFixture(); t.after(x.close);
   assert.equal((await x.f.db.query("SELECT 1 AS present FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
     [x.registration.tenantId, x.registration.id])).rows.length, 0);
