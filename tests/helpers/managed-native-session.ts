@@ -13,6 +13,7 @@ import { TaskResultCoordinator } from "../../src/web/v1/task-result-coordinator"
 import { verifyNativeSessionDatabase, verifyNativeEvidenceDatabase, verifyNativeResultDatabase } from "../../src/web/v1/private-database-preflight";
 import { NATIVE_DELIVERY_FEATURE } from "../../src/harness/v1/native-delivery";
 import { prepareNativeExecutionHandoff } from "../../src/harness/hermes-native-v1/execution-handoff";
+import { NativeObservationReporter } from "../../src/harness/hermes-native-v1/observation-reporter";
 import { nativeTaskObservation, nativeTaskRegistration } from "../../src/harness/hermes-native-v1/task-observation";
 import { resolvePinnedApprovalKey } from "../../src/node-policy/v1/pinned-approval-trust";
 import { sha256Digest } from "../../src/security";
@@ -31,7 +32,7 @@ export type ManagedNativePreparedContext = { f: Base; local: Local; providerRunI
 /** Real signed node protocol and restricted server SQL, entirely in disposable fake-native fixtures.
  * Canonical assignment/approval/dispatch and producer policy reads remain labelled privileged setup.
  * Never constructs a server session or supplies f.auth to the managed server. */
-export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext) {
+export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean } = {}) {
   const f = context?.f ?? await canonicalApprovalStorageFixture();
   const cleanup: (() => void | Promise<void>)[] = [f.close];
   const admin = async <T>(work: () => Promise<T>): Promise<T> => {
@@ -171,6 +172,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       const handoff = await admin(() => prepareNativeExecutionHandoff({ queueId: frame.body.queueId,
         enrollment: f.prepared.enrollment, serverActorId: "server:managed" }, {
         deliveries: x.peer.journal, runs: local.journal, approvals: f.approvals,
+        ...(options.reporting ? { reporting: x.peer.bridge } : {}),
         security: { currentServerTrustRevision: () => f.native.trust.currentServerTrustRevision(),
           async resolveServerKey() { return new Uint8Array(Buffer.from(spki, "base64url")); } },
         local: local.dependencies, clock: f.clock, transport: { ...local.transport,
@@ -186,13 +188,24 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
         },
       }, f.abort.signal));
       cleanup.push(() => handoff.close());
-      const produce = (phase: "start" | "running" | "completed") => admin(async () => {
+      const reporter = options.reporting ? new NativeObservationReporter({ queueId: frame.body.queueId,
+        enrollment: f.prepared.enrollment, serverId: frame.actorId, serverKeyId: frame.keyId, serverPublicKeySpki: spki }, {
+        deliveries: x.peer.journal, runs: local.journal, bridge: x.peer.bridge, clock: f.clock,
+        assertAvailable: () => { if (f.abort.signal.aborted) throw new Error("synthetic_reporting_unavailable"); },
+      }) : undefined;
+      if (reporter) cleanup.push(() => reporter.close());
+      const advanceNative = (phase: "start" | "running" | "completed") => admin(async () => {
         if (phase === "start") await handoff.start();
         else { const now = f.clock() + 1000; f.setNow(now); local.setNow(now); if (phase === "completed") resultText = context?.resultText ?? qualityText; await handoff.poll(); }
-        const body = nativeTaskObservation(handoff.snapshot(), registration.nativeTask!);
-        await x.peer.bridge.publishNativeSnapshot(body, timestamp()); const raw = x.peer.incoming.shift(); assert.ok(raw); return { raw, body };
+        return nativeTaskObservation(handoff.snapshot(), registration.nativeTask!);
       });
-      return { receipt, handoff, produce };
+      const produce = async (phase: "start" | "running" | "completed") => {
+        const body = await advanceNative(phase);
+        // The default retains existing fixture publication. Opt-in handoff reports itself.
+        if (!options.reporting) await admin(() => x.peer.bridge.publishNativeSnapshot(body, timestamp()));
+        const raw = x.peer.incoming.shift(); assert.ok(raw); return { raw, body };
+      };
+      return { receipt, handoff, produce, advanceNative, reporter };
     };
     const states = () => admin(async () => ({ job: await f.canonical.get(f.scope.tenantId, "job", task.jobId),
       attempt: await f.canonical.get(f.scope.tenantId, "attempt", registration.attemptId),
