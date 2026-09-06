@@ -26,6 +26,10 @@ const candidateRowsSchema = z.array(z.object({ run_id: catalogProjectIdSchema, j
 const scenariosSchema = z.array(z.object({ scenarioId: catalogProjectIdSchema, acceptanceProfileId: catalogProjectIdSchema,
   acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), rules: documentStructureRulesSchema }).strict()).max(50);
 const deny = (): never => { throw new Error("task_quality_unavailable"); };
+/** Distinguish operation invalidation from an individual unavailable saved result. */
+class QualityOperationInterrupted extends Error {
+  constructor() { super("task_quality_unavailable"); }
+}
 
 export function validateTaskQualityKeys(quality: TaskQualityConfiguration, reviewKey: Uint8Array, web: PrivateWebProcessOptions["tasks"]) {
   const equal = (a: Uint8Array, b: Uint8Array | undefined) => b instanceof Uint8Array && a.length === 32 && b.length === 32 && timingSafeEqual(a, b);
@@ -67,8 +71,18 @@ export class TaskQualityCoordinator {
   }
   private operation(signal: AbortSignal, assertCurrent: () => void) {
     if (!(signal instanceof AbortSignal)) return deny();
-    const time = () => { const now = this.clock(); if (!Number.isSafeInteger(now) || now < 0 || now < this.highWater) return deny(); this.highWater = now; return now; };
-    const started = time(), current = () => { if (signal.aborted || time() - started > 10_000) return deny(); assertCurrent(); };
+    let interrupted = false;
+    const stop = (): never => { interrupted = true; throw new QualityOperationInterrupted(); };
+    const time = () => {
+      if (interrupted) return stop();
+      let now: number; try { now = this.clock(); } catch { return stop(); }
+      if (!Number.isSafeInteger(now) || now < 0 || now < this.highWater) return stop();
+      this.highWater = now; return now;
+    };
+    const started = time(), current = () => {
+      if (signal.aborted || time() - started > 10_000) return stop();
+      try { assertCurrent(); } catch { return stop(); }
+    };
     current();
     return { time, current };
   }
@@ -113,8 +127,9 @@ export class TaskQualityCoordinator {
         current();
         const result = await this.reconcile(exact, signal, current);
         current(); items.push({ runId: row.run_id, jobId: row.job_id, status: "reconciled", result });
-      } catch {
+      } catch (error) {
         // Do not convert cancellation, a stale lifecycle or an expired budget into a normal item.
+        if (error instanceof QualityOperationInterrupted) throw error;
         current(); items.push({ runId: row.run_id, jobId: row.job_id, status: "unavailable", requiresReconciliation: true });
       }
     }
