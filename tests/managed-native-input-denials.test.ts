@@ -269,6 +269,47 @@ test("queued and active cancellation close the owner and abort the ordered suffi
   });
 });
 
+test("the fixed deadline includes FIFO waiting and late work cannot revive the suffix", async t => {
+  await t.test("a queued operation receives no fresh deadline when it dequeues", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const headGate = deferred(), headEntered = deferred(), queuedGate = deferred(), queuedEntered = deferred();
+    const raw = rawHandle({ before(method) {
+      if (method === "hello") { headEntered.resolve(); return headGate.promise; }
+      if (method === "reconcile") { queuedEntered.resolve(); return queuedGate.promise; }
+    } });
+    const x = inputFixture("initial", raw);
+    const head = x.input.receive(hello(), undefined, signal()); await headEntered.promise;
+    const queued = x.input.receive(reconciliation(), undefined, signal()).catch(error => error);
+    const suffix = x.input.stage(actor, task, signal()).catch(error => error);
+    t.mock.timers.tick(9_999); headGate.resolve();
+    assert.deepEqual(await head, { kind: "hello" }); await queuedEntered.promise;
+    assert.deepEqual(methods(raw.calls), ["hello", "reconcile"]);
+    t.mock.timers.tick(1);
+    assert.equal((await queued).message, "native_input_uncertain");
+    assert.equal((await suffix).message, "native_input_uncertain");
+    assert.equal(raw.closes(), 1);
+    queuedGate.resolve(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(methods(raw.calls), ["hello", "reconcile", "close"]);
+  });
+
+  await t.test("expiry rejects a held head and its suffix before late completion", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const gate = deferred(), entered = deferred();
+    const raw = rawHandle({ before(method) {
+      if (method === "hello") { entered.resolve(); return gate.promise; }
+    } });
+    const x = inputFixture("initial", raw);
+    const head = x.input.receive(hello(), undefined, signal()).catch(error => error); await entered.promise;
+    const queued = x.input.receive(reconciliation(), undefined, signal()).catch(error => error);
+    const suffix = x.input.stage(actor, task, signal()).catch(error => error);
+    t.mock.timers.tick(10_000);
+    for (const result of await Promise.all([head, queued, suffix])) assert.equal(result.message, "native_input_uncertain");
+    assert.deepEqual(methods(raw.calls), ["hello", "close"]); assert.equal(raw.closes(), 1);
+    gate.resolve(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(methods(raw.calls), ["hello", "close"]); assert.equal(raw.closes(), 1);
+  });
+});
+
 test("close is idempotent and invalidates retained operations", async () => {
   const x = inputFixture("initial");
   const first = x.input.close(), second = x.input.close();
