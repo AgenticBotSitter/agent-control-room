@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Shared stylesheet relocated:** The protected app now imports `styles/control-room.css`
+directly; the preview imports that same single source through its existing wrapper.
+Pre-change declaration bytes are identical, and the standalone build passes. This
+removes a legacy stylesheet-path dependency, not demo rules or asset-rights blockers.
+All 53 combined compiled/profile/launcher checks and targeted lint pass. No full
+default lifecycle or visual/hosted-preview validation is claimed.
+
 **Explicit standalone asset packaging:** [Asset review](PUBLIC_ASSET_REVIEW.md) found
 the old preview PNG in the built client directory despite the server refusing it.
 Standalone Vite now emits only the required favicon rather than copying all public

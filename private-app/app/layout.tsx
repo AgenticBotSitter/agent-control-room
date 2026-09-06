@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import "../../app/globals.css";
+import "../../styles/control-room.css";
 import "./private.css";
 
 export const metadata: Metadata = { title: "Projects · Control Room", robots: { index: false, follow: false },

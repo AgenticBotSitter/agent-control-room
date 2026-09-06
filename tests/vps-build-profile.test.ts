@@ -21,6 +21,8 @@ test("VPS build uses isolated artifacts and its all-route readiness guard cannot
   const guard = readFileSync("middleware.ts", "utf8");
   assert.match(guard, /handlePrivateWebRequest/);
   assert.match(config, /appDir: "private-app"/);
+  assert.match(readFileSync("private-app/app/layout.tsx", "utf8"), /styles\/control-room\.css/);
+  assert.doesNotMatch(readFileSync("private-app/app/layout.tsx", "utf8"), /app\/globals\.css/);
   const runtime = readFileSync("src/web/v1/private-process.ts", "utf8");
   assert.match(runtime, /private_app_not_configured/); assert.match(runtime, /status: 503/);
   assert.doesNotMatch(guard, /matcher:/);

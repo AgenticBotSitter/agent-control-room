@@ -46,6 +46,20 @@ No full default suite, visual browser review or hosted preview build was run.
 
 ## Remaining decisions
 
+### Shared stylesheet location follow-up
+
+The original shared stylesheet was moved byte-for-byte to `styles/control-room.css`.
+The protected layout imports that shared file directly; the old preview stylesheet
+now imports the same file. There is one declaration source, no duplicated theme and
+no deliberate cascade/rule-order change. The protected tree no longer needs the
+legacy `app/globals.css` wrapper. Exact source-byte equality was checked against the
+pre-change Git version, and the standalone build passes.
+
+This is structural separation, not completed removal of demo selectors. Those rules
+remain in the shared file pending a consumer-aware split. CSS dependency traversal
+in the export inventory still needs to follow `@import` for preview-oriented scopes.
+No browser screenshot or computed-style comparison was performed.
+
 Confirm original-asset rights or approve replacement artwork before public export.
 Audit the final generated client tree and dependency notices, not just source assets.
 Maintain a public-safe README without inherited private-preview imagery. No asset
