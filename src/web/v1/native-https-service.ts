@@ -7,11 +7,9 @@ import { nativeHttpLimits } from "../../harness/v1/native-http-exchange";
  * supplies exact peer pins and task authorization. No key loading or provisioning.
  * Construction is inert. Explicit start is a separately authorized physical effect.
  */
-export function createNativeHttpsService(input: {
-  host: string; port: number; key: Uint8Array; cert: Uint8Array; ca: Uint8Array;
-  application: Pick<ReturnType<typeof createNativeHttpHost>, "isReady" | "handleNode" | "close">;
-  createServer?: typeof createServer;
-}) {
+export type NativeHttpsConfiguration = { host: string; port: number; key: Uint8Array; cert: Uint8Array; ca: Uint8Array };
+/** Trusted configuration capture only; returned bytes are private and never a log/report. */
+export function captureNativeHttpsConfiguration(input: NativeHttpsConfiguration) {
   const { host, port } = input, octets = host.split(".").map(Number);
   const privateAddress = host === "127.0.0.1" || octets[0] === 10
     || octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31
@@ -23,7 +21,15 @@ export function createNativeHttpsService(input: {
     if (!(bytes instanceof Uint8Array) || bytes.length < 1 || bytes.length > 65_536) throw new Error("native_https_service_config_invalid");
     return Buffer.from(bytes);
   };
-  const key = copy(input.key), cert = copy(input.cert), ca = copy(input.ca);
+  return { host, port, key: copy(input.key), cert: copy(input.cert), ca: copy(input.ca) };
+}
+export function createNativeHttpsService(input: NativeHttpsConfiguration & {
+  application: Pick<ReturnType<typeof createNativeHttpHost>, "isReady" | "handleNode" | "close">;
+  createServer?: typeof createServer;
+  onUnavailable?: () => void;
+}) {
+  const { host, port, key, cert, ca } = captureNativeHttpsConfiguration(input);
+  const onUnavailable = input.onUnavailable;
   const application = input.application, make = input.createServer ?? createServer;
   const handle = application.handleNode.bind(application), appReady = application.isReady.bind(application);
   const closeApp = application.close.bind(application);
@@ -48,6 +54,7 @@ export function createNativeHttpsService(input: {
       } catch { server?.closeAllConnections(); throw new Error("native_https_service_cleanup_uncertain"); }
       finally { clearTimeout(timer); destroySockets(); key.fill(0); cert.fill(0); ca.fill(0); }
     });
+    try { onUnavailable?.(); } catch { /* Readiness is already false; do not interrupt owned cleanup. */ }
     return closing;
   }
   return Object.freeze({ isReady, close, async start() {

@@ -71,8 +71,9 @@ physical PostgreSQL acceptance merely because the command is shell-portable.
 
 Machine connectivity is separate from browser serving: the existing native HTTP handler
 requires the actual authenticated TLS socket, not forwarded certificate headers. The
-E60 loopback browser host does not install that TLS endpoint. See [E61](research/REUSE_E61_FULL_HOST_SERVING_JOURNEY.md)
-for the exact simulated full-host evidence and remaining native transport requirement.
+task host can now compose that endpoint only with explicit native HTTPS configuration,
+as described in [E63](research/REUSE_E63_COMBINED_NATIVE_HOST.md). It does not provision
+certificates or install/start itself. Real TLS and fleet acceptance remain outstanding.
 
 The inspection entry is available to the future preparation runner; it is not invoked
 automatically by application startup. No new service manager, SSH copy protocol,

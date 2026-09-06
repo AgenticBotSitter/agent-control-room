@@ -4,7 +4,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import handler from "../dist-vps/server/index.js";
-import { createPrivateTaskBootstrap } from "../dist-vps/server/taskBootstrap.js";
+import { createPrivateTaskHost } from "../dist-vps/server/taskHost.js";
+import { EventEmitter } from "node:events";
+import { finished } from "node:stream/promises";
+import { nodeExchange } from "./helpers/web-node.ts";
 import { installPrivateApplication } from "../dist-vps/server/runtime.js";
 import { NATIVE_DELIVERY_FEATURE } from "../src/harness/v1/native-delivery.ts";
 import { nativeTaskSnapshotBodySchema } from "../src/harness/v1/native-observation.ts";
@@ -111,24 +114,49 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
       headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) } });
   };
   let installed;
-  const starting = createPrivateTaskBootstrap({ clock: x.f.clock, openDatabase,
+  const servers = [];
+  const fakeServer = () => {
+    const server = new EventEmitter(); server.binds = 0; server.closes = 0;
+    server.listen = (options, callback) => { server.binds++; server.boundHost = options.host; queueMicrotask(callback); return server; };
+    server.close = callback => { server.closes++; queueMicrotask(() => callback?.()); return server; };
+    server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+    servers.push(server); return server;
+  };
+  let machineServer;
+  const starting = createPrivateTaskHost({ clock: x.f.clock, openDatabase, createServer: fakeServer,
+    createNativeServer: () => { machineServer = fakeServer(); return machineServer; },
     install: value => {
       assert.equal(preflights.length, 5);
       installed = value;
       // The process installation is deliberately one-shot. The second case tests
       // the compiled supplied-resource factory, not a second process installation.
       if (mode === "progress") installPrivateApplication(value);
-    } }).start({
-    ...startup.config, coordinator: { ...startup.config.coordinator,
+    } }).start({ port: 3210, handler, assets: { count: 0, digest: "synthetic-no-assets", respond: () => undefined },
+    ...(mode === "progress" ? { nativeHttps: { host: "100.64.0.1", port: 443,
+      key: new Uint8Array([1]), cert: new Uint8Array([2]), ca: new Uint8Array([3]) } } : {}),
+    configuration: { ...startup.config, coordinator: { ...startup.config.coordinator,
       approvals: { enrollments: [{ enrollment: x.f.prepared.enrollment, nodeClass: "personal-compute" }], store: x.f.store },
       quality: { ...x.f.ownerConfig, scenarios: [scenario] }, resultDatabase,
-      evidence: evidenceSettings, sessions: sessionSettings, nativeHttp },
+      evidence: evidenceSettings, sessions: sessionSettings, nativeHttp } },
   });
   // All caller-owned settings are captured before startup's first asynchronous preflight.
   sessionSettings.database.username = "mutated_session_login"; sessionSettings.nodes[0].nodeId = "node:mutated";
   sessionSettings.sign = async () => { throw new Error("mutated_sign"); };
   evidenceSettings.enrollments[0].nodeId = "node:mutated";
   const runtime = await starting; t.after(() => runtime.close());
+  assert.equal(servers.length, mode === "progress" ? 2 : 1);
+  assert.ok(servers.every(server => server.binds === 1));
+  assert.equal(servers.at(-1).boundHost, "127.0.0.1");
+  async function machineExchange(command) {
+    const req = machineRequest(command);
+    const stream = nodeExchange({ path: new URL(req.url).pathname, method: "POST", body: await req.text() });
+    stream.input.rawHeaders = ["Host", "machine.example.test:443", ...[...req.headers].flat(),
+      "Accept-Encoding", "identity", "Connection", "close"];
+    // The native client uses a new TLS connection per exchange, never socket reuse.
+    stream.input.socket = { ...machineSocket };
+    const completed = finished(stream.output); machineServer.emit("request", stream.input, stream.output); await completed;
+    return new Response(stream.body(), { status: stream.output.statusCode });
+  }
   assert.equal(runtime.isReady(), true); assert.ok(runtime.connections); assert.ok(runtime.evidence);
   assert.equal(typeof runtime.connections.attachWire, "function");
   assert.deepEqual(opened, ["web_test", "coordinator_test", "result_test", "evidence_test", "session_test"]);
@@ -161,16 +189,15 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
   if (mode === "progress") {
     const beforeWrites = writes.length, beforeCalls = [...x.local.calls], beforeEffects = x.local.effects.countFull();
     const nodePackets = [], receivedPackets = [];
-    const opened = await runtime.nativeHttp.handle(machineRequest({ schema: "control-room.native-http/v1",
-      operation: "open", mode: "initial" }), machineSocket);
+    const opened = await machineExchange({ schema: "control-room.native-http/v1", operation: "open", mode: "initial" });
     assert.equal(opened.status, 200);
     const generation = await opened.json(); assert.deepEqual(generation.packets, []); assert.equal(generation.more, false);
     await bridge.open({ async send(raw) { nodePackets.push(encodeNativeWire(raw, "node_to_server")); }, async close() {} },
       { now: new Date(x.f.clock()).toISOString(), transportIdentity: "transport:compiled-http-node" });
     let more = false;
     for (let count = 0; count < 20 && (nodePackets.length || more); count++) {
-      const response = await runtime.nativeHttp.handle(machineRequest({ schema: "control-room.native-http/v1",
-        operation: "exchange", connection: generation.connection, packet: nodePackets.shift() ?? null }), machineSocket);
+      const response = await machineExchange({ schema: "control-room.native-http/v1",
+        operation: "exchange", connection: generation.connection, packet: nodePackets.shift() ?? null });
       assert.equal(response.status, 200); const value = await response.json();
       assert.equal(value.connection, generation.connection); more = value.more;
       for (const packet of value.packets) {
@@ -188,8 +215,7 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
     assert.ok(httpWrites.some(row => row.table === "node_protocol_replay"));
     assert.ok(httpWrites.every(row => row.current_user === "session_test" && row.session_user === "session_test" && row.rolsuper === false));
     assert.deepEqual(x.local.calls, beforeCalls); assert.equal(x.local.effects.countFull(), beforeEffects);
-    const closed = await runtime.nativeHttp.handle(machineRequest({ schema: "control-room.native-http/v1",
-      operation: "close", connection: generation.connection }), machineSocket);
+    const closed = await machineExchange({ schema: "control-room.native-http/v1", operation: "close", connection: generation.connection });
     assert.equal(closed.status, 200); await bridge.disconnected();
   }
   // Preserve the original direct-session missing-history negative proof independently.
@@ -245,7 +271,12 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
   if (mode === "progress") assert.equal((await handler(request(hiddenPath, "POST", input, undefined, x.f.jwt))).status, 404);
 
   const retained = handle;
+  if (mode === "progress") {
+    machineServer.emit("error", new Error("synthetic machine listener failure"));
+    assert.equal(runtime.isReady(), false, "machine failure immediately removes combined readiness");
+  }
   await runtime.close(); assert.equal(runtime.isReady(), false); assert.equal(transportCloses, 1);
+  assert.ok(servers.every(server => server.closes === 1));
   if (mode === "progress") assert.equal((await runtime.nativeHttp.handle(machineRequest({
     schema: "control-room.native-http/v1", operation: "open", mode: "initial" }), machineSocket)).status, 503);
   assert.equal(startup.web.closes(), 1); assert.equal(startup.coordinator.closes(), 1); assert.equal(result.closes(), 1);
@@ -260,5 +291,5 @@ test("compiled browser assets exclude managed session implementation and restric
   const javascript = files("dist-vps/client").filter(file => file.endsWith(".js"));
   assert.ok(javascript.length > 0);
   for (const file of javascript) assert.doesNotMatch(readFileSync(file, "utf8"),
-    /ManagedNativeSessions|recoverNativeDelivery|native_recovery_unavailable|control_room_native_sessions|native_session_unavailable|native_session_operation_uncertain|node_protocol_replay|DatabaseNodeKeyResolver|native_http_unavailable|native_http_close_uncertain/);
+    /ManagedNativeSessions|recoverNativeDelivery|native_recovery_unavailable|control_room_native_sessions|native_session_unavailable|native_session_operation_uncertain|node_protocol_replay|DatabaseNodeKeyResolver|native_http_unavailable|native_http_close_uncertain|native_https_service_|requestCert/);
 });

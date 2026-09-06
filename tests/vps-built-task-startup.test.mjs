@@ -66,8 +66,9 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
 });
 
 test("compiled host denies invalid setup before pools and cleans up after failed bind", async t => {
-  for (const mode of ["invalid-port", "bind-error", "cleanup-error"]) await t.test(mode, async t => {
+  for (const mode of ["invalid-port", "missing-native-config", "mismatched-native-port", "bind-error", "cleanup-error"]) await t.test(mode, async t => {
     const f = await taskStartupFixture(); t.after(f.close);
+    const invalid = ["invalid-port", "missing-native-config", "mismatched-native-port"].includes(mode);
     let opens = 0, binds = 0, listenerCloses = 0;
     const server = new EventEmitter();
     server.listen = () => { binds++; queueMicrotask(() => server.emit("error", new Error("synthetic bind error"))); return server; };
@@ -78,11 +79,15 @@ test("compiled host denies invalid setup before pools and cleans up after failed
       if (mode !== "cleanup-error" || config.username !== f.config.coordinator.database.username) return pool;
       return { ...pool, async close() { await pool.close(); throw new Error("synthetic pool close error"); } };
     }, install() {}, clock: () => instant + 8000, createServer: () => server });
-    await assert.rejects(host.start({ configuration: f.config, port: mode === "invalid-port" ? 0 : 3210, handler,
+    const configuration = mode === "mismatched-native-port"
+      ? { ...f.config, coordinator: { ...f.config.coordinator, nativeHttp: { origin: "https://machine.example.test" } } } : f.config;
+    await assert.rejects(host.start({ configuration, port: mode === "invalid-port" ? 0 : 3210, handler,
+      ...(["missing-native-config", "mismatched-native-port"].includes(mode)
+        ? { nativeHttps: { host: "127.0.0.1", port: 8443, key: new Uint8Array([1]), cert: new Uint8Array([2]), ca: new Uint8Array([3]) } } : {}),
       assets: { count: 0, digest: "synthetic", respond: () => undefined } }),
-    new RegExp(mode === "invalid-port" ? "config_invalid" : mode === "cleanup-error" ? "cleanup_uncertain" : "start_failed"));
-    assert.equal(opens, mode === "invalid-port" ? 0 : 2);
-    assert.equal(binds, mode === "invalid-port" ? 0 : 1);
+    new RegExp(invalid ? "config_invalid" : mode === "cleanup-error" ? "cleanup_uncertain" : "start_failed"));
+    assert.equal(opens, invalid ? 0 : 2);
+    assert.equal(binds, invalid ? 0 : 1);
     assert.equal(listenerCloses, binds);
     assert.equal(f.web.closes(), binds); assert.equal(f.coordinator.closes(), binds);
     await assert.rejects(host.start({}), /already_attempted/);

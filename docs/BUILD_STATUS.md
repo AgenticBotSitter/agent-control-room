@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest combined host integration — E63:** [Browser/native ownership](research/REUSE_E63_COMBINED_NATIVE_HOST.md)
+connects optional native TLS serving to shared readiness and cleanup. Compiled simulated
+machine handshakes traverse Node request callbacks; machine failure closes both listeners
+and five logical database pools once. Final compiled suite: 41 pass; native checks: 31
+pass; queue/schema journeys: four pass. TypeScript, lint and build pass. The initial
+socket-reuse test-helper cancellation is documented. Real TLS/credentials, operator
+configuration, owner approval and deployment remain outstanding.
+
 **Latest local transport implementation — E62:** [Native HTTPS service](research/REUSE_E62_NATIVE_HTTPS_SERVICE.md)
 uses standard Node TLS with required client certificates and the existing peer-pinned
 callback. Private explicit IPv4 binding and bounded startup/cleanup are fake-tested;

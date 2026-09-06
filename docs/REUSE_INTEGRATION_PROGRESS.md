@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E63 combined native host](research/REUSE_E63_COMBINED_NATIVE_HOST.md) connects the
+optional native TLS service to compiled task-host readiness and shutdown. Simulated
+machine handshakes traverse the full Node callback; real TLS/resources remain unproven.
+
 [E62 native HTTPS service](research/REUSE_E62_NATIVE_HTTPS_SERVICE.md) supplies a
 standard Node TLS lifecycle around the existing native callback. Fake server tests
 cover options, delivery, private binds and bounded cleanup. It remains unwired; real
