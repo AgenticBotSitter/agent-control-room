@@ -32,9 +32,9 @@ export class NativeResultVerificationService {
   }
   async verify(input: NativeQualityRequest, assertCurrent: () => void) {
     const request = nativeQualityRequestSchema.parse(input); assertNoSecretMaterial(request); assertCurrent();
-    const started = this.clock(), staged = stageCompletionCheckpoint(this.config.checkpoints, request.tenantId);
-    const current = () => { const now = this.clock(); if (!Number.isSafeInteger(now) || now < started || now - started > 10_000)
-      throw new Error("native_verification_unavailable"); assertCurrent(); };
+    const started = this.clock(), staged = stageCompletionCheckpoint(this.config.checkpoints, request.tenantId, 50); let last = started;
+    const current = () => { const now = this.clock(); if (!Number.isSafeInteger(started) || !Number.isSafeInteger(now) || now < last || now - started > 10_000)
+      throw new Error("native_verification_unavailable"); last = now; assertCurrent(); return now; };
     const result = await this.db.transactionWithPreCommitCheck(async tx => {
       current();
       const context = await new NativeResultSubmissionService(this.db, { ...this.config, checkpoints: staged.checkpoints })
@@ -44,7 +44,7 @@ export class NativeResultVerificationService {
       const scenarios = this.descriptors.filter(value => value.acceptanceProfileId === context.profile.id
         && value.acceptanceProfileDigest === sha256Digest(context.profile) && context.profile.requiredVerificationScenarioIds.includes(value.scenarioId));
       if (!scenarios.length) throw new Error("native_verification_not_configured");
-      const verifiedAt = new Date(this.clock()).toISOString();
+      const verifiedAt = new Date(current()).toISOString();
       if (Date.parse(verifiedAt) < Date.parse(context.snapshot.target.submittedAt)) throw new Error("native_verification_unavailable");
       const records: CompletionVerificationV1[] = []; let replayed = true;
       for (const scenario of scenarios) {

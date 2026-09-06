@@ -60,8 +60,8 @@ export class NativeTaskCompletionService {
   }
   async complete(input: NativeQualityRequest, assertCurrent: () => void) {
     const request = nativeQualityRequestSchema.parse(input); assertNoSecretMaterial(request); assertCurrent();
-    const started = this.clock();
-    const current = () => { const now = this.clock(); if (!Number.isSafeInteger(now) || now < started || now - started > 10_000) return deny(); assertCurrent(); };
+    const started = this.clock(); let last = started;
+    const current = () => { const now = this.clock(); if (!Number.isSafeInteger(started) || !Number.isSafeInteger(now) || now < last || now - started > 10_000) return deny(); last = now; assertCurrent(); return now; };
     const result = await this.db.transactionWithPreCommitCheck(async tx => {
       current(); const context = await this.submission.inspectSubmitted(tx, request.tenantId, request.runId);
       const { run, snapshot, result: artifact } = context, native = run.nativeTask!;
@@ -80,7 +80,7 @@ export class NativeTaskCompletionService {
         || run.finishedAt !== terminal.occurredAt || Date.parse(run.startedAt) < Date.parse(lease.acquiredAt)
         || Date.parse(run.finishedAt) < Date.parse(run.startedAt)
         || Date.parse(run.finishedAt) >= Math.min(Date.parse(native.deadline), Date.parse(lease.expiresAt), Date.parse(job.authority.expiresAt))) return deny();
-      const recordedAt = new Date(this.clock()).toISOString();
+      const recordedAt = new Date(current()).toISOString();
       if ([job.updatedAt, attempt.updatedAt, lease.updatedAt, run.finishedAt, artifact.receipt.receivedAt, snapshot.target.submittedAt]
         .some(value => Date.parse(value) > Date.parse(recordedAt))) return deny();
       // Do not mark completion before its accepted reviews or verification records existed.

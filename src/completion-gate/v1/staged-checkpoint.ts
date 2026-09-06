@@ -3,7 +3,8 @@ import { parseRollbackCheckpointV1, rollbackCheckpointDigestV1,
 
 /** Transaction-local buffering, not durable checkpoint storage. The caller must retain the SQL
  * integrity lock and flush only after its final authority checks, immediately before commit. */
-export function stageCompletionCheckpoint(store: RollbackCheckpointStoreV1, tenantId: string) {
+export function stageCompletionCheckpoint(store: RollbackCheckpointStoreV1, tenantId: string, maxAdvances = 2) {
+  if (!Number.isSafeInteger(maxAdvances) || maxAdvances < 1 || maxAdvances > 50) throw new Error("review_checkpoint_unavailable");
   const scope = `completion-gate:${tenantId}`, read = store.read.bind(store), advance = store.advance.bind(store);
   let known: RollbackCheckpointV1 | undefined, loaded = false, closed = false;
   const pending: { expected: string; next: RollbackCheckpointV1 }[] = [];
@@ -21,7 +22,7 @@ export function stageCompletionCheckpoint(store: RollbackCheckpointStoreV1, tena
     advance(expected: string, value: RollbackCheckpointV1) {
       const previous = current(), next = parseRollbackCheckpointV1(value);
       if (!previous || next.scope !== scope || expected !== rollbackCheckpointDigestV1(previous)
-        || next.revision !== previous.revision + 1 || pending.length >= 2) return fail();
+        || next.revision !== previous.revision + 1 || pending.length >= maxAdvances) return fail();
       pending.push({ expected, next: { ...next } }); known = { ...next };
     },
   });
