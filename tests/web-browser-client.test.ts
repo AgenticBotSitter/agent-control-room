@@ -4,6 +4,37 @@ import { createProjectBrowserClient } from "../src/web/v1/browser-client.ts";
 
 const project = { projectId: "project:web", title: "Work", summary: "", lifecycle: "active", version: 1,
   createdAt: "2026-09-04T12:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+test("project creation rejects a different result and retains the original explicit retry key", async () => {
+  for (const mismatch of [{ title: "Different" }, { summary: "Different" }, { lifecycle: "archived" },
+    { version: 2 }, { updatedAt: "2026-09-04T12:01:00.000Z" }]) {
+    const keys: string[] = []; let attempt = 0;
+    const client = createProjectBrowserClient((async (_, init) => {
+      keys.push(new Headers(init?.headers).get("idempotency-key")!);
+      return Response.json({ project: attempt++ === 0 ? { ...project, ...mismatch } : project, replayed: attempt > 1 });
+    }) as typeof fetch, () => "fixed-create-key");
+    await assert.rejects(client.create({ title: "Work", summary: "" }), /uncertain/);
+    await assert.rejects(client.create({ title: "Another", summary: "" }), /uncertain/);
+    assert.equal(keys.length, 1, "uncertainty never triggers another request automatically");
+    assert.equal((await client.create({ title: "Work", summary: "" })).projectId, project.projectId);
+    assert.deepEqual(keys, ["fixed-create-key", "fixed-create-key"]);
+  }
+});
+test("lifecycle receipts must match the original project, fields and requested successor version", async () => {
+  const expected = { ...project, lifecycle: "archived", version: 2, updatedAt: "2026-09-04T12:01:00.000Z" };
+  for (const mismatch of [{ projectId: "project:other" }, { lifecycle: "paused" }, { version: 1 },
+    { version: 3 }, { title: "Other" }, { summary: "Other" }, { createdAt: expected.updatedAt }]) {
+    let calls = 0; const keys: string[] = [];
+    const client = createProjectBrowserClient((async (_, init) => {
+      keys.push(new Headers(init?.headers).get("idempotency-key")!);
+      return Response.json({ project: calls++ === 0 ? { ...expected, ...mismatch } : expected, replayed: calls > 1 });
+    }) as typeof fetch, () => "fixed-lifecycle-key");
+    await assert.rejects(client.transition(project as never, "archived"), /uncertain/);
+    await assert.rejects(client.transition(project as never, "paused"), /uncertain/);
+    assert.equal(calls, 1);
+    assert.deepEqual(await client.transition(project as never, "archived"), expected);
+    assert.deepEqual(keys, ["fixed-lifecycle-key", "fixed-lifecycle-key"]);
+  }
+});
 test("browser retries an uncertain save only with the original key and never auto-resubmits", async () => {
   const calls: RequestInit[] = []; let attempts = 0; let keys = 0;
   const client = createProjectBrowserClient((async (_, init) => {

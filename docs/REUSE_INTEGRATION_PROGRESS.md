@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E49 project receipts](research/REUSE_E49_PROJECT_RECEIPT_MATCHING.md) checks save responses
+against the original request before clearing pending state. It reuses existing explicit
+idempotent retry and current-state reads, with no new workflow engine or automatic write.
+
 [E48 separate project tabs](research/REUSE_E48_PROJECT_TAB_AFFORDANCE.md) makes opening
 multiple authorized project pages explicit using native browser links. It introduces
 no tab-state infrastructure, project mutation or claim of a connected fleet.

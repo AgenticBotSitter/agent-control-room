@@ -33,7 +33,7 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
     if (!response.ok) throw new BrowserRequestError(errorFor(response.status));
     try { return await response.json(); } catch { throw new BrowserRequestError("unavailable"); }
   }
-  async function command(path: string, value: unknown): Promise<WebProject> {
+  async function command(path: string, value: unknown, matches: (project: WebProject) => boolean): Promise<WebProject> {
     if (busy) throw new BrowserRequestError("uncertain");
     const body = JSON.stringify(value);
     if (pending && (pending.path !== path || pending.body !== body)) throw new BrowserRequestError("uncertain");
@@ -46,6 +46,7 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
         throw new BrowserRequestError("uncertain");
       }
       const result = z.object({ project: webProjectSchema, replayed: z.boolean() }).strict().parse(await response.json());
+      if (!matches(result.project)) throw new BrowserRequestError("uncertain");
       pending = undefined;
       return result.project;
     } catch (error) {
@@ -76,11 +77,16 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
     create(draft: unknown) {
       const parsed = projectCreateSchema.safeParse(draft);
       if (!parsed.success) return Promise.reject(new BrowserRequestError("invalid_request"));
-      return command("/api/v1/projects", parsed.data);
+      const { title, summary } = parsed.data;
+      return command("/api/v1/projects", parsed.data, result => result.title === title && result.summary === summary
+        && result.lifecycle === "active" && result.version === 1 && result.createdAt === result.updatedAt);
     },
     transition(project: WebProject, lifecycle: WebProject["lifecycle"]) {
       const input = projectTransitionSchema.parse({ lifecycle, expectedVersion: project.version });
-      return command(`/api/v1/projects/${encodeURIComponent(project.projectId)}/lifecycle`, input);
+      const { projectId, title, summary, createdAt } = project;
+      return command(`/api/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, input, result =>
+        result.projectId === projectId && result.lifecycle === input.lifecycle && result.version === input.expectedVersion + 1
+        && result.title === title && result.summary === summary && result.createdAt === createdAt);
     },
     async logout() {
       const response = await call("/api/v1/session/logout", "POST");

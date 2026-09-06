@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E49:** [Project receipt matching](research/REUSE_E49_PROJECT_RECEIPT_MATCHING.md)
+rejects save responses that do not match the requested creation or lifecycle change,
+retaining the original explicit retry identity. A handler/SQL test verifies a lost
+creation reply followed by another tab's archive and historical receipt reconciliation.
+All 23 project/client checks, TypeScript, lint, production build and 35 compiled
+regressions pass. Actual browser and live-service acceptance remain open.
+
 **Latest local implementation — E48:** [Separate project tabs](research/REUSE_E48_PROJECT_TAB_AFFORDANCE.md)
 adds explicit browser-tab links without changing project status or starting work.
 Outdated assignment-disconnected copy now points to actual task configuration.

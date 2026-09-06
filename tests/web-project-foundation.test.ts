@@ -4,6 +4,32 @@ import { AuditStore } from "../src/audit/audit-store.ts";
 import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
 import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { fixture, now, trust, token, request } from "./helpers/web-foundation.ts";
+import { createProjectBrowserClient } from "../src/web/v1/browser-client.ts";
+
+test("browser reconciles a lost create receipt after another tab changes the saved project", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  let dropReply = true; let writes = 0;
+  const browser = createProjectBrowserClient((async (path, init) => {
+    const method = init?.method ?? "GET";
+    const response = await f.handler(request(String(path), method,
+      init?.body ? JSON.parse(String(init.body)) : undefined, new Headers(init?.headers).get("idempotency-key") ?? "read-only-key"));
+    if (method === "POST") { writes++; if (dropReply) { dropReply = false; throw new Error("lost response after commit"); } }
+    return response;
+  }) as typeof fetch, () => "original-browser-create-key");
+  const draft = { title: "My project", summary: "Work" };
+  await assert.rejects(browser.create(draft), /uncertain/);
+  const catalog = await browser.list();
+  assert.equal(catalog.projects.length, 1); assert.equal(writes, 1);
+  const saved = catalog.projects[0];
+  assert.equal((await f.handler(request(`/api/v1/projects/${encodeURIComponent(saved.projectId)}/lifecycle`, "POST",
+    { lifecycle: "archived", expectedVersion: 1 }, "other-tab-archive-key"))).status, 200);
+  const receipt = await browser.create(draft);
+  assert.equal(receipt.projectId, saved.projectId); assert.equal(receipt.version, 1);
+  assert.equal((await browser.get(saved.projectId)).lifecycle, "archived", "receipt is historical, fresh GET owns current state");
+  assert.equal(writes, 2);
+  const audit = await new AuditStore(f.client).verify("tenant:web", "month:2026-09");
+  assert.equal(audit.valid, true); assert.equal(audit.checkedEvents, 2, "explicit replay creates no duplicate project effect");
+});
 
 test("real SQL flow creates, lists, archives and reopens an ordinary project with audit and replay", async t => {
   const f = await fixture(); t.after(() => f.db.close());
