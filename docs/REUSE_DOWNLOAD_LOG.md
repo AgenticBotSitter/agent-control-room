@@ -286,3 +286,10 @@ All source retained for provenance; no source modules from the web server, file 
 or credential-sync manager executed. Only the isolated path-policy module was evaluated.
 See [E08 evidence](research/REUSE_E08_HERMES_FILE_API.md). No live service or credential
 access, no runtime source adoption, and no directory cleanup beyond test fixtures.
+
+### E09 — owned queue lifecycle (no acquisition)
+
+Reused E01's existing pg-boss 12.30.0 package and repository PGlite for 28 combined
+actual-package tests. No downloads, native database server, native agent, service or
+provider. Unit/type/lint tests also used existing dependencies. In-memory fixtures
+closed on completion. All E01–E08 retained acquisition paths remain unchanged.

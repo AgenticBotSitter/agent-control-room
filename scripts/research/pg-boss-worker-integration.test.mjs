@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { startPgBossNativeTaskWorker } from '../../src/persistence/pg-boss-native-task-worker.ts';
+import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
 import { nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
 
@@ -45,8 +46,61 @@ async function fixture(t) {
     const worker = await startPgBossNativeTaskWorker(boss, { deliver, concurrency }); workers.push(worker); return worker;
   };
   const get = id => boss.getJobById(spec.name, id);
-  return { raw, boss, send, start, get, errors };
+  return { raw, boss, send, start, get, errors, workers };
 }
+
+// A separate logical SQL port models ownership of a dedicated worker pool; PGlite
+// has one in-memory engine, so this is not proof of PostgreSQL roles/pool isolation.
+async function runtimeFixture(t, f, deliver, concurrency = 1) {
+  let closed = false, closeCount = 0;
+  const statements = [], clients = [];
+  class CapturedBoss extends PgBoss { constructor(options) { super(options); clients.push(this); } }
+  const runtime = await startPgBossNativeTaskRuntime(CapturedBoss, {
+    async query(sql, values) {
+      assert.equal(closed, false, 'worker SQL must stop after its owned port closes');
+      statements.push(sql);
+      return values?.length ? f.raw.query(sql, values) : (await f.raw.exec(sql)).at(-1) ?? { rows: [] };
+    },
+    async close() { closed = true; closeCount++; },
+  }, { backend: 'pglite', deliver, concurrency });
+  f.workers.push(runtime);
+  return { runtime, statements, closed: () => closed, closeCount: () => closeCount,
+    fault: () => clients[0].emit('error', new Error('synthetic runtime fault')) };
+}
+
+test('actual owned runtime picks up continuously then closes only its worker SQL port', { timeout: 20000 }, async t => {
+  const f = await fixture(t), seen = [];
+  const r = await runtimeFixture(t, f, async ref => { seen.push(ref.jobId); return { disposition: 'held' }; }, 2);
+  const ids = await Promise.all([11, 12, 13].map(n => f.send(n)));
+  await until(async () => (await f.get(ids[2]))?.state === 'completed');
+  await r.runtime.close();
+  assert.equal(r.closed(), true); assert.equal(r.closeCount(), 1);
+  assert.deepEqual(new Set(seen), new Set(['job:11', 'job:12', 'job:13']));
+  assert.deepEqual(r.runtime.status(), { state: 'closed', faulted: false, accepting: false });
+  assert.equal(r.statements.some(sql => /^\s*(CREATE|ALTER|DROP)\b/i.test(sql)), false);
+  const next = await f.send(14); await delay(1100);
+  assert.equal((await f.get(next)).state, 'created');
+  assert.deepEqual(f.errors, []);
+});
+
+test('actual runtime infrastructure fault aborts current delivery without automatic replacement', { timeout: 20000 }, async t => {
+  const f = await fixture(t); let entered, signalSeen, calls = 0;
+  const ready = new Promise(resolve => { entered = resolve; });
+  const r = await runtimeFixture(t, f, async (_ref, signal) => {
+    calls++; signalSeen = signal; entered();
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    return { disposition: 'delivered' };
+  });
+  const id = await f.send(21); await ready;
+  r.fault(); assert.equal(signalSeen.aborted, true);
+  await r.runtime.close();
+  assert.deepEqual(r.runtime.status(), { state: 'closed', faulted: true, accepting: false });
+  assert.equal((await f.get(id)).state, 'failed');
+  assert.equal((await f.get(id)).retryCount, 0);
+  const pending = await f.send(22); await delay(1100);
+  assert.equal((await f.get(pending)).state, 'created'); assert.equal(calls, 1);
+  assert.equal(r.closeCount(), 1); assert.deepEqual(f.errors, []);
+});
 
 test('actual continuous worker moves on while prior work is held for review', { timeout: 20000 }, async t => {
   const f = await fixture(t), received = [], awaitingReview = new Set();

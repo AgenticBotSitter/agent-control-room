@@ -38,6 +38,14 @@ server-trust-versus-owner-revocation assumption is preserved in the report. No p
 worker/client/startup wiring, native agent or new database-server attempt. Continue with
 package/role/bootstrap composition and current canonical authorization, not a custom poller.
 
+**Latest implementation — E09 owned queue runtime:** [Evidence](research/REUSE_E09_PG_BOSS_RUNTIME.md)
+composes the tested pg-boss worker with dedicated SQL-port ownership, immediate abort
+on infrastructure failure, bounded drain/stop/close and late-registration fencing.
+42 unit checks and 28 actual-package integration checks pass, including the canonical
+approval/transmission path through this runtime. Typecheck and targeted lint pass.
+No deployment, native database, live agent or automatic restart; production roles,
+package adoption, startup mounting and recovery/cutover remain open.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

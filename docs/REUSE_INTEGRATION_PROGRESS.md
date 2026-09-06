@@ -106,6 +106,12 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+Latest continuation: [E09 owned runtime](research/REUSE_E09_PG_BOSS_RUNTIME.md) connects
+the pg-boss worker to bounded lifecycle/error handling and dedicated worker SQL-port
+ownership. The canonical delivery tests now use this composition. 42 unit and 28
+actual-package checks pass; production role/bootstrap/cutover evidence remains open.
+Do not repeat the E05 lifecycle gap as entirely unimplemented or call it deployed.
+
 1. [E04](research/REUSE_E04_HERMES_PRESENTATION.md) now identifies Desktop's active-session
    strip as the focused project-tab presentation candidate. Full sidebar/onboarding
    modules are not drop-ins: Electron/cache/credential callbacks need our actual

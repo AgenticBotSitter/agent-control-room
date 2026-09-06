@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { canonicalApprovalStorageFixture } from '../../tests/helpers/canonical-approval-storage.ts';
 import { preparePgBossNativeTaskSubmission, nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
-import { startPgBossNativeTaskWorker } from '../../src/persistence/pg-boss-native-task-worker.ts';
+import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
 import { nativeEnvelopeSession } from '../../tests/helpers/native-envelope-session.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -43,7 +43,16 @@ async function fixture(t) {
   submission = await preparePgBossNativeTaskSubmission(ObservedPgBoss, f.db, { backend: 'pglite' });
   return { ...f, admin, submission, client: instances[0], errors, c: f.create(f.db, submission),
     async startWorker(deliver) {
-      const worker = await startPgBossNativeTaskWorker(admin, { deliver }); workers.push(worker); return worker;
+      // Distinct logical worker SQL port over the same PGlite database. This tests
+      // composition ownership, not real PostgreSQL role/pool isolation.
+      let workerClosed = false;
+      const runtime = await startPgBossNativeTaskRuntime(PgBoss, {
+        async query(sql, values) {
+          assert.equal(workerClosed, false);
+          return values?.length ? f.raw.query(sql, values) : (await f.raw.exec(sql)).at(-1) ?? { rows: [] };
+        }, async close() { workerClosed = true; },
+      }, { backend: 'pglite', deliver });
+      workers.push(runtime); return runtime;
     } };
 }
 
@@ -57,7 +66,7 @@ async function settled(f, id) {
   assert.fail('Synthetic canonical worker observation timed out');
 }
 
-test('actual package worker reaches canonical staging and transmission once; absent receipt stays unresolved', { timeout: 30000 }, async t => {
+test('actual owned runtime reaches canonical staging and transmission once; absent receipt stays unresolved', { timeout: 30000 }, async t => {
   const f = await fixture(t); await f.save();
   const receipt = await enqueue(f), ref = reference(f, receipt), id = nativeTaskSubmissionId(ref);
   const session = await nativeEnvelopeSession(f); t.after(session.close);
