@@ -2194,6 +2194,22 @@ Published in [PR #330](https://github.com/MarvinAi5/control-room/pull/330), base
 PR #328. All six actual local lanes passed: 2,419 tests, two existing platform skips,
 zero failures/cancellations. Both builds, private20/rendered4, migrations0054/138,
 types and lint passed. Final current-head GitHub CI remains pending; no merge.
+Run `34005397761` attempt 1 passed all jobs except `main-3`, whose log reported a runner
+shutdown and killed test process. The aggregate check correctly failed. One failed-job
+retry was requested only after the run became terminal; attempt 2 is confirmed running.
+
+## Recorded revision history presentation
+
+Product `843849aca59459eff2a7a9cfc316577b6bb137a7` is independently reviewed for display
+scope. File cards match exact review revisions; replaced targets keep findings/checks
+historical, and predecessor/successor labels use recorded IDs rather than array order.
+Missing bounded history remains explicit. The page distinguishes saved change-request
+feedback from the still-unimplemented revised-agent execution path. See
+`CR14C_REVISION_HISTORY_ACCEPTANCE.md` for real-store regression and corrected review
+findings. Final focused result/owner-review integration passed 39 tests. This is not
+acceptance of revision dispatch, pending PR #329, a running website or a deployed fleet.
+Both final builds, private20/rendered4, TypeScript and full ESLint passed. Current-head
+GitHub CI and dependency-order integration remain required; no merge or deployment.
 
 ## Next block
 

@@ -71,6 +71,15 @@ the checks/build and four matrix jobs, with two matrix jobs queued as designed.
 The final current-head GitHub result remains pending; no timing improvement or green
 GitHub check is claimed here. No merge is claimed.
 
+Follow-up on final head `6d4d6be`: run `34005397761` attempt 1 finished non-passing.
+Checks, both builds/migrations and five test lanes passed. `main-3` reported the runner
+receiving a shutdown signal, followed by a killed test process and cancellation; no
+failed assertion was shown. The aggregate check correctly failed. This is retained
+negative infrastructure evidence, not a diagnosed product defect or an accepted pass.
+After the run was terminal, one failed-job retry was requested. Attempt 2 was confirmed
+running for `main-3`; successful jobs were retained. No product code or test coverage was
+changed to obtain the retry, and its terminal result remains required.
+
 No product runtime, SQL permission, agent connection, credential, listener, provider,
 production database, deployment or public release changed. Real PostgreSQL and fleet
 acceptance remain separate owner-authorized work. Next model remains Astra Medium
