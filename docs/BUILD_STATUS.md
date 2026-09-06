@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest transport candidate — E70:** [Existing gRPC bindings](research/REUSE_E70_ETCD_GRPC_EVALUATION.md)
+pass three offline generated-client/codec diagnostics: isolated request cancellation,
+no high-level invalid-token reissue and exact large identifiers. Combined E69/E70:
+five pass; targeted lint passes. Proceed to a small bounded adapter evaluation, not
+a custom transport or storage engine. Actual channel retry/deadline behavior, trusted
+configuration, durability and restore acceptance remain open. No new download/service.
+
+**Latest reuse evaluation — E69:** [Pinned etcd client](research/REUSE_E69_ETCD_CLIENT_EVALUATION.md)
+finds that the high-level unary wrapper hides cancellation and independently retries
+invalid-token responses. Two installed-package fake-RPC diagnostics and targeted lint
+pass. Do not adopt that wrapper unchanged; next evaluate existing lower-level gRPC
+bindings with explicit cancellation/no retries. The logged isolated download is 31 MiB.
+No service ran, no application dependency changed, and durable storage is not accepted.
+
 **Latest cancellation integration — E68:** [Checkpoint cancellation](research/REUSE_E68_CHECKPOINT_CANCELLATION.md)
 uses Node async context to carry the bounded database signal into checkpoint reads,
 initialization and staged writes. Tests prove timeout fences a late first reply

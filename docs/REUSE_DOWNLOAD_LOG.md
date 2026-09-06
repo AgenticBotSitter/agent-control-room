@@ -471,3 +471,29 @@ still available. Cleanup status: retained for the next offline adapter evaluatio
 not deleted. Exact cleanup candidate remains `/private/tmp/cr-e55.x7lWXA`; keep this
 ledger and the committed lock after eventual cleanup. Tests close their in-memory
 protocols and disposable fixtures. No standing process/socket/key store was created.
+
+## Evaluation E69 — etcd client (2026-09-06)
+
+Pre-acquisition free space: 102 GiB on the workspace/temporary volume.
+Exact isolated evaluation and cleanup candidate: `/private/tmp/cr-e69.gJhaMa`.
+Planned acquisition: public npm metadata and a pinned `etcd3` package plus its
+dependencies, with lifecycle scripts disabled, no optional dependencies and a local
+cache/configuration. No application dependency change, credentials, etcd server,
+listener or live database is authorized by this evaluation. Retain the download
+record and package lock after eventual cleanup. Acquisition outcome recorded below.
+
+Outcome: initial sandbox metadata lookup failed DNS; authorized escalated public
+registry lookup and install succeeded. Pinned `etcd3@1.1.2`, 37 packages installed
+with scripts disabled. Retained root totals 31 MiB including cache and dependencies.
+No server binary downloaded or started. Package LICENSE inspected: MIT (Microsoft).
+Transitive license/security clearance remains unfinished. Reproducible dependency
+inventory: `docs/research/reuse-e69-package-lock.json`, SHA-256
+`b8307c21522e05b5325aa2c9c79164ec86303f4f0a675cd72837d9d20d6ad7f9`.
+Two installed-package fake-RPC diagnostics pass. Retained, not deleted; no main
+application dependencies changed. Evaluation decision is documented in E69.
+
+E70 reuses this same directory and package lock without additional acquisition.
+Three generated-gRPC-client/codec diagnostics pass with a fake channel (five combined
+E69/E70 tests). gRPC/proto-loader installed license files are Apache-2.0; upstream
+protocol provenance and full transitive clearance remain required before adoption.
+No service, resolver or physical connection created. Retention status unchanged.
