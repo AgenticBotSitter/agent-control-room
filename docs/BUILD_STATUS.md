@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Focused reuse research — E54:** [Owner signer candidate](research/REUSE_E54_OWNER_SIGNER_CANDIDATE.md)
+identifies ssh2's existing agent-signing interface for a pinned, in-memory compatibility
+evaluation. It is not adopted or connected to an SSH agent. Separate owner consent,
+key provisioning and exact prepared-request provenance remain required. No real keys,
+downloads, service calls or deployment occurred; source-only GitHub research was used.
+
 **Latest local implementation — E53:** [Unsigned owner material](research/REUSE_E53_OWNER_APPROVAL_MATERIAL.md)
 reuses existing binding, schema and crypto primitives to prepare exact task/recovery
 approval bodies. All 11 storage checks pass, including signing with a synthetic key and

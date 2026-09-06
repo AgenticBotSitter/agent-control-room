@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E54 signer candidate](research/REUSE_E54_OWNER_SIGNER_CANDIDATE.md) narrows the custody
+access gap to an existing agent protocol implementation for offline evaluation. It does
+not select an installed key, provide owner consent or adopt another transport system.
+
 [E53 owner approval material](research/REUSE_E53_OWNER_APPROVAL_MATERIAL.md) supplies
 unsigned domain bodies using existing verification and cryptography, tested through
 actual signed intake with synthetic keys. Real custody and owner consent remain separate.
