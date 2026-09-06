@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+Latest: [E21 connected queue-to-review test](research/REUSE_E21_QUEUE_TO_REVIEW.md)
+passes with all 44 actual-package checks. One signed dispatch reaches a pending review
+with exact stored result bytes through simulated native execution. This closes the
+separate-fixture integration gap, not browser, host startup or live-agent acceptance.
+
 | Area | Actual change | Evidence and remaining limits |
 |---|---|---|
 | Approved-task queue submission | Thin pg-boss adapter and optional trusted coordinator composition. Fresh immutable intent, queue INSERT and audit share one checked transaction. Canonical replay never re-enqueues, including after operational history pruning. | 13 actual-package/PGlite integration tests passed. 131 related tests passed. Not wired to app startup, no consuming worker/native dispatch, no app dependency adoption or production schema change. |

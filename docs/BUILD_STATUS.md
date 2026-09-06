@@ -116,6 +116,13 @@ stage/transmit. Replacement, missing connection and owner revocation prevent del
 later signed receipt intake still works. 49 related checks pass. Host composition,
 exact-role/full-path acceptance, browser enqueue and real-PG/live acceptance remain open.
 
+**E21 — queue to pending review:** [Evidence](research/REUSE_E21_QUEUE_TO_REVIEW.md)
+connects actual pg-boss pickup to managed signed delivery, later receipt, synthetic
+native completion and exact stored bytes in pending review. All 44 package checks
+pass. Outstanding receipt does not trigger retry or become an automatic success.
+This is not browser/live-agent acceptance or exact independent production pools;
+host startup and offline-node recovery remain next.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

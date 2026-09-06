@@ -12,6 +12,10 @@ import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-nati
 import { verifyPgBossNativeWorkerPermissions } from '../../src/persistence/pg-boss-native-task-permissions.ts';
 import { verifyNativeQueueWorkerDatabase } from '../../src/web/v1/private-database-preflight.ts';
 import { createNativeQueueWorkerBootstrap } from '../../src/web/v1/native-queue-worker-startup.ts';
+import { preparePgBossNativeTaskSubmission } from '../../src/persistence/pg-boss-native-task-submission.ts';
+import { managedNativeSessionFixture, currentSignal } from '../../tests/helpers/managed-native-session.ts';
+import { qualityText } from '../../tests/helpers/native-quality-completion.ts';
+import { WebSessionAuthority } from '../../src/web/v1/session-authority.ts';
 import { nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
 
@@ -74,6 +78,70 @@ async function runtimeFixture(t, f, deliver, concurrency = 1) {
   return { runtime, statements, closed: () => closed, closeCount: () => closeCount,
     fault: () => clients[0].emit('error', new Error('synthetic runtime fault')) };
 }
+
+test('actual queue pickup reaches managed signed receipt and completed result review without a browser identity', { timeout: 30000 }, async t => {
+  const x = await managedNativeSessionFixture(undefined, { queue: true });
+  let worker, producer, admin;
+  t.after(async () => { try { await worker?.close(); await producer?.close(); await admin?.stop({ graceful: false }); } finally { await x.close(); } });
+  admin = new PgBoss({ db: { executeSql: (sql, values) => x.admin(async () =>
+    values?.length ? x.f.raw.query(sql, values) : (await x.f.raw.exec(sql)).at(-1) ?? { rows: [] }) },
+    schema: spec.schema, backend: 'pglite', supervise: false, schedule: false, useListenNotify: false });
+  const errors = []; admin.on('error', error => errors.push(error));
+  await admin.start(); await admin.createQueue(spec.name, { retryLimit: 0 });
+  const canonical = { query: (sql, values) => x.admin(() => x.f.db.query(sql, values)),
+    transaction: work => x.admin(() => x.f.db.transaction(work)),
+    transactionWithPreCommitCheck: (work, check) => x.admin(() => x.f.db.transactionWithPreCommitCheck(work, check)) };
+  producer = await preparePgBossNativeTaskSubmission(PgBoss, canonical, { backend: 'pglite' });
+  const workerRole = await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8');
+  await x.admin(() => x.f.raw.exec(workerRole));
+  const query = (sql, values) => x.f.raw.transaction(async tx => {
+    await tx.exec('SET LOCAL SESSION AUTHORIZATION postgres; SET LOCAL ROLE control_room_native_queue_worker');
+    return values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] };
+  });
+  const c = await x.attach(); await x.handshake(c);
+  let deliveries = 0;
+  worker = await startPgBossNativeTaskRuntime(PgBoss, { query, async close() {} }, { backend: 'pglite', async deliver(ref, signal) {
+    deliveries++; const result = await x.manager.deliverApproved(ref, signal);
+    if (!result.deliveryConfirmed) throw new Error('synthetic awaiting signed receipt');
+    return { disposition: 'delivered' };
+  } });
+  const coordinator = x.f.create(canonical, producer);
+  await x.admin(() => x.f.save());
+  const receipt = await coordinator.enqueueNativeTask(...x.f.args, x.task.packetDigest, currentSignal());
+  const ref = { schema: 'control-room.native-task-submission/v1', tenantId: x.f.scope.tenantId,
+    projectId: receipt.projectId, jobId: receipt.jobId, attemptId: receipt.attemptId, queueId: receipt.queueId,
+    inputDigest: x.task.inputDigest, packetDigest: receipt.packetDigest };
+  await new WebSessionAuthority(canonical, x.f.scope, x.f.clock).logout(x.f.identity);
+  const id = nativeTaskSubmissionId(ref);
+  await until(async () => (await admin.getJobById(spec.name, id))?.state === 'failed');
+  assert.equal(deliveries, 1);
+  const frames = c.peer.outgoing.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch');
+  assert.equal(frames.length, 1);
+  await c.peer.acknowledge(); await c.handle.receipt(c.peer.incoming.shift(), currentSignal());
+  const native = await x.prepareNode(c.peer, JSON.parse(frames[0]));
+  const beforeCompletion = await x.states();
+  const bound = await x.receiver.register(x.request, currentSignal());
+  for (const phase of ['start', 'running']) {
+    const wire = await native.produce(phase); await c.handle.progress(wire.raw, undefined, currentSignal()); await c.peer.acknowledge();
+  }
+  const wire = await native.produce('completed');
+  const result = await c.handle.progress(wire.raw, new TextEncoder().encode(qualityText), currentSignal());
+  await c.peer.acknowledge();
+  assert.equal(result.state, 'succeeded'); assert.ok(result.submission);
+  assert.equal(result.submission.targetId, bound.receipt.targetId);
+  assert.equal(result.submission.qualityAccepted, false);
+  const review = await x.admin(() => x.f.reviewStore.snapshot(x.f.scope.tenantId, bound.receipt.targetId));
+  assert.equal(review.status, 'pending');
+  const counts = await x.counts();
+  assert.equal(counts.runs.length, 1); assert.equal(counts.events.length, 3);
+  assert.equal(counts.artifacts.length, 1); assert.equal(counts.receipts.length, 1);
+  assert.deepEqual(await x.f.config.storage.read(counts.artifacts[0].id), new TextEncoder().encode(qualityText));
+  assert.deepEqual(await x.states(), beforeCompletion);
+  // An outstanding receipt is not permission to retry the external start. Later
+  // evidence reaches review without rewriting the operational failure as success.
+  assert.equal((await admin.getJobById(spec.name, id)).state, 'failed');
+  assert.equal(deliveries, 1); assert.deepEqual(errors, []);
+});
 
 test('actual owned runtime picks up continuously then closes only its worker SQL port', { timeout: 20000 }, async t => {
   const f = await fixture(t), seen = [];

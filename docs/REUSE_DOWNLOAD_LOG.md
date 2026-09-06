@@ -358,3 +358,9 @@ or new retained temporary directories.
 
 Repository dependencies only. Disposable signed-session/PGlite fixtures closed after
 tests; no package acquisition, native provider, credential access or external changes.
+
+### E21 — connected queue-to-review regression (no acquisition)
+
+Existing E01 package and repository dependencies only. In-memory queue and signed
+session fixtures closed after tests. No new download, directory, native service,
+credential use or external publication.
