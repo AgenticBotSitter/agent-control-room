@@ -27,7 +27,10 @@ test("task catalog is concrete, escaped and links each job to its own project pa
 test("proposal form names its non-running save, labels inputs and holds uncertain instructions", () => {
   const html = renderToStaticMarkup(<TaskProposalForm draft={{ title: "Research", instructions: "Useful result" }} setDraft={() => {}}
     pending={false} uncertain onSave={() => {}} />);
-  assert.match(html, /Save proposal/); assert.match(html, /assignment is not connected/); assert.match(html, /for="task-instructions"/);
+  assert.match(html, /Save proposal/); assert.match(html, /Saving does not assign or start an agent/);
+  assert.match(html, /check preparation and assignment availability/);
+  assert.doesNotMatch(html, /assignment is not connected yet|agent is ready|automatically start/i);
+  assert.match(html, /for="task-instructions"/);
   assert.match(html, /aria-describedby="task-secrets-note"/); assert.equal((html.match(/disabled=""/g) ?? []).length, 3);
 });
 test("completion, reported cancellation, unknown tokens and missing review are not rendered as accepted work", () => {

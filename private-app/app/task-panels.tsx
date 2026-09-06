@@ -15,7 +15,8 @@ export const taskUrl = (projectId: string, jobId?: string) => `/projects/${encod
 export function TaskProposalForm({ draft, setDraft, pending, uncertain, onSave }: { draft: TaskDraft;
   setDraft: (value: TaskDraft) => void; pending: boolean; uncertain: boolean; onSave: () => void }) {
   return <form className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
-    <h2>Propose a task</h2><p className="private-note">Save what you want done. Agent assignment is not connected yet.</p>
+    <h2>Propose a task</h2><p className="private-note">Save what you want done. Saving does not assign or start an agent.
+      Open the saved task to check preparation and assignment availability.</p>
     <label htmlFor="task-title">Task title</label><input id="task-title" required maxLength={120} value={draft.title}
       disabled={pending || uncertain} onChange={event => setDraft({ ...draft, title: event.target.value })} />
     <label htmlFor="task-instructions">What should the agent deliver?</label>

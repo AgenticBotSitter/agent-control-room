@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Misleading proposal guidance corrected:** The task form no longer says assignment
+is universally unconnected. It explains that saving starts no agent and directs the
+user to the saved task for preparation/assignment availability. Existing per-installation
+checks still decide which controls appear. Five task-panel tests, standalone strict
+TypeScript and targeted lint pass. No dispatch, permissions or live configuration changed.
+
 **Contributor demo reuse proven at the request bridge:** The compiled owner-review/
 revision test now traverses the real Node serving bridge using in-memory streams and
 temporary synthetic authentication. It rejects an unauthenticated review, renders a
