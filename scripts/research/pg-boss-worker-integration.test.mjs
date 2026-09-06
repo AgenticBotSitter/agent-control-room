@@ -11,6 +11,7 @@ import { startPgBossNativeTaskWorker } from '../../src/persistence/pg-boss-nativ
 import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
 import { verifyPgBossNativeWorkerPermissions } from '../../src/persistence/pg-boss-native-task-permissions.ts';
 import { verifyNativeQueueWorkerDatabase } from '../../src/web/v1/private-database-preflight.ts';
+import { createNativeQueueWorkerBootstrap } from '../../src/web/v1/native-queue-worker-startup.ts';
 import { nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
 
@@ -257,12 +258,20 @@ test('dedicated worker login passes shared session gates and runs without canoni
     await f.raw.exec(restore); await verifyNativeQueueWorkerDatabase(db, config);
   }
   let closed = 0, delivered = 0;
-  const runtime = await startPgBossNativeTaskRuntime(PgBoss, { query: db.query, async close() { closed++; } }, {
-    backend: 'pglite', async deliver() { delivered++; return { disposition: 'held' }; },
-  });
+  const input = { database: config, application: { host: config.host, port: config.port, database: config.database,
+    loginNames: ['web_test', 'coordinator_test'] }, async deliver() { delivered++; return { disposition: 'held' }; } };
+  const make = () => createNativeQueueWorkerBootstrap({ PgBoss, backend: 'pglite', openDatabase: () => ({
+    client: db, isAvailable: () => true, async close() { closed++; },
+  }) });
+  await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE; REVOKE DELETE ON control_room_queue.job_common FROM control_room_native_queue_worker');
+  await assert.rejects(make().start(input), /native_queue_worker_start_failed/);
+  assert.equal(closed, 1); assert.equal(delivered, 0);
+  await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE; GRANT DELETE ON control_room_queue.job_common TO control_room_native_queue_worker');
+  const bootstrap = make(), runtime = await bootstrap.start(input);
+  await assert.rejects(bootstrap.start(input), /already_attempted/);
   f.workers.push(runtime);
   const id = await f.send(91); await until(async () => (await f.get(id))?.state === 'completed');
-  await runtime.close(); assert.equal(closed, 1); assert.equal(delivered, 1);
+  await runtime.close(); assert.equal(closed, 2); assert.equal(delivered, 1);
 });
 
 test('candidate worker role setup rejects retry-enabled queue before creating a role', { timeout: 20000 }, async t => {

@@ -90,6 +90,12 @@ application session gate plus E11 queue-only permissions. 42 package and 78 exis
 database/startup checks pass. Real PostgreSQL pool isolation and worker bootstrap
 mounting remain unproven; no native service or provider effects.
 
+**E17 — verified worker startup:** [Evidence](research/REUSE_E17_WORKER_STARTUP.md)
+connects worker identity/preflight to owned runtime via explicit trusted composition.
+Topology refusal, bounded preflight, late-SQL fencing and close ownership are tested;
+45 unit and 42 package checks pass. No production mounting: current-authority delivery
+binding, joint shutdown, real-PG and owner task acceptance remain unfinished.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

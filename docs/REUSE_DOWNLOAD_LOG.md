@@ -335,3 +335,9 @@ native database/server, additional retained directory or external mutation.
 Retained E01 package and existing repository dependencies only. Synthetic LOGIN/role
 changes occurred solely in disposable PGlite fixtures, closed after tests. No native
 credential, server, connection pool, downloads or new cleanup directory.
+
+### E17 — worker startup composition (no acquisition)
+
+Existing E01 package and repository dependencies only; actual-package fixtures remain
+in-memory and close after tests. No new downloads, persistent services, native database,
+provider calls or temporary acquisition paths.

@@ -106,6 +106,11 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E17 worker startup](research/REUSE_E17_WORKER_STARTUP.md) composes the identity check
+and existing runtime with topology validation, one attempt, bounded cleanup and late
+SQL fencing. 45 unit and 42 package checks pass. Production mounting still requires
+current-authority delivery and joint application/worker shutdown, not an arbitrary callback.
+
 [E16 worker identity](research/REUSE_E16_WORKER_DATABASE_IDENTITY.md) verifies a dedicated
 worker LOGIN, database, session limits and fixed role membership using the existing
 application gate. 42 package and 78 role/startup regression checks pass. This is still

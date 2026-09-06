@@ -5,6 +5,8 @@ import { startPgBossNativeTaskRuntime, type PgBossNativeRuntimeConstructor } fro
 import { nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from "../src/persistence/pg-boss-native-task-submission";
 import type { PgBossNativeWorkerClient } from "../src/persistence/pg-boss-native-task-worker";
 import { sha256Digest } from "../src/security";
+import { createNativeQueueWorkerBootstrap } from "../src/web/v1/native-queue-worker-startup";
+import type { DatabaseClient } from "../src/persistence/database";
 
 const reference = () => {
   const ids = { tenantId: "tenant:runtime", jobId: "job:runtime", attemptId: "attempt:runtime" };
@@ -66,6 +68,45 @@ test("invalid configuration does not acquire or close the caller's pool", async 
     await assert.rejects(f.start({ async deliver() { return { disposition: "held" }; }, ...options }), /config_invalid/);
     assert.deepEqual(f.calls, []);
   }
+});
+
+test("worker bootstrap rejects a different primary, shared login and invalid concurrency before opening", async () => {
+  const config = { host: "127.0.0.1" as const, port: 5432, database: "synthetic", username: "worker_test", password: "synthetic-only", majorVersion: 17 as const };
+  const application = { host: config.host, port: config.port, database: config.database, loginNames: ["web_test", "coordinator_test"] };
+  for (const patch of [{ application: { ...application, port: 5433 } }, { application: { ...application, database: "other" } },
+    { application: { ...application, loginNames: ["web_test", "worker_test"] } }, { concurrency: 9 }]) {
+    let opened = 0;
+    const f = fixture();
+    const bootstrap = createNativeQueueWorkerBootstrap({ PgBoss: f.Boss, openDatabase: () => { opened++; throw new Error(); } });
+    const input = { database: config, application, async deliver() { return { disposition: "held" as const }; }, ...patch };
+    await assert.rejects(bootstrap.start(input), /native_queue_worker_config_invalid/);
+    await assert.rejects(bootstrap.start(input), /already_attempted/);
+    assert.equal(opened, 0);
+  }
+});
+
+test("worker startup timeout closes once and fences late preflight SQL", async t => {
+  let enter!: () => void, release!: () => void, finish!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const finished = new Promise<void>(resolve => { finish = resolve; });
+  let queries = 0, closes = 0;
+  const db: DatabaseClient = {
+    async query<T>() { queries++; return { rows: [] as T[] }; },
+    async transaction(work) { enter(); await released; try { return await work(db); } finally { finish(); } },
+    async transactionWithPreCommitCheck(work, check) { const result = await db.transaction(work); check(); return result; },
+  };
+  const f = fixture();
+  const config = { host: "127.0.0.1" as const, port: 5432, database: "synthetic", username: "worker_test", password: "synthetic-only", majorVersion: 17 as const };
+  const bootstrap = createNativeQueueWorkerBootstrap({ PgBoss: f.Boss, openDatabase: () => ({ client: db,
+    isAvailable: () => true, async close() { closes++; } }) });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const pending = assert.rejects(bootstrap.start({ database: config,
+    application: { ...config, loginNames: ["web_test", "coordinator_test"] }, async deliver() { return { disposition: "held" }; },
+  }), /cleanup_uncertain/);
+  await entered; t.mock.timers.tick(5001); await pending;
+  release(); await finished;
+  assert.equal(closes, 1); assert.equal(queries, 0); assert.deepEqual(f.calls, []);
 });
 
 test("failed or malformed permissions prevent package construction and close the owned pool", async () => {
