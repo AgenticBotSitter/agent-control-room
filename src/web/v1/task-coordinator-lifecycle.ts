@@ -6,6 +6,7 @@ import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
 import { timingSafeEqual } from "node:crypto";
+import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -44,7 +45,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   let drained: (() => void) | undefined, force!: () => void;
   const stops = new Set<() => void>();
   const forced = new Promise<void>(resolve => { force = resolve; });
-  const check = () => { if (invalid || !pool.isAvailable()) throw new Error("task_coordinator_unavailable"); };
+  const check = () => { if (invalid || !pool.isAvailable()) throw new TaskCoordinatorInterruption("task_coordinator_unavailable"); };
   const db: DatabaseClient = {
     async query<T>(sql: string, params?: unknown[]) { check(); const value = await raw.query<T>(sql, params); check(); return value; },
     transaction: work => db.transactionWithPreCommitCheck(work, () => {}),
@@ -53,9 +54,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return raw.transactionWithPreCommitCheck(async tx => {
         let usable = true;
         const session: DatabaseSession = { async query<T>(sql: string, params?: unknown[]) {
-          check(); if (!usable) throw new Error("task_coordinator_session_closed");
+          check(); if (!usable) throw new TaskCoordinatorInterruption("task_coordinator_session_closed");
           const value = await tx.query<T>(sql, params); check();
-          if (!usable) throw new Error("task_coordinator_session_closed"); return value;
+          if (!usable) throw new TaskCoordinatorInterruption("task_coordinator_session_closed"); return value;
         } };
         try { return await work(Object.freeze(session)); } finally { usable = false; }
       }, () => { check(); precommit(); check(); });

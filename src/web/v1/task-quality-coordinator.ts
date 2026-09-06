@@ -10,6 +10,7 @@ import { NativeTaskCompletionService } from "../../persistence/native-task-compl
 import { documentStructureRulesSchema } from "../../completion-gate/v1/document-structure-contract";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { catalogProjectIdSchema } from "./project-wire";
+import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
 
 export type TaskQualityConfiguration = NativeQualityConfiguration & { scenarios: readonly AutomaticDocumentScenario[] };
 export const taskQualityRequestSchema = nativeQualityRequestSchema.extend({ projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict();
@@ -26,10 +27,6 @@ const candidateRowsSchema = z.array(z.object({ run_id: catalogProjectIdSchema, j
 const scenariosSchema = z.array(z.object({ scenarioId: catalogProjectIdSchema, acceptanceProfileId: catalogProjectIdSchema,
   acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), rules: documentStructureRulesSchema }).strict()).max(50);
 const deny = (): never => { throw new Error("task_quality_unavailable"); };
-/** Distinguish operation invalidation from an individual unavailable saved result. */
-class QualityOperationInterrupted extends Error {
-  constructor() { super("task_quality_unavailable"); }
-}
 
 export function validateTaskQualityKeys(quality: TaskQualityConfiguration, reviewKey: Uint8Array, web: PrivateWebProcessOptions["tasks"]) {
   const equal = (a: Uint8Array, b: Uint8Array | undefined) => b instanceof Uint8Array && a.length === 32 && b.length === 32 && timingSafeEqual(a, b);
@@ -72,7 +69,7 @@ export class TaskQualityCoordinator {
   private operation(signal: AbortSignal, assertCurrent: () => void) {
     if (!(signal instanceof AbortSignal)) return deny();
     let interrupted = false;
-    const stop = (): never => { interrupted = true; throw new QualityOperationInterrupted(); };
+    const stop = (): never => { interrupted = true; throw new TaskCoordinatorInterruption("task_quality_unavailable"); };
     const time = () => {
       if (interrupted) return stop();
       let now: number; try { now = this.clock(); } catch { return stop(); }
@@ -129,7 +126,7 @@ export class TaskQualityCoordinator {
         current(); items.push({ runId: row.run_id, jobId: row.job_id, status: "reconciled", result });
       } catch (error) {
         // Do not convert cancellation, a stale lifecycle or an expired budget into a normal item.
-        if (error instanceof QualityOperationInterrupted) throw error;
+        if (error instanceof TaskCoordinatorInterruption) throw error;
         current(); items.push({ runId: row.run_id, jobId: row.job_id, status: "unavailable", requiresReconciliation: true });
       }
     }
