@@ -5,11 +5,12 @@ import type { ClientRequest, IncomingMessage } from "node:http";
 import { createHash } from "node:crypto";
 import type { EventEmitter } from "node:events";
 import { z } from "zod";
-import { preparePinnedHttpsConnection, verifyPinnedTlsPeer, parseCanonicalHttpsDestination,
+import { verifyPinnedTlsPeer, parseCanonicalHttpsDestination,
   type NetworkResolverV1 } from "../node-policy/v1/network-target-guard";
 import { nativeHttpLimits, nativeHttpJson, nativeHttpRequestSchema, nativeHttpResponseSchema,
   type NativeHttpRequest, type NativeHttpResponse } from "../harness/v1/native-http-exchange";
 import type { NativeHttpClient } from "./native-http-host";
+import { captureNativePrivateAddress, prepareNativeHttpsDestination } from "./native-https-destination";
 
 export interface NativeNodeHttpsPorts {
   resolver: NetworkResolverV1;
@@ -19,6 +20,7 @@ export interface NativeNodeHttpsPorts {
 const nativePorts: NativeNodeHttpsPorts = { resolver: { resolve: async host =>
   (await lookup(host, { all: true, verbatim: true })).map(record => record.address) }, connect, request: httpsRequest };
 const schema = z.object({ canonicalDestination: z.string(), connectorCredentialRef: z.string().min(3).max(160),
+  pinnedPrivateAddress: z.string().max(45).optional(),
   serverCertificateDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), serverCa: z.string().min(16).max(65_536) }).strict();
 export type NativeNodeHttpsConfiguration = z.input<typeof schema>;
 const credentialSchema = z.object({ certificate: z.string().min(16).max(65_536), privateKey: z.string().min(16).max(65_536) }).strict();
@@ -31,6 +33,7 @@ export function createNativeNodeHttpsClient(input: NativeNodeHttpsConfiguration,
   assertCurrent(): void; clock?: () => number;
 }, ports: NativeNodeHttpsPorts = nativePorts): NativeHttpClient {
   const config = schema.parse(input); parseCanonicalHttpsDestination(config.canonicalDestination);
+  captureNativePrivateAddress(config.canonicalDestination, config.pinnedPrivateAddress);
   const credential = source.credential.bind(source), available = source.assertCurrent.bind(source);
   const now = (source.clock ?? Date.now).bind(source);
   const resolve = ports.resolver.resolve.bind(ports.resolver), tls = ports.connect.bind(ports), requestHttp = ports.request.bind(ports);
@@ -64,9 +67,8 @@ export function createNativeNodeHttpsClient(input: NativeNodeHttpsConfiguration,
     const timer = setTimeout(abort, nativeHttpLimits.requestMs);
     const work = track(Promise.resolve().then(async () => {
       ensure();
-      const plan = await preparePinnedHttpsConnection({ canonicalDestination: config.canonicalDestination,
-        allowedDestinations: [config.canonicalDestination], resolver: { resolve },
-        executor: { exposesFinalDestination: true, supportsPinnedTlsConnection: true }, resolvedAt: new Date(now()).toISOString() });
+      const plan = await prepareNativeHttpsDestination(config.canonicalDestination, config.pinnedPrivateAddress,
+        { resolve }, new Date(now()).toISOString());
       ensure(); const secret = credentialSchema.parse(await credential(config.connectorCredentialRef)); ensure();
       await new Promise<void>((accepted, rejected) => {
         socket = own(tls({ host: plan.pinnedAddresses[0], port: plan.port,

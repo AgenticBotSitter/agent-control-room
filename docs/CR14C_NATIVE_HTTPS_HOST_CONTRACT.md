@@ -25,12 +25,28 @@ sockets, fallback address, environment credential lookup or automatic network re
 Credential material is not returned, logged or stored in repository/evidence. Construction
 is inert; only an explicitly invoked host operation can reach the supplied network ports.
 
+For a private DNS destination, the operator may supply one exact canonical
+`pinnedPrivateAddress` in connector configuration: RFC1918, IPv6 ULA or tailnet
+100.64/10. Every DNS answer must match that address before any credential read or
+TLS call; mixed, changed, empty or oversized answer sets fail without fallback.
+TLS still verifies the configured DNS hostname, CA and exact leaf fingerprint;
+the actual connected peer must equal the pin. Loopback, link-local/metadata,
+multicast and other reserved ranges are not private-pin options. This narrowly
+scoped connector option does not change general task-network destination policy.
+It configures no DNS, credentials or live connection by itself.
+
 ## Ownership and limits
 
 The server pins one trusted task registration per configured node. Opening a connection
 returns a fresh server-generated opaque generation ID; exchange/close must match that
 node and current generation. Unknown peers/generations cannot close another connection.
 Both client and server capture configuration/callbacks and refuse overlapping requests.
+The native server callback holds an exact generation's delivery admission until its
+physical response finishes or fails. Same-generation exchange/close while a reply is
+pending is refused without acquiring cleanup ownership. An explicit new open may
+replace the old generation; late old delivery settlement cannot unlock or close its
+replacement. Direct in-process `handle` calls return completed response values unless
+their adapter explicitly opts into native-delivery settlement.
 Existing attachWire/openWire own their underlying protocol state and cleanup.
 
 Requests/responses have fixed version/path/method/content-type and bounded headers,

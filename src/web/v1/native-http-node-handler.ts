@@ -6,7 +6,7 @@ import { nativeHttpLimits, readNativeHttpBody } from "../../harness/v1/native-ht
 /** Separate private HTTPS callback. No listener is opened; actual TLS peer evidence
  * comes from the request socket, never an HTTP forwarding header. */
 export function createNativeHttpNodeHandler(origin: string, application: {
-  handle(request: Request, socket: TLSSocket): Promise<Response>; close(): Promise<void>; isReady(): boolean;
+  handle(request: Request, socket: TLSSocket, nativeDelivery?: boolean): Promise<Response>; close(): Promise<void>; isReady(): boolean;
   settleResponse?(response: Response, delivered: boolean): Promise<void>;
 }) {
   const handle = application.handle.bind(application), closeApplication = application.close.bind(application);
@@ -43,7 +43,7 @@ export function createNativeHttpNodeHandler(origin: string, application: {
       const request = new Request(`${origin}${nativeHttpLimits.path}`, { method: "POST", headers,
         body: Readable.toWeb(input) as ReadableStream<Uint8Array>, signal: controller.signal,
         duplex: "half" } as RequestInit & { duplex: "half" });
-      response = await handle(request, input.socket as TLSSocket);
+      response = await handle(request, input.socket as TLSSocket, true);
       if (controller.signal.aborted || output.destroyed) { void response.body?.cancel().catch(() => {}); return; }
       const body = await readNativeHttpBody(response.body, controller.signal);
       if (controller.signal.aborted || output.destroyed) return;

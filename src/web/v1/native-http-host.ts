@@ -24,7 +24,7 @@ export function captureNativeHttpSettings(input: NativeHttpSettings) {
 }
 type Wire = Awaited<ReturnType<ManagedNativeSessions["attachWire"]>>;
 type Record = { nodeId: string; id: string; wire?: Wire; closed: boolean; closing?: Promise<void>;
-  packets: string[]; bytes: number; lastSeen: number };
+  packets: string[]; bytes: number; lastSeen: number; delivering?: boolean };
 const error = () => new Error("native_http_unavailable");
 const responseHeaders = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" };
 
@@ -76,7 +76,7 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
     if (output.more && !output.packets.length) throw error();
     return output;
   }
-  async function handle(request: Request, socket: TLSSocket): Promise<Response> {
+  async function handle(request: Request, socket: TLSSocket, nativeDelivery = false): Promise<Response> {
     let peer: z.infer<typeof peerSchema> | undefined, record: Record | undefined, locked = false;
     const controller = new AbortController(), abort = () => controller.abort();
     const timer = setTimeout(abort, nativeHttpLimits.requestMs);
@@ -128,7 +128,7 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
       } else {
         const existing = records.get(peer.nodeId);
         // A stale token never acquires cleanup ownership of a newer generation.
-        if (!existing || existing.id !== command.connection) throw error();
+        if (!existing || existing.id !== command.connection || existing.delivering) throw error();
         record = existing; current(peer, record);
         if (command.operation === "close") {
           await closeRecord(record);
@@ -140,6 +140,7 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
       current(peer, record); if (controller.signal.aborted || socket.destroyed) throw error();
       record!.lastSeen = current(peer);
       const response = new Response(nativeHttpJson(drain(record!)), { headers: responseHeaders });
+      record!.delivering = nativeDelivery;
       deliveries.set(response, record!);
       return response;
     } catch {
@@ -151,11 +152,12 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
   const facade = Object.freeze({
     async settleResponse(response: Response, delivered: boolean) {
       const record = deliveries.get(response); deliveries.delete(response);
+      if (record) record.delivering = false;
       // Delivery uncertainty belongs to this exact generation, never its replacement.
       if (record && !delivered) await closeRecord(record);
     },
-    handle(request: Request, socket: TLSSocket) {
-      const work = handle(request, socket); active.add(work); void work.finally(() => active.delete(work)).catch(() => {}); return work;
+    handle(request: Request, socket: TLSSocket, nativeDelivery = false) {
+      const work = handle(request, socket, nativeDelivery); active.add(work); void work.finally(() => active.delete(work)).catch(() => {}); return work;
     },
     stage(nodeId: string, ...args: Parameters<Wire["stage"]>) {
       const record = records.get(nodeId), peer = peers.find(p => p.nodeId === nodeId);
