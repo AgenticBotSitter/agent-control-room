@@ -116,20 +116,25 @@ export class NativeResultStore {
     return job;
   }
   /** Caller has authenticated this exact signed observation; this method also requires durable canonical evidence. */
-  async capture(tenantId: string, nodeId: string, observation: NativeTaskSnapshotBody, input: Uint8Array, receivedAt: string) {
+  async capture(tenantId: string, nodeId: string, observation: NativeTaskSnapshotBody, input: Uint8Array, receivedAt: string,
+    assertCurrent: () => void = () => {}) {
+    assertCurrent();
     if (!this.put || this.storageUncertain) throw new Error("result_write_unavailable");
     id.parse(tenantId); id.parse(nodeId); instant.parse(receivedAt);
     const body = nativeTaskSnapshotBodySchema.parse(observation);
     if (body.state !== "completed" || !body.result || Date.parse(receivedAt) < Date.parse(body.observedAt)) throw new Error("result_not_completed");
     const { bytes } = checkedResultBytes(input, body.result), artifactId = nativeResultId(tenantId, body.runId);
-    await this.db.transaction(tx => this.bound(tx, tenantId, nodeId, body));
+    await this.db.transactionWithPreCommitCheck(tx => this.bound(tx, tenantId, nodeId, body), assertCurrent);
+    assertCurrent();
     const stored = await this.io(signal => this.put!({ artifactId, bytes, signal }));
+    assertCurrent();
     if (stored.artifactId !== artifactId || stored.contentHash !== body.result.contentHash || stored.sizeBytes !== bytes.byteLength)
       throw new Error("result_storage_unavailable");
     const readback = await this.io(signal => this.readBytes(artifactId, signal));
+    assertCurrent();
     if (!readback) throw new Error("result_storage_unavailable");
     checkedResultBytes(readback, body.result);
-    return this.db.transaction(async tx => {
+    const captured = await this.db.transactionWithPreCommitCheck(async tx => {
       const job = await this.bound(tx, tenantId, nodeId, body);
       // Serialize on the existing run; duplicate deliveries cannot race a second metadata receipt.
       await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, body.runId]);
@@ -161,7 +166,8 @@ export class NativeResultStore {
         occurredAt: receivedAt, idempotencyKey: receipt.snapshotDigest,
         safeMetadata: { contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes, byteCheck: receipt.byteCheck } });
       return { receipt, replayed: false };
-    });
+    }, assertCurrent);
+    assertCurrent(); return captured;
   }
   async list(tx: DatabaseSession, tenantId: string, projectId: string, jobId: string) {
     const rows = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3
