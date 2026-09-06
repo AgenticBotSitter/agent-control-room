@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { startPgBossNativeTaskWorker } from '../../src/persistence/pg-boss-native-task-worker.ts';
 import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
+import { verifyPgBossNativeWorkerPermissions } from '../../src/persistence/pg-boss-native-task-permissions.ts';
 import { nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
 
@@ -52,6 +53,7 @@ async function fixture(t) {
 // A separate logical SQL port models ownership of a dedicated worker pool; PGlite
 // has one in-memory engine, so this is not proof of PostgreSQL roles/pool isolation.
 async function runtimeFixture(t, f, deliver, concurrency = 1) {
+  await f.raw.exec(await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8'));
   let closed = false, closeCount = 0;
   const statements = [], clients = [];
   class CapturedBoss extends PgBoss { constructor(options) { super(options); clients.push(this); } }
@@ -59,7 +61,10 @@ async function runtimeFixture(t, f, deliver, concurrency = 1) {
     async query(sql, values) {
       assert.equal(closed, false, 'worker SQL must stop after its owned port closes');
       statements.push(sql);
-      return values?.length ? f.raw.query(sql, values) : (await f.raw.exec(sql)).at(-1) ?? { rows: [] };
+      return f.raw.transaction(async tx => {
+        await tx.exec('SET LOCAL ROLE control_room_native_queue_worker');
+        return values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] };
+      });
     },
     async close() { closed = true; closeCount++; },
   }, { backend: 'pglite', deliver, concurrency });
@@ -144,6 +149,31 @@ test('candidate worker role runs the actual owned runtime without queue-edit or 
   await runtime.close(); assert.equal(closed, true);
   assert.deepEqual(runtime.status(), { state: 'closed', faulted: false, accepting: false });
   assert.deepEqual(f.errors, []);
+});
+
+test('effective worker preflight rejects missing and excessive privileges', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  await f.raw.exec(await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8'));
+  await f.raw.exec('CREATE TABLE public.synthetic_private(id int); REVOKE ALL ON public.synthetic_private FROM PUBLIC');
+  const query = sql => f.raw.transaction(async tx => {
+    await tx.exec('SET LOCAL ROLE control_room_native_queue_worker');
+    return tx.query(sql);
+  });
+  const check = () => verifyPgBossNativeWorkerPermissions({ query });
+  await check();
+  const changes = [
+    ['REVOKE DELETE ON control_room_queue.job_common FROM control_room_native_queue_worker', 'GRANT DELETE ON control_room_queue.job_common TO control_room_native_queue_worker'],
+    ['GRANT UPDATE(name) ON control_room_queue.queue TO control_room_native_queue_worker', 'REVOKE UPDATE(name) ON control_room_queue.queue FROM control_room_native_queue_worker'],
+    ['GRANT SELECT(id) ON public.synthetic_private TO control_room_native_queue_worker', 'REVOKE SELECT(id) ON public.synthetic_private FROM control_room_native_queue_worker'],
+    ['GRANT SELECT ON control_room_queue.version TO control_room_native_queue_worker WITH GRANT OPTION', 'REVOKE GRANT OPTION FOR SELECT ON control_room_queue.version FROM control_room_native_queue_worker'],
+    ['CREATE FUNCTION public.synthetic_callable() RETURNS int LANGUAGE SQL AS $$ SELECT 1 $$', 'DROP FUNCTION public.synthetic_callable()'],
+    ['CREATE ROLE synthetic_extra; GRANT synthetic_extra TO control_room_native_queue_worker', 'REVOKE synthetic_extra FROM control_room_native_queue_worker; DROP ROLE synthetic_extra'],
+  ];
+  for (const [change, restore] of changes) {
+    await f.raw.exec(change);
+    await assert.rejects(check(), /native_task_worker_permissions_invalid/);
+    await f.raw.exec(restore); await check();
+  }
 });
 
 test('candidate worker role setup rejects retry-enabled queue before creating a role', { timeout: 20000 }, async t => {

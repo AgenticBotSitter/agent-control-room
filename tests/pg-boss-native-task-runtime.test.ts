@@ -15,7 +15,7 @@ function fixture() {
   const calls: string[] = [], active: Promise<unknown>[] = [];
   let options!: ConstructorParameters<PgBossNativeRuntimeConstructor>[0];
   let onError!: (error: unknown) => void, handler!: Parameters<PgBossNativeWorkerClient["work"]>[2];
-  const hooks = { start: async () => {}, stop: async () => {}, work: async () => {}, closeDb: async () => {}, off: async () => {} };
+  const hooks = { permissions: async (): Promise<unknown[]> => [{ valid: true }], start: async () => {}, stop: async () => {}, work: async () => {}, closeDb: async () => {}, off: async () => {} };
   const queue = { name: spec.name, table: spec.table, policy: "standard", partition: false, retryLimit: 0, deadLetter: null, notify: false };
   class Boss {
     constructor(value: typeof options) { calls.push("constructor"); options = value; }
@@ -27,7 +27,9 @@ function fixture() {
     async offWork() { calls.push("off"); await hooks.off(); await Promise.allSettled(active); }
     async cancel() { calls.push("cancel"); }
   }
-  const database = { async query<T>() { calls.push("sql"); return { rows: [] as T[] }; },
+  const database = { async query<T>(sql: string) {
+    if (sql.includes("pg-boss-worker-permissions/v1")) { calls.push("preflight"); return { rows: await hooks.permissions() as T[] }; }
+    calls.push("sql"); return { rows: [] as T[] }; },
     async close() { calls.push("db-close"); await hooks.closeDb(); } };
   const start = (input: Parameters<typeof startPgBossNativeTaskRuntime>[2] = { async deliver() { return { disposition: "held" }; } }) =>
     startPgBossNativeTaskRuntime(Boss, database, input);
@@ -47,7 +49,7 @@ test("dedicated package composition disables schema, scheduling and notification
   const { db, ...options } = f.options();
   assert.deepEqual(options, { schema: spec.schema, backend: "postgres", migrate: false, createSchema: false,
     supervise: false, schedule: false, useListenNotify: false });
-  assert.deepEqual(f.calls.slice(0, 3), ["constructor", "listen", "start"]);
+  assert.deepEqual(f.calls.slice(0, 4), ["preflight", "constructor", "listen", "start"]);
   input.deliver = async () => { throw new Error("mutated callback"); };
   await f.invoke(); assert.equal(seen, 1);
   assert.deepEqual(runtime.status(), { state: "running", faulted: false, accepting: true });
@@ -66,12 +68,26 @@ test("invalid configuration does not acquire or close the caller's pool", async 
   }
 });
 
+test("failed or malformed permissions prevent package construction and close the owned pool", async () => {
+  for (const rows of [[], [{ valid: false }], [{ valid: "true" }], [{ valid: true }, { valid: true }]]) {
+    const f = fixture(); f.hooks.permissions = async () => rows;
+    await assert.rejects(f.start(), /native_task_runtime_start_failed/);
+    assert.deepEqual(f.calls, ["preflight", "db-close"]);
+  }
+  const f = fixture(); f.hooks.permissions = async () => { throw new Error("private database details"); };
+  await assert.rejects(f.start(), error => {
+    assert.equal((error as Error).message, "native_task_runtime_start_failed");
+    assert.equal((error as Error).stack, undefined); return true;
+  });
+  assert.deepEqual(f.calls, ["preflight", "db-close"]);
+});
+
 test("constructor and start failures close ownership once and redact raw errors", async () => {
   const f = fixture(); f.hooks.start = async () => { throw new Error("private startup details"); };
   await assert.rejects(f.start(), error => {
     assert.equal((error as Error).message, "native_task_runtime_start_failed"); assert.equal((error as Error).stack, undefined); return true;
   });
-  assert.deepEqual(f.calls, ["constructor", "listen", "start", "stop", "db-close"]);
+  assert.deepEqual(f.calls, ["preflight", "constructor", "listen", "start", "stop", "db-close"]);
   class Broken extends f.Boss { constructor(options: ConstructorParameters<typeof f.Boss>[0]) { super(options); throw new Error("secret"); } }
   await assert.rejects(startPgBossNativeTaskRuntime(Broken, f.database, { async deliver() { return { disposition: "held" }; } }), /start_failed/);
   assert.equal(f.calls.filter(value => value === "db-close").length, 2);
@@ -133,7 +149,7 @@ test("uncooperative drain is bounded and still attempts upstream and pool cleanu
 test("startup timeout stops and closes without registering a worker or retrying start", async () => {
   const f = fixture(); f.hooks.start = () => new Promise(() => {});
   await assert.rejects(f.start({ operationTimeoutMs: 20, async deliver() { return { disposition: "held" }; } }), /start_failed/);
-  assert.deepEqual(f.calls, ["constructor", "listen", "start", "stop", "db-close"]);
+  assert.deepEqual(f.calls, ["preflight", "constructor", "listen", "start", "stop", "db-close"]);
 });
 
 test("late registration after timeout is fenced and retired without delivery", async () => {

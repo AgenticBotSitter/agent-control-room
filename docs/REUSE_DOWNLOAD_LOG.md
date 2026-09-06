@@ -299,3 +299,9 @@ closed on completion. All E01–E08 retained acquisition paths remain unchanged.
 Reused E01 pg-boss and existing PGlite. Candidate SQL executed only in fresh in-memory
 fixtures; no native database/role configuration. 31 combined package checks passed.
 Fixtures/processes closed, no downloads or installation, retained sources unchanged.
+
+### E11 — permission preflight (no acquisition)
+
+Reused retained E01 package and repository dependencies. 32 combined package checks
+passed on in-memory PGlite; fixtures closed on completion. No new download, service,
+installation or retained temporary data. Acquisition paths remain unchanged.

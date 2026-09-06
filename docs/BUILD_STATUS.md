@@ -53,6 +53,13 @@ PGlite tests while queue edits, schema creation and synthetic canonical-table ac
 remain denied. 31 combined package checks pass. No production role or new PostgreSQL
 service configured; effective-permission preflight and real-PG acceptance remain open.
 
+**E11 — effective worker permissions:** [Evidence](research/REUSE_E11_PG_BOSS_PERMISSION_PREFLIGHT.md)
+adds a read-only startup check before package construction, rejecting missing/excess
+permissions and closing the owned SQL port on failure. 43 queue unit checks and 32
+actual-package/PGlite checks pass. Canonical fixtures now include existing application
+role hardening and restricted worker SQL. Real-PG, identity/pool checks and application
+startup/cutover remain open; no live services or downloads.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

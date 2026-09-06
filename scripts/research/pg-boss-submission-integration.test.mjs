@@ -46,10 +46,18 @@ async function fixture(t) {
       // Distinct logical worker SQL port over the same PGlite database. This tests
       // composition ownership, not real PostgreSQL role/pool isolation.
       let workerClosed = false;
+      // Match existing application role preparation: migrations alone leave
+      // public trigger functions executable by PUBLIC. The worker preflight
+      // must reject that unprepared database rather than exempt those grants.
+      await f.raw.exec(await readFile(new URL('../../db/roles/task_coordinator_roles.sql', import.meta.url), 'utf8'));
+      await f.raw.exec(await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8'));
       const runtime = await startPgBossNativeTaskRuntime(PgBoss, {
         async query(sql, values) {
           assert.equal(workerClosed, false);
-          return values?.length ? f.raw.query(sql, values) : (await f.raw.exec(sql)).at(-1) ?? { rows: [] };
+          return f.raw.transaction(async tx => {
+            await tx.exec('SET LOCAL ROLE control_room_native_queue_worker');
+            return values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] };
+          });
         }, async close() { workerClosed = true; },
       }, { backend: 'pglite', deliver });
       workers.push(runtime); return runtime;

@@ -106,6 +106,11 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E11 permission preflight](research/REUSE_E11_PG_BOSS_PERMISSION_PREFLIGHT.md) now
+rejects missing/excess effective worker privileges before package startup. 43 unit
+and 32 package checks pass. This closes the component permission-check gap, not the
+real-PG/login/bootstrap or cutover acceptance gaps below.
+
 Latest continuation: [E09 owned runtime](research/REUSE_E09_PG_BOSS_RUNTIME.md) connects
 the pg-boss worker to bounded lifecycle/error handling and dedicated worker SQL-port
 ownership. The canonical delivery tests now use this composition. 42 unit and 28

@@ -1,4 +1,5 @@
 import type { DatabaseSession } from "./database";
+import { verifyPgBossNativeWorkerPermissions } from "./pg-boss-native-task-permissions";
 import { PG_BOSS_NATIVE_SUBMISSION as spec } from "./pg-boss-native-task-submission";
 import { startPgBossNativeTaskWorker, type NativeTaskDeliveryHandler, type PgBossNativeWorkerClient } from "./pg-boss-native-task-worker";
 
@@ -74,6 +75,7 @@ export async function startPgBossNativeTaskRuntime(
     return closing;
   };
   try {
+    await bounded(() => verifyPgBossNativeWorkerPermissions({ query }));
     client = new PgBoss({ db: { async executeSql(sql, values) {
       if (sqlClosed) throw error("native_task_runtime_unavailable");
       return query(sql, values);
