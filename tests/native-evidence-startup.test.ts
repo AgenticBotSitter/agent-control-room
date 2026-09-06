@@ -10,6 +10,7 @@ import { taskStartupFixture } from "./helpers/task-startup";
 
 type QualityFixture = Awaited<ReturnType<typeof nativeQualityCompletionFixture>>;
 type Pool = ReturnType<typeof restrictedPool>;
+type EvidenceSettings = NonNullable<PrivateTaskStartupConfiguration["coordinator"]["evidence"]> & { integrityKey: Uint8Array };
 
 function deferred() {
   let resolve!: () => void;
@@ -59,7 +60,7 @@ async function evidenceStartupFixture() {
   const quality = qualityConfiguration(x);
   const resultDatabase = { ...startup.config.coordinator.database, username: "result_test" };
   const evidenceDatabase = { ...startup.config.coordinator.database, username: "evidence_test" };
-  const evidenceSettings = { database: evidenceDatabase,
+  const evidenceSettings: EvidenceSettings = { database: evidenceDatabase,
     integrityKey: new Uint8Array(32).fill(75),
     storage: { ...x.f.config, integrityKey: Uint8Array.from(x.f.config.integrityKey) },
     enrollments: [{ ...x.f.prepared.enrollment }] };
