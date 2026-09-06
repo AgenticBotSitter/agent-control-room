@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest executable — E80:** [Private VPS launcher](research/REUSE_E80_PRIVATE_VPS_LAUNCHER.md)
+adds an explicit operator-configured launcher using existing compiled host/rendering/
+assets and signal lifetime. Three help/refusal/path tests and targeted lint pass.
+No successful live launch, operator configuration, credential load or service installation
+is claimed; reviewed configuration and real-resource acceptance remain required.
+
 **Latest lifecycle composition — E79:** [Signal lifetime](research/REUSE_E79_HOST_SIGNAL_LIFETIME.md)
 registers supplied stop events before one startup attempt, carries startup cancellation
 into normal shutdown and closes late hosts without erasing timeout uncertainty. Uses

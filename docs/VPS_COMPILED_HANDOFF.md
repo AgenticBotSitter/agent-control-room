@@ -15,7 +15,13 @@ document. Current readiness is in BUILD_STATUS.md, not inferred from a compiled 
 | `dist-vps/server/nativeQueueInspection.js` | Exported `inspectInstalledNativeQueueSchema(database, signal)` | No; invocation reads the supplied SQL port |
 | Remaining `dist-vps/server` files | Shared compiled modules, rendering and existing preparation/rehearsal entries | Preserve the whole output; do not cherry-pick entry files |
 
-The output is **not a standalone installed service**. Keep the matching package manifest,
+The output is **not a standalone installed service**. E80 supplies
+`scripts/run-private-vps.mjs` as an explicit compiled-release launcher, but reviewed
+operator configuration and successful resource-backed startup remain unqualified.
+Its safe help command is `node scripts/run-private-vps.mjs --help`. Do not invoke its
+configuration/start mode until the setup below is authorized and complete. See
+[E80's operator contract](research/REUSE_E80_PRIVATE_VPS_LAUNCHER.md).
+Keep the matching package manifest,
 lockfile and resolved production dependencies alongside it. pg-boss is deliberately
 external and resolves through its installed package and locked dependencies. Never copy
 Mac `node_modules` to Linux. After approval, prepare dependencies on the target platform
