@@ -23,6 +23,9 @@ for (const state of ["prepared", "sent", "receipted"] as const)
       const frame = mode === "unknown-ack" ? signNodeFrame({ ...next, type: "protocol.ack",
         body: { acknowledgedMessageIds: ["message:never-issued"], highestContiguousSequence: 1, disposition: "accepted" } }, x.f.keys.privateKey)
         : signNodeFrame(next, x.f.keys.privateKey);
+      // The synthetic node-authored ACK consumes its real durable outbound sequence,
+      // so a later genuine receipt cannot reuse it.
+      c.peer.journal.stageOutbound(frame, false, frame.sentAt);
       const before = await x.counts(), states = await x.states(), calls = [...x.local.calls], sends = c.peer.state.sends;
       if (mode === "known-ack") await c.handle.reconcile(JSON.stringify(frame), currentSignal());
       else await assert.rejects(c.handle.reconcile(JSON.stringify(frame), currentSignal()));

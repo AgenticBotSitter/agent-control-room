@@ -2398,14 +2398,25 @@ private build passed. Independent production and test reviews accepted the corre
 See `CR14C_NODE_OBSERVATION_REPORTING_ACCEPTANCE.md` for retained failures and limits.
 PR #340 (`bc8074a`) passed all nine GitHub checks; it remains open and unmerged.
 
+## Managed native input: accepted locally
+
+Production `46d1188` passed independent static review after correcting result transaction
+fences, facade privacy, pre-write attempt binding and delayed ACK handling. The runtime
+now owns the initial and reconnect input sequence previously coordinated by tests.
+Final combined checks passed85, existing helper/managed/revised/reconnect/compiled
+regressions passed46, and types/full lint/private build passed. See
+`CR14C_MANAGED_NATIVE_INPUT_ACCEPTANCE.md` for retained failures and precise evidence.
+Prerequisite #341 at `cea6084` passed all nine checks in `34017958371`; it remains unmerged.
+No live agent, database, listener, owner signer or deployment has been activated.
+
 ## Next block
 
 ```text
-Block: CR14C bounded runtime input routing for initial and recovered sessions
+Block: CR14C node-side supplied-resource execution and reporting runtime
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Actual reused-journal tests now prove reporting recovery, but their host input driver explicitly holds and drains the ordered frame suffix. The runtime must own this sequencing before live transport activation.
-Expected output: bounded supplied-input ownership that serializes signed hello, reconciliation, exact recorded-work recovery, progress and trailing ACKs without dropping or reordering frames. Reuse managed sessions and the saved-observation reporter in disposable end-to-end tests. No listener, provider call, implicit dispatch, native restart or live activation. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
+Why: The server now owns ordered input and recorded-work recovery. The node still needs an explicit runtime owner joining approved intake, native handoff, saved reporting and cleanup before a live task can be attempted.
+Expected output: one bounded supplied-resource node composition using the existing bridge, authority, handoff and reporter. Preserve explicit admission, no duplicate starts, bounded progress/stop/close and reconnect reporting. Verify with actual disposable journals and fake provider/transport, without opening a listener or calling a live provider. Do not replace the scheduler or invent owner approval. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
