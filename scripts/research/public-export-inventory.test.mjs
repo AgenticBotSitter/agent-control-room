@@ -3,6 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
+import path from 'node:path';
+import ts from 'typescript';
 
 test('planning inventory covers current tracked inputs without approving their publication', () => {
   const report = JSON.parse(execFileSync(process.execPath, ['scripts/research/public-export-inventory.mjs'],
@@ -30,6 +32,20 @@ test('planning inventory covers current tracked inputs without approving their p
     assert.equal(report.entries.find(entry => entry.path === file).disposition, 'adapt');
   assert.ok(report.unresolved.every(entry => entry.file.startsWith('dist-vps/')));
   assert.ok(report.dynamic.some(entry => entry.file === 'scripts/run-private-vps.mjs'));
+  // Cross-check our planning scan against the compiler, which also resolves type-only
+  // import expressions. A disagreement must be investigated, not silently exported.
+  const parsed = ts.getParsedCommandLineOfConfigFile('tsconfig.vps.json', {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: diagnostic => assert.fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+  });
+  assert.ok(parsed);
+  assert.deepEqual(parsed.errors, []);
+  const program = ts.createProgram(parsed.fileNames, parsed.options);
+  const indexed = new Set(report.entries.filter(entry => entry.reason === 'application_or_build_import').map(entry => entry.path));
+  for (const source of program.getSourceFiles()) {
+    const file = path.relative(process.cwd(), source.fileName);
+    if (!file.startsWith('node_modules/')) assert.ok(indexed.has(file), `Compiler source missing from planning closure: ${file}`);
+  }
 });
 
 test('compiled-test inventory follows selected tests and helpers without executing package commands', () => {

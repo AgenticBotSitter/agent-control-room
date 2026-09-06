@@ -25,6 +25,14 @@ exports. The much larger candidate and dependency/asset review remain unfinished
 
 ## Standalone compiler roots follow-up
 
+At `d667f33`, a separate comparison of TypeScript's full resolved program found all
+291 non-node_modules source files already in the planning import closure. The inventory
+test now asserts this relationship, including any type-only dependencies resolved by
+the compiler. Future disagreement fails the diagnostic and requires investigation;
+it does not silently approve additional files. This checks source completeness only,
+not runtime filesystem inputs, dependency notices or privacy. Both inventory tests
+and targeted lint pass.
+
 At `502f034`, the planning inventory's separate entry-point list was found to omit
 `middleware.ts`, a framework-discovered hook rather than an ordinary application
 import. The script now uses TypeScript's parsed `tsconfig.vps.json` root files instead

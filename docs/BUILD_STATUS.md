@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Inventory cross-checked against the compiler:** All 291 standalone application source
+files resolved by TypeScript are present in the planning closure. The inventory test
+now checks this independently of the custom import traversal, catching future missing
+type-only source dependencies. Two inventory tests and targeted lint pass. No content
+classification, license or publication gate is waived by this source-coverage check.
+
 **Missing-notice investigation advanced:** A bounded nested-package inspection found
 the RSC plugin's bundled React MIT notice; exact-version-tag upstream texts were read
 for the plugin and Next.js lint package. Cloudflare notice-body retrieval remains
