@@ -126,7 +126,7 @@ test("managed native sessions verify five roles before install and capture confi
   assert.deepEqual(Object.keys(runtime).sort(), ["close", "connections", "evidence", "isReady", "quality", "results"]);
   assert.deepEqual(Object.keys(app).sort(), ["close", "connections", "evidence", "handle", "isReady", "quality", "results"]);
   assert.ok(runtime.connections);
-  assert.deepEqual(Object.keys(runtime.connections).sort(), ["attach", "attachInput", "tenantId", "workspaceId"]);
+  assert.deepEqual(Object.keys(runtime.connections).sort(), ["attach", "attachInput", "attachWire", "tenantId", "workspaceId"]);
   for (const forbidden of ["client", "database", "password", "integrityKey", "privateKey", "session_test"])
     assert.equal(JSON.stringify(runtime).includes(forbidden), false, forbidden);
 

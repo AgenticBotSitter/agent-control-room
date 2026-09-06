@@ -114,6 +114,7 @@ for (const mode of ["progress", "recover"]) test(`compiled five-role startup own
   evidenceSettings.enrollments[0].nodeId = "node:mutated";
   const runtime = await starting; t.after(() => runtime.close());
   assert.equal(runtime.isReady(), true); assert.ok(runtime.connections); assert.ok(runtime.evidence);
+  assert.equal(typeof runtime.connections.attachWire, "function");
   assert.deepEqual(opened, ["web_test", "coordinator_test", "result_test", "evidence_test", "session_test"]);
   assert.deepEqual(preflights, [
     { current_user: "web_test", session_user: "web_test", rolsuper: false },

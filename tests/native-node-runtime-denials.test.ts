@@ -51,7 +51,7 @@ test("the frozen facade captures configuration and methods before factory return
   const runtime = x.runtime;
   assert.equal(Object.isFrozen(runtime), true);
   assert.deepEqual(Object.keys(runtime).sort(), ["close", "disconnected", "grantsExecutionAuthority", "nodeId", "observe",
-    "open", "poll", "queueId", "readResult", "receive", "report", "start", "stop"]);
+    "open", "openWire", "poll", "queueId", "readResult", "receive", "receiveWire", "report", "start", "stop"]);
   assert.equal(runtime.grantsExecutionAuthority, false);
   assert.equal("journal" in runtime || "runs" in runtime || "approvals" in runtime || "transport" in runtime
     || "security" in runtime || "recovery" in runtime || "signer" in runtime, false);
