@@ -14,6 +14,7 @@ import { verifyPgBossApplicationPermissions } from '../../src/persistence/pg-bos
 import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase } from '../../src/web/v1/private-database-preflight.ts';
 import { createPrivateTaskBootstrap } from '../../src/web/v1/private-task-startup.ts';
 import { taskStartupFixture } from '../../tests/helpers/task-startup.ts';
+import { WebSessionAuthority } from '../../src/web/v1/session-authority.ts';
 import { nativeEnvelopeSession } from '../../tests/helpers/native-envelope-session.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -89,15 +90,13 @@ test('actual owned runtime reaches canonical staging and transmission once; abse
   const f = await fixture(t); await f.save();
   const receipt = await enqueue(f), ref = reference(f, receipt), id = nativeTaskSubmissionId(ref);
   const session = await nativeEnvelopeSession(f); t.after(session.close);
+  await new WebSessionAuthority(f.db, f.scope, f.clock).logout(f.args[0]);
+  const browserSessions = await count(f, 'control_web_sessions');
   let calls = 0;
   const worker = await f.startWorker(async (value, signal) => {
     calls++; assert.deepEqual(value, ref);
-    // Test-only composition supplies this synthetic verified owner identity. Production
-    // must resolve current authorization; serialized web credentials are never queued.
-    await f.c.stageQueuedNativeDelivery(f.args[0], value.projectId, value.jobId, value.inputDigest,
-      value.packetDigest, session.session, signal, value.attemptId);
-    const sent = await f.c.transmitQueuedNativeDelivery(f.args[0], value.projectId, value.jobId,
-      value.inputDigest, value.packetDigest, session.session, signal, value.attemptId);
+    await f.c.stageApprovedQueueDelivery(value, session.session, signal);
+    const sent = await f.c.transmitApprovedQueueDelivery(value, session.session, signal);
     assert.equal(sent.deliveryConfirmed, false);
     throw new Error('synthetic-awaiting-authenticated-receipt');
   });
@@ -106,9 +105,26 @@ test('actual owned runtime reaches canonical staging and transmission once; abse
   assert.equal(await count(f, 'control_native_transmission_intents'), 1);
   assert.equal(await count(f, 'control_native_delivery_receipts'), 0);
   assert.equal(session.sent.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch').length, 1);
-  assert.equal((await enqueue(f)).replayed, true);
+  await assert.rejects(enqueue(f), /authentication_required/);
+  assert.equal(await count(f, 'control_web_sessions'), browserSessions, 'server delivery creates no browser session');
   await delay(1100); assert.equal(calls, 1);
   await worker.close(); assert.deepEqual(f.errors, []);
+});
+
+test('server delivery grant expiry after commit blocks transport and preserves unresolved intent', { timeout: 20000 }, async t => {
+  const f = await fixture(t); await f.save();
+  const ref = reference(f, await enqueue(f));
+  const session = await nativeEnvelopeSession(f); t.after(session.close);
+  await f.c.stageApprovedQueueDelivery(ref, session.session, f.abort.signal);
+  const expiry = f.clock() + 1000;
+  await f.db.query("UPDATE control_role_grants SET expires_at=$1 WHERE id='grant:test'", [new Date(expiry).toISOString()]);
+  const db = { ...f.db, transactionWithPreCommitCheck: async (work, check) => {
+    const result = await f.db.transactionWithPreCommitCheck(work, check); f.setNow(expiry); return result;
+  } };
+  await assert.rejects(f.create(db, f.submission).transmitApprovedQueueDelivery(ref, session.session, f.abort.signal));
+  assert.equal(await count(f, 'control_native_transmission_intents'), 1);
+  assert.equal(session.sent.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch').length, 0);
+  await assert.rejects(f.c.transmitApprovedQueueDelivery(ref, session.session, f.abort.signal));
 });
 
 for (const mode of ['expired', 'owner-revoked', 'pins-closed', 'node-retired', 'project-completed', 'tampered-packet']) {
@@ -124,8 +140,7 @@ for (const mode of ['expired', 'owner-revoked', 'pins-closed', 'node-retired', '
     if (mode === 'tampered-packet') await f.raw.query('UPDATE control_room_queue.job SET data=$1 WHERE id=$2',
       [{ ...ref, packetDigest: sha256Digest('synthetic-wrong-packet') }, id]);
     const worker = await f.startWorker(async (value, signal) => {
-      await f.c.stageQueuedNativeDelivery(f.args[0], value.projectId, value.jobId, value.inputDigest,
-        value.packetDigest, session.session, signal, value.attemptId);
+      await f.c.stageApprovedQueueDelivery(value, session.session, signal);
       assert.fail('Canonical rejection should precede staging');
     });
     const result = await settled(f, id);

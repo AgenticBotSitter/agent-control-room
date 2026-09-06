@@ -3,14 +3,15 @@ import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema, nodeRecordSche
   requestRecordSchema, workflowRecordSchema, type AttemptRecord, type JobRecord, type LeaseRecord } from "../../domain/v1";
 import { CanonicalStore } from "../../persistence/canonical-store";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
-import type { NativeTaskSubmission } from "../../persistence/native-task-submission";
+import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmissionReference, type NativeTaskSubmission } from "../../persistence/native-task-submission";
 import { FleetSignalStore } from "../../node-fleet/v1/fleet-signal-store";
 import { evaluateFleetEligibility } from "../../node-fleet/v1/eligibility";
 import { appendAuditWith } from "../../audit/audit-store";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
-import { WebSessionAuthority } from "./session-authority";
+import { WebSessionAuthority, type WebActor } from "./session-authority";
+import { NativeQueueAuthority } from "./native-queue-authority";
 import { WebProjectService } from "./project-service";
 import type { TaskExecutionPlanner } from "./task-execution-planner";
 import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native-run-contracts";
@@ -174,6 +175,16 @@ export class TaskAssignmentCoordinator {
   }
   async stageQueuedNativeDelivery(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal, expectedAttemptId?: string) {
+    return this.stageNativeDelivery(identity, projectId, jobId, expectedInputDigest, expectedPacketDigest, session, signal, expectedAttemptId);
+  }
+  /** Explicit server queue path; never accepts a caller-supplied browser identity. */
+  async stageApprovedQueueDelivery(input: NativeTaskSubmissionReference, session: ServerNodeSession, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || ref.tenantId !== this.scope.tenantId) conflict();
+    return this.stageNativeDelivery(undefined, ref.projectId, ref.jobId, ref.inputDigest, ref.packetDigest, session, signal, ref.attemptId, ref);
+  }
+  private async stageNativeDelivery(identity: VerifiedWebIdentity | undefined, projectId: string, jobId: string, expectedInputDigest: string,
+    expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal, expectedAttemptId?: string, queue?: NativeTaskSubmissionReference) {
     digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
@@ -186,10 +197,19 @@ export class TaskAssignmentCoordinator {
           action: "native.delivery.staged", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
           idempotencyKey: `envelope:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.stagedAt });
         return { value: saved.receipt, assertFresh: saved.assertFresh };
-      }));
+      }, queue));
   }
   async transmitQueuedNativeDelivery(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
     expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal, expectedAttemptId?: string) {
+    return this.transmitNativeDelivery(identity, projectId, jobId, expectedInputDigest, expectedPacketDigest, session, signal, expectedAttemptId);
+  }
+  async transmitApprovedQueueDelivery(input: NativeTaskSubmissionReference, session: ServerNodeSession, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || ref.tenantId !== this.scope.tenantId) conflict();
+    return this.transmitNativeDelivery(undefined, ref.projectId, ref.jobId, ref.inputDigest, ref.packetDigest, session, signal, ref.attemptId, ref);
+  }
+  private async transmitNativeDelivery(identity: VerifiedWebIdentity | undefined, projectId: string, jobId: string, expectedInputDigest: string,
+    expectedPacketDigest: string, session: ServerNodeSession, signal: AbortSignal, expectedAttemptId?: string, queue?: NativeTaskSubmissionReference) {
     digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
@@ -208,10 +228,10 @@ export class TaskAssignmentCoordinator {
           action: "native.delivery.transmission_requested", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
           idempotencyKey: `transmit:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.requestedAt });
         return { value: { value: saved.receipt, assertFresh }, assertFresh };
-      }));
+      }, queue));
   }
-  private async withNativeApproval<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
-    finish: (tx: DatabaseSession, prepared: CanonicalNativeApproval, actorId: string, nodeKeyId: string, deadline: number, assertAuthorizationTime: () => void) => Promise<{ value: T; assertFresh?: () => void }>) {
+  private async withNativeApproval<T>(identity: VerifiedWebIdentity | undefined, projectId: string, jobId: string, expectedInputDigest: string,
+    finish: (tx: DatabaseSession, prepared: CanonicalNativeApproval, actorId: string, nodeKeyId: string, deadline: number, assertAuthorizationTime: () => void) => Promise<{ value: T; assertFresh?: () => void }>, queue?: NativeTaskSubmissionReference) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     let deadline: number | undefined, preparedAt: number | undefined, assertFresh: (() => void) | undefined;
     const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
@@ -220,7 +240,7 @@ export class TaskAssignmentCoordinator {
         if (!Number.isSafeInteger(now) || preparedAt === undefined || now < preparedAt || deadline === undefined || now >= deadline) conflict();
         assertFresh?.();
       }) };
-    return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+    const operation = async (tx: DatabaseSession, actor: WebActor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
       // Match reservation/expiry lock order, keeping the complete canonical snapshot in one transaction.
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
@@ -249,7 +269,10 @@ export class TaskAssignmentCoordinator {
       const result = await finish(tx, { ...prepared, enrollment: structuredClone(enrollment), preparedAt: new Date(now).toISOString(),
         sourceInputDigest: plan.sourceInputDigest, inputDigest: job.inputDigest }, actor.id, node.identityKeyId, deadline, actor.assertTimeCurrent);
       assertFresh = result.assertFresh; return result.value;
-    });
+    };
+    if (queue) return new NativeQueueAuthority(db, this.scope, this.approvalStore!, this.clock).authenticated(queue, operation);
+    if (!identity) conflict();
+    return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, operation);
   }
   async options(identity: VerifiedWebIdentity, projectId: string, jobId: string) {
     localId.parse(projectId); localId.parse(jobId);

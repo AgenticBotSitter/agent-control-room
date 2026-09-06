@@ -347,3 +347,9 @@ provider calls or temporary acquisition paths.
 Repository source and existing dependencies only. Fake lifecycle resources and PGlite
 regression fixtures cleaned by tests. No download, new temporary directory, native
 service or external publication.
+
+### E19 — server delivery authority (no acquisition)
+
+Existing repository dependencies and retained E01 package only. PGlite and synthetic
+signed-session fixtures closed after tests; no native provider, credentials, downloads
+or new retained temporary directories.

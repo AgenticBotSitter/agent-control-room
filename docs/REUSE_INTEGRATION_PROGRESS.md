@@ -106,6 +106,11 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E19 approval-bound server delivery](research/REUSE_E19_SERVER_DELIVERY_AUTHORITY.md)
+implements ADR-251's separate server entry points. Background delivery no longer needs
+a fabricated browser identity; exact canonical/signature/current-owner checks still run.
+The path remains opt-in and unmounted pending session routing and acceptance.
+
 [E18 joint lifecycle](research/REUSE_E18_JOINT_LIFECYCLE_AND_DELIVERY_GAP.md) orders worker
 drain before application close and gates requests immediately. 36 related checks pass.
 Inspection found the canonical delivery entry still depends on a browser identity;

@@ -102,6 +102,14 @@ cleanup; 36 related lifecycle checks pass. Production delivery still requires a 
 browser identity today. Next is an explicit server-side approval-bound delivery contract,
 not fabricated browser credentials or a claim that unattended dispatch already works.
 
+**E19 — server delivery authority:** [Evidence](research/REUSE_E19_SERVER_DELIVERY_AUTHORITY.md)
+and ADR-251 add explicit approval-bound server stage/transmit methods without browser
+identity or session creation. Existing signed/canonical checks remain; logout blocks web
+access but does not cancel a still-approved task in this opt-in path. Current owner/grant
+revocation and expiry still deny delivery. 44 regression and 43 package checks pass
+(42 combined plus one focused post-commit grant-expiry check). Not mounted; managed-session
+routing, independent review and real-PG/live acceptance remain open.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

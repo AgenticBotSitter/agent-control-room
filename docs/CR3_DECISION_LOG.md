@@ -6060,3 +6060,31 @@ and privilege preflight precede mounting. Production `274d2738872959c4d476637915
 independent63-check review; see `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md` for actual evidence and limits.
 The compiled-application follow-up adds two independent checks (65 total), without production changes.
 Event routing, revisions, upstream workflow completion and live provisioning remain separate work.
+
+## ADR-251 — explicit approval-bound server delivery, separate from browser sessions
+
+2026-09-06. Accepted for local opt-in implementation; not production or independent-review acceptance.
+
+Background queue delivery must not reconstruct VerifiedWebIdentity, serialize browser
+credentials or manufacture a web session. Explicit server stage/transmit methods use
+an authenticated canonical queue intent to identify its original queuedBy actor, lock
+that active human identity and current owner grants, and restrict policy evaluation to
+the exact project and original intent deadline. Queue locators themselves confer no rights.
+
+These methods reuse the complete canonical project/job/attempt/lease/node/key checks,
+current owner signature trust and exact signed packet revalidation before staging or
+transmission. Neither queue pickup nor browser logout extends, revokes or replaces the
+signed operation authority. For this explicit server path, browser logout revokes web
+access, not an already queued, still-approved bounded task. Owner/grant revocation,
+project/node changes, packet expiry and cancellation still stop delivery. A factor
+requirement cannot be satisfied by inventing an authentication assertion.
+
+Keep legacy browser delivery methods session-bound. Server entry points require explicit
+prepared submission composition and are not HTTP endpoints. Do not backfill old intents,
+auto-retry uncertain transmission, change recipients or extend approval duration. Preserve
+the original initiating actor in audit while machine frames remain separately authenticated.
+
+Use pg-boss for operational pickup and existing signed-session transport; custom code is
+limited to Control Room's current-approval policy and canonical transaction composition.
+E19 records local tests and limits. Current-session routing, lifecycle mounting, independent
+review and real PostgreSQL/live owner acceptance remain required before activation.

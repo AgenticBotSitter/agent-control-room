@@ -8,7 +8,7 @@ import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval
 import { createNativeApprovalIntake } from "../../harness/v1/native-approval-intake";
 import type { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
 import type { NativeEnrollment } from "../../harness/v1/native-run-contracts";
-import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, type NativeTaskQueueScope } from "./native-task-queue";
+import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, readNativeTaskQueueIntentInSession, type NativeTaskQueueScope } from "./native-task-queue";
 import { persistNativeDeliveryPreparation, readNativeDeliveryPreparationReceipt, readNativeDeliveryPreparationInSession } from "./native-delivery-preparation";
 import { assertNativeDeliveryEnvelopeAbsent, persistNativeDeliveryEnvelope, readNativeDeliveryEnvelopeReceipt } from "./native-delivery-envelope";
 import type { ServerNodeSession, NativeEnvelopeChannel } from "../../node-control/server-node-session";
@@ -131,6 +131,11 @@ export class NativeApprovalPacketStore {
   }
   readQueueInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
     return readNativeTaskQueueInSession(tx, this.key, scope);
+  }
+  /** Internal verified evidence for server delivery. Not execution permission;
+   * caller must recheck current grants, canonical state and signed packet. */
+  readQueueIntentInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
+    return readNativeTaskQueueIntentInSession(tx, this.key, scope);
   }
   async prepareDeliveryInSession(tx: DatabaseSession, prepared: Prepared, expectedPacketDigest: string, actorId: string, signal: AbortSignal) {
     const v = await this.revalidateInSession(tx, prepared, expectedPacketDigest, signal), r = prepared.request;
