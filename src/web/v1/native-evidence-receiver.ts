@@ -4,7 +4,7 @@ import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { NativeResultStore, type NativeResultConfiguration } from "../../artifacts/v1/native-results";
 import { prepareNativeTaskDispatchIntake } from "../../harness/v1/native-delivery";
 import { verifyNativeTaskApprovalBinding } from "../../harness/v1/native-task-approval-binding";
-import { nativeTaskRegistration } from "../../harness/hermes-native-v1/task-observation";
+import { nativeTaskRegistration } from "../../harness/v1/native-task-registration";
 import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native-run-contracts";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { sha256Digest } from "../../security";
