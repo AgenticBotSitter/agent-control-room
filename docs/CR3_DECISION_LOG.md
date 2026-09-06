@@ -6017,3 +6017,24 @@ authorize an external effect. Automated verification, coordinated native complet
 separate integrations. Product `3e25462d729982b4c5f38cf80773630304eb1b3c` passed independent67-check
 review; corrected row-lock/Unicode-size findings and actual restricted SQL tests are recorded in
 `CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`.
+
+## ADR-249 — finish native work from verified result evidence, not legacy event fabrication
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Native completion is one trusted coordinated SQL operation over the original authenticated run/plan,
+re-read result bytes, ready Completion Gate and exact current canonical job/attempt/lease lineage.
+Record legal observed-running and success transitions and release the active lease atomically, with
+transition/outbox/audit evidence and an authenticated replay receipt. Do not synthesize legacy signed
+events, insert a second artifact manifest or grant generic job mutation authority. Expired/replaced or
+otherwise terminal unsuccessful attempts cannot be resurrected. A review arriving later may release
+an active unreplaced lease for execution observed before its original deadline, without extending it.
+
+An explicit deterministic structure verifier can contribute profile-pinned evidence, never semantic
+acceptance or independent review. The supported Markdown subset fails unsupported markup; rules do
+not execute code. Multi-scenario checkpoint staging is bounded explicitly while old callers retain
+their default. Time high-water/current-operation fences prevent stale evidence and ambiguous writes
+from becoming automatic retries. Product `194aa08c8617ca6f43dae5fbeec767e307d56ce9` is independently
+reviewed; see `CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md` for corrected findings and full641-check
+integration evidence. Exact deployment coordinator resources/privileges and revisions remain separate;
+no new SQL grants, production database or live native run is authorized by this decision.

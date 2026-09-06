@@ -6,8 +6,10 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — automatic verification and coordinated native completion/revisions,
-then runtime registration/recovery and owner signing, on Astra Medium. Optional human result checks are
+**Next block:** CR14C C-WORK — exact quality/completion coordinator mounting, bounded revisions and
+upstream workflow completion, then runtime registration/recovery and owner signing, on Astra Medium.
+The supplied-database native quality/completion operation is independently reviewed in
+`CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md`; no running fleet is inferred. Optional human result checks are
 independently reviewed in `CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`; they are not a mandatory owner
 stop on every task or a replacement for automated verification. Owner resumed internal parallel
 delivery; see `CR14_PARALLEL_DELIVERY_BATCH.md` for progress routing, lifecycle testing, ABS digest and

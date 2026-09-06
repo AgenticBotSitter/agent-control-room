@@ -2152,14 +2152,27 @@ Both builds, private18/rendered4, migrations0053/138, types and lint passed at u
 Final CR14C591, preparation770, main1135 with two existing platform skips and post-suite392 passed.
 Full regression disposition is recorded in the acceptance document. No deployment or merge.
 
+## Automatic structure checks and native job completion
+
+Product `194aa08c8617ca6f43dae5fbeec767e307d56ce9` is independently reviewed. The trusted internal
+operation now connects exact native run/result/review evidence to atomic job and attempt success plus
+lease release. Replay preserves one completion and one native execution; expiry/replacement and
+failed verification cannot resurrect an old attempt. Configured deterministic document checks prove
+structure only and do not replace required independent quality review. See
+`CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md` for limits and corrected review/fixture evidence.
+Final CR14C641, preparation770, main1136 with two existing platform skips and post-suite392 passed.
+Both builds, private18/rendered4, migrations0053/138, types and lint passed. No schema/grant changes.
+This is a tested supplied-database operation: deployment coordinator mounting, upstream workflow
+completion and bounded revisions remain. No live fleet, installation, merge or deployment is claimed.
+
 ## Next block
 
 ```text
-Block: CR14C automatic verification and coordinated native completion/revisions
+Block: CR14C quality/completion coordinator mounting and bounded revisions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Result bytes, quality review and optional human checks now reach the existing Completion Gate. Automatic verification, canonical completion and bounded revision submission still need real production callers.
-Expected output: trusted automatic verification evidence and coordinated canonical completion/revision integration, then runtime registration/recovery and owner signing composition. No physical listener, real connection, setup, provider or deployment run implied.
+Why: Exact structural checks and ready quality evidence now complete canonical jobs and release leases in disposable integration. The running coordinator still needs exact verified SQL/resource composition, revision submission and upstream workflow completion.
+Expected output: scoped coordinator mounting and bounded revision/workflow integration, then runtime registration/recovery and owner signing composition. No physical listener, real connection, setup, provider or deployment run implied.
 Owner action: none for already-scoped effect-free repository implementation. Worker publication needs a reachable reviewed base and coordinated ready wave/capsules.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
