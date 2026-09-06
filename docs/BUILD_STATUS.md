@@ -46,6 +46,13 @@ approval/transmission path through this runtime. Typecheck and targeted lint pas
 No deployment, native database, live agent or automatic restart; production roles,
 package adoption, startup mounting and recovery/cutover remain open.
 
+**E10 — queue worker grants:** [Evidence](research/REUSE_E10_PG_BOSS_WORKER_ROLE.md)
+proves pg-boss failure recording needs DELETE/INSERT in addition to pickup/completion
+SELECT/UPDATE. An offline candidate worker-role script now passes actual-package
+PGlite tests while queue edits, schema creation and synthetic canonical-table access
+remain denied. 31 combined package checks pass. No production role or new PostgreSQL
+service configured; effective-permission preflight and real-PG acceptance remain open.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

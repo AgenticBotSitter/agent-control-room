@@ -112,6 +112,11 @@ ownership. The canonical delivery tests now use this composition. 42 unit and 28
 actual-package checks pass; production role/bootstrap/cutover evidence remains open.
 Do not repeat the E05 lifecycle gap as entirely unimplemented or call it deployed.
 
+[E10 worker-role evidence](research/REUSE_E10_PG_BOSS_WORKER_ROLE.md) adds an offline
+candidate role script tested under the actual package on PGlite. Failure needs
+DELETE/INSERT as well as read/update. 31 combined package checks pass; effective
+production privileges, actual login/pools and native PostgreSQL remain unqualified.
+
 1. [E04](research/REUSE_E04_HERMES_PRESENTATION.md) now identifies Desktop's active-session
    strip as the focused project-tab presentation candidate. Full sidebar/onboarding
    modules are not drop-ins: Electron/cache/credential callbacks need our actual

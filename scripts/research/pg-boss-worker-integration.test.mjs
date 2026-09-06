@@ -83,6 +83,79 @@ test('actual owned runtime picks up continuously then closes only its worker SQL
   assert.deepEqual(f.errors, []);
 });
 
+test('actual worker role distinguishes pickup/completion privileges from failure privileges', { timeout: 20000 }, async t => {
+  const f = await fixture(t), errors = [];
+  await f.raw.exec(`CREATE ROLE cr_reuse_worker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+    GRANT USAGE ON SCHEMA control_room_queue TO cr_reuse_worker;
+    GRANT SELECT ON control_room_queue.version,control_room_queue.queue,
+      control_room_queue.job,control_room_queue.job_common TO cr_reuse_worker;
+    GRANT UPDATE ON control_room_queue.job,control_room_queue.job_common TO cr_reuse_worker;`);
+  const roleQuery = (sql, values) => f.raw.transaction(async tx => {
+    await tx.exec('SET LOCAL ROLE cr_reuse_worker');
+    return values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] };
+  });
+  const worker = new PgBoss({ db: { executeSql: roleQuery }, schema: spec.schema, backend: 'pglite',
+    migrate: false, createSchema: false, schedule: false, supervise: false, useListenNotify: false });
+  worker.on('error', error => errors.push(error));
+  f.workers.push({ close: () => worker.stop({ graceful: false }) });
+  await worker.start();
+  const first = await f.send(31);
+  assert.equal((await worker.fetch(spec.name))[0].id, first);
+  await worker.complete(spec.name, first, { disposition: 'held' });
+  assert.equal((await f.get(first)).state, 'completed');
+  const second = await f.send(32); await worker.fetch(spec.name);
+  await assert.rejects(worker.fail(spec.name, second, { reason: 'synthetic' }), /permission denied/);
+  assert.equal((await f.get(second)).state, 'active', 'failed statement must roll back');
+  await f.raw.exec('GRANT INSERT,DELETE ON control_room_queue.job,control_room_queue.job_common TO cr_reuse_worker');
+  await worker.fail(spec.name, second, { reason: 'synthetic' });
+  assert.equal((await f.get(second)).state, 'failed');
+  assert.equal((await f.get(second)).retryCount, 0);
+  await assert.rejects(roleQuery("UPDATE control_room_queue.queue SET retry_limit=2 WHERE name='native-task-delivery'"), /permission denied/);
+  await assert.rejects(roleQuery('CREATE TABLE control_room_queue.unapproved(id int)'), /permission denied/);
+  await worker.stop({ graceful: false }); assert.deepEqual(errors, []);
+});
+
+test('candidate worker role runs the actual owned runtime without queue-edit or canonical privileges', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  await f.raw.exec(await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8'));
+  await f.raw.exec('CREATE TABLE public.synthetic_canonical_evidence(id int); REVOKE ALL ON public.synthetic_canonical_evidence FROM PUBLIC');
+  const query = (sql, values) => f.raw.transaction(async tx => {
+    await tx.exec('SET LOCAL ROLE control_room_native_queue_worker');
+    return values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] };
+  });
+  let closed = false;
+  const runtime = await startPgBossNativeTaskRuntime(PgBoss, { async query(sql, values) {
+    assert.equal(closed, false); return query(sql, values);
+  }, async close() { closed = true; } }, { backend: 'pglite', async deliver(ref) {
+    if (ref.jobId === 'job:42') throw new Error('synthetic unresolved delivery');
+    return { disposition: 'held' };
+  } });
+  f.workers.push(runtime);
+  const success = await f.send(41), failure = await f.send(42);
+  await until(async () => (await f.get(failure))?.state === 'failed');
+  assert.equal((await f.get(success)).state, 'completed');
+  assert.equal((await f.get(failure)).retryCount, 0);
+  for (const sql of ["UPDATE control_room_queue.queue SET retry_limit=2", 'CREATE TABLE control_room_queue.unapproved(id int)',
+    'SELECT * FROM public.synthetic_canonical_evidence', 'INSERT INTO public.synthetic_canonical_evidence VALUES(1)']) {
+    await assert.rejects(query(sql), /permission denied/);
+  }
+  const flags = await query("SELECT rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user");
+  assert.equal(Object.values(flags.rows[0]).every(value => value === false), true);
+  await runtime.close(); assert.equal(closed, true);
+  assert.deepEqual(runtime.status(), { state: 'closed', faulted: false, accepting: false });
+  assert.deepEqual(f.errors, []);
+});
+
+test('candidate worker role setup rejects retry-enabled queue before creating a role', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  await f.boss.updateQueue(spec.name, { retryLimit: 1 });
+  const script = await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8');
+  try { await assert.rejects(f.raw.exec(script), /native queue prerequisite mismatch/); }
+  finally { await f.raw.exec('ROLLBACK'); }
+  assert.equal((await f.raw.query("SELECT rolname FROM pg_roles WHERE rolname='control_room_native_queue_worker'")).rows.length, 0);
+  assert.equal((await f.boss.getQueue(spec.name)).retryLimit, 1);
+});
+
 test('actual runtime infrastructure fault aborts current delivery without automatic replacement', { timeout: 20000 }, async t => {
   const f = await fixture(t); let entered, signalSeen, calls = 0;
   const ready = new Promise(resolve => { entered = resolve; });

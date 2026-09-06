@@ -293,3 +293,9 @@ Reused E01's existing pg-boss 12.30.0 package and repository PGlite for 28 combi
 actual-package tests. No downloads, native database server, native agent, service or
 provider. Unit/type/lint tests also used existing dependencies. In-memory fixtures
 closed on completion. All E01–E08 retained acquisition paths remain unchanged.
+
+### E10 — queue worker privileges (no acquisition)
+
+Reused E01 pg-boss and existing PGlite. Candidate SQL executed only in fresh in-memory
+fixtures; no native database/role configuration. 31 combined package checks passed.
+Fixtures/processes closed, no downloads or installation, retained sources unchanged.
