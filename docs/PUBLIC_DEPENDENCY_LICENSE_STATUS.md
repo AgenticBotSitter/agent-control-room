@@ -48,6 +48,28 @@ any included adapted code. This observation does not license unrelated upstream 
 
 ## Installed transitive reconnaissance
 
+### Notice-location follow-up
+
+At private baseline `ab97537`, inspected installed manifests and package files to
+three directory levels for the five direct packages with no matching root notice.
+The scan skipped nested `node_modules` and symlinks; it is not an exhaustive bundled
+license scan. No packages or license files were downloaded into the workspace.
+
+| Exact installed package | Observed notice location | Remaining limitation |
+|---|---|---|
+| @vitejs/plugin-rsc 0.5.26 | Installed `dist/vendor/react-server-dom/LICENSE` contains Meta's MIT notice; the [plugin release-tag root license](https://raw.githubusercontent.com/vitejs/vite-plugin-react/plugin-rsc@0.5.26/LICENSE) contains the Vite contributors' MIT notice | The vendor notice is not a replacement for the plugin's own notice; retain both where applicable and verify source/package provenance |
+| @next/eslint-plugin-next 16.2.6 | [Next.js v16.2.6 root license](https://raw.githubusercontent.com/vercel/next.js/v16.2.6/license.md) contains Vercel's MIT notice | Its installed manifest points to the monorepo package; an upstream tag alone does not prove exact npm source correspondence |
+| postgres 3.4.7 | Version-tagged UNLICENSE identified above; no matching nested file observed in this scan | Retain exact applicable text/provenance with any distribution rather than treating metadata as the notice |
+| wrangler 4.92.0 | Installed manifest points to workers-sdk/packages/wrangler; [release-tag repository listing](https://github.com/cloudflare/workers-sdk/tree/wrangler@4.92.0) lists root LICENSE-MIT and LICENSE-APACHE | License bodies could not be retrieved from the tag in this check; listing is location evidence only |
+| @cloudflare/vite-plugin 1.37.1 | Installed manifest points to workers-sdk/packages/vite-plugin-cloudflare and declares MIT | No matching nested notice observed; attempted release-tag license retrieval failed, so exact text remains unresolved |
+
+The initial direct-dependency JSON remains historical root-file evidence; do not
+rewrite its observations as though the nested notice was originally inspected.
+These findings reduce the unknown notice locations, not the obligations of the final
+distribution. Source-only setup, browser bundles and packaged native tooling still
+need separate inclusion accounting. Failed retrieval is neither proof of absent
+licensing nor authority to substitute a current-main license for the installed version.
+
 At baseline `e03f1c9`, a read-only scan of physical package directories under the
 local pnpm virtual store observed 476 package manifests. Symlink-only entries were
 not followed. This is an installed-package observation, not lockfile reachability,

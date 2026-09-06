@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Missing-notice investigation advanced:** A bounded nested-package inspection found
+the RSC plugin's bundled React MIT notice; exact-version-tag upstream texts were read
+for the plugin and Next.js lint package. Cloudflare notice-body retrieval remains
+unresolved. [Details](PUBLIC_DEPENDENCY_LICENSE_STATUS.md) distinguish source locations
+from npm provenance and final distribution compliance. No package changes/downloads,
+license choice, all-dependency clearance or GitHub writes.
+
 **Content workflow separation clarified from source:** [Generalization map](CONTENT_WORKFLOW_GENERALIZATION.md)
 distinguishes the external-source-scheduled Content Blooms adapter from ordinary core
 content jobs. Branded protocol IDs, digest inputs and SQL names make a global rename
