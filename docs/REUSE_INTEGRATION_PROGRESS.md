@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E33 compiled acceptance](research/REUSE_E33_COMPILED_QUEUE_ACCEPTANCE.md) runs eight
+actual-package scenarios against the built bootstrap and passes all 35 compiled app
+regressions. Source adapter injection and PGlite limits remain explicit; no deployment.
+
 [E32 status/build](research/REUSE_E32_DISPATCH_STATUS_AND_BUILD.md) replaces hardcoded
 unconnected task projections with composition-derived configuration and adds overlapping
 submission coverage. A real build failure from a local `require` binding is fixed without

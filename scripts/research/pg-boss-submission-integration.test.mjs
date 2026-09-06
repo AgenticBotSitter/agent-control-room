@@ -24,6 +24,9 @@ assert.ok(root && isAbsolute(root), 'Explicit existing acquisition root required
 const packageRoot = join(root, 'node_modules/pg-boss');
 assert.equal(JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')).version, spec.packageVersion);
 const { PgBoss } = await import(pathToFileURL(join(packageRoot, 'dist/index.js')).href);
+// Explicit compiled acceptance requires the existing local VPS build; never builds or installs implicitly.
+const startupFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
+  ? (await import('../../dist-vps/server/taskBootstrap.js')).createPrivateTaskBootstrap : createPrivateTaskBootstrap;
 const enqueue = (f, coordinator) => coordinator ? coordinator.enqueueNativeTask(...f.args, sha256Digest(f.packet), f.abort.signal)
   : f.owner.submission.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal);
 const count = async (f, table) => (await f.db.query(`SELECT * FROM ${table}`)).rows.length;
@@ -352,7 +355,7 @@ test('explicit startup prepares actual producer after database gates and closes 
     const withRecovery = mode.startsWith('recovery');
     if (withRecovery) await f.raw.exec(await readFile('db/roles/native_queue_recovery_roles.sql', 'utf8'));
     let prepared = 0, closed = 0, releaseLate, installed;
-    const bootstrap = createPrivateTaskBootstrap({ clock: f.clock, openDatabase: host.openDatabase,
+    const bootstrap = startupFactory({ clock: f.clock, openDatabase: host.openDatabase,
       install: app => { if (mode === 'install') throw new Error('synthetic install failure'); installed = app; },
       prepareNativeSubmission: async db => {
         prepared++;

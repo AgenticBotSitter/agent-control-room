@@ -8,6 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local acceptance — E33:** [Compiled queue acceptance](research/REUSE_E33_COMPILED_QUEUE_ACCEPTANCE.md)
+passes eight actual-package scenarios through compiled task startup and all 35 compiled
+application regressions. No physical listener or live provider/database. The full configured
+worker/session journey and interactive browser acceptance remain open.
+
 **Latest local implementation — E32:** [Status and compiled build](research/REUSE_E32_DISPATCH_STATUS_AND_BUILD.md)
 reports configured submission truthfully in task views, covers overlapping browser calls,
 and fixes a bundler collision in the local permission helper. VPS build, three compiled
