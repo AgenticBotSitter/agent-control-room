@@ -86,6 +86,57 @@ async function settled(f, id) {
   assert.fail('Synthetic canonical worker observation timed out');
 }
 
+for (const failure of [null, 'audit', 'expiry', 'mismatch']) test(`canonical never-staged recovery and actual queue transaction: ${failure ?? 'commit and bounded replay'}`, async t => {
+  const f = await fixture(t); await f.save();
+  const receipt = await enqueue(f), ref = reference(f, receipt), id = nativeTaskSubmissionId(ref);
+  await f.admin.fetch(spec.name); await f.admin.fail(spec.name, id, { reason: 'synthetic offline' });
+  if (failure === 'mismatch') await f.db.query(`UPDATE ${spec.schema}.job SET data=$1 WHERE id=$2`, [{ ...ref, packetDigest: sha256Digest('wrong') }, id]);
+  const before = await f.admin.getJobById(spec.name, id);
+  let canonicalActive = false;
+  // A separate fresh producer gives retry/update a cold metadata cache. Any
+  // escaped package query would fail here instead of deadlocking the fixture.
+  const recovery = await preparePgBossNativeTaskSubmission(PgBoss, { query(sql, values) {
+    assert.equal(canonicalActive, false, 'recovery package query escaped canonical transaction');
+    return f.db.query(sql, values);
+  } }, { backend: 'pglite', recovery: true });
+  t.after(recovery.close);
+  const port = { enqueueInSession: recovery.enqueueInSession, async recoverUnsentInSession(tx, value, ordinal) {
+    const result = await recovery.recoverUnsentInSession(tx, value, ordinal);
+    if (failure === 'expiry') f.setNow(f.prepared.start.deadline);
+    return result;
+  } };
+  const db = failure !== 'audit' ? f.db : { ...f.db,
+    transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work({ async query(sql, values) {
+      if (sql.includes('INSERT INTO audit_events')) throw new Error('synthetic recovery audit failure');
+      return tx.query(sql, values);
+    } }), check) };
+  const coordinator = f.create(db, port);
+  const recover = async () => {
+    canonicalActive = true;
+    try { return await coordinator.recoverNeverStagedQueueDelivery(ref, f.abort.signal); }
+    finally { canonicalActive = false; }
+  };
+  if (failure) {
+    await assert.rejects(recover());
+    assert.deepEqual(await f.admin.getJobById(spec.name, id), before);
+    assert.equal((await f.db.query("SELECT * FROM audit_events WHERE action='native.queue.unsent_recovered'")).rows.length, 0);
+    return;
+  }
+  for (const ordinal of [1, 2, 3]) {
+    assert.deepEqual(await recover(), { recovered: true, ordinal });
+    if (ordinal < 3) assert.deepEqual(await recover(), { recovered: false, ordinal: null });
+    const jobs = await f.admin.fetch(spec.name, { includeMetadata: true });
+    assert.equal(jobs.length, 1); assert.equal(jobs[0].id, id);
+    assert.equal(jobs[0].retryLimit, 0); assert.equal(jobs[0].retryCount, ordinal);
+    await f.admin.fail(spec.name, id, { reason: 'synthetic still offline' });
+  }
+  await assert.rejects(recover());
+  assert.equal((await f.db.query("SELECT * FROM audit_events WHERE action='native.queue.unsent_recovered'")).rows.length, 3);
+  assert.equal(await count(f, 'control_native_task_queue'), 1);
+  assert.equal(await count(f, 'control_native_delivery_envelopes'), 0);
+  assert.equal((await f.admin.fetch(spec.name)).length, 0);
+});
+
 test('actual owned runtime reaches canonical staging and transmission once; absent receipt stays unresolved', { timeout: 30000 }, async t => {
   const f = await fixture(t); await f.save();
   const receipt = await enqueue(f), ref = reference(f, receipt), id = nativeTaskSubmissionId(ref);

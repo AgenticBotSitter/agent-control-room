@@ -10,9 +10,14 @@ export const nativeTaskSubmissionReferenceSchema = z.object({
   inputDigest: digestSchema, packetDigest: digestSchema,
 }).strict();
 export type NativeTaskSubmissionReference = z.infer<typeof nativeTaskSubmissionReferenceSchema>;
+export const MAX_NATIVE_UNSENT_RECOVERIES = 3;
 
 /** Trusted server-side composition only. Called on a fresh canonical intent, inside
  * its checked transaction. No handler, worker, sender, or database connection here. */
 export interface NativeTaskSubmission {
   enqueueInSession(tx: DatabaseSession, reference: NativeTaskSubmissionReference): Promise<void>;
+  /** Optional server-only recovery port. Caller holds canonical locks and has proved
+   * never-staged status; implementation must atomically check the exact failed job,
+   * expected recovery ordinal and keep automatic retries disabled. False is a no-op. */
+  recoverUnsentInSession?(tx: DatabaseSession, reference: NativeTaskSubmissionReference, ordinal: number): Promise<boolean>;
 }

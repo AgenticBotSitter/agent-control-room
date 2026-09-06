@@ -6088,3 +6088,31 @@ Use pg-boss for operational pickup and existing signed-session transport; custom
 limited to Control Room's current-approval policy and canonical transaction composition.
 E19 records local tests and limits. Current-session routing, lifecycle mounting, independent
 review and real PostgreSQL/live owner acceptance remain required before activation.
+
+## ADR-252 — bounded recovery of never-staged queue work
+
+2026-09-06. Accepted for local opt-in implementation only; not deployment, independent
+review or permission to expand database grants.
+
+Recover the same operational job only under the original canonical queue authority,
+signed approval and tenant/project/job/attempt/lease/node locks. Require no delivery
+envelope, transmission intent, delivery receipt or native run evidence for the attempt.
+Even staged-but-unsent work is excluded from this path. Missing receipt alone is never
+proof that nothing started. Preserve recipient, attempt, lease, approval and deadline.
+
+The coordinator calls an optional trusted transaction-scoped recovery port only after
+these checks. Successful recovery and its canonical audit commit together; cancellation,
+expiry, audit failure or ambiguous transaction failure cannot be converted into success.
+Allow at most three audited recoveries per canonical queue identity. A no-op does not
+consume another recovery. No pruned operational row is recreated.
+
+Reuse public pg-boss retry plus update(retryLimit:0) in that exact transaction, including
+cold metadata access. Lock and verify the existing exact failed operational reference,
+policy and recovery count before mutation. Preserve payload and retention; no internal
+restore, custom reset SQL, new attempt or general automatic retry allowance.
+
+The adapter is explicitly opt-in and current producer grants do not authorize recovery
+UPDATE. Production worker metadata admission, exact permissions, authenticated reconnect
+triggering and end-to-end acceptance must be completed together before activation.
+Current workers still reject retryCount greater than zero. This decision authorizes the
+local canonical gate and adapter, not a claim that reconnect recovery already operates.

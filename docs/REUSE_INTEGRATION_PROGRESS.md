@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E24](research/REUSE_E24_NEVER_STAGED_RECOVERY.md) implements the canonical never-staged
+gate and opt-in upstream recovery port, with audit in the same transaction. 52 package
+and 42 related checks pass. Recovery permission/profile, lifecycle command and
+audit-bound reconnect/pickup integration remain unmounted, not silently waived.
+
 [E23 recovery source-fit](research/REUSE_E23_OFFLINE_RECOVERY_PRIMITIVES.md) selects
 the public retry/update transaction, not internal restore or a custom queue reset.
 48 package checks pass. Never-staged canonical proof and reconnect wiring are not yet

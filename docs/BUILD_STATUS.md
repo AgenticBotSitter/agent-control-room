@@ -136,6 +136,13 @@ without enabling automatic retries. All 48 package checks pass. Internal restore
 a public API. Canonical never-staged proof, permissions, bounded recovery audit and
 reconnect integration remain required; current worker still rejects recovered metadata.
 
+**E24 — canonical never-staged recovery:** [Evidence](research/REUSE_E24_NEVER_STAGED_RECOVERY.md)
+and ADR-252 add an optional checked recovery operation and real pg-boss retry/update
+adapter. Original approval, absence of staged/sent evidence, three-recovery audit cap
+and transaction rollback are tested. 52 package and 42 related checks pass. Permissions,
+lifecycle exposure, audit-bound recovered pickup and reconnect triggering remain open;
+automatic recovery is not enabled.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

@@ -376,3 +376,9 @@ download or retained directory; no native service, credential or external effect
 Read retained E01 package source and executed its public APIs against disposable
 in-memory fixtures. No new downloads, native server, credentials or external effects.
 The initial unsupported restore() call failed; corrected to test public API absence.
+
+### E24 — canonical recovery integration (no acquisition)
+
+Existing E01 package and repository dependencies only. Disposable PGlite canonical,
+queue and signed-session fixtures closed after tests. No new retained acquisition,
+native process, credential access, deployment or external publication.

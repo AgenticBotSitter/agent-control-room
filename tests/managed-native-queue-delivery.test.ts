@@ -46,3 +46,17 @@ test("owner revocation after staging is checked again before transmission", asyn
   await assert.rejects(x.manager.deliverApproved(ref, currentSignal()), /native_session_operation_uncertain/);
   assert.equal(c.peer.outgoing.filter(frame => JSON.parse(frame).type === "harness.native.dispatch").length, 0);
 });
+
+for (const transmitted of [false, true]) test(`recovery refuses ${transmitted ? "transmitted" : "staged but not transmitted"} work before touching the queue`, async t => {
+  const { x, ref } = await queued(); t.after(x.close);
+  const c = await x.attach(); await x.handshake(c);
+  if (!transmitted) x.hooks.afterQueueStage = () => { throw new Error("synthetic stop after stage"); };
+  if (transmitted) await x.manager.deliverApproved(ref, currentSignal());
+  else await assert.rejects(x.manager.deliverApproved(ref, currentSignal()));
+  let calls = 0;
+  const coordinator = x.f.create(x.f.db, { enqueueInSession: async () => {},
+    recoverUnsentInSession: async () => { calls++; return true; } });
+  await assert.rejects(x.admin(() => coordinator.recoverNeverStagedQueueDelivery(ref, currentSignal())));
+  assert.equal(calls, 0);
+  assert.equal(c.peer.outgoing.filter(raw => JSON.parse(raw).type === "harness.native.dispatch").length, transmitted ? 1 : 0);
+});
