@@ -17,7 +17,7 @@ const receiptSchema = nativeQualityRequestSchema.extend({ projectId: id, jobId: 
 export type NativeTaskCompletionReceipt = z.infer<typeof receiptSchema>;
 const metadataSchema = z.object({ receipt: receiptSchema, requestDigest: digest, authTag: z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/) }).strict();
 const capacityReceiptSchema = receiptSchema.omit({ recordedAt: true, capacityReleaseDigest: true }).extend({ releasedAt: z.string().datetime(),
-  qualityAccepted: z.literal(false) }).strict();
+  jobRecordDigest: digest, attemptRecordDigest: digest, qualityAccepted: z.literal(false) }).strict();
 export type NativeCapacityReleaseReceipt = z.infer<typeof capacityReceiptSchema>;
 const capacityMetadataSchema = z.object({ receipt: capacityReceiptSchema, requestDigest: digest,
   authTag: z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/) }).strict();
@@ -135,13 +135,15 @@ export class NativeTaskCompletionService {
         || Boolean(attempt.startedAt) && attempt.startedAt !== run.startedAt || attempt.finishedAt) return deny();
       const prior = await this.capacityReceipt(tx, request, context, job, attempt, lease);
       if (prior) {
-        if (prior.jobVersion !== job.version || prior.attemptVersion !== attempt.version) return deny();
+        if (prior.jobVersion !== job.version || prior.attemptVersion !== attempt.version
+          || prior.jobRecordDigest !== sha256Digest(job) || prior.attemptRecordDigest !== sha256Digest(attempt)) return deny();
         current(); return { receipt: prior, replayed: true };
       }
       if (lease.state !== "active") return deny();
       const receipt = capacityReceiptSchema.parse({ ...request, projectId: run.projectId, jobId: job.id, attemptId: attempt.id,
         leaseId: lease.id, nodeId: run.nodeId, leaseEpoch: lease.epoch, artifactId: artifact.receipt.artifactId,
         completedAt: run.finishedAt, releasedAt, jobVersion: job.version, attemptVersion: attempt.version, leaseVersion: lease.version + 1,
+        jobRecordDigest: sha256Digest(job), attemptRecordDigest: sha256Digest(attempt),
         qualityAccepted: false, grantsApproval: false, grantsExecutionAuthority: false });
       const requestDigest = sha256Digest(request), key = requestDigest.slice(7);
       const metadata = { receipt, requestDigest, authTag: this.capacityTag(receipt, requestDigest) }; assertNoSecretMaterial(metadata);
@@ -209,7 +211,8 @@ export class NativeTaskCompletionService {
         current(); return { receipt, replayed: true };
       }
       if (!["leased", "running"].includes(job.state) || !["leased", "running", "waiting"].includes(attempt.state)
-        || (capacity ? lease.state !== "released" || capacity.jobVersion !== job.version || capacity.attemptVersion !== attempt.version : lease.state !== "active")
+        || (capacity ? lease.state !== "released" || capacity.jobVersion !== job.version || capacity.attemptVersion !== attempt.version
+          || capacity.jobRecordDigest !== sha256Digest(job) || capacity.attemptRecordDigest !== sha256Digest(attempt) : lease.state !== "active")
         || Boolean(attempt.startedAt) && attempt.startedAt !== run.startedAt || attempt.finishedAt) return deny();
       const receipt = receiptSchema.parse({ ...request, projectId: run.projectId, jobId: job.id, attemptId: attempt.id,
         leaseId: lease.id, nodeId: run.nodeId, leaseEpoch: lease.epoch, artifactId: artifact.receipt.artifactId,

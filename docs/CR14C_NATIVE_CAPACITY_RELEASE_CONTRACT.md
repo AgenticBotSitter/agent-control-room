@@ -26,7 +26,8 @@ expiry wins. Current time cannot precede any involved state/evidence timestamp.
 Release only the lease, using a legal versioned transition, normal outbox and sanitized
 audit in one transaction. Persist a separately HMAC-authenticated, exact-request receipt
 under a deterministic native-capacity namespace. It names producer, lease/epoch/version,
-native completion time, release time, and unchanged job/attempt versions, with explicit
+native completion time, release time, and unchanged job/attempt versions and full-record
+digests (including state), with explicit
 false quality/approval/execution-authority flags. Current-operation fences apply before
 commit and after acknowledgement. Missing or tampered release proof is never repaired.
 
@@ -40,6 +41,8 @@ only with its exact authenticated native-capacity receipt and unchanged recorded
 job/attempt versions. It transitions job/attempt to success without rewriting the lease;
 the completion receipt retains that lease's actual version. Completion replay validates
 both release and completion evidence, preserving their distinct recorded timestamps.
+An optional authenticated capacity-release digest in the completion receipt pins that
+prerequisite even when both timestamps coincide; legacy receipts omit it unchanged.
 Legacy active-lease completion remains byte-compatible. Arbitrarily released leases cannot
 be adopted. Neither superseded nor changes-requested output becomes successful.
 
