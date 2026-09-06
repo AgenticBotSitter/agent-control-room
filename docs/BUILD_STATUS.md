@@ -2387,14 +2387,25 @@ and the private build passed. See `CR14C_RECORDED_NATIVE_RECONNECT_ACCEPTANCE.md
 for the retained failures, corrections and limits. Prerequisites #338 (`cb32295`) and
 #339 (`1f62ec0`) now each have all nine GitHub checks successful; neither is merged.
 
+## Node-owned observation reporting: accepted locally
+
+The reporting owner and optional handoff integration (`d5c1ab9`, `23fe5aa`, `8c5f861`)
+publish existing saved observations without adding provider calls. The retained-journal
+tests exposed and corrected frame-ordering requirements; `5220164` accepts a trailing
+validated ACK after recovery, never another reconciliation or delivery. Final combined
+checks passed73, helper-consumer regressions passed39, and types/full lint/inventory/
+private build passed. Independent production and test reviews accepted the corrections.
+See `CR14C_NODE_OBSERVATION_REPORTING_ACCEPTANCE.md` for retained failures and limits.
+PR #340 (`bc8074a`) passed all nine GitHub checks; it remains open and unmerged.
+
 ## Next block
 
 ```text
-Block: CR14C node-owned saved-observation reporting across replacement
+Block: CR14C bounded runtime input routing for initial and recovered sessions
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Server-side recovery is tested, but its successful fixture currently explicitly republishes a saved observation. The node runtime must own that reporting path without starting, polling or stopping a provider merely because its transport changed.
-Expected output: bounded node-side ownership of existing recorded observations and fresh-session reporting, connected to the accepted bridge and server recovery path in disposable tests. Preserve original native identity, exact evidence replay, uncertainty and separate start/stop authority. No listener or live agent activation. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
+Why: Actual reused-journal tests now prove reporting recovery, but their host input driver explicitly holds and drains the ordered frame suffix. The runtime must own this sequencing before live transport activation.
+Expected output: bounded supplied-input ownership that serializes signed hello, reconciliation, exact recorded-work recovery, progress and trailing ACKs without dropping or reordering frames. Reuse managed sessions and the saved-observation reporter in disposable end-to-end tests. No listener, provider call, implicit dispatch, native restart or live activation. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.

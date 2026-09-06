@@ -6,8 +6,11 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — node-owned saved-observation reporting across replacement,
-then runtime activation and owner signing, on Astra Medium. Server-side recorded-work
+**Next block:** CR14C C-WORK — bounded runtime input routing for initial and recovered
+sessions, then runtime activation and owner signing, on Astra Medium. Node-owned saved
+observation reporting is accepted in `CR14C_NODE_OBSERVATION_REPORTING_ACCEPTANCE.md`,
+including actual retained-journal reconnect and exact saved bytes. Its ordered host
+input driver is still test composition. Server-side recorded-work
 recovery is accepted in `CR14C_RECORDED_NATIVE_RECONNECT_ACCEPTANCE.md`; tests preserve
 saved results and revisions without redispatch or native restart. Managed session ownership
 and initial/revised evidence routing are locally accepted in

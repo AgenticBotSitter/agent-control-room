@@ -38,6 +38,10 @@ The same bridge/journal requeues unacknowledged snapshots on a new connection. H
 ingress must finish signed reconciliation and call the server's recorded-work recovery
 before routing those automatically flushed progress frames. The test must retain
 the journals and demonstrate that ordering; an empty replacement journal is not proof.
+Once a progress frame is held, retain its entire following frame sequence, including
+ordinary ACKs. After recovery, drain in order. The recovered server state accepts
+existing validated protocol ACKs but refuses another reconciliation report or unknown
+ACK references; this cannot reopen task delivery.
 Already acknowledged snapshots remain deduplicated. An uncertain send or ACK never
 authorizes a new native request.
 
@@ -49,6 +53,8 @@ five-second result bound and only one operation may be unresolved. A reporter cl
 does not retract or delete already journaled observations. The separate bridge owner
 must disconnect a replaced transport; its generation fence owns late signing/sending.
 The reporter does not close caller-owned journals or perform a physical native stop.
+The handoff holds one operation slot through both provider work and publication, so
+overlapping calls cannot reach the provider while an earlier publication is unresolved.
 
 ## Verification boundary
 
