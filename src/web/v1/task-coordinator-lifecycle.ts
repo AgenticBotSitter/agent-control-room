@@ -9,6 +9,7 @@ import { timingSafeEqual } from "node:crypto";
 import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
 import { taskRevisionRequestSchema } from "./task-revision-wire";
 import { TaskResultCoordinator, taskResultRequestSchema, type TaskResultOperation } from "./task-result-coordinator";
+import { NativeEvidenceReceiver, captureNativeEvidenceInput, captureNativeEvidenceSettings, nativeEvidenceRegistrationSchema, type NativeEvidenceSettings } from "./native-evidence-receiver";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -25,6 +26,7 @@ export type TaskCoordinatorConfiguration = {
   database: TaskCoordinatorDatabase;
   /** Optional fixed native-result writer, independently verified against the same primary. */
   resultDatabase?: TaskCoordinatorDatabase;
+  evidence?: NativeEvidenceSettings & { database: TaskCoordinatorDatabase };
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
 };
 
@@ -39,6 +41,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.revisionPlanning !== undefined && (input.revisionPlanning !== true || !input.quality)) throw new Error("task_coordinator_config_invalid");
   if (input.resultDatabase && (!input.quality || input.resultDatabase === input.database || input.resultDatabase.client === input.database.client))
     throw new Error("task_coordinator_config_invalid");
+  if (input.evidence && (!input.resultDatabase || !input.quality
+    || [input.database, input.resultDatabase].some(pool => pool === input.evidence!.database || pool.client === input.evidence!.database.client)))
+    throw new Error("task_coordinator_config_invalid");
   if (input.approvals && (!Array.isArray(input.approvals.enrollments)
     || typeof input.approvals.store?.acceptInSession !== "function" || typeof input.approvals.store?.readInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
@@ -49,12 +54,17 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     return Object.freeze({ client: resource.client, close: resource.close.bind(resource), isAvailable: resource.isAvailable.bind(resource) });
   };
   const pool = capture(input.database), resultPool = input.resultDatabase ? capture(input.resultDatabase) : undefined;
+  const evidenceSettings = input.evidence ? captureNativeEvidenceSettings(input.evidence) : undefined;
+  if (evidenceSettings && (evidenceSettings.storage.storageClass !== input.quality!.results.storageClass
+    || !timingSafeEqual(evidenceSettings.storage.integrityKey, input.quality!.results.integrityKey)))
+    throw new Error("task_coordinator_config_invalid");
+  const evidencePool = input.evidence ? capture(input.evidence.database) : undefined;
   let closing = false, invalid = false, interrupted = false, active = 0, closePromise: Promise<void> | undefined;
   let drained: (() => void) | undefined, force!: () => void;
   const stops = new Set<() => void>();
   const forced = new Promise<void>(resolve => { force = resolve; });
   const check = () => {
-    try { if (!invalid && pool.isAvailable() && (!resultPool || resultPool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
+    try { if (!invalid && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
     throw new TaskCoordinatorInterruption("task_coordinator_unavailable");
   };
   const guardedDatabase = (owned: TaskCoordinatorDatabase) => {
@@ -89,6 +99,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock) : undefined;
   const resultCoordinator = resultPool ? new TaskResultCoordinator(guardedDatabase(resultPool), scope, input.planning, input.quality!, input.clock) : undefined;
+  const receiver = evidencePool ? new NativeEvidenceReceiver(guardedDatabase(evidencePool), {
+    ...evidenceSettings!, scope, integrityKey: input.planning.integrityKey, harnessIntegrityKey: input.quality!.harnessIntegrityKey,
+    results: { ...scope, register: resultCoordinator!.register.bind(resultCoordinator), submit: resultCoordinator!.submit.bind(resultCoordinator) },
+    clock: input.clock, assertAvailable: check,
+  }) : undefined;
   async function run<T>(work: () => Promise<T>): Promise<T> {
     if (closing || active >= maxActive) throw new Error("task_coordinator_unavailable");
     check(); active++;
@@ -139,10 +154,21 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     register: (value, signal) => { const request = taskResultRequestSchema.parse(value); return run(() => resultCoordinator.register(request, signal)); },
     submit: (value, signal) => { const request = taskResultRequestSchema.parse(value); return run(() => resultCoordinator.submit(request, signal)); },
   }) : undefined;
+  // Capture caller-owned values before the shared admission microtask.
+  const ownedEvidence = receiver ? Object.freeze({ ...scope,
+    register: (value: Parameters<NativeEvidenceReceiver["register"]>[0], signal: AbortSignal) => {
+      const request = nativeEvidenceRegistrationSchema.parse(value); return run(() => receiver.register(request, signal));
+    },
+    receive: (session: Parameters<NativeEvidenceReceiver["receive"]>[0], raw: string | Uint8Array, bytes: Uint8Array | undefined, signal: AbortSignal) => {
+      const owned = captureNativeEvidenceInput(raw, bytes), capturedSession = { acceptNativeSnapshot: session.acceptNativeSnapshot.bind(session) };
+      return run(() => receiver.receive(capturedSession, owned.raw, owned.bytes, signal));
+    },
+  }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(revisions ? { revisions } : {}),
     ...(results ? { results } : {}),
-    isReady: () => !closing && !invalid && pool.isAvailable() && (!resultPool || resultPool.isAvailable()),
+    ...(ownedEvidence ? { evidence: ownedEvidence } : {}),
+    isReady: () => !closing && !invalid && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()),
     close(): Promise<void> {
       if (closePromise) return closePromise;
       closing = true;
@@ -154,7 +180,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
             new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; interrupted = true; resolve(); }, drainMs); })]);
           clearTimeout(drainTimer);
           invalid = true;
-          await Promise.race([Promise.all([Promise.resolve().then(pool.close), ...(resultPool ? [Promise.resolve().then(resultPool.close)] : [])]), new Promise<never>((_, reject) => {
+          await Promise.race([Promise.all([Promise.resolve().then(pool.close), ...(resultPool ? [Promise.resolve().then(resultPool.close)] : []),
+            ...(evidencePool ? [Promise.resolve().then(evidencePool.close)] : [])]), new Promise<never>((_, reject) => {
             closeTimer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);
           })]);
           if (timedOut) throw new Error("task_coordinator_close_uncertain");

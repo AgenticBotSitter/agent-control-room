@@ -17,6 +17,22 @@ import { readNativeTransmissionIntentReceipt } from "./native-transmission-inten
 export const nativeEvidenceRegistrationSchema = z.object({ projectId: localId, jobId: localId,
   attemptId: localId, inputDigest: digestSchema }).strict();
 const fail = (): never => { throw new Error("native_evidence_uncertain"); };
+export function captureNativeEvidenceInput(raw: string | Uint8Array, bytes: Uint8Array | undefined) {
+  if ((typeof raw !== "string" && !(raw instanceof Uint8Array))
+    || (typeof raw === "string" ? Buffer.byteLength(raw) : raw.byteLength) > 16_384
+    || bytes !== undefined && (!(bytes instanceof Uint8Array) || bytes.byteLength > 65_536)) return fail();
+  return { raw: typeof raw === "string" ? raw : Uint8Array.from(raw), bytes: bytes === undefined ? undefined : Uint8Array.from(bytes) };
+}
+export type NativeEvidenceSettings = { enrollments: readonly NativeEnrollment[]; storage: NativeResultConfiguration };
+export function captureNativeEvidenceSettings(value: NativeEvidenceSettings): NativeEvidenceSettings {
+  if (!Array.isArray(value.enrollments) || !value.enrollments.length || value.enrollments.length > 32
+    || !(value.storage.integrityKey instanceof Uint8Array) || value.storage.integrityKey.length !== 32
+    || typeof value.storage.storage.put !== "function" || typeof value.storage.storage.read !== "function") return fail();
+  return { enrollments: value.enrollments.map(entry => enrollmentSchema.parse(entry)), storage: {
+    ...value.storage, integrityKey: Uint8Array.from(value.storage.integrityKey),
+    storage: { put: value.storage.storage.put.bind(value.storage.storage), read: value.storage.storage.read.bind(value.storage.storage) },
+  } };
+}
 type Configuration = { scope: { tenantId: string; workspaceId: string }; integrityKey: Uint8Array;
   harnessIntegrityKey: Uint8Array; enrollments: readonly NativeEnrollment[];
   storage: NativeResultConfiguration; results: TaskResultOperation; clock?: () => number;
@@ -36,6 +52,7 @@ export class NativeEvidenceReceiver {
   private readonly available: () => void;
   private highWater = -Infinity;
   constructor(private readonly db: DatabaseClient, config: Configuration) {
+    config = { ...config, ...captureNativeEvidenceSettings(config) };
     this.scope = Object.freeze({ tenantId: localId.parse(config.scope.tenantId), workspaceId: localId.parse(config.scope.workspaceId) });
     if (config.integrityKey.length !== 32 || config.harnessIntegrityKey.length !== 32
       || config.results.tenantId !== this.scope.tenantId || config.results.workspaceId !== this.scope.workspaceId
@@ -109,10 +126,7 @@ export class NativeEvidenceReceiver {
   }
   async receive(session: Pick<ServerNodeSession, "acceptNativeSnapshot">, raw: string | Uint8Array,
     bytes: Uint8Array | undefined, signal: AbortSignal) {
-    if ((typeof raw !== "string" && !(raw instanceof Uint8Array))
-      || (typeof raw === "string" ? Buffer.byteLength(raw) : raw.byteLength) > 16_384
-      || bytes !== undefined && (!(bytes instanceof Uint8Array) || bytes.byteLength > 65_536)) return fail();
-    const owned = typeof raw === "string" ? raw : Uint8Array.from(raw), content = bytes === undefined ? undefined : Uint8Array.from(bytes);
+    const { raw: owned, bytes: content } = captureNativeEvidenceInput(raw, bytes);
     const accept = session.acceptNativeSnapshot.bind(session), current = this.guard(signal), db = this.guarded(current);
     const result = await accept(owned, async (frame, assertSessionCurrent) => {
       const check = () => { current(); assertSessionCurrent(); };

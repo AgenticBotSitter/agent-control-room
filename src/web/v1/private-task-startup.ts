@@ -1,7 +1,7 @@
 import { assertNoSecretMaterial } from "../../security";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
-import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase } from "./private-database-preflight";
+import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase } from "./private-database-preflight";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
@@ -9,11 +9,14 @@ import { nativeTaskTemplateSchema } from "./task-execution-planner";
 import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task-quality-coordinator";
+import { captureNativeEvidenceSettings, type NativeEvidenceSettings } from "./native-evidence-receiver";
+import { timingSafeEqual } from "node:crypto";
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning"> & {
-    database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration };
+    database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
+    evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration } };
 };
 function configuration(input: PrivateTaskStartupConfiguration) {
   try {
@@ -38,9 +41,16 @@ function configuration(input: PrivateTaskStartupConfiguration) {
     const resultDatabase = input.coordinator.resultDatabase ? validatePrivatePostgresConfiguration(input.coordinator.resultDatabase) : undefined;
     if (resultDatabase && (!quality || resultDatabase.host !== database.host || resultDatabase.port !== database.port
       || resultDatabase.database !== database.database || [database.username, web.database.username].includes(resultDatabase.username))) throw new Error();
+    const e = input.coordinator.evidence;
+    const evidence = e ? { ...captureNativeEvidenceSettings(e), database: validatePrivatePostgresConfiguration(e.database) } : undefined;
+    if (evidence && (!quality || !resultDatabase || evidence.database.host !== database.host || evidence.database.port !== database.port
+      || evidence.database.database !== database.database || [database.username, web.database.username, resultDatabase.username].includes(evidence.database.username)
+      || evidence.storage.storageClass !== quality.results.storageClass || !timingSafeEqual(evidence.storage.integrityKey, quality.results.integrityKey)
+      || evidence.enrollments.some(value => value.tenantId !== web.tenantId)
+      || new Set(evidence.enrollments.map(value => value.nodeId)).size !== evidence.enrollments.length)) throw new Error();
     const revisionPlanning = input.coordinator.revisionPlanning;
     if (revisionPlanning !== undefined && (revisionPlanning !== true || !quality)) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase };
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -92,11 +102,18 @@ export function createPrivateTaskBootstrap(dependencies: {
         if ([web.client, coordinator.client].includes(resultDatabase.client)) throw new Error();
         await verifyNativeResultDatabase(resultDatabase.client, config.resultDatabase!, config.web, now);
       }
-      if (!web.isAvailable() || !coordinator.isAvailable() || resultDatabase && !resultDatabase.isAvailable()) throw new Error();
+      const evidenceDatabase = config.evidence ? open(config.evidence.database) : undefined;
+      if (evidenceDatabase) {
+        if ([web.client, coordinator.client, resultDatabase!.client].includes(evidenceDatabase.client)) throw new Error();
+        await verifyNativeEvidenceDatabase(evidenceDatabase.client, config.evidence!.database, config.web, now);
+      }
+      if (!web.isAvailable() || !coordinator.isAvailable() || resultDatabase && !resultDatabase.isAvailable()
+        || evidenceDatabase && !evidenceDatabase.isAvailable()) throw new Error();
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
+        evidence: evidenceDatabase ? { ...config.evidence!, database: evidenceDatabase } : undefined,
       });
       if (!application.isReady()) throw new Error();
       dependencies.install(application);
@@ -104,7 +121,8 @@ export function createPrivateTaskBootstrap(dependencies: {
       return Object.freeze({ isReady: application.isReady, close: application.close,
         ...(application.quality ? { quality: application.quality } : {}),
         ...(application.revisions ? { revisions: application.revisions } : {}),
-        ...(application.results ? { results: application.results } : {}) });
+        ...(application.results ? { results: application.results } : {}),
+        ...(application.evidence ? { evidence: application.evidence } : {}) });
     } catch {
       const results = await Promise.allSettled(application ? [application.close()] : acquired.map(pool => pool.close()));
       if (results.some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
