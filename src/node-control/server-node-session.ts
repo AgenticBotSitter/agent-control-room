@@ -130,7 +130,9 @@ export class ServerNodeSession {
   }
 
   async receive(raw: string | Uint8Array): Promise<void> {
-    if (this.state !== "reconciling" && this.state !== "ready") throw new Error("Server node session is not accepting reconciliation");
+    // A retained node outbox can place progress between the reconciliation report
+    // and its final protocol ACK. Recovery must not discard that sequenced ACK.
+    if (this.state !== "reconciling" && this.state !== "ready" && this.state !== "recovered") throw new Error("Server node session is not accepting reconciliation");
     await this.bounded(async () => {
       const frame = await this.authenticate(raw);
       this.now();
