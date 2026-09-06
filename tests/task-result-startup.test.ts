@@ -51,12 +51,15 @@ async function resultStartupFixture() {
     closes: () => closes, quarantine: () => { available = false; } };
   const quality = qualityConfiguration(x);
   const resultDatabase = { ...startup.config.coordinator.database, username: "result_test" };
+  const webUsername = startup.config.web.database.username;
+  const coordinatorUsername = startup.config.coordinator.database.username;
+  const resultUsername = resultDatabase.username;
   const config: PrivateTaskStartupConfiguration = { ...startup.config, coordinator: { ...startup.config.coordinator,
     quality, resultDatabase } };
   const openDatabase = (database: { username: string }) => {
-    if (database.username === startup.config.web.database.username) return startup.web;
-    if (database.username === startup.config.coordinator.database.username) return startup.coordinator;
-    if (database.username === resultDatabase.username) return result;
+    if (database.username === webUsername) return startup.web;
+    if (database.username === coordinatorUsername) return startup.coordinator;
+    if (database.username === resultUsername) return result;
     throw new Error("unexpected_test_database");
   };
   return { x, startup, result, quality, resultDatabase, config, openDatabase };

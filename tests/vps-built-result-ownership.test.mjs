@@ -35,15 +35,9 @@ async function resultPool(startup) {
 
 test("compiled three-role startup registers and submits separately captured synthetic native bytes through the restricted writer", async t => {
   const x = await nativeTaskLifecycleFixture(); t.after(x.close);
-  // Existing fake transport discovers one run and captures its authenticated result bytes.
-  // Registration and Completion Gate submission are intentionally omitted from this setup.
-  await x.handoff.start(); await x.f.runs.create(x.registration); await x.publish();
-  x.advance(); await x.handoff.poll(); await x.publish();
-  const text = "# Result\nA separately captured synthetic native result.\n# Evidence\nSigned fixture evidence.\n";
-  x.advance(); x.setResult(text); await x.handoff.poll(); const completed = await x.publish();
-  const bytes = new TextEncoder().encode(text);
-  const capture = new NativeTaskResultService(x.f.auth, x.f.runs, x.f.results);
-  const { receipt: artifact } = await capture.ingest(completed.raw, bytes, x.options());
+  // Discovery records only the authenticated run. The restricted runtime must bind its
+  // review plan before the existing fake transport starts or reports any native progress.
+  await x.f.runs.create(x.registration);
   assert.equal((await x.f.reviewStore.inspectSubject(x.registration.tenantId,
     x.registration.projectId, x.registration.jobId)).targets.length, 0);
 
@@ -73,7 +67,6 @@ test("compiled three-role startup registers and submits separately captured synt
     return { ...pool, client: { ...db, transaction: work => db.transaction(observe(work)),
       transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(observe(work), check) } };
   };
-  const nativeCalls = [...x.local.calls], nativeEffects = x.local.effects.countFull();
   const runtime = await createPrivateTaskBootstrap({ clock: x.f.clock, openDatabase,
     install: value => { assert.equal(preflights.length, 3); installPrivateApplication(value); } }).start({
     ...startup.config, coordinator: { ...startup.config.coordinator,
@@ -92,11 +85,26 @@ test("compiled three-role startup registers and submits separately captured synt
   assert.equal(JSON.stringify(runtime).includes("result_test"), false);
 
   const input = { projectId: x.registration.projectId, jobId: x.registration.jobId, runId: x.registration.id };
+  const callsBeforeRegister = [...x.local.calls], effectsBeforeRegister = x.local.effects.countFull();
   const registered = await runtime.results.register(input, new AbortController().signal);
   assert.equal(registered.replayed, false); assert.equal(registered.receipt.projectId, input.projectId);
   assert.equal(registered.receipt.jobId, input.jobId); assert.equal(registered.receipt.runId, input.runId);
   assert.equal(registered.receipt.inputDigest, x.f.prepared.receipt.inputDigest);
   assert.equal(registered.receipt.startsWork, false); assert.equal(registered.receipt.grantsExecutionAuthority, false);
+  assert.deepEqual(x.local.calls, callsBeforeRegister); assert.equal(x.local.effects.countFull(), effectsBeforeRegister);
+  assert.equal((await x.f.reviewStore.inspectSubject(x.registration.tenantId,
+    x.registration.projectId, x.registration.jobId)).targets.length, 0);
+
+  // Existing fake transport now produces one result whose bytes are captured without an
+  // implicit submission callback; only the mounted result writer may submit it below.
+  await x.handoff.start(); await x.publish();
+  x.advance(); await x.handoff.poll(); await x.publish();
+  const text = "# Result\nA separately captured synthetic native result.\n# Evidence\nSigned fixture evidence.\n";
+  x.advance(); x.setResult(text); await x.handoff.poll(); const completed = await x.publish();
+  const bytes = new TextEncoder().encode(text);
+  const capture = new NativeTaskResultService(x.f.auth, x.f.runs, x.f.results);
+  const { receipt: artifact } = await capture.ingest(completed.raw, bytes, x.options());
+  const nativeCalls = [...x.local.calls], nativeEffects = x.local.effects.countFull();
   const submitted = await runtime.results.submit(input, new AbortController().signal);
   assert.equal(submitted.replayed, false); assert.equal(submitted.receipt.targetId, registered.receipt.targetId);
   assert.equal(submitted.receipt.contentHash, artifact.contentHash); assert.equal(submitted.receipt.rootSubjectId, input.jobId);
