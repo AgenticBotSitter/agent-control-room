@@ -15,6 +15,11 @@ application rules; gRPC already supplies request handles and protobuf encoding.
 
 ## Verified offline
 
+**E73 correction:** the original codec diagnostic checked bytes but not comparison
+enum identity and used incorrect enum casing. It did not prove a value comparison.
+E73 corrects the casing and explicitly verifies every prepared comparison target/result.
+Other cancellation and identifier observations below remain separate evidence.
+
 `scripts/research/etcd-grpc-evaluation.test.mjs` loads the actual retained etcd protocol
 definitions using installed `@grpc/proto-loader` and `@grpc/grpc-js` 1.14.4. It constructs
 the generated KV client with a fake channel override: no resolver, real channel,

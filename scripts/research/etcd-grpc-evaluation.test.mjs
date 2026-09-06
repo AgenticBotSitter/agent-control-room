@@ -3,6 +3,8 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { boundedCheckpointCall, CheckpointCallError } from '../../src/completion-gate/v1/bounded-checkpoint-call.ts';
 import { parseEtcdCheckpointRecord } from '../../src/completion-gate/v1/etcd-checkpoint-record.ts';
+import { prepareEtcdCheckpointAdvance } from '../../src/completion-gate/v1/etcd-checkpoint-advance.ts';
+import { rollbackCheckpointDigestV1 } from '../../src/security/rollback-checkpoint.ts';
 
 const root = process.env.CR_ETCD_EVAL_ROOT;
 assert.ok(root, 'Set CR_ETCD_EVAL_ROOT to the logged evaluation directory');
@@ -80,10 +82,12 @@ test('upstream transaction codec preserves uint64 identity and byte comparisons'
   const wire = KV.service.Txn;
   const key = Buffer.from('synthetic-checkpoint');
   const request = wire.requestDeserialize(wire.requestSerialize({
-    compare: [{ key, target: 'VALUE', result: 'EQUAL', value: Buffer.from('prior') }],
+    compare: [{ key, target: 'Value', result: 'Equal', value: Buffer.from('prior') }],
     success: [{ request_put: { key, value: Buffer.from('next') } }],
   }));
   assert.deepEqual(request.compare[0].key, key);
+  assert.equal(request.compare[0].target, 'Value');
+  assert.equal(request.compare[0].result, 'Equal');
   assert.equal(request.compare[0].value.toString(), 'prior');
   assert.equal(request.success[0].request_put.value.toString(), 'next');
   const decoded = wire.responseDeserialize(wire.responseSerialize({
@@ -123,4 +127,15 @@ test('checkpoint record parser accepts actual upstream Range decoding', () => {
       create_revision: binding.createRevision, mod_revision: binding.createRevision, version: '1' }],
   }));
   assert.deepEqual(parseEtcdCheckpointRecord(response, binding).checkpoint, checkpoint);
+  const transaction = prepareEtcdCheckpointAdvance({ response, binding,
+    expectedDigest: rollbackCheckpointDigestV1(checkpoint), next: { ...checkpoint, revision: 2 } });
+  const decoded = KV.service.Txn.requestDeserialize(KV.service.Txn.requestSerialize(transaction));
+  assert.deepEqual(decoded.compare.map(item => item.target), ['Create', 'Mod', 'Value', 'Lease']);
+  assert.deepEqual(decoded.compare.map(item => item.result), ['Equal', 'Equal', 'Equal', 'Equal']);
+  assert.equal(decoded.compare[0].create_revision, binding.createRevision);
+  assert.equal(decoded.compare[1].mod_revision, binding.createRevision);
+  assert.deepEqual(decoded.compare[2].value, response.kvs[0].value);
+  assert.equal(decoded.compare[3].lease, '0');
+  assert.equal(decoded.failure.length, 0);
+  assert.equal(JSON.parse(decoded.success[0].request_put.value.toString()).revision, 2);
 });

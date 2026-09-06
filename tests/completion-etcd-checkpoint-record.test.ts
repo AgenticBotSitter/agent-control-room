@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseEtcdCheckpointRecord } from "../src/completion-gate/v1/etcd-checkpoint-record";
-import { ROLLBACK_CHECKPOINT_SCHEMA_V1 } from "../src/security/rollback-checkpoint";
+import { ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1 } from "../src/security/rollback-checkpoint";
+import { prepareEtcdCheckpointAdvance } from "../src/completion-gate/v1/etcd-checkpoint-advance";
 
 const binding = { clusterId: "18446744073709551615", createRevision: "9007199254740993",
   key: Buffer.from("synthetic/checkpoint"), scope: "completion-gate:synthetic" };
@@ -52,4 +53,34 @@ test("invalid trusted generation is never learned from a response", () => {
   for (const createRevision of ["0", "1", "9007199254740993.0"]) {
     assert.throws(() => parseEtcdCheckpointRecord(fixture(), { ...binding, createRevision }));
   }
+});
+
+test("advance compares exact original bytes, generation, revision and lease with no failure write", () => {
+  const response = fixture();
+  response.kvs[0].value = Buffer.from(JSON.stringify(checkpoint, null, 2));
+  const request = prepareEtcdCheckpointAdvance({ response, binding,
+    expectedDigest: rollbackCheckpointDigestV1(checkpoint), next: { ...checkpoint, revision: 2 } });
+  assert.deepEqual(request.compare.map(item => item.target), [1, 2, 3, 4]);
+  assert.ok(request.compare.every(item => item.result === 0 && item.key.equals(binding.key)));
+  assert.deepEqual(request.compare[2].value, response.kvs[0].value);
+  assert.equal(request.compare[0].create_revision, binding.createRevision);
+  assert.equal(request.compare[1].mod_revision, response.kvs[0].mod_revision);
+  assert.equal(request.compare[3].lease, "0");
+  assert.equal(request.success.length, 1);
+  assert.deepEqual(request.failure, []);
+  response.kvs[0].value.fill(0);
+  assert.equal(JSON.parse(request.compare[2].value!.toString()).revision, 1);
+  assert.equal(JSON.parse(request.success[0].request_put.value.toString()).revision, 2);
+});
+
+test("advance refuses stale digest, wrong scope, skipped and repeated revisions", () => {
+  const expectedDigest = rollbackCheckpointDigestV1(checkpoint);
+  const base = { response: fixture(), binding, expectedDigest, next: { ...checkpoint, revision: 2 } };
+  const variants = [
+    { ...base, expectedDigest: `sha256:${"c".repeat(64)}` },
+    { ...base, next: { ...base.next, scope: "other:scope" } },
+    { ...base, next: { ...base.next, revision: 1 } },
+    { ...base, next: { ...base.next, revision: 3 } },
+  ];
+  for (const input of variants) assert.throws(() => prepareEtcdCheckpointAdvance(input), /^Error: checkpoint_advance_unavailable$/);
 });

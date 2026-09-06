@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest conditional mapping — E73:** [Checkpoint advance preparation](research/REUSE_E73_ETCD_CONDITIONAL_ADVANCE.md)
+prepares exact generation/revision/value/lease comparisons and an empty failure branch.
+38 focused/adjacent checks and seven package diagnostics pass; lint and VPS build pass.
+The package tests now verify comparison enums, correcting E70's unchecked casing mistake.
+No write dispatch or durable store is claimed; result validation and composition remain.
+Final TypeScript passes; no new full-lifecycle/compiled-suite claim.
+
 **Latest record mapping — E72:** [Exact checkpoint read](research/REUSE_E72_ETCD_RECORD_MAPPING.md)
 validates upstream decoded records against supplied cluster/key generation, exact scope
 and integer bounds, preserving original bytes for conditional writes. 36 focused/adjacent
