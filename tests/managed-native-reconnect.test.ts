@@ -120,14 +120,17 @@ test("lost completed-result ACK is reconciled on a fresh recovered connection wi
 test("recorded completed evidence reconnects after canonical lease expiry without reviving its orphaned attempt", async t => {
   const { x, first, completed, bytes } = await pendingResult(); t.after(x.close);
   await first.handle.progress(completed.raw, bytes, currentSignal()); await first.peer.acknowledge();
-  const before = await x.states(), lease = before.lease as LeaseRecord;
+  const before = await x.states(), { job, attempt } = before;
+  assert.ok(job); assert.ok(attempt); assert.ok(before.lease);
+  const lease = before.lease as LeaseRecord;
   x.f.setNow(Date.parse(lease.expiresAt) + 1);
   // Explicit canonical expiry is setup for the historical-read test, not performed by recovery.
-  await x.admin(() => x.f.canonical.expireLease({ tenantId: x.f.scope.tenantId, jobId: before.job.id, attemptId: before.attempt.id,
-    leaseId: lease.id, expectedJobVersion: before.job.version, expectedAttemptVersion: before.attempt.version,
+  await x.admin(() => x.f.canonical.expireLease({ tenantId: x.f.scope.tenantId, jobId: job.id, attemptId: attempt.id,
+    leaseId: lease.id, expectedJobVersion: job.version, expectedAttemptVersion: attempt.version,
     expectedLeaseVersion: lease.version, epoch: lease.epoch, transitionId: "transition:reconnect-expiry",
     idempotencyKey: "managed-reconnect-expiry", actor: { actorId: "identity:test", actorType: "human" }, occurredAt: new Date(x.f.clock()).toISOString() }));
-  const expired = await x.states(); assert.equal(expired.lease.state, "expired"); assert.equal(expired.attempt.state, "orphaned");
+  const expired = await x.states(); assert.ok(expired.lease); assert.ok(expired.attempt);
+  assert.equal(expired.lease.state, "expired"); assert.equal(expired.attempt.state, "orphaned");
   const durable = await deliveryState(x), counts = await x.counts(), calls = [...x.local.calls];
   const next = await recovered(x), raw = await publishSaved(x, next, completed.body);
   const replay = await next.handle.progress(raw, bytes, currentSignal()); await next.peer.acknowledge();
