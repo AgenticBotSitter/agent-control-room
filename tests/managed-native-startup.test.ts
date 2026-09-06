@@ -145,7 +145,7 @@ test("managed native sessions verify five roles before install and capture confi
   const closing = runtime.close(); assert.equal(runtime.close(), closing); assert.equal(runtime.isReady(), false); await closing;
   assert.equal(f.startup.web.closes(), 1); assert.equal(f.startup.coordinator.closes(), 1); assert.equal(f.result.closes(), 1);
   assert.equal(f.evidence.closes(), 1); assert.equal(f.sessions.closes(), 1); assert.equal(originalCloses, 1);
-  await assert.rejects(async () => handle.hello("{}", new AbortController().signal), { message: "native_session_unavailable" });
+  await assert.rejects(async () => handle.hello("{}", new AbortController().signal), { message: "task_coordinator_unavailable" });
 });
 
 test("omitting managed sessions preserves the exact prior four-role evidence surface", async t => {

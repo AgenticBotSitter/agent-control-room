@@ -174,7 +174,7 @@ test("compiled five-role startup owns a signed session and refuses progress with
   await runtime.close(); assert.equal(runtime.isReady(), false); assert.equal(transportCloses, 1);
   assert.equal(startup.web.closes(), 1); assert.equal(startup.coordinator.closes(), 1); assert.equal(result.closes(), 1);
   assert.equal(evidence.closes(), 1); assert.equal(sessions.closes(), 1);
-  await assert.rejects(async () => retained.reconcile("{}", new AbortController().signal), { message: "native_session_unavailable" });
+  await assert.rejects(async () => retained.reconcile("{}", new AbortController().signal), { message: "task_coordinator_unavailable" });
   assert.deepEqual(x.local.calls, nativeCalls); assert.equal(x.local.effects.countFull(), nativeEffects);
 });
 
