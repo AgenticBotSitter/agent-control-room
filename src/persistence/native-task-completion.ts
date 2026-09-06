@@ -12,10 +12,11 @@ const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/), di
 const receiptSchema = nativeQualityRequestSchema.extend({ projectId: id, jobId: id, attemptId: id, leaseId: id, nodeId: id,
   artifactId: id, leaseEpoch: z.number().int().positive(), completedAt: z.string().datetime(), recordedAt: z.string().datetime(),
   jobVersion: z.number().int().positive(), attemptVersion: z.number().int().positive(), leaseVersion: z.number().int().positive(),
+  capacityReleaseDigest: digest.optional(),
   grantsApproval: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict();
 export type NativeTaskCompletionReceipt = z.infer<typeof receiptSchema>;
 const metadataSchema = z.object({ receipt: receiptSchema, requestDigest: digest, authTag: z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/) }).strict();
-const capacityReceiptSchema = receiptSchema.omit({ recordedAt: true }).extend({ releasedAt: z.string().datetime(),
+const capacityReceiptSchema = receiptSchema.omit({ recordedAt: true, capacityReleaseDigest: true }).extend({ releasedAt: z.string().datetime(),
   qualityAccepted: z.literal(false) }).strict();
 export type NativeCapacityReleaseReceipt = z.infer<typeof capacityReceiptSchema>;
 const capacityMetadataSchema = z.object({ receipt: capacityReceiptSchema, requestDigest: digest,
@@ -201,6 +202,7 @@ export class NativeTaskCompletionService {
           || receipt.jobId !== job.id || receipt.attemptId !== attempt.id || receipt.leaseId !== lease.id || receipt.nodeId !== run.nodeId
           || receipt.projectId !== run.projectId || receipt.artifactId !== artifact.receipt.artifactId || receipt.leaseEpoch !== lease.epoch
           || receipt.completedAt !== run.finishedAt || receipt.jobVersion !== job.version || receipt.attemptVersion !== attempt.version || receipt.leaseVersion !== lease.version
+          || receipt.capacityReleaseDigest !== (capacity ? sha256Digest(capacity) : undefined)
           || job.updatedAt !== receipt.recordedAt || attempt.updatedAt !== receipt.recordedAt || lease.updatedAt !== (capacity?.releasedAt ?? receipt.recordedAt)
           || attempt.startedAt !== run.startedAt || attempt.finishedAt !== run.finishedAt
           || sha256Digest(nativeQualityRequestSchema.parse({ tenantId: receipt.tenantId, runId: receipt.runId, targetDigest: receipt.targetDigest, contentHash: receipt.contentHash })) !== requestDigest) return deny();
@@ -213,6 +215,7 @@ export class NativeTaskCompletionService {
         leaseId: lease.id, nodeId: run.nodeId, leaseEpoch: lease.epoch, artifactId: artifact.receipt.artifactId,
         completedAt: run.finishedAt, recordedAt, jobVersion: job.version + (job.state === "leased" ? 2 : 1),
         attemptVersion: attempt.version + (attempt.state === "leased" ? 2 : 1), leaseVersion: lease.version + (capacity ? 0 : 1),
+        ...(capacity ? { capacityReleaseDigest: sha256Digest(capacity) } : {}),
         grantsApproval: false, grantsExecutionAuthority: false });
       const metadata = { receipt, requestDigest, authTag: this.tag(receipt, requestDigest) }; assertNoSecretMaterial(metadata);
       let nextJob: Record = job, nextAttempt: Record = attempt;
