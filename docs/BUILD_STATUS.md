@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest full verification — E82:** [Default test coverage](research/REUSE_E82_DEFAULT_VERIFICATION.md)
+registers five previously direct-run test files and the compiled launcher journey in
+standard commands, with inventory guards. Full `pnpm test` exited 0: 3,126 pass, zero
+failures/cancellations, two platform skips (773 pre; 1,872 main; 481 post). No GitHub
+Actions or real services used. Live configuration/storage/fleet acceptance remains open.
+Updated `pnpm run test:build:vps` also exited 0: build plus all 44 compiled checks pass.
+
 **Latest launcher journey — E81:** [Compiled composition](research/REUSE_E81_LAUNCHER_COMPILED_JOURNEY.md)
 tests launcher success with actual compiled renderer/assets/host/lifecycle and supplied
 disposable resources, plus sanitized operator failure before host creation. Direct CLI

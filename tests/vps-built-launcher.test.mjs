@@ -12,7 +12,7 @@ import { installPrivateApplication } from '../dist-vps/server/runtime.js';
 import { taskStartupFixture } from './helpers/task-startup.ts';
 import { instant } from './hermes-native-fixture.ts';
 
-test('launcher runs compiled application/assets and closes through supplied stop events', async t => {
+test('launcher runs compiled application/assets and closes through supplied stop events', { skip: typeof process.getuid !== 'function' }, async t => {
   const f = await taskStartupFixture(); t.after(f.close);
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'cr-built-launcher-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -48,7 +48,7 @@ test('launcher runs compiled application/assets and closes through supplied stop
   assert.equal(signals.eventNames().length, 0);
 });
 
-test('operator failure is sanitized before host creation and removes signal handlers', async t => {
+test('operator failure is sanitized before host creation and removes signal handlers', { skip: typeof process.getuid !== 'function' }, async t => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'cr-built-launcher-refusal-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'operator.mjs');

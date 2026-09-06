@@ -17,3 +17,14 @@ test("package script keys are unique and posttest retains legacy and reuse check
     "scripts/research/pg-boss-submission-integration.test.mjs", "scripts/research/pg-boss-worker-integration.test.mjs",
     "tests/package-script-inventory.test.mjs"]) assert.ok(paths.includes(required), required);
 });
+
+test("recent checkpoint and host tests remain in standard verification commands", () => {
+  const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
+  const main = scripts.test.split(" ");
+  for (const path of ["tests/completion-bounded-checkpoint-call.test.ts", "tests/completion-etcd-checkpoint-record.test.ts",
+    "tests/web-private-host-shutdown.test.ts", "tests/web-private-host-lifecycle.test.ts", "tests/private-vps-launcher.test.mjs"]) {
+    assert.equal(main.filter(value => value === path).length, 1, path);
+  }
+  assert.equal(scripts["test:build:vps"].split(" ").filter(value => value === "tests/vps-built-launcher.test.mjs").length, 1);
+  assert.ok(!scripts.test.includes("etcd-grpc-evaluation"), "external retained packages remain explicit research only");
+});

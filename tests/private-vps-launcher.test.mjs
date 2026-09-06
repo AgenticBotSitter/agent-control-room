@@ -29,7 +29,7 @@ test('actual help and invalid-input commands exit without compiled startup or co
   }
 });
 
-test('configuration path checks reject shared-readable files and symlinks without importing code', async t => {
+test('configuration path checks reject shared-readable files and symlinks without importing code', { skip: typeof process.getuid !== 'function' }, async t => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'cr-launcher-test-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'operator.mjs');
