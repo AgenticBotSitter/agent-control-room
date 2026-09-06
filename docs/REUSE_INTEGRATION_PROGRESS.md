@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E64 configuration audit](research/REUSE_E64_DURABLE_CHECKPOINT_GAP.md) identifies the
+missing durable rollback-checkpoint implementation and narrows source research to etcd
+and OpenBao. No candidate is adopted. Asynchronous integration and independent restore
+evidence are required; another test-memory configuration is not production completion.
+
 [E63 combined native host](research/REUSE_E63_COMBINED_NATIVE_HOST.md) connects the
 optional native TLS service to compiled task-host readiness and shutdown. Simulated
 machine handshakes traverse the full Node callback; real TLS/resources remain unproven.

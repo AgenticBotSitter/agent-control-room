@@ -23,6 +23,12 @@ E51; E51 has focused and compiled verification, not another full lifecycle run.
 
 ## The immediate critical path
 
+**E64 configuration finding:** [Durable checkpoint gap](research/REUSE_E64_DURABLE_CHECKPOINT_GAP.md)
+is a concrete missing implementation, not an operator-supplied password. The current
+rollback-checkpoint port has only a test-memory implementation. Evaluate an existing
+independent CAS store and asynchronous integration before calling production setup
+complete; do not substitute PostgreSQL self-anchoring or restart the historical LIVE chain.
+
 1. **Browser acceptance:** owner unlocks the Mac. Inspect the existing application and
    use only an already authorized disposable/local setup. Confirm project creation,
    separate tabs, task preparation, assignment and approval review/file intake, including

@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Current configuration finding — E64:** [Durable checkpoint gap](research/REUSE_E64_DURABLE_CHECKPOINT_GAP.md)
+identifies a concrete missing production dependency: the rollback-checkpoint interface
+has only a test-memory implementation. Public primary-source research shortlists etcd
+and OpenBao for independent CAS evaluation, with asynchronous integration and restore
+separation still to prove. Neither is adopted. Existing E63 tests stand; this audit
+ran no new tests, services, downloads or credentials and does not claim setup is complete.
+
 **Latest combined host integration — E63:** [Browser/native ownership](research/REUSE_E63_COMBINED_NATIVE_HOST.md)
 connects optional native TLS serving to shared readiness and cleanup. Compiled simulated
 machine handshakes traverse Node request callbacks; machine failure closes both listeners
