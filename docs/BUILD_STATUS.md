@@ -8,6 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E31:** [Submission readback and controls](research/REUSE_E31_SUBMISSION_READBACK_AND_CONTROLS.md)
+adds protected historical queue readback and explicit browser submission/check controls
+after saved approval. Eight package startup and 17 browser/approval checks pass. Real browser
+interaction, task dispatch projection and full-host/live acceptance remain open.
+
 **Latest local implementation — E30:** [Protected HTTP submission](research/REUSE_E30_PROTECTED_HTTP_SUBMISSION.md)
 connects the explicitly configured queue through authenticated, same-origin task requests.
 Actual-package startup proves fresh/replayed receipts and refusal after owner revocation;

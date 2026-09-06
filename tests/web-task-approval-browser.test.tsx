@@ -4,6 +4,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createTaskApprovalBrowserClient } from "../src/web/v1/task-approval-browser-client";
 import { sha256Digest } from "../src/security";
 import { TaskApprovalPanel } from "../private-app/app/task-approval";
+import { PrivateTaskSubmission } from "../private-app/app/task-submission";
+
+test("submission controls initially wait for readback and do not claim execution", () => {
+  const html = renderToStaticMarkup(<PrivateTaskSubmission projectId="project:test" jobId="job:test" inputDigest={`sha256:${"a".repeat(64)}`} packetDigest={`sha256:${"b".repeat(64)}`} />);
+  assert.match(html, /Checking submission/); assert.match(html, /Queue approved task/);
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 2);
+  assert.match(html, /signed permission and reservation are still valid/);
+});
 
 const digest = sha256Digest("input"), scope = { projectId: "project:test", jobId: "job:test", inputDigest: digest };
 const packet = { schema: "synthetic-file", a: ["value", 1], z: { b: true, a: null } };

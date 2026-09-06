@@ -67,9 +67,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     || [options.approvals.prepare, options.approvals.store, options.approvals.read].some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
   if (options.submission && (options.submission.tenantId !== options.tenantId || options.submission.workspaceId !== options.workspaceId
-    || typeof options.submission.enqueue !== "function")) throw new Error("private_submission_config_invalid");
+    || typeof options.submission.enqueue !== "function" || typeof options.submission.read !== "function")) throw new Error("private_submission_config_invalid");
   const submission = options.submission ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
-    enqueue: options.submission.enqueue.bind(options.submission) }) : undefined;
+    enqueue: options.submission.enqueue.bind(options.submission), read: options.submission.read.bind(options.submission) }) : undefined;
   const approvals = options.approvals ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     prepare: options.approvals.prepare.bind(options.approvals), store: options.approvals.store.bind(options.approvals),
     read: options.approvals.read.bind(options.approvals) }) : undefined;

@@ -386,6 +386,12 @@ test('explicit startup prepares actual producer after database gates and closes 
         req.headers.delete('idempotency-key'); return req;
       };
       const handle = req => installed.handle(req, () => new Response('shell'));
+      const readSubmission = suffix => {
+        const req = request(path + (suffix ?? `?inputDigest=${encodeURIComponent(f.args[3])}`), 'GET', undefined, undefined, f.jwt);
+        req.headers.delete('idempotency-key'); return handle(req);
+      };
+      assert.equal((await (await readSubmission()).json()).receipt, null);
+      assert.equal((await readSubmission(`?inputDigest=${encodeURIComponent(f.args[3])}&inputDigest=${encodeURIComponent(f.args[3])}`)).status, 400);
       if (mode === 'success') {
         const missing = make(); missing.headers.delete('cf-access-jwt-assertion');
         assert.equal((await handle(missing)).status, 401);
@@ -405,6 +411,9 @@ test('explicit startup prepares actual producer after database gates and closes 
       const replay = await handle(make()); assert.equal(replay.status, 200);
       assert.deepEqual(await replay.json(), { ...queued, replayed: true });
       assert.equal(queued.startsWork, false);
+      const observed = await readSubmission(); assert.equal(observed.status, 200);
+      const { replayed: ignored, ...historical } = queued; void ignored;
+      assert.deepEqual((await observed.json()).receipt, historical);
       if (mode === 'success') {
         await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE');
         assert.equal(await count(f, 'control_room_queue.job_common'), 1);

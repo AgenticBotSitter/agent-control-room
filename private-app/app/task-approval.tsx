@@ -4,6 +4,7 @@ import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskApprovalBrowserClient, approvalErrorMessage } from "../../src/web/v1/task-approval-browser-client";
 import type { TaskApprovalRead, TaskApprovalReview } from "../../src/web/v1/task-approval-wire";
 import type { TaskDetail } from "../../src/web/v1/task-wire";
+import { PrivateTaskSubmission } from "./task-submission";
 
 export function TaskApprovalPanel({ state, review, error, pending, uncertain, fileName, onReview, onCheck, onFile, onSave }: {
   state?: TaskApprovalRead; review?: TaskApprovalReview; error?: BrowserRequestError; pending: boolean; uncertain: boolean;
@@ -81,8 +82,10 @@ export function PrivateTaskApproval({ detail }: { detail?: TaskDetail }) {
   if (!detail.attempts.length) return <section className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
     <p>Execution approval is available after task preparation and assignment. No agent starts from this page automatically.</p></section>;
   const current = checked === detail;
-  return <TaskApprovalPanel state={current ? state : undefined} review={current ? review : undefined} error={current ? error : undefined}
+  return <><TaskApprovalPanel state={current ? state : undefined} review={current ? review : undefined} error={current ? error : undefined}
     fileName={current ? file?.name ?? "" : ""} pending={pending} uncertain={client.hasPending()}
     onReview={() => { void action("review"); }} onCheck={() => { void action("check"); }} onSave={() => { void action("save"); }}
-    onFile={selected => { void choose(selected); }} />;
+    onFile={selected => { void choose(selected); }} />
+    {current && state?.receipt && <PrivateTaskSubmission key={`${detail.task.projectId}/${detail.task.jobId}/${detail.inputDigest}/${state.receipt.packetDigest}`}
+      projectId={detail.task.projectId} jobId={detail.task.jobId} inputDigest={detail.inputDigest} packetDigest={state.receipt.packetDigest} />}</>;
 }

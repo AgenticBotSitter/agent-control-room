@@ -7,3 +7,5 @@ export const taskSubmissionReceiptSchema = z.object({ projectId: id, jobId: id, 
   packetDigest: digest, operationDigest: digest, queuedAt: z.string().datetime(), replayed: z.boolean(),
   evidence: z.literal("recorded_delivery_intent"), startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false),
 }).strict();
+export const taskSubmissionReadSchema = z.object({ projectId: id, jobId: id, inputDigest: digest,
+  receipt: taskSubmissionReceiptSchema.omit({ replayed: true }).nullable() }).strict();

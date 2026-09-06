@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E31 submission controls](research/REUSE_E31_SUBMISSION_READBACK_AND_CONTROLS.md) adds
+read-only canonical receipt reconciliation and a bounded browser client that refuses
+another send after uncertainty. The approval page exposes explicit queue/check controls.
+Eight package startup and 17 browser/approval tests pass; no interactive browser acceptance yet.
+
 [E30 HTTP submission](research/REUSE_E30_PROTECTED_HTTP_SUBMISSION.md) wires the narrow
 coordinator operation through the protected private application. Eight focused startup
 checks pass after correcting a test's packet-mismatch error expectation; the preceding

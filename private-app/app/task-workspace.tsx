@@ -90,6 +90,6 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     {jobId && <PrivateTaskAssignment detail={detail} />}
     {jobId && <PrivateTaskApproval detail={detail} />}
     <TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} />
-    {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Agent dispatch is not connected; no work starts from refresh or reconnect.</p>}
+    {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Use the task’s submission controls to queue signed work when configured. Refreshing this page does not submit a task.</p>}
   </main></div>;
 }

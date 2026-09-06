@@ -11,7 +11,8 @@ import { catalogProjectIdSchema } from "./project-wire";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import { taskAssignmentDraftSchema, taskAssignmentCommandSchema, taskAssignmentOptionsSchema } from "./task-assignment-wire";
 import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
-import { taskSubmissionDraftSchema, taskSubmissionReceiptSchema } from "./task-submission-wire";
+import { taskSubmissionDraftSchema, taskSubmissionReceiptSchema, taskSubmissionReadSchema } from "./task-submission-wire";
+import { approvalDigestSchema } from "./task-approval-wire";
 import { taskApprovalHttp } from "./task-approval-http";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-revision-wire";
@@ -28,12 +29,23 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
       const url = new URL(request.url);
       const submissionRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/submission$/.exec(url.pathname);
       if (submissionRoute) {
-        if (url.search || request.headers.has("idempotency-key")) throw new WebAccessError("invalid_request");
+        if (request.headers.has("idempotency-key")) throw new WebAccessError("invalid_request");
         let ids: string[];
         try { ids = submissionRoute.slice(1).map(decodeURIComponent); } catch { throw new WebAccessError("invalid_request"); }
         if (ids.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new WebAccessError("invalid_request");
         const [projectId, jobId] = ids;
         await options.service.authorize(identity, projectId);
+        if (request.method === "GET") {
+          if ([...url.searchParams.keys()].length !== 1 || !url.searchParams.has("inputDigest")) throw new WebAccessError("invalid_request");
+          const digest = approvalDigestSchema.safeParse(url.searchParams.get("inputDigest"));
+          if (!digest.success) throw new WebAccessError("invalid_request");
+          if (!options.submission) throw new Error("task_submission_not_configured");
+          const receipt = await options.submission.read(identity, projectId, jobId, digest.data);
+          const value = taskSubmissionReadSchema.parse({ projectId, jobId, inputDigest: digest.data, receipt });
+          if (receipt && (receipt.projectId !== projectId || receipt.jobId !== jobId)) throw new Error("task_submission_scope_mismatch");
+          return Response.json(value, { headers: privateResponseHeaders });
+        }
+        if (url.search) throw new WebAccessError("invalid_request");
         if (request.method !== "POST") throw new WebAccessError("not_found");
         if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
           throw new WebAccessError("invalid_request");
