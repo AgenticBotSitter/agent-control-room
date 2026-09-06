@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { SqliteBridgeJournal } from "../src/node-bridge/journal";
 import { signNodeFrame, signedNodeFrameSchema, type SignedNodeFrame, type UnsignedNodeFrame } from "../src/node-protocol/v1";
-import { createNativeNodeRuntime } from "../src/harness/hermes-native-v1/node-runtime";
 import { nativeNodeRuntimeFixture } from "./helpers/native-node-runtime";
 import { currentSignal } from "./helpers/managed-native-session";
 
@@ -53,7 +51,7 @@ test("the frozen facade captures configuration and methods before factory return
   const startGate = deferred(), startEntered = deferred(), observeEntered = deferred();
   const original = {
     queueId: x.config.queueId, nodeKeyId: x.config.nodeKeyId, serverId: x.config.serverId,
-    serverKeyId: x.config.serverKeyId, serverPublicKeySpki: x.config.serverPublicKeySpki,
+    serverKeyId: x.config.serverKeyId,
     clock: x.dependencies.clock, revision: x.dependencies.security.currentServerTrustRevision,
     resolve: x.dependencies.security.resolveServerKey, sign: x.dependencies.signer.sign,
     json: x.dependencies.transport.json, events: x.dependencies.transport.events,
@@ -73,7 +71,6 @@ test("the frozen facade captures configuration and methods before factory return
   const captured = x.create();
   x.config.queueId = "native-queue:mutated"; x.config.nodeKeyId = "key:mutated-node";
   x.config.serverId = "server:mutated"; x.config.serverKeyId = "key:mutated-server";
-  x.config.serverPublicKeySpki = "mutated-public-key";
   x.dependencies.clock = () => -1;
   x.dependencies.security.currentServerTrustRevision = () => { throw new Error("mutated revision used"); };
   x.dependencies.security.resolveServerKey = async () => { throw new Error("mutated resolver used"); };
@@ -106,7 +103,7 @@ test("the frozen facade captures configuration and methods before factory return
     // An ambiguous local observation is not evidence that the provider process physically stopped.
   } finally {
     x.config.queueId = original.queueId; x.config.nodeKeyId = original.nodeKeyId; x.config.serverId = original.serverId;
-    x.config.serverKeyId = original.serverKeyId; x.config.serverPublicKeySpki = original.serverPublicKeySpki;
+    x.config.serverKeyId = original.serverKeyId;
     x.dependencies.clock = original.clock;
     x.dependencies.security.currentServerTrustRevision = original.revision;
     x.dependencies.security.resolveServerKey = original.resolve; x.dependencies.signer.sign = original.sign;
@@ -134,29 +131,32 @@ test("malformed, wrong-pinned and foreign-queue input closes without a native re
   await t.test("validly signed dispatch for a foreign queue", async t => {
     const x = await nativeNodeRuntimeFixture(); t.after(x.close);
     const { connection, frame } = await pendingDispatch(x);
-    const foreign = signedNodeFrameSchema.parse(await x.x.settings.sign({ ...unsigned(frame),
-      body: { ...frame.body, queueId: "native-queue:foreign" } }));
-    await receiveFailure(x, JSON.stringify(foreign), connection);
+    const queueId = x.config.queueId; x.config.queueId = "native-queue:foreign";
+    const foreignRuntime = x.create(); x.config.queueId = queueId;
+    const calls = [...x.x.local.calls];
+    await assert.rejects(foreignRuntime.receive(JSON.stringify(frame), currentSignal()),
+      { message: "native_node_runtime_uncertain" });
+    await foreignRuntime.close(); assert.deepEqual(x.x.local.calls, calls);
+    assert.equal(connection.state.nodeCloses, 0);
     assert.equal(x.journal.acceptedNativeDelivery(x.config.queueId), undefined);
   });
 });
 
 test("a saved delivery signed under another key is refused before preparation or native start", async t => {
-  const x = await nativeNodeRuntimeFixture();
-  const foreignJournal = new SqliteBridgeJournal(":memory:");
-  let foreignRuntime: Runtime | undefined;
-  t.after(async () => { if (foreignRuntime) await foreignRuntime.close(); foreignJournal.close(); await x.close(); });
-  const connection = await x.connect(); await x.dispatch(connection);
-  const saved = x.journal.acceptedNativeDelivery(x.config.queueId); assert.ok(saved);
-  const otherKeys = generateKeyPairSync("ed25519");
-  const foreignFrame = signNodeFrame({ ...unsigned(saved.frame), keyId: "key:foreign-saved-source" }, otherKeys.privateKey);
-  foreignJournal.recordNativeDelivery(foreignFrame, saved.receipt, () => {});
-  foreignRuntime = createNativeNodeRuntime(x.config, { ...x.dependencies, journal: foreignJournal });
-  await x.connect("initial", foreignRuntime);
+  const x = await nativeNodeRuntimeFixture(); t.after(x.close); await x.runtime.close();
+  const otherKeys = generateKeyPairSync("ed25519"), load = x.journal.acceptedNativeDelivery.bind(x.journal);
+  const resolve = x.dependencies.security.resolveServerKey.bind(x.dependencies.security);
+  x.dependencies.security.resolveServerKey = async key => key === "key:foreign-saved-source"
+    ? new Uint8Array(otherKeys.publicKey.export({ format: "der", type: "spki" })) : resolve(key);
+  x.journal.acceptedNativeDelivery = queueId => {
+    const saved = load(queueId); if (!saved) return saved;
+    return { ...saved, frame: signNodeFrame({ ...unsigned(saved.frame), keyId: "key:foreign-saved-source" }, otherKeys.privateKey) };
+  };
+  const foreignRuntime = x.create(), connection = await x.connect("initial", foreignRuntime); await x.dispatch(connection);
   const calls = [...x.x.local.calls];
-  await assert.rejects(foreignRuntime.start(currentSignal()), { message: "native_node_runtime_uncertain" });
+  await assert.rejects(x.x.admin(() => foreignRuntime.start(currentSignal())), { message: "native_node_runtime_uncertain" });
   assert.deepEqual(x.x.local.calls, calls);
-  assert.deepEqual(foreignJournal.acceptedNativeDelivery(x.config.queueId)?.frame, foreignFrame);
+  assert.equal(x.x.local.journal.load(x.x.f.prepared.binding.runId), undefined);
 });
 
 async function blockedStartFixture() {
@@ -216,7 +216,7 @@ test("close owns queued transports before bridge open and late settlement cannot
   assert.equal((await second).message, "native_node_runtime_uncertain");
   gate.resolve(); await closing;
   assert.equal(firstSends, 1); assert.equal(secondSends, 0); assert.equal(firstCloses, 1); assert.equal(secondCloses, 1);
-  await assert.rejects(x.runtime.open({ async send() {}, async close() {} }, "transport:late", currentSignal()),
+  await assert.rejects(async () => x.runtime.open({ async send() {}, async close() {} }, "transport:late", currentSignal()),
     { message: "native_node_runtime_unavailable" });
 });
 
