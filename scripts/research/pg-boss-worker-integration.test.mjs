@@ -35,36 +35,38 @@ const hostFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/taskBootstrap.js')).createPrivateTaskBootstrap : createPrivateTaskBootstrap;
 const installedFactories = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/nativeQueueFactories.js')).createInstalledNativeQueueFactories : createInstalledNativeQueueFactories;
+const inspectQueueSchema = process.env.CR_REUSE_COMPILED_STARTUP === '1'
+  ? (await import('../../dist-vps/server/nativeQueueInspection.js')).inspectInstalledNativeQueueSchema : inspectInstalledNativeQueueSchema;
 
 test('upstream schema inspection requires completed probes and an unchanged managed schema', async t => {
   const f = await fixture(t);
   const db = { query: (sql, values) => f.raw.query(sql, values) };
-  assert.deepEqual(await inspectInstalledNativeQueueSchema(db, currentSignal()), {
+  assert.deepEqual(await inspectQueueSchema(db, currentSignal()), {
     packageVersion: '12.30.0', schemaVersion: 40, inspected: true, repairsPerformed: false,
   });
   for (const marker of ['pg_get_functiondef', 'SELECT command FROM', 'FROM pg_enum',
     'FROM pg_attribute', 'SELECT c.relname AS "table"\n', 'pg_get_constraintdef']) {
     let failed = 0;
-    await assert.rejects(inspectInstalledNativeQueueSchema({ query: (sql, values) => {
+    await assert.rejects(inspectQueueSchema({ query: (sql, values) => {
       if (sql.includes(marker)) { failed++; throw new Error('synthetic unavailable probe'); }
       return db.query(sql, values);
     } }, currentSignal()), /schema_inspection_failed/);
     assert.equal(failed, 1, marker);
   }
   const cancelled = new AbortController(); cancelled.abort();
-  await assert.rejects(inspectInstalledNativeQueueSchema({ query: () => {
+  await assert.rejects(inspectQueueSchema({ query: () => {
     assert.fail('already cancelled inspection must not query');
   } }, cancelled.signal), /schema_inspection_failed/);
   const interrupted = new AbortController();
-  await assert.rejects(inspectInstalledNativeQueueSchema({ query: async (sql, values) => {
+  await assert.rejects(inspectQueueSchema({ query: async (sql, values) => {
     const result = await db.query(sql, values);
     if (sql.includes('pg_get_functiondef')) interrupted.abort();
     return result;
   } }, interrupted.signal), /schema_inspection_failed/);
   await f.raw.exec(`CREATE INDEX synthetic_extra_queue_index ON ${spec.schema}.job_common (priority)`);
-  await assert.rejects(inspectInstalledNativeQueueSchema(db, currentSignal()), /schema_inspection_failed/);
+  await assert.rejects(inspectQueueSchema(db, currentSignal()), /schema_inspection_failed/);
   await f.raw.exec(`DROP INDEX ${spec.schema}.synthetic_extra_queue_index; DROP INDEX ${spec.schema}.job_common_i11`);
-  await assert.rejects(inspectInstalledNativeQueueSchema(db, currentSignal()), /schema_inspection_failed/);
+  await assert.rejects(inspectQueueSchema(db, currentSignal()), /schema_inspection_failed/);
   assert.equal(await f.boss.schemaVersion(), 40);
 });
 

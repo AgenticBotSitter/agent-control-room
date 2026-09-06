@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E47 compiled inspection](research/REUSE_E47_COMPILED_QUEUE_INSPECTION.md) packages the
+existing schema inspector and verifies it with the compiled full-host task journeys.
+The VPS handoff distinguishes compiled components from an installed service; real
+database preparation, configuration, live agents and operational acceptance remain open.
+
 [E46 approval editing](research/REUSE_E46_APPROVAL_EDITING.md) preserves matching local
 review/file state without restoring old files into a replacement review or changing
 server approval validation. Focused checks and compiled regressions pass. The duplicate

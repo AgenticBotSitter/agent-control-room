@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E47:** [Compiled queue inspection](research/REUSE_E47_COMPILED_QUEUE_INSPECTION.md)
+includes the existing upstream-backed inspector in the VPS artifact and adds a portable
+compiled verification command. All four compiled queue scenarios and 35 compiled
+regressions pass, along with build/type/lint checks. [VPS handoff](VPS_COMPILED_HANDOFF.md)
+documents packaging and remaining setup gates. Nothing is installed or deployed;
+interactive browser testing still requires owner unlock.
+
 **Latest local implementation — E46:** [Approval editing continuity](research/REUSE_E46_APPROVAL_EDITING.md)
 preserves a selected approval file across matching authorized refreshes and rejects stale
 file reads into a replacement review. 15 focused checks, typecheck, lint, production

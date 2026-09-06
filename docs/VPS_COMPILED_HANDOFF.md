@@ -1,0 +1,69 @@
+# VPS compiled handoff — preparation, not installation authority
+
+Updated 2026-09-06. Intended reader: the Control Room integration owner and Johnny5.
+GitHub publication and deployment remain paused. Do not run production setup from this
+document. Current readiness is in BUILD_STATUS.md, not inferred from a compiled file.
+
+## What the build supplies
+
+| Output | Responsibility | Does importing it start work? |
+|---|---|---|
+| `dist-vps/client` | Private browser assets | No server or worker |
+| `dist-vps/server/taskBootstrap.js` | Explicit configured task application startup | No; calling startup opens supplied databases and can start a configured worker |
+| `dist-vps/server/nativeQueueFactories.js` | Installed pg-boss producer/worker factories | No; factory operations are explicit |
+| `dist-vps/server/nativeQueueInspection.js` | Exported `inspectInstalledNativeQueueSchema(database, signal)` | No; invocation reads the supplied SQL port |
+| Remaining `dist-vps/server` files | Shared compiled modules, rendering and existing preparation/rehearsal entries | Preserve the whole output; do not cherry-pick entry files |
+
+The output is **not a standalone installed service**. Keep the matching package manifest,
+lockfile and resolved production dependencies alongside it. pg-boss is deliberately
+external and resolves through its installed package and locked dependencies. Never copy
+Mac `node_modules` to Linux. After approval, prepare dependencies on the target platform
+from the exact lockfile; do not enable arbitrary package lifecycle scripts or upgrade
+packages to make an installation pass. Retain third-party licenses/notices.
+
+## Local verification available now
+
+From the repository root with already prepared dependencies:
+
+```sh
+node scripts/build-vps.mjs
+pnpm run test:queue-compiled
+node --import tsx --test tests/vps-built-*.test.mjs
+```
+
+The portable compiled-queue command selects the installed package and compiled startup,
+queue factory and schema inspector. A missing compiled entry fails; it never silently
+falls back to TypeScript source. It runs disposable PGlite simulations, including a
+fresh task, reconnect, lost response and incomplete/mismatched schema inspection.
+It opens no PostgreSQL service, listener or real agent. It is not Linux/Windows or
+physical PostgreSQL acceptance merely because the command is shell-portable.
+
+## Before production startup is permitted
+
+1. Prepare one approved private PostgreSQL primary on the Hostinger VPS, not AWS RDS.
+   Apply reviewed schema/role preparation through a separately authorized operator.
+2. Inspect the complete queue schema using the compiled inspector and a bounded,
+   appropriately authorized read-only SQL port. Retain its sanitized result. No
+   automatic repair is supplied; failed or incomplete probes stop acceptance. The
+   caller must bound database queries: abort observation alone cannot interrupt an
+   indefinitely blocked SQL port. Repeat inspection against the actual deployment
+   candidate; an old result does not certify a changed database.
+3. Supply distinct web, coordinator, result, evidence, session and queue-worker database
+   identities as required by the selected full-host configuration. Operational roles
+   do not gain schema-inspection privileges just to make the earlier step pass.
+   Existing startup independently verifies role and scope gates; the inspection
+   result does not bypass them or become request-supplied execution permission.
+4. Supply reviewed owner login/origin configuration, public trust pins, exact enrollments,
+   node/runtime settings and protected server-only secrets through the approved setup.
+   Do not place credentials in Git, browser assets, this document or worker messages.
+5. Complete the real PostgreSQL/pool rehearsal and one scoped real-agent task before
+   treating simulated delivery as a working installation. Establish the actual service
+   entrypoint, supervised lifecycle, private ingress and shutdown/drain behavior.
+6. Validate backups with a restore, then canary/update/rollback. A compiled application
+   alone does not supply those operating procedures or prove daily-use readiness.
+
+The inspection entry is available to the future preparation runner; it is not invoked
+automatically by application startup. No new service manager, SSH copy protocol,
+database authority or Hermes fork is introduced. Real installation commands and
+host-specific secret provisioning remain gated work, not missing steps for a worker
+to improvise.

@@ -62,7 +62,8 @@ export default defineConfig(async ({ mode }) => {
       rsc: { build: { rollupOptions: { external: ["pg-boss"], input: { runtime: "src/web/v1/private-process.ts", bootstrap: "src/web/v1/private-startup.ts",
         serving: "src/web/v1/private-serving.ts", rehearsal: "src/web/v1/private-database-rehearsal.ts",
         preparation: "src/web/v1/private-fixture-preparation.ts", taskApplication: "src/web/v1/private-task-application.ts",
-        taskBootstrap: "src/web/v1/private-task-startup.ts", nativeQueueFactories: "src/web/v1/installed-native-queue.ts" } } } },
+        taskBootstrap: "src/web/v1/private-task-startup.ts", nativeQueueFactories: "src/web/v1/installed-native-queue.ts",
+        nativeQueueInspection: "src/persistence/pg-boss-schema-inspection.ts" } } } },
     } } : {}),
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
