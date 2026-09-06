@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Content workflow separation clarified from source:** [Generalization map](CONTENT_WORKFLOW_GENERALIZATION.md)
+distinguishes the external-source-scheduled Content Blooms adapter from ordinary core
+content jobs. Branded protocol IDs, digest inputs and SQL names make a global rename
+unsafe. Preserve private v1; use core tasks for generic content workflows and review
+optional helper/adapter reuse separately. Existing contract/adapter baseline: 23 tests
+pass. No adapter, migration, runtime configuration or private history changed.
+
 **Misleading proposal guidance corrected:** The task form no longer says assignment
 is universally unconnected. It explains that saving starts no agent and directs the
 user to the saved task for preparation/assignment availability. Existing per-installation

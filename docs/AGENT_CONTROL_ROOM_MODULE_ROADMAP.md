@@ -45,6 +45,11 @@ first core task journey. Disabling an optional module must not break ordinary pr
 
 ## Content generalization, without losing the work
 
+The [targeted generalization map](CONTENT_WORKFLOW_GENERALIZATION.md) identifies an
+important distinction: the existing adapter observes an external source's scheduling
+and leases. Ordinary Control Room content workflows must use core tasks instead;
+do not turn the source adapter into a second scheduler through a cosmetic rename.
+
 The content-specific implementation includes placement, synchronization, routing,
 read/control and project-pack code. Review those capabilities individually rather than
 deleting the folder. Classify each as generic service, domain-specific optional adapter,
