@@ -4,6 +4,11 @@
 
 **Owner direction:** Implement the Astra reassessment; resume repository building.
 
+**Local-only override (2026-09-06):** Owner reports exhausted GitHub Actions minutes
+and directs all work to remain local until explicitly resumed. No GitHub reads/writes,
+fetch/pull, pushes, PRs, merges or CI requests. Local implementation, independent review,
+verification and Git commits continue. Remote integration/CI remain deferred, not waived.
+
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
 **Next block:** CR14C C-WORK — signed-frame and saved-result transport handoff,

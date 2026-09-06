@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner instruction — local-only work (2026-09-06):** The owner reports the billing
+cycle's 3,000 GitHub Actions minutes are exhausted. Stop all GitHub activity until the
+owner explicitly resumes it: no remote reads, fetch/pull, pushes, PRs, merges or CI
+requests/retries. Continue local implementation, independent review, tests and local Git
+commits; retain changes and evidence in this checkout. Publication and remote CI are
+deferred, not passed or waived. This overrides earlier publication instructions below.
+
 **CR14A — private-beta rebaseline is accepted locally.** Independent review accepted product
 `93118f9169d03c6fde68b70a5a2e53fba19fc5f4` with no blocking findings. See `CR14A_ACCEPTANCE.md` for the
 review, actual checks and documentation-only handoff follow-up.
@@ -2426,7 +2433,7 @@ Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
 Why: Node execution/reporting and server ordered input are accepted, but the fixture still selects completed snapshots and supplies their saved result bytes. Production needs ownership of that handoff before a physical transport can be qualified.
 Expected output: bounded supplied transport ports joining signed frames to exact saved result bytes, preserving ordering, cancellation, reconnect and cleanup without application-aware fixture pumping. Keep node and web adapter isolation, no scheduler or implicit start. No physical listener/provider/credential operations. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
-Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
+Owner action: none for scoped local implementation, verification and local commits. GitHub activity and publication are paused until the owner explicitly resumes them. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
 ```
