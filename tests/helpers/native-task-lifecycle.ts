@@ -101,6 +101,7 @@ export async function nativeTaskLifecycleFixture(configuration: { serverFeatures
   }
   return { f, local, handoff, prepare, registration, submission, results, options, register, publish, queueSnapshot,
     journal, receipt, sent, session, outgoing,
+    acknowledgeSnapshot: async () => { await bridge.receive(outgoing.shift()!, timestamp()); },
     loseNextAcknowledgement: () => { loseAcknowledgement = true; },
     setResult: (value: string) => { resultText = value; },
     advance: () => { const now = f.clock() + 1000; f.setNow(now); local.setNow(now); },
