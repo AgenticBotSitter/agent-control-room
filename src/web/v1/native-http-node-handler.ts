@@ -7,9 +7,11 @@ import { nativeHttpLimits, readNativeHttpBody } from "../../harness/v1/native-ht
  * comes from the request socket, never an HTTP forwarding header. */
 export function createNativeHttpNodeHandler(origin: string, application: {
   handle(request: Request, socket: TLSSocket): Promise<Response>; close(): Promise<void>; isReady(): boolean;
+  settleResponse?(response: Response, delivered: boolean): Promise<void>;
 }) {
   const handle = application.handle.bind(application), closeApplication = application.close.bind(application);
   const ready = application.isReady.bind(application), active = new Set<Promise<void>>();
+  const settle = application.settleResponse?.bind(application);
   const controllers = new Set<AbortController>(), sockets = new WeakSet<object>();
   let closed = false, closing: Promise<void> | undefined;
   async function serve(input: IncomingMessage, output: ServerResponse) {
@@ -22,6 +24,7 @@ export function createNativeHttpNodeHandler(origin: string, application: {
     const disconnected = () => { if (!output.writableFinished) abort(); };
     input.once("error", abort); output.once("error", abort); output.once("close", disconnected);
     const timer = setTimeout(abort, nativeHttpLimits.requestMs);
+    let response: Response | undefined, delivered = false;
     try {
       if (input.httpVersion !== "1.1" || input.method !== "POST" || input.url !== nativeHttpLimits.path
         || input.rawHeaders.length > 64 || input.rawHeaders.length % 2) throw new Error();
@@ -40,7 +43,7 @@ export function createNativeHttpNodeHandler(origin: string, application: {
       const request = new Request(`${origin}${nativeHttpLimits.path}`, { method: "POST", headers,
         body: Readable.toWeb(input) as ReadableStream<Uint8Array>, signal: controller.signal,
         duplex: "half" } as RequestInit & { duplex: "half" });
-      const response = await handle(request, input.socket as TLSSocket);
+      response = await handle(request, input.socket as TLSSocket);
       if (controller.signal.aborted || output.destroyed) { void response.body?.cancel().catch(() => {}); return; }
       const body = await readNativeHttpBody(response.body, controller.signal);
       if (controller.signal.aborted || output.destroyed) return;
@@ -54,8 +57,10 @@ export function createNativeHttpNodeHandler(origin: string, application: {
         output.end(body, () => { controller.signal.removeEventListener("abort", stopped); resolve(); });
         if (controller.signal.aborted) stopped();
       });
+      delivered = !controller.signal.aborted && output.writableFinished;
     } catch { abort(); }
-    finally { clearTimeout(timer); controllers.delete(controller);
+    finally { if (response && settle) { try { await settle(response, delivered); } catch { abort(); } }
+      clearTimeout(timer); controllers.delete(controller);
       input.off("error", abort); output.off("error", abort); output.off("close", disconnected);
       if (!input.complete) input.destroy(); }
   }

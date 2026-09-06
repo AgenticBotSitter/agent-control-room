@@ -40,11 +40,12 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
   const peerCurrent = settings.isPeerCurrent, clock = (input.clock ?? Date.now).bind(input);
   const records = new Map<string, Record>(), owned = new Set<Record>(), busy = new Set<string>();
   const active = new Set<Promise<unknown>>(), controllers = new Set<AbortController>();
+  const deliveries = new WeakMap<Response, Record>();
   let closed = false, uncertain = false, closing: Promise<void> | undefined, highWater = -1;
   function current(peer?: z.infer<typeof peerSchema>, record?: Record) {
     const now = clock();
-    if (closed || uncertain || !ready() || !Number.isSafeInteger(now) || now < 0 || now < highWater
-      || peer && !peerCurrent(peer.nodeId, peer.certificateDigest)
+    if (closed || uncertain || ready() !== true || !Number.isSafeInteger(now) || now < 0 || now < highWater
+      || peer && peerCurrent(peer.nodeId, peer.certificateDigest) !== true
       || record && (record.closed || records.get(record.nodeId) !== record || now - record.lastSeen > nativeHttpLimits.idleMs)) throw error();
     highWater = now; return now;
   }
@@ -138,7 +139,9 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
       }
       current(peer, record); if (controller.signal.aborted || socket.destroyed) throw error();
       record!.lastSeen = current(peer);
-      return new Response(nativeHttpJson(drain(record!)), { headers: responseHeaders });
+      const response = new Response(nativeHttpJson(drain(record!)), { headers: responseHeaders });
+      deliveries.set(response, record!);
+      return response;
     } catch {
       if (record) { try { await closeRecord(record); } catch { /* Close retains its failed promise. */ } }
       return new Response(JSON.stringify({ error: "native_http_unavailable" }), { status: 503, headers: responseHeaders });
@@ -146,6 +149,11 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
       controllers.delete(controller); if (locked) busy.delete(peer!.nodeId); }
   }
   const facade = Object.freeze({
+    async settleResponse(response: Response, delivered: boolean) {
+      const record = deliveries.get(response); deliveries.delete(response);
+      // Delivery uncertainty belongs to this exact generation, never its replacement.
+      if (record && !delivered) await closeRecord(record);
+    },
     handle(request: Request, socket: TLSSocket) {
       const work = handle(request, socket); active.add(work); void work.finally(() => active.delete(work)).catch(() => {}); return work;
     },
