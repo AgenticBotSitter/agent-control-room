@@ -123,11 +123,11 @@ test("compiled three-role startup registers and submits separately captured synt
   assert.equal(submissionReplay.replayed, true); assert.deepEqual(submissionReplay.receipt, submitted.receipt);
   await startup.raw.exec("SET SESSION AUTHORIZATION postgres");
   const subject = await x.f.reviewStore.inspectSubject(x.registration.tenantId, input.projectId, input.jobId);
-  assert.equal(subject.targets.length, 1); assert.equal(subject.targets[0].id, submitted.receipt.targetId);
+  assert.equal(subject.targets.length, 1); assert.equal(subject.targets[0].snapshot.target.id, submitted.receipt.targetId);
   assert.equal((await startup.coordinator.client.query(
-    "SELECT id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [x.registration.tenantId, input.runId])).rows.length, 1);
+    "SELECT 1 AS present FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [x.registration.tenantId, input.runId])).rows.length, 1);
   assert.equal((await startup.coordinator.client.query(
-    "SELECT id FROM control_native_artifact_receipts WHERE tenant_id=$1 AND artifact_id=$2", [x.registration.tenantId, artifact.artifactId])).rows.length, 1);
+    "SELECT 1 AS present FROM control_native_artifact_receipts WHERE tenant_id=$1 AND artifact_id=$2", [x.registration.tenantId, artifact.artifactId])).rows.length, 1);
   assert.deepEqual(x.local.calls, nativeCalls); assert.equal(x.local.effects.countFull(), nativeEffects);
 
   const hiddenPath = `/api/v1/projects/${input.projectId}/tasks/${input.jobId}/results/register`;
