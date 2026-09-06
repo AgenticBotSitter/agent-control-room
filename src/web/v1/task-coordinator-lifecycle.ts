@@ -71,13 +71,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         && evidenceSettings!.enrollments.some(enrollment => enrollment.nodeId === node.nodeId));
   }
   const sessionPool = input.sessions ? capture(input.sessions.database) : undefined;
-  let sessions: ManagedNativeSessions | undefined;
+  const sessionState: { manager?: ManagedNativeSessions } = {};
   let closing = false, invalid = false, interrupted = false, active = 0, closePromise: Promise<void> | undefined;
   let drained: (() => void) | undefined, force!: () => void;
   const stops = new Set<() => void>();
   const forced = new Promise<void>(resolve => { force = resolve; });
   const check = () => {
-    try { if (!invalid && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
+    try { if (!invalid && (!sessionState.manager || sessionState.manager.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
     throw new TaskCoordinatorInterruption("task_coordinator_unavailable");
   };
   const guardedDatabase = (owned: TaskCoordinatorDatabase) => {
@@ -135,10 +135,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     }
   }
   const receipt = input.sessions ? input.approvals!.store.receiveDeliveryReceipt.bind(input.approvals!.store) : undefined;
-  sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
+  const sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
   }, run, check, input.clock) : undefined;
+  sessionState.manager = sessions;
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)) });
   const revisions = input.revisionPlanning ? Object.freeze({ ...scope,
     plan: (identity: Parameters<TaskExecutionPlanner["revise"]>[0], projectId: string, sourceJobId: string,
