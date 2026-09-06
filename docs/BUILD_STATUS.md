@@ -2418,6 +2418,21 @@ No live agent, database, listener, owner signer or deployment has been activated
 
 ## Next block
 
+**Local HTTPS implementation checkpoint (2026-09-06):** `12e7956` includes
+the inert node HTTPS client, private machine callback, startup mounting and bounded
+opaque packet exchange. Independent tests cover native result transfer/recovery and
+response-failure generation isolation. Central verification passed 58 entries across
+HTTP/client/startup suites, followed by 6 delivery regression entries and 8 test-lane
+inventory entries; types and full lint passed. The private artifact built at production
+checkpoint `0cb3fbb`; compiled signed-HTTP coverage is being extended independently.
+This block is **not accepted yet**. Review corrections so far cover all owned database
+pool availability, literal-true peer evidence and generation-specific failed response
+delivery. A remaining integration gap is private DNS: the reused task-network guard
+rejects tailnet/private DNS answers (exact IPv4 literals have an existing exception).
+The intended private hostname path needs a separately scoped connector destination
+policy and independent tests; do not weaken the general task-network guard. No live
+connection, credential access, deployment or GitHub operation was performed.
+
 The node runtime is accepted locally: production `b5e3cf8`, final test correction
 `3e47542`, and root regression/registration `f89ef48` passed independent review.
 Final combined checks passed78; compiled managed-session/root pins checks passed5.
