@@ -89,12 +89,14 @@ export class NativeEvidenceReceiver {
         || receipt.nodeReportedDisposition !== "recorded" || receipt.dispatchMessageId !== envelope.frame.messageId
         || receipt.queueId !== envelope.frame.body.queueId || receipt.packetDigest !== envelope.frame.body.packetDigest
         || intent.frameDigest !== sha256Digest(envelope.frame) || intent.messageId !== envelope.frame.messageId
-        || Date.parse(receipt.receivedAt) > current() || Date.parse(receipt.receivedAt) < Date.parse(intent.requestedAt)) return fail();
+        || Date.parse(receipt.receivedAt) > current() || Date.parse(receipt.recordedAt) > Date.parse(receipt.receivedAt)
+        || Date.parse(receipt.recordedAt) < Date.parse(intent.requestedAt)) return fail();
       const body = envelope.frame.body, enrollment = this.enrollments.find(value => value.nodeId === body.request.nodeId);
       if (!enrollment) return fail();
       const prepared = prepareNativeTaskDispatchIntake(body, enrollment);
       const { binding } = verifyNativeTaskApprovalBinding(prepared.enrollment, prepared.request, prepared.start);
-      const run = nativeTaskRegistration(binding, body.inputDigest, body.request.leaseId, body.request.leaseEpoch, receipt.receivedAt);
+      // Node intake precedes possible execution; receipt network arrival can be later than progress.
+      const run = nativeTaskRegistration(binding, body.inputDigest, body.request.leaseId, body.request.leaseEpoch, receipt.recordedAt);
       const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: async work => work(tx),
         transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); check(); return result; } };
       const saved = await new HarnessRunStoreV1(joined, this.harnessKey).create(run);
