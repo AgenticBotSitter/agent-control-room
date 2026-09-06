@@ -1,4 +1,4 @@
-# Direct dependency license observations
+# Dependency license observations
 
 2026-09-06. Inspected installed packages at baseline `5e424f6`. No dependency changes,
 downloads/installations, project license selection or publication.
@@ -45,6 +45,44 @@ its bundled database/WASM components still need their own provenance/notice acco
 The existing Control Center adaptation has a local source revision, original file and
 hashes in `third_party/control-center/NOTICE.md`, plus its MIT text. Preserve both with
 any included adapted code. This observation does not license unrelated upstream files.
+
+## Installed transitive reconnaissance
+
+At baseline `e03f1c9`, a read-only scan of physical package directories under the
+local pnpm virtual store observed 476 package manifests. Symlink-only entries were
+not followed. This is an installed-package observation, not lockfile reachability,
+a complete bundled-code SBOM, or a description of the final public distribution.
+It can include development, optional/platform-specific or stale installed packages.
+No packages were downloaded, removed or changed.
+
+Declared metadata totals: MIT 398; Apache-2.0 27; ISC 17; BSD-2-Clause 10;
+MPL-2.0 8; BSD-3-Clause 5; MIT OR Apache-2.0 3; CC0-1.0 2; and one each of
+LGPL-3.0-or-later, Python-2.0, CC-BY-4.0, BlueOak-1.0.0, Unlicense, and
+`(MIT OR CC0-1.0)`. These are declarations, not compliance clearance.
+
+Prioritized paths observed in dependency/optionalDependency declarations:
+
+| Component | Observed path into the installed toolchain | Review needed |
+|---|---|---|
+| libvips platform payload, LGPL-3.0-or-later | miniflare 4.20260515.0 → sharp 0.34.5 → @img/sharp-libvips-darwin-arm64 1.2.4 | Whether native payloads are distributed; corresponding notices/source obligations |
+| @vercel/og 0.8.6, MPL-2.0 | vinext 1.0.0-beta.2 → @vercel/og → satori 0.16.0 and @resvg/resvg-wasm 2.4.0 | Actual source/bundle inclusion and notices for image-generation dependencies |
+| lightningcss, MPL-2.0 | @tailwindcss/node 4.2.1 → lightningcss 1.31.1; vite 8.0.13 declares ^1.32.0 | Build-tool versus shipped native/bundled content; local versions 1.31.1 and 1.33.0 |
+| axe-core 4.13.0, MPL-2.0 | eslint-plugin-jsx-a11y 6.10.2 declares axe-core ^4.10.0 | Development-only scope versus any redistributed tooling |
+| caniuse-lite 1.0.30001809, CC-BY-4.0 | browserslist 4.28.8 declares caniuse-lite ^1.0.30001809 | Data attribution if redistributed |
+
+These declaration edges are investigation leads, not proof of runtime execution or
+the final resolved distribution graph. In particular, do not remove image tooling,
+CSS tooling or accessibility checks merely because their metadata differs from MIT.
+
+Mozilla's [MPL FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/) explains that MPL
+permits combining covered files with other licenses, while distribution can require
+notices and access to covered source. Its browser-delivered code distinction matters
+here: a hosted application is not automatically outside distribution review. Read
+the applicable license against the actual deliverable; this report is not legal advice.
+
+Next practical step: decide source-only developer preview versus packaged binaries,
+then trace these specific paths into that deliverable and retain the required notices.
+Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 

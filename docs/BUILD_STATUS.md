@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Full local regression refreshed:** At `e03f1c9`, stage-zero passed and `pnpm test`
+exited successfully: 3,129 passed, two existing skips, zero failures/cancellations
+(773 + 1,875 + 481 passes across the three suites). Local log:
+`/private/tmp/cr-public-full-verification.log`. This is local test evidence, not live
+agent, production database or public-release acceptance.
+
+**Transitive licensing priorities identified:** [Dependency review](PUBLIC_DEPENDENCY_LICENSE_STATUS.md)
+now records 476 installed manifests and concrete paths to MPL image/CSS/accessibility
+tooling, an LGPL native image payload and attributed browser data. Installed metadata
+is not the shipped dependency graph or clearance. Preserve useful components and
+review actual distribution scope; no dependency changes or downloads were made.
+
 **Exact-file content review started:** [Batch 01](research/public-source-content-review-01.json)
 records full-text inspection of eight generic UI/build files and matching hashes; no
 embedded private values were observed. It is primary-assistant evidence, not independent
