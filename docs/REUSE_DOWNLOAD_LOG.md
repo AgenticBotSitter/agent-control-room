@@ -341,3 +341,9 @@ credential, server, connection pool, downloads or new cleanup directory.
 Existing E01 package and repository dependencies only; actual-package fixtures remain
 in-memory and close after tests. No new downloads, persistent services, native database,
 provider calls or temporary acquisition paths.
+
+### E18 — joint lifecycle and delivery inspection (no acquisition)
+
+Repository source and existing dependencies only. Fake lifecycle resources and PGlite
+regression fixtures cleaned by tests. No download, new temporary directory, native
+service or external publication.

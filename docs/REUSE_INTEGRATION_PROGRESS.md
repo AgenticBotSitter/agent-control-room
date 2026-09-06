@@ -106,6 +106,12 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E18 joint lifecycle](research/REUSE_E18_JOINT_LIFECYCLE_AND_DELIVERY_GAP.md) orders worker
+drain before application close and gates requests immediately. 36 related checks pass.
+Inspection found the canonical delivery entry still depends on a browser identity;
+settle a separate approval-bound server delivery entry before production mounting.
+Synthetic identity fixtures are not unattended-dispatch acceptance.
+
 [E17 worker startup](research/REUSE_E17_WORKER_STARTUP.md) composes the identity check
 and existing runtime with topology validation, one attempt, bounded cleanup and late
 SQL fencing. 45 unit and 42 package checks pass. Production mounting still requires

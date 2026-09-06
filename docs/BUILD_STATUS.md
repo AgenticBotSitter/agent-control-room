@@ -96,6 +96,12 @@ Topology refusal, bounded preflight, late-SQL fencing and close ownership are te
 45 unit and 42 package checks pass. No production mounting: current-authority delivery
 binding, joint shutdown, real-PG and owner task acceptance remain unfinished.
 
+**E18 — joint lifecycle and delivery gap:** [Evidence](research/REUSE_E18_JOINT_LIFECYCLE_AND_DELIVERY_GAP.md)
+adds worker-before-application shutdown, immediate request gating and bounded uncertain
+cleanup; 36 related lifecycle checks pass. Production delivery still requires a genuine
+browser identity today. Next is an explicit server-side approval-bound delivery contract,
+not fabricated browser credentials or a claim that unattended dispatch already works.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before
