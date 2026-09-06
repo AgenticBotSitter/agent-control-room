@@ -25,6 +25,9 @@ import { request as webRequest } from '../../tests/helpers/web-foundation.ts';
 import { createTaskSubmissionBrowserClient } from '../../src/web/v1/task-submission-browser-client.ts';
 import { createInstalledNativeQueueFactories } from '../../src/web/v1/installed-native-queue.ts';
 import { inspectInstalledNativeQueueSchema } from '../../src/persistence/pg-boss-schema-inspection.ts';
+import { createPrivateTaskHost } from '../../src/web/v1/private-task-host.ts';
+import { EventEmitter, once } from 'node:events';
+import { nodeExchange } from '../../tests/helpers/web-node.ts';
 
 const root = process.env.CR_REUSE_EVAL_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
 assert.ok(isAbsolute(root), 'Package root must be absolute');
@@ -33,6 +36,8 @@ assert.equal(JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'
 const { PgBoss } = await import(pathToFileURL(join(packageRoot, 'dist/index.js')).href);
 const hostFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/taskBootstrap.js')).createPrivateTaskBootstrap : createPrivateTaskBootstrap;
+const servingHostFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
+  ? (await import('../../dist-vps/server/taskHost.js')).createPrivateTaskHost : createPrivateTaskHost;
 const installedFactories = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/nativeQueueFactories.js')).createInstalledNativeQueueFactories : createInstalledNativeQueueFactories;
 const inspectQueueSchema = process.env.CR_REUSE_COMPILED_STARTUP === '1'
@@ -90,17 +95,36 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
   const pools = Object.fromEntries(['managed_auth_test', 'managed_evidence_test', 'managed_result_test', 'worker_test']
     .map(login => [login, restrictedPool(f, login)]));
   const configFor = username => ({ ...f.config.coordinator.database, username });
-  host = await hostFactory({ clock: x.f.clock,
+  let binds = 0, listenerCloses = 0;
+  const server = new EventEmitter();
+  server.listen = (options, callback) => {
+    assert.ok(installed.isReady()); assert.equal(options.host, '127.0.0.1');
+    binds++; queueMicrotask(callback); return server;
+  };
+  server.close = callback => { listenerCloses++; queueMicrotask(() => callback?.()); return server; };
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  host = await servingHostFactory({ clock: x.f.clock, createServer: () => server,
     openDatabase: config => pools[config.username] ?? f.openDatabase(config), install: app => { installed = app; },
     ...installedFactories({ backend: 'pglite', openWorkerDatabase: () => pools.worker_test }),
-  }).start({ ...f.config, coordinator: { ...f.config.coordinator, nativeQueue: true, nativeQueueRecovery: true,
+  }).start({ port: 3210, handler: req => installed.handle(req, () => new Response('shell')),
+    assets: { count: 0, digest: 'synthetic-no-assets', respond: () => undefined },
+    configuration: { ...f.config, coordinator: { ...f.config.coordinator, nativeQueue: true, nativeQueueRecovery: true,
     approvals: { enrollments: [{ enrollment: x.f.prepared.enrollment, nodeClass: 'personal-compute' }], store: x.f.store },
     quality: { ...x.f.ownerConfig, scenarios: [] }, resultDatabase: configFor('managed_result_test'),
     evidence: { database: configFor('managed_evidence_test'), integrityKey: new Uint8Array(32).fill(75),
       storage: x.f.config, enrollments: [x.f.prepared.enrollment] },
     sessions: { ...x.settings, database: configFor('managed_auth_test') },
     queueWorker: { database: configFor('worker_test') },
-  } });
+  } } });
+  assert.equal(binds, 1); assert.equal(host.isReady(), true);
+  async function throughServing(req) {
+    const url = new URL(req.url);
+    const exchange = nodeExchange({ path: url.pathname + url.search, method: req.method,
+      headers: [...req.headers].flat(), body: req.body ? await req.text() : undefined });
+    const finished = once(exchange.output, 'finish');
+    server.emit('request', exchange.input, exchange.output); await finished;
+    return new Response(exchange.body(), { status: exchange.output.statusCode, headers: Object.fromEntries(exchange.headers) });
+  }
   const attach = async () => {
     const peer = x.makePeer(), handle = await host.connections.attach(x.f.prepared.request.nodeId, peer.transport);
     const connection = { peer, handle, hello: await peer.open() }; await x.handshake(connection); return connection;
@@ -111,7 +135,7 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
   const client = createTaskSubmissionBrowserClient(async (path, options) => {
     const req = webRequest(path, options.method, options.body ? JSON.parse(options.body) : undefined, undefined, x.f.jwt);
     req.headers.delete('idempotency-key');
-    const response = await installed.handle(req, () => new Response('shell'));
+    const response = await throughServing(req);
     if (options.method === 'POST') {
       writes++; assert.equal(response.status, 201);
       if (mode === 'lost browser response') throw new Error('synthetic lost response after commit');
@@ -139,10 +163,10 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
   const { peer, handle } = connection;
   const beforeAck = await client.read(...args);
   assert.equal(beforeAck.delivery.state, 'transmission_unconfirmed');
-  const pendingInboxResponse = await installed.handle(webRequest('/api/v1/needs-me/tasks', 'GET', undefined, undefined, x.f.jwt), () => new Response('shell'));
+  const pendingInboxResponse = await throughServing(webRequest('/api/v1/needs-me/tasks', 'GET', undefined, undefined, x.f.jwt));
   assert.equal(pendingInboxResponse.status, 200);
   assert.ok((await pendingInboxResponse.json()).items.some(item => item.task.jobId === x.task.jobId && item.reasons.includes('delivery_uncertain')));
-  const attentionResponse = await installed.handle(webRequest('/api/v1/needs-me', 'GET', undefined, undefined, x.f.jwt), () => new Response('shell'));
+  const attentionResponse = await throughServing(webRequest('/api/v1/needs-me', 'GET', undefined, undefined, x.f.jwt));
   assert.equal(attentionResponse.status, 200);
   const attention = await attentionResponse.json();
   assert.equal(attention.source, 'current_process_recovery'); assert.equal(attention.completeNodes, 1);
@@ -161,7 +185,7 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
   assert.equal(result.state, 'succeeded'); assert.equal(result.submission.qualityAccepted, false);
   const review = await x.admin(() => x.f.reviewStore.snapshot(x.f.scope.tenantId, bound.receipt.targetId));
   assert.equal(review.status, 'pending');
-  const inboxResponse = await installed.handle(webRequest('/api/v1/needs-me/tasks', 'GET', undefined, undefined, x.f.jwt), () => new Response('shell'));
+  const inboxResponse = await throughServing(webRequest('/api/v1/needs-me/tasks', 'GET', undefined, undefined, x.f.jwt));
   assert.equal(inboxResponse.status, 200);
   const inbox = await inboxResponse.json();
   assert.ok(inbox.items.some(item => item.task.jobId === x.task.jobId && item.reasons.includes('review')));
@@ -177,6 +201,7 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
   assert.equal(historical.delivery.state, 'receipt_recorded'); assert.equal(historical.delivery.executionConfirmed, false);
   assert.equal(historical.receipt.queueId, receipt.queueId); assert.equal(writes, 1);
   await host.close();
+  assert.equal(listenerCloses, 1); assert.equal(host.isReady(), false);
   for (const pool of [f.web, f.coordinator, ...Object.values(pools)]) assert.equal(pool.closes(), 1);
   assert.deepEqual(errors, []);
 });

@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E61 full serving journey](research/REUSE_E61_FULL_HOST_SERVING_JOURNEY.md) verifies
+the E60 host with six logical SQL roles and installed queue pickup through result/review,
+including reconnect and lost browser response. Actual native TLS serving remains separate.
+
 [E60 task host](research/REUSE_E60_TASK_HOST_COMPOSITION.md) connects the existing
 application and loopback service with installed queue factories, preserving once-only
 cleanup and failure uncertainty. Compiled tests use fake listener methods; deployment

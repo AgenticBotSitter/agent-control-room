@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest full-host verification — E61:** [Serving/queue journey](research/REUSE_E61_FULL_HOST_SERVING_JOURNEY.md)
+tests the E60 host through actual in-memory Node requests, six logical SQL roles and
+installed queue delivery to one exact result/pending review. Online, reconnect and lost
+browser-response cases pass in source and compiled modes. Final compiled schema/journey
+rerun passes four checks; lint passes. Native TLS serving, real resources and owner
+signing remain unconfigured; fake peer attachment is not live fleet connectivity.
+
 **Latest local host integration — E60:** [Application/serving composition](research/REUSE_E60_TASK_HOST_COMPOSITION.md)
 connects verified task startup to the existing loopback service, with installed
 PostgreSQL/pg-boss composition and once-only cleanup. The expanded compiled suite passes

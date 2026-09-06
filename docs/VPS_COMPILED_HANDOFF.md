@@ -69,6 +69,11 @@ physical PostgreSQL acceptance merely because the command is shell-portable.
 6. Validate backups with a restore, then canary/update/rollback. A compiled application
    alone does not supply those operating procedures or prove daily-use readiness.
 
+Machine connectivity is separate from browser serving: the existing native HTTP handler
+requires the actual authenticated TLS socket, not forwarded certificate headers. The
+E60 loopback browser host does not install that TLS endpoint. See [E61](research/REUSE_E61_FULL_HOST_SERVING_JOURNEY.md)
+for the exact simulated full-host evidence and remaining native transport requirement.
+
 The inspection entry is available to the future preparation runner; it is not invoked
 automatically by application startup. No new service manager, SSH copy protocol,
 database authority or Hermes fork is introduced. Real installation commands and
