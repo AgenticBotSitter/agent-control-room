@@ -18,44 +18,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Verify build
+  checks:
+    name: Checks
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.19.0
-          run_install: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.13.0
-          cache: pnpm
-
-      - name: Run dependency-free readiness probe
-        shell: bash
-        run: |
-          set +e
-          node scripts/qualification/platform-key-store-stage-zero.mjs --platform linux
-          probe_status=$?
-          set -e
-          if [[ "$probe_status" -ne 0 && "$probe_status" -ne 2 ]]; then
-            exit "$probe_status"
-          fi
-
-      - name: Install frozen dependencies
-        env:
-          CI: "true"
-        run: pnpm install --frozen-lockfile
-
-      - name: Confirm prepared checkout
-        run: node scripts/qualification/platform-key-store-stage-zero.mjs --platform linux
+      - name: Prepare Control Room
+        uses: ./.github/actions/prepare-control-room
 
       - name: Type check
         run: pnpm check
@@ -63,8 +35,41 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Run full test lifecycle
-        run: pnpm test
+  tests:
+    name: Test ${{ matrix.lane }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        lane:
+          - pre
+          - main-1
+          - main-2
+          - main-3
+          - main-4
+          - post
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Control Room
+        uses: ./.github/actions/prepare-control-room
+
+      - name: Run test lane
+        run: node scripts/run-ci-test-lane.mjs --lane ${{ matrix.lane }}
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Control Room
+        uses: ./.github/actions/prepare-control-room
 
       - name: Build and verify rendered routes
         run: pnpm test:build
@@ -74,3 +79,23 @@ jobs:
 
       - name: Verify database migrations
         run: pnpm db:verify
+
+  verify:
+    name: Verify build
+    runs-on: ubuntu-latest
+    needs:
+      - checks
+      - tests
+      - build
+    if: ${{ always() }}
+    steps:
+      - name: Require every CI lane to succeed
+        shell: bash
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          [[ "$CHECKS_RESULT" == "success" ]]
+          [[ "$TESTS_RESULT" == "success" ]]
+          [[ "$BUILD_RESULT" == "success" ]]

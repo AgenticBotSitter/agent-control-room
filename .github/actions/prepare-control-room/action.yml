@@ -1,0 +1,38 @@
+name: Prepare Control Room
+description: Prepare the frozen Control Room dependency environment for CI
+
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 11.19.0
+        run_install: false
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22.13.0
+        cache: pnpm
+
+    - name: Run dependency-free readiness probe
+      shell: bash
+      run: |
+        set +e
+        node scripts/qualification/platform-key-store-stage-zero.mjs --platform linux
+        probe_status=$?
+        set -e
+        if [[ "$probe_status" -ne 0 && "$probe_status" -ne 2 ]]; then
+          exit "$probe_status"
+        fi
+
+    - name: Install frozen dependencies
+      shell: bash
+      env:
+        CI: "true"
+      run: pnpm install --frozen-lockfile
+
+    - name: Confirm prepared checkout
+      shell: bash
+      run: node scripts/qualification/platform-key-store-stage-zero.mjs --platform linux
