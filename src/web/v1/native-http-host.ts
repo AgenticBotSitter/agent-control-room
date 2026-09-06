@@ -24,7 +24,7 @@ export function captureNativeHttpSettings(input: NativeHttpSettings) {
 }
 type Wire = Awaited<ReturnType<ManagedNativeSessions["attachWire"]>>;
 type Record = { nodeId: string; id: string; wire?: Wire; closed: boolean; closing?: Promise<void>;
-  packets: string[]; bytes: number; lastSeen: number; delivering?: boolean };
+  packets: string[]; bytes: number; lastSeen: number; delivering?: boolean; dispatching?: boolean };
 const error = () => new Error("native_http_unavailable");
 const responseHeaders = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" };
 
@@ -150,6 +150,22 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
       controllers.delete(controller); if (locked) busy.delete(peer!.nodeId); }
   }
   const facade = Object.freeze({
+    dispatch(nodeId: string, identity: Parameters<Wire["stage"]>[0], input: Parameters<Wire["stage"]>[1], signal: AbortSignal) {
+      const record = records.get(nodeId), peer = peers.find(p => p.nodeId === nodeId);
+      if (!record || !peer || record.dispatching || !(signal instanceof AbortSignal) || signal.aborted) throw error();
+      current(peer, record);
+      const actor = { ...identity }, task = { ...input };
+      record.dispatching = true;
+      const work = (async () => {
+        try {
+          await record.wire!.stage(actor, task, signal);
+          current(peer, record); if (signal.aborted) throw error();
+          const result = await record.wire!.transmit(actor, task, signal);
+          current(peer, record); if (signal.aborted) throw error(); return result;
+        } finally { record.dispatching = false; }
+      })();
+      active.add(work); void work.finally(() => active.delete(work)).catch(() => {}); return work;
+    },
     async settleResponse(response: Response, delivered: boolean) {
       const record = deliveries.get(response); deliveries.delete(response);
       if (record) record.delivering = false;

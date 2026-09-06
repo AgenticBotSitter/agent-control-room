@@ -28,7 +28,10 @@ be injected for deterministic tests; no production effect is performed during th
 
 A native factory composes the existing mTLS client and HTTP host, using the exact
 configured destination/private pin and guarded runtime. Explicit exports are node-private.
-The central stage/transmit caller remains an explicit, separately scoped operation on an
-already-approved exact task; no new signer, approval or global queue is invented here.
+The private server host exposes explicit `dispatch` to capture the existing verified
+owner identity and exact task, stage then transmit on the same captured generation.
+Both steps retain existing canonical approval/lease checks. A replaced connection
+cannot inherit a pending dispatch; repeated overlapping calls are refused. This is
+not a new web endpoint, signer, approval or global queue, nor proof of native start.
 Continuous multi-task selection belongs to CR14D. Service installation, physical listener,
 credential/journal provisioning, native qualification and deployment remain gated.
