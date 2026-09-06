@@ -46,7 +46,7 @@ async function installRestrictedPools(startup) {
     sessions: restrictedPool(startup, "session_test") };
 }
 
-test("compiled five-role startup owns a signed session and refuses progress without same-session dispatch", async t => {
+for (const mode of ["progress", "recover"]) test(`compiled five-role startup owns a signed session and refuses ${mode} without recorded delivery`, async t => {
   const x = await nativeTaskLifecycleFixture(); t.after(x.close);
   assert.equal((await x.f.db.query("SELECT 1 AS present FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
     [x.registration.tenantId, x.registration.id])).rows.length, 0);
@@ -70,7 +70,7 @@ test("compiled five-role startup owns a signed session and refuses progress with
   const scenario = { scenarioId: "scenario:content", acceptanceProfileId: profile.id,
     acceptanceProfileDigest: sha256Digest(profile), rules: { version: "document-structure/v1",
       minUtf8Bytes: 20, maxUtf8Bytes: 4096, requiredHeadings: ["Result", "Evidence"], forbiddenTerms: [] } };
-  const opened = [], preflights = [], writes = [];
+  const opened = [], preflights = [], writes = [], proofReads = [];
   const openDatabase = config => {
     opened.push(config.username);
     const pool = config.username === "web_test" ? startup.web
@@ -82,6 +82,8 @@ test("compiled five-role startup owns a signed session and refuses progress with
     const db = pool.client;
     const observe = work => async tx => work({ async query(sql, params) {
       const value = await tx.query(sql, params);
+      if (sql.includes("FROM control_native_delivery_envelopes"))
+        proofReads.push((await tx.query("SELECT current_user,session_user")).rows[0]);
       if (sql.includes("AS database_temp"))
         preflights.push((await tx.query("SELECT current_user,session_user,rolsuper FROM pg_roles WHERE rolname=current_user")).rows[0]);
       const match = /INSERT INTO (control_[a-z_]+|node_protocol_[a-z_]+)/.exec(sql);
@@ -95,7 +97,12 @@ test("compiled five-role startup owns a signed session and refuses progress with
       transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(observe(work), check) } };
   };
   const starting = createPrivateTaskBootstrap({ clock: x.f.clock, openDatabase,
-    install: value => { assert.equal(preflights.length, 5); installPrivateApplication(value); } }).start({
+    install: value => {
+      assert.equal(preflights.length, 5);
+      // The process installation is deliberately one-shot. The second case tests
+      // the compiled supplied-resource factory, not a second process installation.
+      if (mode === "progress") installPrivateApplication(value);
+    } }).start({
     ...startup.config, coordinator: { ...startup.config.coordinator,
       approvals: { enrollments: [{ enrollment: x.f.prepared.enrollment, nodeClass: "personal-compute" }], store: x.f.store },
       quality: { ...x.f.ownerConfig, scenarios: [scenario] }, resultDatabase,
@@ -155,8 +162,11 @@ test("compiled five-role startup owns a signed session and refuses progress with
     lastActivity: "none", stopAttempted: false, safeReason: "none", result: null, usage: null });
   await bridge.publishNativeSnapshot(body, new Date(x.f.clock()).toISOString());
   const serverFrameCount = serverFrames.length;
-  await assert.rejects(handle.progress(incoming.shift(), undefined, new AbortController().signal),
+  await assert.rejects(mode === "progress"
+    ? handle.progress(incoming.shift(), undefined, new AbortController().signal)
+    : handle.recover(input, new AbortController().signal),
     { message: "native_session_operation_uncertain" });
+  if (mode === "recover") assert.deepEqual(proofReads, [{ current_user: "evidence_test", session_user: "evidence_test" }]);
   assert.equal(outgoing.length, 0); assert.equal(serverFrames.length, serverFrameCount);
   assert.equal(transportCloses, 1); assert.deepEqual(x.local.calls, nativeCalls);
   assert.equal(x.local.effects.countFull(), nativeEffects);
@@ -173,7 +183,7 @@ test("compiled five-role startup owns a signed session and refuses progress with
     .every(row => row.current_user === "session_test" && row.session_user === "session_test" && row.rolsuper === false));
   assert.equal(writes.some(row => row.current_user === "evidence_test" || row.current_user === "result_test"), false);
   const hiddenPath = `/api/v1/projects/${input.projectId}/tasks/${input.jobId}/native-sessions`;
-  assert.equal((await handler(request(hiddenPath, "POST", input, undefined, x.f.jwt))).status, 404);
+  if (mode === "progress") assert.equal((await handler(request(hiddenPath, "POST", input, undefined, x.f.jwt))).status, 404);
 
   const retained = handle;
   await runtime.close(); assert.equal(runtime.isReady(), false); assert.equal(transportCloses, 1);
@@ -189,5 +199,5 @@ test("compiled browser assets exclude managed session implementation and restric
   const javascript = files("dist-vps/client").filter(file => file.endsWith(".js"));
   assert.ok(javascript.length > 0);
   for (const file of javascript) assert.doesNotMatch(readFileSync(file, "utf8"),
-    /ManagedNativeSessions|control_room_native_sessions|native_session_unavailable|native_session_operation_uncertain|node_protocol_replay|DatabaseNodeKeyResolver/);
+    /ManagedNativeSessions|recoverNativeDelivery|native_recovery_unavailable|control_room_native_sessions|native_session_unavailable|native_session_operation_uncertain|node_protocol_replay|DatabaseNodeKeyResolver/);
 });

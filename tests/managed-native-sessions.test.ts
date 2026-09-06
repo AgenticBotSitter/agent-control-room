@@ -7,7 +7,7 @@ import { signNodeFrame, signedNodeFrameSchema } from "../src/node-protocol/v1";
 test("owned restricted authentication carries actual hello, dispatch receipt and completed bytes into exact pending review", async t => {
   const x = await managedNativeSessionFixture(); t.after(x.close); await x.verify();
   const c = await x.attach(); assert.equal(c.handle.grantsExecutionAuthority, false); assert.equal(Object.isFrozen(c.handle), true);
-  assert.deepEqual(Object.keys(c.handle).sort(), ["close", "grantsExecutionAuthority", "hello", "nodeId", "progress", "receipt", "reconcile", "stage", "transmit"].sort());
+  assert.deepEqual(Object.keys(c.handle).sort(), ["close", "grantsExecutionAuthority", "hello", "nodeId", "progress", "receipt", "reconcile", "recover", "stage", "transmit"].sort());
   const beforeProtocol = await x.protocol(); await x.handshake(c);
   assert.ok((await x.protocol()).connections.length > beforeProtocol.connections.length);
   const native = await x.dispatch(c), before = await x.states();

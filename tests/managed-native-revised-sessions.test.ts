@@ -146,4 +146,23 @@ test("new managed child connection registers and delivers the actual v2 result u
   assert.equal(replay.replayed, true); assert.deepEqual(replay.submission, result.submission);
   assert.deepEqual(await x.counts(), counts); assert.deepEqual(x.local.calls, calls);
   assert.deepEqual(await sourceEvidence(), evidenceBefore); assert.deepEqual(await x.admin(original.states), sourceBefore);
+  // Reconnect the revised child without repeating its dispatch or native start.
+  const next = await x.attach(); await x.handshake(next);
+  const sentBeforeRecovery = next.peer.state.sends;
+  assert.deepEqual(await next.handle.recover(x.request, currentSignal()), { recovered: true, grantsExecutionAuthority: false });
+  assert.equal(next.peer.state.sends, sentBeforeRecovery);
+  const connectionId = JSON.parse(next.hello).connectionId;
+  assert.notEqual(connectionId, previous.connectionId);
+  const recovered = signNodeFrame({ ...unsigned, connectionId,
+    sequence: next.peer.journal.nextOutboundSequence(connectionId),
+    messageId: "message:recovered-child-result", nonce: "recovered_child_result_12345678901234567890" }, x.f.keys.privateKey);
+  assert.equal(next.peer.journal.stageOutbound(recovered, true, now), "staged");
+  next.peer.journal.markSent(recovered.messageId, now);
+  const recoveredResult = await next.handle.progress(JSON.stringify(recovered), bytes, currentSignal());
+  await next.peer.acknowledge();
+  assert.equal(recoveredResult.replayed, true); assert.deepEqual(recoveredResult.submission, result.submission);
+  assert.equal(next.peer.sent.some(frame => frame.type === "harness.native.dispatch"), false);
+  assert.deepEqual(await x.counts(), counts); assert.deepEqual(x.local.calls, calls);
+  assert.deepEqual(await x.states(), childBefore); assert.deepEqual(await sourceEvidence(), evidenceBefore);
+  assert.deepEqual(await x.admin(original.states), sourceBefore);
 });

@@ -137,7 +137,7 @@ test("managed native sessions verify five roles before install and capture confi
   transport.send = async () => { throw new Error("mutated_send"); };
   transport.close = async () => { mutatedCloses++; }; transport.isAvailable = () => false;
   const handle = await attaching;
-  assert.deepEqual(Object.keys(handle).sort(), ["close", "grantsExecutionAuthority", "hello", "nodeId", "progress", "receipt", "reconcile", "stage", "transmit"]);
+  assert.deepEqual(Object.keys(handle).sort(), ["close", "grantsExecutionAuthority", "hello", "nodeId", "progress", "receipt", "reconcile", "recover", "stage", "transmit"]);
   assert.equal(handle.nodeId, f.x.registration.nodeId); assert.equal(handle.grantsExecutionAuthority, false);
   assert.equal(JSON.stringify(handle).includes("transport"), false);
   await handle.close(); assert.equal(originalCloses, 1); assert.equal(mutatedCloses, 0);
