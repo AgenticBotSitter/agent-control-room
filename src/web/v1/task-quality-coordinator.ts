@@ -163,16 +163,21 @@ export class TaskQualityCoordinator {
       } else verification = "not_configured";
     }
     const base = { ...request, verification, grantsApproval: false as const, grantsExecutionAuthority: false as const };
+    // Verified native completion frees occupancy independently of the quality disposition.
+    // Ready results retain the existing atomic quality-completion path and its exact replay.
+    const capacity = context.snapshot.status === "ready" ? undefined
+      : await new NativeTaskCompletionService(db, this.config, time).releaseCapacity(native, current);
+    current();
     switch (context.snapshot.status) {
       case "ready": {
         const completion = await new NativeTaskCompletionService(db, this.config, time).complete(native, current);
         current(); return { ...base, disposition: "completed" as const, completion };
       }
-      case "pending": current(); return { ...base, disposition: "waiting_review" as const };
+      case "pending": current(); return { ...base, capacity, disposition: "waiting_review" as const };
       case "changes_requested": case "revision_limit_reached":
-        current(); return { ...base, disposition: "changes_requested" as const };
-      case "verification_blocked": current(); return { ...base, disposition: "verification_blocked" as const };
-      case "superseded": current(); return { ...base, disposition: "superseded" as const };
+        current(); return { ...base, capacity, disposition: "changes_requested" as const };
+      case "verification_blocked": current(); return { ...base, capacity, disposition: "verification_blocked" as const };
+      case "superseded": current(); return { ...base, capacity, disposition: "superseded" as const };
       default: return deny();
     }
   }
