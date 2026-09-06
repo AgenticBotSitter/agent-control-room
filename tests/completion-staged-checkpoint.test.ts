@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { stageCompletionCheckpoint } from "../src/completion-gate/v1/staged-checkpoint";
+import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { InMemoryRollbackCheckpointStoreV1, ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1 } from "../src/security/rollback-checkpoint";
 const initial = { schema: ROLLBACK_CHECKPOINT_SCHEMA_V1, scope: "completion-gate:tenant:test", revision: 1,
   recordCount: 0, stateDigest: `sha256:${"a".repeat(64)}`, stateAuthTag: `hmac-sha256:${"b".repeat(64)}` };
@@ -47,6 +48,42 @@ test("an empty stage never initializes or advances durable storage", () => {
   let writes = 0;
   const stage = stageCompletionCheckpoint({ read: () => undefined, initialize() { writes++; }, advance() { writes++; } }, "tenant:test");
   assert.equal(stage.checkpoints.read(initial.scope), undefined); stage.flush(); assert.equal(writes, 0);
+});
+
+test("an asynchronous checkpoint never permits SQL commit or a second advance, even after late settlement", async () => {
+  for (const settlement of ["resolve", "reject"] as const) {
+    const store = fixture(); let calls = 0, release!: () => void, reject!: (error: Error) => void;
+    const pending = new Promise<void>((resolve, fail) => { release = resolve; reject = fail; });
+    const stage = stageCompletionCheckpoint({ read: store.read.bind(store), initialize() {},
+      async advance() { calls++; await pending; } }, "tenant:test");
+    const next = { ...initial, revision: 2 };
+    stage.checkpoints.advance(rollbackCheckpointDigestV1(initial), next);
+    stage.checkpoints.advance(rollbackCheckpointDigestV1(next), { ...next, revision: 3 });
+    const statements: string[] = []; let releases = 0;
+    const database = boundPrivateDatabase({
+      async acquire() { return { async query(statement: string) { statements.push(statement); return { rows: [] }; },
+        release() { releases++; } }; }, async terminate() {},
+    });
+    try {
+      await assert.rejects(database.client.transactionWithPreCommitCheck(async () => "not committed", () => stage.flush()),
+        /review_checkpoint_unavailable/);
+      assert.deepEqual(statements, ["BEGIN", "ROLLBACK"]); assert.equal(releases, 1); assert.equal(calls, 1);
+      if (settlement === "resolve") release(); else reject(new Error("synthetic_late_failure"));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.throws(() => stage.flush(), /review_checkpoint_unavailable/);
+      assert.throws(() => stage.checkpoints.read(initial.scope), /review_checkpoint_unavailable/);
+      assert.equal(calls, 1); assert.deepEqual(statements, ["BEGIN", "ROLLBACK"]);
+    } finally { release(); await database.close(); }
+  }
+});
+
+test("non-void synchronous adapter output cannot be mistaken for CAS acceptance", () => {
+  const store = fixture(); let calls = 0;
+  const stage = stageCompletionCheckpoint({ read: store.read.bind(store), initialize() {},
+    advance() { calls++; return false; } }, "tenant:test");
+  stage.checkpoints.advance(rollbackCheckpointDigestV1(initial), { ...initial, revision: 2 });
+  assert.throws(() => stage.flush(), /review_checkpoint_unavailable/);
+  assert.throws(() => stage.flush(), /review_checkpoint_unavailable/); assert.equal(calls, 1);
 });
 
 test("explicit automated batches permit fifty sequential advances but never widen the default bound", () => {

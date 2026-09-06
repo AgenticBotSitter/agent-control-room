@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest checkpoint integration work — E65:** [Findings and false-success fix](research/REUSE_E65_CHECKPOINT_INTEGRATION_FINDINGS.md)
+rejects unfinished asynchronous checkpoint writes at the synchronous staged flush,
+preventing SQL commit and further advances. 58 focused tests, TypeScript and targeted
+lint pass; the VPS build and all 41 compiled regressions also pass. Research adds
+restored-but-revision-bumped state to candidate acceptance;
+the full asynchronous consumer migration and durable storage are still unfinished.
+
 **Current configuration finding — E64:** [Durable checkpoint gap](research/REUSE_E64_DURABLE_CHECKPOINT_GAP.md)
 identifies a concrete missing production dependency: the rollback-checkpoint interface
 has only a test-memory implementation. Public primary-source research shortlists etcd

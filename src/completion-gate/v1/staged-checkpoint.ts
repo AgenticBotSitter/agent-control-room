@@ -29,6 +29,14 @@ export function stageCompletionCheckpoint(store: RollbackCheckpointStoreV1, tena
   return Object.freeze({ checkpoints, flush() {
     requireOpen(); closed = true;
     // Exactly the existing CAS sequence. A partial/uncertain flush is not repaired or retried.
-    try { for (const item of pending) advance(item.expected, { ...item.next }); } catch { fail(); }
+    try {
+      for (const item of pending) {
+        const outcome: unknown = advance(item.expected, { ...item.next });
+        // TypeScript permits async functions in void-returning slots. This port is
+        // synchronous: a Promise is not a completed CAS and must never permit SQL
+        // commit. Observe any late rejection, but do not retry or continue the batch.
+        if (outcome !== undefined) { void Promise.resolve(outcome).catch(() => {}); fail(); }
+      }
+    } catch { fail(); }
   } });
 }
