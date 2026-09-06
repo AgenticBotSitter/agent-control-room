@@ -92,7 +92,7 @@ async function reconnectInput(x: Fixture, peer: Peer, oldHello: string, reporter
   return { input, hello, rows };
 }
 
-test("initial input owns hello, queued owner commands and back-to-back receipt/progress registration through exact result review", async t => {
+test("initial input owns hello, queued owner commands and back-to-back receipt/progress registration into pending exact result review", async t => {
   const { x, peer, input, native, reporter, registration } = await initialInput(); t.after(x.close);
   await native.advanceNative("running"); await pump(peer, input, reporter);
   const body = await native.advanceNative("completed"), before = await stableExecution(x);
@@ -118,8 +118,11 @@ test("recover input serializes auto-flushed retained-journal snapshot and traili
   const journal = peer.journal, runs = x.local.journal, saved = runs.load(x.f.prepared.binding.runId);
   assert.deepEqual(journal.pendingNativeSnapshots(), [body]); assert.equal(peer.incoming.length, 0);
   const next = await reconnectInput(x, peer, hello, reporter);
+  assert.deepEqual(next.rows.map(row => row.frame.type), [
+    "protocol.ack", "node.reconciliation.report", "harness.native.snapshot", "protocol.ack",
+  ]);
   const index = next.rows.findIndex(row => row.frame.type === "harness.native.snapshot"); assert.ok(index >= 0);
-  assert.ok(next.rows.slice(index + 1).some(row => row.frame.type === "protocol.ack"));
+  assert.deepEqual(next.rows[index].frame.body, body);
   const progress = next.rows[index].received; assert.equal(progress.kind, "progress");
   if (progress.kind !== "progress") throw new Error("missing recovered progress");
   assert.equal(progress.result.replayed, false); assert.equal(progress.result.submission!.qualityAccepted, false);
@@ -140,6 +143,9 @@ test("lost completed-result ACK is replayed by replacement input from the retain
   const committed = await x.counts(); assert.equal(committed.artifacts.length, 1); assert.equal(committed.receipts.length, 1);
   const cp = x.f.checkpoints.read(`completion-gate:${x.f.scope.tenantId}`);
   const next = await reconnectInput(x, peer, hello, reporter);
+  assert.deepEqual(next.rows.map(row => row.frame.type), [
+    "protocol.ack", "node.reconciliation.report", "harness.native.snapshot", "protocol.ack",
+  ]);
   const received = next.rows.find(row => row.received.kind === "progress"); assert.ok(received);
   assert.notEqual(received.frame.connectionId, original.connectionId); assert.notEqual(received.frame.messageId, original.messageId);
   assert.deepEqual(received.frame.body, original.body);

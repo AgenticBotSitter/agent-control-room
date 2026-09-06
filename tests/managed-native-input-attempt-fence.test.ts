@@ -101,7 +101,9 @@ test("actual generation replacement at result-registration final precommit rolls
   assert.deepEqual(plans.rows, []);
   const before = await x.counts(); assert.equal(before.runs.length, 1); assert.equal(before.events.length, 0);
   assert.equal(before.artifacts.length, 0); assert.equal(before.receipts.length, 0);
+  const protocolBefore = await x.protocol(), dispatchBefore = await savedDispatch(x);
   await assert.rejects(input.receive(progress, undefined, currentSignal()));
+  assert.deepEqual(await x.protocol(), protocolBefore); assert.deepEqual(await savedDispatch(x), dispatchBefore);
   assert.deepEqual(await x.counts(), before); assert.deepEqual(await x.states(), canonical); assert.deepEqual(x.local.calls, calls);
   assert.equal(peer.state.closes, 1); assert.equal(peer.outgoing.length, 0);
   assert.deepEqual(x.f.checkpoints.read(`completion-gate:${x.f.scope.tenantId}`), cp);
