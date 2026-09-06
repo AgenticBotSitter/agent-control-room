@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0056 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "f6ac3c0874db1d516bae9cc1b303913a266a0afc898a25eb73a074eb2ccfcd60";
+// Generated from migrations 0001-0057 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "5829041bedc0606f08cc72f823b88c183d5224dee10b75077554d182a2025706";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
@@ -64,6 +64,12 @@ const evidenceUpdates: Record<string, readonly string[]> = {
   control_harness_runs: ["state", "last_sequence", "run_digest", "run_auth_tag", "payload", "updated_at", "last_observed_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
+const sessionReads = ["workspaces", "control_identities", "control_role_grants", "control_nodes", "control_node_keys",
+  "node_protocol_connections", "node_protocol_replay"];
+const sessionInserts = new Set(["node_protocol_connections", "node_protocol_replay"]);
+const sessionUpdates: Record<string, readonly string[]> = {
+  node_protocol_connections: ["last_sequence", "last_message_id", "updated_at"], node_protocol_replay: ["replay_lock"],
+};
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
  * Effective permissions are checked separately. Any migrated schema change needs a new reviewed digest.
@@ -114,12 +120,17 @@ export async function verifyNativeEvidenceDatabase(db: DatabaseClient, config: P
   return verifyDatabase(db, config, scope, now, "evidence");
 }
 
+export async function verifyNativeSessionDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
+  return verifyDatabase(db, config, scope, now, "sessions");
+}
+
 async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence") {
-  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence" }[kind];
-  const allowedReads = kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
-  const allowedInserts = kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
-  const allowedUpdates = kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions") {
+  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", sessions: "control_room_native_sessions" }[kind];
+  const allowedReads = kind === "sessions" ? sessionReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
+  const allowedInserts = kind === "sessions" ? sessionInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
+  const allowedUpdates = kind === "sessions" ? sessionUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
   try {
     await db.transaction(async tx => {
       const settings = (await tx.query<{ valid: boolean; database_temp: boolean }>(`SELECT

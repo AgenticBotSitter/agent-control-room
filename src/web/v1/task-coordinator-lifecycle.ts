@@ -10,6 +10,7 @@ import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
 import { taskRevisionRequestSchema } from "./task-revision-wire";
 import { TaskResultCoordinator, taskResultRequestSchema, type TaskResultOperation } from "./task-result-coordinator";
 import { NativeEvidenceReceiver, captureNativeEvidenceInput, captureNativeEvidenceSettings, nativeEvidenceRegistrationSchema, type NativeEvidenceSettings } from "./native-evidence-receiver";
+import { ManagedNativeSessions, captureManagedNativeSessionSettings, type ManagedNativeSessionSettings } from "./managed-native-sessions";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -27,6 +28,7 @@ export type TaskCoordinatorConfiguration = {
   /** Optional fixed native-result writer, independently verified against the same primary. */
   resultDatabase?: TaskCoordinatorDatabase;
   evidence?: NativeEvidenceSettings & { database: TaskCoordinatorDatabase };
+  sessions?: ManagedNativeSessionSettings & { database: TaskCoordinatorDatabase };
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
 };
 
@@ -59,12 +61,23 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     || !timingSafeEqual(evidenceSettings.storage.integrityKey, input.quality!.results.integrityKey)))
     throw new Error("task_coordinator_config_invalid");
   const evidencePool = input.evidence ? capture(input.evidence.database) : undefined;
+  const sessionSettings = input.sessions ? captureManagedNativeSessionSettings(input.sessions) : undefined;
+  if (input.sessions && (!input.approvals || !evidencePool || !receiverDependenciesValid()
+    || [input.database, input.resultDatabase, input.evidence?.database].some(pool => pool === input.sessions!.database || pool?.client === input.sessions!.database.client)))
+    throw new Error("task_coordinator_config_invalid");
+  function receiverDependenciesValid() {
+    return typeof input.approvals?.store.receiveDeliveryReceipt === "function"
+      && sessionSettings!.nodes.every(node => node.tenantId === scope.tenantId
+        && evidenceSettings!.enrollments.some(enrollment => enrollment.nodeId === node.nodeId));
+  }
+  const sessionPool = input.sessions ? capture(input.sessions.database) : undefined;
+  let sessions: ManagedNativeSessions | undefined;
   let closing = false, invalid = false, interrupted = false, active = 0, closePromise: Promise<void> | undefined;
   let drained: (() => void) | undefined, force!: () => void;
   const stops = new Set<() => void>();
   const forced = new Promise<void>(resolve => { force = resolve; });
   const check = () => {
-    try { if (!invalid && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
+    try { if (!invalid && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
     throw new TaskCoordinatorInterruption("task_coordinator_unavailable");
   };
   const guardedDatabase = (owned: TaskCoordinatorDatabase) => {
@@ -121,6 +134,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       throw error;
     }
   }
+  const receipt = input.sessions ? input.approvals!.store.receiveDeliveryReceipt.bind(input.approvals!.store) : undefined;
+  sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
+    stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
+    receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
+  }, run, check, input.clock) : undefined;
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)) });
   const revisions = input.revisionPlanning ? Object.freeze({ ...scope,
     plan: (identity: Parameters<TaskExecutionPlanner["revise"]>[0], projectId: string, sourceJobId: string,
@@ -168,7 +186,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     ...(revisions ? { revisions } : {}),
     ...(results ? { results } : {}),
     ...(ownedEvidence ? { evidence: ownedEvidence } : {}),
-    isReady: () => !closing && !invalid && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()),
+    ...(sessions ? { connections: Object.freeze({ ...scope, attach: sessions.attach.bind(sessions) }) } : {}),
+    isReady: () => !closing && !invalid && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable()),
     close(): Promise<void> {
       if (closePromise) return closePromise;
       closing = true;
@@ -180,11 +199,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
             new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; interrupted = true; resolve(); }, drainMs); })]);
           clearTimeout(drainTimer);
           invalid = true;
+          const sessionClose = sessions ? await Promise.allSettled([sessions.close()]) : [];
           await Promise.race([Promise.all([Promise.resolve().then(pool.close), ...(resultPool ? [Promise.resolve().then(resultPool.close)] : []),
-            ...(evidencePool ? [Promise.resolve().then(evidencePool.close)] : [])]), new Promise<never>((_, reject) => {
+            ...(evidencePool ? [Promise.resolve().then(evidencePool.close)] : []),
+            ...(sessionPool ? [Promise.resolve().then(sessionPool.close)] : [])]), new Promise<never>((_, reject) => {
             closeTimer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);
           })]);
-          if (timedOut) throw new Error("task_coordinator_close_uncertain");
+          if (timedOut || sessionClose.some(result => result.status === "rejected")) throw new Error("task_coordinator_close_uncertain");
         } catch { throw new Error("task_coordinator_close_uncertain"); }
         finally { invalid = true; clearTimeout(drainTimer); clearTimeout(closeTimer); force(); for (const stop of stops) stop(); }
       })();

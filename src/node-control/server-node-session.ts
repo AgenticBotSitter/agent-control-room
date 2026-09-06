@@ -17,6 +17,7 @@ const configSchema = z.object({
 }).strict();
 
 export type ServerNodeSessionConfig = z.input<typeof configSchema>;
+export const captureServerNodeSessionConfig = (input: ServerNodeSessionConfig) => configSchema.parse(input);
 export interface ServerNodeSessionPorts {
   authentication: NodeProtocolAuthenticator;
   sign(frame: UnsignedNodeFrame): Promise<SignedNodeFrame>;

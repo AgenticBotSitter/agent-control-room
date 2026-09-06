@@ -11,6 +11,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     || web.workspaceId !== coordinator.scope.workspaceId || web.database.client === coordinator.database.client
     || coordinator.resultDatabase?.client === web.database.client
     || coordinator.evidence?.database.client === web.database.client
+    || coordinator.sessions?.database.client === web.database.client
     || typeof web.database.isAvailable !== "function" || typeof web.database.close !== "function")
     throw new Error("private_task_application_config_invalid");
   // Until construction succeeds, the caller retains both resources.
@@ -40,6 +41,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     ...(tasks.revisions ? { revisions: tasks.revisions } : {}),
     ...(tasks.results ? { results: tasks.results } : {}),
     ...(tasks.evidence ? { evidence: tasks.evidence } : {}),
+    ...(tasks.connections ? { connections: tasks.connections } : {}),
     isReady: () => !closing && available() && tasks.isReady(),
     handle: app.handle.bind(app),
     close(): Promise<void> {
