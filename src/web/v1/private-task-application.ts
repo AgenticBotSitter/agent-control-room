@@ -35,6 +35,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   let closing = false, closePromise: Promise<void> | undefined;
   return Object.freeze({
     ...(tasks.quality ? { quality: tasks.quality } : {}),
+    ...(tasks.revisions ? { revisions: tasks.revisions } : {}),
     isReady: () => !closing && available() && tasks.isReady(),
     handle: app.handle.bind(app),
     close(): Promise<void> {

@@ -12,7 +12,7 @@ import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality"> & { database: PrivatePostgresConfiguration };
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning"> & { database: PrivatePostgresConfiguration };
 };
 function configuration(input: PrivateTaskStartupConfiguration) {
   try {
@@ -34,7 +34,9 @@ function configuration(input: PrivateTaskStartupConfiguration) {
     const approvals = a ? { enrollments: validateNativeApprovalEnrollments(a.enrollments, web.tenantId, routes), store: a.store } : undefined;
     const quality = input.coordinator.quality ? captureTaskQualityConfiguration(input.coordinator.quality) : undefined;
     if (quality) validateTaskQualityKeys(quality, planning.reviewIntegrityKey, web.tasks);
-    return { web, database, planning, routes, approvals, quality };
+    const revisionPlanning = input.coordinator.revisionPlanning;
+    if (revisionPlanning !== undefined && (revisionPlanning !== true || !quality)) throw new Error();
+    return { web, database, planning, routes, approvals, quality, revisionPlanning };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -84,13 +86,15 @@ export function createPrivateTaskBootstrap(dependencies: {
       if (!web.isAvailable() || !coordinator.isAvailable()) throw new Error();
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
-        planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality, clock,
+        planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
+        revisionPlanning: config.revisionPlanning, clock,
       });
       if (!application.isReady()) throw new Error();
       dependencies.install(application);
       // Only the optional scoped quality command is exposed to trusted server composition, never HTTP or raw SQL/keys.
       return Object.freeze({ isReady: application.isReady, close: application.close,
-        ...(application.quality ? { quality: application.quality } : {}) });
+        ...(application.quality ? { quality: application.quality } : {}),
+        ...(application.revisions ? { revisions: application.revisions } : {}) });
     } catch {
       const results = await Promise.allSettled(application ? [application.close()] : acquired.map(pool => pool.close()));
       if (results.some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");

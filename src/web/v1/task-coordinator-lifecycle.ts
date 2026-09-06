@@ -7,6 +7,7 @@ import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
 import { timingSafeEqual } from "node:crypto";
 import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
+import { taskRevisionRequestSchema } from "./task-revision-wire";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -18,6 +19,7 @@ export type TaskCoordinatorConfiguration = {
   planning: ConstructorParameters<typeof TaskExecutionPlanner>[2]; routes: readonly TaskAssignmentRoute[];
   approvals?: { enrollments: readonly NativeApprovalEnrollment[]; store: NativeApprovalPacketStore };
   quality?: TaskQualityConfiguration;
+  revisionPlanning?: true;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
   database: TaskCoordinatorDatabase;
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
@@ -31,6 +33,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const maxActive = input.maxActive ?? 8, drainMs = input.drainMs ?? 30_000, closeMs = input.closeMs ?? 5000;
   for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])
     if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error("task_coordinator_config_invalid");
+  if (input.revisionPlanning !== undefined && (input.revisionPlanning !== true || !input.quality)) throw new Error("task_coordinator_config_invalid");
   if (input.approvals && (!Array.isArray(input.approvals.enrollments)
     || typeof input.approvals.store?.acceptInSession !== "function" || typeof input.approvals.store?.readInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
@@ -66,7 +69,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   };
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
-  const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock);
+  const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
     input.approvals?.enrollments, input.approvals?.store);
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
@@ -91,6 +94,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     }
   }
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)) });
+  const revisions = input.revisionPlanning ? Object.freeze({ ...scope,
+    plan: (identity: Parameters<TaskExecutionPlanner["revise"]>[0], projectId: string, sourceJobId: string,
+      input: Parameters<TaskExecutionPlanner["revise"]>[3], signal: AbortSignal) => {
+      const actor = { ...identity }, request = taskRevisionRequestSchema.parse(input);
+      return run(() => planner.revise(actor, projectId, sourceJobId, request, signal));
+    },
+  }) : undefined;
   const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
     options: (...args) => run(() => assignment.options(...args)) });
@@ -113,6 +123,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
+    ...(revisions ? { revisions } : {}),
     isReady: () => !closing && !invalid && pool.isAvailable(),
     close(): Promise<void> {
       if (closePromise) return closePromise;
