@@ -58,12 +58,14 @@ test("wire framing preserves the exact signed JSON and copies canonical complete
     "returned bytes do not alias either the packet input or a later decode");
 });
 
-test("inclusive raw-frame and result bounds are accepted while the next byte is refused", async t => {
-  await t.test("64 KiB result", () => {
+test("inclusive raw-frame and result bounds are accepted while oversized inputs are refused", async t => {
+  await t.test("64 KiB claimed result and an over-cap mismatched reader", () => {
     const bytes = new Uint8Array(65_536); bytes[0] = 1; bytes[bytes.length - 1] = 2;
     const signed = raw(snapshotFrame(bytes)), packet = encodeNativeWire(signed, "node_to_server", () => bytes);
     assert.equal(Buffer.byteLength(JSON.parse(packet).result, "base64"), bytes.byteLength);
     assert.deepEqual(decodeNativeWire(packet, "node_to_server"), { raw: signed, bytes });
+    // The signed schema cannot express a 65,537-byte result claim, so this reader is
+    // simultaneously over the byte cap and inconsistent with the signed hash/length.
     unavailable(() => encodeNativeWire(signed, "node_to_server", () => new Uint8Array(65_537)));
   });
 
@@ -107,6 +109,10 @@ test("direction and completed-result presence are exact and do not add authority
 test("malformed, noncanonical, tampered and oversized packets fail with one fixed error", async t => {
   const bytes = new Uint8Array([1, 2, 3]), completed = raw(snapshotFrame(bytes));
   const valid = JSON.parse(encodeNativeWire(completed, "node_to_server", () => bytes));
+  const compact = JSON.stringify(valid);
+  const bounded = compact + " ".repeat(NATIVE_WIRE_MAX_BYTES - Buffer.byteLength(compact));
+  assert.equal(Buffer.byteLength(bounded), NATIVE_WIRE_MAX_BYTES);
+  assert.deepEqual(decodeNativeWire(bounded, "node_to_server"), { raw: completed, bytes });
   const cases: [string, string | Uint8Array][] = [
     ["invalid JSON", "{"],
     ["unsupported version", JSON.stringify({ ...valid, schema: "control-room.native-wire/v2" })],
@@ -116,7 +122,7 @@ test("malformed, noncanonical, tampered and oversized packets fail with one fixe
     ["changed result hash", JSON.stringify({ ...valid, result: Buffer.from([1, 2, 4]).toString("base64") })],
     ["changed result length", JSON.stringify({ ...valid, result: Buffer.from([1, 2]).toString("base64") })],
     ["invalid UTF-8", new Uint8Array([0xc3, 0x28])],
-    ["oversized packet", " ".repeat(NATIVE_WIRE_MAX_BYTES + 1)],
+    ["oversized otherwise-valid packet", `${bounded} `],
     ["oversized inner frame", JSON.stringify({ ...valid, raw: `${valid.raw}${" ".repeat(131_073)}` })],
   ];
   for (const [name, packet] of cases) await t.test(name, () => unavailable(() => decodeNativeWire(packet, "node_to_server")));
@@ -144,6 +150,7 @@ test("actual node and server wire owners close malformed transports once and ref
     { mode: "initial", task: f.x.request }), { message: "native_session_unavailable" });
   assert.throws(() => f.runtime.openWire(nodeTransport, "transport:managed-server", currentSignal()),
     { message: "native_node_runtime_unavailable" });
+  assert.equal(state.serverCloses, 0); assert.equal(state.nodeCloses, 0);
 
   await assert.rejects(server.receive("{", currentSignal()), { message: "native_input_uncertain" });
   assert.equal(state.serverCloses, 1); assert.deepEqual(f.x.local.calls, []);
