@@ -20,6 +20,8 @@ import { nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../..
 import { sha256Digest } from '../../src/security/index.ts';
 import { managedStartupFixture, restrictedPool } from '../../tests/helpers/managed-startup.ts';
 import { createPrivateTaskBootstrap } from '../../src/web/v1/private-task-startup.ts';
+import { taskStartupFixture } from '../../tests/helpers/task-startup.ts';
+import { request as webRequest } from '../../tests/helpers/web-foundation.ts';
 
 const root = process.env.CR_REUSE_EVAL_ROOT;
 assert.ok(root && isAbsolute(root), 'Explicit existing E01 acquisition root required');
@@ -28,6 +30,84 @@ assert.equal(JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'
 const { PgBoss } = await import(pathToFileURL(join(packageRoot, 'dist/index.js')).href);
 const hostFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/taskBootstrap.js')).createPrivateTaskBootstrap : createPrivateTaskBootstrap;
+
+for (const offline of [false, true]) test(`fresh HTTP task traverses actual six-role host to signed result and pending review: ${offline ? 'offline recovery' : 'online'}`, { timeout: 30000 }, async t => {
+  const x = await managedNativeSessionFixture(undefined, { queue: true, stopHandshakeAtDispatch: true });
+  // Reuse only the fake peer/provider and preparation; the fixture manager must not deliver.
+  await x.manager.close();
+  const f = await taskStartupFixture(x.f.assignmentFixture);
+  let host, admin, installed;
+  t.after(async () => { try { await host?.close(); } finally { try { await admin?.stop({ graceful: false }); } finally { await x.close(); } } });
+  admin = new PgBoss({ db: { executeSql: (sql, values) => x.admin(async () =>
+    values?.length ? x.f.raw.query(sql, values) : (await x.f.raw.exec(sql)).at(-1) ?? { rows: [] }) },
+    schema: spec.schema, backend: 'pglite', schedule: false, supervise: false, useListenNotify: false });
+  const errors = []; admin.on('error', error => errors.push(error));
+  await admin.start(); await admin.createQueue(spec.name, { retryLimit: 0 });
+  for (const name of ['native_queue_producer_roles.sql', 'native_queue_recovery_roles.sql', 'native_queue_worker_roles.sql'])
+    await x.admin(async () => x.f.raw.exec(await readFile(`db/roles/${name}`, 'utf8')));
+  await x.admin(() => x.f.raw.exec(`CREATE ROLE worker_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+    GRANT control_room_native_queue_worker TO worker_test`));
+  const pools = Object.fromEntries(['managed_auth_test', 'managed_evidence_test', 'managed_result_test', 'worker_test']
+    .map(login => [login, restrictedPool(f, login)]));
+  const configFor = username => ({ ...f.config.coordinator.database, username });
+  host = await hostFactory({ clock: x.f.clock,
+    openDatabase: config => pools[config.username] ?? f.openDatabase(config), install: app => { installed = app; },
+    prepareNativeSubmission: db => preparePgBossNativeTaskSubmission(PgBoss, db, { backend: 'pglite', recovery: true }),
+    startNativeWorker: config => createNativeQueueWorkerBootstrap({ PgBoss, backend: 'pglite',
+      openDatabase: () => pools.worker_test }).start(config),
+  }).start({ ...f.config, coordinator: { ...f.config.coordinator, nativeQueue: true, nativeQueueRecovery: true,
+    approvals: { enrollments: [{ enrollment: x.f.prepared.enrollment, nodeClass: 'personal-compute' }], store: x.f.store },
+    quality: { ...x.f.ownerConfig, scenarios: [] }, resultDatabase: configFor('managed_result_test'),
+    evidence: { database: configFor('managed_evidence_test'), integrityKey: new Uint8Array(32).fill(75),
+      storage: x.f.config, enrollments: [x.f.prepared.enrollment] },
+    sessions: { ...x.settings, database: configFor('managed_auth_test') },
+    queueWorker: { database: configFor('worker_test') },
+  } });
+  const attach = async () => {
+    const peer = x.makePeer(), handle = await host.connections.attach(x.f.prepared.request.nodeId, peer.transport);
+    const connection = { peer, handle, hello: await peer.open() }; await x.handshake(connection); return connection;
+  };
+  let connection = offline ? undefined : await attach();
+  await x.admin(() => x.f.save());
+  const path = `/api/v1/projects/${encodeURIComponent(x.task.projectId)}/tasks/${encodeURIComponent(x.task.jobId)}/submission`;
+  const req = webRequest(path, 'POST', { expectedInputDigest: x.task.inputDigest, expectedPacketDigest: x.task.packetDigest }, undefined, x.f.jwt);
+  req.headers.delete('idempotency-key');
+  const response = await installed.handle(req, () => new Response('shell')); assert.equal(response.status, 201);
+  const receipt = await response.json();
+  const ref = { schema: 'control-room.native-task-submission/v1', tenantId: x.f.scope.tenantId,
+    projectId: receipt.projectId, jobId: receipt.jobId, attemptId: receipt.attemptId, queueId: receipt.queueId,
+    inputDigest: x.task.inputDigest, packetDigest: receipt.packetDigest };
+  await until(async () => (await admin.getJobById(spec.name, nativeTaskSubmissionId(ref)))?.state === 'failed');
+  if (offline) {
+    assert.equal(await x.admin(async () => (await x.f.db.query('SELECT * FROM control_native_transmission_intents')).rows.length), 0);
+    connection = await attach();
+    await until(async () => { const job = await admin.getJobById(spec.name, nativeTaskSubmissionId(ref));
+      return job?.retryCount === 1 && job.state === 'failed'; });
+  }
+  const { peer, handle } = connection;
+  const frames = peer.outgoing.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch'); assert.equal(frames.length, 1);
+  await peer.acknowledge(); await handle.receipt(peer.incoming.shift(), currentSignal());
+  const native = await x.prepareNode(peer, JSON.parse(frames[0]));
+  const beforeCompletion = await x.states();
+  const bound = await host.evidence.register(x.request, currentSignal());
+  for (const phase of ['start', 'running']) {
+    const wire = await native.produce(phase); await handle.progress(wire.raw, undefined, currentSignal()); await peer.acknowledge();
+  }
+  const wire = await native.produce('completed');
+  const result = await handle.progress(wire.raw, new TextEncoder().encode(qualityText), currentSignal()); await peer.acknowledge();
+  assert.equal(result.state, 'succeeded'); assert.equal(result.submission.qualityAccepted, false);
+  const review = await x.admin(() => x.f.reviewStore.snapshot(x.f.scope.tenantId, bound.receipt.targetId));
+  assert.equal(review.status, 'pending');
+  const counts = await x.counts(); assert.equal(counts.runs.length, 1); assert.equal(counts.artifacts.length, 1);
+  assert.equal(counts.events.length, 3); assert.equal(counts.receipts.length, 1);
+  assert.deepEqual(await x.states(), beforeCompletion);
+  assert.equal((await admin.getJobById(spec.name, nativeTaskSubmissionId(ref))).state, 'failed',
+    'late receipt/result must not relabel the original uncertain queue outcome');
+  assert.deepEqual(await x.f.config.storage.read(counts.artifacts[0].id), new TextEncoder().encode(qualityText));
+  await host.close();
+  for (const pool of [f.web, f.coordinator, ...Object.values(pools)]) assert.equal(pool.closes(), 1);
+  assert.deepEqual(errors, []);
+});
 
 test('actual six-role host starts queue worker with managed sessions and owns shutdown', { timeout: 30000 }, async t => {
   const f = await managedStartupFixture();

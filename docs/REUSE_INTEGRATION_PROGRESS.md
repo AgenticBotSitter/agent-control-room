@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E35 full-host journey](research/REUSE_E35_FULL_HOST_TASK_JOURNEY.md) closes the local
+fresh-task composition gap: protected HTTP to actual six-role host/queue to signed delivery
+and exact result awaiting review, online and after reconnect. 65 package checks and both
+compiled variants pass. Provider remains simulated and browser interaction remains open.
+
 [E34 six-role actual startup](research/REUSE_E34_ACTUAL_SIX_ROLE_STARTUP.md) combines
 real package/schema/worker registration with managed sessions and all restricted application
 logins. Source and compiled variants pass; 27 prior startup checks pass. Queue is empty:

@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local acceptance — E35:** [Full-host task journey](research/REUSE_E35_FULL_HOST_TASK_JOURNEY.md)
+passes fresh protected HTTP submission through actual queue/worker and all six restricted
+roles to one signed dispatch, exact stored simulated result and pending review, online
+and after reconnect. All 65 package regressions and both compiled journeys pass. Browser
+interaction, physical PostgreSQL and real-agent acceptance remain unproven; no deployment.
+
 **Latest local acceptance — E34:** [Actual six-role startup](research/REUSE_E34_ACTUAL_SIX_ROLE_STARTUP.md)
 passes with actual queue/worker preparation under both source and compiled task bootstrap;
 27 existing managed-startup tests pass after fixture extraction. This is idle startup and
