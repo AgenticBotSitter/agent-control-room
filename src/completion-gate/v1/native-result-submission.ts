@@ -65,6 +65,31 @@ export class NativeResultSubmissionService {
     const profile = completionAcceptanceProfileSchemaV1.parse(await gate.getRecord(plan.tenantId, plan.acceptanceProfileId, "profile"));
     if (profile.tenantId !== plan.tenantId || profile.projectId !== projectId || profile.targetKind !== "document"
       || sha256Digest(profile) !== plan.acceptanceProfileDigest || Date.parse(profile.createdAt) > Date.parse(plan.plannedAt)) reject();
+    return profile;
+  }
+  /** Trusted transaction-only readback. Never creates a target or invents verification evidence. */
+  async inspectSubmitted(tx: DatabaseSession, tenantId: string, runId: string) {
+    id.parse(tenantId); id.parse(runId);
+    const bound = await this.bound(tx, tenantId, runId), { run, job } = bound;
+    const row = (await tx.query<Row>("SELECT * FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [tenantId, runId])).rows[0];
+    if (!row) return reject();
+    const plan = this.verify(row);
+    if (plan.projectId !== run.projectId || plan.jobId !== job.id || plan.attemptId !== run.attemptId || plan.nodeId !== run.nodeId
+      || plan.inputDigest !== job.inputDigest || plan.authorityDigest !== job.authority.digest
+      || plan.bindingDigest !== run.nativeTask!.bindingDigest || run.state !== "succeeded") return reject();
+    const gate = new CompletionGateStoreV1(joined(tx), this.key, this.checkpoints);
+    const profile = await this.profile(gate, plan, run.projectId);
+    const result = await this.results.read(tx, tenantId, run.projectId, job.id, nativeResultId(tenantId, runId));
+    if (!result || result.receipt.runId !== runId || result.receipt.attemptId !== run.attemptId
+      || result.receipt.nodeId !== run.nodeId || Date.parse(result.receipt.receivedAt) < Date.parse(plan.plannedAt)) return reject();
+    const snapshot = await gate.snapshot(tenantId, plan.targetId), target = snapshot.target;
+    const expected: CompletionReviewTargetV1 = { schemaVersion: "control-room-completion-gate/v1", id: plan.targetId,
+      tenantId, projectId: plan.projectId, kind: "document", subjectId: job.id, subjectDigest: result.receipt.contentHash,
+      acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
+      producer: { actorId: plan.nodeId, actorType: "agent" }, rootTargetId: plan.targetId, revisionNumber: 0,
+      submittedAt: result.receipt.receivedAt };
+    if (sha256Digest(target) !== sha256Digest(expected)) return reject();
+    return { ...bound, plan, profile, result, snapshot, gate };
   }
   /** Only the trusted planner may call this; possessing a signed node frame is not planning authority. */
   async register(input: z.infer<typeof requestSchema>) {
