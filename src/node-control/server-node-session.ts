@@ -45,8 +45,9 @@ export interface NativeEnvelopeChannel extends ServerNativeChannel {
 /** One explicitly owned supplied transport session. No listener or key loading. */
 export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
-  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "closed" = "new";
+  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "recovered" | "closed" = "new";
   private preparedFrame?: SignedNodeFrame<"harness.native.dispatch">;
+  private recoveredFrame?: SignedNodeFrame<"harness.native.dispatch">;
   private nativeDeliveryRecorded = false;
   private busy = false;
   private highWater = -Infinity;
@@ -229,15 +230,37 @@ export class ServerNodeSession {
     });
   }
 
+  /** Trusted durable-evidence lookup only. Restores observation, never a send/start slot.
+   * The historical frame is not transmitted, re-signed or assigned the new connection ID. */
+  async recoverNativeDelivery(resolve: (channel: NativeEnvelopeChannel) => Promise<SignedNodeFrame<"harness.native.dispatch">>): Promise<void> {
+    const available = this.nativeDeliveryChannel();
+    if (!available || !this.features.includes("harness.native.snapshot.v1")) throw new Error("Native recovery channel unavailable");
+    await this.bounded(async () => {
+      const assertCurrent = () => { this.now(); if (this.state !== "ready") throw new Error("Native recovery unavailable"); };
+      const channel = Object.freeze({ ...available, serverId: this.config.serverId, serverKeyId: this.config.serverKeyId,
+        serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent });
+      const frame = signedNodeFrameSchema.parse(await resolve(channel));
+      assertCurrent();
+      if (frame.type !== "harness.native.dispatch" || frame.direction !== "server_to_node"
+        || frame.tenantId !== this.config.tenantId || frame.body.request.tenantId !== this.config.tenantId
+        || frame.body.request.nodeId !== this.config.nodeId || frame.actorId !== this.config.serverId
+        || frame.keyId !== this.config.serverKeyId || frame.connectionId === this.connectionId
+        || !verifyNodeFrameSignature(frame, this.config.serverPublicKeySpki)) throw new Error("Native recovery evidence mismatch");
+      this.recoveredFrame = structuredClone(frame);
+      this.state = "recovered";
+    });
+  }
+
   /** Persist authenticated progress for this exact delivered task before acknowledging it.
    * The trusted store callback must apply assertCurrent inside its transaction before commit.
    * A failed/lost acknowledgement closes this session; it does not permit re-execution. */
   async acceptNativeSnapshot<T>(raw: string | Uint8Array, commit: (
     frame: SignedNodeFrame<"harness.native.snapshot">, assertCurrent: () => void,
   ) => Promise<T>): Promise<T> {
-    if (this.state !== "receipted" || !this.nativeDeliveryRecorded || !this.preparedFrame
+    if (!(this.state === "receipted" && this.nativeDeliveryRecorded && this.preparedFrame
+      || this.state === "recovered" && this.recoveredFrame)
       || !this.features.includes("harness.native.snapshot.v1")) throw new Error("Native progress requires recorded delivery and negotiated support");
-    const dispatch = structuredClone(this.preparedFrame);
+    const dispatch = structuredClone(this.recoveredFrame ?? this.preparedFrame!);
     return this.bounded(async () => {
       const frame = await this.authenticate(raw, 16_384);
       if (frame.type !== "harness.native.snapshot") throw new Error("Expected native progress");
@@ -246,7 +269,7 @@ export class ServerNodeSession {
         || body.bindingDigest !== dispatch.body.bindingDigest || Date.parse(body.observedAt) > Date.parse(frame.sentAt))
         throw new Error("Native progress task mismatch");
       const assertCurrent = () => {
-        if (this.now() >= Date.parse(frame.expiresAt) || this.state !== "receipted") throw new Error("Native progress unavailable");
+        if (this.now() >= Date.parse(frame.expiresAt) || this.state !== "receipted" && this.state !== "recovered") throw new Error("Native progress unavailable");
       };
       assertCurrent();
       const value = await commit(structuredClone(frame), assertCurrent);

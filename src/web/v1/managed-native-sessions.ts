@@ -6,7 +6,7 @@ import type { VerifiedWebIdentity } from "./access-verifier";
 import type { TaskAssignmentCoordinator } from "./task-assignment-coordinator";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import type { NativeEvidenceReceiver } from "./native-evidence-receiver";
-import { captureNativeEvidenceInput } from "./native-evidence-receiver";
+import { captureNativeEvidenceInput, nativeEvidenceRegistrationSchema } from "./native-evidence-receiver";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 
 export type ManagedNativeSessionSettings = {
@@ -28,6 +28,7 @@ type Routes = {
   transmit: TaskAssignmentCoordinator["transmitQueuedNativeDelivery"];
   receipt: (session: ServerNodeSession, raw: string | Uint8Array, signal: AbortSignal) => ReturnType<NativeApprovalPacketStore["receiveDeliveryReceipt"]>;
   progress: NativeEvidenceReceiver["receive"];
+  recover?: NativeEvidenceReceiver["recover"];
 };
 type Record = {
   nodeId: string; session?: ServerNodeSession; transport: NativeSessionTransport;
@@ -54,7 +55,7 @@ export class ManagedNativeSessions {
     this.settings = captureManagedNativeSessionSettings(settings);
     if (this.settings.nodes.some(node => node.tenantId !== scope.tenantId)) throw new Error("native_sessions_config_invalid");
     this.routes = Object.freeze({ stage: routes.stage.bind(routes), transmit: routes.transmit.bind(routes),
-      receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes) });
+      receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes), recover: routes.recover?.bind(routes) });
   }
   private current(record?: Record) {
     this.available();
@@ -154,6 +155,10 @@ export class ManagedNativeSessions {
           stage: (identity: VerifiedWebIdentity, value: Task, signal: AbortSignal) => task("stage", identity, value, signal),
           transmit: (identity: VerifiedWebIdentity, value: Task, signal: AbortSignal) => task("transmit", identity, value, signal),
           receipt: (raw: string | Uint8Array, signal: AbortSignal) => { const copy = frame(raw); return this.operation(record, signal, session => this.routes.receipt(session, copy, signal)); },
+          recover: (value: z.infer<typeof nativeEvidenceRegistrationSchema>, signal: AbortSignal) => {
+            const copy = nativeEvidenceRegistrationSchema.parse(value);
+            return this.operation(record, signal, session => this.routes.recover ? this.routes.recover(session, copy, signal) : Promise.reject(new Error("native_recovery_unavailable")));
+          },
           progress: (raw: string | Uint8Array, bytes: Uint8Array | undefined, signal: AbortSignal) => {
             const copy = captureNativeEvidenceInput(raw, bytes);
             return this.operation(record, signal, session => this.routes.progress(session, copy.raw, copy.bytes, signal));

@@ -138,6 +138,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
+    recover: receiver!.recover.bind(receiver),
   }, run, check, input.clock) : undefined;
   sessionState.manager = sessions;
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)) });

@@ -125,6 +125,54 @@ export class NativeEvidenceReceiver {
     const bound = await this.results.register({ projectId: input.projectId, jobId: input.jobId, runId: registration.run.id }, signal);
     current(); return { receipt: bound.receipt, replayed: registration.replayed && bound.replayed };
   }
+  /** Reattach only existing, authenticated evidence. No registration, planning or writes. */
+  async recover(session: Pick<ServerNodeSession, "recoverNativeDelivery">,
+    value: z.infer<typeof nativeEvidenceRegistrationSchema>, signal: AbortSignal) {
+    const input = nativeEvidenceRegistrationSchema.parse(value), current = this.guard(signal), db = this.guarded(current);
+    await session.recoverNativeDelivery(async channel => {
+      const check = () => { current(); channel.assertCurrent(); };
+      return db.transactionWithPreCommitCheck(async tx => {
+        check(); await this.project(tx, input.projectId);
+        const scope = { tenantId: this.scope.tenantId, ...input };
+        const envelope = await readNativeDeliveryEnvelopeInSession(tx, this.key, scope);
+        const receipt = await readNativeDeliveryReceipt(tx, this.key, scope);
+        const intent = await readNativeTransmissionIntentReceipt(tx, this.key, scope);
+        if (!envelope || envelope.frame.type !== "harness.native.dispatch" || !receipt || !intent
+          || channel.tenantId !== scope.tenantId || envelope.nodeKeyId !== channel.nodeKeyId
+          || envelope.frame.body.request.nodeId !== channel.nodeId
+          || receipt.nodeReportedDisposition !== "recorded" || receipt.dispatchMessageId !== envelope.frame.messageId
+          || receipt.queueId !== envelope.frame.body.queueId || receipt.packetDigest !== envelope.frame.body.packetDigest
+          || intent.frameDigest !== sha256Digest(envelope.frame) || intent.messageId !== envelope.frame.messageId
+          || Date.parse(receipt.receivedAt) > current() || Date.parse(receipt.recordedAt) > Date.parse(receipt.receivedAt)
+          || Date.parse(receipt.recordedAt) < Date.parse(intent.requestedAt)) return fail();
+        const body = envelope.frame.body, enrollment = this.enrollments.find(entry => entry.nodeId === channel.nodeId);
+        if (!enrollment) return fail();
+        const prepared = prepareNativeTaskDispatchIntake(body, enrollment);
+        const { binding } = verifyNativeTaskApprovalBinding(prepared.enrollment, prepared.request, prepared.start);
+        const expected = nativeTaskRegistration(binding, body.inputDigest, body.request.leaseId, body.request.leaseEpoch, receipt.recordedAt);
+        const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: async work => work(tx),
+          transactionWithPreCommitCheck: async (work, commitCheck) => { const result = await work(tx); commitCheck(); return result; } };
+        const saved = await new HarnessRunStoreV1(joined, this.harnessKey).get(scope.tenantId, expected.id);
+        if (!saved) return fail();
+        const initial = { ...saved, state: "discovered", cancelState: "not_requested",
+          updatedAt: saved.createdAt, lastObservedAt: saved.createdAt };
+        delete initial.startedAt; delete initial.finishedAt; delete initial.safeReasonCode;
+        if (sha256Digest(initial) !== sha256Digest(expected)) return fail();
+        // Historical lease identity must still exist; its expiry/state does not grant execution.
+        const canonical = await tx.query(`SELECT j.id FROM control_jobs j
+          JOIN control_attempts a ON a.tenant_id=j.tenant_id AND a.job_id=j.id
+          JOIN control_leases l ON l.tenant_id=a.tenant_id AND l.attempt_id=a.id
+          WHERE j.tenant_id=$1 AND j.id=$2 AND j.project_id=$3 AND a.id=$4 AND a.node_id=$5
+            AND l.id=$6 AND l.node_id=$5 AND a.lease_epoch=$7 AND l.epoch=$7
+            AND j.payload->>'inputDigest'=$8 FOR SHARE OF j,a,l`,
+        [scope.tenantId, input.jobId, input.projectId, input.attemptId, channel.nodeId,
+          body.request.leaseId, body.request.leaseEpoch, input.inputDigest]);
+        if (canonical.rows.length !== 1) return fail();
+        check(); return envelope.frame;
+      }, check);
+    });
+    current(); return { recovered: true as const, grantsExecutionAuthority: false as const };
+  }
   async receive(session: Pick<ServerNodeSession, "acceptNativeSnapshot">, raw: string | Uint8Array,
     bytes: Uint8Array | undefined, signal: AbortSignal) {
     const { raw: owned, bytes: content } = captureNativeEvidenceInput(raw, bytes);
