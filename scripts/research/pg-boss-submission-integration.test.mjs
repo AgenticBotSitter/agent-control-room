@@ -14,6 +14,7 @@ import { verifyPgBossApplicationPermissions } from '../../src/persistence/pg-bos
 import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyNativeQueueWorkerDatabase } from '../../src/web/v1/private-database-preflight.ts';
 import { createPrivateTaskBootstrap } from '../../src/web/v1/private-task-startup.ts';
 import { taskStartupFixture } from '../../tests/helpers/task-startup.ts';
+import { request } from '../../tests/helpers/web-foundation.ts';
 import { WebSessionAuthority } from '../../src/web/v1/session-authority.ts';
 import { nativeEnvelopeSession } from '../../tests/helpers/native-envelope-session.ts';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -350,9 +351,9 @@ test('explicit startup prepares actual producer after database gates and closes 
     await f.raw.exec(await readFile('db/roles/native_queue_producer_roles.sql', 'utf8'));
     const withRecovery = mode.startsWith('recovery');
     if (withRecovery) await f.raw.exec(await readFile('db/roles/native_queue_recovery_roles.sql', 'utf8'));
-    let prepared = 0, closed = 0, releaseLate;
+    let prepared = 0, closed = 0, releaseLate, installed;
     const bootstrap = createPrivateTaskBootstrap({ clock: f.clock, openDatabase: host.openDatabase,
-      install: () => { if (mode === 'install') throw new Error('synthetic install failure'); },
+      install: app => { if (mode === 'install') throw new Error('synthetic install failure'); installed = app; },
       prepareNativeSubmission: async db => {
         prepared++;
         if (mode === 'prepare') throw new Error('synthetic preparation failure');
@@ -378,8 +379,39 @@ test('explicit startup prepares actual producer after database gates and closes 
     else {
       const runtime = await bootstrap.start(config);
       t.after(() => mode === 'close' ? assert.rejects(runtime.close(), /cleanup_uncertain/) : runtime.close());
-      const queued = await runtime.submission.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal);
+      const path = `/api/v1/projects/${encodeURIComponent(f.args[1])}/tasks/${encodeURIComponent(f.args[2])}/submission`;
+      const draft = { expectedInputDigest: f.args[3], expectedPacketDigest: sha256Digest(f.packet) };
+      const make = (body = draft) => {
+        const req = request(path, 'POST', body, undefined, f.jwt);
+        req.headers.delete('idempotency-key'); return req;
+      };
+      const handle = req => installed.handle(req, () => new Response('shell'));
+      if (mode === 'success') {
+        const missing = make(); missing.headers.delete('cf-access-jwt-assertion');
+        assert.equal((await handle(missing)).status, 401);
+        const cross = make(); cross.headers.set('origin', 'https://other.example.invalid');
+        assert.equal((await handle(cross)).status, 403);
+        const keyed = make(); keyed.headers.set('idempotency-key', 'browser-key');
+        assert.equal((await handle(keyed)).status, 400);
+        for (const body of [{ ...draft, queue: 'other' }, { ...draft, expectedPacketDigest: 'wrong' }])
+          assert.equal((await handle(make(body))).status, 400);
+        // Stored-packet mismatch uses the existing coarse unavailable response.
+        assert.equal((await handle(make({ ...draft, expectedPacketDigest: `sha256:${'0'.repeat(64)}` }))).status, 503);
+      }
+      const response = await handle(make()); assert.equal(response.status, 201);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      const queued = await response.json();
       assert.equal(queued.replayed, false);
+      const replay = await handle(make()); assert.equal(replay.status, 200);
+      assert.deepEqual(await replay.json(), { ...queued, replayed: true });
+      assert.equal(queued.startsWork, false);
+      if (mode === 'success') {
+        await f.raw.exec('SET SESSION AUTHORIZATION postgres; RESET ROLE');
+        assert.equal(await count(f, 'control_room_queue.job_common'), 1);
+        assert.equal(await count(f, 'control_native_task_queue'), 1);
+        await f.db.query("UPDATE control_role_grants SET role_key='operator' WHERE tenant_id=$1", [f.scope.tenantId]);
+        assert.equal((await handle(make())).status, 403, 'revoked owner cannot replay submission');
+      }
       assert.equal(!!runtime.queueRecovery, withRecovery);
       if (withRecovery) {
         const ref = reference(f, queued), id = nativeTaskSubmissionId(ref);

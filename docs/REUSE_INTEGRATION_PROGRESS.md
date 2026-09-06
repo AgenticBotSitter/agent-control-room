@@ -8,6 +8,12 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E30 HTTP submission](research/REUSE_E30_PROTECTED_HTTP_SUBMISSION.md) wires the narrow
+coordinator operation through the protected private application. Eight focused startup
+checks pass after correcting a test's packet-mismatch error expectation; the preceding
+full package run passed the other 60 checks. 33 related checks plus the added no-queue
+approval test pass. Browser controls and uncertain-response readback are next, not complete.
+
 [E29 six-role coexistence](research/REUSE_E29_SIX_ROLE_COEXISTENCE.md) passes the real
 database gates for all six application/worker identities on one actual-package PGlite
 schema and rejects incompatible role memberships. 62 package checks pass. This is not

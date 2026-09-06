@@ -17,6 +17,8 @@ import { createNativeHttpHost, captureNativeHttpSettings, type NativeHttpSetting
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
   read: TaskAssignmentCoordinator["readNativeApproval"] }>;
+export type TaskSubmissionOperation = Readonly<{ tenantId: string; workspaceId: string;
+  enqueue: TaskAssignmentCoordinator["enqueueNativeTask"] }>;
 
 export type TaskCoordinatorDatabase = Readonly<{ client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean }>;
 export type TaskCoordinatorConfiguration = {

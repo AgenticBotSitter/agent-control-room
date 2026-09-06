@@ -21,6 +21,17 @@ async function fixture() {
   return { ...f, startup, config, path, make, handle, runtime,
     close: async () => { await runtime.close(); await f.close(); } };
 }
+test("stored approval without a configured queue does not enable HTTP submission", async t => {
+  const f = await fixture(); t.after(f.close);
+  await f.handle(f.make("POST", { action: "store", expectedInputDigest: f.args[3], packet: f.packet }));
+  const req = request(f.path.replace(/approval$/, "submission"), "POST", {
+    expectedInputDigest: f.args[3], expectedPacketDigest: sha256Digest(f.packet),
+  }, undefined, f.jwt);
+  req.headers.delete("idempotency-key");
+  assert.equal((await f.handle(req)).status, 503);
+  await f.raw.exec("SET SESSION AUTHORIZATION postgres");
+  assert.equal((await f.db.query("SELECT * FROM control_native_task_queue")).rows.length, 0);
+});
 test("verified two-pool startup mounts protected review, signed intake and historical readback", async t => {
   const f = await fixture(); t.after(f.close);
   const prepare = await f.handle(f.make("POST", { action: "prepare", expectedInputDigest: f.args[3] }));

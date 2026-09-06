@@ -12,7 +12,7 @@ import { WebTaskReviewService } from "./task-review-service";
 import { WebTaskVerificationService } from "./task-verification-service";
 import type { TaskPlanningOperation } from "./task-execution-planner";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
-import type { TaskApprovalOperation } from "./task-coordinator-lifecycle";
+import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 
 export interface PrivateWebProcessOptions {
@@ -32,6 +32,7 @@ export interface PrivateWebProcessOptions {
   /** Narrow optional coordinator operations; resource ownership remains in trusted composition. */
   assignment?: TaskAssignmentOperation;
   approvals?: TaskApprovalOperation;
+  submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
   clock?: () => number;
   /** Tests may shorten the production drain ceiling; never extend it. */
@@ -65,6 +66,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (options.approvals && (options.approvals.tenantId !== options.tenantId || options.approvals.workspaceId !== options.workspaceId
     || [options.approvals.prepare, options.approvals.store, options.approvals.read].some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
+  if (options.submission && (options.submission.tenantId !== options.tenantId || options.submission.workspaceId !== options.workspaceId
+    || typeof options.submission.enqueue !== "function")) throw new Error("private_submission_config_invalid");
+  const submission = options.submission ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
+    enqueue: options.submission.enqueue.bind(options.submission) }) : undefined;
   const approvals = options.approvals ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     prepare: options.approvals.prepare.bind(options.approvals), store: options.approvals.store.bind(options.approvals),
     read: options.approvals.read.bind(options.approvals) }) : undefined;
@@ -100,7 +105,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
-            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, revisions, clock })(request);
+            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, submission, revisions, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });

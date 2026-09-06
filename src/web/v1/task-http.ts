@@ -10,7 +10,8 @@ import { taskPlanningDraftSchema, taskPlanningCommandSchema } from "./task-plann
 import { catalogProjectIdSchema } from "./project-wire";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import { taskAssignmentDraftSchema, taskAssignmentCommandSchema, taskAssignmentOptionsSchema } from "./task-assignment-wire";
-import type { TaskApprovalOperation } from "./task-coordinator-lifecycle";
+import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
+import { taskSubmissionDraftSchema, taskSubmissionReceiptSchema } from "./task-submission-wire";
 import { taskApprovalHttp } from "./task-approval-http";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-revision-wire";
@@ -18,13 +19,33 @@ import { sha256Digest } from "../../security";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
   ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskExecutionPlanner, "plan">;
-  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
+  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
     try {
       requireSameOrigin(request, options.origin);
       const identity = verify(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const submissionRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/submission$/.exec(url.pathname);
+      if (submissionRoute) {
+        if (url.search || request.headers.has("idempotency-key")) throw new WebAccessError("invalid_request");
+        let ids: string[];
+        try { ids = submissionRoute.slice(1).map(decodeURIComponent); } catch { throw new WebAccessError("invalid_request"); }
+        if (ids.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new WebAccessError("invalid_request");
+        const [projectId, jobId] = ids;
+        await options.service.authorize(identity, projectId);
+        if (request.method !== "POST") throw new WebAccessError("not_found");
+        if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
+          throw new WebAccessError("invalid_request");
+        const draft = taskSubmissionDraftSchema.safeParse(await readBoundedJson(request.body, 1024));
+        if (!draft.success || request.signal.aborted) throw new WebAccessError("invalid_request");
+        if (!options.submission) throw new Error("task_submission_not_configured");
+        const receipt = taskSubmissionReceiptSchema.parse(await options.submission.enqueue(identity, projectId, jobId,
+          draft.data.expectedInputDigest, draft.data.expectedPacketDigest, request.signal));
+        if (receipt.projectId !== projectId || receipt.jobId !== jobId || receipt.packetDigest !== draft.data.expectedPacketDigest)
+          throw new Error("task_submission_scope_mismatch");
+        return Response.json(receipt, { status: receipt.replayed ? 200 : 201, headers: privateResponseHeaders });
+      }
       const revisionRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/revisions$/.exec(url.pathname);
       if (revisionRoute) {
         if (url.search || request.headers.has("idempotency-key")) throw new WebAccessError("invalid_request");

@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E30:** [Protected HTTP submission](research/REUSE_E30_PROTECTED_HTTP_SUBMISSION.md)
+connects the explicitly configured queue through authenticated, same-origin task requests.
+Actual-package startup proves fresh/replayed receipts and refusal after owner revocation;
+the focused eight-check startup rerun passes. Browser controls/readback and full-host/live
+acceptance remain open. No live agent, default production activation or deployment.
+
 **Latest local evidence — E29:** [Six-role coexistence](research/REUSE_E29_SIX_ROLE_COEXISTENCE.md)
 passes all six database identity gates with actual queue/recovery grants and rejects
 cross-role contamination. 62 package checks pass. Browser dispatch remains explicitly
