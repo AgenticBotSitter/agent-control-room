@@ -7,7 +7,7 @@ import handler from "../dist-vps/server/index.js";
 import { createPrivateTaskBootstrap } from "../dist-vps/server/taskBootstrap.js";
 import { installPrivateApplication } from "../dist-vps/server/runtime.js";
 import { NATIVE_DELIVERY_FEATURE } from "../src/harness/v1/native-delivery.ts";
-import { nativeTaskObservation } from "../src/harness/hermes-native-v1/task-observation.ts";
+import { nativeTaskSnapshotBodySchema } from "../src/harness/v1/native-observation.ts";
 import { PortableNodeBridge, SqliteBridgeJournal } from "../src/node-bridge/index.ts";
 import { FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator, signNodeFrame } from "../src/node-protocol/v1/index.ts";
 import { sha256Digest } from "../src/security/index.ts";
@@ -147,7 +147,12 @@ test("compiled five-role startup owns a signed session and refuses progress with
   const input = { projectId: x.registration.projectId, jobId: x.registration.jobId,
     attemptId: x.registration.attemptId, inputDigest: x.f.assignmentFixture.prepared.receipt.inputDigest };
   const nativeCalls = [...x.local.calls], nativeEffects = x.local.effects.countFull();
-  const body = nativeTaskObservation(x.handoff.snapshot(), x.registration.nativeTask);
+  const body = nativeTaskSnapshotBodySchema.parse({ runId: x.registration.id, projectId: x.registration.projectId,
+    jobId: x.registration.jobId, attemptId: x.registration.attemptId, leaseId: x.registration.nativeTask.leaseId,
+    leaseEpoch: x.registration.nativeTask.leaseEpoch, bindingDigest: x.registration.nativeTask.bindingDigest,
+    sessionKeyDigest: x.registration.nativeSessionKeyDigest, nativeRunKeyDigest: null, snapshotVersion: 1,
+    observedAt: new Date(x.f.clock()).toISOString(), upstreamUpdatedAt: null, state: "prepared", availability: "unknown",
+    lastActivity: "none", stopAttempted: false, safeReason: "none", result: null, usage: null });
   await bridge.publishNativeSnapshot(body, new Date(x.f.clock()).toISOString());
   const serverFrameCount = serverFrames.length;
   await assert.rejects(handle.progress(incoming.shift(), undefined, new AbortController().signal),
