@@ -11,6 +11,7 @@ import { NativeObservationReporter } from "./observation-reporter";
 import { createNativeRecoveryAuthority, type NativeRecoveryDependencies } from "./recovery-authority";
 import { HermesNativeRunAdapter } from "./adapter";
 import { verifyNativeTaskApprovalBinding } from "../v1/native-task-approval-binding";
+import { encodeNativeWire, decodeNativeWire } from "../v1/native-wire";
 
 const configuration = z.object({ queueId: localId, enrollment: enrollmentSchema, nodeKeyId: localId,
   serverId: localId, serverKeyId: localId, serverPublicKeySpki: z.string().min(16).max(4096) }).strict();
@@ -211,18 +212,21 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
     })();
     return closing;
   }
-  return Object.freeze({ nodeId: config.enrollment.nodeId, queueId: config.queueId, grantsExecutionAuthority: false as const,
-    open(transport: BridgeTransport, transportIdentity: string, signal: AbortSignal) {
+  function open(transport: BridgeTransport, transportIdentity: string, signal: AbortSignal, packet = false) {
       current(); localId.parse(transportIdentity);
       if (!transport || transports.has(transport) || typeof transport.send !== "function" || typeof transport.close !== "function") return fail();
       transports.add(transport); const send = transport.send.bind(transport), dispose = transport.close.bind(transport);
       let closingTransport: Promise<void> | undefined;
       const closeTransport = () => closingTransport ??= Promise.resolve().then(dispose).then(() => { ownedTransports.delete(closeTransport); });
       ownedTransports.add(closeTransport);
-      return wire(0, signal, () => bridge.open({ send: async raw => { current(); await send(raw); current(); },
+      return wire(0, signal, () => bridge.open({ send: async raw => {
+        current();
+        const output = packet ? encodeNativeWire(raw, "node_to_server", body => reporter.readResult(body, lifetime.signal)) : raw;
+        current(); await send(output); current();
+      },
         close: closeTransport }, { now: new Date(current()).toISOString(), transportIdentity }));
-    },
-    receive(raw: string | Uint8Array, signal: AbortSignal) {
+  }
+  function receive(raw: string | Uint8Array, signal: AbortSignal) {
       let frame: z.infer<typeof signedNodeFrameSchema>, copy: string | Uint8Array, size: number;
       try {
         current(); if (typeof raw !== "string" && !(raw instanceof Uint8Array)) return fail();
@@ -235,6 +239,14 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
           || frame.type === "harness.native.dispatch" && frame.body.queueId !== config.queueId) return fail();
       } catch { void close().catch(() => {}); return Promise.reject(new Error("native_node_runtime_uncertain")); }
       return wire(size, signal, () => bridge.receive(copy, new Date(current()).toISOString()));
+  }
+  return Object.freeze({ nodeId: config.enrollment.nodeId, queueId: config.queueId, grantsExecutionAuthority: false as const,
+    open: (transport: BridgeTransport, identity: string, signal: AbortSignal) => open(transport, identity, signal),
+    openWire: (transport: BridgeTransport, identity: string, signal: AbortSignal) => open(transport, identity, signal, true),
+    receive,
+    receiveWire(packet: string | Uint8Array, signal: AbortSignal) {
+      try { current(); return receive(decodeNativeWire(packet, "server_to_node").raw, signal); }
+      catch { void close().catch(() => {}); return Promise.reject(new Error("native_node_runtime_uncertain")); }
     },
     disconnected(signal: AbortSignal) { return wire(0, signal, () => bridge.disconnected()); },
     start(signal: AbortSignal) { return native("start", signal, async () => {

@@ -9,6 +9,7 @@ import type { NativeEvidenceReceiver } from "./native-evidence-receiver";
 import { captureNativeEvidenceInput, nativeEvidenceRegistrationSchema } from "./native-evidence-receiver";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { ManagedNativeInput, nativeInputConfigurationSchema, type NativeInputConfiguration } from "./managed-native-input";
+import { encodeNativeWire, decodeNativeWire } from "../../harness/v1/native-wire";
 
 export type ManagedNativeSessionSettings = {
   nodes: readonly ServerNodeSessionConfig[];
@@ -117,9 +118,23 @@ export class ManagedNativeSessions {
     return this.attachOwned(nodeId, input).then(value => value.handle);
   }
   attachInput(nodeId: string, input: NativeSessionTransport, configuration: NativeInputConfiguration) {
+    return this.attachInputOwned(nodeId, input, configuration, false);
+  }
+  attachWire(nodeId: string, input: NativeSessionTransport, configuration: NativeInputConfiguration) {
+    return this.attachInputOwned(nodeId, input, configuration, true).then(handle => Object.freeze({
+      nodeId: handle.nodeId, grantsExecutionAuthority: false as const,
+      receive(packet: string | Uint8Array, signal: AbortSignal) {
+        try { const value = decodeNativeWire(packet, "node_to_server"); return handle.receive(value.raw, value.bytes, signal); }
+        catch { return handle.close().then(() => { throw new Error("native_input_uncertain"); },
+          () => { throw new Error("native_input_uncertain"); }); }
+      },
+      stage: handle.stage, transmit: handle.transmit, close: handle.close,
+    }));
+  }
+  private attachInputOwned(nodeId: string, input: NativeSessionTransport, configuration: NativeInputConfiguration, packet: boolean) {
     const config = nativeInputConfigurationSchema.parse(configuration);
     if (!this.routes.register || !this.routes.recover) return Promise.reject(new Error("native_input_unavailable"));
-    return this.attachOwned(nodeId, input, config.task.attemptId).then(({ handle, record }) => {
+    return this.attachOwned(nodeId, input, config.task.attemptId, packet).then(({ handle, record }) => {
       const owner = new ManagedNativeInput(handle, config,
         (value, signal) => this.operation(record, signal, async () => this.routes.register!(value, signal, () => this.current(record))),
         () => this.current(record));
@@ -128,12 +143,14 @@ export class ManagedNativeSessions {
         transmit: owner.transmit.bind(owner), close: owner.close.bind(owner) });
     });
   }
-  private attachOwned(nodeId: string, input: NativeSessionTransport, expectedAttemptId?: string) {
+  private attachOwned(nodeId: string, input: NativeSessionTransport, expectedAttemptId?: string, packet = false) {
     this.current(); localId.parse(nodeId);
     const config = this.settings.nodes.find(node => node.nodeId === nodeId);
     if (!config || !input || this.transports.has(input)
       || [input.send, input.close, input.isAvailable].some(fn => typeof fn !== "function")) return Promise.reject(new Error("native_session_unavailable"));
-    const transport = Object.freeze({ send: input.send.bind(input), close: input.close.bind(input), isAvailable: input.isAvailable.bind(input) });
+    const send = input.send.bind(input);
+    const transport = Object.freeze({ send: (raw: string) => send(packet ? encodeNativeWire(raw, "server_to_node") : raw),
+      close: input.close.bind(input), isAvailable: input.isAvailable.bind(input) });
     this.transports.add(input);
     const prior = this.records.get(nodeId), record: Record = { nodeId, transport, closed: false, busy: false };
     // Replace immediately, before any asynchronous cleanup: retained old handles cannot act.

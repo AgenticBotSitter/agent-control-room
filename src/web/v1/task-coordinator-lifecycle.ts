@@ -189,7 +189,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     ...(revisions ? { revisions } : {}),
     ...(results ? { results } : {}),
     ...(ownedEvidence ? { evidence: ownedEvidence } : {}),
-    ...(sessions ? { connections: Object.freeze({ ...scope, attach: sessions.attach.bind(sessions), attachInput: sessions.attachInput.bind(sessions) }) } : {}),
+    ...(sessions ? { connections: Object.freeze({ ...scope, attach: sessions.attach.bind(sessions),
+      attachInput: sessions.attachInput.bind(sessions), attachWire: sessions.attachWire.bind(sessions) }) } : {}),
     isReady: () => !closing && !invalid && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable()),
     close(): Promise<void> {
       if (closePromise) return closePromise;
