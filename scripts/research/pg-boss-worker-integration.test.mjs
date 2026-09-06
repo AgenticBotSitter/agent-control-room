@@ -154,6 +154,11 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
   assert.equal(result.state, 'succeeded'); assert.equal(result.submission.qualityAccepted, false);
   const review = await x.admin(() => x.f.reviewStore.snapshot(x.f.scope.tenantId, bound.receipt.targetId));
   assert.equal(review.status, 'pending');
+  const inboxResponse = await installed.handle(webRequest('/api/v1/needs-me/tasks', 'GET', undefined, undefined, x.f.jwt), () => new Response('shell'));
+  assert.equal(inboxResponse.status, 200);
+  const inbox = await inboxResponse.json();
+  assert.ok(inbox.items.some(item => item.task.jobId === x.task.jobId && item.reasons.includes('review')));
+  assert.equal(inbox.startsWork, false);
   const counts = await x.counts(); assert.equal(counts.runs.length, 1); assert.equal(counts.artifacts.length, 1);
   assert.equal(counts.events.length, 3); assert.equal(counts.receipts.length, 1);
   assert.deepEqual(await x.states(), beforeCompletion);

@@ -111,6 +111,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = await keys.get();
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          if (url.pathname === "/api/v1/needs-me/tasks") {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+              || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+            return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+          }
           if (url.pathname === "/api/v1/needs-me") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.readQueueAttention(identity, queueAttention), { headers: privateResponseHeaders });

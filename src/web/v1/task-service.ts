@@ -14,7 +14,9 @@ import type { WebTaskReviewConfiguration } from "./task-review-service";
 import type { ManualVerificationScenario } from "./task-verification-service";
 import { taskResultMetadataSchema, boundedTaskResultsPage, taskResultContentSchema, taskReviewEvidenceSchema } from "./task-result-wire";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
-import { WebSessionAuthority } from "./session-authority";
+import { WebSessionAuthority, type WebActor } from "./session-authority";
+import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
+import { taskAttentionPageSchema, type TaskAttentionPage } from "./task-attention-wire";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
@@ -69,9 +71,11 @@ export class WebTaskService {
   private readonly reviewConfig?: NonNullable<WebTaskKeys["reviews"]>;
   private readonly reviewCommandsConfigured: boolean;
   private readonly verificationCommandsConfigured: boolean;
+  private readonly ideaProjectsConfigured: boolean;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
+    this.ideaProjectsConfigured = !!keys?.ideaIntegrityKey;
     this.reviewCommandsConfigured = !!keys?.ownerReviews;
     this.verificationCommandsConfigured = !!keys?.manualVerificationScenarios?.length;
     if (keys?.manualVerificationScenarios && (!keys.results || !keys.reviews || !keys.harnessIntegrityKey)) throw new Error("task_key_invalid");
@@ -252,6 +256,11 @@ export class WebTaskService {
         return taskResultContentSchema.parse({ projectId, jobId, artifact: resultMetadata(content.receipt), text: content.text,
           contentVerifiedAt: new Date(this.clock()).toISOString(), untrustedContent: true });
       }
+      return this.resultPage(tx, actor, projectId, jobId);
+    });
+  }
+
+  private async resultPage(tx: DatabaseSession, actor: WebActor, projectId: string, jobId: string) {
       const result = this.resultStore ? await this.resultStore.list(tx, this.scope.tenantId, projectId, jobId)
         : { receipts: [], additionalResultsOmitted: false };
       const items = result.receipts.map(resultMetadata);
@@ -278,6 +287,60 @@ export class WebTaskService {
         canReadContent: !!this.resultStore && actor.can("tasks.results.read", projectId),
         reviewCommands: this.reviewCommandsConfigured ? "configured" : "not_connected",
         verificationCommands: this.verificationCommandsConfigured ? "configured" : "not_connected" });
+  }
+
+  async attention(identity: VerifiedWebIdentity, after?: string) {
+    if (after !== undefined) this.id(after);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", undefined, true);
+      const ordinary = actor.can("projects.read", undefined, true);
+      const ideas = actor.can("idea_lab.project_read", undefined, true);
+      if (!ordinary && !ideas) throw new WebAccessError("access_denied");
+      if (ordinary) actor.require("projects.read", undefined, true);
+      if (ideas && this.ideaProjectsConfigured) actor.require("idea_lab.project_read", undefined, true);
+      const sources: TaskAttentionPage["sources"] = { ordinary: ordinary ? "included" : "not_authorized",
+        ideas: !ideas ? "not_authorized" : this.ideaProjectsConfigured ? "included" : "not_configured" };
+      const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT EXISTS(
+        SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id) AS has_artifacts, ${selection}
+        JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
+        WHERE j.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C")
+          AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
+            WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))
+          AND (j.state IN ('proposed','waiting_approval','failed','orphaned') OR EXISTS(
+            SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id))
+        ORDER BY j.id COLLATE "C" LIMIT 26`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
+        `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, ordinary, sources.ideas === "included"])).rows;
+      const items: TaskAttentionPage["items"] = [];
+      for (const row of rows.slice(0, 25)) {
+        await this.projects.getViewInSession(tx, actor, row.project_id);
+        actor.require("tasks.read", row.project_id, true);
+        const { summary } = validated(row, this.scope.tenantId, row.project_id);
+        const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
+        if (summary.state === "proposed") reasons.push("proposal");
+        if (summary.state === "waiting_approval") reasons.push("approval");
+        if (summary.state === "failed" || summary.state === "orphaned") reasons.push(summary.state);
+        if (row.has_artifacts) {
+          const result = await this.resultPage(tx, actor, row.project_id, row.id);
+          if (result.resultSource === "not_configured" || result.reviewSource === "not_configured") {
+            reasons.push("result_checks_unavailable");
+          } else {
+            for (const review of result.reviews.filter(value => value.matchingArtifactIds.length > 0)) {
+              switch (review.status) {
+                case "pending": reasons.push("review"); break;
+                case "changes_requested": case "verification_blocked": case "revision_limit_reached":
+                  reasons.push(review.status); break;
+              }
+            }
+            if (result.additionalResultsOmitted || result.additionalTargetsOmitted
+              || result.reviews.some(value => value.additionalEvidenceOmitted)
+              || result.items.some(item => !result.reviews.some(review => review.matchingArtifactIds.includes(item.artifactId))))
+              reasons.push("result_checks_unavailable");
+          }
+        }
+        if (reasons.length) items.push({ task: summary, reasons: [...new Set(reasons)] });
+      }
+      return taskAttentionPageSchema.parse({ items, sources, examined: Math.min(rows.length, 25),
+        nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false });
     });
   }
 }

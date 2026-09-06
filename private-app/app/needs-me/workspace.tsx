@@ -4,6 +4,7 @@ import { PrivateHeader } from "../private-header";
 import { readQueueAttention } from "../../../src/web/v1/queue-attention-browser-client";
 import type { QueueAttention } from "../../../src/web/v1/queue-attention-wire";
 import { BrowserRequestError } from "../../../src/web/v1/browser-client";
+import { PrivateTaskAttention } from "./task-attention";
 
 export function QueueAttentionPanel({ snapshot }: { snapshot: QueueAttention }) {
   return <section aria-labelledby="recovery-heading"><h2 id="recovery-heading">Reconnect recovery</h2>
@@ -33,7 +34,8 @@ export function PrivateNeedsMe() {
     return () => { live = false; };
   }, [refresh]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main">
-    <h1>Needs Me</h1><p>Owner-only recovery observations. Task-specific review and approval items remain on their project pages.</p>
+    <h1>Needs Me</h1><p>Owner-only task attention and recovery observations.</p>
+    <PrivateTaskAttention />
     <button type="button" disabled={loading} onClick={() => {
       setLoading(true); setData(undefined); setError(undefined); setRefresh(value => value + 1);
     }}>Check recovery status</button>

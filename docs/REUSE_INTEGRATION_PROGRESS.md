@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E42 task attention](research/REUSE_E42_TASK_ATTENTION.md) adds saved task/review items
+and direct task links to Needs Me using existing canonical records and verification.
+It does not create another queue. Pagination, current owner/source access and incomplete
+evidence remain explicit; task-specific queue-delivery uncertainty is still unfinished.
+
 [E41 recovery attention](research/REUSE_E41_RECOVERY_ATTENTION.md) connects the first
 owner-only Needs Me section to current runtime recovery observations. It reuses session
 authorization, exposes no raw machine identities or command port, and passes source/

@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E42:** [Task attention](research/REUSE_E42_TASK_ATTENTION.md)
+adds paginated saved-task links to Needs Me, reusing verified review records and current
+owner/project authorization. 14 related tests and source/compiled full-host journeys
+pass, including the final refinement rerun. Task-specific queue uncertainty, exact
+approval readiness, interactive browser and live acceptance remain open.
+
 **Latest local implementation — E41:** [Recovery attention](research/REUSE_E41_RECOVERY_ATTENTION.md)
 mounts an owner-only Needs Me recovery summary from the configured session runtime.
 Source and compiled full-host journeys, 35 compiled regressions, focused access/client/UI
