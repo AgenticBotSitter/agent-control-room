@@ -15,14 +15,18 @@ const files = git(['ls-files', '-z']).split('\0').filter(Boolean).sort();
 // The report is a derived artifact, never an input to its own inventory.
 const reportPath = 'docs/research/public-export-inventory.json';
 const tracked = new Set(files.filter(file => file !== reportPath));
-const options = ts.parseJsonConfigFileContent(ts.readConfigFile('tsconfig.json', ts.sys.readFile).config, ts.sys, root).options;
-const seeds = [...tracked].filter(file => file.startsWith('private-app/') && /\.[jt]sx?$/.test(file));
-seeds.push('vite.vps.config.ts', 'scripts/build-vps.mjs', 'scripts/run-private-vps.mjs',
-  'src/web/v1/private-process.ts', 'src/web/v1/private-startup.ts', 'src/web/v1/private-serving.ts',
-  'src/web/v1/private-database-rehearsal.ts', 'src/web/v1/private-fixture-preparation.ts',
-  'src/web/v1/private-task-application.ts', 'src/web/v1/private-task-startup.ts',
-  'src/web/v1/installed-native-queue.ts', 'src/persistence/pg-boss-schema-inspection.ts',
-  'src/web/v1/private-task-host.ts');
+// Reuse the compiler's standalone roots, including framework middleware. Maintaining
+// another entry-point list here previously omitted that non-imported framework hook.
+const parsed = ts.getParsedCommandLineOfConfigFile('tsconfig.vps.json', {}, {
+  ...ts.sys,
+  onUnRecoverableConfigFileDiagnostic: diagnostic => {
+    throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+  },
+});
+if (!parsed || parsed.errors.length) throw new Error('Invalid standalone TypeScript configuration');
+const { options } = parsed;
+const compilerSeeds = parsed.fileNames.map(file => path.relative(root, file)).sort();
+const seeds = [...compilerSeeds, 'scripts/build-vps.mjs', 'scripts/run-private-vps.mjs'];
 const testSeeds = includeCompiledTests ? [...new Set([
   ...(JSON.parse(readFileSync('package.json', 'utf8')).scripts['test:build:vps'].match(/tests\/[A-Za-z0-9_./-]+\.test\.[cm]?[jt]sx?/g) ?? []),
   'tests/vps-build-profile.test.ts', 'tests/private-vps-launcher.test.mjs',
@@ -71,7 +75,7 @@ function proposal(file) {
   if (/^(docs|coordination|reviews|\.agents|\.github|\.openai|release)\//.test(file))
     return ['exclude', 'private_history_or_configuration_default'];
   if (/^(tests|db|contracts|schemas|third_party)\//.test(file)) return ['review', 'supporting_tests_schema_or_attribution'];
-  if (/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.json|eslint\.config\.mjs|postcss\.config\.mjs|next-env\.d\.ts|next\.config\.ts|middleware\.ts)$/.test(file))
+  if (/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig(?:\.vps)?\.json|eslint\.config\.mjs|postcss\.config\.mjs|next-env\.d\.ts|next\.config\.ts|middleware\.ts)$/.test(file))
     return ['adapt', 'root_build_or_verification_scope'];
   return ['unresolved', 'manual_scope_decision_required'];
 }
@@ -90,4 +94,4 @@ console.log(JSON.stringify({ schema: 'control-room.public-export-planning-invent
     'Built-output imports from the launcher are expected outside tracked source; builds must supply them.',
     'Untracked and ignored files are not inventoried; never copy them implicitly.',
     'Private planning report; contains internal paths and must not be published.'],
-  closureCount: closure.size, testSeeds, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));
+  closureCount: closure.size, compilerSeeds, testSeeds, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));

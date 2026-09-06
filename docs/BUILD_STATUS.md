@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Inventory framework-hook omission fixed:** The public planning inventory now derives
+its entry points from the standalone compiler configuration, including previously
+omitted middleware. This removes a duplicate manually maintained list. Compiled-test
+mode traces 378 paths; two inventory tests and targeted lint pass. Classification is
+still proposed/pending, not a content/privacy clearance or export authorization.
+
 **Standalone contributor type-check added:** `pnpm check:vps` checks protected routes,
 middleware, all ten build entry points and imported source without generated preview
 declarations. Five profile tests pass, including automatic entry/route coverage checks;

@@ -21,6 +21,13 @@ test('planning inventory covers current tracked inputs without approving their p
   assert.equal(report.entries.find(entry => entry.path === 'public/favicon.svg').reason,
     'startup_required_asset_rights_pending');
   assert.equal(report.entries.find(entry => entry.path === '.openai/hosting.json').disposition, 'exclude');
+  assert.ok(report.compilerSeeds.includes('middleware.ts'));
+  assert.ok(report.compilerSeeds.includes('src/web/v1/private-task-host.ts'));
+  assert.ok(report.compilerSeeds.includes('private-app/app/layout.tsx'));
+  for (const file of report.compilerSeeds)
+    assert.equal(report.entries.find(entry => entry.path === file)?.reason, 'application_or_build_import');
+  for (const file of ['tsconfig.json', 'tsconfig.vps.json'])
+    assert.equal(report.entries.find(entry => entry.path === file).disposition, 'adapt');
   assert.ok(report.unresolved.every(entry => entry.file.startsWith('dist-vps/')));
   assert.ok(report.dynamic.some(entry => entry.file === 'scripts/run-private-vps.mjs'));
 });

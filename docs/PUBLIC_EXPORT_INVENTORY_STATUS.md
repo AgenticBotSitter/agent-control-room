@@ -1,5 +1,22 @@
 # Complete tracked-path planning inventory
 
+## Standalone compiler roots follow-up
+
+At `502f034`, the planning inventory's separate entry-point list was found to omit
+`middleware.ts`, a framework-discovered hook rather than an ordinary application
+import. The script now uses TypeScript's parsed `tsconfig.vps.json` root files instead
+of maintaining a second list. Its 39 compiler roots include all protected routes,
+middleware and the build entries checked by the standalone profile regression.
+Both root compiler configuration files are proposed for adaptation, not approved.
+
+The compiled-test mode now traces 378 tracked paths from those roots, build/launcher
+scripts and 23 test seeds. Two inventory regression tests and targeted lint pass.
+The historical JSON inventory is unchanged. This fixes a concrete completeness gap;
+it does not perform content review or discover all runtime reads, CSS imports and
+framework assets, and it does not authorize copying or publishing source.
+
+## Historical snapshot
+
 2026-09-06. Baseline `91c6dbe`. Local/private planning evidence only.
 
 `research/public-export-inventory.json` records all **2,292 tracked paths** at this
