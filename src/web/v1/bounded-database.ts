@@ -1,4 +1,5 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseOperationSignal, withDatabaseOperationSignal } from "../../persistence/operation-signal";
 
 export const privateDatabaseLimits = Object.freeze({ connections: 8, checkoutMs: 5000,
   statementMs: 5000, transactionMs: 10000, closeMs: 5000 });
@@ -45,13 +46,15 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
   async function run<T>(transaction: boolean, callback: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>): Promise<T> {
     if (stopped || active >= limits.connections) throw new PrivateDatabaseError("database_unavailable");
     active++;
+    const operation = new AbortController(), parent = databaseOperationSignal();
+    const signal = parent ? AbortSignal.any([parent, operation.signal]) : operation.signal;
     let valid = true, busy = false, queryFailed = false;
     let invalidate!: () => void;
     const invalidated = new Promise<never>((_, reject) => { invalidate = () => {
-      valid = false; reject(new PrivateDatabaseError("database_outcome_uncertain"));
+      valid = false; operation.abort(); reject(new PrivateDatabaseError("database_outcome_uncertain"));
     }; });
     invalidations.add(invalidate);
-    const assertActive = () => { if (!valid || stopped) throw new PrivateDatabaseError("database_outcome_uncertain"); };
+    const assertActive = () => { if (!valid || stopped || signal.aborted) throw new PrivateDatabaseError("database_outcome_uncertain"); };
     const deadline = async <U>(work: Promise<U>, ms: number): Promise<U> => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try { return await Promise.race([work, invalidated, new Promise<never>((_, reject) => {
@@ -59,7 +62,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
       })]); } finally { clearTimeout(timer); }
     };
     const checkoutTimer = setTimeout(() => { void stop().catch(() => {}); }, limits.checkoutMs);
-    const work = (async () => {
+    const work = withDatabaseOperationSignal(signal, async () => {
       // Late checkout can never enter user code; its lease is still released.
       const lease = await driver.acquire();
       clearTimeout(checkoutTimer);
@@ -96,7 +99,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         }
         throw error;
       } finally { valid = false; lease.release(); }
-    })();
+    });
     try {
       // Acquire has its own ceiling even when the encompassing transaction has time left.
       // It is measured separately by the wrapper below, before any statement can be issued.
@@ -105,7 +108,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
       // Invalidating active operations is immediate; reporting completion also awaits bounded termination.
       if (stopped) await stop();
       throw error;
-    } finally { clearTimeout(checkoutTimer); valid = false; invalidations.delete(invalidate); active--; }
+    } finally { clearTimeout(checkoutTimer); valid = false; operation.abort(); invalidations.delete(invalidate); active--; }
   }
   const client = Object.freeze<DatabaseClient>({
     query: <T>(statement: string, params?: unknown[]) => run(false, session => session.query<T>(statement, params), () => {}),

@@ -2,11 +2,67 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { stageCompletionCheckpoint } from "../src/completion-gate/v1/staged-checkpoint";
 import { stageAsyncCompletionCheckpoint } from "../src/completion-gate/v1/async-staged-checkpoint";
+import { CompletionGateStoreV1 } from "../src/completion-gate/v1/store";
 import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { InMemoryRollbackCheckpointStoreV1, ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1 } from "../src/security/rollback-checkpoint";
 const initial = { schema: ROLLBACK_CHECKPOINT_SCHEMA_V1, scope: "completion-gate:tenant:test", revision: 1,
   recordCount: 0, stateDigest: `sha256:${"a".repeat(64)}`, stateAuthTag: `hmac-sha256:${"b".repeat(64)}` };
 function fixture() { const store = new InMemoryRollbackCheckpointStoreV1({ testOnly: true }); store.initialize(initial); return store; }
+
+test("direct Completion Gate reads and initialization receive database cancellation", async () => {
+  for (const stalled of ["read", "initialize"] as const) {
+    let entered!: () => void, release!: () => void, captured!: AbortSignal, initializes = 0;
+    const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
+    const statements: string[] = [];
+    const database = boundPrivateDatabase({ async acquire() { return {
+      async query<T>(statement: string) { statements.push(statement); return {
+        rows: (statement.startsWith("SELECT id FROM tenants") ? [{ id: "tenant:test" }] : []) as T[],
+      }; }, release() {},
+    }; }, async terminate() {} }, { connections: 1, checkoutMs: 100, statementMs: 100, transactionMs: 30, closeMs: 100 });
+    const gate = new CompletionGateStoreV1(database.client, new Uint8Array(32).fill(42), {
+      async read(_scope, signal) {
+        assert.ok(signal); captured = signal;
+        if (stalled === "read") { entered(); await wait; }
+        return undefined;
+      },
+      async initialize(_checkpoint, signal) {
+        initializes++; assert.equal(signal, captured); entered(); await wait;
+      }, advance() { throw new Error("unexpected_advance"); },
+    });
+    const result = assert.rejects(gate.provisionTenant("tenant:test"), /database_outcome_uncertain/);
+    await started; await result; assert.equal(captured.aborted, true);
+    release(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(initializes, stalled === "read" ? 0 : 1);
+    assert.equal(statements.includes("COMMIT"), false); await database.close();
+  }
+});
+
+test("database timeout cancels checkpoint transport and fences a late reply before the next CAS", async () => {
+  const store = fixture(); let entered!: () => void, release!: () => void, calls = 0, captured!: AbortSignal;
+  const started = new Promise<void>(resolve => { entered = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
+  const stage = stageAsyncCompletionCheckpoint({ async read(scope, signal) {
+    assert.ok(signal); assert.equal(signal.aborted, false); return store.read(scope);
+  }, initialize() {}, async advance(expected, next, signal) {
+    calls++; captured = signal!; entered(); await wait;
+    // Deliberately ignores cancellation: a remote write might already have happened.
+    store.advance(expected, next);
+  } }, "tenant:test");
+  const statements: string[] = [];
+  const database = boundPrivateDatabase({ async acquire() { return {
+    async query(statement: string) { statements.push(statement); return { rows: [] }; }, release() {},
+  }; }, async terminate() {} }, { connections: 1, checkoutMs: 100, statementMs: 100, transactionMs: 30, closeMs: 100 });
+  const running = database.client.transactionWithPreCommitCheck(async () => {
+    for (const revision of [2, 3]) {
+      const current = (await stage.checkpoints.read(initial.scope))!;
+      await stage.checkpoints.advance(rollbackCheckpointDigestV1(current), { ...current, revision });
+    }
+  }, () => stage.flush());
+  const observed = assert.rejects(running, /database_outcome_uncertain/);
+  await started; await observed; assert.equal(captured.aborted, true);
+  release(); await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(calls, 1); assert.equal(store.read(initial.scope)!.revision, 2);
+  assert.deepEqual(statements, ["BEGIN"]); await assert.rejects(stage.flush()); await database.close();
+});
 
 test("awaitable stage reads lazily once and flushes the existing exact CAS sequence", async () => {
   const store = fixture(); let reads = 0, writes = 0;

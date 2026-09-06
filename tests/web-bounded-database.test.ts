@@ -3,9 +3,37 @@ import test from "node:test";
 import { boundPrivateDatabase, PrivateDatabaseError, privateDatabaseLimits, type PrivateDatabaseLease } from "../src/web/v1/bounded-database";
 import { createPrivatePostgresDatabase, privatePostgresOptions } from "../src/web/v1/private-postgres";
 import { startupConfig } from "./helpers/web-startup";
+import { databaseOperationSignal } from "../src/persistence/operation-signal";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 const tick = () => new Promise<void>(r => setTimeout(r, 0));
+
+test("database operation signals are isolated, flow into precommit and expire on completion", async () => {
+  const first = fake(), second = fake(), a = boundPrivateDatabase(first.driver), b = boundPrivateDatabase(second.driver);
+  const entered = deferred<void>(), release = deferred<void>(); let captured!: AbortSignal, other!: AbortSignal;
+  assert.equal(databaseOperationSignal(), undefined);
+  const running = a.client.transactionWithPreCommitCheck(async () => {
+    captured = databaseOperationSignal()!; assert.equal(captured.aborted, false); entered.resolve(); await release.promise;
+    assert.equal(databaseOperationSignal(), captured);
+  }, () => { assert.equal(databaseOperationSignal(), captured); assert.equal(captured.aborted, false); });
+  await entered.promise;
+  await b.client.transaction(async () => { other = databaseOperationSignal()!; assert.notEqual(other, captured); });
+  assert.equal(other.aborted, true); assert.equal(captured.aborted, false); assert.equal(databaseOperationSignal(), undefined);
+  release.resolve(); await running; assert.equal(captured.aborted, true);
+  await a.close(); await b.close();
+});
+
+test("nested operations inherit parent cancellation without issuing a late statement", async () => {
+  const first = fake(), second = fake(), a = boundPrivateDatabase(first.driver), b = boundPrivateDatabase(second.driver);
+  const entered = deferred<void>(), release = deferred<void>(); let child!: AbortSignal;
+  const running = a.client.transaction(async () => b.client.transaction(async tx => {
+    child = databaseOperationSignal()!; entered.resolve(); await release.promise; await tx.query("LATE WRITE");
+  }));
+  const observed = assert.rejects(running, /database_outcome_uncertain/);
+  await entered.promise; await a.close(); assert.equal(child.aborted, true);
+  release.resolve(); await observed; await tick();
+  assert.deepEqual(second.statements, ["BEGIN"]); await b.close();
+});
 
 test("async precommit waits before COMMIT and rejected checks roll back", async () => {
   for (const refuses of [false, true]) {

@@ -1,5 +1,6 @@
 import { parseRollbackCheckpointV1, type AwaitableRollbackCheckpointStoreV1, type RollbackCheckpointV1 } from "../../security/rollback-checkpoint";
 import { stageCompletionCheckpoint } from "./staged-checkpoint";
+import { databaseOperationSignal } from "../../persistence/operation-signal";
 
 /** Reuses the synchronous stage's scope/CAS/batch checks. External reads are lazy,
  * under the caller's SQL integrity lock; external writes run only in awaited flush.
@@ -9,10 +10,13 @@ export function stageAsyncCompletionCheckpoint(store: AwaitableRollbackCheckpoin
   const scope = `completion-gate:${tenantId}`, read = store.read.bind(store), advance = store.advance.bind(store);
   const pending: { expected: string; next: RollbackCheckpointV1 }[] = [];
   let closed = false, operations = 0, stage: Promise<ReturnType<typeof stageCompletionCheckpoint>> | undefined;
+  let signal: AbortSignal | undefined;
   const fail = (): never => { throw new Error("review_checkpoint_unavailable"); };
-  const requireOpen = () => { if (closed) fail(); };
+  const requireActive = () => { if (signal?.aborted) fail(); };
+  const requireOpen = () => { requireActive(); if (closed) fail(); };
   const load = () => stage ??= (async () => {
-    const value = await read(scope); requireOpen();
+    signal = databaseOperationSignal(); requireActive();
+    const value = await read(scope, signal); requireOpen();
     const snapshot = value === undefined ? undefined : parseRollbackCheckpointV1(value);
     if (snapshot && snapshot.scope !== scope) return fail();
     return stageCompletionCheckpoint({ read: () => snapshot, initialize: fail,
@@ -45,7 +49,9 @@ export function stageAsyncCompletionCheckpoint(store: AwaitableRollbackCheckpoin
       (await stage).flush();
       for (const item of pending) {
         await assertCurrent();
-        await advance(item.expected, { ...item.next });
+        requireActive();
+        await advance(item.expected, { ...item.next }, signal);
+        requireActive();
         await assertCurrent();
       }
     } catch { fail(); }

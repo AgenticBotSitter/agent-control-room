@@ -27,9 +27,9 @@ export interface RollbackCheckpointStoreV1 {
  * certify durability or relax the independent-storage requirement above. Historical
  * exact in-memory simulation bindings continue to use the synchronous port. */
 export interface AwaitableRollbackCheckpointStoreV1 {
-  read(scope: string): RollbackCheckpointV1 | undefined | Promise<RollbackCheckpointV1 | undefined>;
-  initialize(checkpoint: RollbackCheckpointV1): void | Promise<void>;
-  advance(expectedCheckpointDigest: string, checkpoint: RollbackCheckpointV1): void | Promise<void>;
+  read(scope: string, signal?: AbortSignal): RollbackCheckpointV1 | undefined | Promise<RollbackCheckpointV1 | undefined>;
+  initialize(checkpoint: RollbackCheckpointV1, signal?: AbortSignal): void | Promise<void>;
+  advance(expectedCheckpointDigest: string, checkpoint: RollbackCheckpointV1, signal?: AbortSignal): void | Promise<void>;
 }
 
 export function parseRollbackCheckpointV1(value: unknown): RollbackCheckpointV1 {

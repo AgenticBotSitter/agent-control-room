@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest cancellation integration — E68:** [Checkpoint cancellation](research/REUSE_E68_CHECKPOINT_CANCELLATION.md)
+uses Node async context to carry the bounded database signal into checkpoint reads,
+initialization and staged writes. Tests prove timeout fences a late first reply
+before any second CAS or SQL commit, while concurrent operations remain isolated.
+120 focused/regression checks, TypeScript, lint, VPS build, all 41 compiled checks
+and four queue/schema journeys pass. Real storage transport, durability and restore
+acceptance remain open.
+
 **Latest checkpoint path — E67:** [Asynchronous integration](research/REUSE_E67_ASYNC_CHECKPOINT_PATH.md)
 connects awaited checkpoint reads/writes to Completion Gate and active result/review
 configuration, reusing the existing staging checks. New tests prove delayed storage,
