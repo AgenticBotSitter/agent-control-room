@@ -8,6 +8,10 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E58 shared review](research/REUSE_E58_SHARED_OWNER_REVIEW.md) uses one verified
+human-readable projection for protected website preparation and the local issuer.
+This connects review semantics, not a live signer or a new credential channel.
+
 [E57 paired issuer](research/REUSE_E57_PAIRED_OWNER_ISSUER.md) joins the evaluated
 signing adapter to complete canonical packets, tested through existing storage. It
 does not implement real consent, key custody or request delivery; runtime wiring waits

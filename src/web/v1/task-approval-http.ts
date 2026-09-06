@@ -6,6 +6,7 @@ import { approvalDigestSchema, taskApprovalReadSchema, taskApprovalReviewSchema,
 import type { TaskApprovalOperation } from "./task-coordinator-lifecycle";
 import type { WebTaskService } from "./task-service";
 import { sha256Digest } from "../../security";
+import { describeNativeOwnerReview } from "../../harness/v1/native-owner-review";
 
 const draftSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("prepare"), expectedInputDigest: approvalDigestSchema }).strict(),
@@ -39,10 +40,8 @@ export async function taskApprovalHttp(request: Request, identity: VerifiedWebId
       || p.start.nodeId !== p.request.nodeId || p.start.nodeId !== p.enrollment.nodeId
       || p.start.operationDigest !== p.request.operationDigest || p.request.approval
       || p.startsWork !== false || p.grantsExecutionAuthority !== false) throw new Error("approval_scope_mismatch");
-    const value = taskApprovalReviewSchema.parse({ projectId, jobId, inputDigest, attemptId: p.start.attemptId, nodeId: p.start.nodeId,
-      prompt: p.start.prompt, instructions: p.start.instructions, model: p.enrollment.model, provider: p.enrollment.provider,
-      durationSeconds: p.request.estimatedDurationSeconds, deadline: new Date(p.start.deadline).toISOString(),
-      operationDigest: p.request.operationDigest, signatureStatus: "unsigned", startsWork: false, grantsExecutionAuthority: false });
+    const value = taskApprovalReviewSchema.parse(describeNativeOwnerReview(p));
+    if (value.inputDigest !== inputDigest) throw new Error("approval_scope_mismatch");
     return Response.json(value, { headers: privateResponseHeaders });
   }
   const receipt = await operation.store(identity, projectId, jobId, inputDigest, draft.data.packet, request.signal);

@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local integration — E58:** [Shared owner review](research/REUSE_E58_SHARED_OWNER_REVIEW.md)
+unifies protected website review and signer review using verified task binding. The
+issuer exposes immutable human-readable details and binds them into its consent digest.
+18 storage/HTTP checks, nine package diagnostics, TypeScript, lint, production build and
+35 compiled regressions pass. Real request delivery, consent and custody remain open;
+no new endpoint, live signer or browser-interaction acceptance is claimed.
+
 **Latest local implementation — E57:** [Paired approval issuer](research/REUSE_E57_PAIRED_OWNER_ISSUER.md)
 joins canonical approval/recovery material with the bounded signer and releases only
 a complete verified packet. Actual-package and canonical storage checks pass: 22 tests,

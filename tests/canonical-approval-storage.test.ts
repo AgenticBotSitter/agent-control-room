@@ -7,6 +7,7 @@ import type { DatabaseClient } from "../src/persistence/database";
 import { canonicalApprovalStorageFixture as fixture } from "./helpers/canonical-approval-storage";
 import { prepareNativeOwnerApprovalMaterial } from "../src/harness/v1/native-owner-approval-material";
 import { createNativeOwnerApprovalIssuer } from "../src/harness/v1/native-owner-approval-issuer";
+import { describeNativeOwnerReview } from "../src/harness/v1/native-owner-review";
 
 test("paired owner issuer releases only complete verified packets and never retries partial issuance", async t => {
   const f = await fixture(); t.after(f.close);
@@ -28,6 +29,8 @@ test("paired owner issuer releases only complete verified packets and never retr
         if (mode === "corrupt") return new Uint8Array(64);
         return Buffer.from(f.sign(JSON.parse(Buffer.from(bytes).toString())).signature, "base64url");
       } });
+    assert.deepEqual(issuer.review, describeNativeOwnerReview(input));
+    assert.equal(Object.isFrozen(issuer.review), true);
     if (mode === "valid") assert.equal((await f.save(await issuer.issue(new AbortController().signal))).startsWork, false);
     else await assert.rejects(issuer.issue(new AbortController().signal), /owner_approval_issuance_uncertain/);
     const before = calls;
@@ -77,6 +80,13 @@ test("unsigned owner material uses existing signatures and exact intake without 
     recoveryExpiresAt: f.prepared.start.deadline + 120_000,
     approvalNonce: "synthetic-owner-material", recoveryNonce: "synthetic-recovery-material" };
   const before = structuredClone(input), material = prepareNativeOwnerApprovalMaterial(input);
+  const review = describeNativeOwnerReview(input);
+  assert.equal(review.prompt, f.prepared.start.prompt);
+  assert.equal(review.inputDigest, f.prepared.inputDigest);
+  assert.equal(Object.isFrozen(review), true);
+  for (const field of ["credentialRef", "canonicalDestination", "enrollment", "request", "body", "qualificationDigest"])
+    assert.equal(field in review, false);
+  assert.throws(() => describeNativeOwnerReview({ ...input, start: { ...input.start, prompt: "substituted task" } }));
   assert.deepEqual(input, before); assert.equal(material.signatureStatus, "unsigned");
   assert.equal(material.startsWork, false); assert.equal(material.grantsExecutionAuthority, false);
   assert.equal("signature" in material.approval, false);

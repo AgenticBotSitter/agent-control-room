@@ -2,6 +2,7 @@ import { canonicalJson, sha256Digest } from "../../security";
 import { verifyArtifactSignature } from "../../node-policy/v1/crypto";
 import { prepareNativeOwnerApprovalMaterial } from "./native-owner-approval-material";
 import { nativeTaskApprovalPacketSchema } from "./native-approval-packet";
+import { describeNativeOwnerReview } from "./native-owner-review";
 
 /** Trusted local composition only. Supplied consent guard is not implemented here;
  * it must bind actual owner consent/current pins to reviewDigest, not a request flag.
@@ -15,13 +16,14 @@ export function createNativeOwnerApprovalIssuer(
     sign: (bytes: Uint8Array, signal: AbortSignal) => Promise<Uint8Array>;
   },
 ) {
-  const material = prepareNativeOwnerApprovalMaterial(input), reviewDigest = sha256Digest(material);
+  const material = prepareNativeOwnerApprovalMaterial(input), review = describeNativeOwnerReview(input);
+  const reviewDigest = sha256Digest({ review, material });
   const key = dependencies.publicKeySpki, clock = dependencies.clock;
   const consent = dependencies.assertOwnerConsentCurrent, sign = dependencies.sign;
   const timeoutMs = dependencies.timeoutMs;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) throw new Error("owner_approval_issuer_invalid");
   let attempted = false, highWater = material.recovery.issuedAt;
-  return Object.freeze({ reviewDigest, async issue(signal: AbortSignal) {
+  return Object.freeze({ review, reviewDigest, async issue(signal: AbortSignal) {
     const unavailable = () => new Error("owner_approval_issuance_uncertain");
     if (attempted) throw unavailable(); attempted = true;
     const controller = new AbortController(), stop = () => controller.abort();
