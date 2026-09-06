@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E40 schema inspection](research/REUSE_E40_SCHEMA_INSPECTION.md) adds a read-only strict
+wrapper around upstream schema detection, covering swallowed probe failures and
+cancellation without granting operational roles more access. Physical PostgreSQL
+rehearsal and caller integration remain separate, unaccepted work.
+
 [E39 installed composition](research/REUSE_E39_INSTALLED_QUEUE_COMPOSITION.md) removes
 test-only package constructor wiring from the complete host journeys. Compiled helper and
 adapter plus installed pg-boss pass all three journeys; 35 compiled regressions pass.

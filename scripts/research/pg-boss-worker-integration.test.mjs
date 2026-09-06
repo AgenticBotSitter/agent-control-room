@@ -24,6 +24,7 @@ import { taskStartupFixture } from '../../tests/helpers/task-startup.ts';
 import { request as webRequest } from '../../tests/helpers/web-foundation.ts';
 import { createTaskSubmissionBrowserClient } from '../../src/web/v1/task-submission-browser-client.ts';
 import { createInstalledNativeQueueFactories } from '../../src/web/v1/installed-native-queue.ts';
+import { inspectInstalledNativeQueueSchema } from '../../src/persistence/pg-boss-schema-inspection.ts';
 
 const root = process.env.CR_REUSE_EVAL_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
 assert.ok(isAbsolute(root), 'Package root must be absolute');
@@ -34,6 +35,38 @@ const hostFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/taskBootstrap.js')).createPrivateTaskBootstrap : createPrivateTaskBootstrap;
 const installedFactories = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/nativeQueueFactories.js')).createInstalledNativeQueueFactories : createInstalledNativeQueueFactories;
+
+test('upstream schema inspection requires completed probes and an unchanged managed schema', async t => {
+  const f = await fixture(t);
+  const db = { query: (sql, values) => f.raw.query(sql, values) };
+  assert.deepEqual(await inspectInstalledNativeQueueSchema(db, currentSignal()), {
+    packageVersion: '12.30.0', schemaVersion: 40, inspected: true, repairsPerformed: false,
+  });
+  for (const marker of ['pg_get_functiondef', 'SELECT command FROM', 'FROM pg_enum',
+    'FROM pg_attribute', 'SELECT c.relname AS "table"\n', 'pg_get_constraintdef']) {
+    let failed = 0;
+    await assert.rejects(inspectInstalledNativeQueueSchema({ query: (sql, values) => {
+      if (sql.includes(marker)) { failed++; throw new Error('synthetic unavailable probe'); }
+      return db.query(sql, values);
+    } }, currentSignal()), /schema_inspection_failed/);
+    assert.equal(failed, 1, marker);
+  }
+  const cancelled = new AbortController(); cancelled.abort();
+  await assert.rejects(inspectInstalledNativeQueueSchema({ query: () => {
+    assert.fail('already cancelled inspection must not query');
+  } }, cancelled.signal), /schema_inspection_failed/);
+  const interrupted = new AbortController();
+  await assert.rejects(inspectInstalledNativeQueueSchema({ query: async (sql, values) => {
+    const result = await db.query(sql, values);
+    if (sql.includes('pg_get_functiondef')) interrupted.abort();
+    return result;
+  } }, interrupted.signal), /schema_inspection_failed/);
+  await f.raw.exec(`CREATE INDEX synthetic_extra_queue_index ON ${spec.schema}.job_common (priority)`);
+  await assert.rejects(inspectInstalledNativeQueueSchema(db, currentSignal()), /schema_inspection_failed/);
+  await f.raw.exec(`DROP INDEX ${spec.schema}.synthetic_extra_queue_index; DROP INDEX ${spec.schema}.job_common_i11`);
+  await assert.rejects(inspectInstalledNativeQueueSchema(db, currentSignal()), /schema_inspection_failed/);
+  assert.equal(await f.boss.schemaVersion(), 40);
+});
 
 for (const mode of ['online', 'offline recovery', 'lost browser response']) test(`fresh HTTP task traverses actual six-role host to signed result and pending review: ${mode}`, { timeout: 30000 }, async t => {
   const offline = mode === 'offline recovery';

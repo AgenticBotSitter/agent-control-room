@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E40:** [Schema inspection](research/REUSE_E40_SCHEMA_INSPECTION.md)
+reuses the installed upstream detector but refuses acceptance after any failed probe,
+drift, pending index build or extra index. Focused actual-package checks, TypeScript
+and lint pass. All 67 queue integration checks pass; physical PostgreSQL acceptance
+and rehearsal wiring remain open. No role expansion, automatic repair or activation.
+
 **Latest local implementation — E39:** [Installed queue composition](research/REUSE_E39_INSTALLED_QUEUE_COMPOSITION.md)
 adds an inert setup helper and compiled server entry using the locked package. All three
 compiled complete task journeys and 35 compiled regressions pass. Node packaging preserves
