@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Public preparation first pass:** [Export findings](PUBLIC_EXPORT_INVENTORY_FIRST_PASS.md)
+identify fixture/project coupling in the homepage, workspace and routes; simply copying
+the old public packages will not yield a runnable app. A [project brief draft](PUBLIC_PROJECT_BRIEF_DRAFT.md)
+states the intended experience and honest pre-alpha limits without private project names.
+Both remain local, unapproved for publication. Exhaustive path classification and the
+protected-app build dependency map are next; no runtime behavior changed.
+
 **Owner-requested public-build pivot:** [Open-source transition plan](OPEN_SOURCE_TRANSITION_PLAN.md)
 preserves the private baseline and proposes a separately reviewed public community tree,
 then one shared development upstream with private configuration/project data downstream.
