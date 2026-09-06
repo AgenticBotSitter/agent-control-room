@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Standalone contributor type-check added:** `pnpm check:vps` checks protected routes,
+middleware, all ten build entry points and imported source without generated preview
+declarations. Five profile tests pass, including automatic entry/route coverage checks;
+standalone and full-repository TypeScript plus targeted lint pass. Existing full check
+and test commands remain intact. This is prepared-checkout evidence, not clean-export
+or live acceptance. See [setup inputs](PUBLIC_RUNTIME_AND_TEST_INPUTS.md).
+
 **Full local regression refreshed:** At `e03f1c9`, stage-zero passed and `pnpm test`
 exited successfully: 3,129 passed, two existing skips, zero failures/cancellations
 (773 + 1,875 + 481 passes across the three suites). Local log:

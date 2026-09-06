@@ -106,6 +106,7 @@
     "ops:backup:dry-run": "node --import tsx scripts/operations-backup-dry-run.ts --json",
     "ops:retention:dry-run": "node --import tsx scripts/operations-retention-cleanup-dry-run.ts --json",
     "check": "tsc --noEmit",
+    "check:vps": "tsc --project tsconfig.vps.json",
     "db:verify": "tsx scripts/verify-migrations.ts",
     "domain:generate": "tsx scripts/generate-domain-schema.ts",
     "protocol:generate": "tsx scripts/generate-node-protocol-schema.ts",

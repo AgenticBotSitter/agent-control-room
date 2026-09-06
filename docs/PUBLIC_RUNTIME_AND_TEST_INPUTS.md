@@ -49,12 +49,15 @@ Before publishing contributor setup:
    registry or absolute maintainer checkout paths.
 2. Include the selected tests' transitive helpers, SQL and fixtures, not just application
    imports. Do not delete regression coverage simply because it needs another helper.
-3. Adapt the check scope deliberately: root tsconfig currently includes historical source
-   and tests outside the proposed slice. Keep application coverage intact.
-4. Separate preview-specific checks: `tests/vps-build-profile.test.ts` still checks the
-   original hosting metadata/preview configuration as well as the standalone build.
-   Those preview assertions belong in private-preview verification, not a public test
-   that forces contributors to recreate excluded hosting files.
+3. Use the new supplemental `pnpm check:vps` for application type checking. Its
+   `tsconfig.vps.json` covers all protected routes, middleware and ten configured build
+   entries plus imported source. It uses installed framework declarations without the
+   generated preview `next-env.d.ts`/`.next` dependency. Root `pnpm check` still checks
+   the full repository unchanged. The contributor candidate must retain or deliberately
+   adapt the inherited root compiler settings, not silently relax strictness.
+4. Keep standalone checks separate from `tests/sites-preview-build-profile.test.ts`.
+   Preview assertions have been moved there and remain in private full-suite verification;
+   public contributors need not recreate excluded hosting metadata for standalone checks.
 5. Supply a documented disposable interactive demo separately. Existing launcher tests
    use in-process injection; they are not a distributable operator configuration template.
 6. Rehearse the actual candidate from a clean checkout before publishing any command as
@@ -70,5 +73,13 @@ The inventory generator now flags the favicon as a required asset with rights pe
 The original inventory snapshot remains historical rather than silently rewritten.
 An opt-in research test verifies current tracked-path coverage, hashes, counts, pending
 reviews and expected generated/dynamic imports. It does not scan for secrets or grant
-publication authority. Next separate the preview-only verification assertions and
-collect the contributor test closure before assembling files.
+publication authority. Preview-only assertions are separated and test closure tracing
+exists; runtime/asset/content review and exact clean-candidate rehearsal remain.
+
+The standalone type-check was exercised in the current prepared checkout: 39 root
+files and 291 non-node_modules source files, including four shared components under
+`app/components/`, with no `.next` source files. A regression test checks every configured
+build entry and discovered protected route remains a compiler root. Both standalone and
+full-repository type checking pass. This is not yet proof that a separately exported
+checkout installs, builds or runs; JavaScript behavior remains covered by runtime tests,
+not a new claim of `checkJs` coverage.

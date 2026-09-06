@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import path from "node:path";
+import ts from "typescript";
 import { loadConfigFromFile } from "vite";
 import { selectBuildTarget } from "../src/config/build-target.ts";
 
@@ -37,4 +39,34 @@ test("standalone build selects a configuration without private hosting dependenc
   assert.equal(loaded.config.publicDir, false);
   assert.equal(loaded.dependencies.some(path => /hosting\.json|sites-vite-plugin/.test(path)), false);
   assert.equal(loaded.config.define?.["process.env.CONTROL_ROOM_BUILD_TARGET"], '"vps-node"');
+});
+
+test("standalone type checking covers every build entry and routes without generated preview declarations", async () => {
+  const parsed = ts.getParsedCommandLineOfConfigFile("tsconfig.vps.json", {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: diagnostic => assert.fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")),
+  });
+  assert.ok(parsed);
+  assert.deepEqual(parsed.errors, []);
+  assert.equal(parsed.options.strict, true);
+  assert.equal(parsed.options.noEmit, true);
+  assert.equal(parsed.options.incremental, false);
+  const loaded = await loadConfigFromFile({ command: "build", mode: "production" }, "vite.vps.config.ts");
+  assert.ok(loaded);
+  const inputs = loaded.config.environments?.rsc?.build?.rollupOptions?.input;
+  assert.ok(inputs && typeof inputs === "object" && !Array.isArray(inputs));
+  const roots = new Set(parsed.fileNames.map(file => path.relative(process.cwd(), file)));
+  for (const entry of Object.values(inputs)) assert.ok(roots.has(entry), `Missing build entry: ${entry}`);
+  for (const route of ts.sys.readDirectory("private-app", [".ts", ".tsx"])) {
+    assert.ok(roots.has(route), `Missing framework route: ${route}`);
+  }
+  assert.ok(roots.has("middleware.ts"));
+  const program = ts.createProgram(parsed.fileNames, parsed.options);
+  const sources = new Set(program.getSourceFiles().map(file => path.relative(process.cwd(), file.fileName)));
+  assert.ok(sources.has("app/components/project-catalog.tsx"));
+  assert.ok(sources.has("src/web/v1/private-process.ts"));
+  assert.equal(sources.has("next-env.d.ts"), false);
+  assert.equal(sources.has("app/page.tsx"), false);
+  assert.equal(sources.has("vite.config.ts"), false);
+  assert.equal([...sources].some(file => file.startsWith(".next/")), false);
 });
