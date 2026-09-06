@@ -4,6 +4,12 @@ Date: 2026-09-06. Local source baseline: `7dc025d8b65324c5a3e3be651bb5b279fed00d
 
 ## Status and scope
 
+**Current implementation override (E52):** [Current completion handoff](CURRENT_COMPLETION_HANDOFF.md)
+reconciles the baseline inventory below with E01–E51. pg-boss is now installed and
+protected synthetic task delivery is implemented; references below to undecided queue
+adoption or disconnected dispatch describe the earlier baseline. Live owner signing,
+executable host configuration and real-agent acceptance remain critical-path work.
+
 Owner approved preparing this plan after the read-only repository assessment, then approved local reuse integrations and continuing until sensible reusable pieces are integrated. Public GitHub research and needed logged downloads are allowed; pushes, PRs, merges and Actions remain paused. This document does not authorize native/provider attempts, credentials, standing services or deployment. Previous narrowly scoped live qualifications are not reusable permission.
 
 This is the current assessment sequence, not an accepted replacement architecture. Preserve prior acceptance evidence. Candidates below began as source research; E01 has since tested an isolated pg-boss package against PGlite, without adoption. Current-branch sources were readable unevenly; immutable revisions and complete dependency licenses must be captured before import. Three bounded independent research reviews informed this plan; their findings do not constitute live acceptance or final security approval.

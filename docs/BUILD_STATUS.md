@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Current critical path — E52:** [Completion handoff](CURRENT_COMPLETION_HANDOFF.md)
+reconciles actual implementation against remaining owner outcomes. Next substantive
+work is owner-signing integration and complete executable host configuration, alongside
+browser acceptance when the owner unlocks the Mac. The node-frame signer is not owner
+approval. This is an evidence-based handoff, not new runtime acceptance or deployment authority.
+
 **Latest local implementation — E51:** [Project save recovery](research/REUSE_E51_PROJECT_SAVE_RECOVERY.md)
 adds an explicit original-save retry that survives routine data refreshes without
 changing request identity. Other project writes stay paused until resolution; current
