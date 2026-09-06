@@ -78,6 +78,12 @@ checks, bounded preparation, late-resource cleanup and producer-before-pool shut
 38 package checks and 28 lifecycle/startup checks pass. Production has no default
 factory; worker bootstrap, schema/version and real-PG evidence remain unfinished.
 
+**E15 — upstream version gate:** [Evidence](research/REUSE_E15_QUEUE_VERSION_AND_DRIFT.md)
+proves producer and worker reject old/future/missing versions without migration or
+pickup, reusing pg-boss startup rather than adding a checker. 41 package checks pass.
+Upstream drift diagnostics detect a missing index but can skip failed probes; full
+schema acceptance remains open. Continue worker identity/startup and real-PG acceptance.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

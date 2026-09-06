@@ -276,6 +276,17 @@ test('explicit startup prepares actual producer after database gates and closes 
   });
 });
 
+test('upstream producer version check refuses incompatible versions without migrating', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  for (const sql of ['UPDATE control_room_queue.version SET version=39', 'UPDATE control_room_queue.version SET version=41', 'DELETE FROM control_room_queue.version']) {
+    await f.raw.exec(sql);
+    const before = await f.raw.query('SELECT * FROM control_room_queue.version');
+    await assert.rejects(preparePgBossNativeTaskSubmission(PgBoss, f.db, { backend: 'pglite' }), /native_task_submission_unavailable/);
+    assert.deepEqual((await f.raw.query('SELECT * FROM control_room_queue.version')).rows, before.rows);
+    assert.equal(await count(f, 'control_native_task_queue'), 0);
+  }
+});
+
 test('coordinator role can submit with exact queue grants; private web role remains excluded', { timeout: 30000 }, async t => {
   const f = await fixture(t); await f.save();
   await f.raw.exec(await readFile('db/roles/task_coordinator_roles.sql', 'utf8'));

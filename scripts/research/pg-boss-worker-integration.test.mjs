@@ -88,6 +88,44 @@ test('actual owned runtime picks up continuously then closes only its worker SQL
   assert.deepEqual(f.errors, []);
 });
 
+test('upstream version gate rejects old, future and missing versions without pickup or migration', { timeout: 20000 }, async t => {
+  const f = await fixture(t); const id = await f.send(81);
+  await f.raw.exec(await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8'));
+  for (const sql of ['UPDATE control_room_queue.version SET version=39', 'UPDATE control_room_queue.version SET version=41', 'DELETE FROM control_room_queue.version']) {
+    await f.raw.exec(sql); let closed = 0, delivered = 0;
+    const before = await f.raw.query('SELECT * FROM control_room_queue.version');
+    const query = (sql, values) => f.raw.transaction(async tx => {
+      await tx.exec('SET LOCAL ROLE control_room_native_queue_worker');
+      return values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] };
+    });
+    await assert.rejects(startPgBossNativeTaskRuntime(PgBoss, { query, async close() { closed++; } }, {
+      backend: 'pglite', async deliver() { delivered++; return { disposition: 'held' }; },
+    }), /native_task_runtime_start_failed/);
+    assert.equal(closed, 1); assert.equal(delivered, 0);
+    assert.deepEqual((await f.raw.query('SELECT * FROM control_room_queue.version')).rows, before.rows);
+    assert.equal((await f.get(id)).state, 'created');
+  }
+});
+
+test('upstream drift API detects a missing managed index but can skip an unavailable function probe', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  assert.equal((await f.boss.detectSchemaDrift()).ok, true);
+  let skipped = 0;
+  const inspection = new PgBoss({ db: { async executeSql(sql, values) {
+    if (sql.includes('pg_get_functiondef')) { skipped++; throw new Error('synthetic catalog probe unavailable'); }
+    return values?.length ? f.raw.query(sql, values) : (await f.raw.exec(sql)).at(-1) ?? { rows: [] };
+  } }, schema: spec.schema, backend: 'pglite', migrate: false, createSchema: false,
+    schedule: false, supervise: false, useListenNotify: false });
+  inspection.on('error', () => {}); f.workers.push({ close: () => inspection.stop({ graceful: false }) });
+  await inspection.start();
+  assert.equal((await inspection.detectSchemaDrift()).ok, true);
+  assert.equal(skipped, 1, 'ok does not certify every probe ran');
+  await f.raw.exec('DROP INDEX control_room_queue.job_common_i11');
+  const report = await f.boss.detectSchemaDrift();
+  assert.equal(report.ok, false); assert.ok(report.missing.some(index => index.name === 'job_common_i11'));
+  assert.equal(await f.boss.schemaVersion(), 40, 'version equality is not a full integrity check');
+});
+
 test('actual worker role distinguishes pickup/completion privileges from failure privileges', { timeout: 20000 }, async t => {
   const f = await fixture(t), errors = [];
   await f.raw.exec(`CREATE ROLE cr_reuse_worker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;

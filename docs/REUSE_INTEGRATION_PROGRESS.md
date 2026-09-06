@@ -106,6 +106,12 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E15 version/drift evaluation](research/REUSE_E15_QUEUE_VERSION_AND_DRIFT.md) proves
+upstream startup version rejection through both adapters. Reuse it; no new custom
+version checker needed. Drift diagnostics can skip failed probes, so an ok report is
+not full schema acceptance. 41 combined package checks pass. Worker identity/bootstrap,
+complete schema validation and real PostgreSQL acceptance remain next.
+
 [E14 producer startup](research/REUSE_E14_PRODUCER_STARTUP.md) now permits explicit
 queue-enabled composition only with approvals and a trusted supplied producer factory.
 Database checks precede preparation; drain/stop/pool cleanup and late preparation are

@@ -323,3 +323,9 @@ the repository, downloads, installation, PostgreSQL service or GitHub publicatio
 Existing E01 package and repository dependencies only. In-memory fixtures and late
 synthetic resources cleaned after tests. No download, installation, native service,
 credential operation or new retained temporary directory.
+
+### E15 — upstream version/drift evaluation (no acquisition)
+
+Read retained E01 package source and used existing PGlite. All version/index changes
+were confined to disposable in-memory fixtures, closed after tests. No downloads,
+native database/server, additional retained directory or external mutation.
