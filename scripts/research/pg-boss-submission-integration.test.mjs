@@ -8,6 +8,8 @@ import { canonicalApprovalStorageFixture } from '../../tests/helpers/canonical-a
 import { preparePgBossNativeTaskSubmission, nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
 import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
+import { createTaskCoordinatorLifecycle } from '../../src/web/v1/task-coordinator-lifecycle.ts';
+import { enrollment } from '../../tests/hermes-native-fixture.ts';
 import { nativeEnvelopeSession } from '../../tests/helpers/native-envelope-session.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -16,7 +18,8 @@ assert.ok(root && isAbsolute(root), 'Explicit existing acquisition root required
 const packageRoot = join(root, 'node_modules/pg-boss');
 assert.equal(JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')).version, spec.packageVersion);
 const { PgBoss } = await import(pathToFileURL(join(packageRoot, 'dist/index.js')).href);
-const enqueue = (f, coordinator = f.c) => coordinator.enqueueNativeTask(...f.args, sha256Digest(f.packet), f.abort.signal);
+const enqueue = (f, coordinator) => coordinator ? coordinator.enqueueNativeTask(...f.args, sha256Digest(f.packet), f.abort.signal)
+  : f.owner.submission.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal);
 const count = async (f, table) => (await f.db.query(`SELECT * FROM ${table}`)).rows.length;
 const audit = async f => (await f.db.query("SELECT * FROM audit_events WHERE action='native.task.queued'")).rows.length;
 const reference = (f, receipt) => ({ schema: 'control-room.native-task-submission/v1', tenantId: f.scope.tenantId,
@@ -25,7 +28,7 @@ const reference = (f, receipt) => ({ schema: 'control-room.native-task-submissio
 
 async function fixture(t) {
   const f = await canonicalApprovalStorageFixture();
-  let submission;
+  let submission, owner;
   const instances = [];
   const errors = [];
   const workers = [];
@@ -36,12 +39,16 @@ async function fixture(t) {
   admin.on('error', error => errors.push(error));
   t.after(async () => {
     await Promise.allSettled(workers.map(worker => worker.close()));
+    if (owner) await owner.close();
     if (submission) await submission.close(); await admin.stop({ graceful: false }); await f.close();
   });
   await admin.start(); await admin.createQueue(spec.name, { retryLimit: 0 });
   class ObservedPgBoss extends PgBoss { constructor(options) { super(options); instances.push(this); } }
   submission = await preparePgBossNativeTaskSubmission(ObservedPgBoss, f.db, { backend: 'pglite' });
-  return { ...f, admin, submission, client: instances[0], errors, c: f.create(f.db, submission),
+  owner = createTaskCoordinatorLifecycle({ scope: f.scope, planning: f.plannerConfig, routes: [f.route],
+    database: { client: f.db, isAvailable: () => true, close: async () => {} }, clock: f.clock,
+    approvals: { enrollments: [{ enrollment, nodeClass: 'personal-compute' }], store: f.store }, nativeSubmission: submission });
+  return { ...f, admin, submission, owner, client: instances[0], errors, c: f.create(f.db, submission),
     async startWorker(deliver) {
       // Distinct logical worker SQL port over the same PGlite database. This tests
       // composition ownership, not real PostgreSQL role/pool isolation.

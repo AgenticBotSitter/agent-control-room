@@ -1,4 +1,5 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import type { NativeTaskSubmission } from "../../persistence/native-task-submission";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment } from "./task-assignment-coordinator";
@@ -22,6 +23,10 @@ export type TaskCoordinatorConfiguration = {
   scope: { tenantId: string; workspaceId: string };
   planning: ConstructorParameters<typeof TaskExecutionPlanner>[2]; routes: readonly TaskAssignmentRoute[];
   approvals?: { enrollments: readonly NativeApprovalEnrollment[]; store: NativeApprovalPacketStore };
+  /** Trusted, already prepared submission port. Bootstrap retains its lifecycle;
+   * close it after coordinator drain and before closing its underlying resources.
+   * Never derived from an HTTP request or enabled implicitly by approval storage. */
+  nativeSubmission?: NativeTaskSubmission;
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
@@ -51,6 +56,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.approvals && (!Array.isArray(input.approvals.enrollments)
     || typeof input.approvals.store?.acceptInSession !== "function" || typeof input.approvals.store?.readInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
+  if (input.nativeSubmission && (!input.approvals || typeof input.nativeSubmission.enqueueInSession !== "function"))
+    throw new Error("task_coordinator_config_invalid");
+  const nativeSubmission = input.nativeSubmission ? Object.freeze({
+    enqueueInSession: input.nativeSubmission.enqueueInSession.bind(input.nativeSubmission),
+  }) : undefined;
   const capture = (resource: TaskCoordinatorDatabase) => {
     if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
       || [resource.client?.query, resource.client?.transaction, resource.client?.transactionWithPreCommitCheck].some(fn => typeof fn !== "function"))
@@ -111,7 +121,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
-    input.approvals?.enrollments, input.approvals?.store);
+    input.approvals?.enrollments, input.approvals?.store, nativeSubmission);
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
@@ -168,6 +178,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return run(() => assignment.storeNativeApproval(identity, projectId, jobId, digest, snapshot, signal));
     },
   }) : undefined;
+  const submission = nativeSubmission ? Object.freeze({ ...scope,
+    enqueue: (...args: Parameters<TaskAssignmentCoordinator["enqueueNativeTask"]>) => {
+      const [identity, projectId, jobId, inputDigest, packetDigest, signal] = args;
+      const actor = { ...identity };
+      return run(() => assignment.enqueueNativeTask(actor, projectId, jobId, inputDigest, packetDigest, signal));
+    },
+  }) : undefined;
   const quality: TaskQualityOperation | undefined = qualityCoordinator ? Object.freeze({ ...scope,
     sweep: (input, signal) => {
       const snapshot = taskQualitySweepRequestSchema.parse(input);
@@ -193,6 +210,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
+    ...(submission ? { submission } : {}),
     ...(revisions ? { revisions } : {}),
     ...(results ? { results } : {}),
     ...(ownedEvidence ? { evidence: ownedEvidence } : {}),

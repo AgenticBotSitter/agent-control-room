@@ -60,6 +60,12 @@ actual-package/PGlite checks pass. Canonical fixtures now include existing appli
 role hardening and restricted worker SQL. Real-PG, identity/pool checks and application
 startup/cutover remain open; no live services or downloads.
 
+**E12 — coordinator submission:** [Evidence](research/REUSE_E12_COORDINATOR_SUBMISSION.md)
+connects the optional prepared submission port to owned coordinator admission and
+transaction/drain fences. The private app exposes it only to trusted server composition.
+20 package checks and 28 lifecycle/startup checks pass. No browser route or production
+startup activation; queue-schema/grant preflight and bootstrap ownership remain next.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

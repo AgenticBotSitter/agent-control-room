@@ -7,8 +7,38 @@ import { createPrivateTaskApplication } from "../src/web/v1/private-task-applica
 import { taskAssignmentFixture } from "./helpers/task-assignment";
 import { instant } from "./hermes-native-fixture";
 import { origin, request } from "./helpers/web-foundation";
+import { canonicalApprovalStorageFixture } from "./helpers/canonical-approval-storage";
+import { enrollment } from "./hermes-native-fixture";
+import { sha256Digest } from "../src/security";
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
+
+test("trusted submission is opt-in, snapshots its port and drains before pool close", async t => {
+  const f = await canonicalApprovalStorageFixture(); t.after(f.close); await f.save();
+  const entered = deferred(), release = deferred(); let closes = 0, calls = 0;
+  const nativeSubmission = { async enqueueInSession() { calls++; entered.resolve(); await release.promise; } };
+  const owner = createTaskCoordinatorLifecycle({ scope: f.scope, planning: f.plannerConfig, routes: [f.route],
+    database: { client: f.db, close: async () => { closes++; }, isAvailable: () => true }, clock: f.clock,
+    approvals: { enrollments: [{ enrollment, nodeClass: "personal-compute" }], store: f.store }, nativeSubmission });
+  nativeSubmission.enqueueInSession = async () => { throw new Error("mutated port"); };
+  const pending = owner.submission!.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal);
+  await entered.promise; const closing = owner.close(); assert.equal(closes, 0);
+  await assert.rejects(owner.submission!.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal), /unavailable/);
+  release.resolve(); assert.equal((await pending).replayed, false); await closing;
+  assert.equal(calls, 1); assert.equal(closes, 1);
+});
+
+test("submission failure rolls back canonical intent through the owned lifecycle", async t => {
+  const f = await canonicalApprovalStorageFixture(); t.after(f.close); await f.save();
+  const owner = createTaskCoordinatorLifecycle({ scope: f.scope, planning: f.plannerConfig, routes: [f.route],
+    database: { client: f.db, close: async () => {}, isAvailable: () => true }, clock: f.clock,
+    approvals: { enrollments: [{ enrollment, nodeClass: "personal-compute" }], store: f.store },
+    nativeSubmission: { async enqueueInSession() { throw new Error("synthetic submission failure"); } } });
+  t.after(() => owner.close());
+  await assert.rejects(owner.submission!.enqueue(...f.args, sha256Digest(f.packet), f.abort.signal));
+  assert.equal((await f.db.query("SELECT * FROM control_native_task_queue")).rows.length, 0);
+  assert.equal((await f.db.query("SELECT * FROM audit_events WHERE action='native.task.queued'")).rows.length, 0);
+});
 async function fixture() {
   const f = await taskAssignmentFixture(); let closes = 0, available = true;
   const database = { client: f.db, close: async () => { closes++; available = false; }, isAvailable: () => available };
@@ -119,6 +149,7 @@ test("shutdown across precommit or lost commit acknowledgement never invents a s
 test("configuration failure retains caller ownership and unavailable pools refuse admission", async t => {
   const f = await fixture(); t.after(f.close);
   for (const patch of [{ maxActive: 0 }, { maxActive: 9 }, { drainMs: 30_001 }, { closeMs: 5001 }, { routes: [f.route, f.route] },
+    { nativeSubmission: { async enqueueInSession() {} } },
     { planning: { ...f.plannerConfig, integrityKey: new Uint8Array(2) } }])
     assert.throws(() => createTaskCoordinatorLifecycle({ ...f.config, ...patch }));
   assert.equal(f.closes(), 0);

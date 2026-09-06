@@ -305,3 +305,9 @@ Fixtures/processes closed, no downloads or installation, retained sources unchan
 Reused retained E01 package and repository dependencies. 32 combined package checks
 passed on in-memory PGlite; fixtures closed on completion. No new download, service,
 installation or retained temporary data. Acquisition paths remain unchanged.
+
+### E12 — coordinator integration (no acquisition)
+
+Used the retained E01 package and existing dependencies for 20 package checks and 28
+lifecycle/startup checks. In-memory fixtures closed; no download, installation, live
+service or additional cleanup target.

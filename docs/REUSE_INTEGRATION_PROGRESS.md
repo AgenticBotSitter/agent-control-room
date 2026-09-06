@@ -106,6 +106,12 @@ block. New source has local tests/review only; do not relabel it deployed/live a
 
 ## Next useful work
 
+[E12 coordinator submission](research/REUSE_E12_COORDINATOR_SUBMISSION.md) wires the
+prepared port through owned admission/transaction/drain checks. Default actual-package
+submission tests now use that lifecycle (20 pass); lifecycle/startup suites pass 28.
+The private app factory exposes this server-side operation without mounting an HTTP
+route. Production startup configuration and permission/schema composition remain open.
+
 [E11 permission preflight](research/REUSE_E11_PG_BOSS_PERMISSION_PREFLIGHT.md) now
 rejects missing/excess effective worker privileges before package startup. 43 unit
 and 32 package checks pass. This closes the component permission-check gap, not the
