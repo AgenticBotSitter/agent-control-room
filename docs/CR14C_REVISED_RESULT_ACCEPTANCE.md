@@ -86,6 +86,8 @@ installation, listener, service, production database or deployment was performed
 PR #333 head `8fa77f9` passed every GitHub job including the aggregate gate in run
 `34009139614`. This branch still requires its own current-head CI and dependency-order
 integration. No merge is claimed.
+Published as [PR #334](https://github.com/MarvinAi5/control-room/pull/334), targeting
+the PR #333 branch. Current-head CI remains pending verification.
 
 ## Remaining continuous-work integration
 

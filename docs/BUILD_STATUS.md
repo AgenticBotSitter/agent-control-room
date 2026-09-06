@@ -2280,6 +2280,8 @@ dependency-order integration remain required.
 
 Prerequisite PR #333 head `8fa77f9` passed all checks and the aggregate gate in GitHub
 run `34009139614`. No merge, physical PostgreSQL rehearsal or deployment is claimed.
+Published as [PR #334](https://github.com/MarvinAi5/control-room/pull/334), stacked on
+PR #333. Its current-head CI remains required; this stack is not merged.
 
 ## Next block
 
