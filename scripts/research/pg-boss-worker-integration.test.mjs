@@ -1,5 +1,5 @@
 // Opt-in actual-package worker evaluation. Synthetic callbacks only; no native agent,
-// PostgreSQL server, provider, listener or application startup is invoked.
+// PostgreSQL server, provider or listener is invoked. Host composition uses supplied disposable SQL ports.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -18,12 +18,54 @@ import { qualityText } from '../../tests/helpers/native-quality-completion.ts';
 import { WebSessionAuthority } from '../../src/web/v1/session-authority.ts';
 import { nativeTaskSubmissionId, PG_BOSS_NATIVE_SUBMISSION as spec } from '../../src/persistence/pg-boss-native-task-submission.ts';
 import { sha256Digest } from '../../src/security/index.ts';
+import { managedStartupFixture, restrictedPool } from '../../tests/helpers/managed-startup.ts';
+import { createPrivateTaskBootstrap } from '../../src/web/v1/private-task-startup.ts';
 
 const root = process.env.CR_REUSE_EVAL_ROOT;
 assert.ok(root && isAbsolute(root), 'Explicit existing E01 acquisition root required');
 const packageRoot = join(root, 'node_modules/pg-boss');
 assert.equal(JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')).version, spec.packageVersion);
 const { PgBoss } = await import(pathToFileURL(join(packageRoot, 'dist/index.js')).href);
+const hostFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
+  ? (await import('../../dist-vps/server/taskBootstrap.js')).createPrivateTaskBootstrap : createPrivateTaskBootstrap;
+
+test('actual six-role host starts queue worker with managed sessions and owns shutdown', { timeout: 30000 }, async t => {
+  const f = await managedStartupFixture();
+  let admin, host;
+  t.after(async () => { try { if (host) await host.close(); }
+    finally { try { if (admin) await admin.stop({ graceful: false }); } finally { await f.x.close(); } } });
+  admin = new PgBoss({ db: { async executeSql(sql, values) {
+    return values?.length ? f.startup.raw.query(sql, values) : (await f.startup.raw.exec(sql)).at(-1) ?? { rows: [] };
+  } }, schema: spec.schema, backend: 'pglite', schedule: false, supervise: false, useListenNotify: false });
+  const errors = []; admin.on('error', error => errors.push(error));
+  await admin.start(); await admin.createQueue(spec.name, { retryLimit: 0 });
+  for (const name of ['native_queue_producer_roles.sql', 'native_queue_recovery_roles.sql', 'native_queue_worker_roles.sql'])
+    await f.startup.raw.exec(await readFile(`db/roles/${name}`, 'utf8'));
+  await f.startup.raw.exec(`CREATE ROLE worker_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+    GRANT control_room_native_queue_worker TO worker_test`);
+  const workerPool = restrictedPool(f.startup, 'worker_test');
+  const workerDatabase = { ...f.config.coordinator.database, username: 'worker_test' };
+  let workerRuntime, installed = 0;
+  const bootstrap = hostFactory({ clock: f.x.f.clock, openDatabase: f.openDatabase,
+    install: () => { assert.equal(workerRuntime.status().accepting, true); installed++; },
+    prepareNativeSubmission: db => preparePgBossNativeTaskSubmission(PgBoss, db, { backend: 'pglite', recovery: true }),
+    startNativeWorker: async config => {
+      assert.deepEqual(config.application.loginNames, ['web_test', 'coordinator_test', 'result_test', 'evidence_test', 'session_test']);
+      assert.equal(typeof config.verifyRecovery, 'function');
+      workerRuntime = await createNativeQueueWorkerBootstrap({ PgBoss, backend: 'pglite', openDatabase: () => workerPool }).start(config);
+      return { status: workerRuntime.status, close: async () => {
+        for (const pool of [f.startup.web, f.startup.coordinator, f.result, f.evidence, f.sessions]) assert.equal(pool.closes(), 0);
+        await workerRuntime.close();
+      } };
+    } });
+  host = await bootstrap.start({ ...f.config, coordinator: { ...f.config.coordinator,
+    nativeQueue: true, nativeQueueRecovery: true, queueWorker: { database: workerDatabase } } });
+  assert.equal(installed, 1); assert.equal(host.isReady(), true);
+  assert.equal(typeof host.connections.attach, 'function'); assert.equal(typeof host.queueRecovery.recover, 'function');
+  await host.close(); await host.close(); assert.equal(host.isReady(), false);
+  for (const pool of [workerPool, f.startup.web, f.startup.coordinator, f.result, f.evidence, f.sessions]) assert.equal(pool.closes(), 1);
+  assert.deepEqual(errors, []);
+});
 const reference = number => {
   const ids = { tenantId: 'tenant:synthetic-worker', jobId: `job:${number}`, attemptId: `attempt:${number}` };
   return { schema: 'control-room.native-task-submission/v1', ...ids, projectId: 'project:synthetic-worker',

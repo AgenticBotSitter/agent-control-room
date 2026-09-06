@@ -8,6 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local acceptance — E34:** [Actual six-role startup](research/REUSE_E34_ACTUAL_SIX_ROLE_STARTUP.md)
+passes with actual queue/worker preparation under both source and compiled task bootstrap;
+27 existing managed-startup tests pass after fixture extraction. This is idle startup and
+shutdown, not fresh-task full-host delivery. That journey and browser interaction are next.
+
 **Latest local acceptance — E33:** [Compiled queue acceptance](research/REUSE_E33_COMPILED_QUEUE_ACCEPTANCE.md)
 passes eight actual-package scenarios through compiled task startup and all 35 compiled
 application regressions. No physical listener or live provider/database. The full configured

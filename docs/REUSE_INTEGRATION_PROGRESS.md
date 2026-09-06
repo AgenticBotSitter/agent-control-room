@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E34 six-role actual startup](research/REUSE_E34_ACTUAL_SIX_ROLE_STARTUP.md) combines
+real package/schema/worker registration with managed sessions and all restricted application
+logins. Source and compiled variants pass; 27 prior startup checks pass. Queue is empty:
+fresh delivery through this whole composition remains the next acceptance gap.
+
 [E33 compiled acceptance](research/REUSE_E33_COMPILED_QUEUE_ACCEPTANCE.md) runs eight
 actual-package scenarios against the built bootstrap and passes all 35 compiled app
 regressions. Source adapter injection and PGlite limits remain explicit; no deployment.
