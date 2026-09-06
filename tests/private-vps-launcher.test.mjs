@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtemp, writeFile, chmod, symlink, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parsePrivateVpsArguments, validatePrivateVpsConfigurationPath } from '../scripts/run-private-vps.mjs';
+import { parsePrivateVpsArguments, requirePrivateVpsMode, validatePrivateVpsConfigurationPath } from '../scripts/run-private-vps.mjs';
 
 test('launcher requires exact explicit absolute configuration or help', () => {
   assert.deepEqual(parsePrivateVpsArguments(['--help']), { help: true });
@@ -15,6 +15,26 @@ test('launcher requires exact explicit absolute configuration or help', () => {
     ['--help', '--start'], ['--configuration', '/x.mjs', '--force'], ['--configuration', '/x\n.mjs']]) {
     assert.throws(() => parsePrivateVpsArguments(args), /private_vps_arguments_invalid/);
   }
+});
+
+test('operator mode cannot silently enable workers or accept an incomplete agent setup', () => {
+  const website = { mode: 'website-only', configuration: { coordinator: {} } };
+  assert.equal(requirePrivateVpsMode(website), 'website-only');
+  assert.throws(() => requirePrivateVpsMode({ configuration: website.configuration }));
+  for (const field of ['nativeQueue', 'queueWorker', 'nativeHttp']) {
+    assert.throws(() => requirePrivateVpsMode({ ...website, configuration: { coordinator: { [field]: true } } }));
+  }
+  assert.throws(() => requirePrivateVpsMode({ ...website, nativeHttps: {} }));
+  const coordinator = { nativeQueue: true, nativeQueueRecovery: true, revisionPlanning: true,
+    queueWorker: {}, nativeHttp: {}, approvals: {}, quality: {}, resultDatabase: {}, evidence: {}, sessions: {} };
+  const agent = { mode: 'agent-tasks', nativeHttps: {}, configuration: { coordinator } };
+  // Presence is not resource validity; the real bootstrap must still reject these empty objects.
+  assert.equal(requirePrivateVpsMode(agent), 'agent-tasks');
+  for (const field of Object.keys(coordinator)) {
+    const incomplete = { ...coordinator }; delete incomplete[field];
+    assert.throws(() => requirePrivateVpsMode({ ...agent, configuration: { coordinator: incomplete } }), field);
+  }
+  assert.throws(() => requirePrivateVpsMode({ ...agent, nativeHttps: undefined }));
 });
 
 test('actual help and invalid-input commands exit without compiled startup or configuration', () => {

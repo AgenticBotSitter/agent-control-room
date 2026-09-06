@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest readiness correction — E83:** [Explicit launch mode](research/REUSE_E83_EXPLICIT_LAUNCH_MODE.md)
+requires website-only or agent-tasks intent before host creation. Website mode refuses
+worker/native serving; agent mode requires the complete task/result/review configuration.
+Readiness text no longer implies live fleet connectivity. Existing authority/resource
+checks remain mandatory; no actual setup or deployment occurred.
+Six focused launcher checks and all 48 combined compiled/launcher checks pass; targeted
+lint and whitespace checks pass. No rebuild/full default lifecycle rerun claimed.
+
 **Latest full verification — E82:** [Default test coverage](research/REUSE_E82_DEFAULT_VERIFICATION.md)
 registers five previously direct-run test files and the compiled launcher journey in
 standard commands, with inventory guards. Full `pnpm test` exited 0: 3,126 pass, zero

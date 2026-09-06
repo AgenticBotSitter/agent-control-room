@@ -27,13 +27,13 @@ test('launcher runs compiled application/assets and closes through supplied stop
   const code = await runPrivateVps(['--configuration', path], {
     signals, reportError: message => errors.push(message), report(message) {
       messages.push(message);
-      if (message.endsWith('ready.')) queueMicrotask(() => signals.emit('SIGTERM'));
+      if (message.includes('host ready.')) queueMicrotask(() => signals.emit('SIGTERM'));
     },
     async loadOperator(actual) {
       assert.equal(actual, path);
       assert.equal(signals.listenerCount('SIGTERM'), 1);
       return { schema: 'control-room.private-vps-configuration/v1', createConfiguration: async ({ signal }) => {
-        assert.equal(signal.aborted, false); return { configuration: f.config, port: 3210 };
+        assert.equal(signal.aborted, false); return { mode: 'website-only', configuration: f.config, port: 3210 };
       } };
     },
     async loadRelease() { return [{ ...hostModule, createInstalledPrivateTaskHost: () => hostModule.createPrivateTaskHost({
@@ -42,7 +42,7 @@ test('launcher runs compiled application/assets and closes through supplied stop
     }) }, serving, renderer]; },
   });
   assert.equal(code, 0); assert.deepEqual(errors, []);
-  assert.deepEqual(messages, ['Control Room private host ready.', 'Control Room private host closed.']);
+  assert.deepEqual(messages, ['Control Room website-only host ready. Agent execution is disabled.', 'Control Room private host closed.']);
   assert.equal(opens, 2); assert.equal(binds, 1); assert.equal(closes, 1);
   assert.equal(f.web.closes(), 1); assert.equal(f.coordinator.closes(), 1);
   assert.equal(signals.eventNames().length, 0);

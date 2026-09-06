@@ -24,6 +24,9 @@ The trusted executable module exports:
   `port`, and optional `nativeHttps` inputs. See PrivateTaskStartupConfiguration in
   src/web/v1/private-task-startup.ts and NativeHttpsConfiguration in native-https-service.ts.
 
+E83 additionally requires returned `mode: "website-only"` or `mode: "agent-tasks"`;
+see REUSE_E83_EXPLICIT_LAUNCH_MODE.md. No real operator configuration existed to migrate.
+
 Its role is to assemble reviewed configuration and already-qualified resources. It
 must honor cancellation and must not start listeners/workers, provision databases,
 perform deployment or acquire resources requiring separate cleanup. Static import

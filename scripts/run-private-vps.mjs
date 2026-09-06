@@ -34,6 +34,26 @@ const installedRuntime = Object.freeze({
   ]),
 });
 
+/** Operator intent/completeness check only. Existing bootstrap validates each
+ * actual resource, role, trust pin and authority; this cannot certify them. */
+export function requirePrivateVpsMode(prepared) {
+  const coordinator = prepared?.configuration?.coordinator;
+  if (!coordinator || !['website-only', 'agent-tasks'].includes(prepared.mode)) {
+    throw new Error('private_vps_mode_invalid');
+  }
+  if (prepared.mode === 'website-only') {
+    if (coordinator.nativeQueue || coordinator.queueWorker || coordinator.nativeHttp || prepared.nativeHttps) {
+      throw new Error('private_vps_mode_invalid');
+    }
+  } else if (coordinator.nativeQueue !== true || coordinator.nativeQueueRecovery !== true
+    || coordinator.revisionPlanning !== true || !coordinator.queueWorker || !coordinator.nativeHttp
+    || !coordinator.approvals || !coordinator.quality || !coordinator.resultDatabase
+    || !coordinator.evidence || !coordinator.sessions || !prepared.nativeHttps) {
+    throw new Error('private_vps_mode_invalid');
+  }
+  return prepared.mode;
+}
+
 // Explicit in-process dependency injection supports offline tests. The CLI never
 // accepts runtime factories, import overrides or a test-mode flag from arguments.
 export async function runPrivateVps(args, runtime = installedRuntime) {
@@ -46,6 +66,7 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
   await validatePrivateVpsConfigurationPath(parsed.configurationPath);
   // Fixed paths in this release, not cwd or a request-supplied module search path.
   const [{ createInstalledPrivateTaskHost, startPrivateHostLifecycle }, serving, renderer] = await runtime.loadRelease();
+  let mode;
   const lifecycle = startPrivateHostLifecycle({ signals: runtime.signals, async start(signal) {
     const active = () => { if (signal.aborted) throw new Error('private_vps_start_canceled'); };
     active();
@@ -55,6 +76,7 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
       || typeof operator.createConfiguration !== 'function') throw new Error('private_vps_configuration_invalid');
     const prepared = await operator.createConfiguration({ signal });
     active();
+    mode = requirePrivateVpsMode(prepared);
     const assets = await serving.loadPrivateClientAssets(fileURLToPath(new URL('../dist-vps/client', import.meta.url)));
     active();
     return createInstalledPrivateTaskHost().start({
@@ -64,7 +86,9 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
   } });
   try {
     await lifecycle.ready;
-    runtime.report('Control Room private host ready.');
+    runtime.report(mode === 'website-only'
+      ? 'Control Room website-only host ready. Agent execution is disabled.'
+      : 'Control Room agent-task host ready. Live-agent connectivity still requires verification.');
   } catch {
     await lifecycle.stop();
     runtime.reportError('Control Room startup failed; cleanup may require operator attention.');
