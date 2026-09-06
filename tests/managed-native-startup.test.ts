@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import type { TLSSocket } from "node:tls";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
@@ -16,6 +17,41 @@ import { taskStartupFixture } from "./helpers/task-startup";
 type QualityFixture = Awaited<ReturnType<typeof nativeQualityCompletionFixture>>;
 type EvidenceSettings = NonNullable<PrivateTaskStartupConfiguration["coordinator"]["evidence"]>;
 type SessionSettings = NonNullable<PrivateTaskStartupConfiguration["coordinator"]["sessions"]>;
+
+test("verified startup mounts separate machine HTTP settings before preflight and preserves its current generation on unknown peers or tokens", async t => {
+  const f = await managedStartupFixture(); t.after(f.x.close);
+  const raw = Buffer.from("synthetic connector certificate");
+  const certificateDigest = `sha256:${createHash("sha256").update(raw).digest("hex")}`;
+  let current = true;
+  const nativeHttp = { origin: "https://machine.example.test", peers: [{ nodeId: f.x.registration.nodeId, certificateDigest,
+    task: { projectId: f.x.registration.projectId, jobId: f.x.registration.jobId,
+      attemptId: f.x.registration.attemptId, inputDigest: f.x.registration.nativeTask!.inputDigest } }],
+  isPeerCurrent: () => current };
+  const starting = createPrivateTaskBootstrap({ clock: f.x.f.clock, openDatabase: f.openDatabase, install: () => {} })
+    .start({ ...f.config, coordinator: { ...f.config.coordinator, nativeHttp } });
+  nativeHttp.origin = "https://mutated.example.test"; nativeHttp.peers[0].nodeId = "node:mutated";
+  nativeHttp.peers[0].task.jobId = "job:mutated"; nativeHttp.isPeerCurrent = () => { throw new Error("mutated peer callback"); };
+  const runtime = await starting; t.after(runtime.close); assert.ok(runtime.nativeHttp);
+  assert.equal(typeof runtime.nativeHttp.handleNode, "function"); assert.equal(runtime.isReady(), true);
+  const socket = { encrypted: true, authorized: true, destroyed: false, getPeerCertificate: () => ({ raw }) } as unknown as TLSSocket;
+  const request = (value: unknown) => {
+    const body = JSON.stringify(value);
+    return new Request("https://machine.example.test/v1/control-room/native", { method: "POST", body,
+      headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) } });
+  };
+  const opened = await runtime.nativeHttp.handle(request({ schema: "control-room.native-http/v1", operation: "open", mode: "initial" }), socket);
+  assert.equal(opened.status, 200);
+  const { connection } = await opened.json();
+  const exchange = { schema: "control-room.native-http/v1", operation: "exchange", connection, packet: null };
+  const unknown = { ...socket, getPeerCertificate: () => ({ raw: Buffer.from("unknown certificate") }) } as unknown as TLSSocket;
+  assert.equal((await runtime.nativeHttp.handle(request(exchange), unknown)).status, 503);
+  assert.equal((await runtime.nativeHttp.handle(request({ ...exchange, connection: "connection:http:00000000-0000-4000-8000-000000000000" }), socket)).status, 503);
+  assert.equal((await runtime.nativeHttp.handle(request(exchange), socket)).status, 200);
+  current = false; assert.equal((await runtime.nativeHttp.handle(request(exchange), socket)).status, 503);
+  await runtime.close(); assert.equal(runtime.isReady(), false);
+  assert.equal(f.sessions.closes(), 1); assert.equal(f.evidence.closes(), 1);
+  assert.equal(f.result.closes(), 1); assert.equal(f.startup.coordinator.closes(), 1); assert.equal(f.startup.web.closes(), 1);
+});
 
 function qualityConfiguration(x: QualityFixture): TaskQualityConfiguration {
   return {
