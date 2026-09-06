@@ -76,6 +76,33 @@ test("recovery no-op does not consume audit budget or create another intent", as
   await assert.rejects(f.coordinator.recoverNeverStagedQueueDelivery(f.ref, f.abort.signal));
 });
 
+test("recovered pickup requires the exact current recovery sequence and current owner authority", async t => {
+  const f = await fixture(); t.after(f.close);
+  const coordinator = f.create(f.db, { enqueueInSession: async () => {}, recoverUnsentInSession: async () => true });
+  await assert.rejects(coordinator.verifyRecoveredQueueDelivery(f.ref, 1, f.abort.signal));
+  for (const ordinal of [1, 2]) {
+    await coordinator.recoverNeverStagedQueueDelivery(f.ref, f.abort.signal);
+    await coordinator.verifyRecoveredQueueDelivery(f.ref, ordinal, f.abort.signal);
+    for (const wrong of [0, ordinal + 1, 4, 0.5, NaN]) await assert.rejects(coordinator.verifyRecoveredQueueDelivery(f.ref, wrong, f.abort.signal));
+  }
+  await assert.rejects(coordinator.verifyRecoveredQueueDelivery(f.ref, 1, f.abort.signal));
+  for (const patch of [{ actor_id: "identity:other" }, { target_id: "job:other" }, { id: "audit:other" },
+    { safe_metadata: { ordinal: 2, packetDigest: sha256Digest("other packet") } }]) {
+    const db: DatabaseClient = { ...f.db, transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work({
+      async query<T>(sql: string, values?: unknown[]) {
+        const result = await tx.query<T>(sql, values);
+        if (sql.startsWith("SELECT id,actor_id,target_id,safe_metadata FROM audit_events")) result.rows = result.rows.map(row => ({ ...row, ...patch }));
+        return result;
+      },
+    }), check) };
+    const corrupted = f.create(db, { enqueueInSession: async () => {}, recoverUnsentInSession: async () => true });
+    await assert.rejects(corrupted.verifyRecoveredQueueDelivery(f.ref, 2, f.abort.signal));
+  }
+  await f.db.query("UPDATE control_role_grants SET revoked_at=created_at");
+  await assert.rejects(coordinator.verifyRecoveredQueueDelivery(f.ref, 2, f.abort.signal));
+  assert.equal((await f.db.query("SELECT * FROM audit_events WHERE action='native.queue.unsent_recovered'")).rows.length, 2);
+});
+
 for (const failure of ["expiry", "abort", "throw", "revoked"] as const) test(`recovery ${failure} preserves operational and audit rollback`, async t => {
   const f = await fixture(); t.after(f.close); let calls = 0;
   await f.db.query("CREATE TABLE synthetic_unsent_recovery(id int)");

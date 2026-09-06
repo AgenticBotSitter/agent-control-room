@@ -40,6 +40,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     ...(tasks.queueDelivery ? { queueDelivery: tasks.queueDelivery } : {}),
     // Server-side bootstrap only; never passed to the browser request router.
     ...(tasks.submission ? { submission: tasks.submission } : {}),
+    ...(tasks.queueRecovery ? { queueRecovery: tasks.queueRecovery } : {}),
     ...(tasks.quality ? { quality: tasks.quality } : {}),
     ...(tasks.revisions ? { revisions: tasks.revisions } : {}),
     ...(tasks.results ? { results: tasks.results } : {}),

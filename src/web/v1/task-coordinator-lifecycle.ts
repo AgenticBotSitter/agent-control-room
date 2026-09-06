@@ -1,5 +1,5 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
-import type { NativeTaskSubmission } from "../../persistence/native-task-submission";
+import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmission } from "../../persistence/native-task-submission";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment } from "./task-assignment-coordinator";
@@ -56,10 +56,12 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.approvals && (!Array.isArray(input.approvals.enrollments)
     || typeof input.approvals.store?.acceptInSession !== "function" || typeof input.approvals.store?.readInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
-  if (input.nativeSubmission && (!input.approvals || typeof input.nativeSubmission.enqueueInSession !== "function"))
+  if (input.nativeSubmission && (!input.approvals || typeof input.nativeSubmission.enqueueInSession !== "function"
+    || input.nativeSubmission.recoverUnsentInSession !== undefined && typeof input.nativeSubmission.recoverUnsentInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
   const nativeSubmission = input.nativeSubmission ? Object.freeze({
     enqueueInSession: input.nativeSubmission.enqueueInSession.bind(input.nativeSubmission),
+    ...(input.nativeSubmission.recoverUnsentInSession ? { recoverUnsentInSession: input.nativeSubmission.recoverUnsentInSession.bind(input.nativeSubmission) } : {}),
   }) : undefined;
   const closeSubmission = input.nativeSubmission?.close?.bind(input.nativeSubmission);
   const capture = (resource: TaskCoordinatorDatabase) => {
@@ -188,6 +190,16 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return run(() => assignment.enqueueNativeTask(actor, projectId, jobId, inputDigest, packetDigest, signal));
     },
   }) : undefined;
+  const queueRecovery = nativeSubmission?.recoverUnsentInSession ? Object.freeze({ ...scope,
+    verify: (value: Parameters<TaskAssignmentCoordinator["verifyRecoveredQueueDelivery"]>[0], ordinal: number, signal: AbortSignal) => {
+      const ref = nativeTaskSubmissionReferenceSchema.parse(value);
+      return run(() => assignment.verifyRecoveredQueueDelivery(ref, ordinal, signal));
+    },
+    recover: (value: Parameters<TaskAssignmentCoordinator["recoverNeverStagedQueueDelivery"]>[0], signal: AbortSignal) => {
+      const ref = nativeTaskSubmissionReferenceSchema.parse(value);
+      return run(() => assignment.recoverNeverStagedQueueDelivery(ref, signal));
+    },
+  }) : undefined;
   const quality: TaskQualityOperation | undefined = qualityCoordinator ? Object.freeze({ ...scope,
     sweep: (input, signal) => {
       const snapshot = taskQualitySweepRequestSchema.parse(input);
@@ -219,6 +231,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return { disposition: "delivered" as const };
     } } : {}),
     ...(submission ? { submission } : {}),
+    ...(queueRecovery ? { queueRecovery } : {}),
     ...(revisions ? { revisions } : {}),
     ...(results ? { results } : {}),
     ...(ownedEvidence ? { evidence: ownedEvidence } : {}),

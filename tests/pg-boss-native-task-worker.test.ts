@@ -38,6 +38,23 @@ test("uses upstream single-item workers with bounded concurrency; snapshots trus
   await assert.rejects(f.invoke([f.job()]), /native_task_delivery_unresolved/); assert.equal(delivered, 1);
 });
 
+for (const mode of ["verified", "denied", "aborted", "over-limit"] as const) test(`recovered pickup requires a captured canonical verifier: ${mode}`, async () => {
+  const f = fixture(), abort = new AbortController(); let verified = 0, delivered = 0;
+  const input = { async verifyRecovery(ref: NativeTaskSubmissionReference, ordinal: number) {
+    verified++; assert.deepEqual(ref, reference()); assert.equal(ordinal, 1);
+    if (mode === "denied") throw new Error("synthetic missing canonical audit");
+    if (mode === "aborted") abort.abort();
+  }, async deliver() { delivered++; return { disposition: "delivered" as const }; } };
+  const worker = await startPgBossNativeTaskWorker(f.client, input);
+  input.verifyRecovery = async () => { throw new Error("mutated verifier"); };
+  const work = () => f.invoke([{ ...f.job(), retryCount: mode === "over-limit" ? 4 : 1, signal: abort.signal }]);
+  if (mode === "verified") assert.deepEqual(await work(), { disposition: "delivered" });
+  else await assert.rejects(work(), /native_task_delivery_unresolved/);
+  assert.equal(verified, mode === "over-limit" ? 0 : 1);
+  assert.equal(delivered, mode === "verified" ? 1 : 0);
+  await worker.close();
+});
+
 test("refuses malformed, mismatched, automatically retried or rerouted entries before delivery", async t => {
   for (const patch of [{ retryLimit: 2 }, { retryCount: 1 }, { deadLetter: "other" }, { policy: "singleton" },
     { state: "created" }, { id: "00000000-0000-8000-8000-000000000000" }, { name: "wrong" },

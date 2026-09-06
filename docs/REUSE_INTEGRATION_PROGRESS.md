@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E26](research/REUSE_E26_RECOVERED_PICKUP.md) connects lifecycle-owned recovery and
+canonical audit verification to optional worker admission. The actual package test
+now reaches pending review from an offline first pickup after explicit recovery on
+reconnect. 53 package and 71 related checks pass. Automatic triggering is still open.
+
 [E25 recovery permissions](research/REUSE_E25_RECOVERY_PERMISSIONS.md) verifies the
 offline coordinator column-grant candidate and opt-in full database profile with actual
 canonical recovery under a restricted LOGIN. 53 package and 39 startup checks pass.

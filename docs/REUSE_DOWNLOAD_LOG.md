@@ -388,3 +388,9 @@ native process, credential access, deployment or external publication.
 Existing E01 package and repository dependencies only. Column grants and temporary
 LOGIN identities exist only inside closed in-memory fixtures. No downloaded files,
 new retained directory, production database changes or external publication.
+
+### E26 — owned recovery and verified pickup (no acquisition)
+
+Existing repository dependencies and retained E01 package only. Synthetic transports
+and in-memory fixtures closed after tests. No acquisition, credentials, native service,
+provider call, deployment or external publication.

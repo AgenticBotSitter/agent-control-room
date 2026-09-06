@@ -198,13 +198,7 @@ export class TaskAssignmentCoordinator {
       const verified = await this.approvalStore!.revalidateInSession(tx, prepared, ref.packetDigest, signal);
       // Canonical tenant/job/attempt locks are retained through commit. A missing
       // receipt alone is not proof of non-execution: even an envelope is too late.
-      const evidence = await tx.query<{ present: boolean }>(`SELECT
-        EXISTS(SELECT 1 FROM control_native_delivery_envelopes WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
-        OR EXISTS(SELECT 1 FROM control_native_transmission_intents WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
-        OR EXISTS(SELECT 1 FROM control_native_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
-        OR EXISTS(SELECT 1 FROM control_harness_runs WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
-        AS present`, [ref.tenantId, ref.jobId, ref.attemptId]);
-      if (evidence.rows.length !== 1 || evidence.rows[0].present !== false) conflict();
+      await this.requireNeverStaged(tx, ref);
       const prior = await tx.query<{ count: string | number }>(`SELECT count(*) AS count FROM audit_events
         WHERE tenant_id=$1 AND action='native.queue.unsent_recovered' AND correlation_id=$2`, [ref.tenantId, ref.queueId]);
       const count = Number(prior.rows[0]?.count);
@@ -221,6 +215,38 @@ export class TaskAssignmentCoordinator {
         if (signal.aborted) conflict(); verified.assertFresh();
       } };
     }, ref);
+  }
+  /** Verify recovered pickup against the canonical recovery sequence, not queue
+   * retry metadata alone. Does not stage, transmit, recover or create an audit. */
+  async verifyRecoveredQueueDelivery(input: NativeTaskSubmissionReference, ordinal: number, signal: AbortSignal): Promise<void> {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission?.recoverUnsentInSession || !this.approvalStore || ref.tenantId !== this.scope.tenantId
+      || !Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > MAX_NATIVE_UNSENT_RECOVERIES
+      || !(signal instanceof AbortSignal) || signal.aborted) conflict();
+    return this.withNativeApproval(undefined, ref.projectId, ref.jobId, ref.inputDigest, async (tx, prepared, actorId) => {
+      if (prepared.request.attemptId !== ref.attemptId) conflict();
+      const verified = await this.approvalStore!.revalidateInSession(tx, prepared, ref.packetDigest, signal);
+      await this.requireNeverStaged(tx, ref);
+      const records = (await tx.query<{ id: string; actor_id: string; target_id: string; safe_metadata: { ordinal?: number; packetDigest?: string } }>(
+        `SELECT id,actor_id,target_id,safe_metadata FROM audit_events
+         WHERE tenant_id=$1 AND action='native.queue.unsent_recovered' AND correlation_id=$2`, [ref.tenantId, ref.queueId])).rows;
+      if (records.length !== ordinal) conflict();
+      for (let i = 1; i <= ordinal; i++) {
+        const row = records.find(row => row.id === `audit:queue-recovery:${ref.queueId}:${i}`);
+        if (!row || row.actor_id !== actorId || row.target_id !== ref.jobId
+          || row.safe_metadata?.ordinal !== i || row.safe_metadata.packetDigest !== ref.packetDigest) conflict();
+      }
+      return { value: undefined, assertFresh: () => { if (signal.aborted) conflict(); verified.assertFresh(); } };
+    }, ref);
+  }
+  private async requireNeverStaged(tx: DatabaseSession, ref: NativeTaskSubmissionReference) {
+    const evidence = await tx.query<{ present: boolean }>(`SELECT
+      EXISTS(SELECT 1 FROM control_native_delivery_envelopes WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
+      OR EXISTS(SELECT 1 FROM control_native_transmission_intents WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
+      OR EXISTS(SELECT 1 FROM control_native_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
+      OR EXISTS(SELECT 1 FROM control_harness_runs WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
+      AS present`, [ref.tenantId, ref.jobId, ref.attemptId]);
+    if (evidence.rows.length !== 1 || evidence.rows[0].present !== false) conflict();
   }
   async stageApprovedQueueDelivery(input: NativeTaskSubmissionReference, session: ServerNodeSession, signal: AbortSignal) {
     const ref = nativeTaskSubmissionReferenceSchema.parse(input);

@@ -150,6 +150,13 @@ queue access; excess/missing permissions are rejected. 53 package and 39 startup
 pass. Normal startup does not select this profile. Lifecycle recovery exposure,
 audit-bound pickup and authenticated reconnect triggering remain next.
 
+**E26 — recovered pickup to review:** [Evidence](research/REUSE_E26_RECOVERED_PICKUP.md)
+adds owned server-only recovery/verification and opt-in audit-bound worker admission.
+Actual offline work reaches pending review after reconnect plus an explicit recovery
+call, with one signed dispatch. 53 package and 71 related checks pass. Automatic
+reconnect triggering and recovery startup configuration remain unmounted; native
+execution is simulated and production is not activated.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

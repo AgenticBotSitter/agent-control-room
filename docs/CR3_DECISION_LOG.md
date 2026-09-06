@@ -6114,5 +6114,7 @@ restore, custom reset SQL, new attempt or general automatic retry allowance.
 The adapter is explicitly opt-in and current producer grants do not authorize recovery
 UPDATE. Production worker metadata admission, exact permissions, authenticated reconnect
 triggering and end-to-end acceptance must be completed together before activation.
-Current workers still reject retryCount greater than zero. This decision authorizes the
-local canonical gate and adapter, not a claim that reconnect recovery already operates.
+Default workers still reject retryCount greater than zero. E26 adds explicit opt-in
+admission only through the current canonical recovery verifier, exact audit sequence
+and repeated never-staged/approval checks. This is not a claim that an authenticated
+reconnect automatically triggers recovery; that startup/event integration remains open.

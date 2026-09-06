@@ -1,7 +1,7 @@
 import type { DatabaseSession } from "./database";
 import { verifyPgBossNativeWorkerPermissions } from "./pg-boss-native-task-permissions";
 import { PG_BOSS_NATIVE_SUBMISSION as spec } from "./pg-boss-native-task-submission";
-import { startPgBossNativeTaskWorker, type NativeTaskDeliveryHandler, type PgBossNativeWorkerClient } from "./pg-boss-native-task-worker";
+import { startPgBossNativeTaskWorker, type NativeTaskDeliveryHandler, type NativeTaskRecoveryVerifier, type PgBossNativeWorkerClient } from "./pg-boss-native-task-worker";
 
 interface RuntimeClient extends PgBossNativeWorkerClient {
   start(): Promise<unknown>;
@@ -31,7 +31,7 @@ const error = (message: string) => {
  */
 export async function startPgBossNativeTaskRuntime(
   PgBoss: PgBossNativeRuntimeConstructor, database: PgBossNativeRuntimeDatabase,
-  input: { deliver: NativeTaskDeliveryHandler; concurrency?: number; backend?: "postgres" | "pglite";
+  input: { deliver: NativeTaskDeliveryHandler; verifyRecovery?: NativeTaskRecoveryVerifier; concurrency?: number; backend?: "postgres" | "pglite";
     operationTimeoutMs?: number },
 ) {
   const concurrency = input.concurrency ?? 1, timeout = input.operationTimeoutMs ?? 5000;
@@ -39,10 +39,12 @@ export async function startPgBossNativeTaskRuntime(
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8
     || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 5000
     || !["postgres", "pglite"].includes(backend) || typeof input.deliver !== "function"
+    || input.verifyRecovery !== undefined && typeof input.verifyRecovery !== "function"
     || typeof database.query !== "function" || typeof database.close !== "function")
     throw error("native_task_runtime_config_invalid");
   // Ownership transfers after validation; capture methods before any asynchronous work.
   const deliver = input.deliver.bind(input), query = database.query.bind(database), closeDatabase = database.close.bind(database);
+  const verifyRecovery = input.verifyRecovery?.bind(input);
   const admission = new AbortController();
   let state: State = "starting", faulted = false, sqlClosed = false;
   let worker: Awaited<ReturnType<typeof startPgBossNativeTaskWorker>> | undefined;
@@ -87,7 +89,13 @@ export async function startPgBossNativeTaskRuntime(
     captured.on("error", () => { faulted = true; void close().catch(() => {}); });
     await bounded(() => captured.start());
     if (admission.signal.aborted) throw error("native_task_runtime_unavailable");
-    const registration = startPgBossNativeTaskWorker(captured, { concurrency, async deliver(reference, signal) {
+    const registration = startPgBossNativeTaskWorker(captured, { concurrency,
+      ...(verifyRecovery ? { async verifyRecovery(reference, ordinal, signal) {
+        const combined = AbortSignal.any([signal, admission.signal]);
+        if (combined.aborted) throw error("native_task_runtime_unavailable");
+        await verifyRecovery(reference, ordinal, combined);
+        if (combined.aborted) throw error("native_task_runtime_unavailable");
+      } } : {}), async deliver(reference, signal) {
       const combined = AbortSignal.any([signal, admission.signal]);
       if (combined.aborted) throw error("native_task_runtime_unavailable");
       const result = await deliver(reference, combined);

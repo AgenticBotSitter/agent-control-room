@@ -13,6 +13,28 @@ import { sha256Digest } from "../src/security";
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
+test("trusted recovery snapshots its request and port, drains, then refuses retained calls", async t => {
+  const f = await canonicalApprovalStorageFixture(); t.after(f.close); await f.save();
+  const queued = await f.coordinator.enqueueNativeTask(...f.args, sha256Digest(f.packet), f.abort.signal);
+  const ref = { schema: "control-room.native-task-submission/v1" as const, tenantId: f.scope.tenantId,
+    projectId: queued.projectId, jobId: queued.jobId, attemptId: queued.attemptId, queueId: queued.queueId,
+    inputDigest: f.args[3], packetDigest: queued.packetDigest };
+  const entered = deferred(), release = deferred(); let closes = 0, calls = 0;
+  const nativeSubmission = { enqueueInSession: async () => {}, async recoverUnsentInSession() {
+    calls++; entered.resolve(); await release.promise; return true;
+  } };
+  const owner = createTaskCoordinatorLifecycle({ scope: f.scope, planning: f.plannerConfig, routes: [f.route],
+    database: { client: f.db, close: async () => { closes++; }, isAvailable: () => true }, clock: f.clock,
+    approvals: { enrollments: [{ enrollment, nodeClass: "personal-compute" }], store: f.store }, nativeSubmission });
+  nativeSubmission.recoverUnsentInSession = async () => { throw new Error("mutated recovery port"); };
+  const pending = owner.queueRecovery!.recover(ref, f.abort.signal); ref.jobId = "job:mutated";
+  await entered.promise; const closing = owner.close(); assert.equal(closes, 0);
+  await assert.rejects(owner.queueRecovery!.recover(ref, f.abort.signal), /unavailable/);
+  release.resolve(); assert.deepEqual(await pending, { recovered: true, ordinal: 1 }); await closing;
+  await assert.rejects(owner.queueRecovery!.verify(ref, 1, f.abort.signal), /unavailable/);
+  assert.equal(calls, 1); assert.equal(closes, 1);
+});
+
 test("trusted submission is opt-in, snapshots its port and drains before pool close", async t => {
   const f = await canonicalApprovalStorageFixture(); t.after(f.close); await f.save();
   const entered = deferred(), release = deferred(); let closes = 0, calls = 0;

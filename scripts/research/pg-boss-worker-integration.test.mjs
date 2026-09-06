@@ -117,7 +117,7 @@ for (const rollback of [false, true]) test(`public retry plus zero-limit update 
 });
 
 for (const offline of [false, true]) test(offline
-  ? 'actual offline-node pickup preserves unsent intent; reconnect does not silently retry'
+  ? 'actual offline task reaches pending review after reconnect and explicit audited recovery'
   : 'actual queue pickup reaches managed signed receipt and completed result review without a browser identity', { timeout: 30000 }, async t => {
   const x = await managedNativeSessionFixture(undefined, { queue: true });
   let worker, producer, admin;
@@ -130,21 +130,22 @@ for (const offline of [false, true]) test(offline
   const canonical = { query: (sql, values) => x.admin(() => x.f.db.query(sql, values)),
     transaction: work => x.admin(() => x.f.db.transaction(work)),
     transactionWithPreCommitCheck: (work, check) => x.admin(() => x.f.db.transactionWithPreCommitCheck(work, check)) };
-  producer = await preparePgBossNativeTaskSubmission(PgBoss, canonical, { backend: 'pglite' });
+  producer = await preparePgBossNativeTaskSubmission(PgBoss, canonical, { backend: 'pglite', ...(offline ? { recovery: true } : {}) });
+  const coordinator = x.f.create(canonical, producer);
   const workerRole = await readFile(new URL('../../db/roles/native_queue_worker_roles.sql', import.meta.url), 'utf8');
   await x.admin(() => x.f.raw.exec(workerRole));
   const query = (sql, values) => x.f.raw.transaction(async tx => {
     await tx.exec('SET LOCAL SESSION AUTHORIZATION postgres; SET LOCAL ROLE control_room_native_queue_worker');
     return values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] };
   });
-  const c = offline ? undefined : await x.attach(); if (c) await x.handshake(c);
+  let c = offline ? undefined : await x.attach(); if (c) await x.handshake(c);
   let deliveries = 0;
-  worker = await startPgBossNativeTaskRuntime(PgBoss, { query, async close() {} }, { backend: 'pglite', async deliver(ref, signal) {
+  worker = await startPgBossNativeTaskRuntime(PgBoss, { query, async close() {} }, { backend: 'pglite',
+    ...(offline ? { verifyRecovery: coordinator.verifyRecoveredQueueDelivery.bind(coordinator) } : {}), async deliver(ref, signal) {
     deliveries++; const result = await x.manager.deliverApproved(ref, signal);
     if (!result.deliveryConfirmed) throw new Error('synthetic awaiting signed receipt');
     return { disposition: 'delivered' };
   } });
-  const coordinator = x.f.create(canonical, producer);
   await x.admin(() => x.f.save());
   const receipt = await coordinator.enqueueNativeTask(...x.f.args, x.task.packetDigest, currentSignal());
   const ref = { schema: 'control-room.native-task-submission/v1', tenantId: x.f.scope.tenantId,
@@ -162,7 +163,10 @@ for (const offline of [false, true]) test(offline
     assert.equal(connected.peer.outgoing.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch').length, 0);
     assert.equal(deliveries, 1); assert.equal((await admin.getJobById(spec.name, id)).state, 'failed');
     assert.equal((await x.counts()).runs.length, 0); assert.deepEqual(errors, []);
-    return;
+    c = connected;
+    assert.deepEqual(await coordinator.recoverNeverStagedQueueDelivery(ref, currentSignal()), { recovered: true, ordinal: 1 });
+    await until(async () => deliveries === 2 && (await admin.getJobById(spec.name, id))?.state === 'failed');
+    assert.equal((await admin.getJobById(spec.name, id)).retryCount, 1);
   }
   const frames = c.peer.outgoing.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch');
   assert.equal(frames.length, 1);
@@ -189,7 +193,7 @@ for (const offline of [false, true]) test(offline
   // An outstanding receipt is not permission to retry the external start. Later
   // evidence reaches review without rewriting the operational failure as success.
   assert.equal((await admin.getJobById(spec.name, id)).state, 'failed');
-  assert.equal(deliveries, 1); assert.deepEqual(errors, []);
+  assert.equal(deliveries, offline ? 2 : 1); assert.deepEqual(errors, []);
 });
 
 test('actual owned runtime picks up continuously then closes only its worker SQL port', { timeout: 20000 }, async t => {
