@@ -79,7 +79,7 @@ test("connector alone drives signed HTTP dispatch, native execution and exact by
   t.after(async () => { try { await connector.close(); } finally { await x.close(); } });
   await x.f.x.verify();
   const canonical = await x.f.x.states();
-  assert.deepEqual(wire.commands, []); assert.deepEqual(x.f.x.local.calls, []);
+  assert.equal(wire.commands.length, 0); assert.deepEqual(x.f.x.local.calls, []);
   assert.equal((await x.f.x.counts()).runs.length, 0);
   const result = await x.f.x.admin(() => connector.run("initial", currentSignal()));
   assert.deepEqual(result, { disposition: "terminal", state: "completed", cycles: 3 });
