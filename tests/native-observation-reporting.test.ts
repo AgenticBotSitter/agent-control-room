@@ -4,6 +4,7 @@ import { managedNativeSessionFixture, currentSignal } from "./helpers/managed-na
 import { qualityText } from "./helpers/native-quality-completion";
 import { signedNodeFrameSchema } from "../src/node-protocol/v1";
 import type { NativeSessionTransport } from "../src/web/v1/managed-native-sessions";
+import type { NativeObservationReporter } from "../src/harness/hermes-native-v1/observation-reporter";
 
 type Fixture = Awaited<ReturnType<typeof managedNativeSessionFixture>>;
 type Connection = Awaited<ReturnType<Fixture["attach"]>>;
@@ -38,7 +39,8 @@ async function unchangedExecution(x: Fixture) {
 }
 
 /** Same node bridge, delivery journal and native-run journal; only transport and server handle
- * are replaced. Auto-flushed snapshot frames are held until the explicit server recovery succeeds. */
+ * are replaced. From the first auto-flushed snapshot onward, hold the FULL wire suffix until
+ * recovery: routing a later ACK ahead of that snapshot would violate protocol sequence order. */
 async function reconnectSameNode(x: Fixture, old: Connection) {
   const peer = old.peer, journal = peer.journal, runs = x.local.journal;
   if (peer.bridge.status().state !== "backing_off") await peer.bridge.disconnected();
@@ -57,7 +59,7 @@ async function reconnectSameNode(x: Fixture, old: Connection) {
     while (peer.outgoing.length) await peer.acknowledge();
     while (peer.incoming.length) {
       const raw = peer.incoming.shift()!, frame = signedNodeFrameSchema.parse(JSON.parse(raw));
-      if (frame.type === "harness.native.snapshot") pending.push(raw);
+      if (pending.length || frame.type === "harness.native.snapshot") pending.push(raw);
       else await handle.reconcile(raw, currentSignal());
     }
   }
@@ -66,6 +68,22 @@ async function reconnectSameNode(x: Fixture, old: Connection) {
   assert.deepEqual(await handle.recover(x.request, currentSignal()), { recovered: true, grantsExecutionAuthority: false });
   assert.equal(state.sends, sends); assert.equal(peer.journal, journal); assert.equal(x.local.journal, runs);
   return { peer, handle, hello, pending, state };
+}
+
+async function drainRecovered(next: Awaited<ReturnType<typeof reconnectSameNode>>, reporter: Pick<NativeObservationReporter, "readResult">) {
+  const results: Awaited<ReturnType<Connection["handle"]["progress"]>>[] = [];
+  while (next.pending.length) {
+    const raw = next.pending.shift()!, frame = signedNodeFrameSchema.parse(JSON.parse(raw));
+    if (frame.type === "harness.native.snapshot") {
+      const bytes = frame.body.state === "completed" && frame.body.result ? reporter.readResult(frame.body, currentSignal()) : undefined;
+      results.push(await next.handle.progress(raw, bytes, currentSignal())); await next.peer.acknowledge();
+    } else {
+      assert.equal(frame.type, "protocol.ack"); await next.handle.reconcile(raw, currentSignal());
+    }
+    // Frames emitted while consuming a server ACK follow the already-held suffix, never precede it.
+    while (next.peer.incoming.length) next.pending.push(next.peer.incoming.shift()!);
+  }
+  assert.equal(next.peer.outgoing.length, 0); return results;
 }
 
 test("opt-in native handoff reports saved start/poll observations and exact reporter result bytes reach pending review", async t => {
@@ -97,12 +115,14 @@ test("offline reporter keeps pending completed evidence and the same journals au
   assert.deepEqual(connection.peer.journal.pendingNativeSnapshots(), [body]); assert.equal(connection.peer.incoming.length, 0);
   const reported = await reporter.report(currentSignal()); assert.equal(reported.disposition, "duplicate"); assert.equal(reported.serverAccepted, false);
   assert.deepEqual(connection.peer.journal.pendingNativeSnapshots(), [body]);
-  const next = await reconnectSameNode(x, connection); assert.equal(next.pending.length, 1);
-  const raw = next.pending[0], frame = signedNodeFrameSchema.parse(JSON.parse(raw));
+  const next = await reconnectSameNode(x, connection);
+  const snapshots = next.pending.filter(raw => signedNodeFrameSchema.parse(JSON.parse(raw)).type === "harness.native.snapshot");
+  assert.equal(snapshots.length, 1);
+  const raw = snapshots[0], frame = signedNodeFrameSchema.parse(JSON.parse(raw));
   assert.equal(frame.type, "harness.native.snapshot"); assert.deepEqual(frame.body, body);
   assert.equal(frame.connectionId, JSON.parse(next.hello).connectionId);
   const bytes = reporter.readResult(body, currentSignal());
-  const result = await next.handle.progress(raw, bytes, currentSignal()); await next.peer.acknowledge();
+  const results = await drainRecovered(next, reporter); assert.equal(results.length, 1); const result = results[0];
   assert.equal(result.replayed, false); assert.equal(result.submission!.qualityAccepted, false);
   assert.deepEqual(connection.peer.journal.pendingNativeSnapshots(), []);
   assert.deepEqual(x.local.journal.load(x.f.prepared.binding.runId), nodeSnapshot);
@@ -126,11 +146,13 @@ test("lost server ACK requeues the same staged native snapshot on replacement wi
   assert.deepEqual(connection.peer.journal.pendingNativeSnapshots(), []);
   const committed = await x.counts(), cp = x.f.checkpoints.read(`completion-gate:${x.f.scope.tenantId}`);
   assert.equal(committed.artifacts.length, 1); assert.equal(committed.receipts.length, 1);
-  const next = await reconnectSameNode(x, connection); assert.equal(next.pending.length, 1);
-  const raw = next.pending[0], fresh = signedNodeFrameSchema.parse(JSON.parse(raw));
+  const next = await reconnectSameNode(x, connection);
+  const snapshots = next.pending.filter(raw => signedNodeFrameSchema.parse(JSON.parse(raw)).type === "harness.native.snapshot");
+  assert.equal(snapshots.length, 1);
+  const raw = snapshots[0], fresh = signedNodeFrameSchema.parse(JSON.parse(raw));
   assert.notEqual(fresh.connectionId, originalFrame.connectionId); assert.notEqual(fresh.messageId, originalFrame.messageId);
   assert.deepEqual(fresh.body, originalFrame.body);
-  const replay = await next.handle.progress(raw, reporter.readResult(wire.body, currentSignal()), currentSignal()); await next.peer.acknowledge();
+  const results = await drainRecovered(next, reporter); assert.equal(results.length, 1); const replay = results[0];
   assert.equal(replay.replayed, true); assert.equal(replay.submission!.qualityAccepted, false);
   assert.deepEqual(await x.counts(), committed); assert.deepEqual(x.f.checkpoints.read(`completion-gate:${x.f.scope.tenantId}`), cp);
   assert.deepEqual(await unchangedExecution(x), before);
