@@ -52,7 +52,7 @@ test("restricted owner revision planning creates a signed proposed child bundle 
   const saved = await x.plan(), stored = await rows(x); assert.equal(stored.length, 1);
   const { plan, auth_tag: tag } = stored[0];
   assert.equal(saved.replayed, false); assert.equal(saved.receipt.startsWork, false); assert.equal(saved.receipt.grantsExecutionAuthority, false);
-  assert.equal(saved.receipt.executionAvailability, "revision_submission_not_connected");
+  assert.equal(saved.receipt.executionAvailability, "requires_separate_assignment_and_approval");
   assert.equal(plan.schema, "control-room.task-execution-plan/v2");
   assert.equal(tag, hmacSha256Tag(x.f.plannerConfig.integrityKey, { purpose: "task-execution-plan/v2", plan }));
   assert.equal(plan.sourceJobId, x.request.jobId); assert.notEqual(plan.job.id, x.request.jobId);
@@ -80,7 +80,7 @@ test("restricted owner revision planning creates a signed proposed child bundle 
   assert.equal((await audits(x, plan.job.id)).length, 1);
   for (const table of ["control_attempts", "control_leases"])
     assert.deepEqual((await x.f.db.query(`SELECT * FROM ${table} WHERE job_id=$1`, [plan.job.id])).rows, []);
-  await assert.rejects(x.f.planner.read(plan.job.id));
+  assert.deepEqual(await x.f.planner.read(plan.job.id), plan);
   await assert.rejects(x.f.planner.bindReview(plan.job.id, x.request.runId, x.f.harnessKey, x.submission));
   assert.deepEqual(await unchangedEvidence(x), before);
 });
@@ -139,7 +139,7 @@ test("commit acknowledgement after caller cancellation or elapsed budget rejects
       assert.equal((after[table] as unknown[]).length, (indexes[table] as unknown[]).length + 1);
     const replay = await owner.revisions!.plan(x.f.identity, x.request.projectId, x.request.jobId, x.revisionRequest, signal());
     assert.equal(replay.replayed, true); assert.equal(replay.receipt.jobId, plan.job.id);
-    assert.equal(replay.receipt.startsWork, false); assert.equal(replay.receipt.executionAvailability, "revision_submission_not_connected");
+    assert.equal(replay.receipt.startsWork, false); assert.equal(replay.receipt.executionAvailability, "requires_separate_assignment_and_approval");
     assert.deepEqual(await rows(x), stored); assert.deepEqual(await bundleIndexes(x), after);
     assert.deepEqual(await unchangedEvidence(x), before);
   });

@@ -79,7 +79,7 @@ test("compiled two-role startup plans one owner-requested revision without start
   assert.equal(saved.receipt.rootSubjectId, x.target.subjectId); assert.equal(saved.receipt.rootTargetId, x.target.rootTargetId);
   assert.equal(saved.receipt.fromTargetId, x.target.id); assert.equal(saved.receipt.revisionNumber, 1);
   assert.equal(saved.receipt.startsWork, false); assert.equal(saved.receipt.grantsExecutionAuthority, false);
-  assert.equal(saved.receipt.executionAvailability, "revision_submission_not_connected");
+  assert.equal(saved.receipt.executionAvailability, "requires_separate_assignment_and_approval");
 
   const child = await canonical.get(x.request.tenantId, "job", saved.receipt.jobId);
   assert.equal(child.state, "proposed"); assert.equal(child.version, 0); assert.equal(child.projectId, x.registration.projectId);
@@ -112,5 +112,5 @@ test("compiled browser assets exclude internal revision planning", () => {
   const javascript = files("dist-vps/client").filter(file => file.endsWith(".js"));
   assert.ok(javascript.length > 0);
   for (const file of javascript) assert.doesNotMatch(readFileSync(file, "utf8"),
-    /TaskExecutionPlanner|control-room\.task-execution-plan\/v2|tasks\.revisions\.plan|revision_submission_not_connected/);
+    /TaskExecutionPlanner|control-room\.task-execution-plan\/v2|tasks\.revisions\.plan|revision_submission_not_connected|requires_separate_assignment_and_approval/);
 });
