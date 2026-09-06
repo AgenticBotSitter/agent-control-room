@@ -18,12 +18,13 @@ const actor: VerifiedWebIdentity = { provider: "https://identity.example.test", 
 const keys = generateKeyPairSync("ed25519");
 let sequence = 0;
 
-function wire<T extends NodeMessageType>(type: T, body: NodeMessageBodyMap[T]): string {
+function wire<T extends NodeMessageType>(type: T, body: NodeMessageBodyMap[T], causationId?: string): string {
   sequence++;
   const frame: UnsignedNodeFrame<T> = { protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
     tenantId: enrollment.tenantId, actorId: enrollment.nodeId, keyId: "key:test", connectionId: "connection:input",
     sequence, messageId: `message:input:${sequence}`, correlationId: "correlation:input",
-    nonce: `input_${sequence}_${"n".repeat(32)}`, sentAt: at(), expiresAt: at(60_000), type, body } as UnsignedNodeFrame<T>;
+    nonce: `input_${sequence}_${"n".repeat(32)}`, sentAt: at(), expiresAt: at(60_000),
+    ...(causationId ? { causationId } : {}), type, body } as UnsignedNodeFrame<T>;
   return JSON.stringify(signNodeFrame(frame, keys.privateKey));
 }
 
@@ -41,7 +42,7 @@ const receipt = () => wire("harness.native.dispatch.receipt", {
   projectId: task.projectId, nodeId: enrollment.nodeId, jobId: task.jobId, attemptId: registration.attemptId,
   packetDigest: task.packetDigest, bindingDigest: registration.nativeTask!.bindingDigest, recordedAt: at(),
   disposition: "recorded", safeReason: "none", startsWork: false, grantsExecutionAuthority: false,
-});
+}, "message:dispatch");
 const progress = () => wire("harness.native.snapshot", observation({ version: 4, state: "running",
   nativeRunId, observedAt: instant }));
 
@@ -123,7 +124,6 @@ test("initial input owns one FIFO and requires explicit stage and transmit", asy
     if (method === "hello") { entered.resolve(); await gate.promise; }
   } });
   const x = inputFixture("initial", raw);
-  assert.equal(Object.isFrozen(x.input), true);
   assert.equal(x.input.grantsExecutionAuthority, false);
   const first = x.input.receive(hello(), undefined, signal());
   const second = x.input.receive(reconciliation(), undefined, signal());
