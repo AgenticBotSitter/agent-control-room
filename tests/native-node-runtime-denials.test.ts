@@ -15,6 +15,14 @@ function deferred() {
   return { promise, resolve };
 }
 
+async function enteredBeforeSettlement(entered: Promise<void>, operation: Promise<unknown>, label: string) {
+  const premature = operation.then(
+    () => { throw new Error(`${label} settled before synthetic transport entry`); },
+    error => { throw error; },
+  );
+  await Promise.race([entered, premature]);
+}
+
 function unsigned(frame: SignedNodeFrame<"harness.native.dispatch">): UnsignedNodeFrame<"harness.native.dispatch"> {
   const { signature, bodyDigest, ...value } = frame;
   void signature; void bodyDigest;
@@ -59,6 +67,7 @@ test("the frozen facade captures configuration and methods before factory return
     localRead: x.dependencies.local.readCurrent, localProfile: x.dependencies.local.assertProfileCurrent,
   };
   let holdStart = true;
+  t.after(startGate.resolve);
   x.dependencies.transport.json = async request => {
     if (request.operation === "start" && holdStart) { startEntered.resolve(); await startGate.promise; }
     return original.json(request);
@@ -84,7 +93,8 @@ test("the frozen facade captures configuration and methods before factory return
   try {
     assert.equal(captured.queueId, original.queueId); assert.equal(captured.nodeId, x.x.f.prepared.enrollment.nodeId);
     const connection = await x.connect("initial", captured); await x.dispatch(connection);
-    const starting = captured.start(currentSignal()); await startEntered.promise;
+    const starting = captured.start(currentSignal());
+    await enteredBeforeSettlement(startEntered.promise, starting, "start");
     const beforeBusy = [...x.x.local.calls];
     await assert.rejects(captured.poll(currentSignal()), { message: "native_node_runtime_unavailable" });
     assert.deepEqual(x.x.local.calls, beforeBusy);
@@ -92,7 +102,8 @@ test("the frozen facade captures configuration and methods before factory return
     const started = await starting; assert.equal(started.binding.runId, x.x.f.prepared.binding.runId);
     assert.equal(x.x.local.calls.filter(value => value === "start").length, 1); await x.pump(connection);
 
-    const observing = captured.observe(currentSignal()); await observeEntered.promise;
+    const observing = captured.observe(currentSignal());
+    await enteredBeforeSettlement(observeEntered.promise, observing, "observe");
     x.setRecoveryAllowed(false);
     const stopping = captured.stop(currentSignal());
     await assert.rejects(observing, { message: "native_node_observation_interrupted" });
@@ -130,14 +141,14 @@ test("malformed, wrong-pinned and foreign-queue input closes without a native re
 
   await t.test("validly signed dispatch for a foreign queue", async t => {
     const x = await nativeNodeRuntimeFixture(); t.after(x.close);
-    const { connection, frame } = await pendingDispatch(x);
     const queueId = x.config.queueId; x.config.queueId = "native-queue:foreign";
     const foreignRuntime = x.create(); x.config.queueId = queueId;
+    const { connection, frame } = await pendingDispatch(x, foreignRuntime);
     const calls = [...x.x.local.calls];
     await assert.rejects(foreignRuntime.receive(JSON.stringify(frame), currentSignal()),
       { message: "native_node_runtime_uncertain" });
     await foreignRuntime.close(); assert.deepEqual(x.x.local.calls, calls);
-    assert.equal(connection.state.nodeCloses, 0);
+    assert.equal(connection.state.nodeCloses, 1);
     assert.equal(x.journal.acceptedNativeDelivery(x.config.queueId), undefined);
   });
 });
@@ -178,7 +189,8 @@ async function blockedStartFixture() {
 test("caller abort and runtime close forward cancellation to active native transport without claiming a physical stop", async t => {
   await t.test("caller abort", async t => {
     const f = await blockedStartFixture(); t.after(f.x.close);
-    const controller = new AbortController(), starting = f.runtime.start(controller.signal); await f.entered.promise;
+    const controller = new AbortController(), starting = f.runtime.start(controller.signal);
+    await enteredBeforeSettlement(f.entered.promise, starting, "aborted start");
     controller.abort();
     await assert.rejects(starting, { message: "native_node_runtime_uncertain" }); await f.runtime.close();
     assert.equal(f.sawAbort(), true); assert.equal(f.providerCalls(), 1);
@@ -190,7 +202,8 @@ test("caller abort and runtime close forward cancellation to active native trans
 
   await t.test("owner close", async t => {
     const f = await blockedStartFixture(); t.after(f.x.close);
-    const starting = f.runtime.start(currentSignal()); await f.entered.promise;
+    const starting = f.runtime.start(currentSignal());
+    await enteredBeforeSettlement(f.entered.promise, starting, "closed start");
     const closing = f.runtime.close();
     await assert.rejects(starting, { message: "native_node_runtime_uncertain" }); await closing;
     assert.equal(f.sawAbort(), true); assert.equal(f.providerCalls(), 1);
