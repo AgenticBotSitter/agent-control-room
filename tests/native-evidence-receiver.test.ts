@@ -59,7 +59,7 @@ async function fixture() {
     const results = { ...x.f.scope, register: resultService.register.bind(resultService), submit: resultService.submit.bind(resultService) };
     // Exact key used by canonical-approval-storage.ts NativeApprovalPacketStore, not plannerConfig.integrityKey.
     const deliveryKey = new Uint8Array(32).fill(75);
-    const receiverConfig = { scope: x.f.scope, integrityKey: deliveryKey, harnessIntegrityKey: x.f.harnessKey,
+    const receiverConfig: ConstructorParameters<typeof NativeEvidenceReceiver>[1] = { scope: x.f.scope, integrityKey: deliveryKey, harnessIntegrityKey: x.f.harnessKey,
       enrollments: [x.f.prepared.enrollment], storage: x.f.config, results, clock: x.f.clock };
     const create = (db = evidence, extra: Partial<typeof receiverConfig> = {}) => new NativeEvidenceReceiver(db, { ...receiverConfig, ...extra });
     const receiver = create();
