@@ -7,6 +7,9 @@
    acceptance profile ID/digest and scenario. No defaults, regular expressions from input, shell, model,
    plugin, network or filesystem execution. These checks prove structure only, never semantic quality.
    Independent accepted reviews and every other profile check remain necessary.
+   The supported format excludes HTML/comment/angle-bracket markup outside fenced code. Such input
+   records unsupported_markup failure, rather than counting invisible pseudo-headings. Closing ATX
+   heading hashes are normalized. This is a conservative structured Markdown subset, not a renderer.
 2. Re-read authenticated native run/history, original HMAC review plan, actual artifact bytes and exact
    immutable review target before evaluating. Record service-owned Completion Gate evidence with rule,
    content and verdict digests; raw text/terms are not copied into audit. Immutable exact replay does

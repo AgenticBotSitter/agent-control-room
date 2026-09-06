@@ -8,4 +8,4 @@ export const documentStructureRulesSchema = z.object({
   forbiddenTerms: z.array(literal).max(30).refine(distinct),
 }).strict().refine(value => value.minUtf8Bytes <= value.maxUtf8Bytes);
 export type DocumentStructureRules = z.infer<typeof documentStructureRulesSchema>;
-export type DocumentStructureVerdict = { outcome: "passed" | "failed"; reasonCodes: ("too_short" | "too_long" | "missing_heading" | "forbidden_term")[] };
+export type DocumentStructureVerdict = { outcome: "passed" | "failed"; reasonCodes: ("too_short" | "too_long" | "missing_heading" | "forbidden_term" | "unsupported_markup")[] };
