@@ -18,6 +18,7 @@ const options: AbsNewsDigestSelectionOptionsV1 = {
 function story(
   storyId: string,
   overrides: Partial<{
+    title: string;
     clusterId: string;
     queue: AbsNewsStoryV1["queue"];
     canonicalHost: string;
@@ -37,7 +38,7 @@ function story(
     projectId: "project.abs.ai-tech-news",
     clusterId: overrides.clusterId ?? `cluster.${storyId}`,
     queue: overrides.queue ?? "important_now",
-    title: `Story ${storyId}`,
+    title: overrides.title ?? `Story ${storyId}`,
     summary: "A normalized story for digest selection tests.",
     canonicalUrl: `https://${canonicalHost}/story`,
     sourceLabel: overrides.sourceLabel ?? `Source ${storyId}`,
@@ -84,6 +85,34 @@ test("CR14F-NEWS-CORE-001 rejects every invalid digest option boundary with the 
   assert.deepEqual(selectAbsNewsDigestV1([], { ...options, windowHours: 168, limit: 100, maxPerSource: 100, minimumScore: 100 }), {
     selectedStoryIds: [],
     deferredStoryIds: [],
+  });
+});
+
+test("reuse defers near-duplicate headlines across clusters without changing evidence", () => {
+  const a = story("story.event-a", { title: "Orion launches open source agent runtime", priorityScore: 95 });
+  const b = story("story.event-b", { title: "Breaking: Open source agent runtime launches from Orion - Tech News", sourceLabel: "Tech News", priorityScore: 90 });
+  const other = story("story.event-other", { title: "Private robotics platform gains offline navigation", priorityScore: 80 });
+  const before = JSON.stringify([a, b, other]);
+  assert.deepEqual(selectAbsNewsDigestV1([b, other, a], options), {
+    selectedStoryIds: [a.storyId, other.storyId], deferredStoryIds: [b.storyId],
+  });
+  assert.deepEqual(selectAbsNewsDigestV1([other, a, b], options), selectAbsNewsDigestV1([b, other, a], options));
+  assert.equal(JSON.stringify([a, b, other]), before);
+});
+
+test("reuse preserves different model versions and sparse headlines from separate publications", () => {
+  const a = story("story.version-a", { title: "Orion launches open source agent runtime 2.0" });
+  const b = story("story.version-b", { title: "Orion launches open source agent runtime 3.0" });
+  const c = story("story.short-a", { title: "Model update" });
+  const d = story("story.short-b", { title: "Model update" });
+  assert.equal(selectAbsNewsDigestV1([a, b, c, d], options).selectedStoryIds.length, 4);
+});
+
+test("reuse does not fill spare slots by exceeding the existing hard source cap", () => {
+  const a = story("story.cap-a", { title: "Orion launches new agent runtime", canonicalHost: "one.example.com" });
+  const b = story("story.cap-b", { title: "Privacy regulations reshape robotics research", canonicalHost: "one.example.com" });
+  assert.deepEqual(selectAbsNewsDigestV1([a, b], { ...options, maxPerSource: 1 }), {
+    selectedStoryIds: [a.storyId], deferredStoryIds: [b.storyId],
   });
 });
 

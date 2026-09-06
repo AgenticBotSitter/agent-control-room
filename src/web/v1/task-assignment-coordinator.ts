@@ -3,6 +3,7 @@ import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema, nodeRecordSche
   requestRecordSchema, workflowRecordSchema, type AttemptRecord, type JobRecord, type LeaseRecord } from "../../domain/v1";
 import { CanonicalStore } from "../../persistence/canonical-store";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import type { NativeTaskSubmission } from "../../persistence/native-task-submission";
 import { FleetSignalStore } from "../../node-fleet/v1/fleet-signal-store";
 import { evaluateFleetEligibility } from "../../node-fleet/v1/eligibility";
 import { appendAuditWith } from "../../audit/audit-store";
@@ -56,7 +57,8 @@ export class TaskAssignmentCoordinator {
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly planner: TaskExecutionPlanner, routes: readonly TaskAssignmentRoute[],
     private readonly clock: () => number = Date.now, enrollments: readonly NativeApprovalEnrollment[] = [],
-    private readonly approvalStore?: NativeApprovalPacketStore) {
+    private readonly approvalStore?: NativeApprovalPacketStore,
+    private readonly nativeTaskSubmission?: NativeTaskSubmission) {
     const plannerScope = planner.webOperation();
     if (plannerScope.tenantId !== scope.tenantId || plannerScope.workspaceId !== scope.workspaceId) unavailable();
     this.scope = Object.freeze({ ...scope });
@@ -139,6 +141,13 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return this.withNativeApproval(identity, projectId, jobId, expectedInputDigest, async (tx, prepared, actorId) => {
       const queued = await store.enqueueInSession(tx, prepared, expectedPacketDigest, actorId, signal);
+      // Cutover is explicit constructor composition, never a browser-supplied queue.
+      // Old/replayed canonical intents are not automatically backfilled or resurrected.
+      if (!queued.receipt.replayed && this.nativeTaskSubmission) await this.nativeTaskSubmission.enqueueInSession(tx, {
+        schema: "control-room.native-task-submission/v1", tenantId: this.scope.tenantId, projectId,
+        jobId, attemptId: queued.receipt.attemptId, queueId: queued.receipt.queueId,
+        inputDigest: expectedInputDigest, packetDigest: queued.receipt.packetDigest,
+      });
       if (!queued.receipt.replayed) await appendAuditWith(tx, {
         id: `audit:${queued.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
         action: "native.task.queued", targetType: "job", targetId: jobId, correlationId: queued.receipt.queueId,

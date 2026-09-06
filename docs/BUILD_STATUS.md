@@ -8,6 +8,45 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest owner direction — reuse-first integration (2026-09-06):** The owner approved
+local implementation of sensible reused components and directed continuing the new plan
+before making custom infrastructure. Public GitHub research/downloads are authorized with
+storage and acquisition logs; remote publication, PRs,
+merges and Actions remain paused. The local
+[`REUSE_FIRST_COMPLETION_PLAN.md`](REUSE_FIRST_COMPLETION_PLAN.md) maps all owner outcomes,
+replacement candidates, selection tests and delivery order. Candidate recommendations
+are not adopted dependencies or live compatibility evidence. This direction supersedes
+the implementation/read restrictions in the older instruction below where they conflict.
+
+**Latest local integration:** [REUSE_INTEGRATION_PROGRESS.md](REUSE_INTEGRATION_PROGRESS.md)
+records the trusted pg-boss submission adapter (13 actual-package integration tests,
+131 related checks) and the attributed Control Center event helpers now used by ABS
+digest selection (61 ABS tests, four pinned-source comparisons). Typecheck, targeted
+lint and PGlite migration verification passed. Queue runtime startup/cutover remains
+unwired; no new database server, provider call or deployment. Default tests now include
+the queue unit and digest suites; package dependencies and lockfile are unchanged.
+The subsequent [E04 source-fit review](research/REUSE_E04_HERMES_PRESENTATION.md) selected
+a focused Hermes Desktop navigation candidate and documented exact Electron/cache/
+close-versus-cancel mismatches. Source retained with hashes/license; no E04 code adopted.
+
+**Reuse validation progress:** The owner directed following the new plan until complete
+or blocked. See [`REUSE_FIRST_VALIDATION_PACKET.md`](REUSE_FIRST_VALIDATION_PACKET.md)
+for candidate acquisition scope, concrete integration/retirement points and host-package
+gaps. Owner approved needed downloads with storage checks and a cleanup ledger. Isolated
+pg-boss 12.30.0 acquisition used about 13 MiB; approximately 105 GiB remains free. The
+[actual-package PGlite evaluation](research/REUSE_E01_PG_BOSS_RESULTS.md) passed 11 tests;
+the existing native-task-queue baseline rerun passed 10. The owner subsequently approved
+one disposable real-PG evaluation: [E02 results](research/REUSE_E02_POSTGRES_RESULTS.md)
+record nine checks passing across the initial/corrective runs, retaining one original
+restricted-role failure. Real concurrent pickup, clean restart, existing migrations,
+capacity reservations and retry-disabled timeout were exercised. The cluster ran only
+in short bursts inside a 316-second window with no TCP listener; shutdown verified and
+disposable data removed. E02 binaries/cache retain about 197 MiB. This is not production
+acceptance or a live fleet: final canonical approval integration, scheduler/review flows,
+crash/restore and cutover still remain. No ongoing server authority. See [download ledger](REUSE_DOWNLOAD_LOG.md) for exact
+inventory, failed first attempts, retained temporary files and cleanup. Application
+dependencies are unchanged; no production configuration or runtime is activated.
+
 **Owner instruction — local-only work (2026-09-06):** The owner reports the billing
 cycle's 3,000 GitHub Actions minutes are exhausted. Stop all GitHub activity until the
 owner explicitly resumes it: no remote reads, fetch/pull, pushes, PRs, merges or CI

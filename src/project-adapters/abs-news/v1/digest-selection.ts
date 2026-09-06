@@ -1,4 +1,5 @@
 import type { AbsNewsStoryV1 } from "./types";
+import { describeIndustryEvent, industryEventsConflict, type IndustryEventTitle } from "../../../vendor/control-center/industry-events";
 
 export interface AbsNewsDigestSelectionOptionsV1 {
   readonly nowMs: number;
@@ -16,6 +17,7 @@ export interface AbsNewsDigestSelectionV1 {
 interface RankedStory {
   readonly story: AbsNewsStoryV1;
   readonly timestampMs: number;
+  readonly event: IndustryEventTitle;
 }
 
 function compareCodePoints(left: string, right: string): number {
@@ -79,7 +81,7 @@ export function selectAbsNewsDigestV1(
 
     const timestampMs = Date.parse(story.publishedAt ?? story.discoveredAt);
     if (!Number.isFinite(timestampMs) || timestampMs > options.nowMs || options.nowMs - timestampMs > windowMs) continue;
-    ranked.push({ story, timestampMs });
+    ranked.push({ story, timestampMs, event: describeIndustryEvent(story.title, story.sourceLabel, story.canonicalUrl) });
   }
 
   ranked.sort((left, right) => (
@@ -91,14 +93,17 @@ export function selectAbsNewsDigestV1(
   const selectedStoryIds: string[] = [];
   const selectedClusters = new Set<string>();
   const sourceCounts = new Map<string, number>();
-  for (const { story } of ranked) {
+  const selectedEvents: IndustryEventTitle[] = [];
+  for (const { story, event } of ranked) {
     if (selectedStoryIds.length >= options.limit) break;
     if (selectedClusters.has(story.clusterId)) continue;
+    if (selectedEvents.some(selected => industryEventsConflict(event, selected))) continue;
     const sourceCount = sourceCounts.get(story.canonicalHost) ?? 0;
     if (sourceCount >= options.maxPerSource) continue;
 
     selectedStoryIds.push(story.storyId);
     selectedClusters.add(story.clusterId);
+    selectedEvents.push(event);
     sourceCounts.set(story.canonicalHost, sourceCount + 1);
   }
 

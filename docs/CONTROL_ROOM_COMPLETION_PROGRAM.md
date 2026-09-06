@@ -2,6 +2,12 @@
 
 **Updated:** 2026-09-06
 
+**Current assessment override:** See [REUSE_FIRST_COMPLETION_PLAN.md](REUSE_FIRST_COMPLETION_PLAN.md).
+The owner paused implementation and authorized read-only public GitHub research and a
+local replacement/completion plan. Keep the acceptances below as historical evidence;
+do not automatically resume their next implementation block. No dependency adoption,
+installation, production activation or GitHub publication is authorized by the assessment.
+
 **Owner direction:** Implement the Astra reassessment; resume repository building.
 
 **Local-only override (2026-09-06):** Owner reports exhausted GitHub Actions minutes
