@@ -16,7 +16,7 @@ export interface PgBossSubmissionClient {
   on(event: "error", listener: (error: unknown) => void): unknown;
   getQueue(name: string): Promise<unknown>;
   send(name: string, data: NativeTaskSubmissionReference, options: { id: string; retryLimit: 0; db: SqlPort }): Promise<string | null>;
-  retry?(name: string, id: string, options: { db: SqlPort }): Promise<{ affected: number }>;
+  retry?(name: string, id: string, options: { db: SqlPort }): Promise<unknown>;
   update?(name: string, data: undefined, options: { id: string; retryLimit: 0; db: SqlPort }): Promise<unknown>;
 }
 export type PgBossSubmissionConstructor = new (options: {
@@ -93,7 +93,8 @@ export async function preparePgBossNativeTaskSubmission(
           || row.retry_limit !== 0 || row.policy !== "standard" || row.dead_letter !== null) unavailable();
         if (row.state !== "failed") return false;
         if (row.retry_count !== ordinal - 1) unavailable();
-        if ((await retry!(PG_BOSS_NATIVE_SUBMISSION.name, id, { db: sql })).affected !== 1) unavailable();
+        const retried = await retry!(PG_BOSS_NATIVE_SUBMISSION.name, id, { db: sql });
+        if (!retried || typeof retried !== "object" || !("affected" in retried) || retried.affected !== 1) unavailable();
         await update!(PG_BOSS_NATIVE_SUBMISSION.name, undefined, { id, retryLimit: 0, db: sql });
         const after = (await tx.query<Row>(`SELECT data,state,retry_limit,retry_count,policy,dead_letter FROM control_room_queue.job
           WHERE name=$1 AND id=$2`, [PG_BOSS_NATIVE_SUBMISSION.name, id])).rows;

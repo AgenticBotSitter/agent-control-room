@@ -8,6 +8,11 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E39:** [Installed queue composition](research/REUSE_E39_INSTALLED_QUEUE_COMPOSITION.md)
+adds an inert setup helper and compiled server entry using the locked package. All three
+compiled complete task journeys and 35 compiled regressions pass. Node packaging preserves
+the installed pg-boss dependency boundary; no activation, configuration or deployment.
+
 **Latest local fix — E38:** [pnpm workspace configuration](research/REUSE_E38_PNPM_WORKSPACE_CONFIGURATION.md)
 resolves the dependency precheck mismatch with explicit root-only/local-store settings.
 The normal pnpm queue command passes all 66 checks; stage-zero and 14 release-tooling

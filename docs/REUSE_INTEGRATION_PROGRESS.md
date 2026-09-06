@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E39 installed composition](research/REUSE_E39_INSTALLED_QUEUE_COMPOSITION.md) removes
+test-only package constructor wiring from the complete host journeys. Compiled helper and
+adapter plus installed pg-boss pass all three journeys; 35 compiled regressions pass.
+Production dependencies remain required beside the build; startup is still explicit.
+
 [E38 pnpm configuration](research/REUSE_E38_PNPM_WORKSPACE_CONFIGURATION.md) resolves
 E37's local precheck mismatch without bypassing verification or reinstalling packages.
 Normal pnpm execution passes all 66 queue checks; preparation and release-tooling checks pass.

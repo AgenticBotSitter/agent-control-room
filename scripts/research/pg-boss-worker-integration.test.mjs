@@ -23,6 +23,7 @@ import { createPrivateTaskBootstrap } from '../../src/web/v1/private-task-startu
 import { taskStartupFixture } from '../../tests/helpers/task-startup.ts';
 import { request as webRequest } from '../../tests/helpers/web-foundation.ts';
 import { createTaskSubmissionBrowserClient } from '../../src/web/v1/task-submission-browser-client.ts';
+import { createInstalledNativeQueueFactories } from '../../src/web/v1/installed-native-queue.ts';
 
 const root = process.env.CR_REUSE_EVAL_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
 assert.ok(isAbsolute(root), 'Package root must be absolute');
@@ -31,6 +32,8 @@ assert.equal(JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'
 const { PgBoss } = await import(pathToFileURL(join(packageRoot, 'dist/index.js')).href);
 const hostFactory = process.env.CR_REUSE_COMPILED_STARTUP === '1'
   ? (await import('../../dist-vps/server/taskBootstrap.js')).createPrivateTaskBootstrap : createPrivateTaskBootstrap;
+const installedFactories = process.env.CR_REUSE_COMPILED_STARTUP === '1'
+  ? (await import('../../dist-vps/server/nativeQueueFactories.js')).createInstalledNativeQueueFactories : createInstalledNativeQueueFactories;
 
 for (const mode of ['online', 'offline recovery', 'lost browser response']) test(`fresh HTTP task traverses actual six-role host to signed result and pending review: ${mode}`, { timeout: 30000 }, async t => {
   const offline = mode === 'offline recovery';
@@ -54,9 +57,7 @@ for (const mode of ['online', 'offline recovery', 'lost browser response']) test
   const configFor = username => ({ ...f.config.coordinator.database, username });
   host = await hostFactory({ clock: x.f.clock,
     openDatabase: config => pools[config.username] ?? f.openDatabase(config), install: app => { installed = app; },
-    prepareNativeSubmission: db => preparePgBossNativeTaskSubmission(PgBoss, db, { backend: 'pglite', recovery: true }),
-    startNativeWorker: config => createNativeQueueWorkerBootstrap({ PgBoss, backend: 'pglite',
-      openDatabase: () => pools.worker_test }).start(config),
+    ...installedFactories({ backend: 'pglite', openWorkerDatabase: () => pools.worker_test }),
   }).start({ ...f.config, coordinator: { ...f.config.coordinator, nativeQueue: true, nativeQueueRecovery: true,
     approvals: { enrollments: [{ enrollment: x.f.prepared.enrollment, nodeClass: 'personal-compute' }], store: x.f.store },
     quality: { ...x.f.ownerConfig, scenarios: [] }, resultDatabase: configFor('managed_result_test'),
