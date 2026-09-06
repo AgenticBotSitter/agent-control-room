@@ -6,6 +6,69 @@ import { sha256Digest } from "../src/security";
 import type { DatabaseClient } from "../src/persistence/database";
 import { canonicalApprovalStorageFixture as fixture } from "./helpers/canonical-approval-storage";
 import { prepareNativeOwnerApprovalMaterial } from "../src/harness/v1/native-owner-approval-material";
+import { createNativeOwnerApprovalIssuer } from "../src/harness/v1/native-owner-approval-issuer";
+
+test("paired owner issuer releases only complete verified packets and never retries partial issuance", async t => {
+  const f = await fixture(); t.after(f.close);
+  const keyId = f.packet.approval.body.approvalKeyId;
+  const publicKeySpki = Buffer.from((await f.approvals.resolveApprovalKey(keyId))!).toString("base64url");
+  const input = { ...f.prepared, approvalKeyId: keyId, issuedAt: f.clock(), recoveryExpiresAt: f.prepared.start.deadline + 120_000,
+    approvalNonce: "synthetic-paired-approval", recoveryNonce: "synthetic-paired-recovery" };
+  for (const mode of ["valid", "no-consent", "revoked", "second-failed", "corrupt", "timeout", "expired"] as const) {
+    let calls = 0, allowed = mode !== "no-consent", now = f.clock();
+    const digests: string[] = [];
+    const issuer = createNativeOwnerApprovalIssuer(input, { publicKeySpki, timeoutMs: mode === "timeout" ? 30 : 1000, clock: () => now,
+      assertOwnerConsentCurrent(digest) { digests.push(digest); if (!allowed) throw new Error("synthetic denied consent"); },
+      async sign(bytes) {
+        calls++;
+        if (mode === "timeout") return new Promise<Uint8Array>(() => {});
+        if (mode === "second-failed" && calls === 2) throw new Error("synthetic uncertain second signature");
+        if (mode === "revoked") allowed = false;
+        if (mode === "expired") now = f.prepared.start.deadline;
+        if (mode === "corrupt") return new Uint8Array(64);
+        return Buffer.from(f.sign(JSON.parse(Buffer.from(bytes).toString())).signature, "base64url");
+      } });
+    if (mode === "valid") assert.equal((await f.save(await issuer.issue(new AbortController().signal))).startsWork, false);
+    else await assert.rejects(issuer.issue(new AbortController().signal), /owner_approval_issuance_uncertain/);
+    const before = calls;
+    await assert.rejects(issuer.issue(new AbortController().signal), /owner_approval_issuance_uncertain/);
+    assert.equal(calls, before);
+    assert.equal(calls, mode === "no-consent" ? 0 : ["valid", "second-failed"].includes(mode) ? 2 : 1);
+    assert.ok(digests.every(digest => digest === issuer.reviewDigest));
+  }
+  assert.equal(await f.count(), 1);
+});
+
+test("paired issuer refuses async consent and cannot resume after a late first signature", async t => {
+  const f = await fixture(); t.after(f.close);
+  const keyId = f.packet.approval.body.approvalKeyId;
+  const publicKeySpki = Buffer.from((await f.approvals.resolveApprovalKey(keyId))!).toString("base64url");
+  const input = { ...f.prepared, approvalKeyId: keyId, issuedAt: f.clock(), recoveryExpiresAt: f.prepared.start.deadline + 120_000,
+    approvalNonce: "synthetic-late-approval", recoveryNonce: "synthetic-late-recovery" };
+  let calls = 0;
+  const asynchronous = createNativeOwnerApprovalIssuer(input, { publicKeySpki, timeoutMs: 1000, clock: f.clock,
+    async assertOwnerConsentCurrent() { throw new Error("synthetic async refusal"); },
+    async sign() { calls++; return new Uint8Array(64); } });
+  await assert.rejects(asynchronous.issue(new AbortController().signal), /owner_approval_issuance_uncertain/);
+  assert.equal(calls, 0);
+  let release: () => void = () => { throw new Error("signing did not start"); };
+  let signingSignal: AbortSignal | undefined;
+  const late = createNativeOwnerApprovalIssuer(input, { publicKeySpki, timeoutMs: 30, clock: f.clock,
+    assertOwnerConsentCurrent() {},
+    sign(bytes, signal) {
+      calls++; signingSignal = signal;
+      const signature = Buffer.from(f.sign(JSON.parse(Buffer.from(bytes).toString())).signature, "base64url");
+      return new Promise<Uint8Array>(resolve => { release = () => resolve(signature); });
+    } });
+  await assert.rejects(late.issue(new AbortController().signal), /owner_approval_issuance_uncertain/);
+  assert.equal(signingSignal?.aborted, true);
+  release();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(calls, 1, "late first signature must not request recovery signature");
+  await assert.rejects(late.issue(new AbortController().signal), /owner_approval_issuance_uncertain/);
+  assert.equal(calls, 1);
+  assert.equal(await f.count(), 0);
+});
 
 test("unsigned owner material uses existing signatures and exact intake without starting work", async t => {
   const f = await fixture(); t.after(f.close);

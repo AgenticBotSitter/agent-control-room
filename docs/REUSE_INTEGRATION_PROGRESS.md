@@ -8,6 +8,11 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E57 paired issuer](research/REUSE_E57_PAIRED_OWNER_ISSUER.md) joins the evaluated
+signing adapter to complete canonical packets, tested through existing storage. It
+does not implement real consent, key custody or request delivery; runtime wiring waits
+for those requirements. Partial or late signatures cannot release a packet or retry.
+
 [E56 bounded signing](research/REUSE_E56_BOUNDED_OWNER_SIGNATURE.md) addresses the
 upstream callback limitation through a thin supplied-channel adapter, preserving one
 attempt and uncertainty. The package remains an isolated candidate, not app dependency.

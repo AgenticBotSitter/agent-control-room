@@ -13,6 +13,33 @@ import { prepareNativeOwnerApprovalMaterial } from '../../src/harness/v1/native-
 import { verifyArtifactSignature } from '../../src/node-policy/v1/crypto.ts';
 import { canonicalApprovalStorageFixture } from '../../tests/helpers/canonical-approval-storage.ts';
 import { createBoundedOwnerSignature } from '../../src/harness/v1/bounded-owner-signature.ts';
+import { createNativeOwnerApprovalIssuer } from '../../src/harness/v1/native-owner-approval-issuer.ts';
+
+test('paired issuer through bounded actual-package channels reaches canonical intake', { timeout: 15000 }, async t => {
+  const f = await canonicalApprovalStorageFixture(); t.after(f.close);
+  const keyId = f.packet.approval.body.approvalKeyId;
+  const publicKeySpki = Buffer.from(await f.approvals.resolveApprovalKey(keyId)).toString('base64url');
+  let channels = 0, closes = 0;
+  const issuer = createNativeOwnerApprovalIssuer({ ...f.prepared, approvalKeyId: keyId, issuedAt: f.clock(),
+    recoveryExpiresAt: f.prepared.start.deadline + 120000, approvalNonce: 'synthetic-issuer-approval', recoveryNonce: 'synthetic-issuer-recovery' }, {
+    publicKeySpki, timeoutMs: 1000, clock: f.clock,
+    assertOwnerConsentCurrent(digest) { assert.equal(digest, issuer.reviewDigest); }, // synthetic gate, not real owner attendance
+    sign(bytes, signal) {
+      channels++; const protocol = new AgentProtocol(true), server = new AgentProtocol(false);
+      t.after(() => { protocol.destroy(); server.destroy(); }); server.on('error', () => {});
+      protocol.pipe(server).pipe(protocol);
+      server.on('sign', (request, _key, data) => server.signReply(request,
+        Buffer.from(f.sign(JSON.parse(data.toString())).signature, 'base64url')));
+      return createBoundedOwnerSignature({ protocol, publicKeySpki, timeoutMs: 500,
+        close() { closes++; protocol.destroy(); server.destroy(); } }).sign(bytes, signal);
+    },
+  });
+  const packet = await issuer.issue(new AbortController().signal);
+  assert.equal((await f.save(packet)).startsWork, false); assert.equal(await f.count(), 1);
+  assert.equal(channels, 2); assert.equal(closes, 2);
+  await assert.rejects(issuer.issue(new AbortController().signal), /issuance_uncertain/);
+  assert.equal(channels, 2);
+});
 
 const root = process.env.CR_SIGNER_EVAL_ROOT;
 assert.ok(root && isAbsolute(root), 'Explicit isolated evaluation root required');

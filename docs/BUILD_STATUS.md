@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E57:** [Paired approval issuer](research/REUSE_E57_PAIRED_OWNER_ISSUER.md)
+joins canonical approval/recovery material with the bounded signer and releases only
+a complete verified packet. Actual-package and canonical storage checks pass: 22 tests,
+zero failures or cancellations, including partial failure, late completion and async
+consent rejection. Real consent, key custody and trusted request delivery remain open;
+the issuer is unwired and no native operations were performed.
+Stage-zero, TypeScript and targeted lint checks also pass.
+
 **Latest local implementation — E56:** [Bounded signature adapter](research/REUSE_E56_BOUNDED_OWNER_SIGNATURE.md)
 handles the candidate's close-without-callback behavior with one attempt, bounded wait,
 exact signature verification and owned closure. Eight actual-package diagnostics and
