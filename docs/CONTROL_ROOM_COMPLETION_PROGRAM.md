@@ -6,8 +6,8 @@
 
 **Completed locally:** CR14A — architecture and delivery rebaseline; see `CR14A_ACCEPTANCE.md`.
 
-**Next block:** CR14C C-WORK — protected owner revision-planning interface, then
-runtime registration/recovery/owner signing, on Astra Medium. Upstream workflow
+**Next block:** CR14C C-WORK — trusted runtime result registration and submission
+composition, then runtime recovery/owner signing, on Astra Medium. Upstream workflow
 completion remains a separate unresolved gate; draft PR #329 is excluded. Exact optional
 quality/completion coordinator mounting is independently reviewed in
 `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md`; it is not a background event router or live fleet.
@@ -25,6 +25,11 @@ before quality approval is now independently reviewed in `CR14C_NATIVE_CAPACITY_
 It preserves old job/attempt/result evidence while freeing canonical capacity. Later quality
 completion verifies the recorded release rather than rewriting it; revision planning and
 assignment after pending release fit the unchanged capacity in disposable tests.
+The protected owner revision-planning interface is independently reviewed in
+`CR14C_OWNER_REVISION_INTERFACE_ACCEPTANCE.md`: the saved review now prepares or
+reconciles one linked proposed task through the bounded two-role coordinator. Exact
+pending requests survive result closure and lost replies in page-owned state. Separate
+assignment/approval and a live runtime are still required; no native start is implied.
 The supplied-database native quality/completion operation is independently reviewed in
 `CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md`; no running fleet is inferred. Optional human result checks are
 independently reviewed in `CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`; they are not a mandatory owner

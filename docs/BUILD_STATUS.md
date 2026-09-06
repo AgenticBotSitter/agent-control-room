@@ -325,7 +325,7 @@ operational multi-machine private beta. Native lifecycle evidence from past scop
 |---|---|---|
 | General project creation and lifecycle | Private compiled pages share ordinary and owner-only Idea reads with pagination; ordinary lifecycle works in SQL tests, Idea lifecycle read-only here; not deployed | Remaining CR14B B-WIRE + pilot; private Idea commands in CR14E |
 | Everyday private login and VPS app | Shared private page/API/session composition tested; bootstrap and IdP/MFA are not configured; old local pilot remains separate | CR14B setup/rehearsal/pilot |
-| Real task -> agent -> progress -> result -> review in the website | Protected proposals, planning, assignment, review and revised-result history connect to actual synthetic native lifecycles; child revisions require fresh quality evidence. Reservation turnover, browser revision planning, runtime activation/signing and real host acceptance remain | CR14C |
+| Real task -> agent -> progress -> result -> review in the website | Protected proposals, planning, assignment, review, revision preparation and revised-result history connect to synthetic native lifecycles; verified finished runs release capacity without quality approval. Runtime registration/activation/signing and real host acceptance remain | CR14C |
 | Mac/PC/VPS Hermes and Codex fleet | Private view reads existing enrollments/signals; new native adapter is component-tested but unwired; no live fleet/dispatch | CR14C/D |
 | Fluid build workforce | GitHub V2 queue works; current open issues are review/blocked inventory, no new ready wave | CR14A prepared drafts, then CR14D native queue |
 | Real multi-bot Idea Lab | Mounted local pilot uses the deterministic fake driver | CR14E |
@@ -2308,14 +2308,35 @@ integration. No merge authority is inferred.
 Published as [PR #335](https://github.com/MarvinAi5/control-room/pull/335), targeting
 the PR #334 branch. Its current-head GitHub checks remain pending verification.
 
+## Protected owner revision-planning interface
+
+Production `79ef608` plus strict-header correction `de949e7` and integrated evidence
+`2691528` are independently accepted. The matching saved owner review now offers
+**Prepare revised task**, using recorded feedback and linking to its separate proposed
+task. Lost replies retain exact reconciliation; preparation never assigns, approves or
+starts an agent. The scoped command is mounted through the existing bounded two-role
+coordinator, with no new SQL permissions. See `CR14C_OWNER_REVISION_INTERFACE_ACCEPTANCE.md`.
+
+Final integrated new tests passed16. Existing compiled26 plus new compiled2, rendered4,
+both builds, TypeScript, full ESLint and disposable migrations0054/138 passed. Browser
+evidence is state/static-render testing plus code review, not an observed mounted DOM
+journey or a live bot. Retained test corrections and full-suite disposition are recorded
+in acceptance. All new files are registered in the standard verification commands.
+The six prior270-file default lanes passed2,504 with two existing platform skips after
+the retained legacy-copy correction. The expanded272-file inventory and final16 new tests
+were verified separately; current-head CI must run the final registered set.
+PR #335 at `1c6b5d4` passed all nine GitHub jobs in run `34011391526`.
+This new block still needs current-head CI and dependency-order integration; no merge
+or deployment is claimed.
+
 ## Next block
 
 ```text
-Block: CR14C protected owner revision-planning interface
+Block: CR14C trusted runtime result registration and submission composition
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: Verified finished runs can now free their canonical slots without approving the output, and revision planning/assignment works afterward at unchanged capacity. The website still needs to expose the existing bounded revision-planning operation.
-Expected output: protected owner command and task/result controls that create and reconcile the exact linked revision job from recorded feedback, preserve uncertainty, and show the new task without implying a native start. Runtime scheduling/registration/recovery and owner signing remain unconfigured; PR #329 remains a separate unresolved gate.
+Why: The protected website can now prepare a revision from recorded feedback, but actual runtime ownership of native review-plan registration and result submission still relies on trusted fixture setup rather than a configured restricted writer.
+Expected output: root-owned bounded composition for the existing native plan/result operations, with exact initial/revision producer binding, explicit resource/privilege ownership, and independent disposable startup/recovery tests. Reuse current protocols; do not activate live dispatch or widen the web role. Runtime scheduling/recovery and owner signing remain unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
