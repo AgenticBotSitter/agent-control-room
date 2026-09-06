@@ -105,6 +105,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
     const canonicalSetupDb: DatabaseClient = { query: (sql, params) => admin(() => f.db.query(sql, params)),
       transaction: work => admin(() => f.db.transaction(work)),
       transactionWithPreCommitCheck: (work, check) => admin(() => f.db.transactionWithPreCommitCheck(work, check)) };
+    let inputRegistrations = 0;
     const routes: ConstructorParameters<typeof ManagedNativeSessions>[3] = {
       // Canonical approval/envelope/intent/receipt work is privileged fixture composition, not
       // evidence of new coordinator grants. Server authentication is always the manager's pool.
@@ -113,6 +114,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       receipt: (session, raw, signal) => f.store.receiveDeliveryReceipt(canonicalSetupDb, session, raw, signal),
       progress: receiver.receive.bind(receiver),
       recover: receiver.recover.bind(receiver),
+      register: (...args) => { inputRegistrations++; return receiver.register(...args); },
     };
     const manager = new ManagedNativeSessions(authDb, settings, f.scope, routes,
       async work => { admitted++; return work(); }, () => { if (!healthy) throw new Error("synthetic_pool_unavailable"); }, f.clock);
@@ -161,18 +163,13 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
     const task = { projectId: f.args[1], jobId: f.args[2], inputDigest: f.args[3], packetDigest: sha256Digest(f.packet) };
     const registration = nativeTaskRegistration(f.prepared.binding, f.args[3], f.prepared.request.leaseId, f.prepared.request.leaseEpoch, timestamp());
     const request = { projectId: task.projectId, jobId: task.jobId, attemptId: registration.attemptId, inputDigest: task.inputDigest };
-    const dispatch = async (x: Connection) => {
-      await admin(async () => { await f.save(); await f.coordinator.enqueueNativeTask(...f.args, task.packetDigest, f.abort.signal); });
-      await x.handle.stage(f.identity, task, currentSignal()); await x.handle.transmit(f.identity, task, currentSignal());
-      const frame = JSON.parse(x.peer.outgoing[0]) as SignedNodeFrame<"harness.native.dispatch">;
-      await x.peer.acknowledge();
-      const receipt = await x.handle.receipt(x.peer.incoming.shift()!, currentSignal());
+    const prepareNode = async (peer: ReturnType<typeof makePeer>, frame: SignedNodeFrame<"harness.native.dispatch">) => {
       // Local handoff and provider are wholly synthetic, unchanged native-start fixture APIs.
       let resultText: string | undefined;
       const handoff = await admin(() => prepareNativeExecutionHandoff({ queueId: frame.body.queueId,
         enrollment: f.prepared.enrollment, serverActorId: "server:managed" }, {
-        deliveries: x.peer.journal, runs: local.journal, approvals: f.approvals,
-        ...(options.reporting ? { reporting: x.peer.bridge } : {}),
+        deliveries: peer.journal, runs: local.journal, approvals: f.approvals,
+        ...(options.reporting ? { reporting: peer.bridge } : {}),
         security: { currentServerTrustRevision: () => f.native.trust.currentServerTrustRevision(),
           async resolveServerKey() { return new Uint8Array(Buffer.from(spki, "base64url")); } },
         local: local.dependencies, clock: f.clock, transport: { ...local.transport,
@@ -190,7 +187,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       cleanup.push(() => handoff.close());
       const reporter = options.reporting ? new NativeObservationReporter({ queueId: frame.body.queueId,
         enrollment: f.prepared.enrollment, serverId: frame.actorId, serverKeyId: frame.keyId, serverPublicKeySpki: spki }, {
-        deliveries: x.peer.journal, runs: local.journal, bridge: x.peer.bridge, clock: f.clock,
+        deliveries: peer.journal, runs: local.journal, bridge: peer.bridge, clock: f.clock,
         assertAvailable: () => { if (f.abort.signal.aborted) throw new Error("synthetic_reporting_unavailable"); },
       }) : undefined;
       if (reporter) cleanup.push(() => reporter.close());
@@ -202,10 +199,18 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       const produce = async (phase: "start" | "running" | "completed") => {
         const body = await advanceNative(phase);
         // The default retains existing fixture publication. Opt-in handoff reports itself.
-        if (!options.reporting) await admin(() => x.peer.bridge.publishNativeSnapshot(body, timestamp()));
-        const raw = x.peer.incoming.shift(); assert.ok(raw); return { raw, body };
+        if (!options.reporting) await admin(() => peer.bridge.publishNativeSnapshot(body, timestamp()));
+        const raw = peer.incoming.shift(); assert.ok(raw); return { raw, body };
       };
-      return { receipt, handoff, produce, advanceNative, reporter };
+      return { handoff, produce, advanceNative, reporter };
+    };
+    const dispatch = async (x: Connection) => {
+      await admin(async () => { await f.save(); await f.coordinator.enqueueNativeTask(...f.args, task.packetDigest, f.abort.signal); });
+      await x.handle.stage(f.identity, task, currentSignal()); await x.handle.transmit(f.identity, task, currentSignal());
+      const frame = JSON.parse(x.peer.outgoing[0]) as SignedNodeFrame<"harness.native.dispatch">;
+      await x.peer.acknowledge();
+      const receipt = await x.handle.receipt(x.peer.incoming.shift()!, currentSignal());
+      return { receipt, ...await prepareNode(x.peer, frame) };
     };
     const states = () => admin(async () => ({ job: await f.canonical.get(f.scope.tenantId, "job", task.jobId),
       attempt: await f.canonical.get(f.scope.tenantId, "attempt", registration.attemptId),
@@ -221,7 +226,8 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       receipts: (await f.db.query("SELECT * FROM control_native_artifact_receipts WHERE run_id=$1", [registration.id])).rows,
     }));
     return { f, local, admin, authDb, evidenceDb, resultDb, observed, hooks, settings, manager, receiver,
-      verify, verifyAuth, checkedScope, makePeer, attach, handshake, dispatch, task, registration, request, states, protocol, counts,
+      verify, verifyAuth, checkedScope, makePeer, attach, handshake, dispatch, prepareNode, task, registration, request, states, protocol, counts,
+      inputRegistrations: () => inputRegistrations,
       admitted: () => admitted, setHealthy: (value: boolean) => { healthy = value; },
       close: async () => { let failed = false;
         for (const fn of cleanup.reverse()) { try { await fn(); } catch { failed = true; } }
