@@ -59,7 +59,7 @@ test("two restricted startup roles mount only the scoped quality command after b
   assert.deepEqual(Object.keys(runtime).sort(), ["close", "isReady", "quality"]);
   assert.deepEqual(Object.keys(app).sort(), ["close", "handle", "isReady", "quality"]);
   assert.ok(runtime.quality);
-  assert.deepEqual(Object.keys(runtime.quality).sort(), ["reconcile", "tenantId", "workspaceId"]);
+  assert.deepEqual(Object.keys(runtime.quality).sort(), ["reconcile", "sweep", "tenantId", "workspaceId"]);
   assert.equal(runtime.quality.tenantId, x.f.scope.tenantId);
   assert.equal(runtime.quality.workspaceId, x.f.scope.workspaceId);
   const exposed = JSON.stringify({ runtime, quality: runtime.quality });
@@ -91,6 +91,7 @@ test("two restricted startup roles mount only the scoped quality command after b
   const closing = runtime.close(); assert.equal(runtime.close(), closing); await closing;
   assert.equal(f.web.closes(), 1); assert.equal(f.coordinator.closes(), 1);
   await assert.rejects(retained.reconcile(input, new AbortController().signal), { message: "task_coordinator_unavailable" });
+  await assert.rejects(retained.sweep({ projectId: input.projectId }, new AbortController().signal), { message: "task_coordinator_unavailable" });
 });
 
 test("startup without quality configuration exposes no quality capability", async t => {

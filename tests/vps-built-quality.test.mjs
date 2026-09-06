@@ -57,11 +57,20 @@ test("compiled two-role startup reconciles native quality, independent HTTP owne
   ]);
   const input = { ...x.request, projectId: x.registration.projectId, jobId: x.registration.jobId };
   const reconcile = () => runtime.quality.reconcile(input, new AbortController().signal);
+  const sweep = () => runtime.quality.sweep({ projectId: input.projectId }, new AbortController().signal);
   const calls = [...x.local.calls], waiting = await reconcile();
   assert.equal(waiting.disposition, "waiting_review"); assert.equal(waiting.verification, "recorded");
   assert.equal(waiting.grantsApproval, false); assert.equal(waiting.grantsExecutionAuthority, false);
   assert.equal("completion" in waiting, false); assert.equal((await states()).job.state, "leased");
   assert.deepEqual(inserts.map(row => row.current_user), ["coordinator_test"]);
+  const discovered = await sweep();
+  assert.equal(discovered.tenantId, input.tenantId); assert.equal(discovered.workspaceId, startup.config.web.workspaceId);
+  assert.equal(discovered.projectId, input.projectId); assert.equal(discovered.nextRunId, null);
+  assert.equal(discovered.grantsApproval, false); assert.equal(discovered.grantsExecutionAuthority, false);
+  assert.equal(discovered.items.length, 1);
+  assert.equal(discovered.items[0].runId, input.runId); assert.equal(discovered.items[0].jobId, input.jobId);
+  assert.equal(discovered.items[0].status, "reconciled"); assert.equal(discovered.items[0].result.disposition, "waiting_review");
+  assert.equal(discovered.items[0].result.verification, "replayed"); assert.equal("completion" in discovered.items[0].result, false);
 
   const path = `/api/v1/projects/${input.projectId}/tasks/${input.jobId}/results/${x.artifact.artifactId}/reviews/${x.target.id}`;
   const req = (method = "GET", body) => request(path, method, body, "compiled-quality-review-001", x.f.jwt);
@@ -75,7 +84,10 @@ test("compiled two-role startup reconciles native quality, independent HTTP owne
   assert.ok(inserts.every(row => row.current_user === row.session_user && row.rolsuper === false));
   assert.equal((await states()).job.state, "leased");
 
-  const completed = await reconcile(); assert.equal(completed.disposition, "completed");
+  const completionSweep = await sweep(); assert.equal(completionSweep.items.length, 1);
+  const completedItem = completionSweep.items[0]; assert.equal(completedItem.runId, input.runId);
+  assert.equal(completedItem.jobId, input.jobId); assert.equal(completedItem.status, "reconciled");
+  const completed = completedItem.result; assert.equal(completed.disposition, "completed");
   assert.equal(completed.verification, "replayed"); assert.equal(completed.completion.replayed, false);
   assert.equal(completed.completion.receipt.jobId, input.jobId); assert.equal(completed.completion.receipt.runId, input.runId);
   assert.equal(completed.completion.receipt.grantsExecutionAuthority, false);
@@ -87,9 +99,12 @@ test("compiled two-role startup reconciles native quality, independent HTTP owne
   assert.equal((await startup.coordinator.client.query("SELECT id FROM control_artifact_manifests WHERE job_id=$1", [input.jobId])).rows.length, 1);
   assert.equal((await startup.coordinator.client.query("SELECT id FROM control_transition_events WHERE actor_id='service:native-task-completion' AND entity_id=$1", [input.jobId])).rows.length, 2);
   assert.deepEqual(x.local.calls, calls); assert.equal(x.local.effects.countFull(), 1);
+  const empty = await sweep(); assert.deepEqual(empty.items, []); assert.equal(empty.nextRunId, null);
+  assert.equal(empty.grantsApproval, false); assert.equal(empty.grantsExecutionAuthority, false);
+  assert.deepEqual(x.local.calls, calls); assert.equal(x.local.effects.countFull(), 1);
   await runtime.close(); assert.equal(runtime.isReady(), false);
   assert.equal(startup.web.closes(), 1); assert.equal(startup.coordinator.closes(), 1);
-  await assert.rejects(reconcile()); assert.equal((await handler(req())).status, 503);
+  await assert.rejects(reconcile()); await assert.rejects(sweep()); assert.equal((await handler(req())).status, 503);
 });
 
 test("compiled browser assets exclude private quality coordinator and completion implementation", () => {
