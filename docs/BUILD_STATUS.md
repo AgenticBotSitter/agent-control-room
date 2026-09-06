@@ -2429,7 +2429,15 @@ This block is **not accepted yet**. Review corrections so far cover all owned da
 pool availability, literal-true peer evidence and generation-specific failed response
 delivery. A remaining integration gap is private DNS: the reused task-network guard
 rejects tailnet/private DNS answers (exact IPv4 literals have an existing exception).
-The intended private hostname path needs a separately scoped connector destination
+Follow-up evidence: `e788752` adds the compiled signed HTTP handshake, actual restricted
+session-role writes, optional-feature omission, browser isolation and shutdown checks;
+all 3 compiled entries passed against the artifact built at `0cb3fbb`. Another 47
+wire/input regression entries passed with zero failures/skips. These are targeted
+checks, not a new full-lifecycle run. Independent re-review found the three repairs
+sound but retained one further ordering issue: same-node HTTP admission releases
+before physical response settlement, permitting overlapping drains. Fix and test
+delivery-lifetime admission while keeping replacement cleanup generation-specific.
+The intended private hostname path also needs a separately scoped connector destination
 policy and independent tests; do not weaken the general task-network guard. No live
 connection, credential access, deployment or GitHub operation was performed.
 
