@@ -3,6 +3,25 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectCatalog } from "../app/components/project-catalog.tsx";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation.tsx";
+import { PrivateProjectWorkspace } from "../private-app/app/workspace.tsx";
+
+test("separate project tabs use isolated native links without project mutations", () => {
+  const projects = [
+    { projectId: "project:first", title: "Same title", summary: "", lifecycle: "active" as const },
+    { projectId: "project:second", title: "Same title", summary: "", lifecycle: "archived" as const },
+  ];
+  const html = renderToStaticMarkup(<ProjectCatalog state="ready" projects={projects} />);
+  assert.equal((html.match(/target="_blank"/g) ?? []).length, 2);
+  assert.equal((html.match(/rel="noopener noreferrer"/g) ?? []).length, 2);
+  for (const id of ["first", "second"]) assert.match(html,
+    new RegExp(`class="private-project-new-tab" href="/projects/project%3A${id}" target="_blank"`));
+  assert.doesNotMatch(html, /<button|<form|onclick|window\.open|role="tab"/i);
+  for (const state of ["loading", "unavailable"] as const)
+    assert.doesNotMatch(renderToStaticMarkup(<ProjectCatalog state={state} projects={projects} />), /Same title|target="_blank"/);
+  const shell = renderToStaticMarkup(<PrivateProjectWorkspace />);
+  assert.match(shell, /Closing a tab does not stop work/);
+  assert.doesNotMatch(shell, /Live agent assignment is not connected yet/);
+});
 
 test("catalog distinguishes loading, unavailable and an actually empty catalog", () => {
   assert.match(renderToStaticMarkup(<ProjectCatalog state="loading" projects={[]} />), /Loading projects/);

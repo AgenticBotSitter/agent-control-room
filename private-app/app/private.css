@@ -36,6 +36,10 @@
 .private-actions > a { padding: .6rem .9rem; min-height: 44px; border: 1px solid var(--border-strong); border-radius: .55rem; }
 .private-actions > .private-note { flex-basis: 100%; margin-top: 0; }
 .private-project-grid .private-note { display: block; margin: .75rem 0; }
+.private-project-grid li { display: flex; flex-direction: column; }
+.private-project-grid li > a { height: auto; }
+.private-project-grid li > a:first-child { flex: 1; }
+.private-project-grid a.private-project-new-tab { display: block; min-height: 44px; padding: .75rem 1.25rem; border-top: 1px solid var(--border); font-weight: 650; }
 .private-summary { white-space: pre-wrap; overflow-wrap: anywhere; }
 .private-task-list { list-style: none; padding: 0; display: grid; gap: .8rem; }
 .private-task-list li { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }

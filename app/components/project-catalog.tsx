@@ -19,6 +19,8 @@ export function ProjectCatalog({ state, projects, selectedProjectId, paginated }
           {project.origin && <span className="private-note">{project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span>}
           <span className="private-open">Open project →</span>
         </a>
+        <a className="private-project-new-tab" href={`/projects/${encodeURIComponent(project.projectId)}`}
+          target="_blank" rel="noopener noreferrer" aria-label={`Open ${project.title} in a new tab`}>Open in new tab ↗</a>
       </li>)}</ul>
     </section>;
   };

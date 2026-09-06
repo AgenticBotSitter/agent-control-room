@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest local implementation — E48:** [Separate project tabs](research/REUSE_E48_PROJECT_TAB_AFFORDANCE.md)
+adds explicit browser-tab links without changing project status or starting work.
+Outdated assignment-disconnected copy now points to actual task configuration.
+Nine focused checks, TypeScript, lint, production build and all 35 compiled regressions pass.
+This is browser-tab navigation, not an in-app tab strip or live-fleet acceptance.
+
 **Latest local implementation — E47:** [Compiled queue inspection](research/REUSE_E47_COMPILED_QUEUE_INSPECTION.md)
 includes the existing upstream-backed inspector in the VPS artifact and adds a portable
 compiled verification command. All four compiled queue scenarios and 35 compiled
