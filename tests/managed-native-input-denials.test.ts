@@ -198,12 +198,12 @@ test("recovery occurs after reconciliation and before progress or a trailing ack
 });
 
 test("a reentrant input queued during handle work does not deadlock its producer", async () => {
-  let nested: Promise<unknown> | undefined, input: ManagedNativeInput | undefined;
+  let nested: Promise<unknown> | undefined;
   const raw = rawHandle({ before(method) {
     // Models a supplied transport send callback: enqueue the dependent frame but do not await it behind this operation.
-    if (method === "hello") nested = input!.receive(acknowledgement(), undefined, signal());
+    if (method === "hello") nested = input.receive(acknowledgement(), undefined, signal());
   } });
-  const x = inputFixture("initial", raw); input = x.input;
+  const x = inputFixture("initial", raw), input: ManagedNativeInput = x.input;
   assert.deepEqual(await x.input.receive(hello(), undefined, signal()), { kind: "hello" });
   assert.ok(nested); await nested;
   assert.deepEqual(methods(raw.calls), ["hello", "reconcile"]); await x.input.close();
