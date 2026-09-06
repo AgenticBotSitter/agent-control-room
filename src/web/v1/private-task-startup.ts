@@ -15,11 +15,17 @@ import { captureManagedNativeSessionSettings, type ManagedNativeSessionSettings 
 import { captureNativeHttpSettings } from "./native-http-host";
 import type { DatabaseSession } from "../../persistence/database";
 import type { NativeTaskSubmission } from "../../persistence/native-task-submission";
+import { composePrivateTaskWorkerApplication } from "./private-task-worker-application";
+import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worker-startup";
+
+type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
     nativeQueue?: true;
+    /** Explicit local composition; no default worker factory or deployment activation. */
+    queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
     evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration };
     sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration } };
@@ -66,33 +72,47 @@ function configuration(input: PrivateTaskStartupConfiguration) {
       || sessions.nodes.some(node => node.tenantId !== web.tenantId || !evidence.enrollments.some(e => e.nodeId === node.nodeId)))) throw new Error();
     const nativeHttp = input.coordinator.nativeHttp ? captureNativeHttpSettings(input.coordinator.nativeHttp) : undefined;
     if (nativeHttp && (!sessions || nativeHttp.peers.some(peer => !sessions.nodes.some(node => node.nodeId === peer.nodeId)))) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue };
+    const w = input.coordinator.queueWorker;
+    const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
+    if (queueWorker && (!nativeQueue || !sessions || queueWorker.database.host !== database.host
+      || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
+      || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username, sessions.database.username].includes(queueWorker.database.username)
+      || !Number.isSafeInteger(queueWorker.concurrency) || queueWorker.concurrency < 1 || queueWorker.concurrency > 8)) throw new Error();
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, queueWorker };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
 /** Trusted server-only startup. Import is inert; explicit start is the first possible pool effect.
  * All configured logins must pass their independent fixed gates against one primary before mounting.
- * Never opens a listener, provisions SQL, loads credentials or starts agent work.
+ * Never opens a listener, provisions SQL or loads credentials. Explicit queueWorker
+ * composition can pick up already-approved work; ordinary startup cannot.
  */
 export function createPrivateTaskBootstrap(dependencies: {
   openDatabase: (config: PrivatePostgresConfiguration) => TaskCoordinatorDatabase;
   install: typeof installPrivateApplication; clock?: () => number;
   /** Trusted pinned-package factory; no default implementation or package loading. */
   prepareNativeSubmission?: (db: DatabaseSession) => Promise<NativeTaskSubmission & { close(): Promise<void> }>;
+  /** Normally bound to the verified worker bootstrap; never supplied by a request. */
+  startNativeWorker?: (config: NativeQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
 }) {
   const prepareSubmission = dependencies.prepareNativeSubmission?.bind(dependencies);
+  const startWorker = dependencies.startNativeWorker?.bind(dependencies);
   let started = false;
   return Object.freeze({ async start(input: PrivateTaskStartupConfiguration) {
     if (started) throw new Error("private_task_startup_already_attempted");
     started = true;
     const config = configuration(input);
     if (config.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
+    if (config.queueWorker && !startWorker) throw new Error("private_task_startup_config_invalid");
     const queue = config.nativeQueue ? { nativeQueue: true as const } : undefined;
     let submission: (NativeTaskSubmission & { close(): Promise<void> }) | undefined;
     let abandoned = false, preparationUncertain = false;
     const acquired: TaskCoordinatorDatabase[] = [];
     const resources = new Set<TaskCoordinatorDatabase>();
     let application: Awaited<ReturnType<typeof createPrivateTaskApplication>> | undefined;
+    let worker: OwnedQueueWorker | undefined;
+    let workerUncertain = false;
+    const startupAbort = new AbortController();
     // Own every returned resource immediately; memoized bounded close tolerates construction failure
     // before or after ownership transfers to the combined application, without a second pool close.
     function open(database: PrivatePostgresConfiguration) {
@@ -177,9 +197,43 @@ export function createPrivateTaskBootstrap(dependencies: {
         nativeSubmission: submission,
       });
       if (!application.isReady()) throw new Error();
-      dependencies.install(application);
+      if (config.queueWorker) {
+        if (!application.queueDelivery) throw new Error();
+        const workerConfig = config.queueWorker, deliver = application.queueDelivery;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const pending = Promise.resolve().then(() => startWorker!({ ...workerConfig,
+          application: { host: config.database.host, port: config.database.port, database: config.database.database,
+            loginNames: [config.web.database.username, config.database.username, config.resultDatabase!.username,
+              config.evidence!.database.username, config.sessions!.database.username] },
+          deliver: async (reference, signal) => {
+            if (abandoned) throw new Error("native_task_delivery_unresolved");
+            return deliver(reference, AbortSignal.any([signal, startupAbort.signal]));
+          },
+        })).then(async raw => {
+          if (!raw || typeof raw.close !== "function") { workerUncertain = true; throw new Error(); }
+          const closeRaw = raw.close.bind(raw); let closing: Promise<void> | undefined;
+          const close = () => closing ??= (async () => {
+            let closeTimer: ReturnType<typeof setTimeout> | undefined;
+            try { await Promise.race([Promise.resolve().then(closeRaw), new Promise<never>((_, reject) => {
+              closeTimer = setTimeout(() => reject(new Error()), 5000);
+            })]); } finally { clearTimeout(closeTimer); }
+          })();
+          // Own cleanup before reading other factory members, including getters.
+          worker = { close, status: () => ({ accepting: false }) };
+          const status = raw.status;
+          if (abandoned || typeof status !== "function") { await close(); throw new Error(); }
+          worker = Object.freeze({ close, status: status.bind(raw) });
+          return worker;
+        }).catch(error => { if (!worker) workerUncertain = true; throw error; });
+        try { await Promise.race([pending, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => { abandoned = true; workerUncertain = true; reject(new Error()); }, 30_000);
+        })]); } finally { clearTimeout(timer); }
+      }
+      const installed = worker ? composePrivateTaskWorkerApplication(application, worker) : application;
+      if (!installed.isReady()) throw new Error();
+      dependencies.install(installed);
       // Optional narrow commands reach only trusted server composition, never raw SQL/keys.
-      return Object.freeze({ isReady: application.isReady, close: application.close,
+      return Object.freeze({ isReady: installed.isReady, close: installed.close,
         ...(application.queueDelivery ? { queueDelivery: application.queueDelivery } : {}),
         ...(application.submission ? { submission: application.submission } : {}),
         ...(application.quality ? { quality: application.quality } : {}),
@@ -190,10 +244,12 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(application.connections ? { connections: application.connections } : {}) });
     } catch {
       abandoned = true;
+      startupAbort.abort();
+      const workerCleanup = worker ? await Promise.allSettled([worker.close()]) : [];
       const appCleanup = application ? await Promise.allSettled([application.close()]) : [];
       const producerCleanup = submission ? await Promise.allSettled([submission.close()]) : [];
       const results = application ? [] : await Promise.allSettled(acquired.map(pool => pool.close()));
-      if (preparationUncertain || [...appCleanup, ...producerCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
+      if (preparationUncertain || workerUncertain || [...workerCleanup, ...appCleanup, ...producerCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
       throw new Error("private_task_startup_prerequisites_failed");
     }
   } });

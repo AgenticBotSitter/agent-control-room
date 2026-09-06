@@ -123,6 +123,13 @@ pass. Outstanding receipt does not trigger retry or become an automatic success.
 This is not browser/live-agent acceptance or exact independent production pools;
 host startup and offline-node recovery remain next.
 
+**E22 — explicit host/worker startup:** [Evidence](research/REUSE_E22_HOST_WORKER_STARTUP.md)
+connects optional worker startup to the actual delivery callback, full login inventory
+and joint lifecycle before installation. Fake-factory tests cover failure and late
+cleanup. All 45 actual-package checks pass, including proof that an offline task is
+retained unsent but does not resume on reconnect. Automatic safe recovery, actual
+whole-host/exact-role acceptance and production activation remain unfinished.
+
 **E06 — Hermes machine-to-machine research:** [Source-fit decision](research/REUSE_E06_HERMES_TRANSFER.md)
 identifies merged cross-gateway Group Chats, but open file-transfer/output-handoff PRs
 #98072/#99159. Native RoomLink file handling is the preferred candidate to evaluate before

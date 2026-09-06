@@ -364,3 +364,9 @@ tests; no package acquisition, native provider, credential access or external ch
 Existing E01 package and repository dependencies only. In-memory queue and signed
 session fixtures closed after tests. No new download, directory, native service,
 credential use or external publication.
+
+### E22 — host startup and offline pickup evidence (no acquisition)
+
+Existing repository dependencies and retained E01 package only. Fake worker factories,
+minimal queue ACL and in-memory actual-package fixtures close after tests. No new
+download or retained directory; no native service, credential or external effect.

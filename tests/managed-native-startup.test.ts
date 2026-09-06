@@ -18,6 +18,100 @@ type QualityFixture = Awaited<ReturnType<typeof nativeQualityCompletionFixture>>
 type EvidenceSettings = NonNullable<PrivateTaskStartupConfiguration["coordinator"]["evidence"]>;
 type SessionSettings = NonNullable<PrivateTaskStartupConfiguration["coordinator"]["sessions"]>;
 
+test("queue-worker topology and missing factory refuse before any database opens", async t => {
+  const f = await managedStartupFixture(); t.after(f.x.close);
+  const database = { ...f.config.coordinator.database, username: "worker_test" };
+  const valid = { ...f.config, coordinator: { ...f.config.coordinator, nativeQueue: true as const, queueWorker: { database } } };
+  const variants: PrivateTaskStartupConfiguration[] = [valid,
+    { ...valid, coordinator: { ...valid.coordinator, nativeQueue: undefined } },
+    { ...valid, coordinator: { ...valid.coordinator, sessions: undefined } },
+    ...[f.config.web.database.username, f.config.coordinator.database.username, "result_test", "evidence_test", "session_test"]
+      .map(username => ({ ...valid, coordinator: { ...valid.coordinator, queueWorker: { database: { ...database, username } } } })),
+    { ...valid, coordinator: { ...valid.coordinator, queueWorker: { database: { ...database, port: 5433 } } } },
+    { ...valid, coordinator: { ...valid.coordinator, queueWorker: { database, concurrency: 9 } } },
+  ];
+  let effects = 0;
+  for (const config of variants) {
+    const bootstrap = createPrivateTaskBootstrap({ openDatabase: () => { effects++; throw new Error(); }, install: () => { effects++; },
+      prepareNativeSubmission: async () => { effects++; throw new Error(); },
+      startNativeWorker: config === valid ? undefined : async () => { effects++; throw new Error(); } });
+    await assert.rejects(bootstrap.start(config), /config_invalid/);
+  }
+  assert.equal(effects, 0);
+});
+
+test("explicit host startup owns worker readiness and worker-before-application cleanup", async t => {
+  for (const mode of ["success", "start", "not-ready", "install", "close", "malformed", "getter", "late"] as const) await t.test(mode, async t => {
+    const f = await managedStartupFixture(); t.after(f.x.close);
+    // Minimal ACL fixture only: no queue package/schema correctness claim. Actual
+    // pg-boss startup and queue behavior are covered by the opt-in package tests.
+    await f.startup.raw.exec(`CREATE SCHEMA control_room_queue;
+      CREATE TABLE control_room_queue.version(version integer);
+      CREATE TABLE control_room_queue.queue(name text);
+      CREATE TABLE control_room_queue.job(id text);
+      CREATE TABLE control_room_queue.job_common(id text);
+      REVOKE ALL ON SCHEMA control_room_queue FROM PUBLIC;
+      GRANT USAGE ON SCHEMA control_room_queue TO control_room_task_coordinator;
+      GRANT SELECT ON ALL TABLES IN SCHEMA control_room_queue TO control_room_task_coordinator;
+      GRANT INSERT ON control_room_queue.job, control_room_queue.job_common TO control_room_task_coordinator;
+      GRANT UPDATE(name) ON control_room_queue.queue TO control_room_task_coordinator;`);
+    let installed: PrivateApplication | undefined, workerCloses = 0, producerCloses = 0, accepting = true;
+    let releaseLate!: () => void, notifyStarted!: () => void;
+    const workerStarted = new Promise<void>(resolve => { notifyStarted = resolve; });
+    const database = { ...f.config.coordinator.database, username: "worker_test" };
+    const bootstrap = createPrivateTaskBootstrap({ clock: f.x.f.clock, openDatabase: f.openDatabase,
+      install: app => { installed = app; if (mode === "install") throw new Error("synthetic install failure"); },
+      prepareNativeSubmission: async () => ({ enqueueInSession: async () => { throw new Error("unused fake producer"); },
+        close: async () => { producerCloses++; assert.equal(workerCloses, ["start", "late"].includes(mode) ? 0 : 1); } }),
+      startNativeWorker: async input => {
+        assert.equal(installed, undefined); assert.equal(input.database.username, "worker_test");
+        assert.deepEqual(input.application.loginNames, ["web_test", "coordinator_test", "result_test", "evidence_test", "session_test"]);
+        assert.equal(input.concurrency, 1); assert.equal(typeof input.deliver, "function");
+        if (mode === "start") throw new Error("synthetic worker start failure");
+        if (mode === "late") {
+          const waiting = new Promise<void>(resolve => { releaseLate = resolve; }); notifyStarted(); await waiting;
+          await assert.rejects(input.deliver({} as never, new AbortController().signal), /native_task_delivery_unresolved/);
+        }
+        return { get status() {
+          if (mode === "getter") throw new Error("synthetic status getter failure");
+          return mode === "malformed" ? undefined! : () => ({ accepting: mode !== "not-ready" && accepting });
+        },
+          close: async () => {
+            workerCloses++;
+            assert.equal(f.startup.coordinator.closes(), mode === "late" ? 1 : 0);
+            assert.equal(f.sessions.closes(), mode === "late" ? 1 : 0);
+            accepting = false;
+            if (mode === "close") throw new Error("synthetic worker close failure");
+          } };
+      } });
+    const config = { ...f.config, coordinator: { ...f.config.coordinator, nativeQueue: true as const, queueWorker: { database } } };
+    if (mode === "late") {
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      const pending = bootstrap.start(config);
+      await workerStarted; t.mock.timers.tick(30_000);
+      await assert.rejects(pending, /cleanup_uncertain/);
+      releaseLate(); await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(installed, undefined); t.mock.timers.reset();
+    } else if (["start", "not-ready", "install", "malformed", "getter"].includes(mode)) {
+      await assert.rejects(bootstrap.start(config), mode === "start" ? /cleanup_uncertain/ : /prerequisites_failed/);
+      assert.equal(installed === undefined, mode !== "install");
+    } else {
+      const runtime = await bootstrap.start(config);
+      assert.equal(runtime.isReady(), true);
+      accepting = false; assert.equal(runtime.isReady(), false);
+      assert.equal((await installed!.handle(new Request("https://example.test/"), () => new Response())).status, 503);
+      if (mode === "close") {
+        await assert.rejects(runtime.close(), /cleanup_uncertain/);
+        await assert.rejects(runtime.close(), /cleanup_uncertain/);
+      } else { await runtime.close(); await runtime.close(); }
+    }
+    assert.equal(workerCloses, mode === "start" ? 0 : 1); assert.equal(producerCloses, 1);
+    assert.equal(f.startup.web.closes(), 1); assert.equal(f.startup.coordinator.closes(), 1);
+    assert.equal(f.result.closes(), 1); assert.equal(f.evidence.closes(), 1); assert.equal(f.sessions.closes(), 1);
+    await assert.rejects(bootstrap.start(config), /already_attempted/);
+  });
+});
+
 test("verified startup mounts separate machine HTTP settings before preflight and preserves its current generation on unknown peers or tokens", async t => {
   const f = await managedStartupFixture(); t.after(f.x.close);
   const raw = Buffer.from("synthetic connector certificate");

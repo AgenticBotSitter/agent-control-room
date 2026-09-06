@@ -8,6 +8,12 @@ The completed E02 database authorization is not reusable standing authority.
 
 ## Completed locally in this block
 
+[E22 host/worker composition](research/REUSE_E22_HOST_WORKER_STARTUP.md) now supplies
+the real delivery callback and all five application logins to an explicitly injected
+worker factory before joint installation. Production remains disabled. The offline
+package test proves retained unsent work does not resume on reconnect; recovery is an
+open product gap, not a passed journey. 45 package checks pass.
+
 Latest: [E21 connected queue-to-review test](research/REUSE_E21_QUEUE_TO_REVIEW.md)
 passes with all 44 actual-package checks. One signed dispatch reaches a pending review
 with exact stored result bytes through simulated native execution. This closes the

@@ -79,7 +79,9 @@ async function runtimeFixture(t, f, deliver, concurrency = 1) {
     fault: () => clients[0].emit('error', new Error('synthetic runtime fault')) };
 }
 
-test('actual queue pickup reaches managed signed receipt and completed result review without a browser identity', { timeout: 30000 }, async t => {
+for (const offline of [false, true]) test(offline
+  ? 'actual offline-node pickup preserves unsent intent; reconnect does not silently retry'
+  : 'actual queue pickup reaches managed signed receipt and completed result review without a browser identity', { timeout: 30000 }, async t => {
   const x = await managedNativeSessionFixture(undefined, { queue: true });
   let worker, producer, admin;
   t.after(async () => { try { await worker?.close(); await producer?.close(); await admin?.stop({ graceful: false }); } finally { await x.close(); } });
@@ -98,7 +100,7 @@ test('actual queue pickup reaches managed signed receipt and completed result re
     await tx.exec('SET LOCAL SESSION AUTHORIZATION postgres; SET LOCAL ROLE control_room_native_queue_worker');
     return values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] };
   });
-  const c = await x.attach(); await x.handshake(c);
+  const c = offline ? undefined : await x.attach(); if (c) await x.handshake(c);
   let deliveries = 0;
   worker = await startPgBossNativeTaskRuntime(PgBoss, { query, async close() {} }, { backend: 'pglite', async deliver(ref, signal) {
     deliveries++; const result = await x.manager.deliverApproved(ref, signal);
@@ -115,6 +117,16 @@ test('actual queue pickup reaches managed signed receipt and completed result re
   const id = nativeTaskSubmissionId(ref);
   await until(async () => (await admin.getJobById(spec.name, id))?.state === 'failed');
   assert.equal(deliveries, 1);
+  if (offline) {
+    assert.equal(await x.admin(async () => (await x.f.db.query('SELECT * FROM control_native_transmission_intents')).rows.length), 0);
+    assert.equal(await x.admin(async () => (await x.f.db.query('SELECT * FROM control_native_task_queue')).rows.length), 1);
+    const connected = await x.attach(); await x.handshake(connected);
+    await delay(1200); // Observe a subsequent upstream polling interval after reconnect.
+    assert.equal(connected.peer.outgoing.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch').length, 0);
+    assert.equal(deliveries, 1); assert.equal((await admin.getJobById(spec.name, id)).state, 'failed');
+    assert.equal((await x.counts()).runs.length, 0); assert.deepEqual(errors, []);
+    return;
+  }
   const frames = c.peer.outgoing.filter(raw => JSON.parse(raw).type === 'harness.native.dispatch');
   assert.equal(frames.length, 1);
   await c.peer.acknowledge(); await c.handle.receipt(c.peer.incoming.shift(), currentSignal());
