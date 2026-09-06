@@ -53,6 +53,29 @@ test("verified startup mounts separate machine HTTP settings before preflight an
   assert.equal(f.result.closes(), 1); assert.equal(f.startup.coordinator.closes(), 1); assert.equal(f.startup.web.closes(), 1);
 });
 
+for (const resource of ["result", "evidence", "sessions"] as const) test(`machine HTTP refuses idle exchanges when the ${resource} pool becomes unavailable`, async t => {
+  const f = await managedStartupFixture(); t.after(f.x.close);
+  const raw = Buffer.from("synthetic pool health certificate");
+  const nativeHttp = { origin: "https://machine.example.test", peers: [{ nodeId: f.x.registration.nodeId,
+    certificateDigest: `sha256:${createHash("sha256").update(raw).digest("hex")}`,
+    task: { projectId: f.x.registration.projectId, jobId: f.x.registration.jobId,
+      attemptId: f.x.registration.attemptId, inputDigest: f.x.registration.nativeTask!.inputDigest } }], isPeerCurrent: () => true };
+  const runtime = await createPrivateTaskBootstrap({ clock: f.x.f.clock, openDatabase: f.openDatabase, install: () => {} })
+    .start({ ...f.config, coordinator: { ...f.config.coordinator, nativeHttp } });
+  t.after(runtime.close); assert.ok(runtime.nativeHttp);
+  const socket = { encrypted: true, authorized: true, destroyed: false, getPeerCertificate: () => ({ raw }) } as unknown as TLSSocket;
+  const request = (value: unknown) => { const body = JSON.stringify(value);
+    return new Request(`${nativeHttp.origin}/v1/control-room/native`, { method: "POST", body,
+      headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) } }); };
+  const opened = await runtime.nativeHttp.handle(request({ schema: "control-room.native-http/v1", operation: "open", mode: "initial" }), socket);
+  assert.equal(opened.status, 200); const { connection } = await opened.json();
+  f[resource].quarantine();
+  assert.equal(runtime.nativeHttp.isReady(), false);
+  assert.equal((await runtime.nativeHttp.handle(request({ schema: "control-room.native-http/v1", operation: "exchange", connection, packet: null }), socket)).status, 503);
+  await runtime.close();
+  for (const pool of [f.result, f.evidence, f.sessions, f.startup.web, f.startup.coordinator]) assert.equal(pool.closes(), 1);
+});
+
 function qualityConfiguration(x: QualityFixture): TaskQualityConfiguration {
   return {
     integrityKey: Uint8Array.from(x.f.ownerConfig.integrityKey),
