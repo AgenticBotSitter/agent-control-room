@@ -4,3 +4,6 @@ export * from "./protected-store-signer";
 export * from "./admission-handler";
 export * from "./job-event-recorder";
 export * from "./node-operation-handler";
+export * from "./native-http-host";
+export * from "./native-https-client";
+export * from "./native-connector";

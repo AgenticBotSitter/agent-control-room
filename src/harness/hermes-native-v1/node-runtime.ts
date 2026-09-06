@@ -241,6 +241,10 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
       return wire(size, signal, () => bridge.receive(copy, new Date(current()).toISOString()));
   }
   return Object.freeze({ nodeId: config.enrollment.nodeId, queueId: config.queueId, grantsExecutionAuthority: false as const,
+    hasAcceptedDispatch() {
+      current(); if (!deliveries.acceptedNativeDelivery(config.queueId)) return false;
+      savedSource(); return true;
+    },
     open: (transport: BridgeTransport, identity: string, signal: AbortSignal) => open(transport, identity, signal),
     openWire: (transport: BridgeTransport, identity: string, signal: AbortSignal) => open(transport, identity, signal, true),
     receive,

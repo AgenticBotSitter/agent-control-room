@@ -50,7 +50,7 @@ test("the frozen facade captures configuration and methods before factory return
   const x = await nativeNodeRuntimeFixture(); t.after(x.close);
   const runtime = x.runtime;
   assert.equal(Object.isFrozen(runtime), true);
-  assert.deepEqual(Object.keys(runtime).sort(), ["close", "disconnected", "grantsExecutionAuthority", "nodeId", "observe",
+  assert.deepEqual(Object.keys(runtime).sort(), ["close", "disconnected", "grantsExecutionAuthority", "hasAcceptedDispatch", "nodeId", "observe",
     "open", "openWire", "poll", "queueId", "readResult", "receive", "receiveWire", "report", "start", "stop"]);
   assert.equal(runtime.grantsExecutionAuthority, false);
   assert.equal("journal" in runtime || "runs" in runtime || "approvals" in runtime || "transport" in runtime
