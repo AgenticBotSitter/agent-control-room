@@ -2411,12 +2411,19 @@ No live agent, database, listener, owner signer or deployment has been activated
 
 ## Next block
 
+The node runtime is accepted locally: production `b5e3cf8`, final test correction
+`3e47542`, and root regression/registration `f89ef48` passed independent review.
+Final combined checks passed78; compiled managed-session/root pins checks passed5.
+Types, full lint and the private build passed. Usage recovery allowed ordinary approved
+integration to resume; no rejection was bypassed. See `CR14C_NODE_RUNTIME_ACCEPTANCE.md`
+for retained failures, exact evidence and limits. This is not a live agent or deployment.
+
 ```text
-Block: CR14C node-side supplied-resource execution and reporting runtime
+Block: CR14C signed-frame and saved-result transport handoff
 Set model: gpt-6-astra (Astra)
 Set reasoning effort: medium
-Why: The server now owns ordered input and recorded-work recovery. The node still needs an explicit runtime owner joining approved intake, native handoff, saved reporting and cleanup before a live task can be attempted.
-Expected output: one bounded supplied-resource node composition using the existing bridge, authority, handoff and reporter. Preserve explicit admission, no duplicate starts, bounded progress/stop/close and reconnect reporting. Verify with actual disposable journals and fake provider/transport, without opening a listener or calling a live provider. Do not replace the scheduler or invent owner approval. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
+Why: Node execution/reporting and server ordered input are accepted, but the fixture still selects completed snapshots and supplies their saved result bytes. Production needs ownership of that handoff before a physical transport can be qualified.
+Expected output: bounded supplied transport ports joining signed frames to exact saved result bytes, preserving ordering, cancellation, reconnect and cleanup without application-aware fixture pumping. Keep node and web adapter isolation, no scheduler or implicit start. No physical listener/provider/credential operations. Owner signing remains unconfigured; PR #329 remains a separate unresolved gate.
 Owner action: none for scoped repository implementation, verification and PR publication. No new merge, native qualification or deployment authority is inferred.
 Separate later owner choices: identity-provider account, private app hostname, scoped host/database preparation and deployment.
 Stop before: live credentials, native/provider calls, host/database services, DNS or deployment without scoped authority.
