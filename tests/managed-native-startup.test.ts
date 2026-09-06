@@ -236,7 +236,14 @@ test("invalid managed-session topology is rejected before opening any pool", asy
   const f = await managedStartupFixture(); t.after(f.x.close); let effects = 0;
   const sessions = f.config.coordinator.sessions!;
   const otherNode = { ...sessions.nodes[0]!, nodeId: "node:other" };
+  const nativeHttp = { origin: "https://machine.example.test", isPeerCurrent: () => true,
+    peers: [{ nodeId: f.x.registration.nodeId, certificateDigest: `sha256:${"a".repeat(64)}`,
+      task: { projectId: f.x.registration.projectId, jobId: f.x.registration.jobId,
+        attemptId: f.x.registration.attemptId, inputDigest: f.x.registration.nativeTask!.inputDigest } }] };
   const variants: PrivateTaskStartupConfiguration[] = [
+    { ...f.config, coordinator: { ...f.config.coordinator, nativeHttp, sessions: undefined } },
+    { ...f.config, coordinator: { ...f.config.coordinator,
+      nativeHttp: { ...nativeHttp, peers: [{ ...nativeHttp.peers[0], nodeId: "node:unconfigured" }] } } },
     { ...f.config, coordinator: { ...f.config.coordinator, evidence: undefined } },
     { ...f.config, coordinator: { ...f.config.coordinator, approvals: undefined } },
     ...[f.config.web.database.username, f.config.coordinator.database.username, f.resultDatabase.username, f.evidenceDatabase.username]
