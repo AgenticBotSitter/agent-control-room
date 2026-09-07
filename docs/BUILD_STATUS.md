@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner creation form connected locally:** `758f00e` adds the New idea form, explicit
+availability based on configured storage/coordinator and current owner permissions,
+and exact body/key recovery after a lost save response. A pending save cannot be
+discarded through Refresh/Cancel; the existing navigation warning/guard is reused.
+Source-only independent review found no concrete defect. Tests cover real disposable
+HTTP save recovery and static form rendering, not mounted browser interactions or
+forced-close recovery. Standard production bootstrap remains unconfigured for creation;
+the next work is coordinator role/composition, then panel/decision operations and live
+acceptance. No native calls, feeds, new deployment or GitHub writes.
+
 **Owner Idea creation operation implemented locally:** `f0f8e49` adds an audited,
 non-executing session-save service and optional scoped POST `/api/v1/ideas` operation.
 Exact replay recovers the original receipt; `bd76e1a` preserves the original roster
@@ -15,8 +25,8 @@ when deployment configuration changes. Current owner/read grants and web-session
 revocation are checked inside the transaction. No session writes were granted to the
 restricted web role; the standard bootstrap rejects this coordinator dependency.
 Forty-three focused tests passed, followed by seven creation/compiled-app checks for
-the replay correction. TypeScript/lint and VPS compilation pass. Creation form,
-production coordinator role/composition, panel execution and decision commands remain
+the replay correction. TypeScript/lint and VPS compilation pass. The creation form is
+now connected above; production coordinator role/composition, panel execution and decision commands remain
 open. No fake panel was run by this service and no native/production effect occurred.
 
 **Private Idea Lab pages mounted locally:** `beeaf72` connects `/ideas` and

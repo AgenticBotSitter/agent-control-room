@@ -25,6 +25,26 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Owner creation form and exact-save recovery
+
+`758f00e` connects the New idea form to the supplied creation operation. The catalog's
+`canCreate` flag requires configured storage/operation and current owner create/read
+permissions; the server still rechecks every command. Input includes the business
+brief, intended customer, rounds, time and cost limits. Saving is labeled non-executing.
+The endpoint echoes the request key in its receipt. The bounded browser client holds
+the exact body/key after uncertain saves and subsequent denials, rejecting a switched
+request or mismatched receipt. Refresh/Cancel cannot unmount an active save, and the
+existing navigation guard is reused. No browser persistence or forced-close recovery.
+The Sites skill informed existing-layout/form-state reuse, not a hosting migration.
+The private VPS/PostgreSQL architecture and local-only deployment boundary are unchanged.
+Independent source review found no concrete defect. Tests cover real disposable HTTP
+save/response-loss/replay, later denial, mismatched receipts and static labels; no mounted
+browser lifecycle/visual QA or live participants are claimed. Production creation still
+requires the separate coordinator role and composition, not a web-role permission expansion.
+All 46 focused workflow tests pass, alongside 16 overlapping compiled/startup/Idea
+integration checks, full TypeScript, focused lint and VPS compilation. These counts
+are different scopes, not an additive unique-test total or production acceptance.
+
 ### Non-executing owner session creation
 
 `f0f8e49` adds `IdeaSessionCreationService` and an optional scoped `ideaCreation`
