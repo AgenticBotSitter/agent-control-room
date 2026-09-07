@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Reader-to-ingestion ownership connected in one unmounted collection component:**
+One captured source configuration controls both the read URL and stored attribution.
+It permits one call per instance, closes the reader before persistence, and rechecks
+current authority at SQL precommit. Failed cleanup cannot become a saved source outcome;
+shutdown waits for active settlement with a bounded deadline and prevents pending commit.
+Twenty-seven collection/ingestion/reader checks and 62 workflow regressions pass, along
+with TypeScript, focused lint and VPS build. Independent source review found no concrete
+introduced defect. Tests use injected network events and PGlite, not live collection.
+This component is not a durable dispatch claim and is not mounted in startup. Restricted
+ingestion SQL role, managed runtime/job ownership, canonical-page verification and actual
+agent journeys remain open. No live DNS, socket, feed, provider or deployment occurred.
+
 **Unwired public-source reader implemented with injected tests:** It reuses the existing
 public-address/pinned-peer guard and Node HTTPS, with exact configured URLs, direct
 checked-IP dialing and DNS identity preserved for TLS and Host. No credentials, private

@@ -25,6 +25,27 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### One owned reader-to-ingestion collection
+
+`createAbsFeedCollection` binds the same captured source and limits to the public reader
+and PostgreSQL ingestion. It is constructed inertly and allows one collect call per
+instance. That in-memory limit is not a persisted job/effect claim; callers still need
+normal durable execution ownership and accepted live-read authority before invoking it.
+After the reader settles, its close must succeed before either articles or read-failure
+status can be stored. Cleanup uncertainty propagates and cannot be relabeled as source
+failure. Revocation/cancellation is rechecked before persistence and at SQL precommit.
+Close fences new work and waits for active settlement under a bounded deadline.
+
+Twenty-seven collection, ingestion and public-reader checks pass with supplied network
+events/PGlite. Coverage includes zero effects at construction, matching source attribution,
+resource closure before SQL, one fetch per instance, no job dispatch, read failure with
+unknown item count, revocation before storage/at commit, close during held storage and
+cleanup uncertainty leaving no source outcome. The 62-test workflow regression, TypeScript,
+focused lint and VPS build pass. Independent source review found no concrete defect; it
+did not execute tests. No native DNS/TLS or real PostgreSQL concurrency is qualified.
+This component remains unmounted; ingestion role/preflight, job/startup lifecycle ownership,
+live source authorization, canonical-page checking and real agent/review journeys remain.
+
 ### Unwired bounded public-source reader
 
 `createAbsPublicReader` reuses `preparePinnedHttpsConnection` / `verifyPinnedTlsPeer`
