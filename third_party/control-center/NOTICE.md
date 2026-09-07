@@ -1,5 +1,23 @@
 # Control Center attribution and adaptation
 
+## Discovery cohort adoption (2026-09-07)
+
+Same revision and MIT license below. Retained complete `lib/feed-discovery.ts` and
+`lib/types.ts` unchanged; `lib/freshness.ts` and `lib/sitemap.ts` change only their
+type-import path to `./types`. `lib/server/rss.ts` becomes `source-reader.ts`:
+imports are local, reader functions are enclosed in `createIndustrySourceReader`,
+network text reads and clock are captured injected ports, and local-file snapshot
+load/save functions are omitted. Feed probing, sitemap fallback, baseline and
+partial-coverage algorithms are retained. The general atomic-write helper remains
+in sitemap source but is not invoked by this integration.
+
+`tests/control-center-discovery-upstream.test.ts` retains 20 selected tests and two
+fixture builders from upstream `tests/industry.test.ts`; only imports and the test
+subset changed. Local source-reader integration tests are additional Control Room
+evidence. Upstream defaults are not approved production ceilings; the reader port
+must enforce total authority/budgets before live use. No SQLite/settings/scheduler
+or ambient network client is imported by the source reader.
+
 ## Complete curation module adoption (2026-09-07)
 
 `src/vendor/control-center/industry-curation.ts` now retains the complete original

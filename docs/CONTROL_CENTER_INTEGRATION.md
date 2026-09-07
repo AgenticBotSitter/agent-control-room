@@ -18,6 +18,11 @@ modules; change boundary adapters, not recreate all their internals.
 
 ## Cohesive adoption blocks
 
+Checkpoint: the discovery source cohort and 20 upstream tests are now retained;
+three additional tests exercise its explicit source-reader port through HTML-feed
+and robots-sitemap flows. Network and snapshot storage ports are not yet connected
+to the production application. This advances source adoption, not completion gates.
+
 | Block | Upstream source | Integration decision and necessary differences |
 | --- | --- | --- |
 | Discovery ranking | lib/industry-curation.ts | Complete unchanged module now retained and invoked by feed decoding. Includes scoring, deduplication, selection, diversity, exclusions and deferral. Keep upstream IDs as presentation identities only. Preserve all canonical stories. |

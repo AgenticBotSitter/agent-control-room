@@ -8,6 +8,24 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Control Center discovery cohort is now adopted and fixture-tested:** Complete
+feed-discovery, freshness, sitemap and type modules are retained from the pinned
+MIT source; the upstream RSS/source reader now takes explicit text-read and clock
+ports instead of ambient networking/settings/filesystem snapshots. Its feed probing,
+recursive sitemap fallback, undated baseline and partial-coverage behavior remain.
+Twenty selected upstream tests and three source-reader integration tests pass;
+the expanded 279-entry Idea/ABS lane, eight lane checks, types, focused lint,
+diff checks and VPS build pass. Pinned fast-xml-parser 5.11.0 and seven dependencies
+were installed with scripts disabled; source/license/download ledger records the
+cohort. New lock hash: `3d98f907941fa407b82b4af1e9475acb2f93f92a427cea666edeb652ad92a8c8`.
+No live feed, provider, filesystem snapshot or service was used. The reader currently
+has injected fixture coverage, not production source authority or a mounted UI.
+**Next:** connect the borrowed discovery result and baseline to project-scoped news
+storage and saved reading view, enforcing explicit whole-collection budgets at the
+reader boundary. Preserve upstream algorithms; adapt only those connections. Then
+connect selected articles to ordinary agent tasks. Full integration remains active;
+keep current model/effort and existing scoped live-effect gates.
+
 **Active direction changed: integrate Control Center, not rebuild its news product.**
 See `CONTROL_CENTER_INTEGRATION.md` for the source-backed adoption map and full
 completion gates. The complete MIT `industry-curation.ts` is now vendored unchanged

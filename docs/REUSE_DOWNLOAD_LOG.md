@@ -1,5 +1,26 @@
 # Reuse evaluation download and cleanup ledger
 
+## Control Center discovery cohort — 2026-09-07
+
+Pre-acquisition: 140 GiB free. Public pinned source root:
+`https://raw.githubusercontent.com/mreflow/control-center/d13e79e866cc33a1fddfe84f563ce2fb9a2113e0/`.
+Acquired `lib/feed-discovery.ts`, `lib/freshness.ts`, `lib/sitemap.ts`, `lib/types.ts`,
+`lib/server/rss.ts` and `tests/industry.test.ts`. Retained adapted code under
+`src/vendor/control-center/` (five files, 44 KiB allocated) and the selected upstream
+tests at `tests/control-center-discovery-upstream.test.ts`. No separate temporary
+source directory. Changes and MIT provenance are in `third_party/control-center/NOTICE.md`.
+
+Installed `fast-xml-parser@5.11.0` with `CI=true pnpm add --save-exact --ignore-scripts`.
+Eight packages added: fast-xml-parser 5.11.0, fast-xml-builder 1.3.1,
+@nodable/entities 3.0.0, anynum 1.0.1, is-unsafe 2.0.2,
+path-expression-matcher 1.6.2, strnum 2.4.2, xml-naming 0.3.0.
+All eight installed manifests declare MIT; package licenses remain in their packages.
+Registry integrity hashes are retained in pnpm-lock.yaml. Installer reported 15
+downloads, 481 reused, eight added; no claim that all downloaded cache entries were
+new runtime dependencies. Shared pnpm cache must not be bulk-deleted. Source, tests
+and parser are in use; remove through a later reviewed dependency/code cleanup if
+this cohort is replaced. No install scripts, service, feed request or provider call.
+
 ## Full Control Center curation adoption — 2026-09-07
 
 Pre-acquisition available space: 140 GiB. Retained one 512-line source file at
