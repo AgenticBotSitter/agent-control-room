@@ -17,6 +17,20 @@ const schema = z.object({ tenantId: localId, workspaceId: localId,
     windowSeconds: z.number().int().min(60).max(3600) }).strict()).min(1).max(100),
 }).strict();
 
+export function captureNewsDiscoveryConfiguration(value: unknown) {
+  const input = schema.parse(value), sources = new Set<string>(), workers = new Map<string, string>();
+  for (const assignment of input.assignments) {
+    const config = assignment.configuration, route = JSON.stringify([config.projectId, config.source.sourceId]);
+    const worker = JSON.stringify([assignment.nodeId, assignment.executorId]);
+    if (config.tenantId !== input.tenantId || config.workspaceId !== input.workspaceId || sources.has(route))
+      throw new Error("news_integration_config_invalid");
+    if (workers.has(config.projectId) && workers.get(config.projectId) !== worker)
+      throw new Error("news_integration_assignment_conflict");
+    sources.add(route); workers.set(config.projectId, worker);
+  }
+  return input;
+}
+
 /** Assembly only. Caller retains ownership of separately verified pools, prepared
  * submission and qualified transport. Construction performs no reads or startup.
  * Pass web operations into the private process and collect into the existing news
@@ -24,7 +38,7 @@ const schema = z.object({ tenantId: localId, workspaceId: localId,
 export function createNewsDiscoveryIntegration(value: unknown, databases: { coordinator: DatabaseClient; ingestion: DatabaseClient },
   keyValue: Uint8Array, submission: { enqueueInSession(tx: DatabaseSession, reference: AbsFeedJobReference): Promise<void> },
   source: AbsCurrentSourceAuthority, ports: Required<Pick<PinnedFetchDependencies, "lookup" | "fetch">>, clock: () => number = Date.now) {
-  const input = schema.parse(value);
+  const input = captureNewsDiscoveryConfiguration(value);
   if (!(keyValue instanceof Uint8Array) || keyValue.length !== 32 || databases.coordinator === databases.ingestion)
     throw new Error("news_integration_config_invalid");
   const key = Uint8Array.from(keyValue), keys = new Set<string>();

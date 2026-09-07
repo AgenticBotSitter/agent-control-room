@@ -16,7 +16,7 @@ export async function taskStartupFixture(base?: Awaited<ReturnType<typeof taskAs
   // One disposable PGlite backend, serialized transactions with actual LOGIN session identities.
   // This proves SQL privileges, not physical independent PostgreSQL connections or concurrency.
   // Only the known PGlite database TEMP metadata limitation is injected; both real gates run.
-  const pool = (login: "web_test" | "coordinator_test" | "idea_test" | "idea_runtime_test") => {
+  const pool = (login: "web_test" | "coordinator_test" | "idea_test" | "idea_runtime_test" | "news_test" | "ingestion_test") => {
     let closes = 0, available = true;
     const client: DatabaseClient = {
       query: (sql, params) => client.transaction(tx => tx.query(sql, params)),

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createInstalledNativeQueueFactories } from "../src/web/v1/installed-native-queue";
+import { createInstalledNativeQueueFactories, createInstalledNewsQueueFactories } from "../src/web/v1/installed-native-queue";
 
 test("installed queue factory construction is inert and validates before opening a resource", async () => {
   let opens = 0;
@@ -9,4 +9,13 @@ test("installed queue factory construction is inert and validates before opening
   assert.deepEqual(Object.keys(factories), ["prepareNativeSubmission", "startNativeWorker"]);
   await assert.rejects(factories.startNativeWorker({} as never), /config_invalid/); assert.equal(opens, 0);
   assert.throws(() => createInstalledNativeQueueFactories({ backend: "other" as never, openWorkerDatabase: () => { throw new Error(); } }), /config_invalid/);
+});
+
+test("installed news factories reuse pg-boss without starting or opening anything", async () => {
+  let opens = 0;
+  const factories = createInstalledNewsQueueFactories({ openWorkerDatabase: () => { opens++; throw new Error("unexpected open"); } });
+  assert.equal(opens, 0); assert.equal(Object.isFrozen(factories), true);
+  assert.deepEqual(Object.keys(factories), ["prepareNewsSubmission", "startNewsWorker"]);
+  await assert.rejects(factories.startNewsWorker({} as never), /config_invalid/); assert.equal(opens, 0);
+  assert.throws(() => createInstalledNewsQueueFactories({ backend: "other" as never, openWorkerDatabase: () => { throw new Error(); } }), /config_invalid/);
 });

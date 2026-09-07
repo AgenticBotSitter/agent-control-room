@@ -8,6 +8,22 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**News is composed into private task startup:** Explicit `news` configuration now
+captures scoped source assignments, distinct same-primary coordinator/ingestion/worker
+logins, matching web integrity key and supplied authority/transport. Startup verifies
+the news database roles, prepares the existing queue producer, mounts refresh routes,
+starts the supplied news worker and joins it with the optional native worker. The
+installed pg-boss package now supplies news factories alongside existing native ones.
+News-only queue presence does not grant native task producer privileges. Failure
+cleanup retains acquired resources and late factory returns; normal shutdown drains
+workers before producer/pool cleanup. Review caught resource cloning breaking class
+methods; original method receivers are now captured after cleanup ownership. Independent
+re-review accepted that correction. Six new startup cases (restricted PGlite roles,
+fake producer/worker), 49 combined startup regressions and two installed-factory tests
+pass, alongside all 315 delivery tests, types, lint and VPS compilation. These are not real queue polling, native
+source transport or production PostgreSQL evidence. Deployment stays unconfigured;
+browser and article-to-agent end-to-end acceptance remain open. All work is local.
+
 **Shared agent/news worker lifecycle:** Extended the existing joint application
 lifecycle to accept both workers, without another supervisor. Readiness requires
 every worker; shutdown attempts all drains before app cleanup and preserves failure

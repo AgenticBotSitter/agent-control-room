@@ -116,6 +116,34 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+### Startup composition
+
+`createPrivateTaskBootstrap` now accepts explicit top-level `news` configuration:
+source assignments, coordinator/ingestion/worker database configurations, the same
+integrity key used by web news storage, supplied current-source authority and supplied
+DNS/HTTP ports. All logins must be distinct and address the existing private primary.
+It verifies news coordinator and ingestion roles before preparing submission and
+mounting collection operations. The worker factory remains responsible for its own
+fixed worker-role preflight. No production roles are created or repaired by startup.
+
+Server composition can supply `createInstalledNewsQueueFactories({openWorkerDatabase})`
+to the existing bootstrap dependencies, alongside native factories when needed. This
+uses the installed pg-boss package and existing news queue; it does not download or
+enable anything at import/construction. There is no default live DNS/HTTP port or
+news configuration in the production singleton. An operator must supply qualified
+ports and pre-provisioned resources before activation.
+
+The mounted app includes news resources in readiness and cleanup. Workers drain
+before the news producer and pools close. Failed or late asynchronous factory results
+retain cleanup ownership; an uncertain factory is not retried. Tests cover restricted
+roles, route mounting, failed role checks, producer/worker factories, installer failure
+and exact cleanup. Class/private-field worker status and close methods are exercised;
+producer enqueue receiver binding is source-reviewed, not invoked by this startup
+fixture. The fixture uses minimal queue ACL tables and a fake worker: actual pg-boss
+polling, native transport, PostgreSQL connections and full live workflow remain gates.
+Run `pnpm test:news:startup` for the local startup regression; it starts no physical
+worker service or listener and uses disposable database/factory fixtures.
+
 ### Private web connection
 
 `createNewsDiscoveryIntegration` assembles per-source web operations and one routed
@@ -132,8 +160,9 @@ list, so native-task and news workers can share one application lifecycle. All m
 be accepting before the combined app reports ready. Shutdown gates new web requests
 and attempts bounded drain of every worker before application cleanup; any drain
 failure or timeout remains cleanup uncertainty, not proof of physical termination.
-Single-worker callers retain compatibility. This supplies the joint lifecycle, not
-the still-pending production factory that opens/verifies news pools and mounts it.
+Single-worker callers retain compatibility. The startup composition above now opens
+and verifies the supplied news pools and mounts it; deployment configuration and
+qualification remain separate requirements.
 An injected integration test now submits a fresh proposal and approval through these
 assembled HTTP bindings, consumes the queued reference with the borrowed collector,
 and confirms the same story is not duplicated after another completed refresh.
