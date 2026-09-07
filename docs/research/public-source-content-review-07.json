@@ -1,0 +1,27 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "baseline": "3322f7520a95c7194fabc21b64697fef83553972",
+  "source": "tracked_committed_bytes",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full text of the general completion panel and its view model, considered for explicit synthetic preview reuse. Not imported-source or visual acceptance.",
+  "entries": [
+    {
+      "path": "app/components/completion-gate-panel.tsx",
+      "sha256": "4274fd71996a8cd6781613eca3b456f85f690e1c1605fdbbdeefcea03831df06",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Pure React rendering of supplied completion metadata. No embedded private host, owner or project records; no network calls, raw artifact reader, buttons, or command capability. Supports empty, pending, changes-requested and superseded states. Existing CSS classes are in the shared stylesheet. Does not itself label simulation provenance or provide interactive review/revision. Alias type import needs candidate compiler support. Existing static-markup tests do not prove full browser accessibility or integration.",
+      "remaining": ["original_code_license_authority", "stylesheet_and_dependency_review", "explicit_simulation_context", "interactive_composition", "visual_and_accessibility_validation", "independent_candidate_review", "owner_publication_decision"]
+    },
+    {
+      "path": "src/completion-gate/v1/view-model.ts",
+      "sha256": "4fe6d8d605ecb33431e4686f8707cf46789a254bd216467c47992e7d34b9581c",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic schema-validated metadata projection with separate quality/operation approval language. No private identity constants, raw artifact bytes or fetching. Caller supplies already-redacted review facts; this is not a store reader or an authorization boundary. Does not calculate quality independently from evidence. Reuse without passing fixture states off as current database facts; retain grantsApproval=false and grantsExecutionAuthority=false.",
+      "remaining": ["original_code_license_authority", "imported_types_and_redaction_review", "store_to_view_composition", "dependency_review", "independent_candidate_review", "owner_publication_decision"]
+    }
+  ]
+}

@@ -1,5 +1,30 @@
 # Complete tracked-path planning inventory
 
+## General completion presentation reuse
+
+Verification at `3322f75`: both source hashes match; all seven focused panel/view-model
+tests pass. The complete default suite also finished with 3,139 passes, two skips and
+zero failures/cancellations across three stages. Local log:
+`/private/tmp/cr-fresh-proposal-regression.log`. Only documentation changed during that
+run; no application/test bytes changed. No standalone build, browser or candidate
+installation acceptance is inferred from this suite result.
+
+[Batch 07](research/public-source-content-review-07.json) reviews the general completion
+panel and view model at `3322f75`. Neither contains embedded private values observed.
+The panel can present review/verification/revision facts using existing shared styles,
+without a native harness record. Its explicit read-only contract should be preserved:
+it cannot read result text, submit review or request revision. Its view model consumes
+already-redacted metadata; it neither authorizes access nor calculates quality evidence.
+
+For the contributor preview, compose this existing panel within the selected project's
+task context with persistent simulation labeling. Supply facts from the general review
+store, not the historic UI fixture. The separate simulated result viewer and review
+controls must bind to the same project/task/result revision. They are not implemented
+by this review. Do not make a standalone mock panel and claim the project workflow is
+done; do not relabel native result receipts as synthetic to reuse native-only controls.
+Styles include small text requiring actual readability/reflow checks. No candidate
+assembly, runtime wiring, new dependencies or publication occurs in this content pass.
+
 ## Project/task service content and preview wiring
 
 ### Existing synthetic execution reuse

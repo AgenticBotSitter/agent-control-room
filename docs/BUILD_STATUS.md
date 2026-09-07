@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Full regression refreshed at `3322f75`:** The default `pnpm test` command completed
+all three stages: 773 + 1,885 + 481 = **3,139 passed**, two skips, zero failures or
+cancellations. Log: `/private/tmp/cr-fresh-proposal-regression.log`. Includes the
+synthetic cancellation fix and fresh-project simulation/revision rehearsal. This does
+not prove a browser demo, native execution, production PostgreSQL or candidate export.
+
+**General review UI content checked:** Batch 07 records exact completion panel/view-model
+bytes for reuse; seven focused tests pass and both hashes match. The panel is generic
+and read-only, not a result reader or review-command form. Interactive simulation
+composition remains unfinished. No original-license choice or public/GitHub change.
+
 **Fresh-project synthetic result/revision rehearsal passes:** Added a test in the
 existing task-service suite that creates the project and proposal through application
 services, runs two explicit simulations with distinct identities, and registers a
