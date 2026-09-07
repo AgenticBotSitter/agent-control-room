@@ -17,8 +17,72 @@ import { installNewsNavigationGuard } from "../src/web/v1/news-navigation-guard"
 import { createNewsSourceClient } from "../src/web/v1/news-source-client";
 import { createNewsRefreshClient, newsRefreshDescriptionSchema } from "../src/web/v1/news-refresh-client";
 import { NewsSourceRefresh } from "../private-app/app/news-source-refresh";
+import { createNewsArchiveClient } from "../src/web/v1/news-archive-client";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(37);
+
+test("archive client retains an uncertain exact change across denied retries and mismatched receipts", async () => {
+  const projectId = "project:archive", input = { storyId: "story:archive", archived: true, expectedRevision: 0 };
+  const bodies: string[] = []; let mode = "lost";
+  const client = createNewsArchiveClient(projectId, async (_url, init) => {
+    bodies.push(String(init?.body));
+    if (mode === "lost") throw new Error("lost response");
+    if (mode === "denied") return Response.json({}, { status: 401 });
+    return Response.json({ projectId, record: { storyId: input.storyId, archived: mode !== "mismatch", revision: 1,
+      updatedAt: new Date(now).toISOString() }, replayed: true, startsWork: false });
+  });
+  await assert.rejects(client.save(input));
+  await assert.rejects(client.save({ ...input, archived: false })); assert.equal(bodies.length, 1);
+  mode = "denied"; await assert.rejects(client.retry()); assert.equal(client.hasPending(), true);
+  mode = "mismatch"; await assert.rejects(client.retry()); assert.equal(client.hasPending(), true);
+  mode = "ok"; assert.equal((await client.retry()).record.archived, true);
+  assert.equal(client.hasPending(), false); assert.equal(new Set(bodies).size, 1);
+});
+
+test("corrupt archive classifications cannot silently hide articles in filtered views", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const projectId = f.project.projectId, store = new PostgresAbsNewsStoreV1(f.client, { ...scope, projectId }, key);
+  const { storyDigest: _digest, ...body } = { ...buildAbsNewsSyntheticWorkspaceV1().stories[0], ...scope, projectId }; void _digest;
+  await store.saveStory({ ...body, storyDigest: sha256Digest(body) });
+  const news = new WebNewsService(f.client, scope, { integrityKey: key }, () => now);
+  await news.archive(f.identity, projectId, { storyId: body.storyId, archived: true, expectedRevision: 0 });
+  // Simulate a corrupt append, not an allowed application write. Its raw column
+  // would previously exclude this story from History before signature checking.
+  await f.client.query(`INSERT INTO control_abs_story_archives
+    (tenant_id,workspace_id,project_id,story_id,revision,archived,payload,auth_tag)
+    SELECT tenant_id,workspace_id,project_id,story_id,2,archived,
+      jsonb_set(payload,'{revision}','2'::jsonb),auth_tag FROM control_abs_story_archives WHERE revision=1`);
+  for (const view of ["all", "history", "archive", "fresh"])
+    await assert.rejects(news.list(f.identity, projectId, undefined, undefined, view), /news_archive_integrity_failed/);
+});
+
+test("archive and restore preserve exact source evidence across recollection and stale retries", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const projectId = f.project.projectId, store = new PostgresAbsNewsStoreV1(f.client, { ...scope, projectId }, key);
+  const { storyDigest: _digest, ...body } = { ...buildAbsNewsSyntheticWorkspaceV1().stories[0], ...scope, projectId }; void _digest;
+  const story = { ...body, storyDigest: sha256Digest(body) }; await store.saveStory(story);
+  const news = new WebNewsService(f.client, scope, { integrityKey: key }, () => now);
+  const input = { storyId: story.storyId, archived: true, expectedRevision: 0 };
+  const saved = await news.archive(f.identity, projectId, input);
+  assert.equal(saved.replayed, false); assert.equal(saved.startsWork, false);
+  assert.equal((await news.archive(f.identity, projectId, input)).replayed, true);
+  const archived = await news.list(f.identity, projectId, undefined, undefined, "archive");
+  assert.equal(archived.stories.length, 1); assert.equal(archived.stories[0].queue, "archive");
+  assert.equal(archived.stories[0].storyDigest, story.storyDigest);
+  assert.deepEqual(await store.getStory(story.storyId), story);
+  assert.equal((await news.list(f.identity, projectId, undefined, undefined, "history")).stories.length, 0);
+  const updated = { ...body, summary: "Updated collection summary" };
+  await store.saveStory({ ...updated, storyDigest: sha256Digest(updated) });
+  assert.equal((await news.list(f.identity, projectId, undefined, undefined, "archive")).stories.length, 1);
+  await news.archive(f.identity, projectId, { ...input, archived: false, expectedRevision: 1 });
+  assert.equal((await news.list(f.identity, projectId, undefined, undefined, "archive")).stories.length, 0);
+  assert.equal((await news.list(f.identity, projectId, undefined, undefined, "history")).stories.length, 1);
+  await assert.rejects(news.archive(f.identity, projectId, input));
+  await assert.rejects(f.client.query("DELETE FROM control_abs_story_archives"));
+  assert.equal((await f.client.query("SELECT * FROM control_abs_story_archives")).rows.length, 2);
+  await f.client.query("UPDATE control_role_grants SET allowed_actions='[\"tasks.read\"]'::jsonb WHERE tenant_id=$1", [scope.tenantId]);
+  await assert.rejects(news.archive(f.identity, projectId, { ...input, expectedRevision: 2 }));
+});
 
 test("refresh controls preserve exact uncertain proposal and approval requests without automatic resubmission", async () => {
   const projectId = "project:refresh", sourceId = "source:refresh", sourceDigest = sha256Digest("source"), inputDigest = sha256Digest("plan");
@@ -190,6 +254,25 @@ test("private news routes require current access and grant only retained-source 
   const handle = (req: Request) => app.handle(req, () => { renders++; return new Response("news-shell"); });
   const { project } = await (await handle(request(undefined, "POST", { title: "Saved news", summary: "" }))).json();
   const path = `/api/v1/projects/${project.projectId}/news`;
+  // Only fixture setup uses the database administrator; requests below retain
+  // the restricted web role and must not gain story-ingestion permissions.
+  await f.db.exec("SET SESSION AUTHORIZATION postgres");
+  const { storyDigest: _digest, ...storyBody } = { ...buildAbsNewsSyntheticWorkspaceV1().stories[0], ...scope, projectId: project.projectId }; void _digest;
+  await new PostgresAbsNewsStoreV1(f.client, { ...scope, projectId: project.projectId }, key)
+    .saveStory({ ...storyBody, storyDigest: sha256Digest(storyBody) });
+  await f.db.exec("SET SESSION AUTHORIZATION web_test");
+  const archiveInput = { storyId: storyBody.storyId, archived: true, expectedRevision: 0 };
+  const archiveResponse = await handle(request(`${path}/archive`, "POST", archiveInput));
+  assert.equal(archiveResponse.status, 200); assert.equal((await archiveResponse.json()).startsWork, false);
+  assert.equal((await (await handle(request(`${path}/archive`, "POST", archiveInput))).json()).replayed, true);
+  assert.equal((await (await handle(request(`${path}?view=archive`))).json()).stories.length, 1);
+  assert.equal((await handle(request(`${path}/archive`, "POST", { ...archiveInput, archived: false }))).status, 409);
+  assert.equal((await handle(request(`${path}/archive`, "POST", { ...archiveInput, archived: false, expectedRevision: 1 }))).status, 200);
+  assert.equal((await handle(request(`${path}/archive`, "POST", { ...archiveInput, storyId: "story:missing" }))).status, 404);
+  const foreignArchive = request(`${path}/archive`, "POST", archiveInput); foreignArchive.headers.set("origin", "https://different.example");
+  assert.equal((await handle(foreignArchive)).status, 403);
+  const anonymousArchive = request(`${path}/archive`, "POST", archiveInput); anonymousArchive.headers.delete("cf-access-jwt-assertion");
+  assert.equal((await handle(anonymousArchive)).status, 401);
   const setting = await handle(request(`${path}/sources`, "POST", { source: { id: "source:restricted", name: "Restricted role source",
     url: "https://example.org/feed", enabled: false }, expectedRevision: 0 }));
   assert.equal(setting.status, 200); assert.equal((await setting.json()).startsWork, false);

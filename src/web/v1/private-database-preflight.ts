@@ -4,10 +4,10 @@ import { verifyPgBossNativeWorkerPermissions } from "../../persistence/pg-boss-n
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0063 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "eccdf1e75b747d9b9351094de48866212679abb0d0f4fed1e2d4827b85a508c4";
+// Generated from migrations 0001-0064 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "f3431786139ea22bd6f50f5fe06cf518540a469bd49f7222fc8362dffdb7edba";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
-  "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings",
+  "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
@@ -16,7 +16,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
-  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_abs_source_settings"]);
+  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_abs_source_settings", "control_abs_story_archives"]);
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
@@ -39,7 +39,7 @@ const ideaRuntimeReads = ["workspaces", "control_identities", "control_role_gran
   "control_idea_contributions", "control_idea_bot_run_events", "control_idea_decisions"];
 const ideaRuntimeInserts = new Set(["control_idea_contributions", "control_idea_bot_run_events"]);
 const ideaRuntimeUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"] };
-const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_source_settings"];
+const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_source_settings", "control_abs_story_archives"];
 const newsIngestionInserts = new Set(["control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines"]);
 const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], projects: ["coordinator_lock"] };
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",

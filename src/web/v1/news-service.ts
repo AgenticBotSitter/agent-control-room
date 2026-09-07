@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PostgresNewsSourceSettings, newsSourceSettingSchema } from "../../project-adapters/abs-news/v1/source-settings";
 import { appendAuditWith } from "../../audit/audit-store";
+import { PostgresNewsStoryArchives } from "../../project-adapters/abs-news/v1/story-archives";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx),
   transaction: async work => work(tx), transactionWithPreCommitCheck: async (work, check) => {
@@ -84,10 +85,36 @@ export class WebNewsService {
       const sources = sourcePage.statuses.map(({ sourceId, label, mode, state, checkedAt, lastSuccessfulAt, itemCount }) =>
         ({ sourceId, label, mode, state, checkedAt, ...(lastSuccessfulAt ? { lastSuccessfulAt } : {}), ...(itemCount !== undefined ? { itemCount } : {}) }));
       const stories = page.stories.map(({ storyId, storyDigest, title, summary, canonicalUrl, queue, verificationState, publishedAt, discoveredAt, sourceLabel, priorityScore }) =>
-        ({ storyId, storyDigest, title, summary, canonicalUrl, queue, verificationState, discoveredAt, sourceLabel, priorityScore, ...(publishedAt ? { publishedAt } : {}) }));
+        ({ storyId, storyDigest, title, summary, canonicalUrl,
+          queue: page.archiveStates[storyId]?.archived === true ? "archive" : page.archiveStates[storyId]?.archived === false && queue === "archive" ? "earlier" : queue,
+          archiveRevision: page.archiveStates[storyId]?.revision ?? 0,
+          verificationState, discoveredAt, sourceLabel, priorityScore, ...(publishedAt ? { publishedAt } : {}) }));
       return newsPageSchema.parse({ project, availability: "configured", stories, nextCursor: page.nextCursor, observedAt: actor.now,
         sources, sourcesNextCursor: sourcePage.nextCursor,
-        canPrepare: project.lifecycle === "active" && actor.can("tasks.propose", projectId) });
+        canPrepare: project.lifecycle === "active" && actor.can("tasks.propose", projectId),
+        canArchive: project.lifecycle === "active" && actor.can("news.archive.manage", projectId, true) });
+    });
+  }
+  async archive(identity: VerifiedWebIdentity, projectId: string, value: unknown) {
+    const input = z.object({ storyId: catalogProjectIdSchema, archived: z.boolean(), expectedRevision: z.number().int().min(0).max(2_147_483_646) }).strict().safeParse(value);
+    if (!input.success || !catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("news.archive.manage", projectId, true);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (!this.key || project.lifecycle !== "active") throw new WebAccessError("conflict");
+      const store = new PostgresAbsNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
+      if (!await store.getStory(input.data.storyId)) throw new WebAccessError("not_found");
+      let saved;
+      try { saved = await new PostgresNewsStoryArchives(joined(tx), { ...this.scope, projectId }, this.key)
+        .save(input.data.storyId, input.data.archived, input.data.expectedRevision, actor.now); }
+      catch (error) {
+        if (error instanceof Error && error.message === "news_archive_conflict") throw new WebAccessError("conflict");
+        throw error;
+      }
+      if (!saved.replayed) await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, projectId,
+        actorId: actor.id, actorType: "human", action: "news.archive.updated", targetType: "news_story", targetId: input.data.storyId,
+        occurredAt: actor.now, safeMetadata: { archived: saved.record.archived, revision: saved.record.revision } });
+      return { ...saved, projectId };
     });
   }
   /** Read-only draft preparation from an exact retained version. Saving uses the ordinary task command. */

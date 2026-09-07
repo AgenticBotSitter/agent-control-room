@@ -116,6 +116,25 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+### Archive and restore integration
+
+The existing borrowed reading views now have owner-only Archive/Restore actions.
+Migration 0064 stores immutable project-scoped choices separately from immutable
+source versions, so recollection does not resurrect archived articles or change
+evidence digests. PostgreSQL supplies this persistence instead of adopting upstream
+SQLite as a second write authority. The existing web authentication, auditing and
+exact-save/replay conventions are reused; these actions start no collection or agent
+work. Restore places previously archived source records in History.
+
+Filtering uses authenticated classification snapshots, not raw overlay columns that
+could exclude corrupt rows before checking their signatures. The current explicit
+bound is 100,000 classified article identities per project, with read batches of
+1,000; new identities are refused at that bound, existing choices remain editable.
+This is bounded local correctness evidence, not production performance evidence.
+The browser preserves unresolved exact requests and reloads authoritative ranked
+pages after confirmation. Restricted-role HTTP tests and client lost-response tests
+pass. Browser interaction acceptance and independent re-review remain outstanding.
+
 ### Library browsing
 
 History, Archive and Recent are now database-level selection over each story's

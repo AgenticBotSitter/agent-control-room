@@ -8,6 +8,30 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Archive/Restore integration (local, browser acceptance pending):** Migration 0064
+adds project-scoped immutable archive choices separately from source evidence.
+Collection retains the owner's choice; restore and stale/exact retries are tested.
+Library filtering now authenticates classification records before they can exclude
+stories, with a regression for corrupt records in every view. Classification reads
+are bounded to 100,000 distinct articles per project; serialized writes refuse new
+classifications at that bound while allowing existing choices to change. This is
+not a production-scale performance qualification. Browser request handling preserves
+an exact unresolved change across lost responses, access failures and mismatched
+receipts. Twenty-four combined storage/web/startup tests passed after the filtering
+correction, then all thirteen web-news tests passed with the new browser client;
+TypeScript and focused lint pass. Archive/Restore buttons now use the exact-save
+client, hold navigation and refresh while unresolved, and reload server-ranked pages
+after a matching receipt. Restricted-role HTTP checks cover archive, restore, replay,
+stale revision, missing article, wrong origin and missing identity. All thirteen
+web-news tests pass with these checks. Local migration verification applies all 64
+migrations and finds 145 tables; VPS compilation passes. The package migration
+wrapper hit a sandbox IPC restriction, so its unchanged script was run with Node's
+tsx import loader instead. No new listener permission was requested. Browser
+interaction acceptance and independent re-review of the correction remain open.
+All 321 delivery tests pass (83 base plus 238 integration cases).
+No live collection, provider call, production migration or GitHub write occurred.
+The separate verification-first Research product decision remains unanswered.
+
 **Borrowed date compatibility:** Database freshness/ranking now truncates fractional
 seconds to JavaScript milliseconds before PostgreSQL parses timestamps. This avoids
 database rounding moving a story across the upstream freshness boundaries. A

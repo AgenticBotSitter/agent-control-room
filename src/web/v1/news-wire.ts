@@ -26,7 +26,7 @@ export const newsResearchPreviewSchema = z.object({ projectId: id, storyId: id,
 }).strict();
 
 export const newsPageSchema = z.object({ project: projectViewSchema,
-  availability: z.enum(["configured", "not_configured"]), observedAt: z.string().datetime(), canPrepare: z.boolean(),
+  availability: z.enum(["configured", "not_configured"]), observedAt: z.string().datetime(), canPrepare: z.boolean(), canArchive: z.boolean().default(false),
   sources: z.array(newsSourceSchema).max(50), sourcesNextCursor: id.nullable(),
   stories: z.array(z.object({ storyId: id, storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     title: z.string().min(1).max(240), summary: z.string().max(4000),
@@ -34,8 +34,8 @@ export const newsPageSchema = z.object({ project: projectViewSchema,
       const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password;
     }), queue: z.enum(["important_now", "earlier", "archive"]), verificationState: z.enum(["verified", "review_only"]),
     publishedAt: z.string().datetime({ offset: true }).optional(),
-    discoveredAt: z.string().datetime({ offset: true }).optional(),
+    discoveredAt: z.string().datetime({ offset: true }).optional(), archiveRevision: z.number().int().min(0).max(2_147_483_647).optional(),
     sourceLabel: z.string().min(1).max(180).optional(), priorityScore: z.number().min(0).max(100).optional(),
   }).strict()).max(50), nextCursor: id.nullable(),
-}).strict().refine(page => page.availability !== "not_configured" || (!page.stories.length && !page.sources.length && page.sourcesNextCursor === null && page.nextCursor === null && !page.canPrepare));
+}).strict().refine(page => page.availability !== "not_configured" || (!page.stories.length && !page.sources.length && page.sourcesNextCursor === null && page.nextCursor === null && !page.canPrepare && !page.canArchive));
 export type NewsPage = z.infer<typeof newsPageSchema>;

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { newsPageSchema, type NewsPage } from "../../src/web/v1/news-wire";
 import { PrivateHeader } from "./private-header";
@@ -9,6 +9,8 @@ import { newsReadingView, type NewsReadingView } from "../../src/web/v1/news-rea
 import type { IndustrySortOrder } from "../../src/vendor/control-center/industry";
 import { NewsDailySnapshot } from "./news-daily-snapshot";
 import { NewsSourceSettings } from "./news-source-settings";
+import { createNewsArchiveClient } from "../../src/web/v1/news-archive-client";
+import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
 
 export function NewsSourceHealth({ sources }: { sources: NewsPage["sources"] }) {
   const labels = { available: "Last check succeeded", partial: "Last check was incomplete", stale: "Needs a fresh check", unavailable: "Last check failed", disabled: "Disabled" };
@@ -28,10 +30,37 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState<NewsPage["stories"][number]>();
+  const [archiveClient] = useState(() => createNewsArchiveClient(projectId));
+  const [archiveHeld, setArchiveHeld] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveMessage, setArchiveMessage] = useState<string>();
+  const archiveLock = useRef(false);
+  useEffect(() => installNewsNavigationGuard(window, document,
+    () => archiveLock.current || archiveClient.hasPending(),
+    () => setArchiveMessage("Finish the pending Archive or Restore change before leaving this page.")), [archiveClient]);
+  async function changeArchive(story?: NewsPage["stories"][number]) {
+    if (archiveLock.current || story && (archiveClient.hasPending() || !page?.canArchive || selected)) return;
+    archiveLock.current = true; setArchiveBusy(true); setArchiveHeld(true); setArchiveMessage(undefined);
+    try {
+      const receipt = story ? await archiveClient.save({ storyId: story.storyId, archived: story.queue !== "archive",
+        expectedRevision: story.archiveRevision ?? 0 }) : await archiveClient.retry();
+      setArchiveMessage(receipt.record.archived ? "Article archived." : "Article restored to History.");
+      // Reload server-ranked pages rather than pretending a local list edit can
+      // fill the gap or recompute its whole-library pagination cursor.
+      setRefresh(value => value + 1);
+    } catch (reason) {
+      setArchiveMessage(reason instanceof Error ? reason.message : "Could not confirm the archive change.");
+    } finally {
+      archiveLock.current = false; setArchiveBusy(false); setArchiveHeld(archiveClient.hasPending());
+    }
+  }
   const reading = page ? newsReadingView(page.stories, view, order, page.observedAt) : undefined;
   const brief = page ? newsReadingView(page.stories, "fresh", "important", page.observedAt) : undefined;
   const base = `/projects/${encodeURIComponent(projectId)}`;
-  const setView = (value: NewsReadingView) => window.location.assign(`${base}/news?${new URLSearchParams({ view: value, order })}`);
+  const setView = (value: NewsReadingView) => {
+    if (archiveLock.current || archiveClient.hasPending()) return;
+    window.location.assign(`${base}/news?${new URLSearchParams({ view: value, order })}`);
+  };
   const setOrder = (value: string) => window.location.assign(`${base}/news?${new URLSearchParams({ view, order: value })}`);
   useEffect(() => {
     let active = true;
@@ -63,7 +92,10 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
     <h1>{page ? `${page.project.title} · News` : "Project news"}</h1>
     <nav aria-label="Project pages"><a href={base}>Overview</a>{" · "}<a href={`${base}/tasks`}>Tasks</a>{" · "}<a href={`${base}/news`} aria-current="page">News</a></nav>
     <NewsSourceSettings key={projectId} projectId={projectId} />
-    <button type="button" disabled={!!selected} onClick={() => { setPage(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved news</button>
+    <button type="button" disabled={!!selected || archiveHeld} onClick={() => { setPage(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved news</button>
+    {archiveMessage ? <p role="status">{archiveMessage}</p> : null}
+    {archiveHeld ? <p>{archiveBusy ? "Saving article location…" : "The earlier change is not yet confirmed."}{" "}
+      <button type="button" disabled={archiveBusy} onClick={() => void changeArchive()}>Retry exact archive change</button></p> : null}
     {selected ? <NewsResearchForm projectId={projectId} story={selected} close={() => setSelected(undefined)} /> : null}
     {error ? <p role="alert">{error}</p> : !page ? <p role="status">Loading saved news…</p> : page.availability === "not_configured"
       ? <p role="status">News storage is not configured for this installation. No sample stories are shown.</p>
@@ -71,10 +103,10 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
         <NewsSourceHealth sources={page.sources} />
         <NewsDailySnapshot items={brief!.stories.slice(0, 5)} availableCount={brief!.counts.fresh} onOpen={() => setView("fresh")} />
         <nav aria-label="Saved news views">{(["fresh", "history", "archive"] as const).map(value =>
-          <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)}>
+          <button key={value} type="button" disabled={archiveHeld} aria-pressed={view === value} onClick={() => setView(value)}>
             {value === "fresh" ? "Recent (24 hours)" : value === "history" ? "History" : "Archive"}
           </button>)}</nav>
-        <label>Sort saved library<select value={order} onChange={event => setOrder(event.target.value)}>
+        <label>Sort saved library<select disabled={archiveHeld} value={order} onChange={event => setOrder(event.target.value)}>
           <option value="important">Most important</option><option value="newest">Newest</option><option value="oldest">Oldest</option>
         </select></label>
         <p>View and sorting apply across the saved library. The daily snapshot summarizes this page. Use “Next saved stories” for more.</p>
@@ -84,8 +116,10 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
           <h2><a href={story.canonicalUrl} target="_blank" rel="noopener noreferrer">{story.title}</a></h2>
           <p>{story.summary}</p><p>{story.verificationState === "verified" ? "Source evidence retained" : "Source needs review"} · {story.queue.replaceAll("_", " ")}</p>
           <p>{story.sourceLabel ?? new URL(story.canonicalUrl).hostname}{story.publishedAt ? ` · Published ${story.publishedAt}` : story.discoveredAt ? ` · Discovered ${story.discoveredAt}` : " · Date unknown"}</p>
-          <button type="button" disabled={!!selected || !page.canPrepare || story.verificationState !== "verified"}
+          <button type="button" disabled={!!selected || archiveHeld || !page.canPrepare || story.verificationState !== "verified"}
             onClick={() => setSelected(story)}>Research, compare or draft</button>
+          <button type="button" disabled={!!selected || archiveHeld || !page.canArchive}
+            onClick={() => void changeArchive(story)}>{story.queue === "archive" ? "Restore to History" : "Archive article"}</button>
         </article>)}
         {page.nextCursor ? <a href={`${base}/news?${new URLSearchParams({ view, order, after: page.nextCursor, ...(sourceAfter ? { sourceAfter } : {}) })}`}>Next saved stories</a> : null}
       </>}

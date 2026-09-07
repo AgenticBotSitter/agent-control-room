@@ -251,6 +251,14 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(await news.saveSourceSetting(identity, projectId, await readBoundedJson(request.body, 8192)), { headers: privateResponseHeaders });
           }
           const newsPrepare = /^\/api\/v1\/projects\/([^/]+)\/news\/prepare$/.exec(url.pathname);
+          const newsArchive = /^\/api\/v1\/projects\/([^/]+)\/news\/archive$/.exec(url.pathname);
+          if (newsArchive) {
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(newsArchive[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await news.archive(identity, projectId, await readBoundedJson(request.body, 2048)), { headers: privateResponseHeaders });
+          }
           if (newsPrepare) {
             if (request.method !== "POST" || url.search || !request.body
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")

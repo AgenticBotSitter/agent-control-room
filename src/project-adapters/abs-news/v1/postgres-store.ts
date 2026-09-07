@@ -7,6 +7,7 @@ import { parseAbsNewsStoryV1 } from "./story";
 import { buildAbsNewsWorkOrderProposalV1, parseAbsNewsWorkOrderProposalV1 } from "./proposal";
 import type { AbsNewsStoryV1, AbsNewsWorkOrderProposalV1 } from "./types";
 import { INDUSTRY_FRESHNESS_HOURS, INDUSTRY_FUTURE_TOLERANCE_MINUTES } from "../../../vendor/control-center/freshness";
+import { PostgresNewsStoryArchives } from "./story-archives";
 
 const scopeSchema = z.object({ tenantId: id, workspaceId: id, projectId: id }).strict();
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -196,15 +197,23 @@ export class PostgresAbsNewsStoreV1 {
     const selected = z.object({ view: z.enum(["all", "history", "archive", "fresh"]), observedAt: z.string().datetime({ offset: true }),
       order: z.enum(["id", "important", "newest", "oldest"]).default("id") }).strict().parse(filter);
     const now = Date.parse(selected.observedAt);
+    // Authenticate classifications before they can exclude a row. Filtering raw
+    // overlay columns first would let corrupted records silently hide stories.
+    const archiveSnapshot = await new PostgresNewsStoryArchives(this.db, this.scope, this.key).snapshot();
+    const archivedIds = [...archiveSnapshot.values()].filter(record => record.archived).map(record => record.storyId);
+    const restoredIds = [...archiveSnapshot.values()].filter(record => !record.archived).map(record => record.storyId);
     const rows = await this.db.query<Row & { story_id: string; story_digest: string }>(`WITH latest AS (SELECT DISTINCT ON (story_id COLLATE "C") story_id,story_digest,payload,auth_tag
       FROM control_abs_story_versions WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3
-      ORDER BY story_id COLLATE "C",sequence DESC), dated AS (
+      ORDER BY story_id COLLATE "C",sequence DESC), classified AS (
+      SELECT *, CASE WHEN story_id=ANY($9::text[]) THEN 'archive'
+        WHEN story_id=ANY($10::text[]) AND payload->>'queue'='archive' THEN 'earlier'
+        ELSE payload->>'queue' END AS effective_queue FROM latest), dated AS (
       SELECT *, regexp_replace(COALESCE(payload->>'publishedAt',payload->>'discoveredAt'),
-        '(\\.[0-9]{3})[0-9]+', '\\1')::timestamptz AS story_time FROM latest), filtered AS (
+        '(\\.[0-9]{3})[0-9]+', '\\1')::timestamptz AS story_time FROM classified), filtered AS (
       SELECT * FROM dated WHERE $5='all'
-        OR ($5='archive' AND payload->>'queue'='archive')
-        OR ($5='history' AND payload->>'queue'<>'archive')
-        OR ($5='fresh' AND payload->>'queue'<>'archive'
+        OR ($5='archive' AND effective_queue='archive')
+        OR ($5='history' AND effective_queue<>'archive')
+        OR ($5='fresh' AND effective_queue<>'archive'
           AND story_time BETWEEN $6::timestamptz AND $7::timestamptz)),
       ranked AS (SELECT *, row_number() OVER (ORDER BY
         CASE WHEN $8='important' THEN (payload->>'priorityScore')::numeric END DESC,
@@ -215,13 +224,18 @@ export class PostgresAbsNewsStoreV1 {
       WHERE $4::text IS NULL OR ($8='id' AND story_id COLLATE "C">$4 COLLATE "C")
         OR ($8<>'id' AND ordinal>(SELECT ordinal FROM ranked WHERE story_id=$4))
       ORDER BY ordinal LIMIT 51`, [...this.values(), after ?? null, selected.view,
-      new Date(now - INDUSTRY_FRESHNESS_HOURS * 3600000).toISOString(), new Date(now + INDUSTRY_FUTURE_TOLERANCE_MINUTES * 60000).toISOString(), selected.order]);
+      new Date(now - INDUSTRY_FRESHNESS_HOURS * 3600000).toISOString(), new Date(now + INDUSTRY_FUTURE_TOLERANCE_MINUTES * 60000).toISOString(), selected.order, archivedIds, restoredIds]);
+    const archiveStates: Record<string, { archived: boolean; revision: number }> = Object.create(null);
     const stories = rows.rows.slice(0, 50).map(row => {
       const story = this.story(row);
       if (story.storyId !== row.story_id || story.storyDigest !== row.story_digest) throw new ProjectWorkspaceContractErrorV1("integrity_failed");
+      const record = archiveSnapshot.get(story.storyId);
+      if (record) {
+        archiveStates[story.storyId] = { archived: record.archived, revision: record.revision };
+      }
       return story;
     });
-    return { stories, nextCursor: rows.rows.length > 50 ? stories.at(-1)!.storyId : null };
+    return { stories, archiveStates, nextCursor: rows.rows.length > 50 ? stories.at(-1)!.storyId : null };
   }
   async getStory(storyId: string, digest?: string) {
     id.parse(storyId);
