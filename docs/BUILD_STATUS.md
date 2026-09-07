@@ -8,6 +8,25 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Feed managed runtime now reuses the native lifecycle locally:** Extracted the
+existing pg-boss lifecycle behind fixed native-task and feed wrappers. Native error,
+recovery, cancellation, late-registration and pool-ownership behavior is preserved;
+feed collection has no recovery port. The wrapper checks operational permissions,
+disables package provisioning/scheduling and owns bounded worker/pool cleanup. It
+does not open a pool, mount a route or supply collection authority by itself. Twenty-one
+runtime checks, 51 admission/feed-runtime checks and the existing 199-entry delivery
+lane pass, plus TypeScript, focused lint, diff checks and VPS compilation. Independent
+source review found no introduced defect. An initial feed test double failed to drain
+its active callback; corrected to match upstream stop behavior before the passing run.
+The delivery command now also includes admission and feed-runtime tests (250 entries
+across the separately verified suites). No live collection, provider, service,
+production grant or GitHub write occurred. **Active/next:** configured feed startup
+with distinct verified coordinator/ingestion/worker resources and qualified current-
+source authority, then visible controls and article-to-research completion. Preserve
+the current model/effort. No owner action for local code/tests; live effects still
+require separate scoped authority. Multi-bot Idea Lab and the complete ABS journey
+remain unfinished; these local checks are not end-to-end production acceptance.
+
 **Restricted operational feed pickup is verified locally:** The installed pg-boss
 client now runs feed pickup and failure settlement through the existing restricted
 operational worker role in disposable PGlite. A held callback completes operational
