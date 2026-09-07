@@ -1,0 +1,33 @@
+{
+  "schema": "control-room.embedded-notice-text-evidence/v1",
+  "baseline": "ec74c114c97367a9bad4395a395c19f6f9c4b8a6",
+  "source": "existing_installed_README_license_sections",
+  "publicationApproved": false,
+  "originalProjectLicenseSelected": false,
+  "entries": [
+    {
+      "package": "pg-types",
+      "version": "2.2.0",
+      "file": "README.md",
+      "section": "License",
+      "readmeSha256": "ecda9bca71d3f0cee4e600d1dd2bef336213f39ef2e8fca6a1a1c1c8723f643a",
+      "manifestSha256": "3ec0293cb38cc8d9475e3eb32ac5f19d195bf9fccc8b19a0714e6ecd6e7c2cf0",
+      "noticeSha256": "c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd",
+      "text": "## license\n\nThe MIT License (MIT)\n\nCopyright (c) 2014 Brian M. Carlson\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n",
+      "upstreamLocation": "https://github.com/brianc/node-pg-types/tree/v2.2.0",
+      "status": "installed_notice_location_and_text_verified_not_final_distribution_clearance"
+    },
+    {
+      "package": "pgpass",
+      "version": "1.0.5",
+      "file": "README.md",
+      "section": "License",
+      "readmeSha256": "62549909404b5a0dcb2b4b74c9a930baf8095dbcfa1543c4ffc79378acd22b57",
+      "manifestSha256": "d75240eb4fe759c10db9f903838275348676a8bdc1f329e20a833713cd7c99bd",
+      "noticeSha256": "f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4",
+      "text": "## License\n\nCopyright (c) 2013-2016 Hannes Hörl\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n",
+      "upstreamLocation": "https://github.com/hoegaarden/pgpass/tree/v1.0.5",
+      "status": "installed_notice_location_and_text_verified_not_final_distribution_clearance"
+    }
+  ]
+}

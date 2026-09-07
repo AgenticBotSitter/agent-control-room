@@ -108,6 +108,24 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Embedded README notices resolve two location gaps
+
+At `ec74c11`, inspected the installed README license sections for **pg-types 2.2.0**
+and **pgpass 1.0.5**. Both contain full MIT permission/disclaimer text: Brian M. Carlson
+for pg-types and Hannes Hörl for pgpass. The root-license filename scan had missed these
+embedded sections. These two notice-location gaps are now resolved; previous observations
+remain historical and do not indicate absent licensing.
+
+[`research/embedded-runtime-notice-texts.json`](research/embedded-runtime-notice-texts.json)
+retains each exact section with full README, manifest and section SHA-256 hashes plus
+verified installed versions. No package execution, credential read or download was used.
+Read-only upstream tag listings were also inspected:
+[pg-types v2.2.0](https://github.com/brianc/node-pg-types/tree/v2.2.0) and
+[pgpass v1.0.5](https://github.com/hoegaarden/pgpass/tree/v1.0.5).
+Guessed standalone LICENSE paths returned 404; the retained text comes from installed
+README bytes, not a replacement current-main license. Final notice delivery and package
+provenance remain separate; Postgres.js and the RSC plugin own-notice tasks remain open.
+
 ### Exact installed notice texts retained
 
 At `0ec9a0e`, read the full installed notices for React, React DOM, React Server DOM

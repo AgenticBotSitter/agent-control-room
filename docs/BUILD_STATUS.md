@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Two runtime notice-location gaps resolved:** pg-types 2.2.0 and pgpass 1.0.5 both
+include full MIT notices inside their installed READMEs. Exact sections, README hashes
+and manifest hashes are retained in `research/embedded-runtime-notice-texts.json`.
+The prior root-filename scan missed these, rather than finding unlicensed packages.
+Final notice delivery/provenance and the other package/asset gaps remain. No download,
+credential access, license selection or GitHub write.
+
 **Installed bundle notice texts preserved:** Seven version-checked package/vendor
 locations now map to three exact full MIT texts in
 `research/installed-bundle-notice-texts.json`. React-family, Vinext and Zod notices were
