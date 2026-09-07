@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Real audit integrity defect corrected privately:** A disposable reproduction
+confirmed incomplete v1 audit rows could pass the original nullable-hash trigger.
+Forward migration 0058 requires all three hashes without rewriting existing history.
+Twenty audit/permission tests and standalone TypeScript pass; independent read-only
+review found no concrete defect in the fix. **The public candidate has not received
+the fix yet.** Next: propagate migration/test and regenerate its separate generalized
+schema fingerprint and release receipts before source publication. Evidence and exact
+review hashes: `AUDIT_HASH_MIGRATION_REVIEW.md`. No production database was touched.
+
 **Independent contributor-readiness review completed:** A separate reviewer fully
 read 28 exact candidate docs/configuration/demo files and found no new concrete
 blocking defect within that scope. One ambiguous browser-test-command instruction

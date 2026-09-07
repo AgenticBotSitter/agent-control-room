@@ -4,8 +4,8 @@ import { verifyPgBossNativeWorkerPermissions } from "../../persistence/pg-boss-n
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0057 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "5829041bedc0606f08cc72f823b88c183d5224dee10b75077554d182a2025706";
+// Generated from migrations 0001-0058 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "5108e1c9aa7f5b09d1f81b75d6f0595f09a0695ab04706d23d33382f2a167c16";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
