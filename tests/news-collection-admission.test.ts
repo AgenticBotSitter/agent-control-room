@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
+import { startupConfig } from "./helpers/web-startup";
+import { verifyNewsCoordinatorDatabase } from "../src/web/v1/private-database-preflight";
 import { taskFixture } from "./helpers/web-task";
 import { now, origin, trust, request } from "./helpers/web-foundation";
 import { createNewsCollectionHttpHandler } from "../src/web/v1/news-collection-http";
@@ -87,6 +90,42 @@ test("collection HTTP admission requires owner authentication and exact protecte
   assert.equal((await handler(request(proposalPath, "POST", input))).status, 200);
   assert.equal((await f.client.query("SELECT * FROM control_jobs WHERE state='proposed'")).rows.length, 1);
   assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 1);
+});
+
+test("restricted coordinator role can plan approve start and settle but cannot write articles", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  // Remove this fixture's stand-in queue before exact schema fingerprint verification.
+  await f.db.exec("DROP TABLE synthetic_feed_queue");
+  await f.db.exec(await readFile("db/roles/news_coordinator_roles.sql", "utf8"));
+  await f.db.exec(`CREATE ROLE news_coordinator_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+    GRANT control_room_news_coordinator TO news_coordinator_test; SET SESSION AUTHORIZATION news_coordinator_test;
+    SET search_path=pg_catalog, public; SET statement_timeout='5s'; SET lock_timeout='2s';
+    SET transaction_timeout='10s'; SET idle_in_transaction_session_timeout='5s'`);
+  const checked: DatabaseClient = { ...f.client, transaction: work => f.client.transaction(tx => work({ async query<T>(sql: string, params?: unknown[]) {
+    const result = await tx.query<T>(sql, params);
+    // PGlite-only TEMP metadata exception, not a production permission override.
+    if (sql.includes("AS database_temp")) result.rows = result.rows.map(row => ({ ...row, database_temp: false }));
+    return result;
+  } })) };
+  const config = { ...startupConfig.database, username: "news_coordinator_test" };
+  await assert.rejects(verifyNewsCoordinatorDatabase(f.client, config, startupConfig, now));
+  await verifyNewsCoordinatorDatabase(checked, config, startupConfig, now);
+  const plan = await f.planner.propose(f.identity, { sourceDigest: f.planner.sourceDigest, idempotencyKey: "restricted-news-plan-002" });
+  let submissions = 0;
+  const service = new WebNewsCollectionAdmission(f.client, f.scope, f.key, { async enqueueInSession() { submissions++; } }, f.clock);
+  const receipt = await service.approve(f.identity, { jobId: plan.jobId, inputDigest: plan.inputDigest });
+  assert.equal(submissions, 1); // No queue privilege is asserted by this injected submission.
+  const store = new CanonicalStore(f.client);
+  const marker = await store.beginAbsFeedAttempt({ ...f.scope, jobId: plan.jobId, inputDigest: plan.inputDigest,
+    attemptId: receipt.attemptId, effectId: receipt.effectId, operationDigest: receipt.operationDigest }, f.clock);
+  assert.equal((await store.settleAbsFeedAttempt({ tenantId: f.scope.tenantId, projectId: f.scope.projectId, jobId: plan.jobId,
+    attemptId: receipt.attemptId, effectId: receipt.effectId, nodeId: f.scope.nodeId, markerDigest: marker.markerDigest, outcome: "ambiguous" }, f.clock)).effectState, "ambiguous");
+  for (const table of ["control_abs_story_versions", "control_abs_source_observations", "projects", "control_role_grants", "control_native_task_queue"])
+    await assert.rejects(f.client.query(`INSERT INTO ${table} DEFAULT VALUES`), /permission denied/);
+  await f.db.exec("SET SESSION AUTHORIZATION postgres; GRANT INSERT ON control_abs_story_versions TO control_room_news_coordinator; SET SESSION AUTHORIZATION news_coordinator_test");
+  await assert.rejects(verifyNewsCoordinatorDatabase(checked, config, startupConfig, now));
+  await f.db.exec("SET SESSION AUTHORIZATION postgres; REVOKE INSERT ON control_abs_story_versions FROM control_room_news_coordinator; REVOKE INSERT ON control_abs_feed_plans FROM control_room_news_coordinator; SET SESSION AUTHORIZATION news_coordinator_test");
+  await assert.rejects(verifyNewsCoordinatorDatabase(checked, config, startupConfig, now));
 });
 test("revoked owners, non-owner roles, paused projects and extra input cannot admit", async t => {
   for (const mode of ["revoked", "operator", "paused", "extra"]) await t.test(mode, async () => {

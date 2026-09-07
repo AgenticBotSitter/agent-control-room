@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Restricted news coordinator profile is verified locally:** An offline NOLOGIN role
+template and the existing exact-permission preflight now cover feed plans, owner
+admission and canonical start/settlement. The role cannot write articles, source
+observations, projects, identity grants or the native task queue. A real restricted
+PGlite login completes planning/approval/start/ambiguous settlement with injected
+submission; excess article rights and missing plan rights are rejected. Seventy-one
+coordinator/ingestion/startup/runtime checks pass, plus TypeScript, focused lint and VPS
+build. The first schema check rejected the fixture's extra synthetic queue table; it is
+removed before exact fingerprint verification. The PGlite TEMP-metadata exception stays
+test-only. Independent review found no grant/profile mismatch; a misplaced comment is
+corrected. This is not production PostgreSQL qualification. No production role or login
+was created. **Next:** fixed feed queue permissions and configured startup wiring;
+queue privileges are deliberately not included in this coordinator profile yet.
+
 **Collector database resources are separated before startup integration:** Execution
 now requires distinct coordinator and ingestion clients. Saved plans and canonical
 transitions use the coordinator; collection storage and receipt verification receive
