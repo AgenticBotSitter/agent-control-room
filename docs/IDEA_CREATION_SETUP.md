@@ -85,8 +85,10 @@ lifecycle. The caller must not concurrently reuse or close a transferred runtime
 
 With this optional configuration, the protected Start endpoint invokes the existing
 owner start operation. It does not bypass current owner permissions or accepted live
-window checks. The browser Start control and real runtime configuration remain unfinished;
-the synthetic startup test deliberately has no accepted window and confirms zero calls.
+window checks. The browser Start control appears for an untouched Idea with current
+owner access; real runtime configuration remains unfinished. The synthetic startup
+test deliberately has no accepted window and confirms zero calls. An uncertain start
+response asks the owner to refresh saved status, never automatically repeat a provider call.
 
 After authorized real setup, verify `/ideas` offers New idea for the scoped owner, save
 and reopen a harmless draft, confirm a retry returns the original session, and confirm

@@ -7,11 +7,13 @@ import { PrivateHeader } from "./private-header";
 import { IdeaCreateForm } from "./idea-create-form";
 import { IdeaStopControl } from "./idea-stop-control";
 import { IdeaDecisionForm } from "./idea-decision-form";
+import { IdeaStartControl } from "./idea-start-control";
 
 export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void }) {
   const { session, contributions, synthesis, decision, run } = detail;
   return <><h1>{session.title}</h1><p>{session.ideaSummary}</p><p>For: {session.targetCustomer}</p>
-    <p>Saved discussion. Starting live panels is not connected on this installation.</p>
+    <p>{detail.execution === "not_configured" ? "Starting live panels is not connected on this installation."
+      : "Live start is configured. Current authorization is still required; this does not confirm that bots are connected."}</p>
     <section className="private-panel" aria-label="Panel status"><h2>Panel status</h2>{run ? <>
       <p>{({ prepared: "Prepared — no turn started", running: "Discussion in progress", completed: "Discussion completed",
         cancelled: "Discussion stopped", failed_definite: "Discussion failed", ambiguous: "Outcome uncertain — do not restart" })[run.state]}</p>
@@ -23,7 +25,9 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: Id
       <p>Automatic retry is disabled.</p>
       {run.cancellationRequestedAt && run.state !== "cancelled" ? <p>Stop requested. This is not confirmation that the current turn stopped.</p> : null}
       {detail.canStop ? <IdeaStopControl key={run.runId} sessionId={session.sessionId} sessionDigest={session.sessionDigest} runId={run.runId} refresh={refresh} /> : null}
-    </> : <p>No panel run is recorded for this idea.</p>}</section>
+    </> : <><p>No panel run is recorded for this idea.</p>
+      {detail.canStart ? <IdeaStartControl key={session.sessionId} session={session} refresh={refresh} />
+        : <p>Starting requires a configured runtime, an untouched idea and current owner access.</p>}</>}</section>
     {contributions.some(c => c.sourceMode === "injected_only") ? <p role="note">This discussion contains synthetic test contributions. Its synthesis is not evidence of a completed live bot panel.</p> : null}
     {Array.from({ length: session.maxRounds }, (_, i) => i + 1).map(round => <section key={round} aria-label={`Round ${round}`}>
       <h2>Round {round}</h2>{session.participants.map(participant => {
@@ -70,7 +74,8 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
       <h1>Idea Lab</h1><p>Explore saved discussions and the projects you chose to pursue.</p>
       {page.availability === "not_configured" ? <p>Idea storage is not configured. No sample discussions are shown.</p>
         : <>{page.canCreate ? <button type="button" disabled={creating} onClick={() => setCreating(true)}>New idea</button>
-          : <p>Idea creation is not available with the current configuration and access.</p>}<p>Running new panels is not connected yet.</p>
+          : <p>Idea creation is not available with the current configuration and access.</p>}<p>{page.execution === "not_configured"
+            ? "Running new panels is not connected yet." : "Open an idea to request a discussion. Current authorization is required."}</p>
           {!page.sessions.length ? <p>No saved ideas on this page.</p> : page.sessions.map(session => <article className="private-panel" key={session.sessionId}>
             <h2><a href={`/ideas/${encodeURIComponent(session.sessionId)}`}>{session.title}</a></h2>
             <p>{session.ideaSummary}</p><p>{session.participantCount} participants · Up to {session.maxRounds} rounds</p>

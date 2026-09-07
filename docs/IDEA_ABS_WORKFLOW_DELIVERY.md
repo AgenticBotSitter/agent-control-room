@@ -401,3 +401,15 @@ Tests include captured-port mutation, missing accepted material, cancellation, f
 preflight/install and failed/stalled cleanup. The full queue/Idea/runtime test exposed
 and now covers the worker topology's seven application logins. These are disposable
 PGlite/injected ports and do not activate a real provider or establish production readiness.
+
+Start UI update: eligible untouched Ideas expose Start with the saved roster size and
+round/time/cost limits. Configured execution is labeled authorization-required rather
+than connected. Every actual start still checks the owner and accepted runtime evidence.
+The client binds exact session/digest/run receipt, makes one request with a bounded wait,
+and performs no automatic resubmission. Uncertainty disables its mounted control and
+points to the shared saved-status refresh; a refresh/remount is safe because server
+claims, not browser state, prevent duplicate execution. Start disappears once a run is
+retained. Existing Stop and owner decision controls remain separate. Independent review
+found no concrete source defect; timeout/navigation rendering is not browser-tested.
+The Sites skill guided extension of existing controls without new hosting, imagery or
+dependencies. This is not a live Idea Lab qualification.

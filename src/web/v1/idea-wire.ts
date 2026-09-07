@@ -18,6 +18,12 @@ export const ideaStopReceiptSchema = z.object({ sessionId: id, sessionDigest: di
   cancellationRequestedAt: z.string().datetime({ offset: true }).nullable(), startsWork: z.literal(false),
 }).strict();
 export type IdeaStopReceipt = z.infer<typeof ideaStopReceiptSchema>;
+export const ideaStartDraftSchema = z.object({ sessionDigest: digest }).strict();
+export const ideaStartReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, runId: id,
+  state: z.enum(["prepared", "running", "completed", "cancelled", "failed_definite", "ambiguous"]),
+  replayed: z.boolean(), providerContacted: z.boolean(), retryPermitted: z.literal(false),
+}).strict();
+export type IdeaStartReceipt = z.infer<typeof ideaStartReceiptSchema>;
 export const ideaDecisionDraftSchema = z.object({ sessionDigest: digest, synthesisDigest: digest,
   intent: ideaOwnerIntentSchemaV1 }).strict().refine(v => (v.intent.decision === "create_project") === !!v.intent.project);
 export const ideaDecisionReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
@@ -29,11 +35,12 @@ const summary = z.object({ sessionId: id, sessionDigest: digest, title: z.string
 export const ideaPageSchema = z.object({ availability: z.enum(["configured", "not_configured"]),
   canCreate: z.boolean(),
   sessions: z.array(summary.extend({ participantCount: z.number().int().min(3).max(6), maxRounds: z.number().int().min(1).max(3) })).max(50),
-  nextCursor: id.nullable(), execution: z.literal("not_configured"), observedAt: z.string().datetime(),
+  nextCursor: id.nullable(), execution: z.enum(["not_configured", "authorization_required"]), observedAt: z.string().datetime(),
 }).strict().refine(page => page.availability !== "not_configured" || page.sessions.length === 0 && page.nextCursor === null && !page.canCreate);
 export const ideaDetailSchema = z.object({ session: summary.extend({ participants: z.array(z.object({
   participantId: id, displayName: z.string().min(1).max(120), perspective: z.string().min(1).max(80),
-})).min(3).max(6), maxRounds: z.number().int().min(1).max(3) }),
+})).min(3).max(6), maxRounds: z.number().int().min(1).max(3),
+  maxDurationSeconds: z.number().int().min(60).max(900), maxCostUsd: z.number().min(0).max(25) }),
 contributions: z.array(z.object({ contributionId: id, sessionId: id, sessionDigest: digest, participantId: id,
   round: z.number().int().min(1).max(3), safeOpinion: text, suggestedExperiment: z.string().min(1).max(500),
   confidencePercent: z.number().int().min(0).max(100),
@@ -53,10 +60,11 @@ run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
 }).strict().nullable(),
 decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decision: z.enum(["create_project", "save", "reject"]), project: z.object({ projectId: id }).optional(),
-}).nullable(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.literal("not_configured"), observedAt: z.string().datetime(),
+}).nullable(), canStart: z.boolean(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.enum(["not_configured", "authorization_required"]), observedAt: z.string().datetime(),
 }).strict().refine(value => {
   const { session, contributions, synthesis, decision, run } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
+    && (!value.canStart || value.execution === "authorization_required" && !run && !synthesis && !decision && !contributions.length)
     && (!value.canPromote || value.canDecide)
     && (!value.canDecide || !!synthesis && !decision && (!run || run.state === "completed"))
     && (!run || run.sessionId === session.sessionId && run.sessionDigest === session.sessionDigest

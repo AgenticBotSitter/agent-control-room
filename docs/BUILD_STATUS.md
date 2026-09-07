@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Saved Idea page now offers Start discussion when eligible:** The server advertises
+configured-but-authorization-required separately from unconfigured execution. The control
+requires an untouched Idea and current owner start access, displays its saved participant,
+round, time and cost limits, and submits only the exact saved digest. Receipts must match
+the session and deterministic run ID. No client automatic retry occurs; an uncertain
+response disables the mounted button and directs the owner to refresh retained status.
+Refreshing may remount the UI, so duplicate prevention remains the server's durable claim.
+Twenty-nine focused checks and the 61-test Idea/ABS regression suite pass, as do TypeScript,
+focused lint and VPS compilation. Independent source review found no concrete defect.
+Tests use injected HTTP/PGlite/static markup, not mounted browser interaction or native
+providers. The Sites skill preserved the existing private interface and local-only build;
+no preview, hosting migration or deployment. Useful synthesis, news ingestion and real
+configured agent journeys remain unfinished.
+
 **Verified optional Idea runtime now reaches startup:** Trusted configuration captures
 prepared runtime methods and requires a separate exact runtime login before mounting
 Start. Startup performs no provider call or admission lookup. Ownership after validated

@@ -15,7 +15,7 @@ export class WebIdeaService {
   private readonly key?: Uint8Array;
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey?: Uint8Array, clock: () => number = Date.now, private readonly creationConfigured = false, private readonly stopConfigured = false,
-    private readonly decisionConfigured = false) {
+    private readonly decisionConfigured = false, private readonly startConfigured = false) {
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
     if (integrityKey !== undefined) {
       if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("idea_key_invalid");
@@ -33,7 +33,7 @@ export class WebIdeaService {
         sessionId: session.sessionId, sessionDigest: session.sessionDigest, title: session.title, ideaSummary: session.ideaSummary,
         targetCustomer: session.targetCustomer, participantCount: session.participants.length, maxRounds: session.maxRounds,
         createdAt: session.createdAt,
-      })), nextCursor: page.nextCursor, execution: "not_configured" as const, observedAt: actor.now,
+      })), nextCursor: page.nextCursor, execution: this.startConfigured ? "authorization_required" as const : "not_configured" as const, observedAt: actor.now,
       canCreate: this.creationConfigured && actor.can("idea_lab.session_create", undefined, true) && actor.can("idea_lab.session_read", undefined, true) };
     });
   }
@@ -65,6 +65,8 @@ export class WebIdeaService {
       const canDecide = this.decisionConfigured && !!synthesis && !decision && (!run || run.state === "completed")
         && actor.can("idea_lab.owner_decide", undefined, true);
       return { session, contributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
+        canStart: this.startConfigured && !run && !synthesis && !decision && !contributions.length
+          && actor.can("idea_lab.panel_start", undefined, true),
         canPromote: canDecide && actor.can("projects.create", undefined, true),
         canStop: this.stopConfigured && !!run && ["prepared", "running"].includes(run.state) && !run.cancellationRequestedAt
           && actor.can("idea_lab.panel_cancel", undefined, true),
@@ -73,7 +75,7 @@ export class WebIdeaService {
           providerContacted: run.providerContacted, updatedAt: run.updatedAt, retryPermitted: run.retryPermitted,
           cancellationRequestedAt: run.cancellationRequestedAt ?? null,
           attempts: run.attempts.map(a => ({ participantId: a.participantId, round: a.round, state: a.state })) } : null,
-        execution: "not_configured" as const, observedAt: actor.now };
+        execution: this.startConfigured ? "authorization_required" as const : "not_configured" as const, observedAt: actor.now };
     });
   }
 }
