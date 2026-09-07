@@ -80,7 +80,8 @@ test("restricted private Idea HTTP reads work without any Idea write permissions
   assert.equal((await handle(request(detail))).status, 200);
   for (const url of [path + "?after=x&after=y", detail + "?after=idea:one", path + "?unexpected=1"])
     assert.equal((await handle(request(url))).status, 400);
-  assert.equal((await handle(request(path, "POST", {}))).status, 400);
+  // The optional creation coordinator is absent; no web-role fallback writes.
+  assert.equal((await handle(request(path, "POST", {}))).status, 503);
   assert.equal((await handle(request(path + "/idea:missing"))).status, 404);
   const anonymous = request(detail); anonymous.headers.delete("cf-access-jwt-assertion");
   assert.equal((await handle(anonymous)).status, 401);

@@ -9,6 +9,7 @@ import { WebConnectionService, type WebConnectionKeys } from "./connection-servi
 import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { WebNewsService } from "./news-service";
 import { WebIdeaService } from "./idea-service";
+import type { IdeaCreateOperation } from "./idea-create-operation";
 import { createTaskHttpHandler } from "./task-http";
 import { WebTaskReviewService } from "./task-review-service";
 import { WebTaskVerificationService } from "./task-verification-service";
@@ -37,6 +38,7 @@ export interface PrivateWebProcessOptions {
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
+  ideaCreation?: IdeaCreateOperation;
   /** Narrow optional coordinator operations; resource ownership remains in trusted composition. */
   assignment?: TaskAssignmentOperation;
   approvals?: TaskApprovalOperation;
@@ -58,6 +60,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
+  if (options.ideaCreation && (options.ideaCreation.tenantId !== options.tenantId
+    || options.ideaCreation.workspaceId !== options.workspaceId || typeof options.ideaCreation.create !== "function"))
+    throw new Error("invalid_private_app_config");
+  const ideaCreation = options.ideaCreation ? Object.freeze({ create: options.ideaCreation.create.bind(options.ideaCreation) }) : undefined;
   if (options.queueAttention && (options.queueAttention.tenantId !== options.tenantId
     || options.queueAttention.workspaceId !== options.workspaceId || typeof options.queueAttention.read !== "function"))
     throw new Error("invalid_private_app_config");
@@ -127,6 +133,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         if (url.pathname.startsWith("/api/")) {
           const ideaRoute = /^\/api\/v1\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
           if (ideaRoute) {
+            if (request.method === "POST" && ideaRoute[1] === undefined) {
+              if (url.search || !request.body || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json"
+                || !/^[A-Za-z0-9:_-]{8,160}$/.test(request.headers.get("idempotency-key") ?? "")) throw new WebAccessError("invalid_request");
+              if (!ideaCreation) throw new Error("idea_creation_not_configured");
+              const result = await ideaCreation.create(identity, await readBoundedJson(request.body, 8192), request.headers.get("idempotency-key")!);
+              return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+            }
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
               || url.searchParams.getAll("after").length > 1 || ideaRoute[1] && url.search)
               throw new WebAccessError("invalid_request");
