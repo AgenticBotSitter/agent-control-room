@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { chmod, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { taskFixture, taskDraft } from "./helpers/web-task";
 import { now, request, trust } from "./helpers/web-foundation";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { CanonicalStore } from "../src/persistence/canonical-store";
 import { AuditStore } from "../src/audit/audit-store";
-import { runSyntheticExecution, buildTextArtifactBundle } from "../src/node-executor";
+import { runSyntheticExecution, buildTextArtifactBundle, DisposableFilesystemArtifactStorage } from "../src/node-executor";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionReviewTargetV1 } from "../src/completion-gate/v1";
 import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { createElement } from "react";
@@ -17,6 +21,11 @@ import { scriptedEtcdCheckpoint } from "./helpers/scripted-etcd-checkpoint";
 
 test("fresh project proposal can anchor an explicitly synthetic result and revision without fabricating native execution", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
+  const directory = await mkdtemp(join(tmpdir(), "control-room-proposal-results-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await chmod(directory, 0o700);
+  const artifactRoot = await realpath(directory);
+  const files = await DisposableFilesystemArtifactStorage.create(artifactRoot);
   const saved = await f.handler(request(f.path, "POST", taskDraft));
   assert.equal(saved.status, 201);
   const { receipt } = await saved.json();
@@ -69,11 +78,15 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
     assert.equal(result.state, "succeeded");
     if (result.state !== "succeeded") throw new Error("simulation did not complete");
     assert.deepEqual(progress, [50, 100]);
+    const stored = await files.put({ artifactId: `artifact:simulation:${round}`, bytes: result.artifactBytes });
     const bundle = buildTextArtifactBundle({ artifactId: `artifact:simulation:${round}`, claimId: `claim:simulation:${round}`,
       tenantId, projectId, jobId: receipt.jobId, attemptId, producerId: producer.actorId,
-      logicalRole: "synthetic-preview-result", schemaVersion: "1.0.0", storageClass: "local", retentionClass: "test-memory",
+      logicalRole: "synthetic-preview-result", schemaVersion: "1.0.0", storageClass: "local", retentionClass: "disposable-test",
+      opaqueLocator: stored.opaqueLocator,
       text: new TextDecoder().decode(result.artifactBytes), createdAt: at(1 + round * 4) });
     assert.deepEqual(bundle.bytes, new Uint8Array(result.artifactBytes));
+    assert.equal(bundle.manifest.contentHash, stored.contentHash);
+    assert.equal(bundle.manifest.sizeBytes, stored.sizeBytes);
     return bundle;
   }
   const first = await simulate(0, `SIMULATED RESULT\n${source.task.title}\nA sample recommendation requiring revision.`);
@@ -183,6 +196,21 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
   assert.equal((await store.recordReview(acceptance)).replayed, true);
   assert.equal(peer.stats().writes, beforeReopen.writes);
   assert.ok(peer.stats().reads > beforeReopen.reads);
+  // Reopen file storage independently of the live writer, then bind each saved
+  // revision's exact bytes to the persisted review target. No native receipt exists.
+  const reopenedFiles = await DisposableFilesystemArtifactStorage.create(artifactRoot);
+  for (const [bundle, reviewTarget] of [[first, target], [second, revised]] as const) {
+    const bytes = await reopenedFiles.read(bundle.manifest.id);
+    assert.ok(bytes);
+    assert.deepEqual(bytes, bundle.bytes);
+    const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    assert.equal(hash, bundle.manifest.contentHash);
+    assert.equal(hash, (await store.snapshot(tenantId, reviewTarget.id)).target.subjectDigest);
+    assert.match(bundle.manifest.opaqueLocator ?? "", /^local-artifact:\/\//u);
+    assert.equal(bundle.manifest.logicalRole, "synthetic-preview-result");
+  }
+  await assert.rejects(files.put({ artifactId: first.manifest.id, bytes: second.bytes }), /storage_conflict/);
+  assert.deepEqual(await reopenedFiles.read(first.manifest.id), first.bytes);
 
   // A successful external CAS with a lost acknowledgement rolls SQL back and
   // makes the resulting disagreement visible. It must not become a green review

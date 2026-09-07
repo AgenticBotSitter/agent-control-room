@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Saved simulation revisions now checked against persisted review targets:** The
+existing proposal-to-revision/review rehearsal uses the existing private disposable
+filesystem adapter for both result files. Reopened reads match each exact byte hash
+to the corresponding saved review target; overwriting the first revision with the
+second is rejected and leaves the first intact. All 12 task-service tests, strict
+application types, focused lint and whitespace checks pass. Temporary files are removed
+by the test. Checkpoint transport is still scripted; native receipts, attempts, leases,
+runs and effects remain absent. This is integration evidence, not new runtime wiring
+or browser acceptance. `CURRENT_COMPLETION_HANDOFF.md` also corrects its stale claim
+that the checkpoint adapter exists only in memory. No GitHub activity or deployment.
+
 **Local preview now mounts the existing result/review read panel:** Canonical browser
 result-list/content requests map to the local owner-cookie handler and existing task
 service, preserving project/content grants and explicit missing-configuration states.

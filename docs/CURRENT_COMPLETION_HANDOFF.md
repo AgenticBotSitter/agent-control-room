@@ -1,6 +1,6 @@
 # Current completion handoff — first usable task before more polish
 
-2026-09-06, inspected at local commit `76edfed`. This updates implementation status,
+2026-09-06, refreshed after local commit `a18a263`. This updates implementation status,
 not the original owner outcomes. GitHub publication remains paused. Local build work
 is authorized; live database, credentials, providers and deployment remain separately gated.
 
@@ -32,11 +32,21 @@ independence and actual operational acceptance remain open. The adapter cannot i
 a missing checkpoint. Local project/task browser controls now exist at `/local-preview`,
 but interactive acceptance and saved synthetic result/review wiring remain unfinished.
 
-**E64 configuration finding:** [Durable checkpoint gap](research/REUSE_E64_DURABLE_CHECKPOINT_GAP.md)
-is a concrete missing implementation, not an operator-supplied password. The current
-rollback-checkpoint port has only a test-memory implementation. Evaluate an existing
-independent CAS store and asynchronous integration before calling production setup
-complete; do not substitute PostgreSQL self-anchoring or restart the historical LIVE chain.
+**E64 historical configuration finding:** [Durable checkpoint gap](research/REUSE_E64_DURABLE_CHECKPOINT_GAP.md)
+identified a missing implementation, not an operator-supplied password. The asynchronous
+adapter and bounded etcd CAS access now exist, as described above; the old test-memory-only
+finding is superseded for source implementation, not operational acceptance. Provisioning,
+authenticated transport and restore independence remain unqualified. Do not substitute
+PostgreSQL self-anchoring or restart the historical LIVE chain.
+
+**Local result integration:** `/local-preview` now mounts the existing native-result
+read panel through the owner-cookie adapter, with truthful `not_configured` sources.
+It does not yet publish simulated evidence. The proposal/revision rehearsal now saves
+both simulated result files with the existing disposable filesystem adapter, reopens
+that adapter, and matches each exact byte hash to its persisted review target. Review
+checkpoint transport remains scripted. The native receipt/attempt/lease/run/effect
+tables remain empty, and the proposal stays proposed. Do not wire simulated output
+into `NativeResultStore` or interpret the fixture's review as real owner acceptance.
 
 1. **Browser acceptance:** owner unlocks the Mac. Inspect the existing application and
    use only an already authorized disposable/local setup. Confirm project creation,
