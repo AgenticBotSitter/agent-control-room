@@ -88,12 +88,12 @@ export class WebNewsCollectionAdmission {
         if (!decision.allowed || decision.identityId !== actor.id) throw new WebAccessError("access_denied");
         // Session locks keep these grants stable, but time can advance during enqueue.
         // Conservatively fence every contributing grant, not just the policy proof lifetime.
-        const grants = await tx.query<{ id: string; expires_at: string | null }>(
-          "SELECT id,expires_at FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2 AND id=ANY($3::text[]) FOR SHARE",
+        const grants = await tx.query<{ id: string; expires_at: string | null; revoked_at: string | null }>(
+          "SELECT id,expires_at,revoked_at FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2 AND id=ANY($3::text[]) FOR SHARE",
           [tenantId, actor.id, decision.matchedGrantIds]);
         if (!grants.rows.length || grants.rows.length !== new Set(decision.matchedGrantIds).size) throw new WebAccessError("access_denied");
         deadline = Math.min(deadline!, Date.parse(decision.expiresAt), ...grants.rows
-          .filter(grant => grant.expires_at !== null).map(grant => Date.parse(grant.expires_at!)));
+          .flatMap(grant => [grant.expires_at, grant.revoked_at].filter((value): value is string => value !== null).map(Date.parse)));
         if (!Number.isFinite(deadline) || deadline <= this.clock()) throw new WebAccessError("access_denied");
         return decision.id;
       };

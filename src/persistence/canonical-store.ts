@@ -29,6 +29,7 @@ import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDi
 import { isHostProxyV1 } from "../security/host-value";
 import { actionInboxItemSchemaV1, type ActionInboxItemV1 } from "../operator-surfaces/v1";
 import { acquireReadyFrontierCanonicalPromotionAuthorizationV1 } from "../ready-frontier/v1/promotion-service";
+import { evaluatePolicy, type RoleGrant } from "../security/policy";
 
 type EntityKind = DomainEntity["kind"];
 type EntityState = DomainEntity["state"];
@@ -868,6 +869,103 @@ export class CanonicalStore {
       }, true);
       return { job: jobResult.entity as JobRecord, attempt: attemptResult.entity as AttemptRecord, lease, replayed: false };
     });
+  }
+
+  /** Durable coordinator pre-effect marker for the fixed public-feed read operation only.
+   * This is persistence, not a reader factory or a portable execution capability.
+   * The collector must bind its saved full plan and recheck its local guard before I/O.
+   * This does not replace the node-local protected claim required for remote execution.
+   * Any replay refuses another start, even when the preceding caller lost its response. */
+  async beginAbsFeedAttempt(input: { tenantId: string; workspaceId: string; projectId: string; jobId: string;
+    attemptId: string; effectId: string; nodeId: string; executorId: string; inputDigest: string; operationDigest: string },
+  clock: () => number = Date.now): Promise<{ started: true; markerDigest: string; deadline: string }> {
+    input = { ...input };
+    const startedAt = clock(); let deadline = startedAt;
+    const assertCurrent = () => { const current = clock();
+      if (!Number.isSafeInteger(current) || current < startedAt || current >= deadline) throw new Error("abs_feed_attempt_expired"); };
+    if (!Number.isSafeInteger(startedAt)) throw new Error("abs_feed_attempt_expired");
+    return this.#transactionWithPreCommitCheck(async tx => {
+      // Match web admission's identity -> grants -> workspace lock order.
+      const proof = (await tx.query<{ identity_id: string; id: string; decided_at: string; expires_at: string; approval_id: string; operation_digest: string }>(
+        `SELECT d.identity_id,d.id,d.decided_at,d.expires_at,c.approval_id,c.operation_digest FROM control_approval_consumptions c
+         JOIN control_policy_decisions d ON d.tenant_id=c.tenant_id AND d.id=c.policy_decision_id
+         WHERE c.tenant_id=$1 AND c.effect_intent_id=$2`, [input.tenantId, input.effectId])).rows[0];
+      if (!proof) throw new Error("abs_feed_attempt_unavailable");
+      const owner = (await tx.query<{ actor_type: string; state: string }>(
+        "SELECT actor_type,state FROM control_identities WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, proof.identity_id])).rows[0];
+      if (owner?.actor_type !== "human" || owner.state !== "active") throw new Error("abs_feed_attempt_unavailable");
+      const rows = await tx.query<{ id: string; role_key: string; allowed_actions: string[]; project_ids: string[];
+        risk_ceiling: RoleGrant["riskCeiling"]; allow_external_effects: boolean; require_strong_factor: boolean;
+        expires_at: string | null; revoked_at: string | null }>(
+        "SELECT * FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2 FOR SHARE", [input.tenantId, proof.identity_id]);
+      const grants = rows.rows.filter(g => g.role_key === "owner").map(g => ({ id: g.id, allowedActions: g.allowed_actions,
+        projectIds: g.project_ids, riskCeiling: g.risk_ceiling, allowExternalEffects: g.allow_external_effects,
+        requireStrongFactor: g.require_strong_factor, ...(g.expires_at ? { expiresAt: g.expires_at } : {}),
+        ...(g.revoked_at ? { revokedAt: g.revoked_at } : {}) }));
+      await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.workspaceId]);
+      // The feed route currently targets ordinary projects; Idea promotion produces one.
+      const project = (await tx.query<{ lifecycle: string }>(`SELECT h.lifecycle FROM projects p
+        JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+        WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 FOR SHARE OF p,h`,
+      [input.tenantId, input.workspaceId, input.projectId])).rows[0];
+      if (project?.lifecycle !== "active") throw new Error("abs_feed_attempt_unavailable");
+      await tx.query("SELECT id FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.jobId]);
+      const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+      const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+      const effect = await this.#requireWith(tx, input.tenantId, "effect_intent", input.effectId) as EffectIntentRecord;
+      const leases = await tx.query<{ payload: LeaseRecord }>(
+        "SELECT payload FROM control_leases WHERE tenant_id=$1 AND attempt_id=$2 AND state='active' FOR UPDATE", [input.tenantId, input.attemptId]);
+      const lease = leases.rows[0] ? domainEntitySchema.parse(leases.rows[0].payload) as LeaseRecord : undefined;
+      const node = (await tx.query<{ state: string }>("SELECT state FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+        [input.tenantId, input.nodeId])).rows[0];
+      if (job.projectId !== input.projectId || job.inputDigest !== input.inputDigest || job.state !== "leased"
+        || job.specVersion !== "abs-feed-collection/v1" || job.jobType !== "abs.feed.collection"
+        || job.authority.allowedExecutor !== input.executorId || job.authority.allowedOperations.length !== 1
+        || job.authority.allowedOperations[0] !== "abs.feed.collect" || job.authority.effectPolicy !== "approval_required"
+        || job.authority.maxConcurrentEffects !== 1 || job.authority.credentialRefs.length || job.authority.filesystemRoots.length
+        || job.authority.maxRisk !== "low" || job.authority.maxCostUsd !== 0 || job.authority.maxDurationSeconds !== 60
+        || job.requiredCapability !== "news.public_feed.read" || job.dependsOnJobIds.length
+        || job.retryPolicy.maxAttempts !== 1 || job.retryPolicy.retryAfterOrphan || job.retryPolicy.retryableFailureCodes.length
+        || job.retryPolicy.backoffSeconds !== 0 || job.retryPolicy.ambiguousEffectPolicy !== "attention"
+        || job.authority.networkPolicy !== "allowlist" || job.authority.allowedNetworkDestinations.length !== 1
+        || attempt.jobId !== job.id || attempt.nodeId !== input.nodeId || attempt.state !== "leased"
+        || !lease || leases.rows.length !== 1 || lease.jobId !== job.id || lease.nodeId !== input.nodeId || lease.epoch !== attempt.leaseEpoch
+        || node?.state !== "active" || effect.jobId !== job.id || effect.attemptId !== attempt.id || effect.state !== "authorized"
+        || effect.operation !== "abs.feed.collect" || effect.risk !== "low" || !effect.approvalId
+        || proof.approval_id !== effect.approvalId || proof.operation_digest !== effect.operationDigest
+        || effect.operationDigest !== input.operationDigest || effect.operationDigest !== computeEffectOperationDigest(effect, job.projectId)
+        || effect.destination !== job.authority.allowedNetworkDestinations[0]) throw new Error("abs_feed_attempt_unavailable");
+      assertAuthorityDigest(job.authority);
+      await tx.query("SELECT id FROM control_approvals WHERE tenant_id=$1 AND id=$2 FOR SHARE", [input.tenantId, effect.approvalId]);
+      const approval = await this.#requireWith(tx, input.tenantId, "approval", effect.approvalId) as ApprovalRecord;
+      if (approval.state !== "approved" || approval.operationDigest !== effect.operationDigest || approval.scope !== job.projectId
+        || approval.risk !== "low") throw new Error("abs_feed_attempt_unavailable");
+      const occurredAt = new Date(startedAt).toISOString();
+      await this.#requirePolicyDecision(tx, { tenantId: input.tenantId, decisionId: proof.id, identityId: proof.identity_id,
+        actorType: "human", action: "effect.authorize", resourceType: "effect_intent", resourceId: effect.id,
+        projectId: job.projectId, risk: "low", externalEffect: true, requiredRoleKey: "owner", occurredAt });
+      const decision = evaluatePolicy({ tenantId: input.tenantId, identityId: proof.identity_id, actorType: "human",
+        authenticatedAt: proof.decided_at, expiresAt: proof.expires_at }, grants, { tenantId: input.tenantId,
+        action: "effect.authorize", resourceType: "effect_intent", resourceId: effect.id, projectId: job.projectId,
+        risk: "low", externalEffect: true, occurredAt });
+      if (!decision.allowed) throw new Error("abs_feed_attempt_unavailable");
+      deadline = Math.min(Date.parse(job.authority.expiresAt), Date.parse(lease.expiresAt), Date.parse(approval.expiresAt),
+        Date.parse(proof.expires_at), ...grants.filter(g => decision.matchedGrantIds.includes(g.id))
+          .flatMap(g => [g.expiresAt, g.revokedAt].filter((value): value is string => !!value).map(Date.parse)));
+      if (!Number.isFinite(deadline)) throw new Error("abs_feed_attempt_unavailable");
+      assertCurrent();
+      const claimKey = sha256Digest({ tenantId: input.tenantId, nodeId: input.nodeId, projectId: job.projectId,
+        jobId: job.id, attemptId: attempt.id, operationDigest: effect.operationDigest });
+      const markerDigest = sha256Digest({ claimKey, inputDigest: job.inputDigest, authorityDigest: job.authority.digest,
+        destination: effect.destination, deadline: new Date(deadline).toISOString() });
+      const actor = { actorId: input.nodeId, actorType: "node" as const }, suffix = claimKey.slice(7, 47);
+      for (const [entity, toState] of [[job, "running"], [attempt, "running"], [effect, "executing"]] as const)
+        await this.#transitionWith(tx, { tenantId: input.tenantId, kind: entity.kind, entityId: entity.id,
+          expectedVersion: entity.version, toState, actor, occurredAt, transitionId: `transition:feed-start:${suffix}:${entity.kind}`,
+          idempotencyKey: `feed-start:${suffix}:${entity.kind}`, ...(entity.kind === "attempt" ? { recordPatch: { startedAt: occurredAt } } : {}), safeMetadata: { claimKey, markerDigest,
+            deadline: new Date(deadline).toISOString(), inputDigest: job.inputDigest } }, true);
+      return { started: true as const, markerDigest, deadline: new Date(deadline).toISOString() };
+    }, assertCurrent);
   }
 
   async expireLease(input: ExpireLeaseInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {

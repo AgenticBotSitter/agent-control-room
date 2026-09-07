@@ -8,6 +8,25 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Coordinator feed start ownership is implemented locally:** The fixed feed operation
+reuses canonical job/attempt/effect transitions to record one durable start marker.
+It checks exact input/operation/assignment and low-risk read ceilings, current owner
+grants, active ordinary project/node, consumed approval lineage and lease. Identity,
+grant, workspace, job, node and approval locks plus a precommit deadline protect the
+transaction. Replays, including through a recreated store, cannot start again. Future
+grant revocation now also bounds both admission and start deadlines. Forty-one focused
+admission/canonical checks and 197 delivery regressions pass with TypeScript, focused lint and VPS compilation.
+The first start test failed because no attempt started; the missing required `startedAt`
+patch was corrected. Independent review identified the unlocked approval read during
+development; approval is now locked before reading, and re-review found no further
+concrete defect. Injected tests cover complete rollback on marker-write failure and
+deadline passage; they do not establish real PostgreSQL concurrent revocation behavior.
+This coordinator marker is not a remote node-local protected claim or a portable
+execution capability. No reader, native runtime, credential, feed or deployment was used.
+**Next implementation:** settle collection outcomes and wire the owned collector to
+current-authority checks, then restricted startup/HTTP permissions and page verification.
+Full Idea Lab/ABS journeys and their authorized live acceptance remain unfinished.
+
 **Owner feed approval now has installed-queue integration evidence:** The real pg-boss
 package receives the canonical admission reference on the same disposable SQL transaction.
 An injected failure after actual send rolls back approval, effect, lease, attempt, policy

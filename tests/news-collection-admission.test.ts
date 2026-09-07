@@ -8,7 +8,7 @@ import { sha256Digest } from "../src/security";
 import { WebNewsCollectionPlanning } from "../src/web/v1/news-collection-planning";
 import { WebNewsCollectionAdmission } from "../src/web/v1/news-collection-admission";
 import { WebProjectService } from "../src/web/v1/project-service";
-import type { DatabaseSession } from "../src/persistence/database";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import type { AbsFeedJobReference } from "../src/persistence/pg-boss-abs-feed-worker";
 
 async function fixture() {
@@ -93,6 +93,74 @@ test("separate external-effect grant expiring during enqueue rolls back admissio
   for (const table of ["control_attempts", "control_leases", "control_approvals", "control_effect_intents", "control_approval_consumptions", "control_policy_decisions", "synthetic_feed_queue"])
     assert.equal((await f.client.query(`SELECT * FROM ${table}`)).rows.length, 0);
   assert.equal((await f.client.query("SELECT state FROM control_jobs WHERE id=$1", [f.plan.jobId])).rows[0].state, "proposed");
+});
+
+test("canonical feed pre-effect marker starts once and survives a recreated store", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const receipt = await f.service.approve(f.identity, f.args);
+  const input = { ...f.scope, ...f.args, attemptId: receipt.attemptId, effectId: receipt.effectId, operationDigest: receipt.operationDigest };
+  const store = new CanonicalStore(f.client);
+  const results = await Promise.allSettled([store.beginAbsFeedAttempt(input, f.clock), store.beginAbsFeedAttempt(input, f.clock)]);
+  assert.equal(results.filter(r => r.status === "fulfilled").length, 1);
+  assert.equal(results.filter(r => r.status === "rejected").length, 1);
+  await assert.rejects(new CanonicalStore(f.client).beginAbsFeedAttempt(input, f.clock));
+  assert.equal((await store.get(f.scope.tenantId, "job", receipt.jobId))?.state, "running");
+  assert.equal((await store.get(f.scope.tenantId, "attempt", receipt.attemptId))?.state, "running");
+  assert.equal((await store.get(f.scope.tenantId, "effect_intent", receipt.effectId))?.state, "executing");
+  const markers = (await f.client.query("SELECT safe_metadata FROM control_transition_events WHERE to_state='executing'")).rows;
+  assert.equal(markers.length, 1); assert.match(String((markers[0].safe_metadata as Record<string, unknown>).markerDigest), /^sha256:/);
+});
+
+test("grant revocation deadline and marker write failures roll back the whole start", async t => {
+  for (const mode of ["revoke", "write"]) await t.test(mode, async () => {
+    const f = await fixture();
+    try {
+      const receipt = await f.service.approve(f.identity, f.args);
+      if (mode === "revoke") await f.client.query("UPDATE control_role_grants SET revoked_at=$1 WHERE id='grant:web'", [new Date(now + 10_000).toISOString()]);
+      let markerReached = false, approvalLocked = false;
+      const session = (tx: DatabaseSession): DatabaseSession => ({ async query<T>(sql: string, values?: unknown[]) {
+        if (sql.includes("SELECT id FROM control_approvals") && sql.includes("FOR SHARE")) approvalLocked = true;
+        const result = await tx.query<T>(sql, values);
+        if (sql.includes("UPDATE control_effect_intents")) {
+          markerReached = true;
+          if (mode === "write") throw new Error("synthetic marker failure");
+          f.setTime(now + 11_000);
+        }
+        return result;
+      } });
+      const db: DatabaseClient = { query: f.client.query.bind(f.client), transaction: work => f.client.transaction(tx => work(session(tx))),
+        transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
+      await assert.rejects(new CanonicalStore(db).beginAbsFeedAttempt({ ...f.scope, ...f.args, attemptId: receipt.attemptId,
+        effectId: receipt.effectId, operationDigest: receipt.operationDigest }, f.clock));
+      assert.equal(markerReached, true); assert.equal(approvalLocked, true);
+      const store = new CanonicalStore(f.client);
+      assert.equal((await store.get(f.scope.tenantId, "job", receipt.jobId))?.state, "leased");
+      assert.equal((await store.get(f.scope.tenantId, "attempt", receipt.attemptId))?.state, "leased");
+      assert.equal((await store.get(f.scope.tenantId, "effect_intent", receipt.effectId))?.state, "authorized");
+      assert.equal((await f.client.query("SELECT * FROM control_transition_events WHERE to_state='executing'")).rows.length, 0);
+    } finally { await f.db.close(); }
+  });
+});
+
+test("changed authority or assignment and elapsed deadlines refuse a feed start", async t => {
+  for (const mode of ["revoked", "effects", "actions", "project", "node", "digest", "expired"]) await t.test(mode, async () => {
+    const f = await fixture();
+    try {
+      const receipt = await f.service.approve(f.identity, f.args), store = new CanonicalStore(f.client);
+      const input = { ...f.scope, ...f.args, attemptId: receipt.attemptId, effectId: receipt.effectId, operationDigest: receipt.operationDigest };
+      if (mode === "revoked") await f.client.query("UPDATE control_role_grants SET revoked_at=$1 WHERE id='grant:web'", [new Date(now).toISOString()]);
+      if (mode === "effects") await f.client.query("UPDATE control_role_grants SET allow_external_effects=false WHERE id='grant:web'");
+      if (mode === "actions") await f.client.query("UPDATE control_role_grants SET allowed_actions='[\"tasks.read\"]'::jsonb WHERE id='grant:web'");
+      if (mode === "project") await new WebProjectService(f.client, { tenantId: f.scope.tenantId, workspaceId: f.scope.workspaceId }, f.clock)
+        .transition(f.identity, f.scope.projectId, { lifecycle: "paused", expectedVersion: f.project.version }, "pause-feed-start-001");
+      if (mode === "node") input.nodeId = "node:other";
+      if (mode === "digest") input.inputDigest = sha256Digest("wrong");
+      if (mode === "expired") f.setTime(now + 60_000);
+      await assert.rejects(store.beginAbsFeedAttempt(input, f.clock));
+      assert.equal((await store.get(f.scope.tenantId, "job", receipt.jobId))?.state, "leased");
+      assert.equal((await store.get(f.scope.tenantId, "effect_intent", receipt.effectId))?.state, "authorized");
+    } finally { await f.db.close(); }
+  });
 });
 test("changed plan, wrong executor, inactive node and external-effect denial cannot authorize", async t => {
   for (const mode of ["digest", "executor", "node", "effects", "expired"]) await t.test(mode, async () => {
