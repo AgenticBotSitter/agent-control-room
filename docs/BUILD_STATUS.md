@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Extension source pins identified; first preview scope clarified:** PGlite's pinned
+database build declares PostgreSQL 17.5 and four exact extension submodule commits.
+These are source inputs, not installed-binary equivalence. Recommended first preview
+remains source/lockfile/tests with frozen setup, not copied node_modules or prebuilt
+database archives. Binary redistribution and hosted bundle notice duties are tracked
+separately rather than silently waived. See `PUBLIC_DEPENDENCY_LICENSE_STATUS.md`.
+No code execution, package install, candidate assembly, license choice or publication.
+
 **PGlite alternate notice and binary-source trail resolved:** Retained the exact
 release's PostgreSQL license, submodule declaration and build-command manifest (2,620
 bytes, logged with hashes after a disk check). Release source points to postgres-pglite

@@ -108,6 +108,46 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### PGlite extension pins and preview scope recommendation
+
+At `ecf8d99`, inspected `.gitmodules`, `.buildconfig` and `wasm-build/build-ext.sh`
+from database source commit `1195d5388bd5529e0013c45fa816cfcd953d84e0`. The config
+declares PostgreSQL 17.5 (`REL_17_5_WASM`) and SDK 3.1.74.11.11. These are source
+configuration values, not a measured version assertion for the installed WASM binary.
+The complete recursive Git tree (`truncated: false`) records:
+
+| Extension source | Git submodule commit |
+|---|---|
+| sraoss/pg_ivm | `f4b40e93a60478a1ea9d69f0fd305452e5c00690` |
+| fboulnois/pg_uuidv7 | `c707aae2411181be4802f5fa565b44d9c0bcbc29` |
+| theory/pgtap | `6e3acbf4e0cb19997edeafeabf1b18870ea68a5e` |
+| pgvector/pgvector | `2627c5ff775ae6d7aef0c430121ccf857842d2f2` |
+
+The extension build script processes PostgreSQL contrib directories with platform-
+dependent skips and invokes extra extension scripts. The tree lists extra scripts for
+pg_ivm, pg_uuidv7 and vector; do not infer the complete pgTAP packaging path from that
+list alone. Build-cache branches and platform settings are additional reasons source
+pins do not by themselves establish exact npm archive correspondence.
+
+Read-only retrieval log (no new retained source files or executable downloads):
+[submodule declarations](https://raw.githubusercontent.com/electric-sql/postgres-pglite/1195d5388bd5529e0013c45fa816cfcd953d84e0/.gitmodules),
+[build configuration](https://raw.githubusercontent.com/electric-sql/postgres-pglite/1195d5388bd5529e0013c45fa816cfcd953d84e0/.buildconfig),
+[extension build script](https://raw.githubusercontent.com/electric-sql/postgres-pglite/1195d5388bd5529e0013c45fa816cfcd953d84e0/wasm-build/build-ext.sh),
+and GitHub's recursive tree API for the same commit. Disk check reported 102 GiB free.
+The responses were inspected, not executed; this document retains only findings/links.
+
+**Recommendation for the first developer preview:** distribute reviewed application
+source, lockfile, notices and synthetic contributor tests, with frozen package setup;
+do not also copy `node_modules`, prebuilt PGlite WASM/data/extension archives or an
+operator database into that repository. This does not remove PGlite from tests or
+waive source/setup/dependency review. It separates the already-proposed source preview
+from a later packaged-binary deliverable, which would require full payload attribution
+and provenance before release. Do not require a binary-distribution evidence claim
+for a source-only candidate that does not distribute those binaries. Conversely,
+browser-bundled code remains distributed if we publish a hosted/compiled demo, so its
+notice delivery must still be covered. No candidate assembly/publication is approved
+by this recommendation; exact scope and the existing preview requirements remain.
+
 ### PGlite alternate notice and binary-source trail pinned
 
 At `85e8c4c`, direct read-only retrieval succeeded where the web cache had missed:
