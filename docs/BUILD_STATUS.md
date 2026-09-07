@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Revision controls connected in the contributor page:** Sample output now exposes a
+bounded feedback form, explicit revision action and expandable earlier samples.
+Unresolved revision feedback stays fixed for explicit reconciliation; successful
+revisions preserve prior displayed content, and access failures clear results.
+The existing panel styling is preserved. Six render tests pass, including escaped
+prior content and disabled unresolved controls, with strict types and focused lint.
+Browser interaction, refresh/re-entry recovery of revision history, progress display
+and public candidate expansion still require work; this is not release acceptance.
+
 **Simulated revisions supported through the protected backend/client:** Explicit
 feedback produces a separate sample artifact without overwriting its parent. The
 session permits one immutable child per parent; identical submissions reconcile a

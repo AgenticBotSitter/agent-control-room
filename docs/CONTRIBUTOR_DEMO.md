@@ -26,7 +26,11 @@ existing agent authentication or production database is required.
 
 Create a project and proposed task, then explicitly choose the simulation action
 to obtain a clearly labelled sample result. Real execution is not enabled.
-Revision flow and browser acceptance are still being completed; this document
+The sample result includes a feedback form for requesting another sample, and
+earlier displayed samples remain expandable. If a reply is uncertain, check that
+same request before changing its feedback. Revision history currently belongs to
+the open page; refresh/re-entry recovery and browser acceptance are still being
+completed. This document
 describes the implemented command, not a claim that the release is ready.
 
 ## Stop

@@ -36,6 +36,15 @@ test("simulation panel distinguishes pending, uncertain and untrusted output", (
   assert.match(result, /&lt;script&gt;/);
   assert.doesNotMatch(result, /<script>/);
   assert.match(render({ error: "Sign in again" }), /role="alert"/);
+  const revision = { feedback: "Make it shorter", previous: ["<script>old sample</script>"], locked: false,
+    onFeedback: () => {}, onSubmit: () => {} };
+  const editable = render({ text: "New sample", revision });
+  assert.match(editable, /Request revised sample/); assert.match(editable, /maxLength="500"/);
+  assert.match(editable, /Previous sample 1/); assert.match(editable, /&lt;script&gt;old sample/);
+  assert.doesNotMatch(editable, /<script>/);
+  const locked = render({ text: "Sample", revision: { ...revision, locked: true } });
+  assert.match(locked, /Check the existing request/);
+  assert.match(locked, /textarea[^>]*disabled/);
 });
 
 const project = { projectId: "project:example", title: "Example <project>", summary: "Purpose", lifecycle: "active" as const,
