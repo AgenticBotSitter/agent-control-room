@@ -50,6 +50,7 @@ export function getControlRoomLocalPilotPortsV1():LocalPilotPortsV1|undefined{if
     listTasks:(request,id,after)=>ready.then(runtime=>runtime.projectTasks.listTasks(request,id,after)),
     getTask:(request,id,job)=>ready.then(runtime=>runtime.projectTasks.getTask(request,id,job)),
     getResults:(request,id,job,artifact)=>ready.then(runtime=>runtime.projectTasks.getResults(request,id,job,artifact)),
+    getSyntheticResult:(request,id,job,artifact)=>ready.then(runtime=>runtime.projectTasks.getSyntheticResult(request,id,job,artifact)),
     proposeTask:(request,id,draft,key)=>ready.then(runtime=>runtime.projectTasks.proposeTask(request,id,draft,key)),
   };
   ports=Object.freeze({ideaLab,projectWorkspace,projectEvents,connectionCenter,sessionIssuer,projectTasks});return ports;}

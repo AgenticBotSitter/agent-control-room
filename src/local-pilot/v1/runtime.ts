@@ -66,6 +66,7 @@ export interface LocalPilotConfigurationV1 {
   masterKey: Uint8Array;
   ownerCodeDigest: string;
   clock?: () => string;
+  syntheticResults?: Parameters<typeof createLocalPilotProjectTasksV1>[3];
 }
 
 interface SessionRow {
@@ -268,7 +269,7 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
       // Canonical services still enforce current identity, grants and revocation.
       return{provider:auth.provider,subject:auth.subject,tokenDigest:sha256Digest({token:oneCookie(request)}),
         issuedAt:auth.verifiedAt,expiresAt:auth.expiresAt,verificationExpiresAt:auth.expiresAt};
-    });
+    },config.syntheticResults);
   const projectEventSource=new ProjectEventStoreV1(db,projectEventKey,clock),projectEventReconciler=new IdeaLabProjectEventReconcilerV1(registry,projectEventSource);
   const operatorService=new IdeaLabProtectedOperatorServiceV1(db,integrityKey,{workspaceId:LOCAL_PILOT_WORKSPACE_ID_V1,
     participants:fixture.session.participants,driver:new DeterministicIdeaLabFakeDriverV1(),clock});

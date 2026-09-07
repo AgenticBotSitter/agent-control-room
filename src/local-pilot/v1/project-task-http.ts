@@ -7,6 +7,8 @@ import { WebAccessError } from "../../web/v1/access-verifier";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "../../web/v1/http-common";
 
 const reads = z.discriminatedUnion("resource", [
+  z.object({ resource: z.literal("synthetic_result"), projectId: catalogProjectIdSchema,
+    jobId: catalogProjectIdSchema, artifactId: catalogProjectIdSchema }).strict(),
   z.object({ resource: z.literal("projects"), after: catalogProjectIdSchema.optional() }).strict(),
   z.object({ resource: z.literal("project"), projectId: catalogProjectIdSchema }).strict(),
   z.object({ resource: z.literal("tasks"), projectId: catalogProjectIdSchema, after: catalogProjectIdSchema.optional() }).strict(),
@@ -39,6 +41,7 @@ export function createLocalPilotProjectTaskHandlerV1(runtime: LocalPilotProjectT
         if (!parsed.success) throw new WebAccessError("invalid_request");
         const query = parsed.data;
         switch (query.resource) {
+          case "synthetic_result": return json(await runtime.getSyntheticResult(request, query.projectId, query.jobId, query.artifactId));
           case "projects": return json(await runtime.listProjects(request, query.after));
           case "project": return json({ project: await runtime.getProject(request, query.projectId) });
           case "tasks": return json(await runtime.listTasks(request, query.projectId, query.after));

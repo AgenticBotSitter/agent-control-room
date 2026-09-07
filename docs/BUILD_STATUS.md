@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Simulation reads now have an authenticated local route:** The local workspace
+handler accepts the separate read-only `synthetic_result` resource, requiring the
+existing owner cookie and canonical task/project/content grants before reading
+evidence. Runtime composition accepts an explicitly supplied read-only source and
+captures its methods; normal startup supplies none and remains unavailable for this
+resource. It cannot start simulations or manufacture native receipts. Integration
+tests exercise exact simulated text through the real handler, no-store headers,
+unauthenticated/cross-project/expired-session denial before evidence access. Eight
+selected pilot/native-result tests, both strict type checks, focused lint and whitespace
+checks pass. The test source is in memory; no new claim of persisted runtime startup,
+browser interaction, deployment or live-agent acceptance. Next is durable simulation
+source setup and browser selection, not another native result-store implementation.
+
 **Simulation result reader added locally:** `src/local-pilot/v1/synthetic-result-read.ts`
 composes the existing recorded lineage, artifact reader and evidence builders. It checks
 selected tenant/project/job/artifact, permits only local simulation roles, bounds bytes,

@@ -4,6 +4,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { buildTextArtifactBundle, buildArtifactLineageRecord, InMemoryArtifactStorage,
+  type ArtifactLineageRecordV1 } from "../src/node-executor";
 import { createControlRoomLocalPilotRuntimeV1,LOCAL_PILOT_TENANT_ID_V1,LocalPilotErrorV1 } from "../src/local-pilot/v1/index.ts";
 import { ConnectionEnrollmentIntakeErrorV1,
   ConnectionEnrollmentPrivateLoopbackFramingErrorV1 } from "../src/connection-registry/v1/index.ts";
@@ -21,8 +23,11 @@ function advance(value:string,seconds:number){return new Date(Date.parse(value)+
 
 test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner flow",async()=>{
   const dataDir=await mkdtemp(join(tmpdir(),"control-room-idea-pilot-")),masterKey=new Uint8Array(32).fill(71);let now="2026-08-31T20:00:00.000Z";
+  const simulationFiles=new InMemoryArtifactStorage();
+  const simulationEvidence:{lineage?:ArtifactLineageRecordV1}={};let simulationReads=0;
   const config={mode:"repository_fake"as const,origin,dataDir,repositoryRoot:process.cwd(),masterKey,
-    ownerCodeDigest:sha256Digest({code}),clock:()=>now};
+    ownerCodeDigest:sha256Digest({code}),clock:()=>now,syntheticResults:{storage:simulationFiles,
+      lineage:(id:string)=>{simulationReads++;return simulationEvidence.lineage?.artifactId===id?simulationEvidence.lineage:undefined;}}};
   let runtime=await createControlRoomLocalPilotRuntimeV1(config);
   assert.equal((await stat(dataDir)).mode&0o777,0o700);
   assert.equal((await runtime.connectionRosterSource.read({tenantId:LOCAL_PILOT_TENANT_ID_V1,now})).connectionCount,0);
@@ -50,6 +55,26 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   assert.equal(proposed.receipt.startsWork,false);
   assert.equal((await runtime.projectTasks.proposeTask(write(),ordinary.project.projectId,taskDraft,"pilot-propose-task-0001")).replayed,true);
   const endpoint=`${origin}/api/v1/local-pilot/workspace`,handler=createLocalPilotProjectTaskHandlerV1(runtime.projectTasks);
+  const simulation=buildTextArtifactBundle({artifactId:"artifact:pilot-simulation",claimId:"claim:pilot-simulation",
+    tenantId:LOCAL_PILOT_TENANT_ID_V1,projectId:ordinary.project.projectId,jobId:proposed.receipt.jobId,
+    attemptId:"attempt:simulation",producerId:"service:simulation",logicalRole:"synthetic-preview-result",
+    schemaVersion:"1.0.0",storageClass:"local",retentionClass:"test-memory",text:"SIMULATION ONLY: example result",createdAt:now});
+  simulationEvidence.lineage=buildArtifactLineageRecord(simulation);
+  await simulationFiles.put({artifactId:simulation.manifest.id,bytes:simulation.bytes});
+  const simulationQuery=new URLSearchParams({resource:"synthetic_result",projectId:ordinary.project.projectId,
+    jobId:proposed.receipt.jobId,artifactId:simulation.manifest.id});
+  assert.equal((await handler(new Request(`${endpoint}?${simulationQuery}`))).status,401);
+  assert.equal(simulationReads,0);
+  const simulationResponse=await handler(new Request(`${endpoint}?${simulationQuery}`,{headers:{cookie}}));
+  assert.equal(simulationResponse.status,200);
+  const simulationBody=await simulationResponse.json();
+  assert.equal(simulationBody.text,"SIMULATION ONLY: example result");
+  assert.equal(simulationBody.simulationOnly,true);assert.equal(simulationBody.grantsExecutionAuthority,false);
+  assert.equal(simulationResponse.headers.get("cache-control"),"no-store");
+  const beforeDenied=simulationReads;
+  const crossProject=new URLSearchParams(simulationQuery);crossProject.set("projectId",another.project.projectId);
+  assert.equal((await handler(new Request(`${endpoint}?${crossProject}`,{headers:{cookie}}))).status,404);
+  assert.equal(simulationReads,beforeDenied);
   const pageResponse=await handler(new Request(`${endpoint}?resource=projects`,{headers:{cookie}}));
   assert.equal(pageResponse.status,200);assert.equal((await pageResponse.json()).projects.length,2);
   assert.equal(pageResponse.headers.get("cache-control"),"no-store");
@@ -142,6 +167,9 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   await assert.rejects(runtime.ownerSession.verify(new Request(`${origin}/ideas`,{headers:{cookie,"x-forwarded-for":"127.0.0.1"}}),now),(error:unknown)=>error instanceof LocalPilotErrorV1&&error.safeCode==="local_request_required");
   await assert.rejects(runtime.projectTasks.listProjects(new Request(`${origin}/local-preview`,{headers:{cookie,"x-forwarded-for":"127.0.0.1"}})),/local_request_required/);
   now=advance(issued.expiresAt,1);
+  const beforeExpired=simulationReads;
+  await assert.rejects(runtime.projectTasks.getSyntheticResult(read(),ordinary.project.projectId,proposed.receipt.jobId,simulation.manifest.id),/authentication_required/);
+  assert.equal(simulationReads,beforeExpired);
   await assert.rejects(runtime.projectTasks.listProjects(read()),/authentication_required/);
   await assert.rejects(runtime.projectTasks.getResults(read(),ordinary.project.projectId,proposed.receipt.jobId),/authentication_required/);
   await assert.rejects(runtime.projectTasks.proposeTask(write(),ordinary.project.projectId,taskDraft,"pilot-propose-expired-0001"),/authentication_required/);

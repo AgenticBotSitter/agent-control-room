@@ -240,6 +240,21 @@ export class WebTaskService {
     });
   }
 
+  /** Trusted server composition, never a browser-supplied callback. */
+  async readScopedResult<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string,
+    read: (scope: { tenantId: string; projectId: string; jobId: string }) => Promise<T>) {
+    this.id(projectId); this.id(jobId);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+      if (!row) throw new WebAccessError("not_found");
+      validated(row, this.scope.tenantId, projectId);
+      return read({ tenantId: this.scope.tenantId, projectId, jobId });
+    });
+  }
+
   async results(identity: VerifiedWebIdentity, projectId: string, jobId: string, artifactId?: string) {
     this.id(projectId); this.id(jobId); if (artifactId !== undefined) this.id(artifactId);
     return this.authority.authenticated(identity, async (tx, actor) => {
