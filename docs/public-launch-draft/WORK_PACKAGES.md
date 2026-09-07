@@ -23,6 +23,65 @@ Codex; real support requires tested versions and platforms, not merely adapter c
 | [Any OS][MVP] Continuous pickup and actionable attention | Integrate existing queue/capacity rules with worker status and owner attention views; cover blocked work and handback | Multiple independent jobs progress while earlier work awaits review; unsupported jobs are declined before starting; uncertain work is visible | Stable task/connector contracts and reproducible fake-worker setup |
 | [Any OS][MVP] Recovery and update acceptance | Exercise existing drain/reconnect/update/restore paths, compatibility failures and operator recovery instructions | Saved results survive supported restarts; a failed update has a tested rollback; no claimed exactly-once external effects | Packaged controller and fake-worker setup; live trials separately authorized |
 
+## First contribution batches after publication
+
+The simulated task/result/revision flow and session-history read now exist. Do not
+rebuild those services. The first two packages below become assignable after the
+maintainer inserts the first reviewed public commit and names a reviewer in the
+issue. They can proceed independently. Neither needs a real agent or our machines.
+
+### DEMO-UX — Complete and verify the browser journey
+
+**Title:** [Any OS][MVP][No live agents] Browser journey, recovery and accessibility
+
+- Outcome: a contributor can create two projects in separate tabs, propose a task,
+  generate a sample, inspect it, request a revision, refresh and continue without
+  losing the revision chain. Finish interaction defects, not a new design system.
+- Allowed implementation: `contributor-demo/`,
+  `app/components/contributor-simulation.tsx`, `app/local-preview/workspace.tsx`,
+  existing shared styles, and focused demo/browser tests. Propose changes outside
+  this scope before editing them. Authentication and server authority rules stay
+  unchanged.
+- Verify keyboard-only operation, meaningful labels/focus, narrow-screen layout,
+  loading and access-denied states, two distinct project tabs and escaped sample
+  text. Test a POST lost before delivery separately from a response lost after
+  acceptance; neither should silently erase feedback or automatically repeat work.
+- Reuse a maintained browser-test tool if needed; explain any new dependency,
+  upstream license and why installed tooling is insufficient. Do not introduce a
+  custom browser automation framework.
+- Local checks: `pnpm check:demo`, `pnpm test:demo`,
+  `pnpm test:build:demo`, plus the documented browser acceptance command.
+- Handoff: one cohesive PR with implementation, repeatable interaction tests and a
+  short evidence table. Redact login codes; screenshots alone do not prove the flow.
+
+### SETUP-OS — Reproduce installation and cleanup on another OS
+
+**Title:** [Choose macOS, Windows or Linux][MVP][No live agents] Contributor setup
+
+- Claim one named OS first. Multiple contributors can take distinct OS assignments
+  without modifying the same scripts concurrently.
+- Outcome: a clean checkout installs pinned dependencies without maintainer files,
+  builds both profiles, runs checks and demonstrates the disposable browser flow.
+  Clearly separate dependency downloads from runtime operations.
+- Allowed implementation: `SETUP.md`, focused platform smoke tests and fixes to
+  `scripts/contributor-demo.mjs` or `src/contributor-demo/launcher.ts`. A dependency,
+  schema or protocol change requires maintainer review before implementation.
+- Run `pnpm check`, `pnpm check:demo`, `pnpm test`,
+  `pnpm test:demo` and `pnpm test:build:demo`. Start the demo explicitly,
+  check occupied-port failure without stopping someone else's service, then stop
+  your demo and verify its temporary data is gone. Test the OS's normal interrupt.
+- No production database, provider call, credential-store access, background service
+  installation or deployment. Do not infer compatibility from another OS's result.
+- Handoff: one PR with reproducible commands, exact OS/Node/pnpm versions, sanitized
+  results, cleanup evidence and necessary portability fixes. No raw execution logs
+  or one-time codes.
+
+The maintainer completes release/privacy/licensing review and integration alongside
+these batches. Controller deployment, live connectors and continuous pickup remain
+separate packages with their stated prerequisites; they are not hidden work inside
+either demo contribution. One public issue per cohesive package or OS assignment,
+not one issue/PR per small code edit.
+
 ## Expansion after the core path
 
 | Package | User outcome | Boundary |

@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor batches clarified and content-review findings addressed:** Two initial
+work packages now name concrete file scope, local checks and failure-case evidence:
+browser journey/accessibility and OS-specific setup/cleanup. Independent content
+review identified old consumer CSS/attribution terms and stale startup wording;
+candidate-only generalization preserves private originals and upstream notices.
+The demo rebuild and both compiled tests pass. A private finalization delta retains
+these changes. This bounded review is not full privacy/rights or browser acceptance.
+
 **Reviewed recovery fix verified in the isolated candidate:** The candidate contains
 the unaccepted-feedback preservation fix and passes strict types, all 28 demo tests
 and both compiled-demo tests. Independent re-review confirms the specific P2 is
