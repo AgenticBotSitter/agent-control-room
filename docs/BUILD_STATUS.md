@@ -22,9 +22,11 @@ not yet configured or proven by this provider setup.
 Further read-only inspection confirms the selected domain is active, its private DNS
 label is unused and the existing tunnel is healthy but has no private Control Room
 route. An unsaved Access draft selects the private hostname and Cloudflare-only login.
-Independent MFA methods are all disabled account-wide; approved method enablement,
-owner enrollment and owner-only application policy remain prerequisites. No route,
-DNS, application or MFA change was saved during this inspection.
+Independent MFA methods were all disabled during that inspection. After explicit
+owner approval, Authenticator application was enabled in Access settings and verified
+On after a full reload. Other MFA methods and account-wide domain blocking remain
+Off. Owner authenticator enrollment and owner-only application MFA enforcement remain
+unfinished. No route, DNS or application was saved; the Access draft remains unsaved.
 Do not deploy a second private address or populate `secondaryAccess`. The optional
 dual-address code remains unused. Hostnames stay out of public export configuration.
 Workplace use remains subject to employer policy, not assumed from domain reachability.

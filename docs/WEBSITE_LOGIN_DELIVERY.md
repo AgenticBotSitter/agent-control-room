@@ -184,6 +184,19 @@ domain blocking, unrelated apps, DNS and tunnel routes must remain unchanged.
 Actual authenticator enrollment is an owner action. A browser draft is not a durable
 configuration or proof of protection and must be revalidated before submission.
 
+### Explicitly approved authenticator-method enablement
+
+The first attempt under a general continuation was rejected by the action reviewer;
+readback confirmed the setting remained Off and no workaround was attempted. The
+owner subsequently explicitly approved enabling authenticator-app MFA. The
+Authenticator application method was then enabled in Access settings. Readback,
+including after a full reload, confirmed On. Other MFA methods and account-wide
+domain blocking remain Off. No credential was enrolled, no application policy was
+created, and no DNS or tunnel route was changed. This enables the method, not MFA
+enforcement on Control Room. The dashboard directs the owner to the Account page of
+the App Launcher for enrollment; the owner must handle the authenticator secret,
+confirmation and recovery material themselves.
+
 ## Public copy checkpoint
 
 The retained public release receipt confirms source publication, but the static page
