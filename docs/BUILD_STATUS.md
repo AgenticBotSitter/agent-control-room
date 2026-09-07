@@ -8,6 +8,23 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Coordinator feed outcomes can now settle without restarting collection:** One
+marker-bound transaction records the effect outcome, job/attempt terminal state and
+lease release. Exact replay is inert; changed outcomes are rejected. Late or already
+orphaned attempts settle as ambiguous, preserving expired lease history. Recording an
+outcome does not require fresh permission to start work and never grants it. The receipt
+digest identifies caller-supplied evidence, not its truth; the future owned collector
+must retain and validate evidence before confirmation. Fifty focused admission/canonical
+checks and 197 delivery regressions pass, with TypeScript, focused lint and VPS build.
+Tests inject failure after lease update and deadline passage, proving whole-transaction
+rollback. The expiry fixture initially omitted required versions; all required versions
+are now supplied and the final run passes. Independent source/test review found no
+concrete defect. Tests remain disposable PGlite, not real PostgreSQL concurrency or
+network evidence. No runtime was mounted, source contacted or GitHub write made.
+**Next:** connect owned collection to fresh authority and saved evidence, then protected
+startup/routes and canonical-page verification. Real multi-bot and ABS research journeys
+remain incomplete; these persistence operations alone do not constitute live execution.
+
 **Coordinator feed start ownership is implemented locally:** The fixed feed operation
 reuses canonical job/attempt/effect transitions to record one durable start marker.
 It checks exact input/operation/assignment and low-risk read ceilings, current owner

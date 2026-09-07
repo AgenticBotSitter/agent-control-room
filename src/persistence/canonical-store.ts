@@ -30,6 +30,7 @@ import { isHostProxyV1 } from "../security/host-value";
 import { actionInboxItemSchemaV1, type ActionInboxItemV1 } from "../operator-surfaces/v1";
 import { acquireReadyFrontierCanonicalPromotionAuthorizationV1 } from "../ready-frontier/v1/promotion-service";
 import { evaluatePolicy, type RoleGrant } from "../security/policy";
+import { z } from "zod";
 
 type EntityKind = DomainEntity["kind"];
 type EntityState = DomainEntity["state"];
@@ -966,6 +967,76 @@ export class CanonicalStore {
             deadline: new Date(deadline).toISOString(), inputDigest: job.inputDigest } }, true);
       return { started: true as const, markerDigest, deadline: new Date(deadline).toISOString() };
     }, assertCurrent);
+  }
+
+  /** Records a trusted collector's outcome; never performs or authorizes another read.
+   * A receipt digest identifies evidence, not proof that the evidence is true. The owned
+   * collector must retain and validate that evidence before requesting confirmation. */
+  async settleAbsFeedAttempt(value: unknown, clock: () => number = Date.now) {
+    const id = z.string().min(1).max(180), digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+    const input = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, effectId: id, nodeId: id,
+      markerDigest: digest, outcome: z.enum(["confirmed", "failed", "ambiguous"]), receiptDigest: digest.optional() }).strict()
+      .refine(v => (v.outcome === "confirmed") === !!v.receiptDigest).parse(value);
+    const now = clock(); if (!Number.isSafeInteger(now)) throw new Error("abs_feed_settlement_unavailable");
+    const occurredAt = new Date(now).toISOString(), outcomeDigest = sha256Digest(input);
+    let completionDeadline: number | undefined;
+    const checkCompletion = () => { const current = clock();
+      if (!Number.isSafeInteger(current) || current < now || completionDeadline !== undefined && current >= completionDeadline)
+        throw new Error("abs_feed_settlement_expired"); };
+    return this.#transactionWithPreCommitCheck(async tx => {
+      await tx.query("SELECT id FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.jobId]);
+      const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+      const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+      const effect = await this.#requireWith(tx, input.tenantId, "effect_intent", input.effectId) as EffectIntentRecord;
+      if (job.projectId !== input.projectId || job.specVersion !== "abs-feed-collection/v1" || job.jobType !== "abs.feed.collection"
+        || attempt.jobId !== job.id || attempt.nodeId !== input.nodeId || effect.jobId !== job.id || effect.attemptId !== attempt.id
+        || effect.operation !== "abs.feed.collect" || effect.risk !== "low") throw new Error("abs_feed_settlement_unavailable");
+      const marker = (await tx.query<{ safe_metadata: { markerDigest?: string; deadline?: string } }>(
+        "SELECT safe_metadata FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='effect_intent' AND entity_id=$2 AND to_state='executing'",
+        [input.tenantId, effect.id])).rows;
+      if (marker.length !== 1 || marker[0].safe_metadata.markerDigest !== input.markerDigest
+        || !Number.isFinite(Date.parse(marker[0].safe_metadata.deadline ?? ""))) throw new Error("abs_feed_settlement_unavailable");
+      const suffix = sha256Digest({ tenantId: input.tenantId, effectId: effect.id, markerDigest: input.markerDigest }).slice(7, 47);
+      const key = `feed-settle:${suffix}:effect_intent`;
+      const prior = (await tx.query<{ safe_metadata: { outcomeDigest?: string }; to_state: string }>(
+        "SELECT safe_metadata,to_state FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='effect_intent' AND idempotency_key=$2",
+        [input.tenantId, key])).rows[0];
+      if (prior) {
+        if (prior.safe_metadata.outcomeDigest !== outcomeDigest || prior.to_state !== effect.state) throw new Error("abs_feed_settlement_conflict");
+        return { replayed: true, effectState: effect.state };
+      }
+      if (effect.state !== "executing") throw new Error("abs_feed_settlement_unavailable");
+      const leases = (await tx.query<{ payload: LeaseRecord }>(
+        "SELECT payload FROM control_leases WHERE tenant_id=$1 AND attempt_id=$2 FOR UPDATE", [input.tenantId, attempt.id])).rows;
+      const lease = leases.length === 1 ? domainEntitySchema.parse(leases[0].payload) as LeaseRecord : undefined;
+      if (!lease || lease.jobId !== job.id || lease.nodeId !== input.nodeId || lease.epoch !== attempt.leaseEpoch)
+        throw new Error("abs_feed_settlement_unavailable");
+      const orphaned = job.state === "orphaned" && attempt.state === "orphaned";
+      if (!orphaned && (job.state !== "running" || attempt.state !== "running")) throw new Error("abs_feed_settlement_unavailable");
+      // A late/expired attempt cannot turn its observation into a successful execution claim.
+      const state = orphaned || lease.state !== "active" || now >= Date.parse(marker[0].safe_metadata.deadline!)
+        ? "ambiguous" as const : input.outcome;
+      if (state !== "ambiguous") completionDeadline = Date.parse(marker[0].safe_metadata.deadline!);
+      checkCompletion();
+      const actor = { actorId: input.nodeId, actorType: "node" as const };
+      const metadata = { markerDigest: input.markerDigest, outcomeDigest, requestedOutcome: input.outcome,
+        ...(input.receiptDigest ? { receiptDigest: input.receiptDigest } : {}) };
+      await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "effect_intent", entityId: effect.id,
+        expectedVersion: effect.version, toState: state, actor, occurredAt, transitionId: `transition:${key}`, idempotencyKey: key,
+        safeMetadata: metadata, recordPatch: state === "confirmed" ? { destinationReceipt: input.receiptDigest }
+          : { safeFailureCode: state === "ambiguous" ? "abs_feed_outcome_uncertain" : "abs_feed_read_failed" } }, true);
+      if (!orphaned) {
+        const terminal = state === "confirmed" ? "succeeded" : state === "failed" ? "failed" : "orphaned";
+        for (const entity of [job, attempt] as const) await this.#transitionWith(tx, { tenantId: input.tenantId,
+          kind: entity.kind, entityId: entity.id, expectedVersion: entity.version, toState: terminal, actor, occurredAt,
+          transitionId: `transition:feed-settle:${suffix}:${entity.kind}`, idempotencyKey: `feed-settle:${suffix}:${entity.kind}`,
+          safeMetadata: metadata, ...(entity.kind === "attempt" ? { recordPatch: { finishedAt: occurredAt } } : {}) }, true);
+      }
+      if (lease.state === "active") await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "lease", entityId: lease.id,
+        expectedVersion: lease.version, toState: "released", actor, occurredAt, transitionId: `transition:feed-settle:${suffix}:lease`,
+        idempotencyKey: `feed-settle:${suffix}:lease`, safeMetadata: metadata }, true);
+      return { replayed: false, effectState: state };
+    }, checkCompletion);
   }
 
   async expireLease(input: ExpireLeaseInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {

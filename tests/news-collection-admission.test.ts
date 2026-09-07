@@ -111,6 +111,86 @@ test("canonical feed pre-effect marker starts once and survives a recreated stor
   assert.equal(markers.length, 1); assert.match(String((markers[0].safe_metadata as Record<string, unknown>).markerDigest), /^sha256:/);
 });
 
+test("feed outcomes settle atomically, replay exactly and never permit another start", async t => {
+  for (const outcome of ["confirmed", "failed", "ambiguous", "late"] as const) await t.test(outcome, async () => {
+    const f = await fixture();
+    try {
+      const receipt = await f.service.approve(f.identity, f.args), store = new CanonicalStore(f.client);
+      const start = { ...f.scope, ...f.args, attemptId: receipt.attemptId, effectId: receipt.effectId, operationDigest: receipt.operationDigest };
+      const marker = await store.beginAbsFeedAttempt(start, f.clock);
+      if (outcome === "late") f.setTime(now + 61_000);
+      const input = { tenantId: f.scope.tenantId, projectId: f.scope.projectId, jobId: receipt.jobId, attemptId: receipt.attemptId,
+        effectId: receipt.effectId, nodeId: f.scope.nodeId, markerDigest: marker.markerDigest,
+        outcome: outcome === "late" ? "confirmed" : outcome, ...(["confirmed", "late"].includes(outcome) ? { receiptDigest: sha256Digest("synthetic retained receipt") } : {}) };
+      await assert.rejects(store.settleAbsFeedAttempt({ ...input, markerDigest: sha256Digest("wrong") }, f.clock));
+      const result = await store.settleAbsFeedAttempt(input, f.clock);
+      assert.equal(result.effectState, outcome === "late" ? "ambiguous" : outcome);
+      assert.equal(result.replayed, false);
+      assert.equal((await new CanonicalStore(f.client).settleAbsFeedAttempt(input, f.clock)).replayed, true);
+      await assert.rejects(store.settleAbsFeedAttempt({ ...input, outcome: outcome === "failed" ? "ambiguous" : "failed", receiptDigest: undefined }, f.clock));
+      await assert.rejects(store.beginAbsFeedAttempt(start, f.clock));
+      const expected = outcome === "confirmed" ? "succeeded" : outcome === "failed" ? "failed" : "orphaned";
+      assert.equal((await store.get(f.scope.tenantId, "job", receipt.jobId))?.state, expected);
+      assert.equal((await store.get(f.scope.tenantId, "attempt", receipt.attemptId))?.state, expected);
+      assert.equal((await f.client.query("SELECT state FROM control_leases WHERE attempt_id=$1", [receipt.attemptId])).rows[0].state, "released");
+    } finally { await f.db.close(); }
+  });
+});
+
+test("settlement write failure or deadline crossing cannot commit partial success", async t => {
+  for (const mode of ["write", "deadline"]) await t.test(mode, async () => {
+    const f = await fixture();
+    try {
+      const receipt = await f.service.approve(f.identity, f.args), store = new CanonicalStore(f.client);
+      const marker = await store.beginAbsFeedAttempt({ ...f.scope, ...f.args, attemptId: receipt.attemptId,
+        effectId: receipt.effectId, operationDigest: receipt.operationDigest }, f.clock);
+      let releaseReached = false;
+      const session = (tx: DatabaseSession): DatabaseSession => ({ async query<T>(sql: string, values?: unknown[]) {
+        const result = await tx.query<T>(sql, values);
+        if (sql.includes("UPDATE control_leases")) {
+          releaseReached = true;
+          if (mode === "write") throw new Error("synthetic release failure");
+          f.setTime(now + 61_000);
+        }
+        return result;
+      } });
+      const db: DatabaseClient = { query: f.client.query.bind(f.client), transaction: work => f.client.transaction(tx => work(session(tx))),
+        transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
+      const input = { tenantId: f.scope.tenantId, projectId: f.scope.projectId, jobId: receipt.jobId, attemptId: receipt.attemptId,
+        effectId: receipt.effectId, nodeId: f.scope.nodeId, markerDigest: marker.markerDigest, outcome: "confirmed", receiptDigest: sha256Digest("synthetic receipt") };
+      await assert.rejects(new CanonicalStore(db).settleAbsFeedAttempt(input, f.clock));
+      assert.equal(releaseReached, true);
+      assert.equal((await store.get(f.scope.tenantId, "job", receipt.jobId))?.state, "running");
+      assert.equal((await store.get(f.scope.tenantId, "attempt", receipt.attemptId))?.state, "running");
+      assert.equal((await store.get(f.scope.tenantId, "effect_intent", receipt.effectId))?.state, "executing");
+      assert.equal((await f.client.query("SELECT state FROM control_leases WHERE attempt_id=$1", [receipt.attemptId])).rows[0].state, "active");
+      if (mode === "deadline") assert.equal((await store.settleAbsFeedAttempt(input, f.clock)).effectState, "ambiguous");
+    } finally { await f.db.close(); }
+  });
+});
+
+test("lease expiry preserves orphaned history when collection uncertainty is settled", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const receipt = await f.service.approve(f.identity, f.args), store = new CanonicalStore(f.client);
+  const marker = await store.beginAbsFeedAttempt({ ...f.scope, ...f.args, attemptId: receipt.attemptId,
+    effectId: receipt.effectId, operationDigest: receipt.operationDigest }, f.clock);
+  const lease = (await f.client.query<{ id: string; epoch: number }>("SELECT id,epoch FROM control_leases WHERE attempt_id=$1", [receipt.attemptId])).rows[0];
+  f.setTime(now + 61_000);
+  await store.expireLease({ tenantId: f.scope.tenantId, jobId: receipt.jobId, attemptId: receipt.attemptId, leaseId: lease.id,
+    epoch: lease.epoch, expectedLeaseVersion: 0,
+    expectedJobVersion: (await store.get(f.scope.tenantId, "job", receipt.jobId))!.version,
+    expectedAttemptVersion: (await store.get(f.scope.tenantId, "attempt", receipt.attemptId))!.version,
+    transitionId: "transition:feed-expired-test", idempotencyKey: "feed-expired-test-001",
+    actor: { actorId: f.scope.nodeId, actorType: "node" }, occurredAt: new Date(f.clock()).toISOString() });
+  const result = await store.settleAbsFeedAttempt({ tenantId: f.scope.tenantId, projectId: f.scope.projectId, jobId: receipt.jobId,
+    attemptId: receipt.attemptId, effectId: receipt.effectId, nodeId: f.scope.nodeId, markerDigest: marker.markerDigest,
+    outcome: "ambiguous" }, f.clock);
+  assert.equal(result.effectState, "ambiguous");
+  assert.equal((await store.get(f.scope.tenantId, "job", receipt.jobId))?.state, "orphaned");
+  assert.equal((await store.get(f.scope.tenantId, "attempt", receipt.attemptId))?.state, "orphaned");
+  assert.equal((await store.get(f.scope.tenantId, "lease", lease.id))?.state, "expired");
+});
+
 test("grant revocation deadline and marker write failures roll back the whole start", async t => {
   for (const mode of ["revoke", "write"]) await t.test(mode, async () => {
     const f = await fixture();
