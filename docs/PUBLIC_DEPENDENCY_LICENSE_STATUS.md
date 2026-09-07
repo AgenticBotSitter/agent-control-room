@@ -135,6 +135,24 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Tailwind root notice coverage
+
+At `9c1a238`, read the complete installed root MIT texts for `tailwindcss`,
+`@tailwindcss/postcss`, `@tailwindcss/node` and `@tailwindcss/oxide`, all 4.2.1.
+All four are byte-identical (1,071 bytes). Exact package-manifest hashes and the full
+shared text are retained in `research/tailwind-notice-evidence.json`. No download,
+installation or executed package entrypoint was needed; package paths were resolved
+and files read as data. Package export restrictions were handled by locating the
+manifest beside its resolved entry, not changing installed files.
+
+This closes these four root-notice retention tasks, not all CSS-tooling obligations.
+The node package declares Lightning CSS 1.31.1; its rights are separate. Oxide's
+platform-specific payloads were not included or reviewed. CSS header/reference inspection
+found CSS Remedy and browser issue links, not an additional copyright/license block;
+that bounded search is neither a full source review nor proof of copied code. The actual
+candidate's bundled stylesheet/notice delivery still needs verification. Keep all
+useful tools; no original Agent Control Room license has been selected.
+
 ### Cloudflare root notice retrieval gaps resolved
 
 At `ac4dbfa`, public annotated tags for `wrangler@4.92.0` and

@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Tailwind root notices retained:** Four installed Tailwind 4.2.1 packages share one
+full MIT text, now retained with exact package hashes in
+`research/tailwind-notice-evidence.json`. No downloads or installed files changed.
+Lightning CSS, native payload and actual distribution notice accounting remain separate;
+this is not full CSS-tooling clearance or an original-project license decision.
+
 **Stored synthetic review lifecycle renders with the existing panel:** The fresh-project
 rehearsal now uses checkpoint-verified records rather than the fixed UI fixture to
 render empty, pending, changes-requested and superseded/revision states. Simulation

@@ -1,0 +1,26 @@
+{
+  "schema": "control-room.installed-notice-evidence/v1",
+  "observedAt": "2026-09-06",
+  "source": "existing_installed_packages",
+  "publicationApproved": false,
+  "originalProjectLicenseSelected": false,
+  "downloadedBytes": 0,
+  "scope": "Root MIT notice text for four Tailwind 4.2.1 packages. Not native binary provenance, a complete dependency graph or distribution clearance.",
+  "packages": [
+    { "name": "tailwindcss", "version": "4.2.1", "declaredLicense": "MIT", "manifestSha256": "ac2d41af33338d2d0a96190ab84b5419187da9f1fc6d2c91fb5b83238e746b46", "noticePath": "LICENSE" },
+    { "name": "@tailwindcss/postcss", "version": "4.2.1", "declaredLicense": "MIT", "manifestSha256": "4f2b5b05374a5b37795dac2adc2a2880d92ba34869e3df1e50a3cdf67c26d6a4", "noticePath": "LICENSE" },
+    { "name": "@tailwindcss/node", "version": "4.2.1", "declaredLicense": "MIT", "manifestSha256": "54e2a25fe9d8b16d6252a4427ccb67b4e71c28f72019d69772aad7378d75755a", "noticePath": "LICENSE" },
+    { "name": "@tailwindcss/oxide", "version": "4.2.1", "declaredLicense": "MIT", "manifestSha256": "e3acde5c64d919d7affec0d7fa877ba282fad0cf39980c64f2301b0d7e123bd5", "noticePath": "LICENSE" }
+  ],
+  "sharedNotice": {
+    "bytes": 1071,
+    "sha256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985",
+    "text": "MIT License\n\nCopyright (c) Tailwind Labs, Inc.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+  },
+  "limitations": [
+    "No platform-specific oxide native binary was reviewed or copied.",
+    "Tailwind node declares lightningcss 1.31.1; this root MIT notice does not replace that dependency's obligations.",
+    "CSS headers/reference lines inspected, not all CSS source or generated output. Browser and CSS Remedy links are leads, not a finding of copied code or missing attribution.",
+    "Retain applicable notices with the actual reviewed deliverable; this private evidence record is not an assembled public attribution file."
+  ]
+}
