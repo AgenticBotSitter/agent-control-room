@@ -3,6 +3,7 @@ import { chmod, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { readSyntheticResultV1 } from "../src/local-pilot/v1/synthetic-result-read";
 import { sha256Digest } from "../src/security";
 import {
   computeExecutionId,
@@ -146,6 +147,29 @@ test("an exact admitted operation completes with stored bytes, manifest, claim, 
     assert.equal(lineages.length, 1);
     assert.equal(lineages[0].artifactId, result.bundle.manifest.id);
     assert.deepEqual(lineages[0].independentVerification, { status: "not_run" });
+    const scope = { tenantId: input.artifact.tenantId, projectId: input.artifact.projectId,
+      jobId: input.spec.jobId, artifactId: input.artifact.artifactId };
+    const readPorts = { lineage: (id: string) => journal.artifactLineage(id), storage: artifacts };
+    const read = await readSyntheticResultV1(scope, readPorts, new AbortController().signal);
+    assert.equal(read?.text, input.spec.artifactText);
+    assert.equal(read?.simulationOnly, true);
+    assert.equal(read?.grantsExecutionAuthority, false);
+    assert.equal(read && "opaqueLocator" in read, false);
+    await assert.rejects(readSyntheticResultV1({ ...scope, projectId: "project:other" },
+      { ...readPorts, storage: { read: async () => { throw new Error("must not read bytes"); } } }, new AbortController().signal),
+    /synthetic_result_unavailable/);
+    await assert.rejects(readSyntheticResultV1(scope, { ...readPorts,
+      storage: { read: async () => new TextEncoder().encode("changed bytes") } }, new AbortController().signal), /synthetic_result_unavailable/);
+    const cancelled = new AbortController(); cancelled.abort();
+    let touched = false;
+    await assert.rejects(readSyntheticResultV1(scope, { ...readPorts,
+      lineage: () => { touched = true; return lineages[0]; } }, cancelled.signal));
+    assert.equal(touched, false);
+    const mutableScope = { ...scope };
+    const retained = await readSyntheticResultV1(mutableScope, { ...readPorts, lineage: () => {
+      mutableScope.projectId = "project:changed"; return lineages[0];
+    } }, new AbortController().signal);
+    assert.equal(retained?.projectId, scope.projectId);
     assert.deepEqual(journal.artifactLineage(result.bundle.manifest.id), lineages[0]);
     assert.deepEqual(journal.unresolvedAttempts(), []);
     assert.deepEqual(journal.pendingJobEvents().map((row) => row.event.sequence), [1, 2, 3, 4, 5, 6, 7]);
@@ -222,6 +246,11 @@ test("simulated completion records only a result whose exact bytes survive file-
     const reopened = await DisposableFilesystemArtifactStorage.create(root);
     assert.deepEqual(await reopened.read(result.bundle.manifest.id), result.bundle.bytes);
     assert.match(result.bundle.manifest.opaqueLocator ?? "", /^local-artifact:\/\//u);
+    const savedRead = await readSyntheticResultV1({ tenantId: input.artifact.tenantId, projectId: input.artifact.projectId,
+      jobId: input.spec.jobId, artifactId: input.artifact.artifactId },
+    { lineage: () => lineages[0], storage: reopened }, new AbortController().signal);
+    assert.equal(savedRead?.text, input.spec.artifactText);
+    assert.equal(savedRead?.simulationOnly, true);
     assert.equal(result.bundle.manifest.logicalRole, "synthetic-result");
     assert.deepEqual(lineages[0].independentVerification, { status: "not_run" });
     assert.deepEqual(events.filter((event) => event.event === "completed").map((event) => event.artifactManifestIds), [[input.artifact.artifactId]]);

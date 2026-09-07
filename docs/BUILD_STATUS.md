@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Simulation result reader added locally:** `src/local-pilot/v1/synthetic-result-read.ts`
+composes the existing recorded lineage, artifact reader and evidence builders. It checks
+selected tenant/project/job/artifact, permits only local simulation roles, bounds bytes,
+decodes strict UTF-8 and reconstructs the recorded evidence before returning text. The
+response explicitly says simulation-only/untrusted and grants no approval/execution;
+no storage locator is exposed. Nine coordinator tests pass with existing journal reads,
+reopened file storage, wrong-scope/changed-byte denial, pre-cancellation and caller-scope
+mutation coverage; strict application types, focused lint and whitespace checks pass.
+This helper requires an already-authorized caller and trusted evidence source. Owner
+HTTP/runtime mounting remains unfinished; no alternate store, native receipt, listener,
+provider call or GitHub write was introduced.
+
 **Full local regression refreshed at `e3a1b06`:** The complete default `pnpm test`
 lifecycle passes: 3,161 passed, two skipped, zero failures/cancellations. Its three
 groups report 775/775, 1,893 passed plus two skipped, and 493/493 (about 281 seconds
