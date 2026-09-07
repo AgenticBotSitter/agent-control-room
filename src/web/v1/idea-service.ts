@@ -1,5 +1,6 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
+import { parseIdeaLabSynthesisV1, parseIdeaLabDecisionV1 } from "../../idea-lab/v1/contracts";
 import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { catalogProjectIdSchema } from "./project-wire";
@@ -45,6 +46,13 @@ export class WebIdeaService {
       const contributions = await store.listContributions(this.scope.tenantId, sessionId);
       const synthesis = await store.getSynthesis(this.scope.tenantId, sessionId);
       const decision = await store.getDecision(this.scope.tenantId, sessionId);
+      // READ COMMITTED may observe new records between queries. Validate this exact
+      // returned tuple, not only each getter's independently reread dependencies.
+      if (synthesis) parseIdeaLabSynthesisV1(synthesis, session, contributions);
+      if (decision) {
+        if (!synthesis) throw new Error("idea_snapshot_changed");
+        parseIdeaLabDecisionV1(decision, session, synthesis);
+      }
       return { session, contributions, synthesis: synthesis ?? null, decision: decision ?? null,
         execution: "not_configured" as const, observedAt: actor.now };
     });

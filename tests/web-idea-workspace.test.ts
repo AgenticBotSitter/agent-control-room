@@ -7,8 +7,26 @@ import { now, request } from "./helpers/web-foundation";
 import { WebIdeaService } from "../src/web/v1/idea-service";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { buildIdeaLabSessionV1 } from "../src/idea-lab/v1/contracts";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" };
+test("interleaved statement visibility cannot return a synthesis or decision without its matching dependencies", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close()); await seedWebIdea(f.client);
+  for (const table of ["control_idea_syntheses", "control_idea_contributions"]) {
+    let reads = 0;
+    const wrap = (tx: DatabaseSession): DatabaseSession => ({ async query<T>(sql: string, params?: unknown[]) {
+      const result = await tx.query<T>(sql, params);
+      // Model a record that was not visible to the first statement but committed
+      // before later getter statements. PGlite does not provide real concurrent PG evidence.
+      if (sql.includes(`FROM ${table} `) && ++reads === 1) return { rows: [] as T[] };
+      return result;
+    } });
+    const db: DatabaseClient = { query: f.client.query.bind(f.client), transaction: f.client.transaction.bind(f.client),
+      transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(wrap(tx)), check) };
+    await assert.rejects(new WebIdeaService(db, scope, webIdeaKey, () => now).detail(f.identity, "idea:project.idea:web"));
+    assert.ok(reads > 1);
+  }
+});
 test("private Idea reads return retained discussions and decisions, never substitute a panel run", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
   const seed = await seedWebIdea(f.client), id = "idea:project.idea:web";
@@ -26,6 +44,10 @@ test("private Idea reads return retained discussions and decisions, never substi
   assert.equal(unavailable.availability, "not_configured"); assert.equal(unavailable.sessions.length, 0);
   await assert.rejects(new WebIdeaService(f.client, { ...scope, workspaceId: "workspace:other" }, webIdeaKey, () => now).detail(f.identity, id), /not_found/);
   await assert.rejects(new WebIdeaService(f.client, scope, new Uint8Array(32), () => now).detail(f.identity, id));
+  await f.client.query("UPDATE control_role_grants SET role_key='operator'");
+  await assert.rejects(service.list(f.identity), /access_denied/);
+  await assert.rejects(service.detail(f.identity, id), /access_denied/);
+  await f.client.query("UPDATE control_role_grants SET role_key='owner'");
   await f.client.query("UPDATE control_role_grants SET revoked_at=$1", [new Date(now).toISOString()]);
   await assert.rejects(service.list(f.identity), /access_denied/);
   await assert.rejects(service.detail(f.identity, id), /access_denied/);
