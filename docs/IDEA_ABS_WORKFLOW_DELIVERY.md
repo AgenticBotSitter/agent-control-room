@@ -150,6 +150,18 @@ concrete finding. No independent test execution or live acceptance is inferred.
 
 ## Still required for the requested outcome
 
+Run visibility update: the protected detail API and existing Idea page now display
+retained panel history from the existing coordinator event store. Reads bind tenant,
+workspace, session and digest; settled attempts must have corresponding returned
+contributions, and completed panels require the full turn count. Multiple distinct
+logical runs for one Idea fail explicitly. The UI never infers live connection from
+saved running state and disables no gate: controls remain unconfigured. Only web-role
+SELECT on run events was added. Two new tests exercise pending/completed synthetic
+turns, uncertainty, browser projection validation and conflicting histories. Static
+rendering is not interactive browser QA or real-provider acceptance. Source-only review
+found no concrete introduced defect. The Sites skill preserved the existing private
+interface and local-only delivery; no preview, imagery, Sites hosting or production change.
+
 Creation composition update: the fixed offline `idea_creation_roles.sql` template and
 `verifyIdeaCreationDatabase` cover only session creation/audit/session-authority needs.
 The existing task lifecycle optionally owns this distinct resource and protects its

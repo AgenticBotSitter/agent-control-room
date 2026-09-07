@@ -29,12 +29,26 @@ contributions: z.array(z.object({ contributionId: id, sessionId: id, sessionDige
 synthesis: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest, executiveSummary: text,
   nextExperiment: z.string().min(1).max(500), overallScore: z.number().min(0).max(100),
 }).nullable(),
+run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
+  state: z.enum(["prepared", "running", "completed", "cancelled", "failed_definite", "ambiguous"]),
+  messagesUsed: z.number().int().min(0).max(18), maxMessages: z.number().int().min(3).max(18),
+  costUsd: z.number().min(0).max(25), providerContacted: z.boolean(), updatedAt: z.string().datetime({ offset: true }),
+  retryPermitted: z.literal(false), attempts: z.array(z.object({ participantId: id, round: z.number().int().min(1).max(3),
+    state: z.enum(["provider_marked", "completed", "failed_definite", "ambiguous"]),
+  }).strict()).max(18),
+}).strict().nullable(),
 decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decision: z.enum(["create_project", "save", "reject"]), project: z.object({ projectId: id }).optional(),
 }).nullable(), execution: z.literal("not_configured"), observedAt: z.string().datetime(),
 }).strict().refine(value => {
-  const { session, contributions, synthesis, decision } = value;
+  const { session, contributions, synthesis, decision, run } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
+    && (!run || run.sessionId === session.sessionId && run.sessionDigest === session.sessionDigest
+      && run.maxMessages === session.maxRounds * session.participants.length && run.messagesUsed <= run.maxMessages
+      && run.messagesUsed === run.attempts.filter(a => a.state === "completed").length
+      && (run.state !== "completed" || run.messagesUsed === run.maxMessages)
+      && new Set(run.attempts.map(a => `${a.round}:${a.participantId}`)).size === run.attempts.length
+      && run.attempts.every(a => a.round <= session.maxRounds && session.participants.some(p => p.participantId === a.participantId)))
     && contributions.every(c => c.sessionId === session.sessionId && c.sessionDigest === session.sessionDigest
       && c.round <= session.maxRounds && session.participants.some(p => p.participantId === c.participantId))
     && contributions.every(c => c.sourceMode === "provider_filtered" ? c.providerContacted && c.liveBotContactAuthorized

@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Private Idea pages now display retained panel status:** The owner detail read loads
+authenticated run history bound to the selected session, checks settled turns against
+returned contributions, and refuses conflicting logical runs instead of selecting one.
+The page shows recorded state, settled-turn count, reported cost and update time, with
+explicit uncertain-outcome/no-retry and stale-running warnings. The web role template
+adds SELECT only on run events; no start/cancel/result write authority is added.
+Fifty-seven focused Idea/ABS regressions and 30 role/rehearsal/startup/run checks pass
+(overlapping suites). Full TypeScript, focused lint and VPS compilation pass. Source-only
+independent review found no concrete introduced defect. Run tests use synthetic drivers
+and static rendering, not real agents, browser interaction or concurrent PostgreSQL.
+Next: protected admitted live start/cancel and synthesis/decision integration, followed
+by feed ingestion and complete real-agent journeys. Nothing deployed or pushed.
+
 **Saved Idea creation is configurable through verified startup:** The existing task
 bootstrap now captures an optional Idea roster/key/login, verifies its fixed role against
 the same primary and installs the owned operation only after all prerequisites pass.

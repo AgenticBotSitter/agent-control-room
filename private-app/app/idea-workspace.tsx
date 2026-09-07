@@ -7,9 +7,19 @@ import { PrivateHeader } from "./private-header";
 import { IdeaCreateForm } from "./idea-create-form";
 
 export function IdeaDiscussion({ detail }: { detail: IdeaDetail }) {
-  const { session, contributions, synthesis, decision } = detail;
+  const { session, contributions, synthesis, decision, run } = detail;
   return <><h1>{session.title}</h1><p>{session.ideaSummary}</p><p>For: {session.targetCustomer}</p>
     <p>Saved discussion. Live panel controls are not connected on this installation.</p>
+    <section className="private-panel" aria-label="Panel status"><h2>Panel status</h2>{run ? <>
+      <p>{({ prepared: "Prepared — no turn started", running: "Discussion in progress", completed: "Discussion completed",
+        cancelled: "Discussion stopped", failed_definite: "Discussion failed", ambiguous: "Outcome uncertain — do not restart" })[run.state]}</p>
+      <p>{run.messagesUsed} of {run.maxMessages} turns recorded · Reported cost: ${run.costUsd.toFixed(2)}</p>
+      <p>{run.providerContacted ? "Provider contact is recorded." : "Provider contact has not been confirmed."}
+        {run.state === "running" ? " Saved status does not prove that a bot is still connected." : ""}</p>
+      <p>Last recorded update: <time dateTime={run.updatedAt}>{run.updatedAt}</time>. Refresh to check for newer records.</p>
+      {run.attempts.some(a => a.state === "provider_marked") ? <p>A turn was started but has no settled result yet.</p> : null}
+      <p>Automatic retry is disabled.</p>
+    </> : <p>No panel run is recorded for this idea.</p>}</section>
     {contributions.some(c => c.sourceMode === "injected_only") ? <p role="note">This discussion contains synthetic test contributions. Its synthesis is not evidence of a completed live bot panel.</p> : null}
     {Array.from({ length: session.maxRounds }, (_, i) => i + 1).map(round => <section key={round} aria-label={`Round ${round}`}>
       <h2>Round {round}</h2>{session.participants.map(participant => {

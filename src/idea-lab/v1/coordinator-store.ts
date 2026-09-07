@@ -21,8 +21,19 @@ export class IdeaLabBotRunStoreV1 {
   async get(runId:string):Promise<IdeaLabBotRunV1|undefined>{
     const rows=await this.#db.query<Row>(`SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version`,[runId]);
     let prior:IdeaLabBotRunV1|undefined;for(let index=0;index<rows.rows.length;index+=1){const run=this.#verify(rows.rows[index]!);
-      if(Number(rows.rows[index]!.version)!==index+1||prior&&(run.sessionDigest!==prior.sessionDigest||run.attempts.length<prior.attempts.length||time(run.updatedAt)<time(prior.updatedAt)))throw new IdeaLabErrorV1("integrity_failed");prior=run;}
+      if(run.runId!==runId||Number(rows.rows[index]!.version)!==index+1||prior&&(run.tenantId!==prior.tenantId||run.workspaceId!==prior.workspaceId||run.sessionId!==prior.sessionId||run.sessionDigest!==prior.sessionDigest||run.attempts.length<prior.attempts.length||time(run.updatedAt)<time(prior.updatedAt)))throw new IdeaLabErrorV1("integrity_failed");prior=run;}
     return prior;
+  }
+  /** One logical panel per saved Idea. Never choose a convenient run from conflicting history. */
+  async getForSession(scope:{tenantId:string;workspaceId:string;sessionId:string;sessionDigest:string}):Promise<IdeaLabBotRunV1|undefined>{
+    const rows=await this.#db.query<{run_id:string}>(`SELECT DISTINCT run_id FROM control_idea_bot_run_events
+      WHERE tenant_id=$1 AND workspace_id=$2 AND session_id=$3 ORDER BY run_id LIMIT 2`,[scope.tenantId,scope.workspaceId,scope.sessionId]);
+    if(rows.rows.length>1)throw new IdeaLabErrorV1("state_conflict");
+    if(!rows.rows.length)return undefined;
+    const run=await this.get(rows.rows[0]!.run_id);
+    if(!run||run.tenantId!==scope.tenantId||run.workspaceId!==scope.workspaceId||run.sessionId!==scope.sessionId||run.sessionDigest!==scope.sessionDigest)
+      throw new IdeaLabErrorV1("integrity_failed");
+    return run;
   }
   async prepare(run:IdeaLabBotRunV1):Promise<IdeaLabBotRunV1>{
     const parsed=parseIdeaLabBotRunV1(run);return this.#db.transaction(async tx=>{const existing=await tx.query<Row>(`SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version DESC LIMIT 1 FOR UPDATE`,[parsed.runId]);

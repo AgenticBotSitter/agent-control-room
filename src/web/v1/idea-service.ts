@@ -4,6 +4,7 @@ import { parseIdeaLabSynthesisV1, parseIdeaLabDecisionV1 } from "../../idea-lab/
 import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { catalogProjectIdSchema } from "./project-wire";
+import { IdeaLabBotRunStoreV1 } from "../../idea-lab/v1/coordinator-store";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -44,6 +45,7 @@ export class WebIdeaService {
       const store = new IdeaLabProjectRegistryStoreV1(joined(tx), this.key);
       const session = await store.getSession(this.scope.tenantId, sessionId);
       if (!session || session.workspaceId !== this.scope.workspaceId) throw new WebAccessError("not_found");
+      const run = await new IdeaLabBotRunStoreV1(joined(tx), this.key).getForSession(session);
       const contributions = await store.listContributions(this.scope.tenantId, sessionId);
       const synthesis = await store.getSynthesis(this.scope.tenantId, sessionId);
       const decision = await store.getDecision(this.scope.tenantId, sessionId);
@@ -54,7 +56,16 @@ export class WebIdeaService {
         if (!synthesis) throw new Error("idea_snapshot_changed");
         parseIdeaLabDecisionV1(decision, session, synthesis);
       }
+      if (run && (run.attempts.some(a => a.round > session.maxRounds
+        || !session.participants.some(p => p.participantId === a.participantId && p.identityDigest === a.participantIdentityDigest)
+        || a.state === "completed" && !contributions.some(c => c.contributionDigest === a.contributionDigest
+          && c.participantId === a.participantId && c.round === a.round))
+        || run.state === "completed" && run.messagesUsed !== session.maxMessages)) throw new Error("idea_snapshot_changed");
       return { session, contributions, synthesis: synthesis ?? null, decision: decision ?? null,
+        run: run ? { runId: run.runId, sessionId: run.sessionId, sessionDigest: run.sessionDigest, state: run.state,
+          messagesUsed: run.messagesUsed, maxMessages: session.maxMessages, costUsd: run.costUsd,
+          providerContacted: run.providerContacted, updatedAt: run.updatedAt, retryPermitted: run.retryPermitted,
+          attempts: run.attempts.map(a => ({ participantId: a.participantId, round: a.round, state: a.state })) } : null,
         execution: "not_configured" as const, observedAt: actor.now };
     });
   }
