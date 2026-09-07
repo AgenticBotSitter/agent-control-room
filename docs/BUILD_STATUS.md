@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner start operation and optional protected endpoint implemented:** A start request
+binds the saved Idea digest, checks the current owner session before and after server-held
+runtime lookup, and atomically claims one run with its audit. Provider execution happens
+outside that transaction. Simultaneous or repeated requests return the existing run;
+prepared/uncertain runs are never automatically resubmitted. Failed audit rolls back the
+claim. The bounded same-origin HTTP endpoint remains closed unless explicitly supplied
+by trusted composition. Ten injected/PGlite start and HTTP checks, ten stop/decision
+regression checks, TypeScript and focused lint pass. Independent
+source review found no concrete defect. This does not prove real PostgreSQL concurrency
+or native execution. The managed runtime resource/role and shutdown ownership are still
+unconfigured; browser Start controls, synthesis integration, news ingestion and real-agent
+end-to-end acceptance remain open. No live calls, credentials, listeners, deployment or
+GitHub writes occurred.
+
 **Live coordinator rechecks authority between turns:** Before each new provider marker,
 the existing coordinator verifies the selected participant's current evidence and replays
 the same admission against the existing server authority. Expired/revoked/unavailable

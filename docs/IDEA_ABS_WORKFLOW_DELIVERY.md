@@ -341,3 +341,22 @@ above; actual deployment/migration and source ingestion remain open.
    authorization; earlier one-shot qualifications are not reused permission.
 
 Completion requires these actual journeys, not this component batch or synthetic tests.
+
+Start integration update: `WebIdeaStartOperation` uses the existing coordinator, ledger
+and current shared-session authority. It looks up separately accepted runtime material
+outside owner SQL, reauthorizes, and atomically claims one persisted run plus audit under
+the stable workspace lock. Only the claiming request executes; no owner transaction stays
+open while a provider answers. Existing prepared, running and ambiguous histories are
+inert replays, not automatic retries. Definite admission refusal can retain a pre-call
+failure without guessing an unknown provider outcome.
+
+The optional `POST /api/v1/ideas/:id/start` route accepts only bounded JSON through the
+existing same-origin and verified identity boundary. Runtime evidence/admissions are
+server-held, never supplied by that request. Missing composition returns unavailable;
+there is no fake fallback. Ten focused tests pass with injected authorities/drivers and
+serialized PGlite, including rollback, revocation during lookup, concurrent lookups,
+interrupted prepared claims, HTTP bounds and logout. Independent source review found
+no concrete defect; it did not execute tests. Actual independent PostgreSQL pools,
+managed runtime role and lifecycle ownership, browser start controls and live acceptance
+remain required. In particular, the optional HTTP route is not proof of configured
+production execution or bounded physical cancellation at shutdown.
