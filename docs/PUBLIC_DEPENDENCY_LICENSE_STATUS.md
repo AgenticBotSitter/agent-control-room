@@ -149,6 +149,31 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Vite bundled notice structure and four missing bodies
+
+At `fb3a922`, indexed all 78 bundled-component sections of the retained Vite 8.0.13
+LICENSE.md. `research/vite-bundled-notice-index.json` preserves heading, declared
+licenses and exact block hashes/lengths. There are 82 declaration lines (some sections
+group multiple components): 70 MIT, eight ISC, two BSD-2-Clause, one Apache-2.0 and
+one CC0-1.0. These are declarations, not independently verified component licenses.
+
+Fully read the Apache block for @vercel/detect-agent, both BSD blocks (dotenv-expand
+and entities), and string-hash's short CC0 entry. Other sections are explicitly indexed
+as structure-only, not claimed fully reviewed. The unchanged complete source text stays
+in the earlier retention record, including all author notices and differing terms.
+
+Four sections contain metadata only, without a quoted license body: @polka/compression,
+@polka/url and sirv (MIT), and string-hash (CC0-1.0). Direct inspection confirmed the
+absence of a body in these four sections; this is not a claim the upstream project is
+unlicensed. Their exact bundled versions/commits and applicable texts need identifying
+before accepting this as complete bundled attribution. Neither the lockfile nor the
+installed Vite manifest contained a string-hash entry in the bounded search. Do not
+substitute today's upstream main notice or generic MIT text without its attribution.
+
+Next: resolve these four pinned-source/text gaps and review remaining terms; then
+carry applicable notices with the actual candidate. Retaining the Vite file alone
+does not close this step. No download, install, source modification or license selection.
+
 ### Next lint root notice and PostCSS notice retained
 
 At `8c24388`, Next.js tag v16.2.6 resolves to immutable commit

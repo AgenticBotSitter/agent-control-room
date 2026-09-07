@@ -1,0 +1,796 @@
+{
+  "schema": "control-room.bundled-notice-index/v1",
+  "package": "vite",
+  "version": "8.0.13",
+  "manifestSha256": "5d084b8d09cedc0206adeea4096e9aaa5f9489efb919b4dc55486c5ee790a7d2",
+  "sourceEvidence": "docs/research/direct-notice-retention.json",
+  "sourceTextSha256": "40501d82eb20f60d031aaaa3291a103d72551ebd49e11e73ba94ea34589e7bdd",
+  "publicationApproved": false,
+  "scope": "Heading and declared-license index of all bundled sections, with four non-MIT/ISC blocks fully read. Does not prove bundled source equivalence or all terms clearance.",
+  "entries": [
+    {
+      "heading": "@jridgewell/gen-mapping, @jridgewell/remapping, @jridgewell/sourcemap-codec, @jridgewell/trace-mapping",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "0361ec5795dcac9a246a8405345baa78d6aa651d96425d673b2210cdf39f6f12",
+      "bytes": 1482,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "@jridgewell/resolve-uri",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "2a869cb85f56332e37e54f45b12aaeffbac5e246ca077d46bfc59f3a63911724",
+      "bytes": 1276,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "@polka/compression",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "5e65c325b59df183f0f287f024f8e77a9cf65bc51dceada256ee23d6fb117cc8",
+      "bytes": 121,
+      "quotedTextPresent": false,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "@polka/url",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "1158309b981e5934379e466e9d7a7f8ba6413a54147b5742a2ac14ab6ec525b3",
+      "bytes": 130,
+      "quotedTextPresent": false,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "@rollup/plugin-alias, @rollup/plugin-dynamic-import-vars, @rollup/pluginutils",
+      "declaredLicenses": [
+        "MIT",
+        "MIT",
+        "MIT"
+      ],
+      "blockSha256": "63fd8e071e2b37e92a64720ca8472c239a080f062d1d6234937723677ffd0ca3",
+      "bytes": 1549,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "@vercel/detect-agent",
+      "declaredLicenses": [
+        "Apache-2.0"
+      ],
+      "blockSha256": "64b4715e428c716b9f2bd80427a3656d8309ed50384fcd10c8f950c46aa05def",
+      "bytes": 11854,
+      "quotedTextPresent": true,
+      "review": "full_block_read"
+    },
+    {
+      "heading": "@vitest/utils",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "317328c03e4bceb54738981608050349360541933b5e049a992b2e22e97a946e",
+      "bytes": 1266,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "anymatch",
+      "declaredLicenses": [
+        "ISC"
+      ],
+      "blockSha256": "d7f9ca4a0fa6974febc30dc16ed4491cf7cbc0c273049d1e3025ac3486457af7",
+      "bytes": 950,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "artichokie",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "712b8d81b6ad28f91eefc78cf15ff1dd00665207fe8c984f553f03961fe41a39",
+      "bytes": 1312,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "binary-extensions",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "4c2623249cfd7c579f1208a2853e9b9de8d9818912d9cc5270e276ae00ae2f59",
+      "bytes": 1344,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "braces, fill-range, is-number",
+      "declaredLicenses": [
+        "MIT",
+        "MIT",
+        "MIT"
+      ],
+      "blockSha256": "ba28f3e9237c656e24fb1a0604931a49b7467ff5329e58b2d5785c6a2f87a72d",
+      "bytes": 1598,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "bundle-name, default-browser, default-browser-id, define-lazy-prop, is-docker, is-inside-container, is-wsl, open, run-applescript, wsl-utils",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "fcd3c82d874b4b1b38b5bff0af6795d9801a356ee8b905ebd68791a4f3820816",
+      "bytes": 1828,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "cac",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "4da7e52b776546fc1aaef7cebdcc73f82f82a6e38f2a625e98a4383b6a7df00b",
+      "bytes": 1274,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "chokidar",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "ee39ba3e090998fa351f1c9d1040c431f6965700caab3beccce39f3d427b7810",
+      "bytes": 1319,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "connect",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "61fde5a0b52362ca981a528c4f0c37374d58afa48e15f3bb31cb12901a70582a",
+      "bytes": 1430,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "convert-source-map",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "33ce67f462b5c2aba5a582d78b308ff3ccc08881462760ec9169d66993107350",
+      "bytes": 1281,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "cors",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "a91face0db4fd777f48a42c3a5bc167bf68c050dd22064f473b1a36330a29b8f",
+      "bytes": 1264,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "cross-spawn",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "69a0c0b11653632dcc26ea382899d08ac5776ae47944e7f8bc28b534205a4e6c",
+      "bytes": 1293,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "cssesc",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "0488d495ddba1cf0c8e85293496ff4670e718bbf76b7c40e262a9569b6d3d005",
+      "bytes": 1254,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "dotenv-expand",
+      "declaredLicenses": [
+        "BSD-2-Clause"
+      ],
+      "blockSha256": "7488678cee8cd42af720e131471605dd84537f857ddbd21abb56953b3c775ad3",
+      "bytes": 1489,
+      "quotedTextPresent": true,
+      "review": "full_block_read"
+    },
+    {
+      "heading": "ee-first",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "7112c1db6a46893b5c28dbcb058e0f571ffe503af6e5ca25ab3370bc2cbc3331",
+      "bytes": 1305,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "encodeurl",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "b85497245325362ec103cba22ad00d5c08c3c42e6e3928a912859d61fbcdfed1",
+      "bytes": 1283,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "entities",
+      "declaredLicenses": [
+        "BSD-2-Clause"
+      ],
+      "blockSha256": "6bf64d0b2750bcbf28fb7b813a352e80db719fef51536c9847ad5fd92bd6ec63",
+      "bytes": 1420,
+      "quotedTextPresent": true,
+      "review": "full_block_read"
+    },
+    {
+      "heading": "es-module-lexer",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "ea6510a7101dc146f145edd7a9b63ac0c7d13e933a0ad9fde0f088bae8012a34",
+      "bytes": 1254,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "escape-html",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "73b40ff06046c45836d31c8557b7b6ad08750f82860c8c2b165c9ed76c2a99ef",
+      "bytes": 1329,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "estree-walker",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "9ff1729a0cf22801c57717c5349d33d6b36ca10f4b7e8cb6312c10552b53bfad",
+      "bytes": 1287,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "etag",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "f8707fc6e1724efb59e6a3b594817604eb84abf1ae7e28f2f330be3dbc3bdcdb",
+      "bytes": 1294,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "finalhandler",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "920195a0368d05aa7a5e875de503c91b671cdd27f954e331ecb0510813c9dc8a",
+      "bytes": 1319,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "follow-redirects",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "96df7969d652f60312015ff53c70707618a2198ce88d89ea8084116b3dd94382",
+      "bytes": 1364,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "generic-names",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "f243df5c2eb9b78aa70b731f99dda433c1ec6b7ef04b1420d18a1c8e389ec099",
+      "bytes": 1274,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "glob-parent",
+      "declaredLicenses": [
+        "ISC"
+      ],
+      "blockSha256": "1602163d2b6d8ca8101362ea18044b157a509f634485309021825078f9607c18",
+      "bytes": 948,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "host-validation-middleware",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "ce173eef68e765350b42d8003aa6848fbc813e298da189dbc85be3841d3ecaeb",
+      "bytes": 1279,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "http-proxy-3",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "5416663f0393f69af992f6569423f74b588fce59b1219364c1442077ff726c4b",
+      "bytes": 1356,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "icss-utils",
+      "declaredLicenses": [
+        "ISC"
+      ],
+      "blockSha256": "5787f9cbda9cdd48767e48d2ac6bb997bfbfb32717543ec45ae7c958edabe9c9",
+      "bytes": 897,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "is-binary-path",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "4d4c7b16dad214070074247e5950d36662587893890ab151104a17f240ff5c50",
+      "bytes": 1328,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "is-extglob",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "4c43e35a909457f79cb280f4a28d8760bf8a57b13be3db9c05548e17ddc88a7e",
+      "bytes": 1274,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "is-glob",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "0275fe67b9e0cf30701f2162d78364519bf1fa763356c1c5151ac2b892e699d9",
+      "bytes": 1296,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "isexe, which",
+      "declaredLicenses": [
+        "ISC"
+      ],
+      "blockSha256": "3e39e01340b56f650ebe46b824f134788d043b1e347ef8c627c398fe45762612",
+      "bytes": 974,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "js-tokens",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "14cf95dffd80a2e2b01d81cfb300e16a151a54dfea7bce90d8d13c6379684ee5",
+      "bytes": 1315,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "launch-editor, launch-editor-middleware",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "7a4c865d93cdc75ced2ca5cac0c61b352162e511987dc21492114e1ca096a7de",
+      "bytes": 1346,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "lilconfig",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "181a461af0dd9451fe7955e60809ad43746adfe6ad4286c920443dfe23f44298",
+      "bytes": 1248,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "loader-utils",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "3c1ffdfb9f3352ffb58d9b2bbcbf270873aba335f40080adf55ebb3073309c42",
+      "bytes": 1261,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "lodash.camelcase",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "caac926bbbe6a5be670f5bd4271d195f29e1454deec482d47587f8f0060af8cf",
+      "bytes": 2220,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "magic-string",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "7414ca63cb8ff5cda5f8a921fddd559e93c02f16d535f63a0055d12277f79551",
+      "bytes": 1209,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "mlly, ufo",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "51381dbeff8bf2911300c1301bd7ce26658fc70f254e47bc55a7154378650865",
+      "bytes": 1261,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "mrmime",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "6a2756fffd63a0bb07cf90c035df23ee71aa85f00824eca3ff8d6f701869185b",
+      "bytes": 1292,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "normalize-path",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "6db357c0604e4a9664e63ef69ba45ea09008dc1e84cf33e9cca5495f28bd86b5",
+      "bytes": 1299,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "object-assign",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "f4900ad154cfbcbf326e4f8c91213f9d0f8fbdd608cbc7e444edfdeb19c22983",
+      "bytes": 1310,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "obug",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "c5f7f8836e103422ca945e5e05c40f8681c52f864b6b0c8d78f812370a727265",
+      "bytes": 1371,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "on-finished",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "ea295faa544b6f8d907ff00632cd331342c9a6ac89b300faecdb6b96cda0f886",
+      "bytes": 1379,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "parse5",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "858e84a887b09cdff04bbf7eb9d21b38032ebddf3fb99b30ed49f5042f36e636",
+      "bytes": 1312,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "parseurl",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "8a3d79308e8e4cfd7871417d8e2be9ede86b72ef39c0d1561281ee0e51028df1",
+      "bytes": 1380,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "path-key, shebang-regex",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "feb71af2e2aefe99044d203b5fc2838e00bd70f3b652068566b83bc4a6d51940",
+      "bytes": 1330,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "periscopic",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "618216c72381bd17d1e6c2ada7222a1a3cdca3abbf8f25f53160a4d0db4c6c78",
+      "bytes": 1193,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "picocolors",
+      "declaredLicenses": [
+        "ISC"
+      ],
+      "blockSha256": "bd76f87176b3c6b497046570b604a38054ceaa0508314a7052e86c6698b6f2f2",
+      "bytes": 964,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-import",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "cd5330534e8e537179dfae72a83da9722137eddc620bf5e88f4ca51f4b2f0680",
+      "bytes": 1306,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-load-config",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "e5961f164d509f48c2d17fab476d0371974b2267b962eb8181888311ee837e45",
+      "bytes": 1381,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-modules",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "f1d05e97610d875155f21d490d9a335b8ee2ba22a6d86de26ed947dac36753f5",
+      "bytes": 1315,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-modules-extract-imports",
+      "declaredLicenses": [
+        "ISC"
+      ],
+      "blockSha256": "ebf251ee2562872616a0280b41393d0fa5e2d26ab6655f720963bb7689b8f6c8",
+      "bytes": 919,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-modules-local-by-default",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "ceafe7b89e6fc2a17f386e8c52d28c88a48d4b3ca99cc6465b02798ecc9b40cd",
+      "bytes": 1336,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-modules-scope",
+      "declaredLicenses": [
+        "ISC"
+      ],
+      "blockSha256": "471f992e4cbce9a33d9bd03bfd71d4b44e05bc3d55bf171627d0fb1f676d4f98",
+      "bytes": 927,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-modules-values",
+      "declaredLicenses": [
+        "ISC"
+      ],
+      "blockSha256": "15263d3060c4091341c30c9fcb215e617f15c9d869f370b138b51da874217f0a",
+      "bytes": 929,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-selector-parser",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "ee91b5bf68d38e81d6e53caec417831aec8c9a043b4cb692fb54aec68542ecd7",
+      "bytes": 1313,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "postcss-value-parser",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "baf53fba83d6a9fa849903b61a56f66dc3ae3c371b3451795232d292aecd5d4a",
+      "bytes": 1278,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "readdirp",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "8e71429d9afa7d679d7ec12badc17c0f8ad39cbc40c3f3217b7aeb4178236668",
+      "bytes": 1307,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "resolve.exports, totalist",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "f142823702553efcc17956f052fd7e1de0097b336f4ad9d9ab9e7ca6ea83e331",
+      "bytes": 1350,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "shebang-command",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "0f74531ffdb2684996e7bd7c034dc397ee9d0ac349ab4de028a86d9593b28846",
+      "bytes": 1284,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "shell-quote",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "84f2f2b5a55261994e06bf417075bb7b6fd85a6fdd44f70fdf66b3fe7fd626e4",
+      "bytes": 1297,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "sirv",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "4cbf14e033f6df2f551b02aed3f3fc32e4ca7f43d51bf89d4b5c898eb688390d",
+      "bytes": 123,
+      "quotedTextPresent": false,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "statuses",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "d99a2094a266ef6f4254ae33137d2c76d53928de9c8a355ce310b21baa2dd33c",
+      "bytes": 1375,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "string-hash",
+      "declaredLicenses": [
+        "CC0-1.0"
+      ],
+      "blockSha256": "4d036756526c46eca0fee4ef0b1041f830c0cbb9499531ece294c7513ca89052",
+      "bytes": 153,
+      "quotedTextPresent": false,
+      "review": "full_block_read"
+    },
+    {
+      "heading": "strip-literal",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "c11d68f8e3099b92a2aa52c0ad0235b81f9d3e9cb0aca70d888190cb86c1873e",
+      "bytes": 1275,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "to-regex-range",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "9f183fd773fcba1e9e3ef50cc735072d100d2b38ad62081fa9089dfad10e7d67",
+      "bytes": 1300,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "unpipe",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "55eaf9bce59da43d35210054a3d9b8d6384195937cd174aa93d833fc9e68fa8c",
+      "bytes": 1306,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "util-deprecate",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "394bf30b8b672e4ada4fe626e44a602c57ace254abc7fe91217abe0a29b28c00",
+      "bytes": 1301,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "utils-merge",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "58f321f4a91deb30f48558a19a4bc55725777d1dbebec969048e6a7410f72b38",
+      "bytes": 1267,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "vary",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "d235837652d23ebc740402e9234f5aa2f9fbc040f9c819ce3e99d38742d36c3b",
+      "bytes": 1276,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    },
+    {
+      "heading": "ws",
+      "declaredLicenses": [
+        "MIT"
+      ],
+      "blockSha256": "8a4374fa48f2182320a8aa46e3c2c95192bf93ea81c832944d766c794b974715",
+      "bytes": 1312,
+      "quotedTextPresent": true,
+      "review": "structure_only_not_full_text_reviewed"
+    }
+  ]
+}

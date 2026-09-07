@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Vite bundled review found four concrete text gaps:** Indexed 78 bundled sections;
+four contain only metadata, not license bodies (@polka/compression, @polka/url, sirv,
+string-hash). Apache/BSD blocks were fully read; remaining terms are not yet all reviewed.
+Exact block hashes are in `research/vite-bundled-notice-index.json`. Next is pinned
+source/text resolution, not treating retained metadata as complete attribution.
+No download, package change, original-license selection or public/GitHub write.
+
 **All direct dependency root notices located and retained:** The 28-package inventory
 now maps 23 installed-root sources and five existing immutable upstream records.
 Sixteen full root texts total 142,018 bytes; package and notice hashes verified.
