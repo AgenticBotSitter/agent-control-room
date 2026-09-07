@@ -1,5 +1,38 @@
 # Complete tracked-path planning inventory
 
+## Project/task service content and preview wiring
+
+[Batch 06](research/public-source-content-review-06.json) records five full-text
+service/HTTP observations at `334a626`. No embedded private values were observed;
+this does not clear their imported stores, SQL, authentication or runtime inputs.
+The exact-content record is primary-assistant evidence, not independent acceptance.
+
+These files make the remaining preview composition concrete:
+
+- Supply a disposable workspace and synthetic identity through an existing reviewed
+  seam; project HTTP still requires same-origin and identity checks. Do not expose a
+  test identity minting endpoint in the operational app.
+- Create a fresh ordinary project and task proposal. Proposal receipt explicitly
+  says it does not start work; an unassigned no-effect proposal is not a running agent.
+- Connect a reviewed synthetic execution path to progress, result storage and review
+  evidence, then demonstrate a requested revision. A seeded completed task alone
+  cannot prove this sequence. Do not label simulated progress as a native run.
+- Show Connections as enrollment/freshness inventory unless actual connection work
+  is demonstrated. Missing registry/telemetry configuration is not a healthy fleet.
+- Retain Idea project lifecycle boundaries and note the Hermes-specific attention
+  delivery check; broader harness coverage requires implementation and tests, not a
+  wording-only claim. Private-task protocol names are not personal branding to erase.
+
+The services themselves need no observed owner-value substitution in this batch.
+Their composition and the synthetic execution seam remain unfinished. No candidate
+was assembled, source license selected, live service started or GitHub write made.
+
+Verification: stage-zero passed; all five recorded source hashes match. The selected
+`web-project-foundation`, `web-task-service`, `web-task-progress` and `web-connections`
+test files passed 39 tests (zero failures/skips). These use synthetic local fixtures;
+they are not a live fleet, browser demo or production PostgreSQL qualification. No
+application code changed in this review, and no full-suite rerun is claimed.
+
 ## Shared stylesheet review and refreshed browser bytes
 
 Follow-up to batch 05: the two mobile hiding rules have now been removed, with .875rem

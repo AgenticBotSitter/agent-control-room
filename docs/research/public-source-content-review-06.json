@@ -1,0 +1,47 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "baseline": "334a6265a9375a74b2d9d0ee275d4bd22876ccf2",
+  "source": "tracked_committed_bytes",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full text of five project, task, connection and HTTP service files. Content and composition observations only; not transitive source clearance or comprehensive security acceptance.",
+  "remainingForAll": ["original_code_license_authority", "imported_source_and_schema_review", "independent_candidate_review", "owner_publication_decision"],
+  "entries": [
+    {
+      "path": "src/web/v1/project-service.ts",
+      "sha256": "bb385d9828c1ce74b4e65d419f78b6634905a1156e3c0ac74291548df4475de2",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Scope and optional Idea integrity key are supplied by server composition, not embedded owner values. Generic project creation/lifecycle SQL and authenticated catalog reads. Idea project lifecycle is deliberately read-only here; lifecycle transitions do not cancel jobs. Requires workspace, manual-project, command/audit and optional Idea stores, not an isolated UI module. Preserve existing adapter identifiers and digest inputs rather than branding-replacing them. Transaction and imported authority behavior need their own review."
+    },
+    {
+      "path": "src/web/v1/project-http.ts",
+      "sha256": "15b391f73800d8247a0f39cd00eb6e36b76800bd234c93b20c3c04e58bd92819",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Fixed generic API paths; trust/origin/service supplied by composition. No database opening or listener creation. Same-origin and identity verification precede route execution. Logout revokes the session but browser integration still depends on the configured Access logout flow. Contributor demo needs synthetic authentication through a reviewed seam, not removal of these checks."
+    },
+    {
+      "path": "src/web/v1/http-common.ts",
+      "sha256": "3d8372bf7b297d23e56a3578f7a979248acaf50f21c349ebd02de5292f4801a6",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic fixed public error codes and no-store/noindex response headers; bounded byte/time JSON decoding with non-awaited cancellation. No host values, credential constants or logging of raw requests. Source inspection is not exhaustive stream behavior or transport security verification."
+    },
+    {
+      "path": "src/web/v1/connection-service.ts",
+      "sha256": "85dbfd01826f08819ba8fed560b9fb07a66febd7706f24fe088d79b2b443001f",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Registry and telemetry keys are supplied; no actual enrollment/roster/host data in this source. Reads tenant-wide enrollments under explicit authority, optionally authenticated freshness, and supplied queue attention. Missing configuration throws rather than claiming connection success. No enrollment, remote transfer, agent invocation or connect command; do not market this read service as working fleet connectivity."
+    },
+    {
+      "path": "src/web/v1/task-service.ts",
+      "sha256": "221e10b10878d2e7b7d01479888814d8a2f2b4614637fa392872818ed8d83062",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic user-supplied task data and deployment keys, with no embedded personal records or private endpoints. Proposal persists a no-effect unassigned job and explicitly startsWork=false; dispatch is reported not_connected. Progress/results/reviews require separately supplied stores and keys. Artifact metadata is not quality acceptance. Attention delivery-check selection is specifically harness.hermes.native.task, not every harness. Preserve protocol strings such as private-task-proposal/v1; they are not owner branding. Full synthetic demo must exercise a fresh task through progress/result/revision rather than just seed finished evidence. Imported stores, audit, checkpoint and SQL behavior remain separate reviews."
+    }
+  ]
+}

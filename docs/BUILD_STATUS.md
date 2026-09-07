@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Project/task service content reviewed:** Batch 06 records five exact service/HTTP
+files with no embedded private values observed. It identifies the actual preview gap:
+project/task proposal works through supplied authority, but proposal is not dispatch;
+progress/results/revision need a synthetic execution composition, and Connections is
+read-only enrollment/freshness inventory. See `PUBLIC_EXPORT_INVENTORY_STATUS.md` and
+`research/public-source-content-review-06.json`. Imported stores/SQL, independent
+candidate review and a fresh-task interactive demo remain; no license/publication change.
+
 **Cloudflare build-tool root notices retrieved:** Both installed release tags resolve
 to one immutable workers-sdk commit. Full MIT/Apache texts and version-matching package
 manifests are retained in `research/cloudflare-notice-evidence.json` (18,855 bytes,
