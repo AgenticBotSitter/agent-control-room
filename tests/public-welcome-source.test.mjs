@@ -8,11 +8,11 @@ test("welcome page is independent, informational and contains no guessed destina
   assert.deepEqual(readdirSync(new URL("../public-site", import.meta.url)).sort(), ["DEPLOYMENT.md", "README.md", "index.html", "styles.css"]);
   assert.match(html, /<html lang="en">/);
   assert.match(html, /name="viewport"/);
-  assert.match(html, /There is no public download yet/);
+  assert.match(html, /there is no public download yet/i);
   assert.match(html, /not a claim that every feature is ready/);
   assert.match(html, /not yet accepted/);
   assert.doesNotMatch(html, /<(?:script|form|iframe|img|video|audio|object|embed)\b/i);
-  assert.doesNotMatch(html, /\b(?:src|action)=|\bon\w+=|https?:\/\//i);
+  assert.doesNotMatch(html, /\b(?:src|action)=|\bon\w+=|dash\.cloudflare\.com/i);
   assert.doesNotMatch(css, /@import|url\s*\(/i);
   assert.match(html, /default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'/);
 });
@@ -21,7 +21,9 @@ test("all local links resolve and sections have accessible headings", () => {
   assert.equal(ids.length, new Set(ids).size);
   for (const [, href] of html.matchAll(/\bhref="([^"]+)"/g)) {
     if (href.startsWith("#")) assert.ok(ids.includes(href.slice(1)));
-    else assert.ok(["styles.css", "mailto:Alastair@agenticbotsitter.com"].includes(href));
+    else assert.ok(["styles.css", "mailto:Alastair@agenticbotsitter.com",
+      "https://github.com/AgenticBotSitter/agent-control-room",
+      "https://agenticbotsitter.com"].includes(href));
   }
   for (const [, label] of html.matchAll(/aria-labelledby="([^"]+)"/g)) assert.ok(ids.includes(label));
   assert.equal([...html.matchAll(/<h1\b/g)].length, 1);

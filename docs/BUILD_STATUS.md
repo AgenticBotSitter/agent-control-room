@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Approved public identity batch pushed:** The public repository now has a useful
+pre-alpha introduction and the approved maintainer/contact/website links (commit
+`f699fa0`). The private welcome website received its matching HTML and deployment
+instructions (`f03ca15`). Both repositories retain disabled Actions; remote content
+was verified and four local welcome-page source tests pass. No application source,
+private development history, DNS changes or deployment are included. Full source
+release and security-setting approval remain pending. See `WEBSITE_REPOSITORY_HANDOFF.md`.
+
 **Public repository settings refreshed read-only:** The destination remains public
 with only its placeholder README. Actions is disabled; private vulnerability reporting,
 secret scanning and push protection are disabled. No setting or public file changed.

@@ -2,7 +2,9 @@
 
 This separate static page is an information-only draft. It is not the Control Room
 application or a public source release. The owner confirmed `agentcontrolroom.xyz`
-as the welcome-page domain. No public source link or license has been assumed.
+as the welcome-page domain. The confirmed public project repository is
+https://github.com/AgenticBotSitter/agent-control-room; source release remains pending.
+Maintainer: Alastair Fraser. Main website: https://agenticbotsitter.com.
 The owner confirmed the project contact as
 Alastair@agenticbotsitter.com. No DNS or hosting configuration has been changed.
 

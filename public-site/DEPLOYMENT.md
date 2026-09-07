@@ -6,6 +6,13 @@ Only the informational HTML/CSS are intended for eventual public serving.
 
 Repository: https://github.com/AgenticBotSitter/agent-control-room-website
 
+Public project repository: https://github.com/AgenticBotSitter/agent-control-room
+Public welcome-page domain: https://agentcontrolroom.xyz
+Maintainer: Alastair Fraser. Main website: https://agenticbotsitter.com
+Contact: Alastair@agenticbotsitter.com
+
+Use these public URLs in website content, never Cloudflare dashboard/account links.
+
 ## Files and requirements
 
 - `index.html`: welcome page, project goals, current status and contribution information.
@@ -82,7 +89,7 @@ server. Adapt it to the server already in use and document the exact approved co
 - The correct HTTPS domain loads the welcome page and `styles.css` successfully.
 - Stylesheet responses use `text/css`; HTML uses `text/html` with UTF-8.
 - Phone-width layout, keyboard focus, skip link and 200% text zoom remain usable.
-- The page clearly says pre-alpha; forthcoming repository links are not fake buttons.
+- The page clearly says pre-alpha; the repository link does not imply source is released.
 - No link points to a private application, host or login page.
 - `/.git/config`, `/README.md` and directory listings expose no source or private files.
 - Headers and certificate match the intended configuration; other hosted sites still work.

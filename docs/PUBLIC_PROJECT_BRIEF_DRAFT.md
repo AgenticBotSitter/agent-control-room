@@ -8,6 +8,8 @@ Project website: [agentcontrolroom.xyz](https://agentcontrolroom.xyz).
 Repository: [AgenticBotSitter/agent-control-room](https://github.com/AgenticBotSitter/agent-control-room).
 These are project destinations, not a claim that the website is deployed or source uploaded.
 
+Maintainer: Alastair Fraser. Main website: [agenticbotsitter.com](https://agenticbotsitter.com).
+
 Project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).
 
 ## One place for projects and the agents working on them
