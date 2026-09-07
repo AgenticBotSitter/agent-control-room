@@ -85,6 +85,17 @@ test("worker bootstrap rejects a different primary, shared login and invalid con
   }
 });
 
+test("worker configuration accepts six distinct application logins but never the worker login", async () => {
+  const database = { host: "127.0.0.1" as const, port: 5432, database: "synthetic", username: "worker_test", password: "synthetic-only", majorVersion: 17 as const };
+  const names = ["web_test", "coordinator_test", "result_test", "evidence_test", "session_test", "idea_test"];
+  for (const loginNames of [names, [...names, "extra_test"], [...names.slice(0, 5), "worker_test"]]) {
+    let opened = 0; const f = fixture();
+    const bootstrap = createNativeQueueWorkerBootstrap({ PgBoss: f.Boss, openDatabase: () => { opened++; throw new Error("synthetic open failure"); } });
+    await assert.rejects(bootstrap.start({ database, application: { ...database, loginNames }, async deliver() { return { disposition: "held" }; } }));
+    assert.equal(opened, loginNames === names ? 1 : 0);
+  }
+});
+
 test("worker startup timeout closes once and fences late preflight SQL", async t => {
   let enter!: () => void, release!: () => void, finish!: () => void;
   const entered = new Promise<void>(resolve => { enter = resolve; });

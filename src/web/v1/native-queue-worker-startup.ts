@@ -35,7 +35,7 @@ export function createNativeQueueWorkerBootstrap(dependencies: {
       config = validatePrivatePostgresConfiguration(input.database);
       const app = input.application;
       if (app.host !== config.host || app.port !== config.port || app.database !== config.database
-        || !Array.isArray(app.loginNames) || app.loginNames.length < 2 || app.loginNames.length > 5
+        || !Array.isArray(app.loginNames) || app.loginNames.length < 2 || app.loginNames.length > 6
         || new Set(app.loginNames).size !== app.loginNames.length
         || app.loginNames.some(name => typeof name !== "string" || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name === config.username)
         || typeof input.deliver !== "function" || input.verifyRecovery !== undefined && typeof input.verifyRecovery !== "function") throw new Error();

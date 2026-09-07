@@ -8,6 +8,24 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Saved Idea creation is configurable through verified startup:** The existing task
+bootstrap now captures an optional Idea roster/key/login, verifies its fixed role against
+the same primary and installs the owned operation only after all prerequisites pass.
+No default enablement, provisioning or listener was added. The new three-role test saves,
+reads and replays through HTTP using actual disposable SQL login privileges. Invalid
+topology/keys/rosters, extra grants, cancellation and reused resources refuse installation.
+Startup checks passed 19 tests before the final alias test; the final Idea/native/result/
+quality regression run passed 51 checks, and compiled startup passed nine. Full TypeScript,
+focused lint and VPS compilation pass. See `IDEA_CREATION_SETUP.md`. Real operator
+configuration and production acceptance remain unperformed; next source work is panel
+execution/decision integration and news ingestion, not another creation service.
+Independent review caught the worker's five-login ceiling when Idea creation adds a
+sixth login; the validator and combined-path tests were corrected. The combined test
+then exposed missing queue-schema context in the Idea preflight; that was corrected
+without granting any queue rights. Final focused role/startup/worker checks pass 25
+tests and combined host-mode checks pass ten. The earlier failed combined run is not
+accepted evidence. Tests use an injected queue worker/producer, not real pg-boss startup.
+
 **Idea creation role and owned application composition implemented locally:** A fixed
 `control_room_idea_creation` role/preflight permits session/audit saves, not panel results,
 decisions or dispatch writes. The existing task coordinator optionally owns this separate

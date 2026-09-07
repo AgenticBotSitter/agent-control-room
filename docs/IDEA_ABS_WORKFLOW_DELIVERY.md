@@ -156,7 +156,12 @@ The existing task lifecycle optionally owns this distinct resource and protects 
 transactions with existing admission/precommit/drain/close handling. The combined
 application rejects aliased clients, missing read configuration and differing integrity
 keys, and mounts the owned save operation. No new service, queue or execution rights.
-Standard production bootstrap still does not provision/configure this optional resource.
+The task bootstrap now accepts explicit trusted configuration for this optional resource,
+validates the roster/key/distinct-login topology before opening, and runs the exact
+Idea role preflight before installing. It never provisions that role or supplies default
+credentials. `IDEA_CREATION_SETUP.md` records the operator prerequisites and evidence
+limits. A disposable three-role HTTP save/read/replay test passes; real operator
+configuration, production database acceptance and deployment have not occurred.
 `pnpm test:idea-abs` passes 56 tests. Separate task/private-process/compiled-app tests
 pass 23 checks; TypeScript, focused lint and VPS compilation pass. Independent source
 review found no concrete implementation defect; final added HTTP-composition and
@@ -178,7 +183,7 @@ this is not real PostgreSQL concurrent-worker or production migration acceptance
 Authenticated read/draft wiring and its SELECT-only role template are now implemented
 above; actual deployment/migration and source ingestion remain open.
 
-1. Finish production configuration for implemented protected creation, then add protected
+1. Supply and accept real operator configuration for implemented protected creation, then add protected
    Idea Lab run/cancel/synthesize/owner-decision commands. Private
    saved Idea and news pages are mounted; the separate demo build is not a live operator.
 2. Complete ingestion and operational use of the implemented PostgreSQL store. Existing

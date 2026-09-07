@@ -55,3 +55,16 @@ test("Idea creation preflight rejects privilege expansion and removed required p
   await f.db.exec("SET SESSION AUTHORIZATION postgres; REVOKE INSERT ON control_outbox FROM control_room_idea_creation; REVOKE INSERT ON control_idea_sessions FROM control_room_idea_creation; SET SESSION AUTHORIZATION idea_test");
   await assert.rejects(verifyIdeaCreationDatabase(f.checked, f.config, startupConfig, now), /preflight_failed/);
 });
+
+test("Idea role recognizes configured queue schema only while retaining zero queue privileges", async t => {
+  const f = await setup(); t.after(() => f.db.close());
+  await f.db.exec(`SET SESSION AUTHORIZATION postgres;
+    CREATE SCHEMA control_room_queue; CREATE TABLE control_room_queue.version(version integer);
+    CREATE TABLE control_room_queue.queue(name text); CREATE TABLE control_room_queue.job(id text);
+    CREATE TABLE control_room_queue.job_common(id text); REVOKE ALL ON SCHEMA control_room_queue FROM PUBLIC;
+    SET SESSION AUTHORIZATION idea_test`);
+  await assert.rejects(verifyIdeaCreationDatabase(f.checked, f.config, startupConfig, now));
+  await verifyIdeaCreationDatabase(f.checked, f.config, startupConfig, now, { nativeQueue: true });
+  await f.db.exec("SET SESSION AUTHORIZATION postgres; GRANT USAGE ON SCHEMA control_room_queue TO control_room_idea_creation; SET SESSION AUTHORIZATION idea_test");
+  await assert.rejects(verifyIdeaCreationDatabase(f.checked, f.config, startupConfig, now, { nativeQueue: true }));
+});

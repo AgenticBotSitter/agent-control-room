@@ -1,7 +1,9 @@
 import { assertNoSecretMaterial } from "../../security";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
-import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase } from "./private-database-preflight";
+import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase } from "./private-database-preflight";
+import { z } from "zod";
+import { ideaParticipantSchemaV1 } from "../../idea-lab/v1/schemas";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
@@ -28,6 +30,7 @@ export type PrivateTaskStartupConfiguration = {
     /** Explicit local composition; no default worker factory or deployment activation. */
     queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
+    ideaCreation?: { database: PrivatePostgresConfiguration; integrityKey: Uint8Array; participants: unknown[] };
     evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration };
     sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration } };
 };
@@ -81,7 +84,16 @@ function configuration(input: PrivateTaskStartupConfiguration) {
       || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
       || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username, sessions.database.username].includes(queueWorker.database.username)
       || !Number.isSafeInteger(queueWorker.concurrency) || queueWorker.concurrency < 1 || queueWorker.concurrency > 8)) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker };
+    const i = input.coordinator.ideaCreation;
+    const ideaCreation = i ? { database: validatePrivatePostgresConfiguration(i.database), integrityKey: key(i.integrityKey),
+      participants: z.array(ideaParticipantSchemaV1).min(3).max(6).parse(i.participants) } : undefined;
+    if (ideaCreation && (!web.ideaProjects || !timingSafeEqual(ideaCreation.integrityKey, web.ideaProjects.integrityKey)
+      || ideaCreation.database.host !== database.host || ideaCreation.database.port !== database.port
+      || ideaCreation.database.database !== database.database
+      || [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database]
+        .some(value => value?.username === ideaCreation.database.username)
+      || new Set(ideaCreation.participants.map(value => value.participantId)).size !== ideaCreation.participants.length)) throw new Error();
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -171,7 +183,13 @@ export function createPrivateTaskBootstrap(dependencies: {
         await verifyNativeSessionDatabase(sessionDatabase.client, config.sessions!.database, config.web, now, queue);
         requireActive();
       }
-      if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase].some(pool => pool && !pool.isAvailable())) throw new Error();
+      const ideaDatabase = config.ideaCreation ? open(config.ideaCreation.database) : undefined;
+      if (ideaDatabase) {
+        if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase].some(pool => pool?.client === ideaDatabase.client)) throw new Error();
+        await verifyIdeaCreationDatabase(ideaDatabase.client, config.ideaCreation!.database, config.web, now, queue);
+        requireActive();
+      }
+      if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase, ideaDatabase].some(pool => pool && !pool.isAvailable())) throw new Error();
       if (queue) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const pending = Promise.resolve().then(() => { requireActive(); return prepareSubmission!({ query: async (sql, values) => {
@@ -211,6 +229,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
+        ideaCreation: ideaDatabase ? { ...config.ideaCreation!, database: ideaDatabase } : undefined,
         evidence: evidenceDatabase ? { ...config.evidence!, database: evidenceDatabase } : undefined,
         sessions: sessionDatabase ? { ...config.sessions!, database: sessionDatabase } : undefined,
         nativeHttp: config.nativeHttp,
@@ -225,7 +244,8 @@ export function createPrivateTaskBootstrap(dependencies: {
         const pending = Promise.resolve().then(() => { requireActive(); return startWorker!({ ...workerConfig,
           application: { host: config.database.host, port: config.database.port, database: config.database.database,
             loginNames: [config.web.database.username, config.database.username, config.resultDatabase!.username,
-              config.evidence!.database.username, config.sessions!.database.username] },
+              config.evidence!.database.username, config.sessions!.database.username,
+              ...(config.ideaCreation ? [config.ideaCreation.database.username] : [])] },
           deliver: async (reference, signal) => {
             if (abandoned) throw new Error("native_task_delivery_unresolved");
             return deliver(reference, AbortSignal.any([signal, startupAbort.signal]));

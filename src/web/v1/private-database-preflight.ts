@@ -117,8 +117,8 @@ export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivateP
 
 /** Fixed session-creation profile: no participant result, decision, job, queue or execution writes. */
 export async function verifyIdeaCreationDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, "ideas");
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "ideas", queue);
 }
 
 /** Exact task-coordinator profile. No request-selected role or caller-supplied permission policy. */

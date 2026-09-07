@@ -7,6 +7,8 @@ import type { NativeSessionTransport } from "../src/web/v1/managed-native-sessio
 import type { PrivateApplication } from "../src/web/v1/private-process";
 import { createPrivateTaskBootstrap, type PrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
 import { managedStartupFixture } from "./helpers/managed-startup";
+import { readFile } from "node:fs/promises";
+import { buildIdeaLabFixtureV1 } from "../src/idea-lab/v1/fixture";
 
 test("queue-worker topology and missing factory refuse before any database opens", async t => {
   const f = await managedStartupFixture(); t.after(f.x.close);
@@ -31,8 +33,17 @@ test("queue-worker topology and missing factory refuse before any database opens
 });
 
 test("explicit host startup owns worker readiness and worker-before-application cleanup", async t => {
-  for (const mode of ["success", "start", "not-ready", "install", "close", "malformed", "getter", "late"] as const) await t.test(mode, async t => {
+  for (const mode of ["success", "ideas", "start", "not-ready", "install", "close", "malformed", "getter", "late"] as const) await t.test(mode, async t => {
     const f = await managedStartupFixture(); t.after(f.x.close);
+    const ideaPool = mode === "ideas" ? f.startup.pool("idea_test") : undefined;
+    if (ideaPool) {
+      await f.startup.raw.exec(await readFile("db/roles/idea_creation_roles.sql", "utf8"));
+      await f.startup.raw.exec("CREATE ROLE idea_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; GRANT control_room_idea_creation TO idea_test");
+      const integrityKey = new Uint8Array(32).fill(67);
+      f.config.web.ideaProjects = { integrityKey };
+      f.config.coordinator.ideaCreation = { integrityKey, participants: buildIdeaLabFixtureV1().session.participants,
+        database: { ...f.config.coordinator.database, username: "idea_test" } };
+    }
     // Minimal ACL fixture only: no queue package/schema correctness claim. Actual
     // pg-boss startup and queue behavior are covered by the opt-in package tests.
     await f.startup.raw.exec(`CREATE SCHEMA control_room_queue;
@@ -49,13 +60,14 @@ test("explicit host startup owns worker readiness and worker-before-application 
     let releaseLate!: () => void, notifyStarted!: () => void;
     const workerStarted = new Promise<void>(resolve => { notifyStarted = resolve; });
     const database = { ...f.config.coordinator.database, username: "worker_test" };
-    const bootstrap = createPrivateTaskBootstrap({ clock: f.x.f.clock, openDatabase: f.openDatabase,
+    const bootstrap = createPrivateTaskBootstrap({ clock: f.x.f.clock,
+      openDatabase: db => db.username === "idea_test" && ideaPool ? ideaPool : f.openDatabase(db),
       install: app => { installed = app; if (mode === "install") throw new Error("synthetic install failure"); },
       prepareNativeSubmission: async () => ({ enqueueInSession: async () => { throw new Error("unused fake producer"); },
         close: async () => { producerCloses++; assert.equal(workerCloses, ["start", "late"].includes(mode) ? 0 : 1); } }),
       startNativeWorker: async input => {
         assert.equal(installed, undefined); assert.equal(input.database.username, "worker_test");
-        assert.deepEqual(input.application.loginNames, ["web_test", "coordinator_test", "result_test", "evidence_test", "session_test"]);
+        assert.deepEqual(input.application.loginNames, ["web_test", "coordinator_test", "result_test", "evidence_test", "session_test", ...(ideaPool ? ["idea_test"] : [])]);
         assert.equal(input.concurrency, 1); assert.equal(typeof input.deliver, "function");
         if (mode === "start") throw new Error("synthetic worker start failure");
         if (mode === "late") {
