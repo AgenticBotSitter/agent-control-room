@@ -23,7 +23,13 @@ test("Idea browser client renders retained round contributions, synthesis and pr
   const detail = await client.detail(id), html = renderToStaticMarkup(createElement(IdeaDiscussion, { detail }));
   for (const p of detail.session.participants) assert.ok(html.includes(p.displayName));
   assert.ok(html.includes("Round 1")); assert.ok(html.includes("Synthesis"));
-  assert.ok(html.includes("Open project workspace")); assert.ok(html.includes("Bot-reported confidence"));
+  assert.ok(html.includes("Open project workspace")); assert.ok(html.includes("Test confidence"));
+  assert.ok(html.includes("Synthetic test contribution")); assert.ok(!html.includes("Bot-reported confidence"));
+  // Rendering-only provider-history variant; this is not provider qualification evidence.
+  const providerHtml = renderToStaticMarkup(createElement(IdeaDiscussion, { detail: { ...detail,
+    contributions: detail.contributions.map(c => ({ ...c, sourceMode: "provider_filtered", providerContacted: true, liveBotContactAuthorized: true })) } }));
+  assert.ok(providerHtml.includes("Retained, filtered provider contribution")); assert.ok(providerHtml.includes("Bot-reported confidence"));
+  assert.ok(!providerHtml.includes("Synthetic test contribution"));
   assert.ok(html.includes("Live panel controls are not connected"));
   let renders = 0;
   const handle = (path: string) => app.handle(request(path), () => { renders++; return new Response("shell"); });
@@ -46,6 +52,7 @@ test("Idea browser rejects mixed identities, incorrect cursor and inconsistent d
   await assert.rejects(reply({ ...detail, contributions: detail.contributions.map(c => ({ ...c, participantId: "participant:other" })) }).detail(id), /unavailable/);
   await assert.rejects(reply({ ...page, nextCursor: id }).list(), /unavailable/);
   await assert.rejects(reply({ ...page, execution: "running" }).list(), /unavailable/);
+  await assert.rejects(reply({ ...detail, contributions: detail.contributions.map(c => ({ ...c, sourceMode: "provider_filtered", providerContacted: false })) }).detail(id), /unavailable/);
   const html = renderToStaticMarkup(createElement(IdeaDiscussion, { detail: { ...detail,
     session: { ...detail.session, title: "<script>untrusted</script>" } } }));
   assert.ok(html.includes("&lt;script&gt;untrusted&lt;/script&gt;"));

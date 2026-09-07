@@ -9,12 +9,14 @@ export function IdeaDiscussion({ detail }: { detail: IdeaDetail }) {
   const { session, contributions, synthesis, decision } = detail;
   return <><h1>{session.title}</h1><p>{session.ideaSummary}</p><p>For: {session.targetCustomer}</p>
     <p>Saved discussion. Live panel controls are not connected on this installation.</p>
+    {contributions.some(c => c.sourceMode === "injected_only") ? <p role="note">This discussion contains synthetic test contributions. Its synthesis is not evidence of a completed live bot panel.</p> : null}
     {Array.from({ length: session.maxRounds }, (_, i) => i + 1).map(round => <section key={round} aria-label={`Round ${round}`}>
       <h2>Round {round}</h2>{session.participants.map(participant => {
         const contribution = contributions.find(c => c.round === round && c.participantId === participant.participantId);
         return <article className="private-panel" key={participant.participantId}><h3>{participant.displayName} · {participant.perspective}</h3>
           {contribution ? <><p style={{ whiteSpace: "pre-wrap" }}>{contribution.safeOpinion}</p>
-            <p>Suggested experiment: {contribution.suggestedExperiment}</p><p>Bot-reported confidence: {contribution.confidencePercent}%</p></>
+            <p>{contribution.sourceMode === "injected_only" ? "Synthetic test contribution — no provider was contacted." : "Retained, filtered provider contribution."}</p>
+            <p>Suggested experiment: {contribution.suggestedExperiment}</p><p>{contribution.sourceMode === "injected_only" ? "Test confidence" : "Bot-reported confidence"}: {contribution.confidencePercent}%</p></>
             : <p>No contribution saved for this round.</p>}</article>;
       })}</section>)}
     <section className="private-panel"><h2>Synthesis</h2>{synthesis ? <><p>{synthesis.executiveSummary}</p>

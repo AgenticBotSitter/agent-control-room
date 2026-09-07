@@ -13,6 +13,7 @@ export const ideaDetailSchema = z.object({ session: summary.extend({ participant
 contributions: z.array(z.object({ contributionId: id, sessionId: id, sessionDigest: digest, participantId: id,
   round: z.number().int().min(1).max(3), safeOpinion: text, suggestedExperiment: z.string().min(1).max(500),
   confidencePercent: z.number().int().min(0).max(100),
+  sourceMode: z.enum(["injected_only", "provider_filtered"]), providerContacted: z.boolean(), liveBotContactAuthorized: z.boolean(),
 })).max(18),
 synthesis: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest, executiveSummary: text,
   nextExperiment: z.string().min(1).max(500), overallScore: z.number().min(0).max(100),
@@ -25,6 +26,8 @@ decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: dige
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
     && contributions.every(c => c.sessionId === session.sessionId && c.sessionDigest === session.sessionDigest
       && c.round <= session.maxRounds && session.participants.some(p => p.participantId === c.participantId))
+    && contributions.every(c => c.sourceMode === "provider_filtered" ? c.providerContacted && c.liveBotContactAuthorized
+      : !c.providerContacted && !c.liveBotContactAuthorized)
     && (!synthesis || synthesis.sessionId === session.sessionId && synthesis.sessionDigest === session.sessionDigest)
     && (!decision || !!synthesis && decision.sessionId === session.sessionId && decision.sessionDigest === session.sessionDigest
       && decision.synthesisDigest === synthesis.synthesisDigest && (decision.decision === "create_project") === !!decision.project);

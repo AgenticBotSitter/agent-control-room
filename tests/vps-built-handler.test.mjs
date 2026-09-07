@@ -75,14 +75,18 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const inventory = await (await handler(request("/api/v1/connections"))).json();
   assert.equal(inventory.projection.summary.connectionCount, 1); assert.equal(inventory.projection.summary.currentSignalCount, 1);
   assert.equal(inventory.projection.summary.livePanelEligibleCount, 0); assert.equal(inventory.telemetry, "configured");
-  for (const legacy of ["/ideas", "/api/v1/fixture-snapshot", "/api/v1/local-pilot/session", "/api/v1/connections/enroll"])
+  const discussionPage = await handler(request("/ideas")); assert.equal(discussionPage.status, 200);
+  const discussionHtml = await discussionPage.text(); assert.match(discussionHtml, /Loading saved ideas/);
+  assert.match(discussionHtml, /<title>Idea Lab · Control Room<\/title>/);
+  assert.doesNotMatch(discussionHtml, /Start panel|Run fake panel/);
+  for (const legacy of ["/api/v1/fixture-snapshot", "/api/v1/local-pilot/session", "/api/v1/connections/enroll"])
     assert.equal((await handler(request(legacy))).status, 404, legacy);
   const stream = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/events`));
   assert.match(await stream.text(), /project-snapshot/);
   const session = await handler(request("/session")); assert.equal(session.status, 200);
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
-  for (const protectedPath of ["/projects", "/connections", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
+  for (const protectedPath of ["/projects", "/ideas", "/api/v1/ideas", "/connections", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
     taskPath, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
