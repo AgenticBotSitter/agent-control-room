@@ -4,7 +4,7 @@ import { taskDraftSchema } from "./task-wire";
 
 export const newsResearchInputSchema = z.object({ storyId: id,
   storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  action: z.enum(["research_brief", "setup_guide"]), goal: z.string().trim().min(1).max(1500),
+  action: z.enum(["research_brief", "setup_guide"]), goal: z.string().trim().min(1).max(1200),
 }).strict();
 export const newsResearchPreviewSchema = z.object({ projectId: id, storyId: id,
   storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), draft: taskDraftSchema,

@@ -13,6 +13,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NewsResearchForm } from "../private-app/app/news-research-form";
 import { PrivateNewsWorkspace } from "../private-app/app/news-workspace";
+import { installNewsNavigationGuard } from "../src/web/v1/news-navigation-guard";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(37);
 function storyFor(projectId: string) {
@@ -45,6 +46,8 @@ test("news preparation reads exact retained evidence, saves no task, and ordinar
   await assert.rejects(new WebNewsService(f.client, scope, { integrityKey: new Uint8Array(32) }, () => now).list(f.identity, projectId));
   const guide = await service.prepare(f.identity, projectId, { ...input, action: "setup_guide" });
   assert.ok(guide.draft.instructions.includes("Deliverable: setup_guide"));
+  assert.ok((await service.prepare(f.identity, projectId, { ...input, goal: "a".repeat(1200) })).draft.instructions.startsWith("a".repeat(1200)));
+  await assert.rejects(service.prepare(f.identity, projectId, { ...input, goal: "a".repeat(1201) }), /invalid_request/);
   await f.client.query("UPDATE control_role_grants SET revoked_at=$1", [new Date(now).toISOString()]);
   await assert.rejects(service.prepare(f.identity, projectId, input));
   await assert.rejects(service.list(f.identity, projectId));
@@ -115,4 +118,21 @@ test("news UI has truthful loading state, labeled research controls and escaped 
   assert.ok(form.includes("Research this")); assert.ok(form.includes("Write a setup guide"));
   assert.ok(form.includes("Your instructions")); assert.ok(form.includes("Prepare draft"));
   assert.ok(form.includes("does not authorize execution or publication"));
+});
+
+test("uncertain news saves hold link navigation and warn on leaving until the save resolves", () => {
+  const doc = new EventTarget(), win = new EventTarget();
+  let pending = true, explanations = 0;
+  const cleanup = installNewsNavigationGuard(win as unknown as Window, doc as unknown as Document, () => pending, () => explanations++);
+  const click = () => {
+    const event = new Event("click", { cancelable: true });
+    Object.defineProperty(event, "target", { value: { closest: () => ({ href: "/projects" }) } });
+    doc.dispatchEvent(event); return event;
+  };
+  assert.equal(click().defaultPrevented, true); assert.equal(explanations, 1);
+  const leave = new Event("beforeunload", { cancelable: true });
+  Object.defineProperty(leave, "returnValue", { writable: true, value: undefined });
+  win.dispatchEvent(leave); assert.equal(leave.defaultPrevented, true);
+  pending = false; assert.equal(click().defaultPrevented, false);
+  cleanup(); pending = true; assert.equal(click().defaultPrevented, false);
 });

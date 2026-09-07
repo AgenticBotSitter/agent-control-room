@@ -1,10 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { newsResearchPreviewSchema, type NewsPage } from "../../src/web/v1/news-wire";
 import type { TaskDraft, TaskReceipt } from "../../src/web/v1/task-wire";
+import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
 
 export function NewsResearchForm({ projectId, story, close }: {
   projectId: string; story: NewsPage["stories"][number]; close: () => void;
@@ -16,6 +17,8 @@ export function NewsResearchForm({ projectId, story, close }: {
   const [receipt, setReceipt] = useState<TaskReceipt>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  useEffect(() => installNewsNavigationGuard(window, document, () => busy || client.hasPending(),
+    () => setError("Stay on this page until this exact save is resolved. It may already have completed; use ‘Check this exact save again’.")), [busy, client]);
   async function prepare() {
     if (busy || client.hasPending()) return;
     setBusy(true); setError(undefined);
@@ -49,7 +52,7 @@ export function NewsResearchForm({ projectId, story, close }: {
           <label>What should the agent prepare?<select value={action} disabled={busy} onChange={event => setAction(event.target.value as typeof action)}>
             <option value="research_brief">Research this</option><option value="setup_guide">Write a setup guide</option>
           </select></label>
-          <label>Your instructions<textarea value={goal} onChange={event => setGoal(event.target.value)} required maxLength={1500} disabled={busy} /></label>
+          <label>Your instructions<textarea value={goal} onChange={event => setGoal(event.target.value)} required maxLength={1200} disabled={busy} /></label>
           <p>Source links and evidence references will be included. This does not authorize execution or publication.</p>
           <button type="submit" disabled={busy || !goal.trim()}>Prepare draft</button>
         </form>}
