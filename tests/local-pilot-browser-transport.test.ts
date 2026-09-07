@@ -15,6 +15,8 @@ test("pilot transport maps bounded reads and preserves request options and respo
     ["/project%3Aexample", { resource: "project", projectId: "project:example" }],
     ["/project%3Aexample/tasks?after=job%3Aprevious", { resource: "tasks", projectId: "project:example", after: "job:previous" }],
     ["/project%3Aexample/tasks/job%3Aexample", { resource: "task", projectId: "project:example", jobId: "job:example" }],
+    ["/project%3Aexample/tasks/job%3Aexample/results", { resource: "results", projectId: "project:example", jobId: "job:example" }],
+    ["/project%3Aexample/tasks/job%3Aexample/results/artifact%3Aexample", { resource: "results", projectId: "project:example", jobId: "job:example", artifactId: "artifact:example" }],
   ] as const) {
     const init: RequestInit = { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal };
     assert.equal(await transport(`/api/v1/projects${path}`, init), response);
@@ -48,7 +50,8 @@ test("unsupported paths, methods, malformed drafts and ambiguous queries never r
   for (const path of [
     "https://example.invalid/api/v1/projects", "//example.invalid/api/v1/projects", "/api/v1/session/logout",
     "/api/v1/projects-other", "/api/v1/projects/", "/api/v1/projects/project%2Fescape",
-    "/api/v1/projects/project%ZZ", "/api/v1/projects/project:example/tasks/job:example/results",
+    "/api/v1/projects/project%ZZ", "/api/v1/projects/project:example/tasks/job:example/results?after=job:next",
+    "/api/v1/projects/project:example/lifecycle/job:example/results", "/api/v1/projects/project:example/tasks/job:example/reviews",
     "/api/v1/projects/project:example/lifecycle", "/api/v1/projects#ignored",
     "/api/v1/projects?after=project:one&after=project:two", "/api/v1/projects?unknown=yes",
     "/api/v1/projects?after=", "/api/v1/projects?after=project:one?extra",

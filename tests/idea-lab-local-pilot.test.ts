@@ -87,6 +87,15 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   assert.deepEqual(await browserTasks.retrySave(),proposed.receipt);
   assert.equal((await browserTasks.list(ordinary.project.projectId)).tasks.length,1);
   assert.equal((await browserTasks.detail(ordinary.project.projectId,proposed.receipt.jobId)).task.state,"proposed");
+  const resultPage=await browserTasks.results(ordinary.project.projectId,proposed.receipt.jobId);
+  assert.equal(resultPage.resultSource,"not_configured");
+  assert.equal(resultPage.reviewSource,"not_configured");
+  assert.equal(resultPage.canReadContent,false);
+  assert.deepEqual(resultPage.items,[]);
+  await assert.rejects(browserTasks.results(another.project.projectId,proposed.receipt.jobId),{code:"not_found"});
+  const resultQuery=new URLSearchParams({resource:"results",projectId:ordinary.project.projectId,jobId:proposed.receipt.jobId});
+  assert.equal((await handler(new Request(`${endpoint}?${resultQuery}`))).status,401);
+  assert.equal((await handler(new Request(`${endpoint}?${resultQuery}&artifactId=artifact:one&artifactId=artifact:two`,{headers:{cookie}}))).status,400);
   await assert.rejects(browserTasks.detail(another.project.projectId,proposed.receipt.jobId),{code:"not_found"});
   const taskBeforeRestart=await runtime.projectTasks.getTask(read(),ordinary.project.projectId,proposed.receipt.jobId);
   assert.equal(taskBeforeRestart.task.state,"proposed");assert.deepEqual(taskBeforeRestart.attempts,[]);
@@ -134,6 +143,7 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   await assert.rejects(runtime.projectTasks.listProjects(new Request(`${origin}/local-preview`,{headers:{cookie,"x-forwarded-for":"127.0.0.1"}})),/local_request_required/);
   now=advance(issued.expiresAt,1);
   await assert.rejects(runtime.projectTasks.listProjects(read()),/authentication_required/);
+  await assert.rejects(runtime.projectTasks.getResults(read(),ordinary.project.projectId,proposed.receipt.jobId),/authentication_required/);
   await assert.rejects(runtime.projectTasks.proposeTask(write(),ordinary.project.projectId,taskDraft,"pilot-propose-expired-0001"),/authentication_required/);
   await runtime.close();
 });

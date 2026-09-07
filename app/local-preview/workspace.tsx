@@ -8,6 +8,8 @@ import type { TaskDetail, TaskPage } from "../../src/web/v1/task-wire";
 import { ProjectCatalog } from "../components/project-catalog";
 import { ProjectCreateForm } from "../components/project-create-form";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm } from "../../private-app/app/task-panels";
+import { TaskResultsPanel } from "../../private-app/app/task-results";
+import type { TaskResultsPage, TaskResultContent } from "../../src/web/v1/task-result-wire";
 
 export function localPreviewHref(projectId?: string, jobId?: string, after?: string) {
   const query = new URLSearchParams();
@@ -31,13 +33,17 @@ export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?:
   const [catalog, setCatalog] = useState<ProjectCatalogPage>();
   const [page, setPage] = useState<TaskPage>();
   const [detail, setDetail] = useState<TaskDetail>();
+  const [results, setResults] = useState<TaskResultsPage>();
+  const [content, setContent] = useState<TaskResultContent>();
+  const [reading, setReading] = useState(false);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true), [pending, setPending] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [draft, setDraft] = useState({ title: "", instructions: "" });
   const busy = useRef(false), generation = useRef(0);
   const uncertain = clients.projects.hasPending() || clients.tasks.hasPending();
-  const clear = useCallback(() => { setCatalog(undefined); setPage(undefined); setDetail(undefined); }, []);
+  const clear = useCallback(() => { setCatalog(undefined); setPage(undefined); setDetail(undefined);
+    setResults(undefined); setContent(undefined); }, []);
   const failure = useCallback((reason: unknown, operation: "read" | "save") => {
     const result = localPreviewFailure(reason, operation, !!projectId);
     if (result.clearRecords) clear();
@@ -45,19 +51,22 @@ export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?:
   }, [clear, projectId]);
   useEffect(() => {
     let current = true;
-    const version = ++generation.current;
+    const requestGeneration = generation;
+    const version = ++requestGeneration.current;
     const read = async () => {
       try {
         const value = projectId ? jobId ? await clients.tasks.detail(projectId, jobId) : await clients.tasks.list(projectId, after)
           : await clients.projects.list(after);
+        const resultPage = projectId && jobId ? await clients.tasks.results(projectId, jobId) : undefined;
         if (!current || version !== generation.current) return;
         setError(undefined);
+        setResults(resultPage); setContent(undefined);
         if ("sources" in value) setCatalog(value); else if ("tasks" in value) setPage(value); else setDetail(value);
       } catch (reason) { if (current && version === generation.current) failure(reason, "read"); }
       finally { if (current && version === generation.current) setLoading(false); }
     };
     void read();
-    return () => { current = false; };
+    return () => { current = false; requestGeneration.current++; };
   }, [clients, projectId, jobId, after, refresh, failure]);
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
@@ -77,8 +86,19 @@ export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?:
     } catch (reason) { failure(reason, "save"); setLoading(false); }
     finally { busy.current = false; setPending(false); }
   }
+  async function openResult(artifactId: string) {
+    if (busy.current || !projectId || !jobId || !results?.canReadContent
+      || !results.items.some(item => item.artifactId === artifactId)) return;
+    busy.current = true; setReading(true); setContent(undefined);
+    const version = ++generation.current;
+    try {
+      const result = await clients.tasks.resultContent(projectId, jobId, artifactId);
+      if (version === generation.current) setContent(result);
+    } catch (reason) { if (version === generation.current) failure(reason, "read"); }
+    finally { busy.current = false; setReading(false); }
+  }
   const project = page?.project ?? detail?.project;
-  const held = pending || uncertain;
+  const held = pending || uncertain || reading;
   return <div className="private-shell"><main>
     <div className="private-heading"><h1>{project?.title ?? "Local project preview"}</h1>
       <p>Projects and proposals are saved locally. This preview cannot assign or start agents.</p></div>
@@ -111,5 +131,8 @@ export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?:
           localPreviewHref(projectId, (result as { jobId: string }).jobId));
       }} />}</>}
     {detail && <TaskDetailPanel detail={detail} />}
+    {detail && results && <TaskResultsPanel page={results} content={content} pending={reading}
+      onOpen={artifactId => { void openResult(artifactId); }}
+      onClose={() => { generation.current++; setContent(undefined); }} />}
   </main></div>;
 }

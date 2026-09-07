@@ -30,6 +30,9 @@ export function createLocalPilotProjectTasksV1(
     async getTask(request: Request, projectId: string, jobId: string) {
       return tasks.detail(await verify(request, "GET"), projectId, jobId);
     },
+    async getResults(request: Request, projectId: string, jobId: string, artifactId?: string) {
+      return tasks.results(await verify(request, "GET"), projectId, jobId, artifactId);
+    },
     async proposeTask(request: Request, projectId: string, draft: unknown, key: string) {
       return tasks.propose(await verify(request, "POST"), projectId, draft, key);
     },

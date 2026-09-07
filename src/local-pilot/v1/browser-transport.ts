@@ -12,13 +12,16 @@ export function createLocalPilotBrowserTransportV1(transport: typeof fetch = fet
       || input.includes("\\")) throw invalid();
     const [pathname, query = "", extra] = input.split("?");
     if (extra !== undefined) throw invalid();
-    const match = /^\/api\/v1\/projects(?:\/([^/]+)(?:\/(lifecycle|tasks)(?:\/([^/]+))?)?)?$/.exec(pathname);
+    const match = /^\/api\/v1\/projects(?:\/([^/]+)(?:\/(lifecycle|tasks)(?:\/([^/]+)(?:\/(results)(?:\/([^/]+))?)?)?)?)?$/.exec(pathname);
     if (!match) throw invalid();
     const decodeId = (value: string | undefined) => value === undefined ? undefined
       : catalogProjectIdSchema.parse(decodeURIComponent(value));
     const projectId = decodeId(match[1]);
     const jobId = decodeId(match[3]);
     const action = match[2];
+    const results = match[4] !== undefined;
+    const artifactId = decodeId(match[5]);
+    if (results && action !== "tasks") throw invalid();
     const method = init?.method ?? "GET";
     const params = new URLSearchParams(query);
     let body: string | undefined;
@@ -30,9 +33,10 @@ export function createLocalPilotBrowserTransportV1(transport: typeof fetch = fet
         || !list && params.has("after")) throw invalid();
       const after = params.has("after") ? catalogProjectIdSchema.parse(params.get("after")) : undefined;
       const mapped = new URLSearchParams({ resource: projectId === undefined ? "projects"
-        : action === "tasks" ? jobId === undefined ? "tasks" : "task" : "project" });
+        : results ? "results" : action === "tasks" ? jobId === undefined ? "tasks" : "task" : "project" });
       if (projectId !== undefined) mapped.set("projectId", projectId);
       if (jobId !== undefined) mapped.set("jobId", jobId);
+      if (artifactId !== undefined) mapped.set("artifactId", artifactId);
       if (after !== undefined) mapped.set("after", after);
       target += `?${mapped}`;
     } else if (method === "POST") {

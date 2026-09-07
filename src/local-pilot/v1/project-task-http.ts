@@ -11,6 +11,8 @@ const reads = z.discriminatedUnion("resource", [
   z.object({ resource: z.literal("project"), projectId: catalogProjectIdSchema }).strict(),
   z.object({ resource: z.literal("tasks"), projectId: catalogProjectIdSchema, after: catalogProjectIdSchema.optional() }).strict(),
   z.object({ resource: z.literal("task"), projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict(),
+  z.object({ resource: z.literal("results"), projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema,
+    artifactId: catalogProjectIdSchema.optional() }).strict(),
 ]);
 const writes = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("create_project"), draft: projectCreateSchema }).strict(),
@@ -41,6 +43,7 @@ export function createLocalPilotProjectTaskHandlerV1(runtime: LocalPilotProjectT
           case "project": return json({ project: await runtime.getProject(request, query.projectId) });
           case "tasks": return json(await runtime.listTasks(request, query.projectId, query.after));
           case "task": return json(await runtime.getTask(request, query.projectId, query.jobId));
+          case "results": return json(await runtime.getResults(request, query.projectId, query.jobId, query.artifactId));
         }
       }
       if (request.method !== "POST") throw new WebAccessError("not_found");

@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Local preview now mounts the existing result/review read panel:** Canonical browser
+result-list/content requests map to the local owner-cookie handler and existing task
+service, preserving project/content grants and explicit missing-configuration states.
+The task page reuses `TaskResultsPanel`, reads content only on selection, clears it on
+failed reads/refresh, and adds no polling or review-write route. Runtime currently has
+no native result store/review checkpoint configured, so this is truthful read-path/UI
+wiring, not a completed simulated or live result-to-review journey. Ten selected pilot
+tests (including actual handler/PGlite scope and expired-session denial) and 13 existing
+result/browser tests pass; both strict type checks, focused lint and Node-only preview
+build pass. No browser-interaction acceptance, provider, listener, deployment or GitHub
+write. Next: connect a correctly labeled persisted simulated result through its own
+existing evidence path; do not insert it as a native-agent result or enable review
+writes with an in-memory rollback checkpoint.
+
 **Existing simulator/file-store composition verified:** Reused
 `runAdmittedSyntheticExecution` rather than creating another coordinator. A new
 regression first failed with `admission_mismatch` when a caller changed its submitted
