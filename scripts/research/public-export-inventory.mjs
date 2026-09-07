@@ -4,6 +4,7 @@ import { readFileSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import ts from 'typescript';
+import { publicExportImports } from './public-export-imports.mjs';
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -40,19 +41,9 @@ while (pending.length) {
   closure.add(file);
   if (!/\.[cm]?[jt]sx?$/.test(file)) continue;
   if (!lstatSync(file).isFile()) { unresolved.push({ file, reason: 'not_regular_file' }); continue; }
-  const ast = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
-  const imports = [];
-  function visit(node) {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier
-      && ts.isStringLiteral(node.moduleSpecifier)) imports.push(node.moduleSpecifier.text);
-    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
-      || ts.isIdentifier(node.expression) && node.expression.text === 'require')) {
-      if (node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) imports.push(node.arguments[0].text);
-      else dynamic.push({ file, line: ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1 });
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(ast);
+  const scanned = publicExportImports(file, readFileSync(file, 'utf8'));
+  const imports = scanned.imports;
+  dynamic.push(...scanned.dynamic);
   for (const specifier of imports) {
     if (specifier.endsWith('.css')) {
       pending.push(path.relative(root, path.resolve(path.dirname(path.resolve(file)), specifier))); continue;
@@ -90,7 +81,7 @@ const entries = [...tracked].map(file => {
 console.log(JSON.stringify({ schema: 'control-room.public-export-planning-inventory/v1', baseline,
   source: 'tracked_working_tree_bytes', publicationApproved: false, counts,
   limitations: ['Proposals are not content review or an export allowlist.',
-    'CSS dependencies, runtime file reads, type-only import expressions and framework discovery require review.',
+    'CSS dependencies, runtime file reads and framework discovery require review.',
     'Built-output imports from the launcher are expected outside tracked source; builds must supply them.',
     'Untracked and ignored files are not inventoried; never copy them implicitly.',
     'Private planning report; contains internal paths and must not be published.'],

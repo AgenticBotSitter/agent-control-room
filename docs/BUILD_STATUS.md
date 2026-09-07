@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor source inventory refreshed:** The existing TypeScript-based scanner now
+handles inline type imports and external import-equals declarations without evaluating
+source. Three inventory/compiler-comparison diagnostics and focused lint pass. The
+compiled-test closure remains 380 tracked files from 24 test seeds, with only nine
+expected generated server outputs unresolved; no new missing current source was found.
+Actual content/rights review, runtime inputs and isolated candidate setup remain open.
+No export, download, GitHub operation or deployment performed.
+
 **Public completion roadmap drafted:** The contributor-facing roadmap now defines five
 outcome-based milestones: reproducible source/demo, one live private task/revision,
 productive multi-machine workers, Idea Lab/news/content, and dependable daily operation.

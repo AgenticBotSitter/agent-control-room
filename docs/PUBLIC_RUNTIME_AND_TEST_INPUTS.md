@@ -2,6 +2,15 @@
 
 ## Latest local verification
 
+2026-09-06 refresh: the planning scanner now follows inline `import()` type expressions
+and TypeScript external import-equals declarations using the installed compiler parser.
+The current compiled-test selection still reaches 380 tracked paths from 24 test seeds;
+the nine distinct unresolved paths are expected generated server outputs. No newly
+missing current source was discovered by this syntax fix. Three inventory diagnostics,
+including comparison against the compiler's actual source set, and focused lint pass.
+Runtime file reads, framework discovery, rights/content review and an isolated candidate
+rehearsal remain necessary. This does not approve any export or establish a runnable demo.
+
 After the explicit test-only migration profile was added, the unchanged full default
 test lifecycle passed at code baseline `46dc478`: 3,130 passes, two existing skips and
 zero failures/cancellations. All 47 compiled tests had passed separately. The inventory's

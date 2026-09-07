@@ -5,6 +5,28 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import path from 'node:path';
 import ts from 'typescript';
+import { publicExportImports } from './public-export-imports.mjs';
+
+test('compiler-based planning scan includes type expressions without executing source', () => {
+  const source = `
+    import { value } from './ordinary';
+    export type { Other } from './exported';
+    type Shape = import('./type-only').Shape;
+    type Factory = typeof import('./factory');
+    import Legacy = require('./legacy');
+    const lazy = import('./lazy');
+    const shared = require('./ordinary');
+    const unresolved = import(variable);
+    // import('./comment-only')
+    const text = "require('./string-only')";
+    throw new Error('this must never execute');
+  `;
+  const scanned = publicExportImports('synthetic.ts', source);
+  assert.deepEqual(scanned.imports, ['./ordinary', './exported', './type-only', './factory', './legacy', './lazy']);
+  assert.equal(scanned.dynamic.length, 1);
+  assert.equal(scanned.dynamic[0].file, 'synthetic.ts');
+  assert.equal(scanned.dynamic[0].line, 9);
+});
 
 test('planning inventory covers current tracked inputs without approving their publication', () => {
   const report = JSON.parse(execFileSync(process.execPath, ['scripts/research/public-export-inventory.mjs'],
