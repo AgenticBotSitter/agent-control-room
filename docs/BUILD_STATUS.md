@@ -8,6 +8,44 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Public candidate now has a durable reconstruction record:** All 467 current source
+files were reconstructed in memory from the recorded private base plus 17 additions/
+changes and two superseded paths, then byte/hash checked against the candidate. The
+private receipt excludes dependencies, generated output and raw logs. Demo investigation
+confirmed the Mac Keychain launcher and test-only startup overrides are not public
+quick-start solutions; existing synthetic runtime services need standalone composition.
+No listener, authentication change or publication occurred.
+
+**Owner approved Apache-2.0 and project attribution:** The isolated public candidate
+now has the full official LICENSE, approved project NOTICE wording, package metadata
+and README license declaration. Third-party code retains separate terms. Durable copies
+are under `docs/public-launch-draft/`. This resolves original-code license selection,
+not final third-party/privacy review or demo acceptance. Nothing was uploaded.
+
+**Contributor documents now staged in the isolated source:** README, CONTRIBUTING,
+SETUP, ROADMAP, WORK_PACKAGES and architecture are present, with checked local links.
+They describe substantial MVP-first work, Hermes/Codex priority, proposed additional
+harnesses and local-check/batched-review policy. No ready assignments or runnable-demo
+claims were invented. License and final publication review remain pending; no upload.
+
+**Public candidate content names generalized and reverified:** Candidate-only migration
+filenames, 14 table identifiers and corresponding tests now use generic external-content
+names. Exact SQL comparison shows only identifier/comment substitutions; the private
+schema is unchanged. The fixed candidate catalog fingerprint was recomputed from fresh
+PGlite migrations, not bypassed. Types, standalone build and all 47 compiled tests pass,
+including incomplete-schema denial. Expanded matching found no known private tokens in
+460 candidate source files, not a full privacy clearance. Public demo, rights/license
+decision, final content review and independent review still precede publication.
+
+**Public candidate upload hygiene improved; SQL generalization remains:** Candidate
+ignore rules now exclude dependencies, generated output, environment overrides, key
+files, logs and workflows; all 16 representative ignore/retain checks pass and the
+template is saved under `docs/public-launch-draft/CANDIDATE_GITIGNORE`. Expanded
+privacy matching identified private consumer table identifiers in migrations 0025/0026
+and references in two test/helper files. These require coordinated candidate-only
+generalization and schema verification, not changes to the private database. No license
+was applied or source published. See `PUBLIC_CANDIDATE_STAGING.md` for remaining work.
+
 **Isolated public candidate now installs, checks and compiles:** In the separate
 candidate, private-checkout scripts were replaced by three matching check/build/test
 commands, unselected SDK aliases removed, and the private-brand assertion generalized.

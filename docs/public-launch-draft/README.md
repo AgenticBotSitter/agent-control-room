@@ -7,6 +7,10 @@ and reproducibility review. Nothing here enables GitHub Actions or changes repos
 
 ## Proposed public files
 
+Original-code licensing is approved: use the full [LICENSE](LICENSE) and project
+[NOTICE](NOTICE), now staged in the isolated candidate. Preserve separate upstream
+licenses; this decision does not approve unfinished release checks.
+
 | Destination | Local source | Before publication |
 |---|---|---|
 | README.md | [Project brief](../PUBLIC_PROJECT_BRIEF_DRAFT.md) | Confirm name, website/repository links and current release status |
@@ -25,7 +29,8 @@ defaults or private project names. They are not a license grant or security cert
 
 ## Still needed, not silently filled in
 
-- LICENSE and any contribution sign-off requirements: owner decision, then compatibility review.
+- LICENSE/NOTICE: Apache-2.0 approved; finish third-party compatibility/delivery review.
+  Any additional contribution sign-off requirements still need an explicit policy.
 - CODEOWNERS: actual consenting maintainer handles, not imaginary reviewers or bot identities.
 - CODE_OF_CONDUCT and moderation contact: owner-approved behavior and enforcement policy.
 - Review the drafted public roadmap against the [internal module map](../AGENT_CONTROL_ROOM_MODULE_ROADMAP.md),

@@ -1,0 +1,2408 @@
+{
+  "description": "PRIVATE candidate reconstruction receipt; not for publication.",
+  "baseCommit": "4667c1197f364b9648bf7b03ab36d83fe4b662da",
+  "baseFiles": [
+    "app/components/connection-center.tsx",
+    "app/components/project-catalog-navigation.tsx",
+    "app/components/project-catalog.tsx",
+    "app/components/project-create-form.tsx",
+    "db/migrations/0001_control_room_core.sql",
+    "db/migrations/0002_allocation_simulation_audit.sql",
+    "db/migrations/0003_canonical_domain_delivery.sql",
+    "db/migrations/0004_cr4b_review_hardening.sql",
+    "db/migrations/0005_cr4c_identity_policy.sql",
+    "db/migrations/0006_cr4d_audit_chain.sql",
+    "db/migrations/0007_cr4q_integrity_hardening.sql",
+    "db/migrations/0008_cr5a_node_protocol_identity.sql",
+    "db/migrations/0009_cr5b_protocol_delivery_semantics.sql",
+    "db/migrations/0010_cr5d_node_operation_requests.sql",
+    "db/migrations/0011_cr5d_node_job_evidence.sql",
+    "db/migrations/0012_cr6b_fleet_history.sql",
+    "db/migrations/0013_cr6b_fleet_current_subject.sql",
+    "db/migrations/0014_cr6c_resource_reservations.sql",
+    "db/migrations/0015_cr6c_project_budget_reservations.sql",
+    "db/migrations/0016_cr6d_schedule_occurrences.sql",
+    "db/migrations/0017_cr6d_service_incidents.sql",
+    "db/migrations/0018_cr6d_service_incident_remedies.sql",
+    "db/migrations/0019_cr6e_operator_surfaces.sql",
+    "db/migrations/0020_cr7_harness_runs.sql",
+    "db/migrations/0021_cr7e_package_registry.sql",
+    "db/migrations/0022_cr8b_completion_gate.sql",
+    "db/migrations/0023_cr8d_telegram_delivery.sql",
+    "db/migrations/0024_cr8q_rollback_checkpoints.sql",
+    "db/migrations/0025_cr9a_content_blooms_sync.sql",
+    "db/migrations/0026_cr9a_content_blooms_placement.sql",
+    "db/migrations/0027_cr11b_ready_frontier_handoffs.sql",
+    "db/migrations/0028_cr12b_idea_lab_project_lifecycle.sql",
+    "db/migrations/0029_cr12b_idea_lab_protected_coordinator.sql",
+    "db/migrations/0030_cr12b_local_fake_pilot.sql",
+    "db/migrations/0031_cr12b_live_panel_authority.sql",
+    "db/migrations/0032_cr12b_idea_qualification_spends.sql",
+    "db/migrations/0033_cr13a_project_live_events.sql",
+    "db/migrations/0034_cr13a_connection_registry.sql",
+    "db/migrations/0035_cr13a_connection_enrollment_intake.sql",
+    "db/migrations/0036_cr13a_connection_enrollment_node_delivery.sql",
+    "db/migrations/0037_cr13a_native_observation_authorizations.sql",
+    "db/migrations/0038_cr13a_native_observation_authorization_consumptions.sql",
+    "db/migrations/0039_cr14b_web_projects.sql",
+    "db/migrations/0040_cr14b_private_web_lock_support.sql",
+    "db/migrations/0041_cr14c_private_task_proposals.sql",
+    "db/migrations/0042_cr14c_private_task_results.sql",
+    "db/migrations/0043_cr14c_owner_result_review.sql",
+    "db/migrations/0044_cr14c_native_review_plans.sql",
+    "db/migrations/0045_cr14c_task_execution_plans.sql",
+    "db/migrations/0046_cr14c_coordinator_lock_support.sql",
+    "db/migrations/0047_cr14c_native_approval_packets.sql",
+    "db/migrations/0048_cr14c_native_task_queue.sql",
+    "db/migrations/0049_cr14c_native_delivery_preparations.sql",
+    "db/migrations/0050_cr14c_native_delivery_envelopes.sql",
+    "db/migrations/0051_cr14c_native_transmission_intents.sql",
+    "db/migrations/0052_cr14c_native_delivery_receipts.sql",
+    "db/migrations/0053_cr14c_owner_result_verification.sql",
+    "db/migrations/0054_cr14c_quality_coordinator.sql",
+    "db/migrations/0055_cr14c_native_result_writer.sql",
+    "db/migrations/0056_cr14c_native_evidence_locks.sql",
+    "db/migrations/0057_cr14c_protocol_replay_lock.sql",
+    "db/roles/native_evidence_roles.sql",
+    "db/roles/native_queue_producer_roles.sql",
+    "db/roles/native_queue_recovery_roles.sql",
+    "db/roles/native_queue_worker_roles.sql",
+    "db/roles/native_results_roles.sql",
+    "db/roles/native_session_roles.sql",
+    "db/roles/private_web_database.sql",
+    "db/roles/private_web_roles.sql",
+    "db/roles/production_roles.sql",
+    "db/roles/task_coordinator_roles.sql",
+    "middleware.ts",
+    "next-env.d.ts",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "postcss.config.mjs",
+    "private-app/app/connections/page.tsx",
+    "private-app/app/connections/workspace.tsx",
+    "private-app/app/layout.tsx",
+    "private-app/app/needs-me/page.tsx",
+    "private-app/app/needs-me/task-attention.tsx",
+    "private-app/app/needs-me/workspace.tsx",
+    "private-app/app/page.tsx",
+    "private-app/app/private-header.tsx",
+    "private-app/app/private.css",
+    "private-app/app/projects/[projectId]/[sectionId]/page.tsx",
+    "private-app/app/projects/[projectId]/page.tsx",
+    "private-app/app/projects/[projectId]/tasks/[jobId]/page.tsx",
+    "private-app/app/projects/[projectId]/tasks/page.tsx",
+    "private-app/app/projects/page.tsx",
+    "private-app/app/session/page.tsx",
+    "private-app/app/session/session-controls.tsx",
+    "private-app/app/task-approval.tsx",
+    "private-app/app/task-assignment.tsx",
+    "private-app/app/task-owner-review.tsx",
+    "private-app/app/task-owner-revision.tsx",
+    "private-app/app/task-owner-verification.tsx",
+    "private-app/app/task-panels.tsx",
+    "private-app/app/task-planning.tsx",
+    "private-app/app/task-results.tsx",
+    "private-app/app/task-submission.tsx",
+    "private-app/app/task-workflow-guide.tsx",
+    "private-app/app/task-workspace.tsx",
+    "private-app/app/workspace.tsx",
+    "public/favicon.svg",
+    "scripts/build-vps.mjs",
+    "scripts/run-private-vps.mjs",
+    "src/artifacts/v1/native-results.ts",
+    "src/audit/audit-store.ts",
+    "src/audit/types.ts",
+    "src/completion-gate/v1/async-staged-checkpoint.ts",
+    "src/completion-gate/v1/document-structure-contract.ts",
+    "src/completion-gate/v1/document-structure-verifier.ts",
+    "src/completion-gate/v1/index.ts",
+    "src/completion-gate/v1/native-result-submission.ts",
+    "src/completion-gate/v1/native-result-verification.ts",
+    "src/completion-gate/v1/native-review-plan.ts",
+    "src/completion-gate/v1/native-revision-context.ts",
+    "src/completion-gate/v1/schemas.ts",
+    "src/completion-gate/v1/staged-checkpoint.ts",
+    "src/completion-gate/v1/store.ts",
+    "src/completion-gate/v1/types.ts",
+    "src/completion-gate/v1/view-model.ts",
+    "src/config/build-target.ts",
+    "src/connection-center/v1/authenticated-freshness.ts",
+    "src/connection-center/v1/exact.ts",
+    "src/connection-center/v1/http-client.ts",
+    "src/connection-center/v1/schemas.ts",
+    "src/connection-center/v1/service.ts",
+    "src/connection-center/v1/types.ts",
+    "src/connection-registry/v1/store.ts",
+    "src/contracts/v1/index.ts",
+    "src/contracts/v1/types.ts",
+    "src/contracts/v1/validators.ts",
+    "src/domain/v1/authority.ts",
+    "src/domain/v1/index.ts",
+    "src/domain/v1/json-schema.ts",
+    "src/domain/v1/state-machines.ts",
+    "src/domain/v1/types.ts",
+    "src/domain/v1/validators.ts",
+    "src/harness/codex-v1/private-sqlite-schema.ts",
+    "src/harness/hermes-native-v1/adapter.ts",
+    "src/harness/hermes-native-v1/contracts.ts",
+    "src/harness/hermes-native-v1/execution-handoff.ts",
+    "src/harness/hermes-native-v1/lease-evidence.ts",
+    "src/harness/hermes-native-v1/node-runtime.ts",
+    "src/harness/hermes-native-v1/observation-reporter.ts",
+    "src/harness/hermes-native-v1/protocol.ts",
+    "src/harness/hermes-native-v1/recovery-authority.ts",
+    "src/harness/hermes-native-v1/run-journal.ts",
+    "src/harness/hermes-native-v1/start-authority.ts",
+    "src/harness/hermes-native-v1/task-approval-binding.ts",
+    "src/harness/hermes-native-v1/task-observation.ts",
+    "src/harness/v1/lifecycle.ts",
+    "src/harness/v1/native-approval-intake.ts",
+    "src/harness/v1/native-approval-packet.ts",
+    "src/harness/v1/native-delivery.ts",
+    "src/harness/v1/native-http-exchange.ts",
+    "src/harness/v1/native-observation.ts",
+    "src/harness/v1/native-owner-review.ts",
+    "src/harness/v1/native-run-contracts.ts",
+    "src/harness/v1/native-run-identifiers.ts",
+    "src/harness/v1/native-task-approval-binding.ts",
+    "src/harness/v1/native-task-registration.ts",
+    "src/harness/v1/native-wire.ts",
+    "src/harness/v1/schemas.ts",
+    "src/harness/v1/store.ts",
+    "src/harness/v1/types.ts",
+    "src/idea-lab/v1/contracts.ts",
+    "src/idea-lab/v1/coordinator-store.ts",
+    "src/idea-lab/v1/coordinator.ts",
+    "src/idea-lab/v1/errors.ts",
+    "src/idea-lab/v1/exact.ts",
+    "src/idea-lab/v1/fixture.ts",
+    "src/idea-lab/v1/hermes-021-enrolled-connection.ts",
+    "src/idea-lab/v1/hermes-021-enrolled-gateway-port.ts",
+    "src/idea-lab/v1/hermes-021-enrollment-readiness.ts",
+    "src/idea-lab/v1/hermes-021-filtered-driver.ts",
+    "src/idea-lab/v1/hermes-021-fixed-operation-set.ts",
+    "src/idea-lab/v1/hermes-021-fixed-rpc-bridge.ts",
+    "src/idea-lab/v1/hermes-021-macos-connector.ts",
+    "src/idea-lab/v1/hermes-021-native-launch-readiness.ts",
+    "src/idea-lab/v1/hermes-021-native-qualification.ts",
+    "src/idea-lab/v1/hermes-021-panel-packet.ts",
+    "src/idea-lab/v1/hermes-021-profile-preparation-attestation.ts",
+    "src/idea-lab/v1/hermes-021-profile-preparation-contract.ts",
+    "src/idea-lab/v1/hermes-021-qualification-spend-store.ts",
+    "src/idea-lab/v1/index.ts",
+    "src/idea-lab/v1/lifecycle-service.ts",
+    "src/idea-lab/v1/live-panel-admission.ts",
+    "src/idea-lab/v1/live-panel-authority-store.ts",
+    "src/idea-lab/v1/operator-service.ts",
+    "src/idea-lab/v1/owner-decision-service.ts",
+    "src/idea-lab/v1/owner-ready-live-packet.ts",
+    "src/idea-lab/v1/schemas.ts",
+    "src/idea-lab/v1/store.ts",
+    "src/idea-lab/v1/types.ts",
+    "src/local-pilot/v1/synthetic-result-wire.ts",
+    "src/node-bridge/admission-handler.ts",
+    "src/node-bridge/bridge.ts",
+    "src/node-bridge/index.ts",
+    "src/node-bridge/job-event-recorder.ts",
+    "src/node-bridge/journal.ts",
+    "src/node-bridge/native-connector.ts",
+    "src/node-bridge/native-dispatch-handler.ts",
+    "src/node-bridge/native-http-host.ts",
+    "src/node-bridge/native-https-client.ts",
+    "src/node-bridge/native-https-destination.ts",
+    "src/node-bridge/node-operation-handler.ts",
+    "src/node-bridge/protected-store-signer.ts",
+    "src/node-control/native-task-result-service.ts",
+    "src/node-control/native-task-snapshot-service.ts",
+    "src/node-control/server-node-session.ts",
+    "src/node-executor/artifact-evidence.ts",
+    "src/node-executor/artifact-storage.ts",
+    "src/node-executor/synthetic-coordinator.ts",
+    "src/node-executor/synthetic-executor.ts",
+    "src/node-fleet/v1/authenticated-telemetry-receipt-store.ts",
+    "src/node-fleet/v1/benchmark-runner.ts",
+    "src/node-fleet/v1/capability-probe-runner.ts",
+    "src/node-fleet/v1/eligibility.ts",
+    "src/node-fleet/v1/fingerprint.ts",
+    "src/node-fleet/v1/fleet-eligibility-service.ts",
+    "src/node-fleet/v1/fleet-signal-store.ts",
+    "src/node-fleet/v1/freshness.ts",
+    "src/node-fleet/v1/index.ts",
+    "src/node-fleet/v1/inventory-manifest.ts",
+    "src/node-fleet/v1/rediscovery.ts",
+    "src/node-fleet/v1/schemas.ts",
+    "src/node-fleet/v1/static-discovery.ts",
+    "src/node-fleet/v1/telemetry-port.ts",
+    "src/node-fleet/v1/types.ts",
+    "src/node-policy/v1/admission-store.ts",
+    "src/node-policy/v1/clock.ts",
+    "src/node-policy/v1/crypto.ts",
+    "src/node-policy/v1/denial-receipt.ts",
+    "src/node-policy/v1/effect-claim-store.ts",
+    "src/node-policy/v1/effect-claim.ts",
+    "src/node-policy/v1/encrypted-file-key-store.ts",
+    "src/node-policy/v1/execution-authority.ts",
+    "src/node-policy/v1/execution-state-store.ts",
+    "src/node-policy/v1/filesystem-target-guard.ts",
+    "src/node-policy/v1/index.ts",
+    "src/node-policy/v1/json-schema.ts",
+    "src/node-policy/v1/native-key-stores.ts",
+    "src/node-policy/v1/network-target-guard.ts",
+    "src/node-policy/v1/owner-pins.ts",
+    "src/node-policy/v1/persistent-security-state.ts",
+    "src/node-policy/v1/pinned-approval-trust.ts",
+    "src/node-policy/v1/policy-evaluator.ts",
+    "src/node-policy/v1/private-key-runtime.ts",
+    "src/node-policy/v1/private-key-store-factory.ts",
+    "src/node-policy/v1/provider-selection.ts",
+    "src/node-policy/v1/schemas.ts",
+    "src/node-policy/v1/stores.ts",
+    "src/node-policy/v1/target-guard-errors.ts",
+    "src/node-policy/v1/types.ts",
+    "src/node-protocol/v1/authentication.ts",
+    "src/node-protocol/v1/crypto.ts",
+    "src/node-protocol/v1/index.ts",
+    "src/node-protocol/v1/json-schema.ts",
+    "src/node-protocol/v1/persistence.ts",
+    "src/node-protocol/v1/rate-limit.ts",
+    "src/node-protocol/v1/schemas.ts",
+    "src/node-protocol/v1/types.ts",
+    "src/node-protocol/v1/versioning.ts",
+    "src/operator-surfaces/v1/http-client.ts",
+    "src/operator-surfaces/v1/index.ts",
+    "src/operator-surfaces/v1/owner-focus-command-service.ts",
+    "src/operator-surfaces/v1/projections.ts",
+    "src/operator-surfaces/v1/read-service.ts",
+    "src/operator-surfaces/v1/store.ts",
+    "src/operator-surfaces/v1/types.ts",
+    "src/operator-surfaces/v1/validators.ts",
+    "src/persistence/canonical-store.ts",
+    "src/persistence/database.ts",
+    "src/persistence/native-task-completion.ts",
+    "src/persistence/native-task-submission.ts",
+    "src/persistence/operation-signal.ts",
+    "src/persistence/pg-boss-application-permissions.ts",
+    "src/persistence/pg-boss-native-task-permissions.ts",
+    "src/persistence/pg-boss-native-task-runtime.ts",
+    "src/persistence/pg-boss-native-task-submission.ts",
+    "src/persistence/pg-boss-native-task-worker.ts",
+    "src/persistence/pg-boss-schema-inspection.ts",
+    "src/persistence/pglite-provenance.ts",
+    "src/ready-frontier/v1/automation-schemas.ts",
+    "src/ready-frontier/v1/automation-types.ts",
+    "src/ready-frontier/v1/controller.ts",
+    "src/ready-frontier/v1/cycle-projection.ts",
+    "src/ready-frontier/v1/durable-store.ts",
+    "src/ready-frontier/v1/errors.ts",
+    "src/ready-frontier/v1/exact.ts",
+    "src/ready-frontier/v1/integration-schemas.ts",
+    "src/ready-frontier/v1/integration-types.ts",
+    "src/ready-frontier/v1/materialization.ts",
+    "src/ready-frontier/v1/no-relay-coordinator.ts",
+    "src/ready-frontier/v1/no-relay-schemas.ts",
+    "src/ready-frontier/v1/no-relay-types.ts",
+    "src/ready-frontier/v1/no-relay.ts",
+    "src/ready-frontier/v1/promotion-service.ts",
+    "src/ready-frontier/v1/promotion.ts",
+    "src/ready-frontier/v1/ready-policy-schemas.ts",
+    "src/ready-frontier/v1/ready-policy-store.ts",
+    "src/ready-frontier/v1/ready-policy-types.ts",
+    "src/ready-frontier/v1/ready-policy.ts",
+    "src/ready-frontier/v1/schemas.ts",
+    "src/ready-frontier/v1/standing-policy-store.ts",
+    "src/ready-frontier/v1/standing-policy.ts",
+    "src/ready-frontier/v1/types.ts",
+    "src/scheduler/v1/allocation.ts",
+    "src/scheduler/v1/availability.ts",
+    "src/scheduler/v1/bottleneck.ts",
+    "src/scheduler/v1/budget-store.ts",
+    "src/scheduler/v1/constraints.ts",
+    "src/scheduler/v1/index.ts",
+    "src/scheduler/v1/placement.ts",
+    "src/scheduler/v1/reservation-store.ts",
+    "src/security/canonical-digest.ts",
+    "src/security/digest.ts",
+    "src/security/host-value.ts",
+    "src/security/index.ts",
+    "src/security/policy.ts",
+    "src/security/redaction.ts",
+    "src/security/rollback-checkpoint.ts",
+    "src/security/safe-error.ts",
+    "src/security/security-store.ts",
+    "src/services/v1/incident-store.ts",
+    "src/web/v1/access-key-cache.ts",
+    "src/web/v1/access-verifier.ts",
+    "src/web/v1/bounded-database.ts",
+    "src/web/v1/browser-client.ts",
+    "src/web/v1/browser-json.ts",
+    "src/web/v1/connection-browser-client.ts",
+    "src/web/v1/connection-service.ts",
+    "src/web/v1/http-common.ts",
+    "src/web/v1/installed-native-queue.ts",
+    "src/web/v1/managed-native-input.ts",
+    "src/web/v1/managed-native-sessions.ts",
+    "src/web/v1/native-approval-packet-store.ts",
+    "src/web/v1/native-delivery-envelope.ts",
+    "src/web/v1/native-delivery-preparation.ts",
+    "src/web/v1/native-delivery-receipt.ts",
+    "src/web/v1/native-evidence-receiver.ts",
+    "src/web/v1/native-http-host.ts",
+    "src/web/v1/native-http-node-handler.ts",
+    "src/web/v1/native-https-service.ts",
+    "src/web/v1/native-queue-authority.ts",
+    "src/web/v1/native-queue-worker-startup.ts",
+    "src/web/v1/native-task-queue.ts",
+    "src/web/v1/native-transmission-intent.ts",
+    "src/web/v1/private-assets.ts",
+    "src/web/v1/private-database-preflight.ts",
+    "src/web/v1/private-database-rehearsal.ts",
+    "src/web/v1/private-fixture-preparation.ts",
+    "src/web/v1/private-host-lifecycle.ts",
+    "src/web/v1/private-host-shutdown.ts",
+    "src/web/v1/private-node-handler.ts",
+    "src/web/v1/private-postgres.ts",
+    "src/web/v1/private-process.ts",
+    "src/web/v1/private-rehearsal-checks.ts",
+    "src/web/v1/private-rehearsal-fixture.ts",
+    "src/web/v1/private-rehearsal-probe.ts",
+    "src/web/v1/private-serving.ts",
+    "src/web/v1/private-startup.ts",
+    "src/web/v1/private-task-application.ts",
+    "src/web/v1/private-task-host.ts",
+    "src/web/v1/private-task-startup.ts",
+    "src/web/v1/private-task-worker-application.ts",
+    "src/web/v1/project-http.ts",
+    "src/web/v1/project-service.ts",
+    "src/web/v1/project-wire.ts",
+    "src/web/v1/queue-attention-browser-client.ts",
+    "src/web/v1/queue-attention-wire.ts",
+    "src/web/v1/session-authority.ts",
+    "src/web/v1/task-approval-browser-client.ts",
+    "src/web/v1/task-approval-editor.ts",
+    "src/web/v1/task-approval-http.ts",
+    "src/web/v1/task-approval-wire.ts",
+    "src/web/v1/task-assignment-browser-client.ts",
+    "src/web/v1/task-assignment-coordinator.ts",
+    "src/web/v1/task-assignment-wire.ts",
+    "src/web/v1/task-attention-wire.ts",
+    "src/web/v1/task-browser-client.ts",
+    "src/web/v1/task-coordinator-interruption.ts",
+    "src/web/v1/task-coordinator-lifecycle.ts",
+    "src/web/v1/task-delivery-wire.ts",
+    "src/web/v1/task-execution-planner.ts",
+    "src/web/v1/task-http.ts",
+    "src/web/v1/task-planning-browser-client.ts",
+    "src/web/v1/task-planning-wire.ts",
+    "src/web/v1/task-quality-coordinator.ts",
+    "src/web/v1/task-result-coordinator.ts",
+    "src/web/v1/task-result-wire.ts",
+    "src/web/v1/task-review-browser-client.ts",
+    "src/web/v1/task-review-service.ts",
+    "src/web/v1/task-review-wire.ts",
+    "src/web/v1/task-review-workspace.ts",
+    "src/web/v1/task-revision-browser-client.ts",
+    "src/web/v1/task-revision-operation.ts",
+    "src/web/v1/task-revision-wire.ts",
+    "src/web/v1/task-service.ts",
+    "src/web/v1/task-submission-browser-client.ts",
+    "src/web/v1/task-submission-wire.ts",
+    "src/web/v1/task-verification-browser-client.ts",
+    "src/web/v1/task-verification-service.ts",
+    "src/web/v1/task-verification-wire.ts",
+    "src/web/v1/task-verification-workspace.ts",
+    "src/web/v1/task-wire.ts",
+    "styles/control-room.css",
+    "tests/helpers/canonical-approval-storage.ts",
+    "tests/helpers/native-lease-evidence.ts",
+    "tests/helpers/native-quality-completion.ts",
+    "tests/helpers/native-revised-result.ts",
+    "tests/helpers/native-start-authority.ts",
+    "tests/helpers/native-task-lifecycle.ts",
+    "tests/helpers/task-assignment.ts",
+    "tests/helpers/task-startup.ts",
+    "tests/helpers/web-connection.ts",
+    "tests/helpers/web-foundation.ts",
+    "tests/helpers/web-idea-project.ts",
+    "tests/helpers/web-native-result.ts",
+    "tests/helpers/web-node.ts",
+    "tests/helpers/web-owner-review.ts",
+    "tests/helpers/web-startup.ts",
+    "tests/helpers/web-task.ts",
+    "tests/hermes-native-fixture.ts",
+    "tests/native-task-fixture.ts",
+    "tests/private-vps-launcher.test.mjs",
+    "tests/vps-build-profile.test.ts",
+    "tests/vps-built-approval.test.mjs",
+    "tests/vps-built-assignment.test.mjs",
+    "tests/vps-built-capacity-release.test.mjs",
+    "tests/vps-built-core-schema.test.mjs",
+    "tests/vps-built-handler.test.mjs",
+    "tests/vps-built-launcher.test.mjs",
+    "tests/vps-built-managed-native-sessions.test.mjs",
+    "tests/vps-built-native-evidence.test.mjs",
+    "tests/vps-built-owner-review.test.mjs",
+    "tests/vps-built-owner-revision-interface.test.mjs",
+    "tests/vps-built-planning.test.mjs",
+    "tests/vps-built-preparation.test.mjs",
+    "tests/vps-built-quality.test.mjs",
+    "tests/vps-built-rehearsal.test.mjs",
+    "tests/vps-built-result-ownership.test.mjs",
+    "tests/vps-built-results.test.mjs",
+    "tests/vps-built-revised-result.test.mjs",
+    "tests/vps-built-revision-planning.test.mjs",
+    "tests/vps-built-serving.test.mjs",
+    "tests/vps-built-startup.test.mjs",
+    "tests/vps-built-task-application.test.mjs",
+    "tests/vps-built-task-startup.test.mjs",
+    "third_party/control-center/LICENSE",
+    "third_party/control-center/NOTICE.md",
+    "tsconfig.json",
+    "tsconfig.vps.json",
+    "vite.vps.config.ts"
+  ],
+  "removed": [
+    "db/migrations/0025_cr9a_content_blooms_sync.sql",
+    "db/migrations/0026_cr9a_content_blooms_placement.sql"
+  ],
+  "changes": [
+    {
+      "path": ".gitignore",
+      "content": "# Local dependencies and generated output are not release source.\nnode_modules/\n/.next/\n/dist/\n/dist-vps/\n/coverage/\n*.tsbuildinfo\n\n# Local credentials and environment overrides. Examples must contain placeholders.\n.env\n.env.*\n!.env.example\n!.env.sample\n*.pem\n*.key\n\n# Local execution logs and operating-system metadata.\n*.log\n*.ndjson\n.DS_Store\n\n# Do not add automation without an explicit budget/security review.\n/.github/workflows/\n"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "content": "# Contributing to Agent Control Room\n\n**Draft for the planned public repository.** Apache-2.0 is approved. The public source,\nmaintainer roles and clean setup instructions are not published yet. These\ninstructions are a proposed workflow, not an invitation to access a private repository\nor run agents against an existing installation. Remove this draft notice only after\nthose prerequisites are in place and the guide is reviewed for publication.\n\nGeneral project questions: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).\nDo not send credentials or private installation records. Private vulnerability reporting\nwill be described separately in the reviewed security policy.\n\n## What we are building\n\nAgent Control Room is a shared workspace for projects, tasks, agent workers, schedules,\napprovals and results. Each project has its own page. The core coordinates work across\ndifferent agent runtimes; optional workflows add ideas, research, news and content tools.\nWe prefer proven libraries and thin integrations over new custom infrastructure.\n\nA passing test is useful evidence, not proof of a live deployment. The developer preview\nwill use clearly labeled synthetic work; production and native-runtime readiness are\ntracked separately. Do not claim a real agent worked just because a fixture completed.\n\n## Choose work you can complete\n\nRead [setup](SETUP.md), [work packages](WORK_PACKAGES.md) and the [roadmap](ROADMAP.md).\nThe current candidate supports check/build/tests; browser-demo startup is still pending.\n\nStart with an issue marked ready and read its acceptance criteria before claiming it.\nEvery ready issue should identify:\n\n- The outcome and exact public base revision.\n- Platform/runtime requirements, such as `[Any OS][UI]` or `[Windows][Validation]`.\n- Dependencies, allowed files and work that is explicitly outside scope.\n- Preparation and verification commands, including any separately authorized downloads.\n- The reviewing maintainer and required handoff evidence.\n\nMissing prerequisites are a reason to clarify the issue, not to experiment with another\nperson's credentials or machine. A platform label is a work requirement, not proof that\nthe entire application supports that platform.\n\nAsk for assignment in the issue before starting. Maintainers confirm one responsible\ncontributor to avoid duplicate work. Do not assume a comment alone is an atomic claim.\nIf you propose unlisted work, explain the user benefit and discuss overlapping changes\nbefore investing in a large patch.\n\n## Make the change\n\nUse your own fork/checkout and a dedicated branch based on the specified revision.\nKeep one independently reviewable outcome per PR. Preserve unrelated changes and do not\nshare a live checkout, credentials, local databases or dependency directories with other\ncontributors or agents.\n\nFollow the published setup guide with the pinned package manager and frozen lockfile.\nKeep dependency preparation separate from tests and live platform validation. Do not\nupgrade packages, install tools or add network fallback merely to get a green test.\nRecord a missing prerequisite and ask for the appropriate setup decision.\n\nFix ordinary implementation mistakes within the agreed scope and rerun relevant tests.\nA failed test is not a permanent disqualification. A native/provider attempt, however,\nmust follow its explicit limits; never retry an uncertain external action as if it were\nan ordinary unit test. Stop before expanding permissions, data scope or cleanup targets.\n\nWhen adopting code, name its upstream repository and exact revision/version, preserve\nits notices, and explain what changed. Discuss dependencies and licensing before adding\nthem. AI-assisted contributions have the same requirements as human-written changes;\nthe contributor remains responsible for understanding and checking the result.\n\n## Submit useful evidence\n\nRun checks locally and batch meaningful pushes and review requests. GitHub Actions\nremains disabled. Do not add workflows, scheduled jobs, automatic deployments or\nself-hosted public-PR runners without explicit maintainer approval. Local commits and\nordinary Git pushes do not themselves consume Actions runner minutes.\n\nUse this short PR summary:\n\n```text\nIssue and outcome:\nBase revision / submitted revision:\nFiles changed and why:\nPlatform and tool versions:\nCommands run and actual results:\nWhat was not tested:\nUpstream code/dependencies and attribution:\nKnown limitations or follow-up:\n```\n\nFor UI changes, include synthetic screenshots and keyboard/narrow-screen checks where\nrelevant. Never include private project records, credential values, host identities or\nraw native diagnostics. Reports should distinguish observed behavior from assumptions.\nIf a check fails, show a sanitized reproduction rather than relabeling it as a pass.\n\n## Keep moving while reviews happen\n\nYou may take another assigned, independent issue while a PR awaits review. You can have\nseveral independent PRs open; you do not need to wait after every completed task.\nDo not stack unrelated work on an unmerged branch. If a change genuinely depends on\nanother PR, state that dependency and its exact base; maintainers integrate in order.\n\nIf blocked, leave a draft PR or a concise issue update with the current revision,\nreproduction, completed work and precise missing decision. Ask the maintainer to release\nyour assignment if you cannot continue. Preserve useful evidence; never erase a failed\nattempt or rewrite another contributor's branch to make the handoff look complete.\n\n## How review works\n\nMaintainers compare scope, implementation and test evidence, then request focused fixes\nor accept the change. Contributors do not approve or merge their own PRs. Automated\nchecks and assistant reviews support an accountable maintainer; multiple agent messages\nare not multiple independent GitHub approvals.\n\nArchitecture, permissions, secret handling, database migrations and live execution stay\nmaintainer-led. These areas need explicit scope and risk-appropriate independent review,\nnot an ordinary UI issue that quietly grows into an authority change. Small UI/docs\nchanges should receive proportionate review rather than a production release ceremony.\n\nMerge and deployment are separate decisions. Untrusted PRs must not run with maintainer\ncredentials or on private agent hosts. Contributor tests use disposable resources.\nReport vulnerabilities through the project's designated private reporting route once\npublished; never post exploits containing private data or credentials in normal issues.\n\n## Maintainer prerequisites before publishing this guide\n\nPublish the approved Apache-2.0 license and clarify any contribution/sign-off policy; establish the\npublic repository, responsible reviewers and private vulnerability-reporting contact;\nrehearse and link the exact setup guide; and publish a truthful supported-platform/status\nmatrix. Do not collect contributions under an unspecified license or advertise a demo\nthat cannot yet be reproduced from the public source.\n"
+    },
+    {
+      "path": "LICENSE",
+      "content": "\n                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apache.org/licenses/\n\n   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n\n   1. Definitions.\n\n      \"License\" shall mean the terms and conditions for use, reproduction,\n      and distribution as defined by Sections 1 through 9 of this document.\n\n      \"Licensor\" shall mean the copyright owner or entity authorized by\n      the copyright owner that is granting the License.\n\n      \"Legal Entity\" shall mean the union of the acting entity and all\n      other entities that control, are controlled by, or are under common\n      control with that entity. For the purposes of this definition,\n      \"control\" means (i) the power, direct or indirect, to cause the\n      direction or management of such entity, whether by contract or\n      otherwise, or (ii) ownership of fifty percent (50%) or more of the\n      outstanding shares, or (iii) beneficial ownership of such entity.\n\n      \"You\" (or \"Your\") shall mean an individual or Legal Entity\n      exercising permissions granted by this License.\n\n      \"Source\" form shall mean the preferred form for making modifications,\n      including but not limited to software source code, documentation\n      source, and configuration files.\n\n      \"Object\" form shall mean any form resulting from mechanical\n      transformation or translation of a Source form, including but\n      not limited to compiled object code, generated documentation,\n      and conversions to other media types.\n\n      \"Work\" shall mean the work of authorship, whether in Source or\n      Object form, made available under the License, as indicated by a\n      copyright notice that is included in or attached to the work\n      (an example is provided in the Appendix below).\n\n      \"Derivative Works\" shall mean any work, whether in Source or Object\n      form, that is based on (or derived from) the Work and for which the\n      editorial revisions, annotations, elaborations, or other modifications\n      represent, as a whole, an original work of authorship. For the purposes\n      of this License, Derivative Works shall not include works that remain\n      separable from, or merely link (or bind by name) to the interfaces of,\n      the Work and Derivative Works thereof.\n\n      \"Contribution\" shall mean any work of authorship, including\n      the original version of the Work and any modifications or additions\n      to that Work or Derivative Works thereof, that is intentionally\n      submitted to Licensor for inclusion in the Work by the copyright owner\n      or by an individual or Legal Entity authorized to submit on behalf of\n      the copyright owner. For the purposes of this definition, \"submitted\"\n      means any form of electronic, verbal, or written communication sent\n      to the Licensor or its representatives, including but not limited to\n      communication on electronic mailing lists, source code control systems,\n      and issue tracking systems that are managed by, or on behalf of, the\n      Licensor for the purpose of discussing and improving the Work, but\n      excluding communication that is conspicuously marked or otherwise\n      designated in writing by the copyright owner as \"Not a Contribution.\"\n\n      \"Contributor\" shall mean Licensor and any individual or Legal Entity\n      on behalf of whom a Contribution has been received by Licensor and\n      subsequently incorporated within the Work.\n\n   2. Grant of Copyright License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      copyright license to reproduce, prepare Derivative Works of,\n      publicly display, publicly perform, sublicense, and distribute the\n      Work and such Derivative Works in Source or Object form.\n\n   3. Grant of Patent License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      (except as stated in this section) patent license to make, have made,\n      use, offer to sell, sell, import, and otherwise transfer the Work,\n      where such license applies only to those patent claims licensable\n      by such Contributor that are necessarily infringed by their\n      Contribution(s) alone or by combination of their Contribution(s)\n      with the Work to which such Contribution(s) was submitted. If You\n      institute patent litigation against any entity (including a\n      cross-claim or counterclaim in a lawsuit) alleging that the Work\n      or a Contribution incorporated within the Work constitutes direct\n      or contributory patent infringement, then any patent licenses\n      granted to You under this License for that Work shall terminate\n      as of the date such litigation is filed.\n\n   4. Redistribution. You may reproduce and distribute copies of the\n      Work or Derivative Works thereof in any medium, with or without\n      modifications, and in Source or Object form, provided that You\n      meet the following conditions:\n\n      (a) You must give any other recipients of the Work or\n          Derivative Works a copy of this License; and\n\n      (b) You must cause any modified files to carry prominent notices\n          stating that You changed the files; and\n\n      (c) You must retain, in the Source form of any Derivative Works\n          that You distribute, all copyright, patent, trademark, and\n          attribution notices from the Source form of the Work,\n          excluding those notices that do not pertain to any part of\n          the Derivative Works; and\n\n      (d) If the Work includes a \"NOTICE\" text file as part of its\n          distribution, then any Derivative Works that You distribute must\n          include a readable copy of the attribution notices contained\n          within such NOTICE file, excluding those notices that do not\n          pertain to any part of the Derivative Works, in at least one\n          of the following places: within a NOTICE text file distributed\n          as part of the Derivative Works; within the Source form or\n          documentation, if provided along with the Derivative Works; or,\n          within a display generated by the Derivative Works, if and\n          wherever such third-party notices normally appear. The contents\n          of the NOTICE file are for informational purposes only and\n          do not modify the License. You may add Your own attribution\n          notices within Derivative Works that You distribute, alongside\n          or as an addendum to the NOTICE text from the Work, provided\n          that such additional attribution notices cannot be construed\n          as modifying the License.\n\n      You may add Your own copyright statement to Your modifications and\n      may provide additional or different license terms and conditions\n      for use, reproduction, or distribution of Your modifications, or\n      for any such Derivative Works as a whole, provided Your use,\n      reproduction, and distribution of the Work otherwise complies with\n      the conditions stated in this License.\n\n   5. Submission of Contributions. Unless You explicitly state otherwise,\n      any Contribution intentionally submitted for inclusion in the Work\n      by You to the Licensor shall be under the terms and conditions of\n      this License, without any additional terms or conditions.\n      Notwithstanding the above, nothing herein shall supersede or modify\n      the terms of any separate license agreement you may have executed\n      with Licensor regarding such Contributions.\n\n   6. Trademarks. This License does not grant permission to use the trade\n      names, trademarks, service marks, or product names of the Licensor,\n      except as required for reasonable and customary use in describing the\n      origin of the Work and reproducing the content of the NOTICE file.\n\n   7. Disclaimer of Warranty. Unless required by applicable law or\n      agreed to in writing, Licensor provides the Work (and each\n      Contributor provides its Contributions) on an \"AS IS\" BASIS,\n      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or\n      implied, including, without limitation, any warranties or conditions\n      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A\n      PARTICULAR PURPOSE. You are solely responsible for determining the\n      appropriateness of using or redistributing the Work and assume any\n      risks associated with Your exercise of permissions under this License.\n\n   8. Limitation of Liability. In no event and under no legal theory,\n      whether in tort (including negligence), contract, or otherwise,\n      unless required by applicable law (such as deliberate and grossly\n      negligent acts) or agreed to in writing, shall any Contributor be\n      liable to You for damages, including any direct, indirect, special,\n      incidental, or consequential damages of any character arising as a\n      result of this License or out of the use or inability to use the\n      Work (including but not limited to damages for loss of goodwill,\n      work stoppage, computer failure or malfunction, or any and all\n      other commercial damages or losses), even if such Contributor\n      has been advised of the possibility of such damages.\n\n   9. Accepting Warranty or Additional Liability. While redistributing\n      the Work or Derivative Works thereof, You may choose to offer,\n      and charge a fee for, acceptance of support, warranty, indemnity,\n      or other liability obligations and/or rights consistent with this\n      License. However, in accepting such obligations, You may act only\n      on Your own behalf and on Your sole responsibility, not on behalf\n      of any other Contributor, and only if You agree to indemnify,\n      defend, and hold each Contributor harmless for any liability\n      incurred by, or claims asserted against, such Contributor by reason\n      of your accepting any such warranty or additional liability.\n\n   END OF TERMS AND CONDITIONS\n\n   APPENDIX: How to apply the Apache License to your work.\n\n      To apply the Apache License to your work, attach the following\n      boilerplate notice, with the fields enclosed by brackets \"[]\"\n      replaced with your own identifying information. (Don't include\n      the brackets!)  The text should be enclosed in the appropriate\n      comment syntax for the file format. We also recommend that a\n      file or class name and description of purpose be included on the\n      same \"printed page\" as the copyright notice for easier\n      identification within third-party archives.\n\n   Copyright [yyyy] [name of copyright owner]\n\n   Licensed under the Apache License, Version 2.0 (the \"License\");\n   you may not use this file except in compliance with the License.\n   You may obtain a copy of the License at\n\n       http://www.apache.org/licenses/LICENSE-2.0\n\n   Unless required by applicable law or agreed to in writing, software\n   distributed under the License is distributed on an \"AS IS\" BASIS,\n   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n   See the License for the specific language governing permissions and\n   limitations under the License.\n"
+    },
+    {
+      "path": "NOTICE",
+      "content": "Agent Control Room\n\nThis product includes software developed by the Agent Control Room project.\nOriginal project: https://github.com/AgenticBotSitter/agent-control-room\nAgent Control Room is available under the Apache License, Version 2.0.\n\nThird-party components retain their respective licenses and attribution notices.\nThis notice is informational and does not modify the Apache License, Version 2.0.\n"
+    },
+    {
+      "path": "README.md",
+      "content": "# Agent Control Room\n\nLocal public-facing candidate. Apache-2.0 is approved; source publication is pending.\nDo not present this candidate as an operational release.\n\nProject website: [agentcontrolroom.xyz](https://agentcontrolroom.xyz).\n\nRepository: [AgenticBotSitter/agent-control-room](https://github.com/AgenticBotSitter/agent-control-room).\nThese are project destinations, not a claim that the website is deployed or source uploaded.\n\nProject contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).\n\n## One place for projects and the agents working on them\n\nAgent Control Room is being built as a self-hosted workspace for coordinating AI agents\nacross projects and machines. Give each project its own page, assign work to suitable\nagents, follow progress, collect results and decide what happens next.\n\nThe goal is useful collaboration without manually relaying every message between\nagents. You remain in control of permissions, budgets and consequential actions.\n\n## What we want you to be able to do\n\n- Open a project, see its tasks, files, progress and decisions, then archive it when done.\n- Let compatible workers pick up eligible work and continue while completed work awaits review.\n- Use different agent runtimes on different machines without sharing their credentials.\n- Ask several agents to explore an idea, compare their answers and turn the result into a project.\n- Turn an interesting article into a research task or setup guide and keep the result with its project.\n- See what needs your attention without watching every worker continuously.\n- Reconnect after interruptions and update the system without silently repeating uncertain work.\n\n## Honest status\n\nThis is a pre-alpha project, not a production-ready fleet manager. The private development\ntree has implemented project/task interfaces, queue integration, connector components,\nresult/review flows and extensive automated tests using disposable or simulated resources.\nThose results do not establish live compatibility on your machine.\n\nAn isolated source candidate passes its standalone type check, build and 47 selected\ncompiled integration tests on macOS. The browser demo still lacks a supported start\ncommand. Real multi-machine operation and recovery acceptance remain unfinished.\nNo working public download, supported agent-runtime version or release date is announced here.\n\n## Contributor starting points\n\n- [Setup and verified check commands](SETUP.md)\n- [How to contribute and get work assigned](CONTRIBUTING.md)\n- [Substantial MVP-first work packages](WORK_PACKAGES.md)\n- [Full roadmap and completion criteria](ROADMAP.md)\n- [Architecture and trust boundaries](docs/ARCHITECTURE.md)\n\nHermes and Codex are the first integration priorities. Claude Code, OpenClaw and other\nharnesses are proposed contributor tracks, not current compatibility claims. Start with\nthe minimum usable project-to-task-to-result-to-revision experience before expansion.\n\nRun ordinary checks locally. GitHub Actions remains disabled; batch meaningful pushes\nand reviews. Small local commits are welcome. Do not add scheduled builds, automatic\ndeployment or privileged runners for public contributions.\n\n## How the pieces fit\n\nThe browser talks to one application. PostgreSQL stores authoritative project and job\nstate. Registered node connectors communicate with the application over authenticated\nHTTPS and adapt approved work to supported agent runtimes. Files and review decisions\nreturn to the originating project. Local worker limits still apply.\n\nWe prefer maintained components over new infrastructure. The queue uses pg-boss;\nHermes integrations prefer supported native interfaces. MCP tools, where provided,\nuse the same application services rather than introducing a second scheduler.\nPGlite is for development/tests, not the production database.\n\n## What help will be useful\n\nWe plan to open work on project/task usability, accessible interfaces, reproducible\nsetup, runtime adapters, news/research workflows, Idea Lab and reliability testing.\nEach ready issue will state its outcome, prerequisites, dependencies and completion tests.\n\nContributors will use ordinary GitHub issues and pull requests. You will not need access\nto the maintainers' machines or private project data. Independent changes can be reviewed\nin parallel; unfinished or blocked work can be handed back with a reproducible explanation.\n\nArchitecture, permission boundaries and integration changes require maintainer review.\nAgent-assisted contributions are welcome, but the submitter remains responsible for\nunderstanding the change, testing it and respecting upstream licenses.\n\n## Roadmap\n\n1. Publish a reviewed, generic contributor demo with clear installation and test instructions.\n2. Prove one complete live task: assignment, execution, returned files, review and revision.\n3. Expand supported machines and runtimes, automatic pickup and recovery.\n4. Complete bounded multi-agent idea discussions and news-to-project workflows.\n5. Validate backup, restore, updates and sustained everyday operation before a beta claim.\n\n## Privacy and licensing\n\nOriginal Agent Control Room code in this candidate is licensed under the\n[Apache License, Version 2.0](LICENSE). See [project attribution](NOTICE).\nThird-party code and dependencies retain their own licenses and notices; the project\nlicense does not relicense them. Final third-party distribution review is still pending.\nYour installation, project records, agent credentials and business data are not\npublished with the application. A private security-reporting route must be established\nbefore launch.\n"
+    },
+    {
+      "path": "ROADMAP.md",
+      "content": "# Agent Control Room roadmap\n\nUnpublished draft for maintainer review. Pre-alpha: the public runnable source release\nand live multi-machine acceptance are not complete. These milestones preserve the full\nproduct direction; they are not release dates or claims of supported configurations.\n\n## What finished should look like\n\nCreate a project, send useful work to a suitable agent, follow progress, open its result,\nask for a revision and review the revised work—all from that project's page. Other\neligible work can continue while results await review. You can use different runtimes\non different machines without relaying every message or sharing their credentials.\n\nIdeas, articles and content workflows become work in those same projects. A global\nattention view shows decisions and problems without replacing individual project pages.\n\n## 1. Reproducible contributor release\n\n**Deliver:** A reviewed source tree, attribution, development instructions and a clearly\nlabeled disposable demo. Keep private records, infrastructure configuration and history\noutside the public release.\n\n**Done when:** Someone without maintainer access can start from a clean checkout, prepare\nthe pinned dependencies, run documented checks and complete the documented synthetic\nproject/task/result/revision flow. The demo distinguishes simulated work from real agents,\nsurvives the restarts it claims to support, and has bounded cleanup instructions.\n\n**Useful contributions:** Setup-guide reproduction, accessible project/task controls,\nerror/retry usability, generic fixtures and attribution review. Source selection and\nlicense/privacy acceptance remain maintainer-led. A website announcement alone does not\ncomplete this milestone.\n\n## 2. One genuinely usable private installation\n\n**Deliver:** Configured owner access, one private PostgreSQL primary, separate approval\nkey custody, independent review-integrity storage, one supported connector and the full\ntask-to-result path. Reuse the existing queue and application services.\n\n**Done when:** On an explicitly authorized installation, a real task reaches a real agent,\nreturns the correct files, receives a review and completes a linked revision. Refresh,\npermission expiry and lost responses do not duplicate execution or expose another project's\ndata. A review-quality decision never becomes blanket execution permission.\n\n**Useful contributions:** Connector packaging, installation documentation, result display,\nreproducible failure cases and platform-specific validation. Credentials, database\nprovisioning, security architecture and live attempts require explicit maintainer scope.\nUnit tests or an in-memory integrity checkpoint cannot substitute for operational evidence.\n\n## 3. Productive workers across machines\n\nHermes and Codex are the initial priority. Claude Code and OpenClaw are proposed\ncommunity adapter tracks, not supported configurations today. Other harnesses can\npropose adapters against the same reviewed contracts. See [work packages](WORK_PACKAGES.md).\n\n**Deliver:** Qualified platform/runtime combinations, independently registered workers,\ncontinuous eligible pickup, bounded concurrency and useful status/recovery reporting.\n\n**Done when:** Several independent tasks progress while earlier results await review.\nDisconnect and reconnect a worker without repeating uncertain work. A worker declines\nunsupported tasks before starting. Cancellation affects only its intended run; revoked\naccess stops new authorized work. Failed tasks can be handed back with useful evidence.\n\n**Useful contributions:** Platform installers, documented runtime-version checks, usage\nreporting, reconnect tests, per-node limits and operator troubleshooting. Support is\nrecorded per tested OS/runtime/version combination, not inferred from a package compiling.\n\n## 4. Ideas, research and content on the same core\n\n**Deliver:** Bounded multi-agent idea discussions, news/article curation and generic\ncontent workflows, all using ordinary project tasks and existing permissions.\n\n**Done when:** Several real participants explore an idea within limits; the user inspects\nthe synthesis and promotes it to a project with its own page and follow-up work. Selecting\nan article can create a research or setup-guide task whose reviewed output returns to\nthe correct project. Disabling an optional workflow leaves ordinary projects usable.\n\n**Useful contributions:** Discussion navigation, source attribution/deduplication, article\nselection, project promotion and domain-specific input/output templates. Preserve existing\nupstream notices. Do not add a parallel scheduler or automatically publish generated content.\n\nIdea Lab and news/research remain intended product scope even if they follow the first\nusable core. They are optional installation choices, not features abandoned to declare success.\n\n## 5. Dependable daily operation\n\n**Deliver:** Accurate attention handling, backup/restore, updates, rollback and sustained\ndesktop/mobile usability, with documented supported configurations.\n\n**Done when:** A sustained trial exercises normal work and failures. Restores preserve\nthe intended integrity guarantees. An update drains or preserves in-flight work as\ndocumented; clients reconnect and old/new components handle version mismatches clearly.\nA failed update has a tested rollback procedure. Uncertainty is actionable, not shown\nas success or hidden behind a stale green indicator.\n\n**Useful contributions:** Keyboard/mobile tests, actionable error copy, long-running\nrehearsals, update/restore documentation and exact-version compatibility evidence.\nDo not promise zero downtime where a migration or protocol change requires a pause.\n\n## Parallel work and acceptance\n\nIndependent UI, documentation and fixture work can proceed while maintainers complete\nruntime setup. Contributors can hold several assigned independent issues and submit\nseparate PRs while earlier work is reviewed. Declare dependent branches so they can be\nintegrated in order. A ready issue must specify its public base revision, platform,\nprerequisites, reviewing maintainer, scope and completion checks before assignment.\n\nPrefer a proven component with a small adapter over custom infrastructure. A proposal\nfor new infrastructure must explain the missing requirement, alternatives considered,\nlicense fit and maintenance cost. Tests support acceptance; file counts, elapsed effort\nand numbers of green checks do not establish product completion.\n\n## Collaboration and build budget\n\nRun ordinary checks locally and batch meaningful changes. Do not add scheduled builds,\nautomatic per-push deployment, private-host runners or paid usage without maintainer\napproval. Review can happen asynchronously without triggering a workflow every time\nsomeone comments or pushes a small fix. Merge, deployment and live execution are separate.\n"
+    },
+    {
+      "path": "SETUP.md",
+      "content": "# Contributor setup — local candidate\n\nThis candidate is not yet a published release. Original code is licensed under Apache-2.0;\nthird-party licenses remain applicable. These instructions cover\nsource compilation and compiled synthetic integration tests, not a live installation.\n\n## Requirements\n\n- Node.js 22.13.0 or newer (current rehearsal: Node 22.22.3 on macOS).\n- pnpm 11.19.0.\n- Access to the public npm registry for dependencies not already cached.\n\nFrom this source directory:\n\n```sh\nCI=true pnpm install --frozen-lockfile\npnpm check\npnpm test\n```\n\nIf pnpm is not installed, `npx --yes pnpm@11.19.0` can replace `pnpm` in the commands\nabove. It may download the pinned package manager; do not substitute the newest release.\nKeep the lockfile and disabled dependency-build policy unchanged.\n\n`pnpm check` checks the standalone TypeScript source. `pnpm test` builds the standalone\napplication and runs its selected compiled integration tests with synthetic/disposable\nresources. It is not the full private-development test suite. No GitHub credentials,\nagent authentication or production database should be supplied for these checks.\n\nTo compile without running the selected tests:\n\n```sh\npnpm build\n```\n\nThe output is `dist-vps`. A successful build does not configure a running application.\nThe operational launcher requires trusted operator configuration and real resources;\ndo not use it as a demo quick start or supply fake production credentials.\n\n## Not ready yet\n\nThe browser demonstration and its startup/shutdown instructions are not complete in\nthis candidate. There is no supported `pnpm dev` or `pnpm start` command here. Hermes\nand Codex live compatibility, PostgreSQL deployment, owner login, approval key custody\nand independent integrity storage require separate configuration and acceptance.\n\nTests of simulated behavior do not prove live-agent compatibility or production safety.\nDo not publish this candidate as an operational release or run it against private data.\n\n## Contributor workflow and cost\n\nRun checks locally, use a branch per independently reviewable outcome, and batch\nmeaningful pushes and PR updates. Small local commits do not consume Actions minutes.\nThis candidate contains no GitHub Actions workflows. Never add scheduled jobs,\nautomatic deployment, secrets or self-hosted public-PR runners without maintainer review.\n\n## Local cleanup\n\nStop any process you explicitly started before cleaning its data. Preserve your source\nedits. Dependencies (`node_modules`) and generated output (`dist-vps`) can be recreated;\ninspect exact paths before removing them. Do not delete a shared package cache, home\ndirectory or another checkout. Temporary rehearsal logs are not release content.\n"
+    },
+    {
+      "path": "WORK_PACKAGES.md",
+      "content": "# Contributor work packages\n\nDraft for the first runnable public source release. These are substantial outcomes,\nnot currently assigned or ready-to-claim issues. A maintainer must add the exact public\nbase commit, allowed files, reviewing maintainer and runnable acceptance commands before\nmarking a package ready. Never point contributors at the private development checkout.\n\n## MVP first\n\nThe minimum viable product is one private installation where an owner can create a\nproject, assign useful work, watch progress, read a returned file, request a revision\nand review the revised result. Other eligible work can continue during review. Each\nproject has its own page and history. The first supported harnesses are Hermes and\nCodex; real support requires tested versions and platforms, not merely adapter code.\n\n| Package / proposed issue title | Substantial deliverable | Acceptance outcome | Dependency |\n|---|---|---|---|\n| [Any OS][MVP] Complete the project/task/result user journey | Integrate existing project, task, result, revision and review screens; cover loading, denied, empty and uncertain states, keyboard access and separate project tabs | Fresh demo project reaches a visibly simulated result and revision; refresh loses neither records nor pending-save identity; no native run is implied | Reviewed runnable source and demo setup |\n| [macOS/Windows/Linux][MVP] Reproducible contributor installation | Validate documented prerequisites, pinned dependency preparation, migrations, build, demo startup, shutdown and cleanup on the claimed OS | A contributor without maintainer access reproduces the documented journey from a clean checkout; report each tested OS/version separately | Reviewed source candidate; authorized dependency downloads |\n| [Linux][MVP] Package the private controller installation | Assemble existing startup entries and operator instructions for PostgreSQL, process supervision, configuration checks and rollback | Disposable installation starts with no public database; missing configuration is actionable; stop/restart and rollback are documented and tested | Maintainer-approved deployment/configuration contracts; no production changes in this package |\n| [Hermes][MVP] Complete connector packaging and lifecycle tests | Reuse supported upstream Hermes interfaces and existing adapter; package configuration, compatibility checks, progress, results, cancellation and reconnect | One separately authorized real task and revision return to the correct project; lost response never triggers an unapproved second run | Stable public connector contract; exact OS/Hermes version; separately approved native calls |\n| [Codex][MVP] Complete connector packaging and lifecycle tests | Reuse the supported upstream Codex interface and existing adapter; supply equivalent setup, capability and lifecycle evidence | Same task/result/revision and interruption scenarios as Hermes, with exact tested versions | Stable public connector contract; exact OS/Codex version; separately approved native calls |\n| [Any OS][MVP] Continuous pickup and actionable attention | Integrate existing queue/capacity rules with worker status and owner attention views; cover blocked work and handback | Multiple independent jobs progress while earlier work awaits review; unsupported jobs are declined before starting; uncertain work is visible | Stable task/connector contracts and reproducible fake-worker setup |\n| [Any OS][MVP] Recovery and update acceptance | Exercise existing drain/reconnect/update/restore paths, compatibility failures and operator recovery instructions | Saved results survive supported restarts; a failed update has a tested rollback; no claimed exactly-once external effects | Packaged controller and fake-worker setup; live trials separately authorized |\n\n## Expansion after the core path\n\n| Package | User outcome | Boundary |\n|---|---|---|\n| Claude Code adapter (proposed) | Claude Code users can contribute a connector using the same task/result contract | Not currently supported; confirm upstream interfaces, license and version before implementation |\n| OpenClaw adapter (proposed) | OpenClaw users can integrate their harness without a second scheduler | Not currently supported; demonstrate capability discovery, scoped execution, results and interruption handling |\n| Other harness adapters | Additional runtimes use the same project/job/evidence model | Propose a concrete maintained runtime and compatibility matrix; do not invent support claims |\n| Idea Lab | Several agents discuss an idea, expose their reasoning and promote an inspected synthesis into ordinary project work | Use the existing discussion/project services; no automatic business deployment |\n| News and research | Attributed articles become research, setup-guide or draft tasks and return reviewed results | Reuse curated-source and deduplication components; publishing is a separate permission |\n| Generic content workflows | Optional content projects use reusable templates, review and artifact history | No private brands, datasets or credentials in examples; optional modules must not redefine the core |\n| Accessibility and mobile operation | Owners can monitor and review across keyboard, desktop and mobile | Real interaction evidence, not screenshots alone; preserve current access boundaries |\n\n## Claim and keep moving\n\n1. Choose a **ready** package whose platform, dependencies and resources you have.\n2. Comment with the intended scope and ask for assignment. Wait for maintainer confirmation;\n   simultaneous comments do not create competing claims.\n3. Use your own fork/branch. Agree on milestones for large packages and send one cohesive\n   PR per independently reviewable outcome. Multiple local commits are fine.\n4. Test locally. Include exact base/head, commands, observed results, relevant failure\n   cases, upstream provenance/licenses and limitations. Do not upload private logs.\n5. While a PR awaits review, pick another confirmed independent assignment. You do not\n   need to wait idle, but avoid overlapping work or building on unmerged assumptions.\n6. Fix ordinary mistakes in scope and rerun checks. If blocked, retain the work in a\n   draft PR, explain the missing prerequisite, and request release/reassignment. Never\n   repeat an uncertain provider or deployment action without appropriate authority.\n\nMaintainers own security contracts, migrations, source-release review and final\nintegration. Reviewers do not approve their own changes. Merge permission is not\ndeployment permission. Contributor agents follow the same accountability rules.\n\n## Actions and batching\n\nActions start disabled. No scheduled polling, automatic deployment, per-comment jobs,\nor self-hosted runners attached to public pull requests. Run checks locally and batch\nmeaningful pushes and review requests. Small local commits are useful and do not consume\nActions minutes. Avoid huge unreviewable PRs solely to reduce commit counts.\n\nBefore enabling CI, a maintainer must approve its triggers, permissions, runner class,\nconcurrency/cancellation, retention and spending controls. Never run untrusted PR code\nwith repository secrets or privileged credentials. Standard public GitHub-hosted runners\nare currently free; private repository allowances are runner minutes, not pushes/pulls.\nSee [GitHub billing guidance](https://docs.github.com/en/actions/concepts/billing-and-usage).\n"
+    },
+    {
+      "path": "db/migrations/0025_cr9a_external_content_sync.sql",
+      "content": "-- CR-9A: isolated, source-scheduled external content read synchronization.\n-- Source records remain authoritative. These tables contain sanitized projections,\n-- digest-only evidence, and opaque cursors; no source command or lease is stored.\n\nCREATE TABLE control_external_content_releases (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  release_digest text NOT NULL CHECK (release_digest ~ '^sha256:[a-f0-9]{64}$'),\n  release_id text NOT NULL,\n  workspace_id text NOT NULL,\n  project_id text NOT NULL,\n  adapter_id text NOT NULL,\n  payload jsonb NOT NULL,\n  accepted_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,release_digest),\n  UNIQUE (tenant_id,release_id)\n);\n\nCREATE TABLE control_external_content_state (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  state_id text NOT NULL,\n  workspace_id text NOT NULL,\n  project_id text NOT NULL,\n  adapter_id text NOT NULL,\n  revision bigint NOT NULL CHECK (revision >= 0),\n  state_digest text NOT NULL CHECK (state_digest ~ '^sha256:[a-f0-9]{64}$'),\n  payload jsonb NOT NULL,\n  updated_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,state_id),\n  UNIQUE (tenant_id,workspace_id,project_id,adapter_id)\n);\n\nCREATE TABLE control_external_content_read_receipts (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  receipt_digest text NOT NULL CHECK (receipt_digest ~ '^sha256:[a-f0-9]{64}$'),\n  receipt_id text NOT NULL,\n  request_id text NOT NULL,\n  page_id text NOT NULL,\n  workspace_id text NOT NULL,\n  project_id text NOT NULL,\n  adapter_id text NOT NULL,\n  release_digest text NOT NULL,\n  control_state_digest text NOT NULL CHECK (control_state_digest ~ '^sha256:[a-f0-9]{64}$'),\n  operation text NOT NULL CHECK (operation IN ('getProjectSummary','listWorkItems','listExecutions','listBlockers','listWorkers','listAttentionItems','readChanges')),\n  next_cursor_value text NOT NULL,\n  next_cursor_digest text NOT NULL CHECK (next_cursor_digest ~ '^sha256:[a-f0-9]{64}$'),\n  payload jsonb NOT NULL,\n  recorded_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,receipt_digest),\n  UNIQUE (tenant_id,adapter_id,request_id,page_id),\n  FOREIGN KEY (tenant_id,release_digest) REFERENCES control_external_content_releases(tenant_id,release_digest) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_streams (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  workspace_id text NOT NULL,\n  project_id text NOT NULL,\n  adapter_id text NOT NULL,\n  operation text NOT NULL CHECK (operation IN ('getProjectSummary','listWorkItems','listExecutions','listBlockers','listWorkers','listAttentionItems','readChanges')),\n  cursor_value text NOT NULL,\n  cursor_digest text NOT NULL CHECK (cursor_digest ~ '^sha256:[a-f0-9]{64}$'),\n  receipt_digest text NOT NULL,\n  revision bigint NOT NULL CHECK (revision >= 1),\n  updated_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,adapter_id,operation),\n  FOREIGN KEY (tenant_id,receipt_digest) REFERENCES control_external_content_read_receipts(tenant_id,receipt_digest) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_record_history (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  workspace_id text NOT NULL,\n  project_id text NOT NULL,\n  adapter_id text NOT NULL,\n  kind text NOT NULL CHECK (kind IN ('project','work_item','execution','blocker','worker','attention')),\n  source_record_id text NOT NULL,\n  source_version text NOT NULL,\n  operation text NOT NULL CHECK (operation IN ('upsert','remove')),\n  record_digest text NOT NULL CHECK (record_digest ~ '^sha256:[a-f0-9]{64}$'),\n  receipt_digest text NOT NULL,\n  payload jsonb NOT NULL,\n  observed_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,adapter_id,kind,source_record_id,source_version),\n  FOREIGN KEY (tenant_id,receipt_digest) REFERENCES control_external_content_read_receipts(tenant_id,receipt_digest) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_current_records (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  workspace_id text NOT NULL,\n  project_id text NOT NULL,\n  adapter_id text NOT NULL,\n  kind text NOT NULL CHECK (kind IN ('project','work_item','execution','blocker','worker','attention')),\n  source_record_id text NOT NULL,\n  source_version text NOT NULL,\n  record_digest text NOT NULL CHECK (record_digest ~ '^sha256:[a-f0-9]{64}$'),\n  receipt_digest text NOT NULL,\n  payload jsonb NOT NULL,\n  observed_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,adapter_id,kind,source_record_id),\n  FOREIGN KEY (tenant_id,receipt_digest) REFERENCES control_external_content_read_receipts(tenant_id,receipt_digest) ON DELETE RESTRICT\n);\n\nCREATE INDEX idx_external_content_current_scope\n  ON control_external_content_current_records(tenant_id,workspace_id,project_id,kind,source_record_id);\n\nCREATE TRIGGER control_external_content_releases_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_releases\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_read_receipts_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_read_receipts\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_record_history_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_record_history\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\n"
+    },
+    {
+      "path": "db/migrations/0026_cr9a_external_content_placement.sql",
+      "content": "-- CR-9A CB-060: protected, fake-backed external content placement command ledger.\n-- These tables contain contract records and digest-only effect evidence. They do\n-- not contain an endpoint, credential, source lease, source content, or network authority.\n\nCREATE TABLE control_external_content_placement_declarations (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  declaration_id text NOT NULL,\n  declaration_digest text NOT NULL CHECK (declaration_digest ~ '^sha256:[a-f0-9]{64}$'),\n  workspace_id text NOT NULL,\n  project_id text NOT NULL,\n  adapter_id text NOT NULL,\n  release_digest text NOT NULL CHECK (release_digest ~ '^sha256:[a-f0-9]{64}$'),\n  payload jsonb NOT NULL,\n  record_auth_tag text NOT NULL CHECK (record_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),\n  accepted_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,declaration_digest),\n  UNIQUE (tenant_id,declaration_id),\n  FOREIGN KEY (tenant_id,release_digest) REFERENCES control_external_content_releases(tenant_id,release_digest) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_placement_requests (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  request_id text NOT NULL,\n  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[a-f0-9]{64}$'),\n  workspace_id text NOT NULL,\n  project_id text NOT NULL,\n  adapter_id text NOT NULL,\n  declaration_digest text NOT NULL CHECK (declaration_digest ~ '^sha256:[a-f0-9]{64}$'),\n  idempotency_key text NOT NULL CHECK (idempotency_key ~ '^cb-placement:[a-f0-9]{64}$'),\n  operation_digest text NOT NULL CHECK (operation_digest ~ '^sha256:[a-f0-9]{64}$'),\n  payload jsonb NOT NULL,\n  record_auth_tag text NOT NULL CHECK (record_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),\n  requested_at timestamptz NOT NULL,\n  expires_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,request_digest),\n  UNIQUE (tenant_id,request_id),\n  UNIQUE (tenant_id,idempotency_key),\n  UNIQUE (tenant_id,operation_digest),\n  FOREIGN KEY (tenant_id,declaration_digest) REFERENCES control_external_content_placement_declarations(tenant_id,declaration_digest) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_placement_authorizations (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  authorization_id text NOT NULL,\n  authorization_digest text NOT NULL CHECK (authorization_digest ~ '^sha256:[a-f0-9]{64}$'),\n  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[a-f0-9]{64}$'),\n  approval_request_digest text NOT NULL CHECK (approval_request_digest ~ '^sha256:[a-f0-9]{64}$'),\n  approval_decision_digest text NOT NULL CHECK (approval_decision_digest ~ '^sha256:[a-f0-9]{64}$'),\n  payload jsonb NOT NULL,\n  approval_request_payload jsonb NOT NULL,\n  approval_decision_payload jsonb NOT NULL,\n  record_auth_tag text NOT NULL CHECK (record_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),\n  authorized_at timestamptz NOT NULL,\n  expires_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,authorization_digest),\n  UNIQUE (tenant_id,authorization_id),\n  UNIQUE (tenant_id,request_digest),\n  FOREIGN KEY (tenant_id,request_digest) REFERENCES control_external_content_placement_requests(tenant_id,request_digest) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_placement_node_attestations (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  evidence_id text NOT NULL,\n  evidence_digest text NOT NULL CHECK (evidence_digest ~ '^sha256:[a-f0-9]{64}$'),\n  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[a-f0-9]{64}$'),\n  operation_digest text NOT NULL CHECK (operation_digest ~ '^sha256:[a-f0-9]{64}$'),\n  node_id text NOT NULL,\n  nonce_digest text NOT NULL CHECK (nonce_digest ~ '^sha256:[a-f0-9]{64}$'),\n  payload jsonb NOT NULL,\n  record_auth_tag text NOT NULL CHECK (record_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),\n  verified_at timestamptz NOT NULL,\n  expires_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,evidence_digest),\n  UNIQUE (tenant_id,evidence_id),\n  UNIQUE (tenant_id,nonce_digest),\n  FOREIGN KEY (tenant_id,request_digest) REFERENCES control_external_content_placement_requests(tenant_id,request_digest) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_placement_effect_claims (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  claim_key text NOT NULL CHECK (claim_key ~ '^sha256:[a-f0-9]{64}$'),\n  claim_id text NOT NULL,\n  claim_digest text NOT NULL CHECK (claim_digest ~ '^sha256:[a-f0-9]{64}$'),\n  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[a-f0-9]{64}$'),\n  authorization_digest text NOT NULL CHECK (authorization_digest ~ '^sha256:[a-f0-9]{64}$'),\n  node_attestation_digest text NOT NULL CHECK (node_attestation_digest ~ '^sha256:[a-f0-9]{64}$'),\n  idempotency_key text NOT NULL CHECK (idempotency_key ~ '^cb-placement:[a-f0-9]{64}$'),\n  operation_digest text NOT NULL CHECK (operation_digest ~ '^sha256:[a-f0-9]{64}$'),\n  state text NOT NULL CHECK (state IN ('claimed','executing','accepted','already_applied','rejected','ambiguous')),\n  marker_digest text CHECK (marker_digest IS NULL OR marker_digest ~ '^sha256:[a-f0-9]{64}$'),\n  outcome_digest text CHECK (outcome_digest IS NULL OR outcome_digest ~ '^sha256:[a-f0-9]{64}$'),\n  payload jsonb NOT NULL,\n  record_auth_tag text NOT NULL CHECK (record_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),\n  version bigint NOT NULL CHECK (version >= 1),\n  created_at timestamptz NOT NULL,\n  updated_at timestamptz NOT NULL,\n  effective_deadline timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,claim_key),\n  UNIQUE (tenant_id,claim_id),\n  UNIQUE (tenant_id,request_digest),\n  UNIQUE (tenant_id,idempotency_key),\n  UNIQUE (tenant_id,operation_digest),\n  FOREIGN KEY (tenant_id,request_digest) REFERENCES control_external_content_placement_requests(tenant_id,request_digest) ON DELETE RESTRICT,\n  FOREIGN KEY (tenant_id,authorization_digest) REFERENCES control_external_content_placement_authorizations(tenant_id,authorization_digest) ON DELETE RESTRICT,\n  FOREIGN KEY (tenant_id,node_attestation_digest) REFERENCES control_external_content_placement_node_attestations(tenant_id,evidence_digest) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_placement_pre_effect_markers (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  marker_id text NOT NULL,\n  marker_digest text NOT NULL CHECK (marker_digest ~ '^sha256:[a-f0-9]{64}$'),\n  claim_key text NOT NULL CHECK (claim_key ~ '^sha256:[a-f0-9]{64}$'),\n  claim_digest text NOT NULL CHECK (claim_digest ~ '^sha256:[a-f0-9]{64}$'),\n  payload jsonb NOT NULL,\n  record_auth_tag text NOT NULL CHECK (record_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),\n  marked_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,marker_digest),\n  UNIQUE (tenant_id,marker_id),\n  UNIQUE (tenant_id,claim_key),\n  FOREIGN KEY (tenant_id,claim_key) REFERENCES control_external_content_placement_effect_claims(tenant_id,claim_key) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_placement_outcomes (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  receipt_id text NOT NULL,\n  receipt_digest text NOT NULL CHECK (receipt_digest ~ '^sha256:[a-f0-9]{64}$'),\n  claim_key text NOT NULL CHECK (claim_key ~ '^sha256:[a-f0-9]{64}$'),\n  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[a-f0-9]{64}$'),\n  disposition text NOT NULL CHECK (disposition IN ('accepted','already_applied','rejected','ambiguous')),\n  payload jsonb NOT NULL,\n  record_auth_tag text NOT NULL CHECK (record_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),\n  recorded_at timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,receipt_digest),\n  UNIQUE (tenant_id,receipt_id),\n  UNIQUE (tenant_id,claim_key),\n  UNIQUE (tenant_id,request_digest),\n  FOREIGN KEY (tenant_id,claim_key) REFERENCES control_external_content_placement_effect_claims(tenant_id,claim_key) ON DELETE RESTRICT\n);\n\nCREATE TABLE control_external_content_placement_tombstones (\n  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,\n  tombstone_id text NOT NULL,\n  tombstone_digest text NOT NULL CHECK (tombstone_digest ~ '^sha256:[a-f0-9]{64}$'),\n  claim_key text NOT NULL CHECK (claim_key ~ '^sha256:[a-f0-9]{64}$'),\n  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[a-f0-9]{64}$'),\n  idempotency_key text NOT NULL CHECK (idempotency_key ~ '^cb-placement:[a-f0-9]{64}$'),\n  outcome_digest text NOT NULL CHECK (outcome_digest ~ '^sha256:[a-f0-9]{64}$'),\n  disposition text NOT NULL CHECK (disposition IN ('accepted','already_applied','rejected','ambiguous')),\n  payload jsonb NOT NULL,\n  record_auth_tag text NOT NULL CHECK (record_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),\n  sealed_at timestamptz NOT NULL,\n  retain_until timestamptz NOT NULL,\n  PRIMARY KEY (tenant_id,tombstone_digest),\n  UNIQUE (tenant_id,tombstone_id),\n  UNIQUE (tenant_id,claim_key),\n  UNIQUE (tenant_id,request_digest),\n  UNIQUE (tenant_id,idempotency_key),\n  FOREIGN KEY (tenant_id,claim_key) REFERENCES control_external_content_placement_effect_claims(tenant_id,claim_key) ON DELETE RESTRICT\n);\n\nCREATE TRIGGER control_external_content_placement_declarations_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_placement_declarations\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_requests_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_placement_requests\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_authorizations_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_placement_authorizations\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_node_attestations_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_placement_node_attestations\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_effect_claims_delete_guard\n  BEFORE DELETE ON control_external_content_placement_effect_claims\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_pre_effect_markers_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_placement_pre_effect_markers\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_outcomes_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_placement_outcomes\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_tombstones_append_only\n  BEFORE UPDATE OR DELETE ON control_external_content_placement_tombstones\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();\n\nCREATE TRIGGER control_external_content_placement_declarations_truncate_guard\n  BEFORE TRUNCATE ON control_external_content_placement_declarations\n  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_requests_truncate_guard\n  BEFORE TRUNCATE ON control_external_content_placement_requests\n  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_authorizations_truncate_guard\n  BEFORE TRUNCATE ON control_external_content_placement_authorizations\n  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_node_attestations_truncate_guard\n  BEFORE TRUNCATE ON control_external_content_placement_node_attestations\n  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_effect_claims_truncate_guard\n  BEFORE TRUNCATE ON control_external_content_placement_effect_claims\n  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_pre_effect_markers_truncate_guard\n  BEFORE TRUNCATE ON control_external_content_placement_pre_effect_markers\n  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_outcomes_truncate_guard\n  BEFORE TRUNCATE ON control_external_content_placement_outcomes\n  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();\nCREATE TRIGGER control_external_content_placement_tombstones_truncate_guard\n  BEFORE TRUNCATE ON control_external_content_placement_tombstones\n  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();\n"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "content": "# Agent Control Room architecture\n\nUnpublished draft. Describes the intended architecture and contribution boundaries,\nnot a claim that a production installation or every connector is supported today.\n\n## One application, many projects and workers\n\nAgent Control Room coordinates projects, work, schedules, approvals, results and review.\nThe browser is a view of the application, not a second scheduler. Each project has its\nown page and history. Archiving a project preserves its records; closing a browser tab\ndoes not stop a worker.\n\nThe trusted controller is one modular application backed by one private PostgreSQL\nprimary. Queue integration uses pg-boss with the application's admission and permission\nchecks. PGlite supports local development and tests only. Object storage holds artifacts\nand backups, not task ownership, locks or transactional coordination.\n\nNode connectors adapt approved work to different agent runtimes. They communicate through\nauthenticated application interfaces and keep runtime credentials on the relevant node.\nThey do not receive unrestricted database access. MCP tools, where available, call the\nsame application services; MCP is not a separate authority or mandatory transport for\nevery worker. A connector is not permission to run arbitrary remote shell commands.\n\n## Follow one task\n\n1. An authenticated user saves a task under a project. A saved proposal has not started.\n2. The application checks eligibility, permissions, dependencies and any required approval.\n3. An eligible registered worker receives bounded work through the configured delivery path.\n4. Runtime observations and returned artifacts are associated with that task and attempt.\n5. Review evaluates the exact result. A requested revision stays linked to its predecessor.\n6. Quality acceptance and permission for consequential actions remain separate decisions.\n\nUnknown delivery outcomes must stay unknown until reconciled. Reconnecting, refreshing\nthe browser or losing a response must not automatically submit the same real work again.\nReported agent completion is not proof of independent verification or owner acceptance.\n\n## Trust boundaries\n\n- Authenticate and authorize each operation at the server, including after permissions change.\n- Network membership, a private URL and a successful login do not grant unlimited execution.\n- Keep private credentials out of the browser, jobs, artifacts, source and diagnostic reports.\n- Run untrusted worker code outside the controller's trusted process and credentials.\n- Preserve attribution, exact-result identity and meaningful failure evidence.\n- Review-integrity checkpoints must live independently of the database they protect.\n  An ordinary table in that database is not an independent rollback anchor.\n- Separate deployment and provisioning from source tests. A passing simulated test does\n  not establish real database durability, host compatibility or a safe production rollout.\n\n## Core versus optional workflows\n\nCore includes project/task storage, worker connectivity, results, review, permissions,\nattention handling and reliable operation. A usable core needs one demonstrated live\ntask-to-result-to-revision journey, not just a collection of green component tests.\n\nIdea Lab adds bounded discussions and project creation. News/research adds article\nselection and follow-up tasks. Content and media workflows add domain-specific inputs\nand artifacts. These modules reuse core project, task and approval services. They must\nnot introduce parallel queues, identity systems or global write authorities.\n\nPrefer maintained upstream components with compatible licenses. Custom infrastructure\nneeds a specific requirement that suitable existing components cannot meet, plus an\nexplanation of the maintenance and verification cost. Keep adaptations small and upstream\nprovenance visible. Do not copy a complete competing application merely to reuse one panel.\n"
+    },
+    {
+      "path": "package.json",
+      "content": "{\n  \"name\": \"control-room\",\n  \"version\": \"0.1.0\",\n  \"license\": \"Apache-2.0\",\n  \"private\": true,\n  \"packageManager\": \"pnpm@11.19.0\",\n  \"engines\": {\n    \"node\": \">=22.13.0\"\n  },\n  \"scripts\": {\n    \"check\": \"tsc --project tsconfig.vps.json\",\n    \"build\": \"node scripts/build-vps.mjs\",\n    \"test\": \"node scripts/build-vps.mjs && node --import tsx --test tests/vps-built-handler.test.mjs tests/vps-built-startup.test.mjs tests/vps-built-serving.test.mjs tests/vps-built-rehearsal.test.mjs tests/vps-built-preparation.test.mjs tests/vps-built-results.test.mjs tests/vps-built-owner-review.test.mjs tests/vps-built-planning.test.mjs tests/vps-built-assignment.test.mjs tests/vps-built-task-application.test.mjs tests/vps-built-task-startup.test.mjs tests/vps-built-approval.test.mjs tests/vps-built-quality.test.mjs tests/vps-built-revision-planning.test.mjs tests/vps-built-revised-result.test.mjs tests/vps-built-capacity-release.test.mjs tests/vps-built-owner-revision-interface.test.mjs tests/vps-built-result-ownership.test.mjs tests/vps-built-native-evidence.test.mjs tests/vps-built-managed-native-sessions.test.mjs tests/vps-built-launcher.test.mjs tests/vps-built-core-schema.test.mjs\"\n  },\n  \"dependencies\": {\n    \"pg-boss\": \"12.30.0\",\n    \"postgres\": \"3.4.7\",\n    \"react\": \"19.2.6\",\n    \"react-dom\": \"19.2.6\",\n    \"zod\": \"4.1.12\"\n  },\n  \"devDependencies\": {\n    \"@cloudflare/vite-plugin\": \"1.37.1\",\n    \"@electric-sql/pglite\": \"0.3.14\",\n    \"@eslint/js\": \"9.39.4\",\n    \"@next/eslint-plugin-next\": \"16.2.6\",\n    \"@tailwindcss/postcss\": \"4.2.1\",\n    \"@types/node\": \"22.19.19\",\n    \"@types/react\": \"19.2.14\",\n    \"@types/react-dom\": \"19.2.3\",\n    \"@vitejs/plugin-react\": \"6.0.2\",\n    \"@vitejs/plugin-rsc\": \"0.5.26\",\n    \"eslint\": \"9.39.4\",\n    \"eslint-plugin-jsx-a11y\": \"6.10.2\",\n    \"eslint-plugin-react\": \"7.37.5\",\n    \"eslint-plugin-react-hooks\": \"7.1.1\",\n    \"globals\": \"16.4.0\",\n    \"react-server-dom-webpack\": \"19.2.6\",\n    \"tailwindcss\": \"4.2.1\",\n    \"tsx\": \"4.23.1\",\n    \"typescript\": \"5.9.3\",\n    \"typescript-eslint\": \"8.59.3\",\n    \"vinext\": \"1.0.0-beta.2\",\n    \"vite\": \"8.0.13\",\n    \"wrangler\": \"4.92.0\"\n  },\n  \"type\": \"module\"\n}\n"
+    },
+    {
+      "path": "src/web/v1/private-database-preflight.ts",
+      "content": "import { createHash } from \"node:crypto\";\nimport { verifyPgBossApplicationPermissions } from \"../../persistence/pg-boss-application-permissions\";\nimport { verifyPgBossNativeWorkerPermissions } from \"../../persistence/pg-boss-native-task-permissions\";\nimport type { DatabaseClient, DatabaseSession } from \"../../persistence/database\";\nimport type { PrivatePostgresConfiguration } from \"./private-postgres\";\n\n// Generated from public-candidate migrations 0001-0057, including generic external-content\n// identifiers, using the catalog query below, not a mutable database marker.\nexport const privateWebSchemaDigest = \"5ddb1f082f2e598bf0434f63708063674829fcde2c2b4384aecc32f6dff238e3\";\nexport const privateWebReadTables = [\"control_identities\", \"control_role_grants\", \"workspaces\", \"control_web_sessions\",\n  \"adapter_registry\", \"projects\", \"control_manual_project_heads\", \"control_web_project_commands\", \"audit_events\",\n  \"control_audit_chain_heads\", \"control_project_lifecycle_events\", \"control_connection_registry_heads\",\n  \"control_connection_enrollments\", \"control_connection_authenticated_telemetry_receipts\", \"control_requests\", \"control_workflows\",\n  \"control_jobs\", \"control_attempts\", \"control_harness_runs\", \"control_harness_run_events\", \"control_web_task_commands\",\n  \"control_artifact_manifests\", \"control_native_artifact_receipts\", \"control_completion_gate_records\", \"control_completion_gate_integrity\", \"control_web_task_review_commands\", \"control_native_review_plans\"] as const;\nconst inserts = new Set([\"control_web_sessions\", \"adapter_registry\", \"projects\", \"control_manual_project_heads\",\n  \"control_web_project_commands\", \"audit_events\", \"control_audit_chain_heads\", \"control_requests\", \"control_workflows\",\n  \"control_jobs\", \"control_web_task_commands\", \"control_completion_gate_records\", \"control_web_task_review_commands\"]);\nconst updates: Record<string, readonly string[]> = {\n  control_identities: [\"web_lock\"], control_role_grants: [\"web_lock\"], workspaces: [\"web_lock\"],\n  control_connection_registry_heads: [\"web_lock\"], control_web_sessions: [\"revoked_at\"],\n  control_completion_gate_integrity: [\"web_lock\", \"revision\", \"record_count\", \"state_digest\", \"state_auth_tag\"],\n  control_completion_gate_records: [\"web_lock\"],\n  projects: [\"domain_state\", \"source_version\", \"normalized_state\", \"updated_at\"],\n  control_manual_project_heads: [\"lifecycle\", \"version\", \"updated_at\"],\n  control_audit_chain_heads: [\"head_hash\", \"event_count\", \"updated_at\"],\n};\nconst fail = () => { throw new Error(\"private_database_preflight_failed\"); };\nconst coordinatorReads = [\"tenants\", \"workspaces\", \"control_identities\", \"control_role_grants\", \"control_web_sessions\",\n  \"projects\", \"control_manual_project_heads\", \"control_requests\", \"control_workflows\", \"control_jobs\",\n  \"control_attempts\", \"control_leases\", \"control_task_execution_plans\", \"control_nodes\", \"control_node_keys\",\n  \"control_node_fleet_current\", \"control_job_dependencies\", \"control_transition_events\", \"control_outbox\",\n  \"audit_events\", \"control_audit_chain_heads\", \"control_completion_gate_integrity\", \"control_completion_gate_records\", \"control_native_approval_packets\", \"control_native_task_queue\", \"control_native_delivery_preparations\", \"control_native_delivery_envelopes\", \"control_native_transmission_intents\", \"control_native_delivery_receipts\",\n  \"control_harness_runs\", \"control_harness_run_events\", \"control_native_review_plans\", \"control_artifact_manifests\", \"control_native_artifact_receipts\"];\nconst coordinatorInserts = new Set([\"control_web_sessions\", \"control_requests\", \"control_workflows\", \"control_jobs\",\n  \"control_attempts\", \"control_leases\", \"control_task_execution_plans\", \"control_transition_events\", \"control_outbox\",\n  \"audit_events\", \"control_audit_chain_heads\", \"control_native_approval_packets\", \"control_native_task_queue\", \"control_native_delivery_preparations\", \"control_native_delivery_envelopes\", \"control_native_transmission_intents\", \"control_native_delivery_receipts\", \"control_completion_gate_records\"]);\nconst coordinatorUpdates: Record<string, readonly string[]> = {\n  ...Object.fromEntries([\"control_requests\", \"control_workflows\", \"control_jobs\", \"control_attempts\", \"control_leases\"]\n    .map(table => [table, [\"state\", \"version\", \"payload\", \"updated_at\"]])),\n  ...Object.fromEntries([\"tenants\", \"control_nodes\", \"control_node_keys\", \"control_manual_project_heads\", \"projects\"].map(table => [table, [\"coordinator_lock\"]])),\n  ...Object.fromEntries([\"control_identities\", \"control_role_grants\", \"workspaces\", \"control_completion_gate_integrity\"].map(table => [table, [\"web_lock\"]])),\n  control_web_sessions: [\"revoked_at\"], control_audit_chain_heads: [\"head_hash\", \"event_count\", \"updated_at\"],\n  control_harness_runs: [\"coordinator_lock\"], control_completion_gate_records: [\"web_lock\"],\n  control_completion_gate_integrity: [\"web_lock\", \"revision\", \"record_count\", \"state_digest\", \"state_auth_tag\"],\n};\nconst resultReads = [\"workspaces\", \"control_identities\", \"control_role_grants\", \"projects\",\n  \"control_jobs\", \"control_workflows\", \"control_requests\", \"control_task_execution_plans\",\n  \"control_harness_runs\", \"control_harness_run_events\", \"control_native_review_plans\",\n  \"control_artifact_manifests\", \"control_native_artifact_receipts\", \"control_completion_gate_records\",\n  \"control_completion_gate_integrity\", \"audit_events\", \"control_audit_chain_heads\"];\nconst resultInserts = new Set([\"control_native_review_plans\", \"control_completion_gate_records\", \"audit_events\", \"control_audit_chain_heads\"]);\nconst resultUpdates: Record<string, readonly string[]> = {\n  control_jobs: [\"result_lock\"], control_harness_runs: [\"coordinator_lock\"], projects: [\"coordinator_lock\"],\n  control_completion_gate_records: [\"web_lock\"],\n  control_completion_gate_integrity: [\"web_lock\", \"revision\", \"record_count\", \"state_digest\", \"state_auth_tag\"],\n  control_audit_chain_heads: [\"head_hash\", \"event_count\", \"updated_at\"],\n};\nconst evidenceReads = [\"workspaces\", \"control_identities\", \"control_role_grants\", \"projects\",\n  \"control_jobs\", \"control_attempts\", \"control_leases\", \"control_harness_runs\", \"control_harness_run_events\",\n  \"control_native_delivery_envelopes\", \"control_native_transmission_intents\", \"control_native_delivery_receipts\",\n  \"control_artifact_manifests\", \"control_native_artifact_receipts\", \"audit_events\", \"control_audit_chain_heads\"];\nconst evidenceInserts = new Set([\"control_harness_runs\", \"control_harness_run_events\", \"control_artifact_manifests\",\n  \"control_native_artifact_receipts\", \"audit_events\", \"control_audit_chain_heads\"]);\nconst evidenceUpdates: Record<string, readonly string[]> = {\n  control_jobs: [\"result_lock\"], control_attempts: [\"evidence_lock\"], control_leases: [\"evidence_lock\"], projects: [\"coordinator_lock\"],\n  control_harness_runs: [\"state\", \"last_sequence\", \"run_digest\", \"run_auth_tag\", \"payload\", \"updated_at\", \"last_observed_at\"],\n  control_audit_chain_heads: [\"head_hash\", \"event_count\", \"updated_at\"],\n};\nconst sessionReads = [\"workspaces\", \"control_identities\", \"control_role_grants\", \"control_nodes\", \"control_node_keys\",\n  \"node_protocol_connections\", \"node_protocol_replay\"];\nconst sessionInserts = new Set([\"node_protocol_connections\", \"node_protocol_replay\"]);\nconst sessionUpdates: Record<string, readonly string[]> = {\n  node_protocol_connections: [\"last_sequence\", \"last_message_id\", \"updated_at\"], node_protocol_replay: [\"replay_lock\"],\n};\n\n/** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.\n * Effective permissions are checked separately. Any migrated schema change needs a new reviewed digest.\n */\nexport async function readPrivateWebSchemaDigest(db: DatabaseSession) {\n  const result = await db.query<{ kind: string; name: string; definition: string }>(`\n    SELECT * FROM (SELECT 'column' AS kind, c.relname || '.' || a.attname AS name,\n      json_build_array(c.relkind,a.attnum,format_type(a.atttypid,a.atttypmod),a.attnotnull,\n        pg_get_expr(d.adbin,d.adrelid),a.attidentity,a.attgenerated,c.relrowsecurity,c.relforcerowsecurity)::text AS definition\n    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid\n    LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum\n    WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped AND c.relkind IN ('r','p','v','m','S','f')\n    UNION ALL SELECT 'constraint', c.relname || '.' || x.conname,\n      json_build_array(pg_get_constraintdef(x.oid),x.convalidated)::text\n    FROM pg_constraint x JOIN pg_class c ON c.oid=x.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'\n    UNION ALL SELECT 'index', c.relname, pg_get_indexdef(c.oid)\n    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='i'\n    UNION ALL SELECT 'trigger', c.relname || '.' || t.tgname,\n      json_build_array(pg_get_triggerdef(t.oid),t.tgenabled)::text\n    FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace\n      WHERE n.nspname='public' AND NOT t.tgisinternal\n    UNION ALL SELECT 'function', p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', pg_get_functiondef(p.oid)\n    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public') manifest\n    ORDER BY kind COLLATE \"C\", name COLLATE \"C\"`);\n  return createHash(\"sha256\").update(JSON.stringify(result.rows)).digest(\"hex\");\n}\n\n/** Trusted bootstrap choice, never an HTTP permission policy. Omitted stays queue-free. */\nexport type NativeQueueDatabaseOption = { nativeQueue: true; nativeQueueRecovery?: true };\n\n/** Read-only setup gate; never grants, migrates, creates an owner, or repairs a failed prerequisite. */\nexport async function verifyPrivateDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,\n  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {\n  return verifyDatabase(db, config, scope, now, \"web\", queue);\n}\n\n/** Exact task-coordinator profile. No request-selected role or caller-supplied permission policy. */\nexport async function verifyTaskCoordinatorDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,\n  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {\n  return verifyDatabase(db, config, scope, now, \"coordinator\", queue);\n}\n\n/** Fixed, separately owned native-result writer. It cannot plan, dispatch or accept quality. */\nexport async function verifyNativeResultDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,\n  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {\n  return verifyDatabase(db, config, scope, now, \"results\", queue);\n}\n\nexport async function verifyNativeEvidenceDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,\n  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {\n  return verifyDatabase(db, config, scope, now, \"evidence\", queue);\n}\n\nexport async function verifyNativeSessionDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,\n  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {\n  return verifyDatabase(db, config, scope, now, \"sessions\", queue);\n}\n\n/** Dedicated operational worker: no canonical-owner reads or application writes.\n * Caller validates connection topology and owns the pool. This check is read-only. */\nexport async function verifyNativeQueueWorkerDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration) {\n  try {\n    await db.transaction(async tx => {\n      await verifySession(tx, config, \"control_room_native_queue_worker\");\n      await verifyPgBossNativeWorkerPermissions(tx);\n      const row = (await tx.query<{ unsafe: boolean }>(`SELECT\n        EXISTS(SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%'\n          AND nspname NOT IN ('information_schema','public','control_room_queue'))\n        OR EXISTS(SELECT 1 FROM pg_parameter_acl p CROSS JOIN LATERAL aclexplode(p.paracl) a\n          WHERE a.privilege_type='ALTER SYSTEM' AND (a.grantee=0 OR\n            a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER'))))\n        OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a\n          WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))\n        AS unsafe`)).rows[0];\n      if (row?.unsafe !== false) fail();\n    });\n  } catch { fail(); }\n}\n\nasync function verifySession(tx: DatabaseSession, config: PrivatePostgresConfiguration, role: string) {\n  const settings = (await tx.query<{ valid: boolean; database_temp: boolean }>(`SELECT\n    current_user=session_user AND current_user=$1 AND current_database()=$2\n    AND current_setting('server_version_num')::integer BETWEEN 170000 AND 179999\n    AND current_setting('statement_timeout')='5s' AND current_setting('lock_timeout')='2s'\n    AND current_setting('transaction_timeout')='10s' AND current_setting('idle_in_transaction_session_timeout')='5s'\n    AND current_setting('search_path')='pg_catalog, public' AND current_setting('session_replication_role')='origin'\n    AND current_setting('transaction_read_only')='off' AND NOT pg_is_in_recovery()\n    AND NOT has_database_privilege(current_database(),'CREATE') AS valid,\n    has_database_privilege(current_database(),'TEMP') AS database_temp`, [config.username, config.database])).rows[0];\n  if (settings?.valid !== true || settings.database_temp !== false) fail();\n  const roles = (await tx.query<{ rolname: string; valid: boolean }>(`SELECT rolname,\n    NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) AND rolinherit\n    AND rolcanlogin=(rolname=current_user) AS valid FROM pg_roles WHERE pg_has_role(oid,'MEMBER') ORDER BY rolname`)).rows;\n  if (roles.length !== 2 || roles.some(r => !r.valid)\n    || !roles.some(r => r.rolname === config.username) || !roles.some(r => r.rolname === role)) fail();\n}\n\nasync function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,\n  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: \"web\" | \"coordinator\" | \"results\" | \"evidence\" | \"sessions\", queue?: NativeQueueDatabaseOption) {\n  const withQueue = queue?.nativeQueue === true;\n  const role = { web: \"control_room_private_web\", coordinator: \"control_room_task_coordinator\", results: \"control_room_native_results\", evidence: \"control_room_native_evidence\", sessions: \"control_room_native_sessions\" }[kind];\n  const allowedReads = kind === \"sessions\" ? sessionReads : kind === \"evidence\" ? evidenceReads : kind === \"results\" ? resultReads : kind === \"coordinator\" ? coordinatorReads : privateWebReadTables;\n  const allowedInserts = kind === \"sessions\" ? sessionInserts : kind === \"evidence\" ? evidenceInserts : kind === \"results\" ? resultInserts : kind === \"coordinator\" ? coordinatorInserts : inserts;\n  const allowedUpdates = kind === \"sessions\" ? sessionUpdates : kind === \"evidence\" ? evidenceUpdates : kind === \"results\" ? resultUpdates : kind === \"coordinator\" ? coordinatorUpdates : updates;\n  try {\n    await db.transaction(async tx => {\n      await verifySession(tx, config, role);\n      const unsafe = (await tx.query<{ unsafe: boolean }>(`SELECT\n        EXISTS(SELECT 1 FROM pg_auth_members WHERE pg_has_role(member,'MEMBER') AND admin_option)\n        OR has_database_privilege(current_database(),'CREATE WITH GRANT OPTION')\n        OR has_parameter_privilege('session_replication_role','SET')\n        OR EXISTS(SELECT 1 FROM pg_parameter_acl p CROSS JOIN LATERAL aclexplode(p.paracl) a\n          WHERE a.privilege_type='ALTER SYSTEM' AND (a.grantee=0 OR\n            a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER'))))\n        OR EXISTS(SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema'\n          AND ((nspname<>'public' AND NOT ($1 AND nspname='control_room_queue')) OR has_schema_privilege(oid,'CREATE') OR pg_has_role(nspowner,'MEMBER')))\n        OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'\n          AND (pg_has_role(c.relowner,'MEMBER') OR c.relkind='S' AND\n            (has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE') OR has_sequence_privilege(c.oid,'USAGE'))))\n        OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'\n          AND (has_function_privilege(p.oid,'EXECUTE') OR pg_has_role(p.proowner,'MEMBER') OR p.prosecdef))\n        OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a\n          WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))\n        OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue])).rows[0];\n      if (unsafe?.unsafe !== false) fail();\n      if (withQueue) await verifyPgBossApplicationPermissions(tx, kind === \"coordinator\", kind === \"coordinator\" && queue?.nativeQueueRecovery === true);\n      const columns = (await tx.query<{ table_name: string; column_name: string; read: boolean; insert: boolean; update: boolean; extra: boolean }>(`\n        SELECT c.relname AS table_name,a.attname AS column_name,\n          has_column_privilege(c.oid,a.attnum,'SELECT') AS read,\n          has_column_privilege(c.oid,a.attnum,'INSERT') AS insert,\n          has_column_privilege(c.oid,a.attnum,'UPDATE') AS update,\n          has_column_privilege(c.oid,a.attnum,'REFERENCES')\n          OR has_column_privilege(c.oid,a.attnum,'SELECT WITH GRANT OPTION')\n          OR has_column_privilege(c.oid,a.attnum,'INSERT WITH GRANT OPTION')\n          OR has_column_privilege(c.oid,a.attnum,'UPDATE WITH GRANT OPTION')\n          OR has_column_privilege(c.oid,a.attnum,'REFERENCES WITH GRANT OPTION')\n          OR has_table_privilege(c.oid,'DELETE') OR has_table_privilege(c.oid,'TRUNCATE')\n          OR has_table_privilege(c.oid,'TRIGGER') OR has_table_privilege(c.oid,'MAINTAIN') AS extra\n        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid\n        WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;\n      const reads: ReadonlySet<string> = new Set(allowedReads);\n      if (!columns.length || columns.some(c => c.extra || c.read !== reads.has(c.table_name)\n        || c.insert !== allowedInserts.has(c.table_name) || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();\n      if (await readPrivateWebSchemaDigest(tx) !== privateWebSchemaDigest) fail();\n      const binding = (await tx.query<{ valid: boolean }>(`SELECT EXISTS(SELECT 1 FROM workspaces w\n        JOIN control_identities i ON i.tenant_id=w.tenant_id JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id\n        WHERE w.tenant_id=$1 AND w.id=$2 AND i.id=$3 AND i.auth_provider=$4 AND i.actor_type='human' AND i.state='active'\n        AND g.role_key='owner' AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$5)\n        AND g.project_ids @> '[\"*\"]'::jsonb AND g.allowed_actions @> '[\"*\"]'::jsonb AND NOT g.require_strong_factor) AS valid`,\n      [scope.tenantId, scope.workspaceId, scope.ownerIdentityId, scope.issuer, new Date(now).toISOString()])).rows[0];\n      if (binding?.valid !== true) fail();\n    });\n  } catch { fail(); }\n}\n"
+    },
+    {
+      "path": "tests/helpers/web-foundation.ts",
+      "content": "import { generateKeyPairSync, sign } from \"node:crypto\";\nimport { readFile, readdir } from \"node:fs/promises\";\nimport { PGlite } from \"@electric-sql/pglite\";\nimport { adaptPglite } from \"../../src/persistence/database.ts\";\nimport { SecurityStore } from \"../../src/security/security-store.ts\";\nimport { WebProjectService } from \"../../src/web/v1/project-service.ts\";\nimport { createProjectHttpHandler } from \"../../src/web/v1/project-http.ts\";\nimport type { AccessTrust } from \"../../src/web/v1/access-verifier.ts\";\n\nexport const now = Date.parse(\"2026-09-04T12:00:00.000Z\");\nexport const origin = \"https://private.example.invalid\";\nconst keys = generateKeyPairSync(\"rsa\", { modulusLength: 2048 });\nexport const trust: AccessTrust = { issuer: \"https://access.example.invalid\", audience: \"test-app\",\n  keys: [{ kid: \"test-public-key\", jwk: keys.publicKey.export({ format: \"jwk\" }) }], validUntilMs: now + 3600_000, maxSessionSeconds: 604800 };\nexport function token(changes: Record<string, unknown> = {}) {\n  const header = Buffer.from(JSON.stringify({ alg: \"RS256\", typ: \"JWT\", kid: \"test-public-key\" })).toString(\"base64url\");\n  const claims = Buffer.from(JSON.stringify({ iss: trust.issuer, aud: [trust.audience], sub: \"test-owner\", type: \"app\",\n    iat: now / 1000 - 60, exp: now / 1000 + 300, ...changes })).toString(\"base64url\");\n  return `${header}.${claims}.${sign(\"RSA-SHA256\", Buffer.from(`${header}.${claims}`), keys.privateKey).toString(\"base64url\")}`;\n}\nexport function request(path = \"/api/v1/projects\", method = \"GET\", value?: unknown, key = \"test-request-key-0001\", jwt = token()) {\n  return new Request(`${origin}${path}`, { method, headers: { \"cf-access-jwt-assertion\": jwt, origin,\n    \"content-type\": \"application/json\", \"idempotency-key\": key }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) });\n}\nexport type WebFixtureMigrationProfile = \"full\" | \"without-external-content\";\nexport async function fixture(clock = () => now, migrationProfile: WebFixtureMigrationProfile = \"full\") {\n  const db = new PGlite();\n  const omitted = migrationProfile === \"without-external-content\"\n    ? new Set([\"0025_cr9a_external_content_sync.sql\", \"0026_cr9a_external_content_placement.sql\"]) : new Set<string>();\n  for (const file of (await readdir(\"db/migrations\")).filter(f => f.endsWith(\".sql\") && !omitted.has(f)).sort())\n    await db.exec(await readFile(`db/migrations/${file}`, \"utf8\"));\n  await db.query(\"INSERT INTO tenants(id,display_name) VALUES('tenant:web','Test tenant')\");\n  await db.query(\"INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:web','tenant:web','Test workspace')\");\n  const client = adaptPglite(db);\n  await new SecurityStore(client).bootstrapOwner({ tenantId: \"tenant:web\", provider: trust.issuer, subject: \"test-owner\",\n    identityId: \"identity:web\", grantId: \"grant:web\", displayName: \"Test owner\", verifiedAt: new Date(now - 60_000).toISOString(),\n    expiresAt: new Date(now + 300_000).toISOString(), now: new Date(now).toISOString() });\n  const service = new WebProjectService(client, { tenantId: \"tenant:web\", workspaceId: \"workspace:web\" }, clock);\n  return { db, client, service, handler: createProjectHttpHandler({ origin, trust, service, clock }) };\n}\n"
+    },
+    {
+      "path": "tests/vps-built-core-schema.test.mjs",
+      "content": "import assert from \"node:assert/strict\";\nimport test from \"node:test\";\nimport handler from \"../dist-vps/server/index.js\";\nimport { createPrivateWebBootstrap } from \"../dist-vps/server/bootstrap.js\";\nimport { installPrivateWebProcess } from \"../dist-vps/server/runtime.js\";\nimport { limitedWebFixture, startupConfig } from \"./helpers/web-startup.ts\";\nimport { fixture, now, origin, request } from \"./helpers/web-foundation.ts\";\nimport { readPrivateWebSchemaDigest, privateWebSchemaDigest } from \"../src/web/v1/private-database-preflight.ts\";\n\ntest(\"default test preparation retains the private external-content schema\", async t => {\n  const f = await fixture(); t.after(() => f.db.close());\n  const tables = await f.client.query(\"SELECT to_regclass('public.control_external_content_releases') AS present\");\n  assert.equal(tables.rows[0].present, \"control_external_content_releases\");\n});\n\nfor (const profile of [\"full\", \"without-external-content\"]) test(`compiled schema boundary: ${profile}`, async t => {\n  const f = await limitedWebFixture(profile);\n  t.after(() => f.pool.close());\n  const tables = await f.client.query(\"SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'control_external_content%'\");\n  if (profile === \"without-external-content\") {\n    assert.deepEqual(tables.rows, []);\n    assert.notEqual(await readPrivateWebSchemaDigest(f.client), privateWebSchemaDigest);\n    let installs = 0;\n    const bootstrap = createPrivateWebBootstrap({ openDatabase: () => f.pool, clock: () => now,\n      install: () => { installs++; throw new Error(\"Unexpected installation\"); } });\n    await assert.rejects(bootstrap.start(startupConfig), /private_startup_prerequisites_failed/);\n    assert.equal(installs, 0); assert.equal(f.closes(), 1);\n    assert.equal((await handler(request())).status, 503);\n    return;\n  }\n  assert.ok(tables.rows.length > 0);\n  assert.equal(await readPrivateWebSchemaDigest(f.client), privateWebSchemaDigest);\n  const app = await createPrivateWebBootstrap({ openDatabase: () => f.pool,\n    install: installPrivateWebProcess, clock: () => now }).start(startupConfig);\n  t.after(() => app.close());\n  assert.equal(app.isReady(), true);\n  assert.equal((await handler(new Request(`${origin}/api/v1/projects`))).status, 401);\n  const created = await handler(request(undefined, \"POST\", { title: \"Generic research\", summary: \"Disposable contributor project\" }, \"core-schema-project-001\"));\n  assert.equal(created.status, 201, await created.clone().text());\n  const { project } = await created.json();\n  const projectPath = `/api/v1/projects/${encodeURIComponent(project.projectId)}`;\n  const taskPath = `${projectPath}/tasks`;\n  const proposed = await handler(request(taskPath, \"POST\", { title: \"Compare options\", instructions: \"Return a synthetic comparison; do not contact a provider.\" }, \"core-schema-task-001\"));\n  assert.equal(proposed.status, 201, await proposed.clone().text());\n  const { receipt } = await proposed.json();\n  const detail = await handler(request(`${taskPath}/${encodeURIComponent(receipt.jobId)}`));\n  assert.equal(detail.status, 200);\n  const saved = await detail.json();\n  assert.equal(saved.task.state, \"proposed\"); assert.deepEqual(saved.attempts, []);\n  const page = await handler(request(`/projects/${encodeURIComponent(project.projectId)}/tasks`));\n  assert.equal(page.status, 200); assert.match(await page.text(), /Loading protected tasks/);\n  assert.equal((await handler(request(\"/api/v1/session/logout\", \"POST\"))).status, 204);\n  assert.equal((await handler(request(projectPath))).status, 401);\n  await app.close(); assert.equal(f.closes(), 1);\n  assert.equal((await handler(request(projectPath))).status, 503);\n});\n"
+    },
+    {
+      "path": "tests/vps-built-handler.test.mjs",
+      "content": "import assert from \"node:assert/strict\";\nimport { existsSync, readdirSync } from \"node:fs\";\nimport test from \"node:test\";\nimport handler from \"../dist-vps/server/index.js\";\nimport { installPrivateWebProcess } from \"../dist-vps/server/runtime.js\";\nimport { fixture, now, origin, trust, request } from \"./helpers/web-foundation.ts\";\nimport { seedWebIdea, webIdeaKey } from \"./helpers/web-idea-project.ts\";\nimport { seedWebConnection, seedWebSignal, webConnectionKeys } from \"./helpers/web-connection.ts\";\n\ntest(\"compiled Node entry protects pages, APIs and streams before application composition\", async () => {\n  assert.equal(typeof handler, \"function\");\n  for (const path of [\"/\", \"/ideas\", \"/connections\", \"/api/v1/connections\", \"/api/v1/projects\", \"/api/v1/operator-surface\", \"/api/v1/projects/project:test/events\"]) {\n    const response = await handler(new Request(`https://private.example.invalid${path}`));\n    assert.equal(response.status, 503, path);\n    assert.deepEqual(await response.json(), { error: \"private_app_not_configured\" });\n    assert.equal(response.headers.get(\"cache-control\"), \"no-store\");\n  }\n});\ntest(\"Node client/SSR artifacts are separate from Sites metadata\", () => {\n  assert.equal(existsSync(\"dist-vps/server/ssr/index.js\"), true);\n  assert.ok(readdirSync(\"dist-vps/client/_next/static\").length > 0);\n  assert.equal(existsSync(\"dist-vps/.openai/hosting.json\"), false);\n});\n\ntest(\"compiled private routes use the installed process, real disposable SQL, and shared revocation\", async t => {\n  const f = await fixture();\n  const { project: idea } = await seedWebIdea(f.client);\n  await seedWebConnection(f.client); await seedWebSignal(f.client);\n  const app = installPrivateWebProcess({ origin, ...trust, tenantId: \"tenant:web\", workspaceId: \"workspace:web\",\n    ideaProjects: { integrityKey: webIdeaKey },\n    connections: webConnectionKeys,\n    database: { client: f.client, close: () => f.db.close() }, clock: () => now, loadKeys: async () => trust.keys });\n  t.after(() => app.close());\n  assert.throws(() => installPrivateWebProcess({}), /already_configured/);\n  const created = await handler(request(undefined, \"POST\", { title: \"Compiled project\", summary: \"From the actual built API\" }));\n  assert.equal(created.status, 201); const { project } = await created.json();\n  const catalog = await handler(request(\"/projects\")); assert.equal(catalog.status, 200);\n  const catalogHtml = await catalog.text();\n  // The creation form waits for the authenticated catalog's canCreate result, not just a rendered shell.\n  assert.match(catalogHtml, /Loading projects/); assert.doesNotMatch(catalogHtml, /<form/);\n  // The client shell must wait for the authenticated catalog read before showing records.\n  assert.equal(catalogHtml.includes(project.title), false);\n  const path = `/projects/${encodeURIComponent(project.projectId)}`;\n  const taskPath = `/api/v1/projects/${encodeURIComponent(project.projectId)}/tasks`;\n  const taskSaved = await handler(request(taskPath, \"POST\", { title: \"Compiled task\", instructions: \"Produce a useful comparison\" }, \"compiled-task-save-001\"));\n  assert.equal(taskSaved.status, 201); const { receipt: taskReceipt } = await taskSaved.json();\n  const taskPage = await handler(request(`${path}/tasks`)); assert.equal(taskPage.status, 200);\n  assert.match(await taskPage.text(), /Loading protected tasks/);\n  const taskDetailPage = await handler(request(`${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`));\n  assert.equal(taskDetailPage.status, 200); assert.match(await taskDetailPage.text(), /Task progress · Control Room/);\n  const taskRead = await (await handler(request(`${taskPath}/${encodeURIComponent(taskReceipt.jobId)}`))).json();\n  assert.equal(taskRead.task.title, \"Compiled task\"); assert.equal(taskRead.task.state, \"proposed\"); assert.equal(taskRead.review, \"not_connected\");\n  const detail = await handler(request(`${path}/settings`)); assert.equal(detail.status, 200);\n  assert.match(await detail.text(), /Loading project/);\n  const read = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}`));\n  assert.equal((await read.json()).project.title, \"Compiled project\");\n  const combined = await (await handler(request())).json();\n  assert.equal(combined.projects.length, 2); assert.equal(combined.sources.ideas, \"included\");\n  const ideaRead = await (await handler(request(`/api/v1/projects/${encodeURIComponent(idea.projectId)}`))).json();\n  assert.equal(ideaRead.project.origin, \"idea_lab\"); assert.equal(ideaRead.project.lifecycleEditable, false);\n  const ideaPage = await handler(request(`/projects/${encodeURIComponent(idea.projectId)}/settings`));\n  assert.equal(ideaPage.status, 200); assert.match(await ideaPage.text(), /Loading project/);\n  const nextPage = await handler(request(`/projects?after=${encodeURIComponent(idea.projectId)}`));\n  assert.equal(nextPage.status, 200); assert.match(await nextPage.text(), /Loading projects/);\n  const nextRead = await (await handler(request(`/api/v1/projects?after=${encodeURIComponent(idea.projectId)}`))).json();\n  assert.ok(nextRead.projects.every(item => item.projectId > idea.projectId));\n  const archive = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/lifecycle`, \"POST\",\n    { lifecycle: \"archived\", expectedVersion: 1 }, \"compiled-archive-0001\"));\n  assert.equal(archive.status, 200);\n  const connectionsPage = await handler(request(\"/connections\")); assert.equal(connectionsPage.status, 200);\n  const connectionsHtml = await connectionsPage.text(); assert.match(connectionsHtml, /Loading protected connection inventory/);\n  assert.match(connectionsHtml, /<title>Connections · Control Room<\\/title>/);\n  assert.match(connectionsHtml, /Private connection inventory across all workspaces/);\n  assert.match(connectionsHtml, /covers all workspaces in this Control Room account/);\n  assert.match(connectionsHtml, /not a live fleet monitor/); assert.doesNotMatch(connectionsHtml, /node:private-test|connection:private-test/);\n  const inventory = await (await handler(request(\"/api/v1/connections\"))).json();\n  assert.equal(inventory.projection.summary.connectionCount, 1); assert.equal(inventory.projection.summary.currentSignalCount, 1);\n  assert.equal(inventory.projection.summary.livePanelEligibleCount, 0); assert.equal(inventory.telemetry, \"configured\");\n  for (const legacy of [\"/ideas\", \"/api/v1/fixture-snapshot\", \"/api/v1/local-pilot/session\", \"/api/v1/connections/enroll\"])\n    assert.equal((await handler(request(legacy))).status, 404, legacy);\n  const stream = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/events`));\n  assert.match(await stream.text(), /project-snapshot/);\n  const session = await handler(request(\"/session\")); assert.equal(session.status, 200);\n  assert.match(await session.text(), /Access sessions for other protected applications/);\n  assert.equal((await handler(request(\"/api/v1/session/logout\", \"POST\"))).status, 204);\n  for (const protectedPath of [\"/projects\", \"/connections\", \"/api/v1/connections\", path, `/projects/${encodeURIComponent(idea.projectId)}`,\n    taskPath, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,\n    `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])\n    assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);\n  await app.close(); assert.equal((await handler(request(\"/projects\"))).status, 503);\n});\n"
+    },
+    {
+      "path": "tsconfig.json",
+      "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2017\",\n    \"lib\": [\n      \"dom\",\n      \"dom.iterable\",\n      \"esnext\"\n    ],\n    \"allowJs\": true,\n    \"allowImportingTsExtensions\": true,\n    \"skipLibCheck\": true,\n    \"strict\": true,\n    \"noEmit\": true,\n    \"esModuleInterop\": true,\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\",\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"jsx\": \"react-jsx\",\n    \"incremental\": true,\n    \"paths\": {\n      \"@/*\": [\n        \"./*\"\n      ]\n    }\n  },\n  \"include\": [\n    \"next-env.d.ts\",\n    \"**/*.ts\",\n    \"**/*.tsx\",\n    \".next/types/**/*.ts\",\n    \".next/dev/types/**/*.ts\",\n    \"**/*.mts\"\n  ],\n  \"exclude\": [\n    \"node_modules\"\n  ]\n}\n"
+    }
+  ],
+  "manifest": [
+    {
+      "path": ".gitignore",
+      "sha256": "7172ca4e29866adb1bc32b018484f89ce60667498121acf3b8dbb8d180d7b121"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "297bd510fb15a9349ddc3da092d768cff87c03b408c43813db345e1d58ab6320"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "NOTICE",
+      "sha256": "740bb8f016c0ecfb16fd7572ff6bcf512129dccb502f6328b0999bafb4a62942"
+    },
+    {
+      "path": "README.md",
+      "sha256": "38f2dd6b3566edfa03bafe677d6d7a4258c7884e042d1717a6eaeae63f2ff219"
+    },
+    {
+      "path": "ROADMAP.md",
+      "sha256": "fb01a3285a6853089bb45d88b55daeaf3ad45d75671c143dafc39da77cb33914"
+    },
+    {
+      "path": "SETUP.md",
+      "sha256": "ef7743813efc2571cee858f9a0e906b2685e889a9abe9b3f354849674ffc1de2"
+    },
+    {
+      "path": "WORK_PACKAGES.md",
+      "sha256": "f4448329c53be0813e1996a60d2c37a6ed5a241b394a098df066fd61cbe6f5bf"
+    },
+    {
+      "path": "app/components/connection-center.tsx",
+      "sha256": "95df7975706104a8384db5f4ca781777f9743747c6dcd9c889a85a4b96641ff8"
+    },
+    {
+      "path": "app/components/project-catalog-navigation.tsx",
+      "sha256": "3a77bb629151537565fd3c49021534beadd2856fd675f6b063a340e7b65ac5ea"
+    },
+    {
+      "path": "app/components/project-catalog.tsx",
+      "sha256": "781ca8b5c7934ff6c4f57286b429be1bf0b6d20dff185b98520340c214223447"
+    },
+    {
+      "path": "app/components/project-create-form.tsx",
+      "sha256": "2a8ef15ef05f7f46d7b64ec8b15dbe4a7ea40f8f0bb88d0b6072166fd4719dd7"
+    },
+    {
+      "path": "db/migrations/0001_control_room_core.sql",
+      "sha256": "7d7b3994f8867a385d516ee480771ad425e2950b2fc7554b5d1315f9231cc8ed"
+    },
+    {
+      "path": "db/migrations/0002_allocation_simulation_audit.sql",
+      "sha256": "7a5ca4ae4f3ed58c526148b44fef4d15e5d91c65319ab622aa5090f47885fe21"
+    },
+    {
+      "path": "db/migrations/0003_canonical_domain_delivery.sql",
+      "sha256": "95ddcff940c17a2ea655789b479d9a75c86c7650fe75ae76083337c2f6d2df9c"
+    },
+    {
+      "path": "db/migrations/0004_cr4b_review_hardening.sql",
+      "sha256": "098d3cfcdc6e2259f23e88f6007b47ee80310dcfee77170e212600d64154a6d0"
+    },
+    {
+      "path": "db/migrations/0005_cr4c_identity_policy.sql",
+      "sha256": "1278ff95469510b4c1557aa21a915a91c4478db6b8ff4c13c429453f71da4299"
+    },
+    {
+      "path": "db/migrations/0006_cr4d_audit_chain.sql",
+      "sha256": "0d2e6af9f1ad723f54c9b9ef47a6f4e054d57e63f20196eafa8d3efffef4b2a7"
+    },
+    {
+      "path": "db/migrations/0007_cr4q_integrity_hardening.sql",
+      "sha256": "b52060e391f141c319bf6eca8ef85faa36c7ac6ecd5ff7e04d939cd7766ccdc5"
+    },
+    {
+      "path": "db/migrations/0008_cr5a_node_protocol_identity.sql",
+      "sha256": "b94d9847b9765bb59c874c5c2221498849bc4767e38f5577e80d24083c963b51"
+    },
+    {
+      "path": "db/migrations/0009_cr5b_protocol_delivery_semantics.sql",
+      "sha256": "f444d9b0859f9e25b28b02ad7c4c45388502f6788e55bd4922d9cc7598e9eae1"
+    },
+    {
+      "path": "db/migrations/0010_cr5d_node_operation_requests.sql",
+      "sha256": "a65eb47b9f02ee14ead7e0ad86cef273503b6b40440bbea7f6f783e8f7d9e1dc"
+    },
+    {
+      "path": "db/migrations/0011_cr5d_node_job_evidence.sql",
+      "sha256": "010bec227c33808a188d96c3142dcbc56c61e8c26527d583de9a29e93cfbcc60"
+    },
+    {
+      "path": "db/migrations/0012_cr6b_fleet_history.sql",
+      "sha256": "eca4b14497d94eff4cc3a46afa29a93557e6db002588e0fef4cd8d5db0fcf300"
+    },
+    {
+      "path": "db/migrations/0013_cr6b_fleet_current_subject.sql",
+      "sha256": "a9915f339f88eeb4de0ff5e64de553e4531008a090a4ebaef755a692a7800f2e"
+    },
+    {
+      "path": "db/migrations/0014_cr6c_resource_reservations.sql",
+      "sha256": "c2e4fd7df7599f011e03b48ee2c600a80fd12f0bcb100dd542e00d1271ae8088"
+    },
+    {
+      "path": "db/migrations/0015_cr6c_project_budget_reservations.sql",
+      "sha256": "b5208bb3e33c499a170de4dc0ba9cbbc628b4fa81decd41cc64ec9d8f9ce9852"
+    },
+    {
+      "path": "db/migrations/0016_cr6d_schedule_occurrences.sql",
+      "sha256": "c1389b551d17ec0091903dcfdbeb3e7b56092dd4dfd11dff33b855cbabef7c83"
+    },
+    {
+      "path": "db/migrations/0017_cr6d_service_incidents.sql",
+      "sha256": "102cb0f273986252b6ace20b8b28e9879c75be6b027c9854ff2c44a0110cca7f"
+    },
+    {
+      "path": "db/migrations/0018_cr6d_service_incident_remedies.sql",
+      "sha256": "9d3dc47f260060a1ab6fdf8b4322ad5c2402de122d53adde02eede03d7e930d2"
+    },
+    {
+      "path": "db/migrations/0019_cr6e_operator_surfaces.sql",
+      "sha256": "5a1befb752f028db82374527c97134699991df9471b14e79de672abb326395c0"
+    },
+    {
+      "path": "db/migrations/0020_cr7_harness_runs.sql",
+      "sha256": "0524b6bdbd44ab1dc4b87403e745402d5d37c7e4e00773f5ff39abe0625f98ea"
+    },
+    {
+      "path": "db/migrations/0021_cr7e_package_registry.sql",
+      "sha256": "1db7f3be842b8c49f40cdbe830df80d22b40ca2558a026eb4caf0e4150acf74f"
+    },
+    {
+      "path": "db/migrations/0022_cr8b_completion_gate.sql",
+      "sha256": "64bb9be28b7a84f4f38ddf1e03fb7d4a60ee4ead74a8fcd2db8ca1691d3c7ae4"
+    },
+    {
+      "path": "db/migrations/0023_cr8d_telegram_delivery.sql",
+      "sha256": "72c09f09510c51208e741974df7d1f96fcab606f35403fbdbd001083457fe081"
+    },
+    {
+      "path": "db/migrations/0024_cr8q_rollback_checkpoints.sql",
+      "sha256": "7fcef3a321fbe90ae08919d4f12680e54e48bf7ea0aea325094bd5e9528fd3e4"
+    },
+    {
+      "path": "db/migrations/0025_cr9a_external_content_sync.sql",
+      "sha256": "a461e52cba46035e5a7e9a060fbba5039b73ee708c2695a99680fbcea1307c91"
+    },
+    {
+      "path": "db/migrations/0026_cr9a_external_content_placement.sql",
+      "sha256": "843fe2549b300d7a1d4bdb60ac2a60739805a91c67c7d55efa768981e9b55d36"
+    },
+    {
+      "path": "db/migrations/0027_cr11b_ready_frontier_handoffs.sql",
+      "sha256": "b7b03db48bd6ca59e6095197e200cea6f3424506dfd1c48d56a2c0f27f34c6fe"
+    },
+    {
+      "path": "db/migrations/0028_cr12b_idea_lab_project_lifecycle.sql",
+      "sha256": "a81b3c59d969005963aae7d9ccaa8310e013524be17360131e1a583082341e6e"
+    },
+    {
+      "path": "db/migrations/0029_cr12b_idea_lab_protected_coordinator.sql",
+      "sha256": "b223e276801074fb560610522aaa7b1212e9d0d2773822825ac7042c8b10a26d"
+    },
+    {
+      "path": "db/migrations/0030_cr12b_local_fake_pilot.sql",
+      "sha256": "c82ac7ec91830b0488415aa259be7775e44746adf7a41e67f3d06fd55319f6d2"
+    },
+    {
+      "path": "db/migrations/0031_cr12b_live_panel_authority.sql",
+      "sha256": "0cce314b741e951946a56df920c337a941fc3fe415de1f15510a81bd5faa4b48"
+    },
+    {
+      "path": "db/migrations/0032_cr12b_idea_qualification_spends.sql",
+      "sha256": "67461e5d538827b74b8245a714a8fd9401c3e40ff602bc37ab2c97183bcbdc87"
+    },
+    {
+      "path": "db/migrations/0033_cr13a_project_live_events.sql",
+      "sha256": "7aca6c767a8b5e67ef0d41859b11e8172983b96fd2b09d87d7e85f3221d0c008"
+    },
+    {
+      "path": "db/migrations/0034_cr13a_connection_registry.sql",
+      "sha256": "0c201b83b66a80de38e89c7f53e66ab52a8332c23d84b711c3d32267b3d7a6a3"
+    },
+    {
+      "path": "db/migrations/0035_cr13a_connection_enrollment_intake.sql",
+      "sha256": "e869fd177a14e175d1d122fef4756745f5edbc71e2f6812fae3a8715bec7ee04"
+    },
+    {
+      "path": "db/migrations/0036_cr13a_connection_enrollment_node_delivery.sql",
+      "sha256": "e6e6372ee347710706a212a85f72a129c74687adf4cde5991433d6cc89452f0c"
+    },
+    {
+      "path": "db/migrations/0037_cr13a_native_observation_authorizations.sql",
+      "sha256": "8d4efd8e49f9b1891079c99ee0bf82afc2c731349386ec44ceca8c2eb2f1b154"
+    },
+    {
+      "path": "db/migrations/0038_cr13a_native_observation_authorization_consumptions.sql",
+      "sha256": "c98128708a164ec7bb888b8f8de3465478451605c46ea41e37d6c45b68647ab5"
+    },
+    {
+      "path": "db/migrations/0039_cr14b_web_projects.sql",
+      "sha256": "05e43d3ca1780762fae214ca38347a01a2320d41ab0241846488d1717b6c98f3"
+    },
+    {
+      "path": "db/migrations/0040_cr14b_private_web_lock_support.sql",
+      "sha256": "83e4240a53a77e86f967581c1f3405de77a12143dd7e4271c93a7e29a498a12b"
+    },
+    {
+      "path": "db/migrations/0041_cr14c_private_task_proposals.sql",
+      "sha256": "9825891d9f8ef1423a12465af39569f6d33a0b63a3960a4bdbccb44cc8b5beba"
+    },
+    {
+      "path": "db/migrations/0042_cr14c_private_task_results.sql",
+      "sha256": "16c8ca4e23839b4e1b1ca15140031859c97723cf5488941dd4a627a878f771b8"
+    },
+    {
+      "path": "db/migrations/0043_cr14c_owner_result_review.sql",
+      "sha256": "27435749e36b4e91fffd3468e06f39b15e344a8cea73bbadc78a2e8f80e2eb73"
+    },
+    {
+      "path": "db/migrations/0044_cr14c_native_review_plans.sql",
+      "sha256": "86513cbb56cf0c011318db34943f9851b3c48dab5ba7bf26b64e6a1bf61bac09"
+    },
+    {
+      "path": "db/migrations/0045_cr14c_task_execution_plans.sql",
+      "sha256": "c31ba47121ec94e63a4c1b129d95bebcb59061630006af639c9e6825dd6645fb"
+    },
+    {
+      "path": "db/migrations/0046_cr14c_coordinator_lock_support.sql",
+      "sha256": "6c864ac7e94dbb5becce6ebaed1de22bf4ed213f30f07b13cff945f399c2b0dc"
+    },
+    {
+      "path": "db/migrations/0047_cr14c_native_approval_packets.sql",
+      "sha256": "e8257bd352c5971ad421f54d317fe138c90617661f5bc6e25d5ff81f4381852a"
+    },
+    {
+      "path": "db/migrations/0048_cr14c_native_task_queue.sql",
+      "sha256": "baa999af03fe2e9b6ef27ef226a06cee785842e8d5e11d2079220cb9551bc9a1"
+    },
+    {
+      "path": "db/migrations/0049_cr14c_native_delivery_preparations.sql",
+      "sha256": "140a5651a01edecfef9248d72149019885209fcbff47a789a2fd6985c601723b"
+    },
+    {
+      "path": "db/migrations/0050_cr14c_native_delivery_envelopes.sql",
+      "sha256": "f0e11f0a20c21e7c9c50a603c4dd187b3d24cc0497561127f39386960fdcdd28"
+    },
+    {
+      "path": "db/migrations/0051_cr14c_native_transmission_intents.sql",
+      "sha256": "6d2a4e4dd6494e0e075b47d0ebedf470591debff8807da1877782f8bb8761a81"
+    },
+    {
+      "path": "db/migrations/0052_cr14c_native_delivery_receipts.sql",
+      "sha256": "acb6f70c05654a5a5d892ed7ae35f55bf76da3a271c41a7440717f2ca103ce62"
+    },
+    {
+      "path": "db/migrations/0053_cr14c_owner_result_verification.sql",
+      "sha256": "b19e78325e83a61378632674e09a938a4f4c1351b6f54bbcae345640bde3f7c1"
+    },
+    {
+      "path": "db/migrations/0054_cr14c_quality_coordinator.sql",
+      "sha256": "425beeff9e7fc5762ff62f23ef702b817638581a39dd6644d5362ac90e98579f"
+    },
+    {
+      "path": "db/migrations/0055_cr14c_native_result_writer.sql",
+      "sha256": "235646625730e102baefc918b65cddfdd4edc9546c689732ec8d0f4d4f39062c"
+    },
+    {
+      "path": "db/migrations/0056_cr14c_native_evidence_locks.sql",
+      "sha256": "db8dde9b3adb0a29191d7ef6f2d29dc7f06592ed98890d96673cdd123f0caf59"
+    },
+    {
+      "path": "db/migrations/0057_cr14c_protocol_replay_lock.sql",
+      "sha256": "0ff887f53c954a5011f8255fd7f0305692f324a028919280e42e9e3e980c46c5"
+    },
+    {
+      "path": "db/roles/native_evidence_roles.sql",
+      "sha256": "4dc5a79706a46042482e36573859ccd586c25b4a9ed5b8ffd3653c7c52220c15"
+    },
+    {
+      "path": "db/roles/native_queue_producer_roles.sql",
+      "sha256": "2d34ae9161f1803cd20d673d815682a4330211ff5524444c57c6ba1b2d135c50"
+    },
+    {
+      "path": "db/roles/native_queue_recovery_roles.sql",
+      "sha256": "457c173d8ebecc686cc2bfd31bf9327f9825e6ce803d56c53216f4167d3f2df3"
+    },
+    {
+      "path": "db/roles/native_queue_worker_roles.sql",
+      "sha256": "64ce05ce944690b31b0d2de80f6ff1ea5b85285489811eeb96db3828a347cf3a"
+    },
+    {
+      "path": "db/roles/native_results_roles.sql",
+      "sha256": "5dc03fe28f00d688e93efa096b4cfc27a6b380a132ef87002cb9174b7421310f"
+    },
+    {
+      "path": "db/roles/native_session_roles.sql",
+      "sha256": "cdf59f657b1592f6870047592f9585bf5476ae3f4c8eaefe2683f99c8d041474"
+    },
+    {
+      "path": "db/roles/private_web_database.sql",
+      "sha256": "af6e78cd02986baf028a2954f0ffa6b78fd6230aea0deb0436f41102a2d3367f"
+    },
+    {
+      "path": "db/roles/private_web_roles.sql",
+      "sha256": "2e274d751d29179d1acfd011372e0dd5b7896f2aa1af1cac6ad8bf96a87a9929"
+    },
+    {
+      "path": "db/roles/production_roles.sql",
+      "sha256": "9da5b27148ad7826f3b4c16f6b785c171b122ad1f88b1c6d896e22fe02391d1a"
+    },
+    {
+      "path": "db/roles/task_coordinator_roles.sql",
+      "sha256": "132e5758b72abb9e26fcc0e72526aefca07ca9f1dffa1fb08b84dbce4cc41aea"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "4937b171ce08c519760484724558fff2978d56577a5fa47961f12cc5ba27a19b"
+    },
+    {
+      "path": "middleware.ts",
+      "sha256": "3ad268e35dd5884f60c92a2887116a0a4b400b14e371f7b412f48db74c6371e0"
+    },
+    {
+      "path": "next-env.d.ts",
+      "sha256": "a291a6b60536fec0a3b9d4ffd6d51179b463e9bc20281d7499d756813b4c07d5"
+    },
+    {
+      "path": "package.json",
+      "sha256": "7ee045bcf1b1bcf17425e3d797b94b8395901912b73728fab281857bd13d798e"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "sha256": "62ed975b55579422d287aeb6b34f532b7eb741363a3b910b31cd7abeb9126b69"
+    },
+    {
+      "path": "postcss.config.mjs",
+      "sha256": "dfac7ac2d86d326a0e5adb024e7943c181393ed17a5fcb8f0315b24c7da6ddde"
+    },
+    {
+      "path": "private-app/app/connections/page.tsx",
+      "sha256": "d65d6423832ca4c4433cf4c5fb0d278ff2192575ec872d1ba49b57abaec16dbf"
+    },
+    {
+      "path": "private-app/app/connections/workspace.tsx",
+      "sha256": "f7515b4470c746a44768d46743f405e646e7769328323e9c6b8d9c570ff1c692"
+    },
+    {
+      "path": "private-app/app/layout.tsx",
+      "sha256": "d34f921176cb73320a868c4ae73dac46968c24d7d643dd2366005d2fe029c15a"
+    },
+    {
+      "path": "private-app/app/needs-me/page.tsx",
+      "sha256": "57726ec8c337503881ce0873702a340c3039a9be93d529ce2fef3388ca19f4fc"
+    },
+    {
+      "path": "private-app/app/needs-me/task-attention.tsx",
+      "sha256": "714e525b718dd59e917e26c16492f09fe78a27f8e3ecd07c968184fcd5ddb809"
+    },
+    {
+      "path": "private-app/app/needs-me/workspace.tsx",
+      "sha256": "7757f3e0102e87d8f87de3012b9f9cf43fc5d2ce54022922b027828345502326"
+    },
+    {
+      "path": "private-app/app/page.tsx",
+      "sha256": "c910d43d7e572cc42c9f00b62ab6b4e434c093b1b322f4b6b0f4571805487213"
+    },
+    {
+      "path": "private-app/app/private-header.tsx",
+      "sha256": "ecf3818c6e313bbd9a789e2fbc667db46f33dcfb3428aadcf5f51ae27307a292"
+    },
+    {
+      "path": "private-app/app/private.css",
+      "sha256": "a4bfdd969c5c0365726520798fd0633c8e6bf9aad364a16fcc041f907541153e"
+    },
+    {
+      "path": "private-app/app/projects/[projectId]/[sectionId]/page.tsx",
+      "sha256": "3096a701f0a2a5a6069fa0a680ef775647edfad206b7e25ba6a7e36bfeb904e6"
+    },
+    {
+      "path": "private-app/app/projects/[projectId]/page.tsx",
+      "sha256": "c840e5362071f94a938411bfa65a06a652e9615d02b681751c6e941a1cbc1763"
+    },
+    {
+      "path": "private-app/app/projects/[projectId]/tasks/[jobId]/page.tsx",
+      "sha256": "80e466c54b6fa2b1155481b30b9c9c6fafe155d431670576251067c93e5ad58f"
+    },
+    {
+      "path": "private-app/app/projects/[projectId]/tasks/page.tsx",
+      "sha256": "356d584ef46c8197e17fd01fd9df7990141a3ea1e4ea42f17efea85bf521bbf5"
+    },
+    {
+      "path": "private-app/app/projects/page.tsx",
+      "sha256": "dcad9ff189b76452a32a7d8ec3fd8edfc1965647950f812cbef9416eca9af304"
+    },
+    {
+      "path": "private-app/app/session/page.tsx",
+      "sha256": "b294618610293c3b17c6cc0a16ea368237af123eb7ebcb1144628002cbef8513"
+    },
+    {
+      "path": "private-app/app/session/session-controls.tsx",
+      "sha256": "30fab7c3ae95fdd2d59774d6d42d093756dc79909e7130cd2dae25d095edb297"
+    },
+    {
+      "path": "private-app/app/task-approval.tsx",
+      "sha256": "48ceb7d3617a2079b62b0f8b580950324787130e195c98acfcbac964143021b3"
+    },
+    {
+      "path": "private-app/app/task-assignment.tsx",
+      "sha256": "928b776293ffcbb1a990352f826515a47df2c802886db291f920ee3ecfd76c4e"
+    },
+    {
+      "path": "private-app/app/task-owner-review.tsx",
+      "sha256": "98f10c6e58a01dc9672159e26cf66801ed4fd7fb4d1f77c8676cc2a49dbbf909"
+    },
+    {
+      "path": "private-app/app/task-owner-revision.tsx",
+      "sha256": "762466b90ccc740471bfb2ca25b602b586434de5af8844fb52783e5e01c6d596"
+    },
+    {
+      "path": "private-app/app/task-owner-verification.tsx",
+      "sha256": "f0a2e909d68b2a4ab20ee3390c93f62dcd55f754ac0fed355648f6c796e78730"
+    },
+    {
+      "path": "private-app/app/task-panels.tsx",
+      "sha256": "f311f16b5346eadf835c80d539da7a615babe47ebd15c703daaab2270d5dbdfc"
+    },
+    {
+      "path": "private-app/app/task-planning.tsx",
+      "sha256": "9c4ec799d895c68e0ce4f59ad68948d7c7b2c9e3fbed8ad6fac9f9efd9aeadac"
+    },
+    {
+      "path": "private-app/app/task-results.tsx",
+      "sha256": "59113ba094fa61be716ae75f88573c3d07658e2cdb9eb1d784e871edcbf9ab4b"
+    },
+    {
+      "path": "private-app/app/task-submission.tsx",
+      "sha256": "12494b2d5587b0acb909bae87af01ad09448fbd8e93818d4dd45940a00595848"
+    },
+    {
+      "path": "private-app/app/task-workflow-guide.tsx",
+      "sha256": "ac48778cc8193e62116dcd6f825bedad4d390e00bfbf67ae5643788b67efca40"
+    },
+    {
+      "path": "private-app/app/task-workspace.tsx",
+      "sha256": "cec929507adc733ef66eb5bd4c7d33bb6f075c69e987f46c2cca5fe780e11167"
+    },
+    {
+      "path": "private-app/app/workspace.tsx",
+      "sha256": "68eae22eb4d44ee4b7e7052546dc6da44630162a66c4d756c78643b7f4a306f6"
+    },
+    {
+      "path": "public/favicon.svg",
+      "sha256": "b718117c09caff435de086a545f5c27c8b22497a1be2b3069f595ccad3da268a"
+    },
+    {
+      "path": "scripts/build-vps.mjs",
+      "sha256": "0aa8746ae262eba1703eef667d0cf5483a440eb8a4dcc841d8f5b05ee32d12ae"
+    },
+    {
+      "path": "scripts/run-private-vps.mjs",
+      "sha256": "e614be53aea37c81ad3e3fc42309c2af7835d6a5f4650fafab0820d8600fc86f"
+    },
+    {
+      "path": "src/artifacts/v1/native-results.ts",
+      "sha256": "313b037dad9bf0e78dddf32096f2509a1b7dfc6389b043b6fb94a96d18151ffc"
+    },
+    {
+      "path": "src/audit/audit-store.ts",
+      "sha256": "8f00a94b2eb2755b29c2e3b2d0d3d1a454ba96fb8bba3147754df93f13896fac"
+    },
+    {
+      "path": "src/audit/types.ts",
+      "sha256": "710f96519f5fe8915e793b7a401ecd56616241b7c45f87fb9b2eebd9b3229cad"
+    },
+    {
+      "path": "src/completion-gate/v1/async-staged-checkpoint.ts",
+      "sha256": "c8598cca3a00590e38db4f89728101fde456c9167228894ea4eb479c7c81c115"
+    },
+    {
+      "path": "src/completion-gate/v1/document-structure-contract.ts",
+      "sha256": "7ee6952cea93ea73cff54e654a5a3fafff9421128ca6d6ce2e3c9ff034b5181c"
+    },
+    {
+      "path": "src/completion-gate/v1/document-structure-verifier.ts",
+      "sha256": "1c072e20b41232e4a228aae1e28086d4a7a400525f4978b77bbb4843ade5f7d9"
+    },
+    {
+      "path": "src/completion-gate/v1/index.ts",
+      "sha256": "12e8eab5925e39311acbd37a14a74df7e99cf5c6b166973f23fee1ee2813a05b"
+    },
+    {
+      "path": "src/completion-gate/v1/native-result-submission.ts",
+      "sha256": "5fd97338118330111bd033d32467124cd81e2bcaf3a66c3fb13bf1836189fb6f"
+    },
+    {
+      "path": "src/completion-gate/v1/native-result-verification.ts",
+      "sha256": "e5fe02956b1d153ae64ba0b9d99543ada3fcdd60ae102d323c4da743e422fe31"
+    },
+    {
+      "path": "src/completion-gate/v1/native-review-plan.ts",
+      "sha256": "1c4f31be372dab5e07d73d972877f51b16247e82d344358d3b7508825d0cc843"
+    },
+    {
+      "path": "src/completion-gate/v1/native-revision-context.ts",
+      "sha256": "3c8bbc2a4fc04e5d9aea5c83c138529977749ef8e7bc906e87325cdcee01faa3"
+    },
+    {
+      "path": "src/completion-gate/v1/schemas.ts",
+      "sha256": "ed4c93d685276fe7a21aacc8103b7a9520fd7e95de0daf5c7bcbf4fb4fe3bfd4"
+    },
+    {
+      "path": "src/completion-gate/v1/staged-checkpoint.ts",
+      "sha256": "269291a2500c7e7d4999f789efee730c6616074bbd381619e0672331a815c80c"
+    },
+    {
+      "path": "src/completion-gate/v1/store.ts",
+      "sha256": "0583c89f1338ccdca93a6d915fc44cfd22c03ebcf71f0e1aa5267ddd3ed4ee35"
+    },
+    {
+      "path": "src/completion-gate/v1/types.ts",
+      "sha256": "e5706ed1bc7df0087fb28aa300892db3c8ef3d331b806a2c8852ae0a7cc6059c"
+    },
+    {
+      "path": "src/completion-gate/v1/view-model.ts",
+      "sha256": "bc4e738f15f58504062eb58e2fab7acde0a49d966015bee0aae4e1a5caa11ac9"
+    },
+    {
+      "path": "src/config/build-target.ts",
+      "sha256": "0b23607ca40a2ab336962d2ac2e71e2c55972413894fc8716169bb5bbc3be5d9"
+    },
+    {
+      "path": "src/connection-center/v1/authenticated-freshness.ts",
+      "sha256": "0d27841847bbcdcc2e8cdaf795ca8879ef3228cfad669bd2b0218e73ee5a500e"
+    },
+    {
+      "path": "src/connection-center/v1/exact.ts",
+      "sha256": "641f8352080897be0d50dd2a840025638043835115cdd4d875eea008ec036aea"
+    },
+    {
+      "path": "src/connection-center/v1/http-client.ts",
+      "sha256": "029ccd96fd832a20e836dc162acddc8241a1a963364b30f73f8c83cf43dc3f1a"
+    },
+    {
+      "path": "src/connection-center/v1/schemas.ts",
+      "sha256": "4bf1ae3f1d8e78f681d576e5d67cdddd11490fed4847b25b8f5ad87e7e32863c"
+    },
+    {
+      "path": "src/connection-center/v1/service.ts",
+      "sha256": "c74db9def9ae0fdadec77a4ec18362bce8d13ab41a6663bf60ea13620d231f0b"
+    },
+    {
+      "path": "src/connection-center/v1/types.ts",
+      "sha256": "d830e95f9be2543a8caa1d035248002b7a5ed99b1ef71acdb976f278c0528c85"
+    },
+    {
+      "path": "src/connection-registry/v1/store.ts",
+      "sha256": "514072bbe68ad49f64d3b1befe39cf7e67968e5405c76b2e5b985df36313e0f4"
+    },
+    {
+      "path": "src/contracts/v1/index.ts",
+      "sha256": "e866672fc3fa5e53982c0381bd1398450760a52f6e1bf64c1cff799a616020d9"
+    },
+    {
+      "path": "src/contracts/v1/types.ts",
+      "sha256": "9736705ede2036ef090021d38c97f93b07551214dc0f14084a07363423021d71"
+    },
+    {
+      "path": "src/contracts/v1/validators.ts",
+      "sha256": "b4248d6117b181920b04900c6f8b3dfd909fdc9f3db34381e04e0eee224da9dc"
+    },
+    {
+      "path": "src/domain/v1/authority.ts",
+      "sha256": "aae6eedcff09e809da1476fb2997460272dc5adaecc7860d24da19db7b855b03"
+    },
+    {
+      "path": "src/domain/v1/index.ts",
+      "sha256": "e8ef5d42ef09b05b14540d20cf50767df4f3383adb78b2fc79f2eded49301b9e"
+    },
+    {
+      "path": "src/domain/v1/json-schema.ts",
+      "sha256": "884bccce36299c21e134a9ede39391fa6ad73eff76fec0ec1213677f1f183b68"
+    },
+    {
+      "path": "src/domain/v1/state-machines.ts",
+      "sha256": "849698a15bd66189c446e3e4227cbcdb4d63a9562de20e4307236888b719f969"
+    },
+    {
+      "path": "src/domain/v1/types.ts",
+      "sha256": "c18bddeff605e284a438d1e27f76166e9f76107d27acee10165403d4b42d798b"
+    },
+    {
+      "path": "src/domain/v1/validators.ts",
+      "sha256": "f04bfeb7a16d33e501fad35b90118d363cd636a329937a05f7bbe3d8399f3028"
+    },
+    {
+      "path": "src/harness/codex-v1/private-sqlite-schema.ts",
+      "sha256": "32081a211bade649306fffa882820579cd932c071252ec20e918281a03ebbd76"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/adapter.ts",
+      "sha256": "17b95f581b4d295c37fb27e211fd04af5444ef855dc00fdec65e733b09f0cb2f"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/contracts.ts",
+      "sha256": "b7929f94e6e0a118f147a73d232e7efdd1147c7fe08b8b728cc1ed88cd2cd045"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/execution-handoff.ts",
+      "sha256": "95687b76412a5d36490e28c0324e1deb3723a95fa49754d190698f31fe73471e"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/lease-evidence.ts",
+      "sha256": "6f6d9c67729045ef8db4c652642377e154c9bda83c6013785f31b98de88b1c5c"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/node-runtime.ts",
+      "sha256": "c88324c454e5255be59838551c52945896e39bc1bdd78420ad5de42abd3d3b08"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/observation-reporter.ts",
+      "sha256": "9a8dd3fffdc1c8d0d3beaade51bbd3de9a890010d9147ca2f33be6aecbc8706d"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/protocol.ts",
+      "sha256": "ebe11987056c9eadf08089f13a40651cd4fcad7108859c0410c0628fe05fd971"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/recovery-authority.ts",
+      "sha256": "c923e722146bcfda615a2ce2156eb61651e32df2ad5ebc2dd71017be11112840"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/run-journal.ts",
+      "sha256": "296d4bd6d4ee2c54c15f972af213f82b48698103c7932808d95208693ddd762b"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/start-authority.ts",
+      "sha256": "ddd841699b18ba9893433565fa2d30ca4d6413e6aef48f699f7f6868db3d5602"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/task-approval-binding.ts",
+      "sha256": "8aaf8161d2f503d80f9bbc21c9425fad350bf6470d7410544592c1817298f4c0"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/task-observation.ts",
+      "sha256": "852154f095b6f2256b9ab0de2d06a81dca4c3166a3e883b7c23680b7b47479c4"
+    },
+    {
+      "path": "src/harness/v1/lifecycle.ts",
+      "sha256": "1a4c716e9c484063d0ccb247a8b21bff43735c9a247a7ca999b687a31200bde3"
+    },
+    {
+      "path": "src/harness/v1/native-approval-intake.ts",
+      "sha256": "792c562dff51eeae610dc7eebce3672a117f0c0718a135186f8a0ad8ec21b32d"
+    },
+    {
+      "path": "src/harness/v1/native-approval-packet.ts",
+      "sha256": "1b2fd09e499436d4f1b4221a5ae03c50c16985c4e9dbd28a2c9b781322d19f6d"
+    },
+    {
+      "path": "src/harness/v1/native-delivery.ts",
+      "sha256": "cdf80c4107f3f859ede9dd725e4146186b7276cb34e760076c8366fe148b8698"
+    },
+    {
+      "path": "src/harness/v1/native-http-exchange.ts",
+      "sha256": "1d5755a99ca07513db72886a6479f1f0f953e359dff62120599d5ed7199f4213"
+    },
+    {
+      "path": "src/harness/v1/native-observation.ts",
+      "sha256": "8969bdb09e24267b3b1af6a83b02849a9a419cbd29249b82c1f0ea08c9818c6c"
+    },
+    {
+      "path": "src/harness/v1/native-owner-review.ts",
+      "sha256": "ed76055119b1f8837dbcb5614b4b50f68d1b8c67d0b5b641ce966b7107173506"
+    },
+    {
+      "path": "src/harness/v1/native-run-contracts.ts",
+      "sha256": "300270bba5097ee0c67f51f4233d342905a509508162b4ef9d2e992d4477b709"
+    },
+    {
+      "path": "src/harness/v1/native-run-identifiers.ts",
+      "sha256": "c85952aae1e96eb8f3d83f5ec2e80befb9b16c3f3ab9d6be092483a4cf938300"
+    },
+    {
+      "path": "src/harness/v1/native-task-approval-binding.ts",
+      "sha256": "0a49f77870372c1d5e2135766d990552925b16bc50fd608c10e12ed5de9e8416"
+    },
+    {
+      "path": "src/harness/v1/native-task-registration.ts",
+      "sha256": "46272066c68a02df510be995c259b488ff6f95a24a237b3771dfb4dade7de61a"
+    },
+    {
+      "path": "src/harness/v1/native-wire.ts",
+      "sha256": "8643a62f31dcca45cc38aecace3c6add5bf243d010bcfc9704520b658b4fb48d"
+    },
+    {
+      "path": "src/harness/v1/schemas.ts",
+      "sha256": "b9e5ea8014e5c41fb883f94f0cc011dc095cf66240bd419f565d5f3f05f1f0ce"
+    },
+    {
+      "path": "src/harness/v1/store.ts",
+      "sha256": "00646883bca7c1552301e133ea15d56cd356e0c7b1d5803c9351ae9a3bf9b60c"
+    },
+    {
+      "path": "src/harness/v1/types.ts",
+      "sha256": "6d782874fbb6fed3aad359aac9154b515bc9ae8353a0ecae7e94608826c6a28e"
+    },
+    {
+      "path": "src/idea-lab/v1/contracts.ts",
+      "sha256": "08aea747d8682bb79551bca6a13ed6f7f66a352c0682815776e1a4bc20e84800"
+    },
+    {
+      "path": "src/idea-lab/v1/coordinator-store.ts",
+      "sha256": "c692761aa7ec334e8cf6babb359f4d870908e17ca130eebfa3c125bcf3b1aa80"
+    },
+    {
+      "path": "src/idea-lab/v1/coordinator.ts",
+      "sha256": "e32c7f380b7337afeb20f4aaf81fa34091084cb0480158e46c318a5e84f64832"
+    },
+    {
+      "path": "src/idea-lab/v1/errors.ts",
+      "sha256": "05f6c83b6fa87fab019ef4b7187e7cbb4ccdae1fb98ec32a8cb9c2a2ab531148"
+    },
+    {
+      "path": "src/idea-lab/v1/exact.ts",
+      "sha256": "22f385ad65c62e33a30aa8559d0dd06218bfaf941f3956e5ecc4bcc3835cace8"
+    },
+    {
+      "path": "src/idea-lab/v1/fixture.ts",
+      "sha256": "33f524ca03f2a7e0ac07f5c4b81ba0c68042b661d30cd84a3aff7163a1737f60"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-enrolled-connection.ts",
+      "sha256": "162f12aaf48608503ad221a30b63313349574294b9de099be995944c58244554"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-enrolled-gateway-port.ts",
+      "sha256": "f80f7e90358ab1963b413b125bcd769f40bae317dd788267182e9df79c02df44"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-enrollment-readiness.ts",
+      "sha256": "654be12194d81cee7c36ab166c3682a63cc2cbf70b0e6dc6f759474be4105aee"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-filtered-driver.ts",
+      "sha256": "dea2260909f7e8afd6cf5a2718617e19f42f1f57d7654724c81960a9ba88c78f"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-fixed-operation-set.ts",
+      "sha256": "02e7cc39b395138432b9c1eabd1cd4c93722949aac624dec4abff8ff8143ae7c"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-fixed-rpc-bridge.ts",
+      "sha256": "083e091fbaa87818674ed7dd118828c2f85c107f5165771bae71e5920d920b79"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-macos-connector.ts",
+      "sha256": "81596f38bad42668ab2062a0fd10c014b34e510c04a3a374c55bbed213899dff"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-native-launch-readiness.ts",
+      "sha256": "53bf170810e90cb2f0c3fbb49ee34f699ef7a043a6f0fe4567260cdb802e2e32"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-native-qualification.ts",
+      "sha256": "8ac80ac68304e7eadf6c949f0edc14ac20587060237fb23ad6ad1c95d8174666"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-panel-packet.ts",
+      "sha256": "0eb4ecac4f3adacbd87aa3090dbe9a7f4e9a6e4880b762dc8d783230ccf69dd8"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-profile-preparation-attestation.ts",
+      "sha256": "8c500697e637833442e228fb9ac4c18de74fcd340ba978fc793fc9bd5a277c7a"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-profile-preparation-contract.ts",
+      "sha256": "eec5513d21ed3c838da38fbe4da4994bc5d5645e6401a12cb8c408056c786863"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-qualification-spend-store.ts",
+      "sha256": "7d6aba05404c0cab39b023c1e52cae1a974dd04bcfabcbf21fa945370c93b40d"
+    },
+    {
+      "path": "src/idea-lab/v1/index.ts",
+      "sha256": "f1133732cce1965ce99a27e342ed3e5fa6efbdf3b706f3fafa1bb2be95690295"
+    },
+    {
+      "path": "src/idea-lab/v1/lifecycle-service.ts",
+      "sha256": "2b93e6df17e763962e397882874eee501c8e80684c21d5b3cc219d646860ad6a"
+    },
+    {
+      "path": "src/idea-lab/v1/live-panel-admission.ts",
+      "sha256": "d986bf6e67f446c65ee58b6b4bec78d810f658f0c5360bf8d93d43f82a383299"
+    },
+    {
+      "path": "src/idea-lab/v1/live-panel-authority-store.ts",
+      "sha256": "a3e05920ccdcd6a8dfc1775e74312da6b4fe727c6d3bac6da14cf1f521bf0899"
+    },
+    {
+      "path": "src/idea-lab/v1/operator-service.ts",
+      "sha256": "39246681b4590e19f477d811a209d187772283bab5526e74385713d5fa98d6db"
+    },
+    {
+      "path": "src/idea-lab/v1/owner-decision-service.ts",
+      "sha256": "fb9216b09474c1621454621a8c2291111af46a9af50528f7f605a5ec61b3c387"
+    },
+    {
+      "path": "src/idea-lab/v1/owner-ready-live-packet.ts",
+      "sha256": "a69bc6afcbd958afa46ed078018248fdb773a64e953475c6f0d16bedb0963601"
+    },
+    {
+      "path": "src/idea-lab/v1/schemas.ts",
+      "sha256": "b8e92fc2d6cddf5e5fad435d33a6c37aa726f209720e5679996f60dcf3c46f46"
+    },
+    {
+      "path": "src/idea-lab/v1/store.ts",
+      "sha256": "1369c55addca41b3d065f5cb30df5e93885780669a3b75a59c6b006970d0c9c8"
+    },
+    {
+      "path": "src/idea-lab/v1/types.ts",
+      "sha256": "48830d2c05aff0fae2b9e7bb61fac1c69af4f583c29b1db81778e78de0b38661"
+    },
+    {
+      "path": "src/local-pilot/v1/synthetic-result-wire.ts",
+      "sha256": "558b8ba1921a55fcb9ff0049cceba895bbf9027d6ab93698441b8c6e5b9f8c33"
+    },
+    {
+      "path": "src/node-bridge/admission-handler.ts",
+      "sha256": "f6434bd43f9bf905a348545cc33006b5992da66c50c850bf3071732659381316"
+    },
+    {
+      "path": "src/node-bridge/bridge.ts",
+      "sha256": "c9997e5f4d43de5c1e1db2f648dcf0a68f870b2d7299e9ef55518008d7a86495"
+    },
+    {
+      "path": "src/node-bridge/index.ts",
+      "sha256": "fb9d8275b2d6c05514faf7fdfbbd0ae6d142bc27e294e0dd9d722186c908ca9a"
+    },
+    {
+      "path": "src/node-bridge/job-event-recorder.ts",
+      "sha256": "a7ba50d71f2a5a0db5abc60fc7f79e176c10d8f647b7eac1ddb40a10df71ab2a"
+    },
+    {
+      "path": "src/node-bridge/journal.ts",
+      "sha256": "d962329ddd93d794fe54a571acade9f397c97b2dbdd53873051f6932cc9eb579"
+    },
+    {
+      "path": "src/node-bridge/native-connector.ts",
+      "sha256": "49ca3b7c64d7a1a2e6edc1ca1fd7f22ba5fd57b34cd73a2e3622560cf9a5ae71"
+    },
+    {
+      "path": "src/node-bridge/native-dispatch-handler.ts",
+      "sha256": "da23ec5d2737af6c41501be61bc1c171cb93688f8f4e455e2394211124cdb1c9"
+    },
+    {
+      "path": "src/node-bridge/native-http-host.ts",
+      "sha256": "6b082437994751e58e8cca98d1a08c85dd1efaeba55d0ca59310da841fc0dcad"
+    },
+    {
+      "path": "src/node-bridge/native-https-client.ts",
+      "sha256": "6e913646c3f16a8ca557a0e9e4f29eefa9a0499c36e2ebd9a0347a848c1c7a79"
+    },
+    {
+      "path": "src/node-bridge/native-https-destination.ts",
+      "sha256": "b5eda70273769ddd49d23cc4b82d38e5b376ea0ca2253f3c8dd93dbfc3d16732"
+    },
+    {
+      "path": "src/node-bridge/node-operation-handler.ts",
+      "sha256": "f74a272901913bb6ed1701e5845ac9995abe857958e162d1f4760ed0352005f6"
+    },
+    {
+      "path": "src/node-bridge/protected-store-signer.ts",
+      "sha256": "5f113ad88fe6805dd11dbfa2a9b4ff67783e8a12f5c9d74776b7c0161d4fdbc3"
+    },
+    {
+      "path": "src/node-control/native-task-result-service.ts",
+      "sha256": "2734351b0757ed76f4e401b983b8858d2906bdf4ce653ef8947431eb7b6cbb0b"
+    },
+    {
+      "path": "src/node-control/native-task-snapshot-service.ts",
+      "sha256": "24b7fc04f1337471c6772ba2706568272cec390e18ee0deed74cf015ed1a66b8"
+    },
+    {
+      "path": "src/node-control/server-node-session.ts",
+      "sha256": "2db367bef60c562a9b5aaa6886c31e8f2efca9611326d8f8b5f85ddd294596b0"
+    },
+    {
+      "path": "src/node-executor/artifact-evidence.ts",
+      "sha256": "c4dc725ee16d79b40c1f9c6c87851fcf098e8b6d5067af13fdc127f3c870cd78"
+    },
+    {
+      "path": "src/node-executor/artifact-storage.ts",
+      "sha256": "cb6c7c48e075f7a24004d5c580bcbf412d6c1c2923de199289970e5998c816d7"
+    },
+    {
+      "path": "src/node-executor/synthetic-coordinator.ts",
+      "sha256": "58da9b9b44ae4fee092a026571e5e84329565b6fbaad5ff8d0fa7dabd463ebdd"
+    },
+    {
+      "path": "src/node-executor/synthetic-executor.ts",
+      "sha256": "587823ef94e955f8b823b8edb61438b4379c7fde6075e18b28c5d3acc69193cb"
+    },
+    {
+      "path": "src/node-fleet/v1/authenticated-telemetry-receipt-store.ts",
+      "sha256": "6d83b24585b61685934d6efdfbc3042794977ee4250b8d6a9d0395afa362c53a"
+    },
+    {
+      "path": "src/node-fleet/v1/benchmark-runner.ts",
+      "sha256": "7be1e4702e27b61d7fbd6c39fa635af344dadbbfe63d3f64267732b2d7a080bf"
+    },
+    {
+      "path": "src/node-fleet/v1/capability-probe-runner.ts",
+      "sha256": "cc6b31fdc0bd30b972d4e3e106d8feee1fa6e4cd52a1f143cc05f3cdee13e6ad"
+    },
+    {
+      "path": "src/node-fleet/v1/eligibility.ts",
+      "sha256": "663e4378f418624481ff076e41012ac8445b1883e0be6bad6f912e977900c16c"
+    },
+    {
+      "path": "src/node-fleet/v1/fingerprint.ts",
+      "sha256": "04976bf8b7fda27e7518284dea6919714c895152c15233c8055fcc75db19e151"
+    },
+    {
+      "path": "src/node-fleet/v1/fleet-eligibility-service.ts",
+      "sha256": "119cae34330ecb34ee0ca8cedc9374a91b80b996fc89b642a4176937b4d9ddfc"
+    },
+    {
+      "path": "src/node-fleet/v1/fleet-signal-store.ts",
+      "sha256": "0d7253d5f5c3db46d716426cbe0f206a50a3ca2313344125cc2b9e0271cb3865"
+    },
+    {
+      "path": "src/node-fleet/v1/freshness.ts",
+      "sha256": "f6d5209dc90bfe02c0a24646c4d4d9d168cd23e9dc9b3dda51a44087a0ccd9f8"
+    },
+    {
+      "path": "src/node-fleet/v1/index.ts",
+      "sha256": "6817c01f1fdb114bc59402672c340f4eadc7f251aac22a687ca9e2397e0bb367"
+    },
+    {
+      "path": "src/node-fleet/v1/inventory-manifest.ts",
+      "sha256": "88e0f7f7d4c27d8d78cbaece49c8dbc3c0e4d481cf18d918b3936d842b33f15d"
+    },
+    {
+      "path": "src/node-fleet/v1/rediscovery.ts",
+      "sha256": "9445bd5e7c393e979608aab9e68edc062b2302b52a5eeef99bb3e1516b90f8ae"
+    },
+    {
+      "path": "src/node-fleet/v1/schemas.ts",
+      "sha256": "7612813843f1cfb443666d66ffc6007588054830337bdd83d4d5ebbbf5430a8d"
+    },
+    {
+      "path": "src/node-fleet/v1/static-discovery.ts",
+      "sha256": "c730da3ab4027bc43090eda435879640a3c52b2b676890f35f905273c284eb36"
+    },
+    {
+      "path": "src/node-fleet/v1/telemetry-port.ts",
+      "sha256": "e914945af7d60876e00c7975e8fd7047f5334bc42aef319457a427356c0eb049"
+    },
+    {
+      "path": "src/node-fleet/v1/types.ts",
+      "sha256": "e416ec9176c784434c0b955ea7836a9591dfdddf34d391e3e33707006f809e70"
+    },
+    {
+      "path": "src/node-policy/v1/admission-store.ts",
+      "sha256": "2199802b6c9eed0bc329b5012435f0726dcf4a02dd4ec7d89cbc2f7a9babf82d"
+    },
+    {
+      "path": "src/node-policy/v1/clock.ts",
+      "sha256": "5fb4d0a1f9abebf75b8d880f85f037176b4187f99301d837b900b14aeaf80e8e"
+    },
+    {
+      "path": "src/node-policy/v1/crypto.ts",
+      "sha256": "c3dd2e8f53ceea46f338d38c7719e21929097ddcd8857723c6ff28d060892bc4"
+    },
+    {
+      "path": "src/node-policy/v1/denial-receipt.ts",
+      "sha256": "733a7a95b1b84a708cc73f12a089684e122cb8f1f093c4eb78eba352f2c2834f"
+    },
+    {
+      "path": "src/node-policy/v1/effect-claim-store.ts",
+      "sha256": "4ca59ff552412b5be918a1d81da9b9622b887b90c8261d3b03839cedf800993e"
+    },
+    {
+      "path": "src/node-policy/v1/effect-claim.ts",
+      "sha256": "8f1dfa638d0102210bc6a847534444e0a1a4d7d68b290ede75f31e680c4dbb9e"
+    },
+    {
+      "path": "src/node-policy/v1/encrypted-file-key-store.ts",
+      "sha256": "100256d30758accccef06db6a20d315c855400ebe8f5a56cd5f26265c957c12a"
+    },
+    {
+      "path": "src/node-policy/v1/execution-authority.ts",
+      "sha256": "ca86dac66564e35b0c877fc8657f29a2f4592443ff895e7f7f0c677a7572340a"
+    },
+    {
+      "path": "src/node-policy/v1/execution-state-store.ts",
+      "sha256": "93d73c8207b9a04827c64d1747a8acc59b3b46c590eb02940c83516c68fbd99c"
+    },
+    {
+      "path": "src/node-policy/v1/filesystem-target-guard.ts",
+      "sha256": "9648615bb22ed97951783b47f1d7200a37f4531ecd6fe90bedbcea72319d7e49"
+    },
+    {
+      "path": "src/node-policy/v1/index.ts",
+      "sha256": "da0c6dd059be34b381975b9d9705bf567d3766efee0876e9831bec996e8841dd"
+    },
+    {
+      "path": "src/node-policy/v1/json-schema.ts",
+      "sha256": "26d3b1bad687d943d93d8d47839a28c484c28198304a6ab96b8ce739d66be6f0"
+    },
+    {
+      "path": "src/node-policy/v1/native-key-stores.ts",
+      "sha256": "39e82d948b2179920b65c63751935283367b43d91a6a19a33bd8f712b1ac6f88"
+    },
+    {
+      "path": "src/node-policy/v1/network-target-guard.ts",
+      "sha256": "73f3f86223fb6d4f67223fd1a54ff5b8dd657c00969eaa2cce533fa85a883872"
+    },
+    {
+      "path": "src/node-policy/v1/owner-pins.ts",
+      "sha256": "a07bc29775a204cb2ce5b818f30ac746e23fe9f03bb816bd6d5b14769ec0095d"
+    },
+    {
+      "path": "src/node-policy/v1/persistent-security-state.ts",
+      "sha256": "7143128a8cdc507de866d0655ea693fb6fdba6d44243597db7b5434aec81c154"
+    },
+    {
+      "path": "src/node-policy/v1/pinned-approval-trust.ts",
+      "sha256": "50becdf1776287f4cf55890778589396755cff82272d16ddf7283d111e3ffda9"
+    },
+    {
+      "path": "src/node-policy/v1/policy-evaluator.ts",
+      "sha256": "2f8df7b6c9703506c875b6c31d51473c6798cb964999f44d744b5a2eadf0b4ae"
+    },
+    {
+      "path": "src/node-policy/v1/private-key-runtime.ts",
+      "sha256": "eabb326bc53ae612bf0cd4c8e4daf56b82d12ab38622736617e46c4f3fca8054"
+    },
+    {
+      "path": "src/node-policy/v1/private-key-store-factory.ts",
+      "sha256": "29a6d7044c841bfbb6fe017abeef8f94d3a7db802994e5d19b131cabed369111"
+    },
+    {
+      "path": "src/node-policy/v1/provider-selection.ts",
+      "sha256": "5410b29a1aed811fc1445bbcedf8cb98e7fb2cd923cdea45c910919cbfe371d5"
+    },
+    {
+      "path": "src/node-policy/v1/schemas.ts",
+      "sha256": "e4b5d626e95c06a74f4d444bf7f517d7470edb4a9f34d5a39e2f35291b72f90b"
+    },
+    {
+      "path": "src/node-policy/v1/stores.ts",
+      "sha256": "a11400e2f1f29af2011b0c27fc581362d0b0a1b80259823e07f70c5e8f39255a"
+    },
+    {
+      "path": "src/node-policy/v1/target-guard-errors.ts",
+      "sha256": "73ab262d5de91fc34469f115248f835ded7f5606c5a8c596f5a50cd1f4d1ac09"
+    },
+    {
+      "path": "src/node-policy/v1/types.ts",
+      "sha256": "23df388148f07ce830080f6bf2663ad5686a8499fffeb00335fc9234488a0050"
+    },
+    {
+      "path": "src/node-protocol/v1/authentication.ts",
+      "sha256": "90195c2d9fff39a3441910c995dd075d1887f46439b82da438a91c159cec1a8b"
+    },
+    {
+      "path": "src/node-protocol/v1/crypto.ts",
+      "sha256": "756485fa2144dacf8cc5234bbf476177a17a3a9fe3c0f4a89dc87050aee4b08a"
+    },
+    {
+      "path": "src/node-protocol/v1/index.ts",
+      "sha256": "820e7c22b82c7b5b4c344ed2acdfb8b0eb22b14e4670f7f80002b7e105a798f0"
+    },
+    {
+      "path": "src/node-protocol/v1/json-schema.ts",
+      "sha256": "4a43b1b905bc15fa4c53c468e01af5162c3b1d60b9665e9d88e4d13bfd87c5a1"
+    },
+    {
+      "path": "src/node-protocol/v1/persistence.ts",
+      "sha256": "11acb94de138acc58a58c96d52e9454a50cf1f845a689ba1905d53a4dfa5efaa"
+    },
+    {
+      "path": "src/node-protocol/v1/rate-limit.ts",
+      "sha256": "84b4183663e948fc238fc9e4fd9d48ca7ae6c7c8efc96f83d92209f5cb548bed"
+    },
+    {
+      "path": "src/node-protocol/v1/schemas.ts",
+      "sha256": "19e7554f32355e3215a7197dcca563069bdcd4f53e7d7d9f72958eb7cc51dd3e"
+    },
+    {
+      "path": "src/node-protocol/v1/types.ts",
+      "sha256": "9ccf5f45589bdd2854a811e01206532640a97e9e9dbb61b3cc33685dfe65c6b4"
+    },
+    {
+      "path": "src/node-protocol/v1/versioning.ts",
+      "sha256": "72f51e800c4bccaffea90c98e07d28e24cab1f0c1934d8e5079082d41116175a"
+    },
+    {
+      "path": "src/operator-surfaces/v1/http-client.ts",
+      "sha256": "63dee35370142185fe827deb9c578fe106e752b804bcda03432fab7db240bc7a"
+    },
+    {
+      "path": "src/operator-surfaces/v1/index.ts",
+      "sha256": "0d16776266ac1a86bfcccd0703666167de10c7aaf26cf3c5924107c717d4fe35"
+    },
+    {
+      "path": "src/operator-surfaces/v1/owner-focus-command-service.ts",
+      "sha256": "6d67f78b3a3192050c581d873059773b5d62bb49e4e2d82c43e336a483ad8b00"
+    },
+    {
+      "path": "src/operator-surfaces/v1/projections.ts",
+      "sha256": "dabbd45cc7ef590f795b7179eec3f769bc7c2ef74777998eb82c78704ca41500"
+    },
+    {
+      "path": "src/operator-surfaces/v1/read-service.ts",
+      "sha256": "3018b24406b6035dc497b3f0ce7e82e7510a9a7d18466575f43b6e7aad6d3c10"
+    },
+    {
+      "path": "src/operator-surfaces/v1/store.ts",
+      "sha256": "cedffa7e32366e311b1d60351319593b8176a2849f60e710eb7490f0b70f849f"
+    },
+    {
+      "path": "src/operator-surfaces/v1/types.ts",
+      "sha256": "053d24fe59c9194b21878f181702d6cbfbc83615c3c789dc526e293fb114df9e"
+    },
+    {
+      "path": "src/operator-surfaces/v1/validators.ts",
+      "sha256": "272c9b5c9e437db6916dad6fb568546e8517c3f192018e1dcf723f8eba82c9d4"
+    },
+    {
+      "path": "src/persistence/canonical-store.ts",
+      "sha256": "2809f905c1d7b07eba39368da9048ce30e190848d115f9b49ff7db9c819a46c8"
+    },
+    {
+      "path": "src/persistence/database.ts",
+      "sha256": "6b122a7ba367976fa68f7f0344307dc65e3cc29df345689e8854a833f9de515d"
+    },
+    {
+      "path": "src/persistence/native-task-completion.ts",
+      "sha256": "08092a9e70e021b6db11843d704557796604a88751ac1fc06ea950cd96e2bdba"
+    },
+    {
+      "path": "src/persistence/native-task-submission.ts",
+      "sha256": "1042c0fe9ccda7fb14ed296d8d5db5c67e01f29a53dfa83f5080a894316f1ef1"
+    },
+    {
+      "path": "src/persistence/operation-signal.ts",
+      "sha256": "f08f4f04f3c77841535586825f1001531d0cf8db2ba6aa0d90ce39ee3a185989"
+    },
+    {
+      "path": "src/persistence/pg-boss-application-permissions.ts",
+      "sha256": "ba7361fb5d5f4dd57e4955f03b8bfe46fad4a10f22920c901627d69adb4cd96f"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-permissions.ts",
+      "sha256": "5e049dcbce34a0d28077c5b26c1947bd9b042ced2300c3677fb3fca482d61c89"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-runtime.ts",
+      "sha256": "b93f96991bff5a6e7cf50e08f307f0fd14f3963e277563022748c5812b55a81f"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-submission.ts",
+      "sha256": "20b342a21e47577b855e534a6a54ce0b1f8be2fdce421183ab975b77a377f817"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-worker.ts",
+      "sha256": "0fbe9f1a295b698a207c6ac15ad94bd42281e561ead4c814261188953191fa66"
+    },
+    {
+      "path": "src/persistence/pg-boss-schema-inspection.ts",
+      "sha256": "e27162b81482a1f23629264b8bb2f877b6eef866d35e8960548e01475c845a55"
+    },
+    {
+      "path": "src/persistence/pglite-provenance.ts",
+      "sha256": "773145d225c468fd578f5f5cf8d6116b9053f0617bb8ec5025ad2afb501df900"
+    },
+    {
+      "path": "src/ready-frontier/v1/automation-schemas.ts",
+      "sha256": "331409ce58355d221155a54b323fa609f5929efccf125aaff94e96cc61caa9ac"
+    },
+    {
+      "path": "src/ready-frontier/v1/automation-types.ts",
+      "sha256": "312f37d6038a4f3f1fa4b77acbb5c143d0165912dd418bef4151f626994d6178"
+    },
+    {
+      "path": "src/ready-frontier/v1/controller.ts",
+      "sha256": "448dd1092b4835158f2d3280c223d5c116560685ecdcf3fb664deaaff747a903"
+    },
+    {
+      "path": "src/ready-frontier/v1/cycle-projection.ts",
+      "sha256": "e58ef46374ac312b91df8af82ca7f09b7d03150363736b010cd917c84782fda5"
+    },
+    {
+      "path": "src/ready-frontier/v1/durable-store.ts",
+      "sha256": "223dbd382e06116cab459064da26027fd51c4953fcf5396635425ed503a53027"
+    },
+    {
+      "path": "src/ready-frontier/v1/errors.ts",
+      "sha256": "933424c2c4e78461e3046345c766d612885e75d2d67ee926c7a905d31630c37a"
+    },
+    {
+      "path": "src/ready-frontier/v1/exact.ts",
+      "sha256": "1745dcd1c5d081f457b71ef0bfc9e16f4c062b6c822787c823dac8c110b35bab"
+    },
+    {
+      "path": "src/ready-frontier/v1/integration-schemas.ts",
+      "sha256": "2b8f442e47149ce45c36bb5f64ac783ded83819342512d07f4a93d4129e50759"
+    },
+    {
+      "path": "src/ready-frontier/v1/integration-types.ts",
+      "sha256": "5684522c40af0d1e230b081c8544fa376f5c4c6e73b7cea58dcb1f66b7a98890"
+    },
+    {
+      "path": "src/ready-frontier/v1/materialization.ts",
+      "sha256": "3c3d1f6788cd3e8061f8b1abefe1bde2d2f97ab9111c470de648ade7afbd879a"
+    },
+    {
+      "path": "src/ready-frontier/v1/no-relay-coordinator.ts",
+      "sha256": "4982ac247d971b688d2872cad5e48857fb8bd30a5e0baff4b05773c7610b9003"
+    },
+    {
+      "path": "src/ready-frontier/v1/no-relay-schemas.ts",
+      "sha256": "acfd2c85f02ff9b49af3e1ee355ee749bcbd5a3d97a53536eae8904f263a4a23"
+    },
+    {
+      "path": "src/ready-frontier/v1/no-relay-types.ts",
+      "sha256": "5656eb9c33d2f923d3d8f2f6d9caf8b9136d89eb378919ca4fd2d7e13a2ce096"
+    },
+    {
+      "path": "src/ready-frontier/v1/no-relay.ts",
+      "sha256": "3c08f63f924d6a05087f6473ee4552aad367f58fcb7710c181569220af91dc15"
+    },
+    {
+      "path": "src/ready-frontier/v1/promotion-service.ts",
+      "sha256": "00474bda6622f8f6b906277390295de315c64e864b7936cf69028b59ee4fce44"
+    },
+    {
+      "path": "src/ready-frontier/v1/promotion.ts",
+      "sha256": "4450a8dc866fadb41ec7b4f04ec11b4eecfd4d8bf7fcf6641898ecfdfaec5895"
+    },
+    {
+      "path": "src/ready-frontier/v1/ready-policy-schemas.ts",
+      "sha256": "e79614d0aa970854294845ba78f62eacd4219c35bae2af561103158e36fbffe1"
+    },
+    {
+      "path": "src/ready-frontier/v1/ready-policy-store.ts",
+      "sha256": "97d101afcdd8094b0eaba38d4510010cd465aaaed58a595e9606bf5610d83f29"
+    },
+    {
+      "path": "src/ready-frontier/v1/ready-policy-types.ts",
+      "sha256": "894bcd5dc734a7c31cadd8892956587be041f077bc640ed2d7e806ceb61727be"
+    },
+    {
+      "path": "src/ready-frontier/v1/ready-policy.ts",
+      "sha256": "89933279d522e7100bcf3247a538a118fa410d9718348dd5d9a10a4bd0babc5b"
+    },
+    {
+      "path": "src/ready-frontier/v1/schemas.ts",
+      "sha256": "fd6cdddb6e47a2742ea1390b0e895b33d0f2eb363a9f090c89bb9c61c18697c3"
+    },
+    {
+      "path": "src/ready-frontier/v1/standing-policy-store.ts",
+      "sha256": "69a9ee6acca400138ad1a4574d0a2df697724e5b6312366e630256e6f20775f7"
+    },
+    {
+      "path": "src/ready-frontier/v1/standing-policy.ts",
+      "sha256": "cbed52cd0e997d23016c9423b84b7db818fac85907fc34b45c42b78ae93cc966"
+    },
+    {
+      "path": "src/ready-frontier/v1/types.ts",
+      "sha256": "1ea0c5c57692834b5d47b3f80298abb8712a312e0a98f882feb7c8628f001b0b"
+    },
+    {
+      "path": "src/scheduler/v1/allocation.ts",
+      "sha256": "b8801e5e05c69e74b274538fd73f3e2a2b3d4e12974985f7f0b1c530ea6f2067"
+    },
+    {
+      "path": "src/scheduler/v1/availability.ts",
+      "sha256": "19c72a84697a9857f132347249b66fe09f9fb5e38e46634b33d2dc94ebbe3467"
+    },
+    {
+      "path": "src/scheduler/v1/bottleneck.ts",
+      "sha256": "a542ce696da038f18fa78a8cf696a5ef0404cc1c998a892a1a2fb59377c9c684"
+    },
+    {
+      "path": "src/scheduler/v1/budget-store.ts",
+      "sha256": "2b60e3da3ccba64efef3cb4fb125e227c9950d42ce5609f74941bed4cdc9ec0f"
+    },
+    {
+      "path": "src/scheduler/v1/constraints.ts",
+      "sha256": "06610f2fba421589bfa7510c3d99270a2a3252e7a4274c46ab4df8c5fda425ac"
+    },
+    {
+      "path": "src/scheduler/v1/index.ts",
+      "sha256": "8648facf0dd8086a6835ee923cd5e9fdb21400c4e745c0101b4589ece89cb1ff"
+    },
+    {
+      "path": "src/scheduler/v1/placement.ts",
+      "sha256": "48be3987789c72699b5779bd1f58d17adb0b4d5fc6f3d19b62eb5a95b2b289ea"
+    },
+    {
+      "path": "src/scheduler/v1/reservation-store.ts",
+      "sha256": "e6c60448af0733cae9b4c21e5362feb733c118391120ec9eca8723b2c0855936"
+    },
+    {
+      "path": "src/security/canonical-digest.ts",
+      "sha256": "417a63c7c1a7ee0f8cd9d4b05955a3ca375811de00acdd1ae8a488a971c1a9ee"
+    },
+    {
+      "path": "src/security/digest.ts",
+      "sha256": "d25f3461802cc8c534e01da4042da7575b4f7fb0c9626b62eba3a410e2697b18"
+    },
+    {
+      "path": "src/security/host-value.ts",
+      "sha256": "307943dd689efbd26f70a821227bc5216466ca11a52baf8d59744580e7834062"
+    },
+    {
+      "path": "src/security/index.ts",
+      "sha256": "8910c49ce57ee0a686aafe60872a48b013b3d0ac64b388dd67c3636a324b78b5"
+    },
+    {
+      "path": "src/security/policy.ts",
+      "sha256": "40039c56371c41e5d6db0957679d5ff1d06ab4266621421f5d9e588fdc52e91f"
+    },
+    {
+      "path": "src/security/redaction.ts",
+      "sha256": "4978844c2b43ac2df863e392fcfb08dc3ea1ce4e49874b87a5a4305603e2a13b"
+    },
+    {
+      "path": "src/security/rollback-checkpoint.ts",
+      "sha256": "f9d44375791b27052524aae5b84aba5452e68e71dc67d8751415c8c26e97b6d9"
+    },
+    {
+      "path": "src/security/safe-error.ts",
+      "sha256": "ef9cc4fbbc468c1bde5f342d5e6375de99ecf0bc25f4f30c9d6c327374c1f499"
+    },
+    {
+      "path": "src/security/security-store.ts",
+      "sha256": "88e9fb6c0e84a1536fdf83becb1374daefbea3e20643b6c5abe2f3013088486f"
+    },
+    {
+      "path": "src/services/v1/incident-store.ts",
+      "sha256": "a3e0a48b9681a90289f27fea61afea84fb9036864c0ca0a14cf1893a00abaf33"
+    },
+    {
+      "path": "src/web/v1/access-key-cache.ts",
+      "sha256": "957522108a0c0f8b0bb6d9e363dbd071e16a5a7159133e84a54b8ae7d9fbf0e9"
+    },
+    {
+      "path": "src/web/v1/access-verifier.ts",
+      "sha256": "4f530f5add22cce9b3f50474870368121c31d4490b949877c66d72447cbe0298"
+    },
+    {
+      "path": "src/web/v1/bounded-database.ts",
+      "sha256": "65255b968dbb1f26b03e668de67bc9332cad17d0793bfb364930d0812e9548d4"
+    },
+    {
+      "path": "src/web/v1/browser-client.ts",
+      "sha256": "fba27d5e65ed4fb6322c0dd8829a5d9776a69e1049ceeafd3b9967b6304006c4"
+    },
+    {
+      "path": "src/web/v1/browser-json.ts",
+      "sha256": "fd26314fe3d31c353e0880e80711132adb91c51bef8c934ae0033cd4d738cd5b"
+    },
+    {
+      "path": "src/web/v1/connection-browser-client.ts",
+      "sha256": "59211cade015a179c04231590a2d979427b57608b8959a2e834a5be50bb4a6c3"
+    },
+    {
+      "path": "src/web/v1/connection-service.ts",
+      "sha256": "85dbfd01826f08819ba8fed560b9fb07a66febd7706f24fe088d79b2b443001f"
+    },
+    {
+      "path": "src/web/v1/http-common.ts",
+      "sha256": "3d8372bf7b297d23e56a3578f7a979248acaf50f21c349ebd02de5292f4801a6"
+    },
+    {
+      "path": "src/web/v1/installed-native-queue.ts",
+      "sha256": "28dbdc5baa5de7d7f239f35e14b941e5710c18ac43df625fdc96e4d9f4fd8164"
+    },
+    {
+      "path": "src/web/v1/managed-native-input.ts",
+      "sha256": "6ca28b5fdacfc5b1941fb8518e74f10e86e297c6186b0b57eceed407b789e7e4"
+    },
+    {
+      "path": "src/web/v1/managed-native-sessions.ts",
+      "sha256": "8d983466724643f93ec152f8b9238aacf224e218f6b642582328f68d38994f88"
+    },
+    {
+      "path": "src/web/v1/native-approval-packet-store.ts",
+      "sha256": "d62a23c0d0e4e6e5dc0631cdfca607e8285e4fd912aa22a99e579644e7369e1b"
+    },
+    {
+      "path": "src/web/v1/native-delivery-envelope.ts",
+      "sha256": "659a9efe2ecb8c4a1659acc5880b1a81388685d71da576a9b1d02f67cc708ac2"
+    },
+    {
+      "path": "src/web/v1/native-delivery-preparation.ts",
+      "sha256": "9cca0e9431d870d7932bb664bb4af13140474c824ace0c6938b34a64e578d2f9"
+    },
+    {
+      "path": "src/web/v1/native-delivery-receipt.ts",
+      "sha256": "20f17fa9bd1dc49786a7f527b39a70d2ad7f24f368cc2104ea8328a4cc58e135"
+    },
+    {
+      "path": "src/web/v1/native-evidence-receiver.ts",
+      "sha256": "8279a737fb165326a732a040328590e40ba7ea645fff71fb1ec5a65dfd1d0c4f"
+    },
+    {
+      "path": "src/web/v1/native-http-host.ts",
+      "sha256": "31fe7cd346d50e34dcd277a1431a42208f18bd75f8cbcece4991b50346f1342c"
+    },
+    {
+      "path": "src/web/v1/native-http-node-handler.ts",
+      "sha256": "f069954978b44089fa9f2c73ae6c5a7ca0595465adaded0c103189f8f11ce5cb"
+    },
+    {
+      "path": "src/web/v1/native-https-service.ts",
+      "sha256": "37f67f859ff0a53002fbb42742ddc769950c4b9f45a6b9f4bb80ecb4dce9a34f"
+    },
+    {
+      "path": "src/web/v1/native-queue-authority.ts",
+      "sha256": "26cecb9b96d60b7d0eba8101e15493c347a8b72089672b0aba466caf98280393"
+    },
+    {
+      "path": "src/web/v1/native-queue-worker-startup.ts",
+      "sha256": "b46b1dc78a3835aec33252f232dee3cafc7dcc360d629b3b37c552070e4bb878"
+    },
+    {
+      "path": "src/web/v1/native-task-queue.ts",
+      "sha256": "1d4b0a7a9d32289ed101225a45d9aa3da281dd1c38c69bfb40991ffe4186935a"
+    },
+    {
+      "path": "src/web/v1/native-transmission-intent.ts",
+      "sha256": "fc14648c84e74b207e51c095afa69fa806e157824ea15130b2a1104771978725"
+    },
+    {
+      "path": "src/web/v1/private-assets.ts",
+      "sha256": "8d075f8d34778da74fecb937ccccbee61f94c26d676900a9ee43f17fc610663f"
+    },
+    {
+      "path": "src/web/v1/private-database-preflight.ts",
+      "sha256": "13dc4e536c4373cfa0663a3c7f8eb780e2736f21758e4abbe803f2383df3fb87"
+    },
+    {
+      "path": "src/web/v1/private-database-rehearsal.ts",
+      "sha256": "d74c3f2bfdaea0840acf20a63e584fd8406ee0398b00e99f765b776fbf988bbe"
+    },
+    {
+      "path": "src/web/v1/private-fixture-preparation.ts",
+      "sha256": "0fe8e61c10c9e969ff1c44fd459807560887ef8417d7888dcc690d41f8c051ce"
+    },
+    {
+      "path": "src/web/v1/private-host-lifecycle.ts",
+      "sha256": "bfbcca4dcc218514c0e04a10127f51fe9eb49a395c700a2ccdb2715d538794ae"
+    },
+    {
+      "path": "src/web/v1/private-host-shutdown.ts",
+      "sha256": "962112da95badbeae33de1c41c57faeeb1fe54d50282be8e36ea8eff5c302573"
+    },
+    {
+      "path": "src/web/v1/private-node-handler.ts",
+      "sha256": "4ddd4857b6a6a739d24559ccc1a934ab60fbf967275908dc24567172f2f73cf2"
+    },
+    {
+      "path": "src/web/v1/private-postgres.ts",
+      "sha256": "ca388a9b5334daa94e92a38f5b5eb144c1ab6b4bb5b318b9c64be85a05e9cd34"
+    },
+    {
+      "path": "src/web/v1/private-process.ts",
+      "sha256": "146316ca71b9ade91686fc10ed6362a0a5e437e8a9323e96f37d6d3ea78b95e9"
+    },
+    {
+      "path": "src/web/v1/private-rehearsal-checks.ts",
+      "sha256": "0ea483c77246860c482ddd1e53d70beddd517d6192df03d02a7dff081f18b31a"
+    },
+    {
+      "path": "src/web/v1/private-rehearsal-fixture.ts",
+      "sha256": "6ff8a577e5ab7c3b39fe96ee1ef93fb2630ebb98b73f4fcd4bb0af0caeea3e1a"
+    },
+    {
+      "path": "src/web/v1/private-rehearsal-probe.ts",
+      "sha256": "c89ddfb7200e23bd1128b074ee08f58f22a8d74b83eacbc2f812971dc195992c"
+    },
+    {
+      "path": "src/web/v1/private-serving.ts",
+      "sha256": "11549c54528dadc4b988427baca800c2bbd486cf2bfb56834738bc0ce9c3fdfe"
+    },
+    {
+      "path": "src/web/v1/private-startup.ts",
+      "sha256": "03da24a90923257e8faad6ebd7b27c0a07ee5d3c7ef989f61abb309bcc4d05c4"
+    },
+    {
+      "path": "src/web/v1/private-task-application.ts",
+      "sha256": "fea08077198c8015e9d1d9f7619f0c3420eac54be7b4f25975d9a3cc73fe0c11"
+    },
+    {
+      "path": "src/web/v1/private-task-host.ts",
+      "sha256": "1539cd0def82d51b03e32acb1f9d114a886dbcb39f0976de8cc3188a63e45e0a"
+    },
+    {
+      "path": "src/web/v1/private-task-startup.ts",
+      "sha256": "20266faa3a400b1b494e55f9b3d54de2867eac2beaa16ee801b387fa57cd6b62"
+    },
+    {
+      "path": "src/web/v1/private-task-worker-application.ts",
+      "sha256": "f7bea75e897e1e16a331bda5375cb461abbb405a176bd7bdaea7e47a695c2b4d"
+    },
+    {
+      "path": "src/web/v1/project-http.ts",
+      "sha256": "15b391f73800d8247a0f39cd00eb6e36b76800bd234c93b20c3c04e58bd92819"
+    },
+    {
+      "path": "src/web/v1/project-service.ts",
+      "sha256": "bb385d9828c1ce74b4e65d419f78b6634905a1156e3c0ac74291548df4475de2"
+    },
+    {
+      "path": "src/web/v1/project-wire.ts",
+      "sha256": "2058c793ea42e3ea9a969c3511d8c98c8b2474720c5805db402429ba22e8838a"
+    },
+    {
+      "path": "src/web/v1/queue-attention-browser-client.ts",
+      "sha256": "644ef54d7c6a55c9244408d6ad9f48d84aa2656e96d78b4dae0c215547c93431"
+    },
+    {
+      "path": "src/web/v1/queue-attention-wire.ts",
+      "sha256": "30393e668dc28c012baea59ccea907ed8649671a16cdd6592faafa5037b78c23"
+    },
+    {
+      "path": "src/web/v1/session-authority.ts",
+      "sha256": "db85de9fe29a111d5178e9d0570f34ac8547a5d43d55ce28101d49e2a71fc12b"
+    },
+    {
+      "path": "src/web/v1/task-approval-browser-client.ts",
+      "sha256": "3dd8a221221af98f83128b0473441eec3fca6a6e61e2f047ea31a2363988c8e4"
+    },
+    {
+      "path": "src/web/v1/task-approval-editor.ts",
+      "sha256": "83b419c23950c161b5eb1381b4c2c0fa80009e102ae1e606021c1f3e032a45d3"
+    },
+    {
+      "path": "src/web/v1/task-approval-http.ts",
+      "sha256": "02d72b8a3c13f6f928168888cd15da7ba15daabcee05886e2cb63cfc8085cefa"
+    },
+    {
+      "path": "src/web/v1/task-approval-wire.ts",
+      "sha256": "2d4a1212e6b101811318051edeb0e87c233088b1a3dd73b36dce4ea934647b13"
+    },
+    {
+      "path": "src/web/v1/task-assignment-browser-client.ts",
+      "sha256": "7f7f3b0bbb87e1f69a8c9dd5b2eefb65c098b5de6d8ddb6ab2a38ef8f0f3d943"
+    },
+    {
+      "path": "src/web/v1/task-assignment-coordinator.ts",
+      "sha256": "18d49dd97aa4b893b1c751df0155752e916d00208e5ed3cdb6a444b455bd9d99"
+    },
+    {
+      "path": "src/web/v1/task-assignment-wire.ts",
+      "sha256": "44e6f33589c838f9b8c983c35fbd3b5aab956b1f906693e085732c88442e6cef"
+    },
+    {
+      "path": "src/web/v1/task-attention-wire.ts",
+      "sha256": "dacad89cb6f5d16ed2aecfba72cec051af389d2fdcf76f437dc2614fa2396800"
+    },
+    {
+      "path": "src/web/v1/task-browser-client.ts",
+      "sha256": "0a8b70546e409f63b9e4c05b85bff4883ba25057ba7017cb5a54a8d65ad43849"
+    },
+    {
+      "path": "src/web/v1/task-coordinator-interruption.ts",
+      "sha256": "a5ccb6aa47bbc037519bd4bec41fae003c1f37c38145bf0ee832e207e136d5cc"
+    },
+    {
+      "path": "src/web/v1/task-coordinator-lifecycle.ts",
+      "sha256": "cc2be826d099fcf58ac9e81ffd4a335d8c3e365e0e6b1cbf75bfc58d6e7f0d4b"
+    },
+    {
+      "path": "src/web/v1/task-delivery-wire.ts",
+      "sha256": "701dc1e3ed41b4f88c1eacf127db6229edbe37a72ce6c50dd0c8feb925085376"
+    },
+    {
+      "path": "src/web/v1/task-execution-planner.ts",
+      "sha256": "efda4867092b82abdc55b5238efdc6297dd54ba3c822c84420dfbf740389d2d3"
+    },
+    {
+      "path": "src/web/v1/task-http.ts",
+      "sha256": "8769337a35bdfa25233ca71820609aa707d0ca7d5a0c75cd66b06c2f29154a1d"
+    },
+    {
+      "path": "src/web/v1/task-planning-browser-client.ts",
+      "sha256": "718b7a0ea94ef0acac7c68c9f540c7a99dfc3dc1e9a3e452438d05e4eefde615"
+    },
+    {
+      "path": "src/web/v1/task-planning-wire.ts",
+      "sha256": "516e469b2e373bf3a172427d4a3418d9a6ca4935057bc0d6669944ded450fab9"
+    },
+    {
+      "path": "src/web/v1/task-quality-coordinator.ts",
+      "sha256": "397173e1ec9b95b47a55f515676b10394a34cf966f00daa7e1375d3ae4a7adcb"
+    },
+    {
+      "path": "src/web/v1/task-result-coordinator.ts",
+      "sha256": "da9e2dea7a0c372c3d7c163c22df4e46ea750d0f634a13a5df2c5a584097ef5b"
+    },
+    {
+      "path": "src/web/v1/task-result-wire.ts",
+      "sha256": "3813e961ef414b405d7870347d2cfc97ef6134c80c47609a008873f5fcc08828"
+    },
+    {
+      "path": "src/web/v1/task-review-browser-client.ts",
+      "sha256": "a915a8b0b02b008ecd9c810fd36b73dc1a887e6289ec428ff4b5bba71bba925d"
+    },
+    {
+      "path": "src/web/v1/task-review-service.ts",
+      "sha256": "d3f8c6adcb365cecc11968d985800cb4d32223afbdc65dcbe42f65fee03e861c"
+    },
+    {
+      "path": "src/web/v1/task-review-wire.ts",
+      "sha256": "036136ca78e592bfb6e86357a3eb34bba11e1e3aaee1684a52fc2dd4e34273e7"
+    },
+    {
+      "path": "src/web/v1/task-review-workspace.ts",
+      "sha256": "fea0d36e1e7bcb32f04c7269cf790ec0fa9798a829b93c9bba4fddf5334fb9eb"
+    },
+    {
+      "path": "src/web/v1/task-revision-browser-client.ts",
+      "sha256": "6216974bb74869409b3c4c965a0293be5dc434e214448b0b60efedb6f0b9f0c0"
+    },
+    {
+      "path": "src/web/v1/task-revision-operation.ts",
+      "sha256": "2e3ec182ae9dd00473d2a08e15fe61a5db383c37dbf5670321c00f67a606dbcc"
+    },
+    {
+      "path": "src/web/v1/task-revision-wire.ts",
+      "sha256": "35a4ffb85f172ed9054e3720b6b612ff270d8d61eafadfe6e03f57442527bf5d"
+    },
+    {
+      "path": "src/web/v1/task-service.ts",
+      "sha256": "26c49fa1bc808b287e64619134e5c03f25e69a41395733d6b2ed409188736aa8"
+    },
+    {
+      "path": "src/web/v1/task-submission-browser-client.ts",
+      "sha256": "344a96a44e06ad383a32ff46475ad29069175d3320b7875f83a04d0009ea8008"
+    },
+    {
+      "path": "src/web/v1/task-submission-wire.ts",
+      "sha256": "ba93446fa246726e7f293c087dceae0c4b020cf14fa7d3d94f433c9a7a750c4f"
+    },
+    {
+      "path": "src/web/v1/task-verification-browser-client.ts",
+      "sha256": "20289b8c6ed3545d4a08ee852ba2eba47163cd371aabbf585e8e3206287f20f7"
+    },
+    {
+      "path": "src/web/v1/task-verification-service.ts",
+      "sha256": "b03f1a44ddd5a9293976d5827fc408c08ffc5fcfaea2530b2c9475b59f5d259e"
+    },
+    {
+      "path": "src/web/v1/task-verification-wire.ts",
+      "sha256": "53acac2f7f7f01f062ee5bba7a2857b034e1a46c42f2bede90a1ab40f32ce799"
+    },
+    {
+      "path": "src/web/v1/task-verification-workspace.ts",
+      "sha256": "745fa42c27256acf21baf01d2610ff8d31a2ad4d7f29d928d08c67a798c96a0b"
+    },
+    {
+      "path": "src/web/v1/task-wire.ts",
+      "sha256": "07a4c2f857f9fa80dbfb2d865f0f42a37f1eda26e8ae7d7e690487f05c89710b"
+    },
+    {
+      "path": "styles/control-room.css",
+      "sha256": "af4cff91b7d8f89031d9b0f73b4333eac20ac92b0b4724fae3773ed07cdbe0ea"
+    },
+    {
+      "path": "tests/helpers/canonical-approval-storage.ts",
+      "sha256": "f8d4f7831c4246443365f9ded4936a9e2fc14c544300c3be46d9d89ea7df3db3"
+    },
+    {
+      "path": "tests/helpers/native-lease-evidence.ts",
+      "sha256": "f9f7f3dbd4f1ab33f0d3be4c393ecc54338d695a8f579d26671255b43574ba07"
+    },
+    {
+      "path": "tests/helpers/native-quality-completion.ts",
+      "sha256": "32429d1a952c0833d0e62b6669acacb06148d65872746d345a615a1909fc708c"
+    },
+    {
+      "path": "tests/helpers/native-revised-result.ts",
+      "sha256": "c233ec8087163026907db156fb5f0ab725cd4da4fcea895432ede554e08b218e"
+    },
+    {
+      "path": "tests/helpers/native-start-authority.ts",
+      "sha256": "19aa3cf5a5ab727537009befd641ae948afcdef8d6de838f2b9901a602330ab1"
+    },
+    {
+      "path": "tests/helpers/native-task-lifecycle.ts",
+      "sha256": "fa84170c474a38f0765231a11b698374f115740dae0f168f576418be2c4aba5d"
+    },
+    {
+      "path": "tests/helpers/task-assignment.ts",
+      "sha256": "630b0b5ffa167b87f743696adffc9361f05e7fc0acec5b6614cfce9bf6d1dea2"
+    },
+    {
+      "path": "tests/helpers/task-startup.ts",
+      "sha256": "d7cff61275f84814e5be21ab147f9baaea055538fe8676a85fe23859a1d39f46"
+    },
+    {
+      "path": "tests/helpers/web-connection.ts",
+      "sha256": "2d39170f1081e6330e4ddcddd3affaae52974d7e705e388c4fd19a5370e7b32f"
+    },
+    {
+      "path": "tests/helpers/web-foundation.ts",
+      "sha256": "fec5640bffbed59635690fd99fa0f62bc1a83699c69c95f59346dff04ab906cb"
+    },
+    {
+      "path": "tests/helpers/web-idea-project.ts",
+      "sha256": "56526fd4069afcf912396d7b3fa28d07d27d7baf4cebdbf1c60dd9d46c28bcdf"
+    },
+    {
+      "path": "tests/helpers/web-native-result.ts",
+      "sha256": "d4c42b3311fcf306956cf5dfaf62e1bf4be868f85cd61a8c9666da4c05ed8313"
+    },
+    {
+      "path": "tests/helpers/web-node.ts",
+      "sha256": "c8aecb9fe205c462f802512b2f90e56cadde56257a2ff44b207921e38cf581e1"
+    },
+    {
+      "path": "tests/helpers/web-owner-review.ts",
+      "sha256": "21e4fe05e77102ff38f7e3eec8e979689fa1f2b3241880d8be58d55b7a2e3966"
+    },
+    {
+      "path": "tests/helpers/web-startup.ts",
+      "sha256": "7212d200cc3aaac80ac838a730967847b870efeed96b3a3a53facac0b0c0d474"
+    },
+    {
+      "path": "tests/helpers/web-task.ts",
+      "sha256": "442b8a083e44a4504816ebaca45cdb8523c9f33403d1bef692ad9f33b9da44a3"
+    },
+    {
+      "path": "tests/hermes-native-fixture.ts",
+      "sha256": "a610d7ddf3097aac38c257cdd55785695300ddeb676dbea3d0cd4178377bb6bb"
+    },
+    {
+      "path": "tests/native-task-fixture.ts",
+      "sha256": "2e24229048fd96a6c2b7a9c42dd1b56b55680c64bb1be4ba3d0311dc400a7197"
+    },
+    {
+      "path": "tests/private-vps-launcher.test.mjs",
+      "sha256": "14a9cf9d00a2324f252c17fe41d8d586b7514817dad72d2367168be253f07621"
+    },
+    {
+      "path": "tests/vps-build-profile.test.ts",
+      "sha256": "71d233562531ef898a2e4b71b42132822e50ffc6bb204e8240829e669875f884"
+    },
+    {
+      "path": "tests/vps-built-approval.test.mjs",
+      "sha256": "cbfa5c16cc79b1dedf02f27e881a1d2e0aefe95e66b8aaa50a65acb052c52e88"
+    },
+    {
+      "path": "tests/vps-built-assignment.test.mjs",
+      "sha256": "bd8a51dc696745d130974169bff2ad25419501f84d605a49b09fbf1ab40ceeeb"
+    },
+    {
+      "path": "tests/vps-built-capacity-release.test.mjs",
+      "sha256": "d28ec88af24225412177c8cd6550495e64136595e7455581d3720cccf048557b"
+    },
+    {
+      "path": "tests/vps-built-core-schema.test.mjs",
+      "sha256": "4ee02cff9b30a337085de47be1d727691c7c068511076b1846243dc64a971696"
+    },
+    {
+      "path": "tests/vps-built-handler.test.mjs",
+      "sha256": "6fb4b0ad94a2b00cdc514f3a3099d425b1c6ac3ce7eb1574458cd41b9b7422b3"
+    },
+    {
+      "path": "tests/vps-built-launcher.test.mjs",
+      "sha256": "b259ffda71dc520670871eb70a297a39b406602696d3f7447c3d0861ba824457"
+    },
+    {
+      "path": "tests/vps-built-managed-native-sessions.test.mjs",
+      "sha256": "bf9abf4735012da515ca96d541422167523335ae1b686404ffa704701ed15fe0"
+    },
+    {
+      "path": "tests/vps-built-native-evidence.test.mjs",
+      "sha256": "1d56f7816ec66cb5e91d786574dc7e5ca373494f1d58b387653f99cd68c2c557"
+    },
+    {
+      "path": "tests/vps-built-owner-review.test.mjs",
+      "sha256": "33a03e362073f26c257ecac709b660bae84600c19c3cfc68c9934fab4a6c7385"
+    },
+    {
+      "path": "tests/vps-built-owner-revision-interface.test.mjs",
+      "sha256": "631d48775c52618abe713058f2b549d356e059fe9d5e26bcb2ee597c4f99924f"
+    },
+    {
+      "path": "tests/vps-built-planning.test.mjs",
+      "sha256": "a645081b207229777dd3ef646e626420d055db4a092c2cd50847be13aff4f195"
+    },
+    {
+      "path": "tests/vps-built-preparation.test.mjs",
+      "sha256": "f2fa1692a2e4cd46d64934617d9bc954f9d035ca11d20301dba765fb3d2a1723"
+    },
+    {
+      "path": "tests/vps-built-quality.test.mjs",
+      "sha256": "b298401fa614321470287431d7980aaddddb0b58d9a214513720c04693802a76"
+    },
+    {
+      "path": "tests/vps-built-rehearsal.test.mjs",
+      "sha256": "fefad6161b72f7f96901e84ac780e7de171f7baf1d24b0371b11e9d472e34d3e"
+    },
+    {
+      "path": "tests/vps-built-result-ownership.test.mjs",
+      "sha256": "d1f8ddc5a549bb5a61bfc87bb66afadaee4cb60e8783ab76c5ce51845a121739"
+    },
+    {
+      "path": "tests/vps-built-results.test.mjs",
+      "sha256": "0821c0eb0c85419652efdc92be7bbbb2d8e03bf70d36bd5f71eaeb72b561ff2f"
+    },
+    {
+      "path": "tests/vps-built-revised-result.test.mjs",
+      "sha256": "4a484a2ba9f0bfc896b6e5666129f5ac4896f7fac4bf684f827584a3c4a632d1"
+    },
+    {
+      "path": "tests/vps-built-revision-planning.test.mjs",
+      "sha256": "94d9f73923da3792eb49e59c58bab33130072928118be561eef0c4c207396026"
+    },
+    {
+      "path": "tests/vps-built-serving.test.mjs",
+      "sha256": "aea48243d6c180fba8227be2afce0362882051d2c40c12b83dc7071cc55097d7"
+    },
+    {
+      "path": "tests/vps-built-startup.test.mjs",
+      "sha256": "e7c80e3e7383b1bb76e5ee42fe569d4441546340b34d41b190d2b9e53a56274b"
+    },
+    {
+      "path": "tests/vps-built-task-application.test.mjs",
+      "sha256": "d84000179cdb7f9f36983b4cf78c53882052a2c632e5cc01f7fcc84a37729f83"
+    },
+    {
+      "path": "tests/vps-built-task-startup.test.mjs",
+      "sha256": "99fdd5902a816e3ee588c03193c55ffeb23b1d40e8f9a7e1f64ddf2accf8ea59"
+    },
+    {
+      "path": "third_party/control-center/LICENSE",
+      "sha256": "a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b"
+    },
+    {
+      "path": "third_party/control-center/NOTICE.md",
+      "sha256": "a16be2e9041b0759c9f5425ea7d1534be3815fdae52af22f8d42a9c78f822aeb"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "744e30d113cc31b44a487b1d68651fbed0ac376aaf08f3c2d92421d795b9f288"
+    },
+    {
+      "path": "tsconfig.vps.json",
+      "sha256": "bd428c5df3c6f35c7f95057434a1407b402b068426e9056323032c237ad9f6e2"
+    },
+    {
+      "path": "vite.vps.config.ts",
+      "sha256": "b0ef850cd6a472bb9b6f0f875888ba44a9ede922aff79deceb6f7d2b4368e87e"
+    }
+  ]
+}

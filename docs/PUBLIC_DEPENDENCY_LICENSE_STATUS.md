@@ -2,6 +2,11 @@
 
 ## Current actionable summary
 
+**2026-09-06 owner decision:** Apache-2.0 is now approved and applied to original code
+in the isolated public candidate, with the agreed project attribution NOTICE. Earlier
+statements below that original-code licensing is undecided are historical. This decision
+does not change upstream terms or certify the remaining distribution review.
+
 **Draft delivery file assembled:** `research/DEPENDENCY_NOTICES_DRAFT.txt` combines
 36 distinct retained notice texts with component/version labels. It includes direct
 roots, the selected runtime graph, known bundle owners, resolved Vite gaps and PGlite's

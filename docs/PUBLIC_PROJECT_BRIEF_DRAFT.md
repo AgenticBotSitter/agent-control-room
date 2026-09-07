@@ -1,7 +1,12 @@
 # Agent Control Room
 
-Local public-facing draft. Not published. Project name, license and
-repository address await confirmation. Remove this drafting note only after review.
+Local public-facing candidate. Apache-2.0 is approved; source publication is pending.
+Do not present this candidate as an operational release.
+
+Project website: [agentcontrolroom.xyz](https://agentcontrolroom.xyz).
+
+Repository: [AgenticBotSitter/agent-control-room](https://github.com/AgenticBotSitter/agent-control-room).
+These are project destinations, not a claim that the website is deployed or source uploaded.
 
 Project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).
 
@@ -31,9 +36,26 @@ tree has implemented project/task interfaces, queue integration, connector compo
 result/review flows and extensive automated tests using disposable or simulated resources.
 Those results do not establish live compatibility on your machine.
 
-The runnable public source candidate is still being prepared. Public clean-checkout
-installation, real multi-machine operation and recovery acceptance remain unfinished.
-No working public download, supported runtime version or release date is announced here.
+An isolated source candidate passes its standalone type check, build and 47 selected
+compiled integration tests on macOS. The browser demo still lacks a supported start
+command. Real multi-machine operation and recovery acceptance remain unfinished.
+No working public download, supported agent-runtime version or release date is announced here.
+
+## Contributor starting points
+
+- [Setup and verified check commands](SETUP.md)
+- [How to contribute and get work assigned](CONTRIBUTING.md)
+- [Substantial MVP-first work packages](WORK_PACKAGES.md)
+- [Full roadmap and completion criteria](ROADMAP.md)
+- [Architecture and trust boundaries](docs/ARCHITECTURE.md)
+
+Hermes and Codex are the first integration priorities. Claude Code, OpenClaw and other
+harnesses are proposed contributor tracks, not current compatibility claims. Start with
+the minimum usable project-to-task-to-result-to-revision experience before expansion.
+
+Run ordinary checks locally. GitHub Actions remains disabled; batch meaningful pushes
+and reviews. Small local commits are welcome. Do not add scheduled builds, automatic
+deployment or privileged runners for public contributions.
 
 ## How the pieces fit
 
@@ -71,7 +93,10 @@ understanding the change, testing it and respecting upstream licenses.
 
 ## Privacy and licensing
 
-The shared application is intended to be open source. Your installation, project records,
-agent credentials and business data are not published with it. The initial code release
-will include the selected license and applicable third-party notices; no licensing grant
-is made by this draft. A private security-reporting route must be established before launch.
+Original Agent Control Room code in this candidate is licensed under the
+[Apache License, Version 2.0](LICENSE). See [project attribution](NOTICE).
+Third-party code and dependencies retain their own licenses and notices; the project
+license does not relicense them. Final third-party distribution review is still pending.
+Your installation, project records, agent credentials and business data are not
+published with the application. A private security-reporting route must be established
+before launch.

@@ -1,6 +1,6 @@
 # Contributing to Agent Control Room
 
-**Draft for the planned public repository.** The public source, project license,
+**Draft for the planned public repository.** Apache-2.0 is approved. The public source,
 maintainer roles and clean setup instructions are not published yet. These
 instructions are a proposed workflow, not an invitation to access a private repository
 or run agents against an existing installation. Remove this draft notice only after
@@ -22,6 +22,9 @@ will use clearly labeled synthetic work; production and native-runtime readiness
 tracked separately. Do not claim a real agent worked just because a fixture completed.
 
 ## Choose work you can complete
+
+Read [setup](SETUP.md), [work packages](WORK_PACKAGES.md) and the [roadmap](ROADMAP.md).
+The current candidate supports check/build/tests; browser-demo startup is still pending.
 
 Start with an issue marked ready and read its acceptance criteria before claiming it.
 Every ready issue should identify:
@@ -64,6 +67,11 @@ them. AI-assisted contributions have the same requirements as human-written chan
 the contributor remains responsible for understanding and checking the result.
 
 ## Submit useful evidence
+
+Run checks locally and batch meaningful pushes and review requests. GitHub Actions
+remains disabled. Do not add workflows, scheduled jobs, automatic deployments or
+self-hosted public-PR runners without explicit maintainer approval. Local commits and
+ordinary Git pushes do not themselves consume Actions runner minutes.
 
 Use this short PR summary:
 
@@ -114,7 +122,7 @@ published; never post exploits containing private data or credentials in normal 
 
 ## Maintainer prerequisites before publishing this guide
 
-Choose and publish the project license and contribution/sign-off policy; establish the
+Publish the approved Apache-2.0 license and clarify any contribution/sign-off policy; establish the
 public repository, responsible reviewers and private vulnerability-reporting contact;
 rehearse and link the exact setup guide; and publish a truthful supported-platform/status
 matrix. Do not collect contributions under an unspecified license or advertise a demo

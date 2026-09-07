@@ -2,6 +2,46 @@
 
 ## First isolated snapshot
 
+## Approved license application (2026-09-06)
+
+Owner explicitly approved Apache-2.0 with the proposed Agent Control Room attribution.
+Applied the official complete license to the candidate LICENSE, approved attribution to
+NOTICE, Apache-2.0 package metadata and README declaration. Durable LICENSE/NOTICE
+copies are in `docs/public-launch-draft/`. This applies to candidate original code;
+the private checkout was not broadly relicensed and upstream licenses remain separate.
+Earlier undecided-license statements in this receipt describe prior steps.
+
+Download record: official `https://www.apache.org/licenses/LICENSE-2.0.txt` fetched twice
+(initial inspection, then verbatim application); 101 GiB available before retrieval.
+Retained license is 11,358 bytes, SHA-256
+`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`.
+The two retained files are the candidate LICENSE and durable template, not dependency
+downloads. No additional download file/cache was created by these curl calls. Candidate
+copy follows the recorded staging cleanup scope; durable template is intentional source.
+No public upload, Actions run or deployment occurred.
+
+## Original snapshot receipt
+
+### Durable reconstruction receipt
+
+`docs/research/public-candidate-reconstruction.json` preserves the exact private base
+commit, 458 selected base paths, 17 added/changed file bodies, two superseded migration
+paths, and SHA-256 hashes for all 467 current candidate source files. It excludes
+dependencies, generated output and execution logs. This is private release-preparation
+evidence: do not publish the receipt, its private base references or historical paths.
+An in-memory reconstruction using the recorded Git base plus changes matched every
+manifest hash and every current candidate file byte-for-byte. No reconstruction writes
+or deletion were performed. The candidate is no longer dependent solely on temporary
+storage, provided the private repository and this receipt are retained.
+
+Demo investigation: the existing owner-attended launcher is macOS/Keychain-specific;
+the standalone compiled tests include test-only startup metadata injection and are not
+a demo launcher. Do not reuse those injections in a runnable public demo. The existing
+local synthetic runtime has protected project/task services and explicit simulation
+result input, but its standalone UI/runtime composition is not in this candidate yet.
+Reuse those services through a separately reviewed disposable-demo composition; do not
+claim browser readiness or weaken operational authentication to obtain a quick start.
+
 - Exact source commit: `4667c1197f364b9648bf7b03ab36d83fe4b662da`.
 - Staging root: `/private/tmp/control-room-public-candidate.zVOmZD`.
 - Extracted source: `source/`; retained archive: `source.tar`.
@@ -31,7 +71,7 @@ the private tree; adapt the candidate assertion without publishing private brand
 No matches in the other scanned categories. This limited scan is not secret detection,
 manual content review or privacy clearance, and does not cover all selected SQL/config.
 
-## Next work before any publication
+## Candidate preparation and remaining publication work
 
 ### Isolated preparation evidence
 
@@ -64,15 +104,70 @@ Adapted tsconfig SHA-256: `744e30d113cc31b44a487b1d68651fbed0ac376aaf08f3c2d9242
 Unchanged lockfile SHA-256: `51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0`.
 The archive remains the original snapshot; adaptations are in the extracted candidate.
 
-1. Adapt candidate package scripts and TypeScript paths to the selected tree. The copied
-   root scripts still mention private/unselected tests and are not a usable quick start.
+### Expanded privacy and upload-hygiene review
+
+The expanded source check found private consumer identifiers in migrations 0025/0026,
+including table names, and matching references in `tests/vps-built-core-schema.test.mjs`
+and `tests/helpers/web-foundation.ts`. These were publication findings, not
+credentials. Generalization must preserve SQL references and schema-test coverage;
+do not rename the existing private installation's tables or remove the content feature.
+The earlier scan did not include underscore-separated brand spellings and therefore
+understated the affected files. Future scans must cover filenames and token variants.
+
+Candidate `.gitignore` now excludes dependency/build trees, environment overrides,
+key files, logs and workflows. Its durable template is
+`docs/public-launch-draft/CANDIDATE_GITIGNORE`. This is an accident-prevention aid,
+not a secret scanner or a publication allowlist; forced additions can bypass it.
+Required source, lockfile, notices and placeholder environment examples remain eligible.
+Nothing was uploaded and no license was applied.
+
+### Candidate-only generic content schema adaptation
+
+Resolved the above identifier finding in the isolated source: migration filenames and
+all SQL/test references change `content_blooms` to `external_content`; the two SQL
+comments use `external content`. All 14 content tables remain. Exact comparison to
+the private original SQL proves that no statements changed except these substitutions.
+The test-helper omitted-migration profile now names the generic filenames, and the
+compiled schema tests assert generic table names. Private source/database is untouched.
+
+Recomputed the candidate's fixed catalog fingerprint from all 57 migrations in fresh
+disposable PGlite, using the existing catalog query:
+`5ddb1f082f2e598bf0434f63708063674829fcde2c2b4384aecc32f6dff238e3`.
+Updated only candidate `src/web/v1/private-database-preflight.ts`. This is a separate
+fresh-install candidate schema, not an upgrade migration for an existing installation.
+Fingerprint enforcement remains fixed; the incomplete-schema rejection still passes.
+Real PostgreSQL equivalence has not been rehearsed here.
+
+Candidate type check, standalone build and all 47 compiled tests pass again (zero
+failures/skips/cancellations). Private log: `generalized-schema-test.log` under the
+recorded staging root; retain for cleanup, never publish. An expanded filename/content
+scan of 460 source files (excluding dependencies and generated `.next`, `dist`,
+`dist-vps`) reports zero known private-name, home-path, private-key-header or selected
+token-shape matches. This is limited pattern evidence, not full manual privacy or
+secret clearance. No new downloads, native/provider calls, listener or public writes.
+
+### Contributor documents staged
+
+Candidate now includes README, CONTRIBUTING, SETUP, ROADMAP, WORK_PACKAGES and
+`docs/ARCHITECTURE.md`. README links to the five supporting documents, reports actual
+candidate check/build evidence, and clearly states that browser startup and live
+compatibility are unfinished. Hermes/Codex are first priority; Claude Code/OpenClaw and
+other harnesses are proposed tracks. Work packages stay substantial and unassigned
+until their prerequisites and exact public base are available. Actions remains disabled;
+local checks and meaningful batches are documented without discouraging local commits.
+All six documents were checked for resolving local links and selected private-reference
+patterns. They retain candidate/draft labels. License, governance and private security
+reporting approval were not inferred or published.
+
+1. Package scripts and TypeScript paths are adapted and verified as recorded above.
+   Finish an honest runnable contributor demonstration; build tests alone are not it.
 2. Inspect SQL, configuration and selected source content; retain private provenance
    separately. Resolve findings, do not mechanically replace security-significant IDs.
 3. Add reviewed public README, setup, roadmap, substantial work packages and contribution
    policy; no Actions workflows. Keep incomplete integrations labeled accurately.
 4. Apply the owner-selected original-code license and exact third-party notices.
-5. Prepare dependencies from the frozen lockfile in this isolated candidate, recording
-   downloads and disk use; run its actual type/build/tests and documented local demo.
+5. Repeat the recorded isolated type/build/tests after candidate changes and verify the
+   documented local demo; preserve download/disk receipts and cold-cache limitations.
 6. Obtain independent candidate review and publish only the accepted tree to the already
    existing public repository. Do not attach that remote to the private checkout.
 
