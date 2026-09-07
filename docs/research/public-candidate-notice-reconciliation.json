@@ -1,0 +1,265 @@
+{
+  "schema": "control-room.candidate-notice-reconciliation/v1",
+  "publicationApproved": false,
+  "scope": "Exact candidate installed direct manifests and packaged root notices compared with prior retained research; saved upstream evidence text hashes checked offline. No network or installed package code execution.",
+  "lockSha256": "51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0",
+  "directPackageCount": 28,
+  "packagesWithPackagedRootNotices": 23,
+  "packagesUsingPriorUpstreamEvidence": 5,
+  "entries": [
+    {
+      "name": "pg-boss",
+      "version": "12.30.0",
+      "manifestSha256": "72f89c78727d3bb15c535f8eef148aee6dbf78eaeaedcc1f9825840e7c31a2f0",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "postgres",
+      "version": "3.4.7",
+      "manifestSha256": "7324573388770786378751cf5e4267587261e694319be41924dcd2420262eb85",
+      "packagedNoticesVerified": 0,
+      "upstreamEvidence": "docs/research/pinned-upstream-notice-texts.json"
+    },
+    {
+      "name": "react",
+      "version": "19.2.6",
+      "manifestSha256": "e631b6ac066fa758d9b36f226d96e8fc05425d1e8993ffcc99c6de2d6aa7268c",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "react-dom",
+      "version": "19.2.6",
+      "manifestSha256": "2c195b9bfa1b4f7dee5dd6f955c0fbb716e83c3e9c2e7a80b5e19c5a18507718",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "zod",
+      "version": "4.1.12",
+      "manifestSha256": "8fafce7fd929141a91d78d66fa4b275415ac68cd9c81f9e3160868a5fab4122f",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "@cloudflare/vite-plugin",
+      "version": "1.37.1",
+      "manifestSha256": "1b70071cd6a59ef353716d16bc136ab41e87078d5a21d870a997aa45483797ce",
+      "packagedNoticesVerified": 0,
+      "upstreamEvidence": "docs/research/cloudflare-notice-evidence.json"
+    },
+    {
+      "name": "@electric-sql/pglite",
+      "version": "0.3.14",
+      "manifestSha256": "a540c379fd1d820810793681d25fa7ad5dadfcee2b190d14a6553fdb469cfe3c",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "@eslint/js",
+      "version": "9.39.4",
+      "manifestSha256": "c68baf2c859b03e43de607b9f1e392008e678a982baed3c93ab52f89843af260",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "@next/eslint-plugin-next",
+      "version": "16.2.6",
+      "manifestSha256": "1cf80a11fcaf678a33a75ee4fccb734f2ffa8bc67f5142591ec46fb98a515e69",
+      "packagedNoticesVerified": 0,
+      "upstreamEvidence": "docs/research/next-postcss-notice-evidence.json"
+    },
+    {
+      "name": "@tailwindcss/postcss",
+      "version": "4.2.1",
+      "manifestSha256": "4f2b5b05374a5b37795dac2adc2a2880d92ba34869e3df1e50a3cdf67c26d6a4",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "@types/node",
+      "version": "22.19.19",
+      "manifestSha256": "ba8f6326a685af9e7dce89a99f55e0dc3cef450046acf00a20f7cb673562f581",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "@types/react",
+      "version": "19.2.14",
+      "manifestSha256": "e8beff67b2575112eff5757dc8e9310a78fc6e7d2d44d9d7a8204026f4ab81b7",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "@types/react-dom",
+      "version": "19.2.3",
+      "manifestSha256": "bf90986beaec5f757c164bf1d374f3038dc41b0b06673de4a55fd975d1e5deca",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "@vitejs/plugin-react",
+      "version": "6.0.2",
+      "manifestSha256": "4cd7456c1d01b92b6a983ccec4916d55ae21a512608ea4087d8acf96c5327699",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "@vitejs/plugin-rsc",
+      "version": "0.5.26",
+      "manifestSha256": "e12b4bf4c33982738d1b5bdc68fa7bc496f26253f64a79d5f0c207a93ca900c5",
+      "packagedNoticesVerified": 0,
+      "upstreamEvidence": "docs/research/pinned-upstream-notice-texts.json"
+    },
+    {
+      "name": "eslint",
+      "version": "9.39.4",
+      "manifestSha256": "80a7caf2adf34963e47b32a1e75157de6d6814c3ae5a9d90358ddd9364833fe7",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "eslint-plugin-jsx-a11y",
+      "version": "6.10.2",
+      "manifestSha256": "952fc60d13cacdc35cef8234832187672822a10b6767da4f8596b97eb3f2cecc",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "eslint-plugin-react",
+      "version": "7.37.5",
+      "manifestSha256": "f6cf43d8467c9a7777ccf4b779ad03c594a3203c83bdf3506741a58db66a3b62",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "eslint-plugin-react-hooks",
+      "version": "7.1.1",
+      "manifestSha256": "c745f6ec0ce838f395eb5da17e3f907094fcd14c87c30b94810f217fe5e7b476",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "globals",
+      "version": "16.4.0",
+      "manifestSha256": "1c67d55add77bbddaf7ae6c193d36f1574ebafbe9b39a4aa6de218689f229234",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "react-server-dom-webpack",
+      "version": "19.2.6",
+      "manifestSha256": "6fb9e471e91790f5c674aa319b24a538a18e72074392882d35e61987dff48bef",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "tailwindcss",
+      "version": "4.2.1",
+      "manifestSha256": "ac2d41af33338d2d0a96190ab84b5419187da9f1fc6d2c91fb5b83238e746b46",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "tsx",
+      "version": "4.23.1",
+      "manifestSha256": "116662201c06041c63de8837cf7bf6743f79a10187d0a210b377476071550a40",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "typescript",
+      "version": "5.9.3",
+      "manifestSha256": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "typescript-eslint",
+      "version": "8.59.3",
+      "manifestSha256": "cd6eb4e5a24404c7c383e49c81a4a301be730ad7fa3f769670987af7af3e56b3",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "vinext",
+      "version": "1.0.0-beta.2",
+      "manifestSha256": "8a0c8727b7570e324cb92abad784f90bb9a0264e25ef3ba16dd2f62e6ec8119e",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "vite",
+      "version": "8.0.13",
+      "manifestSha256": "5d084b8d09cedc0206adeea4096e9aaa5f9489efb919b4dc55486c5ee790a7d2",
+      "packagedNoticesVerified": 1,
+      "upstreamEvidence": null
+    },
+    {
+      "name": "wrangler",
+      "version": "4.92.0",
+      "manifestSha256": "b659402d435053012c1843c226a701964abbeb4ce8a9a560d57c5be0ced4916d",
+      "packagedNoticesVerified": 0,
+      "upstreamEvidence": "docs/research/cloudflare-notice-evidence.json"
+    }
+  ],
+  "retainedUpstreamRecordsVerified": [
+    {
+      "file": "docs/research/pinned-upstream-notice-texts.json",
+      "entry": "/entries/0",
+      "sha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c",
+      "bytes": 1212
+    },
+    {
+      "file": "docs/research/pinned-upstream-notice-texts.json",
+      "entry": "/entries/1",
+      "sha256": "29b68325fe026047d13e187b44c33b2acacf7dc647dec4583702e59f235e13b5",
+      "bytes": 1103
+    },
+    {
+      "file": "docs/research/cloudflare-notice-evidence.json",
+      "entry": "/entries/0",
+      "sha256": "9bb3b077cc8628334bab25961223dd8207252c8a56aa054195be38f1c042aaf4",
+      "bytes": 1086
+    },
+    {
+      "file": "docs/research/cloudflare-notice-evidence.json",
+      "entry": "/entries/1",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+      "bytes": 9723
+    },
+    {
+      "file": "docs/research/cloudflare-notice-evidence.json",
+      "entry": "/entries/2",
+      "sha256": "f596416df4d88b2716f22216bcf8f0acc988d7c8a1beb3c5add2a4c9880d8236",
+      "bytes": 2207
+    },
+    {
+      "file": "docs/research/cloudflare-notice-evidence.json",
+      "entry": "/entries/3",
+      "sha256": "6969ef01272b8ce19cf6b745a3891f3a854dc0d494062c164e4d6cfd37ed292b",
+      "bytes": 5839
+    },
+    {
+      "file": "docs/research/next-postcss-notice-evidence.json",
+      "entry": "/next/files/0",
+      "sha256": "ee765244e2d59f5234d474f62e0766fa0c8b99af967fdd4c0cb8dcb0c76ea224",
+      "bytes": 1079
+    },
+    {
+      "file": "docs/research/next-postcss-notice-evidence.json",
+      "entry": "/next/files/1",
+      "sha256": "1cf80a11fcaf678a33a75ee4fccb734f2ffa8bc67f5142591ec46fb98a515e69",
+      "bytes": 715
+    },
+    {
+      "file": "docs/research/next-postcss-notice-evidence.json",
+      "entry": "/postcss",
+      "sha256": "5be1f3465bba68a626777f984878814aaf35e7ef8e9fd314d469bcf887050fb8",
+      "bytes": 1095
+    }
+  ],
+  "draftAssemblyHashVerified": "df2638d2ce77ead48eac4530dc38fd36f4f431e1c2628251130f200cad2363cf",
+  "remaining": "Source privacy and independent exact-tree review, distribution-scope decision and publication approval. This does not establish artifact licensing clearance, full transitive coverage or publisher equivalence."
+}

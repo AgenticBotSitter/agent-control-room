@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Dependency notice evidence reconciled against the candidate:** All 28 direct
+installed manifests and the frozen lockfile match earlier retained research. The
+23 packaged-root notice sets match; the other five have existing pinned upstream
+evidence whose saved text hashes/byte counts were verified offline. The notice draft
+assembly hash also matches. These are retained-source checks, not legal clearance
+or transitive/binary distribution acceptance. No download, install, package execution
+or publication was needed; see `PUBLIC_DEPENDENCY_LICENSE_STATUS.md`.
+
 **Contribution handoff tightened:** The draft PR template now requests submitted
 revision, a results/limitations table, reviewer and blocking prerequisite, and makes
 independent follow-on assignments explicit. It requires a reason for custom

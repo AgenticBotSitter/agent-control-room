@@ -41,8 +41,9 @@ contributor release. The separate website repository does not supply application
 
 2. **Close source-distribution rights and privacy findings.** Preserve the full
    Apache license, project NOTICE and upstream notices. The 28 installed direct
-   dependency metadata entries were observed without downloads; missing root notice
-   files must be reconciled with the existing dependency research, not guessed.
+   dependency manifests and available packaged root notices now match the existing
+   research; five missing packaged roots have verified saved upstream text evidence
+   in `research/public-candidate-notice-reconciliation.json`. Do not repeat retrieval.
    Review only the actual source distribution now; a future binary/container release
    requires its own review. The original geometric favicon has recorded provenance.
    Do not republish the unverified historical icon or private reconstruction receipts.

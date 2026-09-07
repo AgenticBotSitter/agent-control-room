@@ -2,6 +2,17 @@
 
 ## Current actionable summary
 
+**Exact candidate reconciliation:** All 28 installed direct package manifests and
+the candidate lockfile match the prior direct-notice retention record byte-for-byte.
+Root notice hashes match for the 23 packages that include them. The other five map
+to existing pinned upstream evidence; saved text hashes and byte counts in those
+records were checked without downloads. The assembled notice draft hash also matches.
+See `research/public-candidate-notice-reconciliation.json`. Missing packaged root
+files are therefore not new retrieval blockers. This confirms retained evidence,
+not full upstream equivalence or distribution/legal clearance. Source review and
+the actual source-only delivery decision remain; do not expand this into a binary
+or container release or repeat already-resolved missing-root searches.
+
 **Current source-only staging scope (2026-09-06):** The expanded candidate inventory
 contained 517 source/document files before adding `THIRD_PARTY.md`. Excluding explicit
 build/dependency directories, it contained no native/WASM/font/archive/image payloads,
