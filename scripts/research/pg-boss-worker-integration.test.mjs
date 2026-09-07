@@ -30,6 +30,12 @@ import { inspectInstalledNativeQueueSchema } from '../../src/persistence/pg-boss
 import { createPrivateTaskHost } from '../../src/web/v1/private-task-host.ts';
 import { EventEmitter, once } from 'node:events';
 import { nodeExchange } from '../../tests/helpers/web-node.ts';
+import { taskFixture } from '../../tests/helpers/web-task.ts';
+import { now as fixtureNow } from '../../tests/helpers/web-foundation.ts';
+import { CanonicalStore } from '../../src/persistence/canonical-store.ts';
+import { DOMAIN_CONTRACT_VERSION } from '../../src/domain/v1/index.ts';
+import { WebNewsCollectionPlanning } from '../../src/web/v1/news-collection-planning.ts';
+import { WebNewsCollectionAdmission } from '../../src/web/v1/news-collection-admission.ts';
 
 const root = process.env.CR_REUSE_EVAL_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
 assert.ok(isAbsolute(root), 'Package root must be absolute');
@@ -341,6 +347,64 @@ test('feed submission and its caller marker commit or roll back together with in
   await assert.rejects(submit.enqueueInSession(port(f.raw), rolled), /abs_feed_submission_unavailable/);
   assert.deepEqual(f.errors, []);
   // Marker is deliberately synthetic: actual canonical admission is a separate service.
+});
+
+test('owner feed admission commits canonical approval and installed queue atomically before pickup', async t => {
+  const f = await taskFixture(() => fixtureNow), errors = [];
+  let submit, worker;
+  const boss = new PgBoss({ db: { async executeSql(sql, values) {
+    return values?.length ? f.db.query(sql, values) : (await f.db.exec(sql)).at(-1) ?? { rows: [] };
+  } }, schema: spec.schema, backend: 'pglite', schedule: false, supervise: false, useListenNotify: false });
+  boss.on('error', error => errors.push(error));
+  t.after(async () => { try { await worker?.close(); await submit?.close(); }
+    finally { try { await boss.stop({ graceful: false }); } finally { await f.db.close(); } } });
+  await boss.start(); await boss.createQueue(ABS_FEED_QUEUE.name, { retryLimit: 0 });
+  submit = await preparePgBossAbsFeedSubmission(PgBoss, f.client, { backend: 'pglite' });
+  const scope = { tenantId: 'tenant:web', workspaceId: 'workspace:web', projectId: f.project.projectId,
+    nodeId: 'node:feed-integration', executorId: 'executor:feed-integration' };
+  const key = new Uint8Array(32).fill(71), instant = new Date(fixtureNow).toISOString();
+  const planner = new WebNewsCollectionPlanning(f.client, { configuration: {
+    tenantId: scope.tenantId, workspaceId: scope.workspaceId, projectId: scope.projectId,
+    source: { sourceId: 'source:feed-integration', sourceLabel: 'Synthetic news', sourceKind: 'rss', endpointUrl: 'https://example.org/feed' },
+    maxBytes: 10000, maxItems: 10, timeoutMs: 10000 }, executorId: scope.executorId, windowSeconds: 300 }, key, () => fixtureNow);
+  const plan = await planner.propose(f.identity, { sourceDigest: planner.sourceDigest, idempotencyKey: 'feed-installed-admission-001' });
+  const canonical = new CanonicalStore(f.client);
+  await canonical.create({ contractVersion: DOMAIN_CONTRACT_VERSION, kind: 'node', id: scope.nodeId, tenantId: scope.tenantId,
+    displayName: 'Synthetic collector', state: 'pending_enrollment', platform: 'linux', architecture: 'x64', identityKeyId: 'key:synthetic',
+    hardwareFingerprint: sha256Digest('hardware'), softwareFingerprint: sha256Digest('software'), policyVersion: '1.0.0',
+    minimumProtocolVersion: 'control-room-node/v1', version: 0, createdAt: instant, updatedAt: instant });
+  await canonical.transition({ tenantId: scope.tenantId, kind: 'node', entityId: scope.nodeId, expectedVersion: 0, toState: 'active',
+    transitionId: 'transition:feed-integration-active', idempotencyKey: 'feed-integration-active-001',
+    actor: { actorId: 'identity:web', actorType: 'human' }, occurredAt: instant, recordPatch: { enrolledAt: instant } });
+  const args = { jobId: plan.jobId, inputDigest: plan.inputDigest };
+  let sent = false;
+  const failing = new WebNewsCollectionAdmission(f.client, scope, key, { async enqueueInSession(tx, reference) {
+    await submit.enqueueInSession(tx, reference); sent = true; throw new Error('synthetic failure after actual send');
+  } }, () => fixtureNow);
+  await assert.rejects(failing.approve(f.identity, args), /synthetic failure/); assert.equal(sent, true);
+  for (const table of ['control_attempts', 'control_leases', 'control_approvals', 'control_effect_intents',
+    'control_approval_consumptions', 'control_policy_decisions', `${spec.schema}.job_common`])
+    assert.equal((await f.client.query(`SELECT * FROM ${table}`)).rows.length, 0);
+  assert.equal((await canonical.get(scope.tenantId, 'job', plan.jobId)).state, 'proposed');
+  const service = new WebNewsCollectionAdmission(f.client, scope, key, submit, () => fixtureNow);
+  const receipt = await service.approve(f.identity, args);
+  const { replayed, effectState, networkContacted, ...reference } = receipt;
+  assert.equal(replayed, false); assert.equal(effectState, 'authorized'); assert.equal(networkContacted, false);
+  const id = absFeedJobId(reference), queued = await boss.getJobById(ABS_FEED_QUEUE.name, id);
+  assert.equal(queued.state, 'created'); assert.equal(queued.retryLimit, 0); assert.deepEqual(queued.data, reference);
+  assert.equal((await canonical.get(scope.tenantId, 'effect_intent', receipt.effectId)).state, 'authorized');
+  assert.equal((await service.approve(f.identity, args)).replayed, true);
+  let pickups = 0;
+  worker = await startPgBossAbsFeedWorker(boss, { async collect(value) {
+    assert.deepEqual(value, reference); pickups++; return { disposition: 'held' };
+  } });
+  await until(async () => (await boss.getJobById(ABS_FEED_QUEUE.name, id))?.state === 'completed');
+  await worker.close(); assert.equal(pickups, 1);
+  await f.client.query(`DELETE FROM ${spec.schema}.job_common WHERE id=$1`, [id]);
+  assert.equal((await service.approve(f.identity, args)).replayed, true);
+  assert.equal(await boss.getJobById(ABS_FEED_QUEUE.name, id), null);
+  assert.deepEqual(errors, []);
+  // Pickup deliberately holds: no reader, dispatch claim, network or completed collection is asserted.
 });
 
 // A separate logical SQL port models ownership of a dedicated worker pool; PGlite

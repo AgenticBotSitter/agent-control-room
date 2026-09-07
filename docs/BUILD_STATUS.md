@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner feed approval now has installed-queue integration evidence:** The real pg-boss
+package receives the canonical admission reference on the same disposable SQL transaction.
+An injected failure after actual send rolls back approval, effect, lease, attempt, policy
+and queue records. A later committed approval is picked up once by an injected collector;
+canonical replay stays inert after the operational row is deleted. All 28 installed-package
+integration checks pass, plus focused lint and whitespace checks. Independent source
+review found no concrete test defect. The collector returns `held`: this is not a durable
+hold, executed network request or completed collection. No production code changed in
+this evidence block, no PostgreSQL server or provider was contacted, and no push occurred.
+The next implementation remains durable feed execution ownership and outcome settlement;
+reuse canonical coordinated transitions rather than exposing generic effect transitions.
+
 **Owner feed admission is implemented locally, not mounted:** One authenticated owner
 operation binds the saved plan, assigns a configured active collector, records approval
 and effect authorization, inserts the queue reference and audit atomically. Exact replay
