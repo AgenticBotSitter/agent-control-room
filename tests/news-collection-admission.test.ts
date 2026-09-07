@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { taskFixture } from "./helpers/web-task";
-import { now } from "./helpers/web-foundation";
+import { now, origin, trust, request } from "./helpers/web-foundation";
+import { createNewsCollectionHttpHandler } from "../src/web/v1/news-collection-http";
 import { CanonicalStore } from "../src/persistence/canonical-store";
 import { DOMAIN_CONTRACT_VERSION } from "../src/domain/v1";
 import { sha256Digest } from "../src/security";
@@ -36,7 +37,7 @@ async function fixture() {
     if (expireQueue) current += 61_000; if (failQueue) throw new Error("synthetic queue failure");
   } };
   const service = new WebNewsCollectionAdmission(f.client, scope, key, submission, () => current);
-  return { ...f, scope, key, plan, service, submission, clock: () => current, setTime: (value: number) => { current = value; },
+  return { ...f, scope, key, plan, planner, service, submission, clock: () => current, setTime: (value: number) => { current = value; },
     failQueue: () => { failQueue = true; }, expireQueue: () => { expireQueue = true; },
     args: { jobId: plan.jobId, inputDigest: plan.inputDigest } };
 }
@@ -52,6 +53,30 @@ test("owner approval, assignment, effect authorization and queue entry commit on
   await f.client.query("DELETE FROM synthetic_feed_queue");
   assert.equal((await f.service.approve(f.identity, f.args)).replayed, true);
   assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0);
+});
+
+test("collection HTTP admission requires owner authentication and exact protected route", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const handler = createNewsCollectionHttpHandler({ origin, trust, projectId: f.scope.projectId, admission: f.service,
+    planning: f.planner, clock: f.clock });
+  const path = `/api/v1/projects/${encodeURIComponent(f.scope.projectId)}/news/collection/approve`;
+  const unauthenticated = request(path, "POST", f.args); unauthenticated.headers.delete("cf-access-jwt-assertion");
+  assert.equal((await handler(unauthenticated)).status, 401);
+  const foreign = request(path, "POST", f.args); foreign.headers.set("origin", "https://other.example.org");
+  assert.equal((await handler(foreign)).status, 403);
+  assert.equal((await handler(request(path + "?url=anything", "POST", f.args))).status, 400);
+  assert.equal((await handler(request(path, "POST", { padding: "x".repeat(5000) }))).status, 400);
+  assert.equal((await handler(request(path.replace(encodeURIComponent(f.scope.projectId), "project%3Aother"), "POST", f.args))).status, 404);
+  assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0);
+  const first = await handler(request(path, "POST", f.args)); assert.equal(first.status, 201);
+  assert.match(first.headers.get("cache-control") ?? "", /no-store/);
+  assert.equal((await handler(request(path, "POST", f.args))).status, 200);
+  assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 1);
+  const proposalPath = path.replace(/approve$/, "propose"), input = { sourceDigest: f.planner.sourceDigest, idempotencyKey: "http-feed-proposal-002" };
+  assert.equal((await handler(request(proposalPath, "POST", input))).status, 201);
+  assert.equal((await handler(request(proposalPath, "POST", input))).status, 200);
+  assert.equal((await f.client.query("SELECT * FROM control_jobs WHERE state='proposed'")).rows.length, 1);
+  assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 1);
 });
 test("revoked owners, non-owner roles, paused projects and extra input cannot admit", async t => {
   for (const mode of ["revoked", "operator", "paused", "extra"]) await t.test(mode, async () => {

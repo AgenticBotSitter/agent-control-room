@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Protected collection HTTP handler is implemented, not mounted:** Fixed-project
+proposal and approval POST routes reuse existing origin/identity checks, bounded JSON,
+sanitized failures and private no-store headers. Services retain exact input, owner and
+transactional authority checks. Forty-five admission/execution checks pass; the final
+expanded HTTP check also passes for proposal creation/replay, oversized-body refusal,
+unauthenticated/cross-origin/wrong-project rejection and one-time queue admission.
+TypeScript, focused lint and VPS compilation pass. Independent source review found no
+concrete defect. Tests use the real planning/admission services with disposable PGlite
+and a synthetic queue; no HTTP server, collector or network was started. Startup must
+bind the handler's project to its configured services and qualified collector before
+mounting. Restricted SQL roles, current-authority lifecycle, UI configuration and the
+full article-to-agent journey remain unfinished.
+
 **Owned feed execution is connected locally, not mounted:** One composition loads the
 exact saved plan, records its durable coordinator start, owns one collection, awaits
 cleanup, verifies the freshly returned retained receipt and settles the job. It does
