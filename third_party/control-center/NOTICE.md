@@ -2,6 +2,13 @@
 
 ## Discovery cohort adoption (2026-09-07)
 
+Storage-bridge follow-up: `source-reader.ts` also exposes captured `sourceUrl`,
+machine-readable `coverageComplete` and RSS/Atom `feedKind`; source input and prior
+snapshot are copied before asynchronous work. Feed format uses the existing XML
+parser, not a new XML implementation. This binds results to their configured source
+without confusing the discovered feed endpoint with the input homepage. No discovery
+ranking/fallback rule changed. These metadata changes are Control Room adaptations.
+
 Same revision and MIT license below. Retained complete `lib/feed-discovery.ts` and
 `lib/types.ts` unchanged; `lib/freshness.ts` and `lib/sitemap.ts` change only their
 type-import path to `./types`. `lib/server/rss.ts` becomes `source-reader.ts`:

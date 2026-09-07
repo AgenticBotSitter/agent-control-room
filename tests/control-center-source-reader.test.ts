@@ -7,6 +7,17 @@ const now = Date.parse("2026-09-07T12:00:00Z");
 const rss = (items: string) => `<rss><channel><title>Example</title>${items}</channel></rss>`;
 const entry = (slug: string) => `<item><title>${slug}</title><link>https://example.org/${slug}</link></item>`;
 
+test("source provenance is captured before I/O and empty Atom keeps its format", async () => {
+  const input = { ...source };
+  const reader = createIndustrySourceReader({ async readText(url) {
+    input.url = "https://other.example.org/";
+    return { text: '<feed xmlns="http://www.w3.org/2005/Atom"></feed>', finalUrl: url };
+  } });
+  const result = await reader.readSource(input);
+  assert.equal(result.sourceUrl, source.url); assert.equal(result.feedKind, "atom");
+  assert.equal(result.coverageComplete, true);
+});
+
 test("upstream whole source flow discovers an HTML feed and preserves undated baselines", async () => {
   let contents = rss(entry("old"));
   const calls: string[] = [];

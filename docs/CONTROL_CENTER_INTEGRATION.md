@@ -23,6 +23,15 @@ three additional tests exercise its explicit source-reader port through HTML-fee
 and robots-sitemap flows. Network and snapshot storage ports are not yet connected
 to the production application. This advances source adoption, not completion gates.
 
+Storage bridge: `AbsControlCenterIngestion` translates a captured reader result into
+existing scoped story/source records through shared ingestion persistence. Borrowed
+ranking remains in use; no second ranking engine was added. The adapter requires
+source ID/name/input URL to match, carries RSS/Atom/sitemap evidence and treats
+partial coverage explicitly. It accepts the current 100-item storage batch ceiling;
+upstream larger batches are not silently truncated. Baseline persistence and larger
+batch orchestration still need integration before production collection is enabled.
+This bridge is not the whole configured application or visible news page.
+
 | Block | Upstream source | Integration decision and necessary differences |
 | --- | --- | --- |
 | Discovery ranking | lib/industry-curation.ts | Complete unchanged module now retained and invoked by feed decoding. Includes scoring, deduplication, selection, diversity, exclusions and deferral. Keep upstream IDs as presentation identities only. Preserve all canonical stories. |

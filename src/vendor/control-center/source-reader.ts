@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { XMLParser } from "fast-xml-parser";
 import { filterPlausiblyDatedStories } from "./freshness";
 import type { IndustrySource, IndustrySourceStatus, LiveStory } from "./types";
 import { discoveredFeedLinks, isFeedDocument } from "./feed-discovery";
@@ -21,7 +22,7 @@ import {
 
 export type SitemapSnapshot = { sourceUrl: string; endpoint: string; urls: Record<string, string>; checkedAt: string; mode?: "sitemap" | "feed" };
 export type SitemapSnapshots = Record<string, SitemapSnapshot>;
-export type IndustryReadResult = { items: LiveStory[]; status: IndustrySourceStatus; snapshot?: SitemapSnapshot };
+export type IndustryReadResult = { sourceUrl: string; items: LiveStory[]; status: IndustrySourceStatus; snapshot?: SitemapSnapshot; coverageComplete: boolean; feedKind?: "rss" | "atom" };
 
 /** Adapted upstream reader with explicit I/O and clock ports. No ambient network or
  * filesystem snapshot writes; caller owns authority, total budgets and persistence. */
@@ -30,6 +31,8 @@ export function createIndustrySourceReader(ports: {
   now?: () => number;
 }) {
   const safeFetchText = ports.readText.bind(ports), now = ports.now?.bind(ports) ?? Date.now;
+  // Preserve source format for Control Room evidence; reuse the same XML package.
+  const feedKind = (xml: string): "rss" | "atom" => Object.hasOwn(new XMLParser({ removeNSPrefix: true }).parse(xml), "feed") ? "atom" : "rss";
 function parseFeed(xml: string, fallbackSource: string, baseUrl?: string) {
   return filterPlausiblyDatedStories(parseFeedDocument(xml, fallbackSource, baseUrl), now());
 }
@@ -84,9 +87,9 @@ async function firstFeed(candidates: string[], sourceName: string, sourceUrl: st
     const response = await safeFetchText(candidate, { maxBytes: FEED_MAX_RESPONSE_BYTES });
     if (!isFeedDocument(response.text)) throw new Error("Not a feed");
     const items = feedItemsInSourcePath(parseFeed(response.text, sourceName, response.finalUrl), sourceUrl);
-    return { endpoint: response.finalUrl, items };
+    return { endpoint: response.finalUrl, items, feedKind: feedKind(response.text) };
   }));
-  let emptyFeed: { endpoint: string; items: LiveStory[] } | null = null;
+  let emptyFeed: { endpoint: string; items: LiveStory[]; feedKind: "rss" | "atom" } | null = null;
   for (const attempt of attempts) {
     if (attempt.status !== "fulfilled") continue;
     if (attempt.value.items.length) return attempt.value;
@@ -155,7 +158,7 @@ function standardSitemapCandidates(input: URL) {
   ]);
 }
 
-function feedReadResult(source: IndustrySource, sourceName: string, endpoint: string, feedItems: LiveStory[], previous?: SitemapSnapshot): IndustryReadResult {
+function feedReadResult(source: IndustrySource, sourceName: string, endpoint: string, feedItems: LiveStory[], previous: SitemapSnapshot | undefined, kind: "rss" | "atom"): IndustryReadResult {
   const checkedAt = new Date(now()).toISOString();
   const prior = previous?.sourceUrl === source.url && previous.mode === "feed" ? previous : undefined;
   const observed = observeUndatedFeedStories(feedItems, prior?.urls, checkedAt);
@@ -173,6 +176,8 @@ function feedReadResult(source: IndustrySource, sourceName: string, endpoint: st
       : "";
   return {
     items: observed.items,
+    sourceUrl: source.url, feedKind: kind,
+    coverageComplete: true,
     snapshot,
     status: {
       sourceId: source.id,
@@ -186,6 +191,7 @@ function feedReadResult(source: IndustrySource, sourceName: string, endpoint: st
 }
 
 async function readSource(source: IndustrySource, previous?: SitemapSnapshot): Promise<IndustryReadResult> {
+  source = { ...source }; previous = previous ? structuredClone(previous) : undefined;
   const input = new URL(source.url.includes("://") ? source.url : `https://${source.url}`);
   const origin = input.origin;
   const sourceName = source.name || input.hostname;
@@ -195,7 +201,7 @@ async function readSource(source: IndustrySource, previous?: SitemapSnapshot): P
 
   if (homepage && isFeedDocument(homepage.text)) {
     const items = parseFeed(homepage.text, sourceName, homepage.finalUrl);
-    return feedReadResult(source, sourceName, homepage.finalUrl, items, previous);
+    return feedReadResult(source, sourceName, homepage.finalUrl, items, previous, feedKind(homepage.text));
   }
 
   const feed = await firstFeed([
@@ -203,7 +209,7 @@ async function readSource(source: IndustrySource, previous?: SitemapSnapshot): P
     ...feedCandidates(input),
   ], sourceName, input.toString());
   if (feed) {
-    const result = feedReadResult(source, sourceName, feed.endpoint, feed.items, previous);
+    const result = feedReadResult(source, sourceName, feed.endpoint, feed.items, previous, feed.feedKind);
     if (homepageError) result.status.message += "; homepage access was not required";
     return result;
   }
@@ -248,7 +254,7 @@ async function readSource(source: IndustrySource, previous?: SitemapSnapshot): P
     : snapshot
       ? `Baseline saved for ${scopedEntries.length.toLocaleString()} sitemap URLs${coverage}`
       : `Baseline deferred until full sitemap coverage; ${scopedEntries.length.toLocaleString()} URLs observed${coverage}`;
-  return { items, snapshot, status: { sourceId: source.id, source: sourceName, mode: "sitemap", endpoint: sitemap.endpoint, state, message } };
+  return { sourceUrl: source.url, items, snapshot, coverageComplete, status: { sourceId: source.id, source: sourceName, mode: "sitemap", endpoint: sitemap.endpoint, state, message } };
 }
 
   return Object.freeze({ readSource, parseFeed });

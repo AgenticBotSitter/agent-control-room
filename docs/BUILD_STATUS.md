@@ -8,6 +8,23 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Borrowed discovery now connects to project news storage:** Added the thin
+`AbsControlCenterIngestion` adapter and extracted the existing feed atomic-save path
+for reuse. Reader results become existing project stories/source observations with
+upstream scores; replay and stale-write protection remain. Partial coverage stays
+partial, sitemap discovery time is not represented as publisher time, and discoveries
+remain review-only. Source metadata now carries RSS/Atom format, explicit coverage
+and captured input URL. Independent review found a source-URL binding gap; corrected
+with exact configuration/result binding and a no-write regression, then re-reviewed
+without further concrete findings. The expanded 282-entry delivery lane, types,
+focused lint, diff checks and VPS build pass. Tests use supplied text and disposable
+PGlite; no live source, provider, service or deployment. No new schema or role grant.
+**Next:** persist upstream baseline and discovery outcome atomically, then connect
+the saved reading view and article-to-task actions. Current adapter has a 100-item
+batch ceiling and does not persist baselines; larger borrowed discovery batches
+still need explicit orchestration. Keep current model/effort; full integration is
+unfinished and live effects retain their separate scoped-authority requirements.
+
 **Control Center discovery cohort is now adopted and fixture-tested:** Complete
 feed-discovery, freshness, sitemap and type modules are retained from the pinned
 MIT source; the upstream RSS/source reader now takes explicit text-read and clock
