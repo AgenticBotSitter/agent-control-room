@@ -5,7 +5,94 @@ import { now, request, trust } from "./helpers/web-foundation";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { CanonicalStore } from "../src/persistence/canonical-store";
 import { AuditStore } from "../src/audit/audit-store";
+import { runSyntheticExecution, buildTextArtifactBundle } from "../src/node-executor";
+import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionReviewTargetV1 } from "../src/completion-gate/v1";
+import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project";
+
+test("fresh project proposal can anchor an explicitly synthetic result and revision without fabricating native execution", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const saved = await f.handler(request(f.path, "POST", taskDraft));
+  assert.equal(saved.status, 201);
+  const { receipt } = await saved.json();
+  assert.equal(receipt.startsWork, false);
+  const source = await f.tasks.detail(f.identity, f.project.projectId, receipt.jobId);
+  assert.equal(source.instructions, taskDraft.instructions);
+  assert.deepEqual(source.attempts, []);
+  const tenantId = "tenant:web", projectId = f.project.projectId;
+  const at = (seconds: number) => new Date(Date.parse(source.observedAt) + seconds * 1000).toISOString();
+  const store = new CompletionGateStoreV1(f.client, new Uint8Array(32).fill(49),
+    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }), () => at(0));
+  await store.provisionTenant(tenantId);
+  const profile: CompletionAcceptanceProfileV1 = {
+    schemaVersion: "control-room-completion-gate/v1", id: "profile:synthetic-preview", tenantId, projectId,
+    name: "Synthetic preview document", targetKind: "document", requiredVerificationScenarioIds: ["scenario:content"],
+    minimumIndependentReviews: 1, reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false },
+    verificationRequiresProducerSeparation: true, minimumRisk: "low", maximumRevisionRounds: 2,
+    automaticLowRiskDisposition: false, createdBy: { actorId: "identity:web", actorType: "human" }, createdAt: at(0),
+  };
+  await store.registerProfile(profile);
+  const producer = { actorId: "service:synthetic-preview", actorType: "service" as const };
+  async function simulate(round: number, text: string) {
+    const attemptId = `attempt:simulation:${round}`;
+    const progress: number[] = [];
+    // This test invokes the simulator explicitly. It never dispatches the proposal
+    // or represents these events as authenticated native-agent observations.
+    const result = await runSyntheticExecution({ schema: "control-room.synthetic-execution/v1", jobId: receipt.jobId,
+      attemptId, steps: 2, checkpointEverySteps: 1, stepDelayMilliseconds: 0, artifactText: text }, {
+      signal: new AbortController().signal, now: () => at(1 + round * 4), sleep: async () => {},
+      emit: async event => {
+        assert.equal(event.schema, "control-room.synthetic-execution-event/v1");
+        assert.equal(event.attemptId, attemptId);
+        if (event.event === "progress") progress.push(event.progressPercent);
+        const current = await f.tasks.detail(f.identity, projectId, receipt.jobId);
+        assert.equal(current.task.state, "proposed"); assert.deepEqual(current.attempts, []);
+      },
+    });
+    assert.equal(result.state, "succeeded");
+    if (result.state !== "succeeded") throw new Error("simulation did not complete");
+    assert.deepEqual(progress, [50, 100]);
+    const bundle = buildTextArtifactBundle({ artifactId: `artifact:simulation:${round}`, claimId: `claim:simulation:${round}`,
+      tenantId, projectId, jobId: receipt.jobId, attemptId, producerId: producer.actorId,
+      logicalRole: "synthetic-preview-result", schemaVersion: "1.0.0", storageClass: "local", retentionClass: "test-memory",
+      text: new TextDecoder().decode(result.artifactBytes), createdAt: at(1 + round * 4) });
+    assert.deepEqual(bundle.bytes, new Uint8Array(result.artifactBytes));
+    return bundle;
+  }
+  const first = await simulate(0, `SIMULATED RESULT\n${source.task.title}\nA sample recommendation requiring revision.`);
+  const target: CompletionReviewTargetV1 = { schemaVersion: profile.schemaVersion, id: "target:simulation:0",
+    tenantId, projectId, kind: "document", subjectId: receipt.jobId, subjectDigest: first.manifest.contentHash!,
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile), producer,
+    rootTargetId: "target:simulation:0", revisionNumber: 0, submittedAt: at(2) };
+  await store.registerTarget(target);
+  const findingId = "finding:simulation:missing-detail", reviewId = "review:simulation:changes";
+  await store.recordReview({ schemaVersion: profile.schemaVersion, id: reviewId, tenantId, projectId,
+    targetId: target.id, targetDigest: sha256Digest(target), acceptanceProfileId: profile.id,
+    acceptanceProfileDigest: sha256Digest(profile), reviewer: { actorId: "identity:web", actorType: "human" },
+    authority: "completion_gate", decision: "changes_requested", assessedRisk: "low", effectiveRisk: "low",
+    evidenceDigests: [first.manifest.contentHash], findingIds: [findingId], reviewedAt: at(3), grantsApproval: false, grantsExecutionAuthority: false },
+  [{ schemaVersion: profile.schemaVersion, id: findingId, tenantId, projectId, targetId: target.id,
+    targetDigest: sha256Digest(target), reviewId, code: "missing_detail", severity: "low",
+    statementDigest: sha256Digest("Add a concrete next step"), evidenceDigests: [first.manifest.contentHash], raisedAt: at(3) }]);
+  assert.equal((await store.snapshot(tenantId, target.id)).status, "changes_requested");
+  const second = await simulate(1, `SIMULATED REVISION\n${source.task.title}\nNext step: interview one potential user.`);
+  assert.notEqual(first.manifest.contentHash, second.manifest.contentHash);
+  assert.notEqual(first.manifest.attemptId, second.manifest.attemptId);
+  const revised: CompletionReviewTargetV1 = { ...target, id: "target:simulation:1", revisionNumber: 1,
+    subjectDigest: second.manifest.contentHash!, supersedesTargetId: target.id, submittedAt: at(6) };
+  await store.recordRevision({ schemaVersion: profile.schemaVersion, id: "revision:simulation:1", tenantId, projectId,
+    rootTargetId: target.id, fromTargetId: target.id, fromTargetDigest: sha256Digest(target), toTargetId: revised.id,
+    toTargetDigest: sha256Digest(revised), revisionNumber: 1, resolvedFindingIds: [findingId], revisedBy: producer,
+    revisedAt: at(6), grantsApproval: false, grantsExecutionAuthority: false }, revised);
+  assert.equal((await store.snapshot(tenantId, target.id)).status, "superseded");
+  const pending = await store.snapshot(tenantId, revised.id);
+  assert.equal(pending.status, "pending");
+  assert.deepEqual(pending.missingVerificationScenarioIds, ["scenario:content"]);
+  // Reusing completion storage must not turn the demonstration into an operational run.
+  assert.deepEqual(await f.tasks.detail(f.identity, projectId, receipt.jobId), source);
+  for (const table of ["control_attempts", "control_leases", "control_harness_runs", "control_native_artifact_receipts", "control_effect_intents"])
+    assert.equal((await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0, table);
+});
 
 test("private task proposal persists the existing canonical bundle, audit and receipt in one transaction", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());

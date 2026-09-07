@@ -4,6 +4,31 @@
 
 ### Existing synthetic execution reuse
 
+Fresh-source rehearsal now added to `tests/web-task-service.test.ts`: `taskFixture`
+creates the ordinary project through `WebProjectService`; the HTTP task handler saves
+the user's proposal. The rehearsal reads that actual title/instructions, explicitly
+invokes the existing simulator twice, builds exact-byte artifacts with distinct attempt
+and artifact IDs, and records a general completion changes-requested finding and its
+revision. The previous target becomes superseded; the revision remains pending its
+required verification rather than being declared accepted automatically.
+
+This is a test-only composition, not a worker that executes the proposal. During each
+progress callback the canonical task stays proposed with no attempts. After revision,
+the complete task-detail response still matches its original value; native runs,
+native result receipts, leases, attempts and effects remain empty. This establishes
+which general review components can reuse a newly created project/job identity without
+fabricating a native run. It also demonstrates the remaining UI gap directly: the
+native task-detail service does not expose the separate simulation history or artifacts.
+The eventual developer presentation must identify that history as a simulation, not
+silently turn these test assertions into a production dispatch implementation.
+
+The test is in an existing default-suite test file, so it is not an opt-in orphan.
+Stage-zero, root type checking and targeted lint pass; the full task-service,
+synthetic-executor and synthetic-coordinator selection passes 37 tests with no skips
+or failures. This is not a full-suite or browser run.
+No alternate schema, database migration, approval bypass, live listener or new simulator
+was added. Full interactive demo acceptance and public candidate assembly remain open.
+
 Follow-up: `tests/cr8-integration-acceptance.test.ts` already connects the synthetic
 executor to `buildTextArtifactBundle`, general completion targets, a changes-requested
 review, a second synthetic execution and `CompletionGateStoreV1.recordRevision`.

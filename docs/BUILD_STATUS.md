@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Fresh-project synthetic result/revision rehearsal passes:** Added a test in the
+existing task-service suite that creates the project and proposal through application
+services, runs two explicit simulations with distinct identities, and registers a
+changes-requested review and superseding revision using the general completion store.
+The canonical proposal remains unexecuted; native evidence/leases/effects stay empty.
+This verifies reusable library composition, not the interactive demo: native task
+detail still cannot show the separate synthetic history. No runtime or public export.
+
 **General synthetic review/revision path verified for reuse:** The existing CR8
 integration already connects synthetic execution, artifact bytes and the general
 completion store without native snapshots. Its test now checks ordered progress in
