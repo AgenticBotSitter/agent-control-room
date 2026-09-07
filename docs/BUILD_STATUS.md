@@ -8,9 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
-**Active website/login lane:** Owner goal now targets website, login and dual website
-access. `WEBSITE_LOGIN_DELIVERY.md` records public/private separation, provider/hostname
-choices, exact-origin dual-address integration, deployment sequence and live acceptance.
+**Current owner decision:** Deploy only one private application address on the owner's
+separate existing domain, selected in the private conversation. Keep the public project
+domain informational with no private login link. Use Cloudflare Access and the owner's
+Cloudflare login with MFA; inspect actual account configuration before enabling it.
+Do not deploy a second private address or populate `secondaryAccess`. The optional
+dual-address code remains unused. Hostnames stay out of public export configuration.
+Workplace use remains subject to employer policy, not assumed from domain reachability.
+`WEBSITE_LOGIN_DELIVERY.md` records this superseding scope and live acceptance.
+
+**Earlier dual-address implementation evidence (retained, not deployment scope):**
 The private process now accepts an optional `secondaryAccess` exact HTTPS origin and
 distinct audience, captured before requests and preserved by startup validation.
 Both origins reuse one set of services and resource ownership; unknown origins and
@@ -34,8 +41,8 @@ reports no new concrete defect. Deployment and live browser/IdP validation remai
 unfinished. Isolated verifier tests cover
 separate audiences, same owner with distinct tokens, cross-origin writes and spoofed
 forwarded-host rejection. No actual alternate hostname is enabled by these tests.
-Private hostname, provider and employer-approved alternate use await owner answers;
-no DNS, account, service or deployment changes have been made.
+The earlier hostname/provider questions were superseded by the owner's single-address
+decision above. No DNS, account, service or deployment changes have been made.
 The compiled VPS handoff now maps the existing operator configuration to optional
 dual-address website-only startup, existing tunnel routing, live acceptance and
 non-destructive alias rollback. No new deployment wrapper is required: the launcher

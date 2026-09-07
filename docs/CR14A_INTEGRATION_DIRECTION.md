@@ -117,6 +117,14 @@ than interactive login redirects. SSE rechecks/expiry must not leave an indefini
 
 ### Public and private addresses
 
+Owner amendment 2026-09-07: use only the selected private hostname on the separate
+existing domain, not a private subdomain of the public project domain. Cloudflare
+itself is the selected login provider behind Access, with owner-specific authorization
+and MFA still required. Keep exact private DNS values in protected configuration.
+The formerly requested second private address is no longer a delivery requirement;
+retain optional code unused and omit its configuration. This supersedes the earlier
+alternate-address proposal below, not the employer-policy requirement.
+
 - The apex `agentcontrolroom.xyz` is an independent informational/coming-soon surface, with no private-app link,
   login form, fleet details or shared application session cookie. Its public release is a separate explicit action.
 - The private application uses one owner-selected subdomain. Treat its name as discoverable; authentication and

@@ -57,6 +57,12 @@ physical PostgreSQL acceptance merely because the command is shell-portable.
 
 ### Website-only and optional second address
 
+**Current owner decision (2026-09-07): single private address only.** Use the selected
+private origin with its Access audience and omit `secondaryAccess`. Do not deploy a
+private alias on the public project domain. The optional example below is retained
+for reference, not the current installation recipe; it must not be copied with the
+secondary field enabled for this deployment.
+
 See [website delivery](WEBSITE_LOGIN_DELIVERY.md) for pending owner choices and live
 acceptance. The existing launcher passes `prepared.configuration` unchanged to the
 host; a second address needs no new launcher, process, database or queue. Assemble

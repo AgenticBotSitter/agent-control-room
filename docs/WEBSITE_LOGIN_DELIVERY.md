@@ -1,7 +1,9 @@
-# Website, login and dual-address delivery
+# Public website and single private application delivery
 
-2026-09-07. Current owner goal: finish the website, login, dual website interface
-and supporting items. This is the active website lane, not a claim of deployment.
+2026-09-07. Owner superseded dual-private-address delivery with one private address
+on a separate existing domain. The exact chosen hostname remains in private operator
+configuration/conversation, not public source. Finish that login/application and the
+separate public informational website. This is not a claim of deployment.
 Existing application and PostgreSQL architecture are retained. No new password store,
 identity provider, queue or news engine is proposed.
 
@@ -10,17 +12,18 @@ identity provider, queue or news engine is proposed.
 | Surface | Required behavior | Current position |
 | --- | --- | --- |
 | Public agentcontrolroom.xyz | Informational page, project/contribution links, no private login link or app data | Static source and website repository handoff exist; current hosted content not verified in this lane |
-| Primary private address | Full authenticated Control Room, same projects/tasks/results | Private hostname and actual identity provider requested from owner; app defaults to one origin with optional exact secondary origin |
-| Optional second private address | Same application data and permissions, independent site login | Exact hostname and employer-approved use remain unconfirmed; deployment disabled |
+| Single private address | Full authenticated Control Room, projects/tasks/results | Owner selected a hostname on the separate existing domain and approved the Cloudflare approach; live setup unverified |
+| Second private address | Not requested for this deployment | Do not configure; retain optional code unused |
 
-Candidate primary labels offered to owner: room, app or cr. None is selected or
-published by this document. Do not put actual private infrastructure configuration
+No private address is to be deployed under the public project domain. Do not put actual private infrastructure configuration
 into public website content, repository exports or screenshots.
 
 ## Login approach
 
-Retain Cloudflare Access and an existing configured identity provider. Let that
-provider manage password/passkey and MFA; Proton Pass may store the chosen account's
+Retain Cloudflare Access and use Cloudflare itself as the login identity provider,
+subject to inspection and configuration of the owner's actual account. Restrict to
+the approved owner identity and enforce MFA; account membership alone is not a grant
+of Control Room ownership. Let the provider manage credentials; Proton Pass may store the chosen account's
 credentials where supported, but is not presumed to be an identity provider.
 Owner membership remains explicitly checked by Control Room after signature,
 issuer, audience and time validation. Do not infer membership from an email header.
@@ -37,8 +40,14 @@ Official references checked 2026-09-07:
 - https://developers.cloudflare.com/cloudflare-one/access-controls/policies/mfa-requirements/
 - https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/independent-mfa/
 - https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/
+- https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/cloudflare/
 
-## Dual-address integration boundary
+## Retained optional dual-address integration (not deployment scope)
+
+The current deployment omits `secondaryAccess` and uses the existing single-origin
+path. The following describes already-built optional behavior, not work still
+required to finish this website. Do not create an alias, extra Access application or
+cross-domain login session for it.
 
 Use separately configured Access applications/audiences for independent private
 addresses, exact origin routing and independent host-only sessions. Both map an
@@ -100,23 +109,39 @@ audience. This change extends that bridge; it does not duplicate Cloudflare rout
 1. Inspect existing public deployment read-only and compare it with approved static
    source. Preserve other hosted sites. Verify HTTPS, public links and absence of
    private data; no replacement until the actual target and approval are confirmed.
-2. Resolve primary private hostname and provider; inspect existing Access configuration
-   and supported MFA methods. Do not solicit secrets in conversation.
+2. Inspect the selected private hostname's existing DNS/tunnel and Cloudflare login
+   configuration, exact owner identity and supported MFA methods. Preserve the parent
+   website. Do not solicit secrets in conversation.
 3. Complete private origin/Access/identity configuration and application startup,
    reusing VPS_COMPILED_HANDOFF.md. Actual DNS, services, certificates, database and
    account writes require one explicit scoped setup authorization, not guessed values.
 4. Test login, deep links, expiration, logout/revocation, MFA, ordinary remembered
    sessions and refusal of anonymous APIs. Test desktop and phone at the real address.
-5. Add the separately approved second address through exact-origin composition.
-   Verify both see identical project/task state, cannot exchange credentials/CSRF
-   requests, and cannot duplicate task execution. Test independent session behavior
-   and explain the existing Access-wide logout effects.
+5. Verify only the selected private address reaches the application. No project-domain
+   private alias, wildcard host acceptance or public login link may be introduced.
+   Keep public static content and private sessions separate. Workplace use requires
+   compliance with employer policy; reachability alone does not establish permission.
 6. Deliver a batched deployment/rollback handoff with exact releases, configuration
    inventory (no secrets), service ownership and acceptance receipts. Keep Actions off.
 
 No browser/native integration, DNS/account write, deployment, new download or GitHub
 activity occurred in preparing this packet. Website-only readiness must remain
 distinct from agent execution readiness. Closing a browser tab never cancels work.
+
+### Read-only account inspection after the single-address decision
+
+The authenticated Cloudflare dashboard is available. Its Access inventory showed
+three pre-existing applications, none identified as Control Room, and the overview
+reported one active tunnel. Neither observation proves a suitable Control Room
+origin service exists. The identity-provider inventory contained only One-time PIN.
+The Add Cloudflare screen is available; its account-member restriction defaults off.
+No login method, Access policy, DNS record, tunnel or service was changed.
+Before saving an account-wide login method, inspect existing applications' accepted
+login methods and obtain confirmation of the security-sensitive change. Restrict
+the new method to account members and retain explicit owner-only application policy;
+do not authorize all account members as Control Room owners. MFA and live acceptance
+remain unfinished. Do not copy account identifiers or unrelated application details
+into this handoff.
 
 ## Public copy checkpoint
 
