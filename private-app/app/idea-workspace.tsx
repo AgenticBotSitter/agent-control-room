@@ -4,6 +4,7 @@ import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import type { IdeaDetail, IdeaPage } from "../../src/web/v1/idea-wire";
 import { BrowserRequestError, browserErrorMessage } from "../../src/web/v1/browser-client";
 import { PrivateHeader } from "./private-header";
+import { IdeaCreateForm } from "./idea-create-form";
 
 export function IdeaDiscussion({ detail }: { detail: IdeaDetail }) {
   const { session, contributions, synthesis, decision } = detail;
@@ -32,6 +33,7 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
   const [client] = useState(() => createIdeaBrowserClient());
   const [page, setPage] = useState<IdeaPage>(), [detail, setDetail] = useState<IdeaDetail>();
   const [error, setError] = useState<string>(), [refresh, setRefresh] = useState(0);
+  const [creating, setCreating] = useState(false);
   useEffect(() => {
     let active = true; const abort = new AbortController();
     void (async () => {
@@ -46,11 +48,13 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
   }, [client, sessionId, after, refresh]);
   return <><PrivateHeader /><main className="private-main">
     <nav aria-label="Idea pages"><a href="/ideas">All saved ideas</a></nav>
-    <button type="button" onClick={() => { setPage(undefined); setDetail(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved discussion</button>
+    <button type="button" disabled={creating} onClick={() => { setPage(undefined); setDetail(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved discussion</button>
+    {creating ? <IdeaCreateForm close={() => { setCreating(false); setPage(undefined); setRefresh(v => v + 1); }} /> : null}
     {error ? <p role="alert">{error}</p> : detail ? <IdeaDiscussion detail={detail} /> : page ? <>
       <h1>Idea Lab</h1><p>Explore saved discussions and the projects you chose to pursue.</p>
       {page.availability === "not_configured" ? <p>Idea storage is not configured. No sample discussions are shown.</p>
-        : <><p>Creating and running new panels is not connected yet.</p>
+        : <>{page.canCreate ? <button type="button" disabled={creating} onClick={() => setCreating(true)}>New idea</button>
+          : <p>Idea creation is not available with the current configuration and access.</p>}<p>Running new panels is not connected yet.</p>
           {!page.sessions.length ? <p>No saved ideas on this page.</p> : page.sessions.map(session => <article className="private-panel" key={session.sessionId}>
             <h2><a href={`/ideas/${encodeURIComponent(session.sessionId)}`}>{session.title}</a></h2>
             <p>{session.ideaSummary}</p><p>{session.participantCount} participants · Up to {session.maxRounds} rounds</p>

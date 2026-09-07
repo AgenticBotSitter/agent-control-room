@@ -60,7 +60,7 @@ export class IdeaSessionCreationService {
           safeMetadata: { sessionDigest: session.sessionDigest, state: "saved_not_started" } });
       }
       return { sessionId, sessionDigest: session.sessionDigest, createdAt: session.createdAt,
-        replayed: !!existing, startsWork: false as const, execution: "not_requested" as const };
+        replayed: !!existing, startsWork: false as const, execution: "not_requested" as const, idempotencyKey: key };
     });
   }
 }

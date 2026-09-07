@@ -1,12 +1,23 @@
 import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), text = z.string().min(1).max(2000);
+export const ideaCreateDraftSchema = z.object({ title: z.string().trim().min(1).max(120), ideaSummary: z.string().trim().min(1).max(800),
+  targetCustomer: z.string().trim().min(1).max(300), maxRounds: z.number().int().min(1).max(3),
+  maxDurationSeconds: z.number().int().min(60).max(900), maxCostUsd: z.number().min(0).max(25),
+}).strict();
+export const ideaCreateReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, createdAt: z.string().datetime(),
+  replayed: z.boolean(), startsWork: z.literal(false), execution: z.literal("not_requested"),
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9:_-]{8,160}$/),
+}).strict();
+export type IdeaCreateDraft = z.infer<typeof ideaCreateDraftSchema>;
+export type IdeaCreateReceipt = z.infer<typeof ideaCreateReceiptSchema>;
 const summary = z.object({ sessionId: id, sessionDigest: digest, title: z.string().min(1).max(120),
   ideaSummary: text, targetCustomer: z.string().min(1).max(300), createdAt: z.string().datetime({ offset: true }) });
 export const ideaPageSchema = z.object({ availability: z.enum(["configured", "not_configured"]),
+  canCreate: z.boolean(),
   sessions: z.array(summary.extend({ participantCount: z.number().int().min(3).max(6), maxRounds: z.number().int().min(1).max(3) })).max(50),
   nextCursor: id.nullable(), execution: z.literal("not_configured"), observedAt: z.string().datetime(),
-}).strict().refine(page => page.availability !== "not_configured" || page.sessions.length === 0 && page.nextCursor === null);
+}).strict().refine(page => page.availability !== "not_configured" || page.sessions.length === 0 && page.nextCursor === null && !page.canCreate);
 export const ideaDetailSchema = z.object({ session: summary.extend({ participants: z.array(z.object({
   participantId: id, displayName: z.string().min(1).max(120), perspective: z.string().min(1).max(80),
 })).min(3).max(6), maxRounds: z.number().int().min(1).max(3) }),

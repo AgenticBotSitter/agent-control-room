@@ -13,7 +13,7 @@ export class WebIdeaService {
   private readonly authority: WebSessionAuthority;
   private readonly key?: Uint8Array;
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    integrityKey?: Uint8Array, clock: () => number = Date.now) {
+    integrityKey?: Uint8Array, clock: () => number = Date.now, private readonly creationConfigured = false) {
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
     if (integrityKey !== undefined) {
       if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("idea_key_invalid");
@@ -25,13 +25,14 @@ export class WebIdeaService {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("idea_lab.session_list", undefined, true);
       if (!this.key) return { availability: "not_configured" as const, sessions: [], nextCursor: null,
-        execution: "not_configured" as const, observedAt: actor.now };
+        execution: "not_configured" as const, canCreate: false, observedAt: actor.now };
       const page = await new IdeaLabProjectRegistryStoreV1(joined(tx), this.key).listSessionPage(this.scope.tenantId, this.scope.workspaceId, after);
       return { availability: "configured" as const, sessions: page.sessions.map(session => ({
         sessionId: session.sessionId, sessionDigest: session.sessionDigest, title: session.title, ideaSummary: session.ideaSummary,
         targetCustomer: session.targetCustomer, participantCount: session.participants.length, maxRounds: session.maxRounds,
         createdAt: session.createdAt,
-      })), nextCursor: page.nextCursor, execution: "not_configured" as const, observedAt: actor.now };
+      })), nextCursor: page.nextCursor, execution: "not_configured" as const, observedAt: actor.now,
+      canCreate: this.creationConfigured && actor.can("idea_lab.session_create", undefined, true) && actor.can("idea_lab.session_read", undefined, true) };
     });
   }
   async detail(identity: VerifiedWebIdentity, sessionId: string) {

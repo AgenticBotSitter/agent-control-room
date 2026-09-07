@@ -61,7 +61,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
   if (options.ideaCreation && (options.ideaCreation.tenantId !== options.tenantId
-    || options.ideaCreation.workspaceId !== options.workspaceId || typeof options.ideaCreation.create !== "function"))
+    || options.ideaCreation.workspaceId !== options.workspaceId || typeof options.ideaCreation.create !== "function" || !options.ideaProjects))
     throw new Error("invalid_private_app_config");
   const ideaCreation = options.ideaCreation ? Object.freeze({ create: options.ideaCreation.create.bind(options.ideaCreation) }) : undefined;
   if (options.queueAttention && (options.queueAttention.tenantId !== options.tenantId
@@ -107,7 +107,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    options.ideaProjects?.integrityKey, clock);
+    options.ideaProjects?.integrityKey, clock, !!ideaCreation);
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
