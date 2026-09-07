@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner reprioritized Idea Lab and ABS:** Work is on `codex/idea-abs-workflows`.
+Discussion rounds now include prior opinions; an authenticated ABS intake and browser
+client save source-backed ordinary task proposals without execution permission.
+Independent review findings were fixed and re-reviewed. Twenty-five focused tests,
+TypeScript and focused lint pass. See `IDEA_ABS_WORKFLOW_DELIVERY.md` for exact limits
+and remaining integration. Neither live workflow is complete: private page mounting,
+PostgreSQL news storage, real feeds/participants and end-to-end acceptance remain open.
+
 **Public contributor source published:** Owner approved the exact release and repository
 protections. Public main is `cc565d2acf33883316a5784fd0c8ba56fe2eb389`; all 520 remote
 files match the reviewed snapshot. Issues #1–#3 provide browser/accessibility, Windows
