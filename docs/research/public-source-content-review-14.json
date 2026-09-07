@@ -1,0 +1,119 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full current work-package/manifest read closes primary reread of two changed readiness files, without claiming fresh independent approval. Small configuration, SVG and notice files fully read. No runtime execution, GitHub or deployment changes.",
+  "entries": [
+    {
+      "path": "WORK_PACKAGES.md",
+      "sha256": "4e397fe3731da6c975e513e41f079e97c8e9639cf644e704881f1270004c26c6",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full current document read; substantial packages distinguish simulated demo from gated live work. Browser automation command is a deliverable, not claimed present. Ready issue still requires public base and maintainer.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "package.json",
+      "sha256": "2fb42f092ab023206f565a96d36e2477076983b905c6bd6054417f73c69bb95d",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full current manifest read; pinned dependencies and audit regression test commands. No credential-bearing registry or lifecycle-install script. Not dependency vulnerability clearance.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "d163e81bfab1cdbaa5748d4cfb2c06dcb6225ce8e7615a2ba516ce98d554956f",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generic release/configuration source or approved public project notice; no embedded private values.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "NOTICE",
+      "sha256": "740bb8f016c0ecfb16fd7572ff6bcf512129dccb502f6328b0999bafb4a62942",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generic release/configuration source or approved public project notice; no embedded private values.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "middleware.ts",
+      "sha256": "3ad268e35dd5884f60c92a2887116a0a4b400b14e371f7b412f48db74c6371e0",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generic release/configuration source or approved public project notice; no embedded private values.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "next-env.d.ts",
+      "sha256": "a291a6b60536fec0a3b9d4ffd6d51179b463e9bc20281d7499d756813b4c07d5",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generated framework type imports and public documentation pointer, not a private endpoint.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "sha256": "62ed975b55579422d287aeb6b34f532b7eb741363a3b910b31cd7abeb9126b69",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generic release/configuration source or approved public project notice; no embedded private values.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "postcss.config.mjs",
+      "sha256": "dfac7ac2d86d326a0e5adb024e7943c181393ed17a5fcb8f0315b24c7da6ddde",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generic release/configuration source or approved public project notice; no embedded private values.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "public/favicon.svg",
+      "sha256": "b718117c09caff435de086a545f5c27c8b22497a1be2b3069f595ccad3da268a",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full geometric SVG inspected; no external resources, script or embedded private image data.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "third_party/control-center/LICENSE",
+      "sha256": "a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b",
+      "contentReview": "no_private_values_observed",
+      "observation": "Retained public upstream MIT attribution; adapted helper path is outside this initial source subset as THIRD_PARTY scope explains. No private records.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "third_party/control-center/NOTICE.md",
+      "sha256": "82879105fdd02ca9d8c9e9d96b44d4edb7f8c5c9475bddfb72f02c72aa9cfc1c",
+      "contentReview": "no_private_values_observed",
+      "observation": "Retained public upstream MIT attribution; adapted helper path is outside this initial source subset as THIRD_PARTY scope explains. No private records.",
+      "remaining": [
+        "independent_final_candidate_acceptance",
+        "owner_publication_decision"
+      ]
+    }
+  ]
+}

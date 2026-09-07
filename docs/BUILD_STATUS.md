@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Changed readiness files reread:** Current WORK_PACKAGES and package.json were fully
+read alongside nine small configuration, icon and notice files. No embedded private
+values found; exact hashes and observations are in content receipt 14. This is a new
+primary content review, not renewed independent approval of the two changed files.
+The work packages clearly separate runnable simulation from gated live connectors.
+Recorded content coverage is 239 files; mixed-scope union with existing readiness
+evidence is 263 of 520. No candidate source or public repository changed.
+
 **Existing readiness evidence reconciled:** Twenty-six of the independent review's
 28 files still match exact candidate hashes. WORK_PACKAGES and package.json changed
 and are excluded from that prior review. The reconciliation receipt preserves both

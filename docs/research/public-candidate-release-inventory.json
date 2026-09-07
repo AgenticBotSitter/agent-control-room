@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Thirteen numbered content receipts match 135 exact files. Separate independent domain/node receipts cover 93 additional files: 228 unique content-reviewed files. Prior readiness review matches 26 current files, adding 24 distinct paths for a mixed-scope union of 252. Two changed readiness files are excluded. Scope-specific evidence is not correctness, license or publication approval.",
-  "exactPriorReviewMatches": 135,
+  "manualReviewCoverageMeaning": "Fourteen numbered content receipts match 146 exact files. Separate independent domain/node receipts cover 93 additional files: 239 unique content-reviewed files. Prior readiness review matches 26 current files, adding 24 distinct paths for a mixed-scope union of 263. Two changed readiness files now have primary content rereads, not renewed independent approval. Scope-specific evidence is not correctness, license or publication approval.",
+  "exactPriorReviewMatches": 146,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -245,7 +245,7 @@
       "path": ".gitignore",
       "bytes": 454,
       "sha256": "d163e81bfab1cdbaa5748d4cfb2c06dcb6225ce8e7615a2ba516ce98d554956f",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -263,7 +263,7 @@
       "path": "NOTICE",
       "bytes": 404,
       "sha256": "740bb8f016c0ecfb16fd7572ff6bcf512129dccb502f6328b0999bafb4a62942",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "README.md",
@@ -293,7 +293,7 @@
       "path": "WORK_PACKAGES.md",
       "bytes": 11487,
       "sha256": "4e397fe3731da6c975e513e41f079e97c8e9639cf644e704881f1270004c26c6",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "app/components/connection-center.tsx",
@@ -773,19 +773,19 @@
       "path": "middleware.ts",
       "bytes": 451,
       "sha256": "3ad268e35dd5884f60c92a2887116a0a4b400b14e371f7b412f48db74c6371e0",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "next-env.d.ts",
       "bytes": 189,
       "sha256": "a291a6b60536fec0a3b9d4ffd6d51179b463e9bc20281d7499d756813b4c07d5",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "package.json",
       "bytes": 2728,
       "sha256": "2fb42f092ab023206f565a96d36e2477076983b905c6bd6054417f73c69bb95d",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -797,13 +797,13 @@
       "path": "pnpm-workspace.yaml",
       "bytes": 112,
       "sha256": "62ed975b55579422d287aeb6b34f532b7eb741363a3b910b31cd7abeb9126b69",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "postcss.config.mjs",
       "bytes": 94,
       "sha256": "dfac7ac2d86d326a0e5adb024e7943c181393ed17a5fcb8f0315b24c7da6ddde",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "private-app/app/connections/page.tsx",
@@ -977,7 +977,7 @@
       "path": "public/favicon.svg",
       "bytes": 527,
       "sha256": "b718117c09caff435de086a545f5c27c8b22497a1be2b3069f595ccad3da268a",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "scripts/build-vps.mjs",
@@ -3329,13 +3329,13 @@
       "path": "third_party/control-center/LICENSE",
       "bytes": 1067,
       "sha256": "a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "third_party/control-center/NOTICE.md",
       "bytes": 1788,
       "sha256": "82879105fdd02ca9d8c9e9d96b44d4edb7f8c5c9475bddfb72f02c72aa9cfc1c",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
     },
     {
       "path": "tsconfig.json",
