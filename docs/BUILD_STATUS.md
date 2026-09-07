@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Public completion roadmap drafted:** The contributor-facing roadmap now defines five
+outcome-based milestones: reproducible source/demo, one live private task/revision,
+productive multi-machine workers, Idea Lab/news/content, and dependable daily operation.
+Each includes usable acceptance evidence and parallel contributor work; optional workflows
+remain in scope. Source release, license, runtime provisioning and deployment are not
+claimed complete. The roadmap carries the local-check/batched-update budget policy.
+Local document links and whitespace checked; no GitHub write or new issue assignment.
+
 **Owner-authorized private website transfer completed:**
 `AgenticBotSitter/agent-control-room-website` contains only the standalone HTML, CSS and
 manual deployment README at `2fc2327cf766e4bc8e42978f8f12bf94e6876936`. Private visibility,

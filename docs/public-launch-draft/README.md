@@ -12,6 +12,7 @@ and reproducibility review. Nothing here enables GitHub Actions or changes repos
 | README.md | [Project brief](../PUBLIC_PROJECT_BRIEF_DRAFT.md) | Confirm name, website/repository links and current release status |
 | CONTRIBUTING.md | [Contributor guide](../PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md) | Confirm license/contribution policy and link verified setup |
 | docs/ARCHITECTURE.md | [Architecture](ARCHITECTURE.md) | Technical review against the exact exported source |
+| ROADMAP.md | [Roadmap](ROADMAP.md) | Confirm milestone evidence and turn scoped work into ready issues after source release |
 | GOVERNANCE.md | [Governance](GOVERNANCE.md) | Owner approves policy and names accountable maintainers |
 | SECURITY.md | [Security policy](SECURITY.md) | Establish and test a monitored private reporting channel |
 | .github/PULL_REQUEST_TEMPLATE.md | [PR template](PULL_REQUEST_TEMPLATE.md) | Confirm contributor workflow |
@@ -25,7 +26,7 @@ defaults or private project names. They are not a license grant or security cert
 - LICENSE and any contribution sign-off requirements: owner decision, then compatibility review.
 - CODEOWNERS: actual consenting maintainer handles, not imaginary reviewers or bot identities.
 - CODE_OF_CONDUCT and moderation contact: owner-approved behavior and enforcement policy.
-- A public ROADMAP derived from the [internal module map](../AGENT_CONTROL_ROOM_MODULE_ROADMAP.md),
+- Review the drafted public roadmap against the [internal module map](../AGENT_CONTROL_ROOM_MODULE_ROADMAP.md),
   without publishing that internal source/path inventory verbatim.
 - Verified quick start, development setup, supported-platform matrix and connector guides.
 - Exact third-party notice package and resolved asset rights for the selected source tree.
