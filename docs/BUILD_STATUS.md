@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Final staged source reconstruction and links verified:** All 518 candidate files
+match the three private reconstruction records; no extra source or broken relative
+Markdown link was found. Automated and bounded review evidence does not prove actual
+browser operation. The next meaningful acceptance step is a temporary local synthetic
+demo browser trial, followed by owned-process/data cleanup; scoped authority is being
+requested. No live agent qualification or production action is implied.
+
 **Contributor batches clarified and content-review findings addressed:** Two initial
 work packages now name concrete file scope, local checks and failure-case evidence:
 browser journey/accessibility and OS-specific setup/cleanup. Independent content

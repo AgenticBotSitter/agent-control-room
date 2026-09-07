@@ -1,5 +1,21 @@
 # Local public source candidate staging
 
+## Post-review reconstruction and link check (2026-09-06)
+
+Applying the original receipt, demo delta and finalization delta in memory reproduced
+all 518 staged source/document files byte-for-byte. No extra source file or broken
+relative Markdown link was found. Dependencies/build directories were explicitly
+excluded, not treated as release content. Ordered path/content-hash inventory digest:
+`25ab1753eebb87bc85037faebfd03ea936cb6e046137a1b66597c3363ce03981`.
+This is a content snapshot identifier, not a privacy/license certification.
+
+Next requested authority: one temporary, local-only contributor demo browser trial,
+up to ten minutes, fixed 127.0.0.1:3000 only, synthetic projects/tasks/revisions, no
+provider/agent/Keychain access, no installs, no public upload or deployment. Fail if
+the port is occupied; do not stop another process. Stop the owned demo and verify its
+temporary directory is absent afterward. This is distinct from prior owner-attended
+native agent qualifications and does not reuse their authority or attempt budget.
+
 ## Expanded isolated demo rehearsal (2026-09-06)
 
 Follow-up: the full selected standalone command also builds successfully and passes
