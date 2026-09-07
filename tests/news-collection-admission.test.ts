@@ -10,6 +10,8 @@ import { WebNewsCollectionAdmission } from "../src/web/v1/news-collection-admiss
 import { WebProjectService } from "../src/web/v1/project-service";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import type { AbsFeedJobReference } from "../src/persistence/pg-boss-abs-feed-worker";
+import { createAbsFeedJobExecution } from "../src/project-adapters/abs-news/v1/feed-job-execution";
+import { AbsFeedIngestionService } from "../src/project-adapters/abs-news/v1/feed-ingestion";
 
 async function fixture() {
   let current = now, failQueue = false, expireQueue = false;
@@ -189,6 +191,60 @@ test("lease expiry preserves orphaned history when collection uncertainty is set
   assert.equal((await store.get(f.scope.tenantId, "job", receipt.jobId))?.state, "orphaned");
   assert.equal((await store.get(f.scope.tenantId, "attempt", receipt.attemptId))?.state, "orphaned");
   assert.equal((await store.get(f.scope.tenantId, "lease", lease.id))?.state, "expired");
+});
+
+test("owned feed execution binds approved plan, retained receipt and terminal job", async t => {
+  for (const mode of ["success", "read_failure", "bad_receipt", "cleanup", "revoked"] as const) await t.test(mode, async () => {
+    const f = await fixture();
+    try {
+      const approved = await f.service.approve(f.identity, f.args);
+      const { replayed, effectState, networkContacted, ...reference } = approved;
+      assert.equal(replayed, false); assert.equal(effectState, "authorized"); assert.equal(networkContacted, false);
+      let calls = 0, closes = 0, permitted = true;
+      const runner = createAbsFeedJobExecution(f.client, f.scope, f.key, { assertCurrent(url) {
+        assert.equal(url, "https://example.org/feed"); if (!permitted) throw new Error("synthetic revoked guard");
+      } }, f.clock, (db, value, key, guard) => {
+        const { timeoutMs, ...configuration } = value as Record<string, unknown>;
+        assert.equal(timeoutMs, 10000);
+        const ingestion = new AbsFeedIngestionService(db, configuration, key);
+        return { async collect(signal) {
+          calls++; assert.equal(signal.aborted, false); guard.assertCurrent("https://example.org/feed");
+          assert.equal((await new CanonicalStore(f.client).get(f.scope.tenantId, "effect_intent", approved.effectId))?.state, "executing");
+          const result = mode === "read_failure" ? await ingestion.recordReadFailure({ checkedAt: new Date(now).toISOString(), reason: "read_failed" })
+            : await ingestion.ingest('<rss version="2.0"><channel><title>News</title><item><title>Saved news</title><link>https://example.org/story</link></item></channel></rss>', new Date(now).toISOString());
+          if (mode === "bad_receipt") result.receipt.authTag = "hmac-sha256:" + "0".repeat(64);
+          if (mode === "revoked") permitted = false;
+          return result;
+        }, async close() { closes++; if (mode === "cleanup") throw new Error("synthetic cleanup uncertainty"); } };
+      });
+      const result = await runner.collect(reference, new AbortController().signal);
+      assert.equal(result.disposition, mode === "success" ? "delivered" : "held");
+      assert.equal(calls, 1); assert.ok(closes >= 1);
+      assert.equal((await new CanonicalStore(f.client).get(f.scope.tenantId, "effect_intent", approved.effectId))?.state,
+        mode === "success" ? "confirmed" : mode === "read_failure" ? "failed" : "ambiguous");
+      await assert.rejects(runner.collect(reference, new AbortController().signal)); assert.equal(calls, 1);
+    } finally { await f.db.close(); }
+  });
+});
+
+test("cancellation during durable start cannot invoke the collector", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const approved = await f.service.approve(f.identity, f.args), controller = new AbortController();
+  const reference = { schema: "control-room.abs-feed-job/v1", tenantId: f.scope.tenantId, projectId: f.scope.projectId,
+    jobId: approved.jobId, attemptId: approved.attemptId, effectId: approved.effectId, operationDigest: approved.operationDigest };
+  let marked = false;
+  const session = (tx: DatabaseSession): DatabaseSession => ({ async query<T>(sql: string, values?: unknown[]) {
+    const result = await tx.query<T>(sql, values);
+    if (sql.includes("UPDATE control_effect_intents") && values?.[0] === "executing") { marked = true; controller.abort(); }
+    return result;
+  } });
+  const db: DatabaseClient = { query: f.client.query.bind(f.client), transaction: work => f.client.transaction(tx => work(session(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
+  const runner = createAbsFeedJobExecution(db, f.scope, f.key, { assertCurrent() {} }, f.clock, () => {
+    assert.fail("cancelled attempt must not construct a collector");
+  });
+  assert.equal((await runner.collect(reference, controller.signal)).disposition, "held"); assert.equal(marked, true);
+  assert.equal((await new CanonicalStore(f.client).get(f.scope.tenantId, "effect_intent", approved.effectId))?.state, "ambiguous");
 });
 
 test("grant revocation deadline and marker write failures roll back the whole start", async t => {

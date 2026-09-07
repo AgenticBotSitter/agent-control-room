@@ -8,6 +8,23 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owned feed execution is connected locally, not mounted:** One composition loads the
+exact saved plan, records its durable coordinator start, owns one collection, awaits
+cleanup, verifies the freshly returned retained receipt and settles the job. It does
+not accept a queued URL. Cancellation, bad receipts, revoked source guards and cleanup
+uncertainty cannot become successful collection or allow another read. Fifty-two focused
+execution/collection checks and 199 delivery regressions pass, plus TypeScript, focused
+lint and VPS build. Initial lint caught unused test destructuring; assertions now use
+those fields. Independent source review found no concrete defect; an additional passing
+test cancels during marker persistence and confirms no collector is constructed.
+Composition tests inject the collector while using real canonical/ingestion/receipt
+storage in PGlite. Timer-driven expiry, real PostgreSQL concurrency and native network
+interoperability are not established by this evidence. The required synchronous source
+guard still needs a separately qualified current-authority implementation; this does not
+replace remote node-local protection. No live feed, provider, runtime mounting, deployment
+or GitHub write occurred. **Next:** configure and protect this route's authority/lifecycle
+and startup, then canonical-page verification and the full article-to-agent journey.
+
 **Collection receipts now verify exact retained evidence:** Collection storage returns
 an authenticated, scope-bound manifest of the source-status digest and sorted unique
 story versions. Verification reads those exact historical records, authenticates them,
