@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { canonicalNetworkDestinationSchema } from "../../security/canonical-network-destination";
 import { authorityModes } from "../../contracts/v1/types";
 import {
   DOMAIN_CONTRACT_VERSION,
@@ -183,7 +184,7 @@ export const effectIntentRecordSchema = orderedRecord({
   attemptId: safeId,
   operation: safeId,
   operationDigest: digest,
-  destination: safeId,
+  destination: z.union([safeId, canonicalNetworkDestinationSchema]),
   idempotencyKey: z.string().min(12).max(180),
   risk: z.enum(["low", "medium", "high", "critical"]),
   state: z.enum(effectIntentStates),

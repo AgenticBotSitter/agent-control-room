@@ -389,6 +389,38 @@ test("CR-4Q enforces job authority at lease and effect boundaries", async () => 
   await db.close();
 });
 
+test("canonical HTTPS effect destinations retain exact allowlist enforcement", async t => {
+  const db = await migratedDatabase(); t.after(() => db.close());
+  const store = new CanonicalStore(adaptPglite(db)); await seedActiveNode(store);
+  const base = records("feed-destination");
+  Object.assign(base.job.authority, { networkPolicy: "allowlist", allowedNetworkDestinations: ["https://example.org:443"],
+    effectPolicy: "preauthorized", maxConcurrentEffects: 1 });
+  base.job.authority.digest = computeAuthorityDigest(base.job.authority);
+  await store.create(base.request); await store.create(base.workflow); await store.create(base.job);
+  const ready = await store.transition({ tenantId: base.job.tenantId, kind: "job", entityId: base.job.id, expectedVersion: 0,
+    toState: "ready", transitionId: "transition:feed-ready", idempotencyKey: "idem-feed-ready-0001", actor, occurredAt: t1 });
+  const claimed = await store.claimReadyJob({ tenantId: base.job.tenantId, jobId: base.job.id, expectedJobVersion: ready.entity.version,
+    nodeId: node().id, attemptId: "attempt:feed", leaseId: "lease:feed", transitionId: "transition:feed-claim",
+    idempotencyKey: "idem-feed-claim-0001", actor, acquiredAt: t1, expiresAt: t5 });
+  const effect: EffectIntentRecord = { contractVersion: DOMAIN_CONTRACT_VERSION, kind: "effect_intent", id: "effect:feed",
+    tenantId: base.job.tenantId, jobId: base.job.id, attemptId: claimed.attempt.id, operation: "operation:test",
+    operationDigest: hashA, destination: "https://example.org:443", idempotencyKey: "effect-feed-0001", risk: "low",
+    state: "proposed", version: 0, createdAt: t1, updatedAt: t1 };
+  effect.operationDigest = computeEffectOperationDigest(effect, base.job.projectId);
+  await store.create(effect);
+  assert.equal((await store.get(base.job.tenantId, "effect_intent", effect.id) as EffectIntentRecord).destination, effect.destination);
+  for (const destination of ["https://other.example.org:443", "https://example.org:8443", "destination:other"]) {
+    const changed = { ...effect, id: "effect:other", destination }; changed.operationDigest = computeEffectOperationDigest(changed, base.job.projectId);
+    await assert.rejects(store.create(changed), /destination exceeds job authority/);
+  }
+  for (const destination of ["http://example.org:443", "https://example.org", "https://example.org:443/path",
+    "https://example.org:443?key=x", "https://user@example.org:443", "https://EXAMPLE.org:443", "https://example.org:99999"]) {
+    const changed = { ...effect, id: "effect:invalid", destination }; changed.operationDigest = computeEffectOperationDigest(changed, base.job.projectId);
+    await assert.rejects(store.create(changed));
+  }
+  assert.equal((await db.query("SELECT * FROM control_effect_intents")).rows.length, 1);
+});
+
 test("CR-4Q binds claim replay and transition chronology", async () => {
   const db = await migratedDatabase();
   const store = new CanonicalStore(adaptPglite(db));

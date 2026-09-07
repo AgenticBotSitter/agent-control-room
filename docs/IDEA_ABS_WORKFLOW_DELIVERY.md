@@ -25,6 +25,46 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Proposed feed jobs bind the complete source configuration
+
+`buildAbsFeedProposedWork` creates ordinary draft/proposed request/workflow/job records.
+The input digest covers job identity, tenant/workspace/project, planned time, source ID,
+label/kind/full URL, byte/item ceilings and timeout. Structural verification rejects drift
+or widened authority/retry settings. Requested authority is one operation, one executor,
+one canonical HTTPS host/port, no credentials/filesystem/provider cost, one concurrent
+effect, approval-required and a 60-second execution ceiling. The exact path is separately
+input-digest-bound; host permission alone must never authorize another path. One attempt
+and attention on ambiguity are required. No ready transition, permission or lease is minted.
+The plan payload still needs durable storage and an authenticated creation/admission service.
+
+Seventeen canonical persistence/plan checks pass, plus TypeScript and focused lint. The
+test writes proposed records through the existing canonical store with no lease, approval,
+effect or outbox entry. Source-only independent review found no introduced defect.
+
+### Canonical effect destination representation correction
+
+The existing effect destination accepted identifiers only, making exact HTTPS destinations
+impossible to match against the job allowlist. The domain schema now accepts either the
+unchanged identifier form or the existing canonical HTTPS host/explicit-port validator.
+That pure validator is extracted unchanged and re-exported by node policy, rather than
+creating a second normalizer. There is no database schema change and exact allowlist
+membership/operation digests remain required. Tests persist the matching destination and
+reject different host/port, path/query/credential URLs and noncanonical forms. Public DNS,
+address pinning and TLS checks still belong to the reader; representation is not authority.
+
+Compatibility boundary: existing identifier records remain readable. Older readers reject
+new HTTPS destination records; do not enable this job class in mixed-version deployments
+until its readers are upgraded. No such record was written outside disposable tests, and
+no deployed protocol, queue, source or role was changed. Independent source review confirms
+validator parity and this compatibility limit; final integration remains with Codex.
+The first broader test run caught the stale generated domain schema (42/43 passed).
+The repository generators refreshed it and exposed the already-enforced basic destination
+pattern in the domain, ceiling, local-request and frame artifacts. The redundant runtime
+regex does not change acceptance. Forty-three contract/target/reader checks now pass.
+Generated JSON syntax alone does not enforce the full hostname/port refinement; runtime
+validation remains required. Follow-up independent source review found no introduced defect.
+Final TypeScript, focused lint, 62 workflow regressions and VPS compilation also pass.
+
 ### Transactional feed submission through the shared adapter
 
 `preparePgBossAbsFeedSubmission` selects the fixed feed reference/queue profile through

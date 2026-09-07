@@ -894,10 +894,20 @@
           "pattern": "^sha256:[a-f0-9]{64}$"
         },
         "destination": {
-          "type": "string",
-          "minLength": 3,
-          "maxLength": 180,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 180,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
+            {
+              "type": "string",
+              "minLength": 12,
+              "maxLength": 300,
+              "pattern": "^https:\\/\\/([a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?):([1-9][0-9]{0,4})$"
+            }
+          ]
         },
         "idempotencyKey": {
           "type": "string",

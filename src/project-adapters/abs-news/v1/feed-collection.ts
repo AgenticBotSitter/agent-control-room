@@ -5,7 +5,7 @@ import { absFeedInputSchema } from "./feed-decoder";
 import { AbsFeedIngestionService } from "./feed-ingestion";
 import { createAbsPublicReader, type AbsPublicReaderPorts } from "./public-reader";
 
-const schema = absFeedInputSchema.omit({ xml: true, observedAt: true }).extend({ timeoutMs: z.number().int().min(1).max(30_000) });
+export const absFeedCollectionConfigurationSchema = absFeedInputSchema.omit({ xml: true, observedAt: true }).extend({ timeoutMs: z.number().int().min(1).max(30_000) });
 type Receipt = Awaited<ReturnType<AbsFeedIngestionService["ingest"]>>;
 
 /** One owned collection inside an already-authorized job; not a durable dispatch claim.
@@ -13,7 +13,7 @@ type Receipt = Awaited<ReturnType<AbsFeedIngestionService["ingest"]>>;
  * One source configuration controls both reader destination and stored attribution. */
 export function createAbsFeedCollection(db: DatabaseClient, value: unknown, key: Uint8Array,
   source: AbsCurrentSourceAuthority, ports?: AbsPublicReaderPorts) {
-  const { timeoutMs, ...config } = schema.parse(value), endpoint = config.source.endpointUrl;
+  const { timeoutMs, ...config } = absFeedCollectionConfigurationSchema.parse(value), endpoint = config.source.endpointUrl;
   const assertCurrent = captureAbsCurrentSourceAuthority(source);
   let closed = false, used = false, active: Promise<Receipt> | undefined, closing: Promise<void> | undefined;
   let operationSignal: AbortSignal | undefined;

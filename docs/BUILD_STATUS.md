@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Proposed feed jobs now bind source and limits to canonical job input:** The builder
+produces only draft/proposed records with one approval-required read operation, fixed
+host/port authority, full-path input binding, no credentials/filesystem access and no
+automatic retry. Seventeen plan/canonical persistence checks pass. Integration exposed
+an older mismatch: effect destinations accepted IDs but could not represent HTTPS
+allowlists. They now also accept the existing canonical HTTPS host/port representation;
+exact allowlist and network guard requirements remain intact. Forty-three contract/target
+checks pass after regenerating a stale domain artifact caught by the first run. Independent
+review found no introduced defect, including the unchanged runtime destination validator.
+Older readers reject the new destination form: this is not mixed-version rollout-ready.
+The full plan store, owner admission, durable execution ownership and real journeys remain
+unfinished. No deployment, live source or provider was used.
+Final TypeScript, focused lint, 62 workflow regressions and VPS compilation pass.
+
 **News submission now shares the transactional pg-boss adapter:** The native adapter was
 extracted without changing its fixed reference/recovery behavior. A feed-only wrapper
 keeps recovery unavailable and inserts the operational reference on the caller's SQL
