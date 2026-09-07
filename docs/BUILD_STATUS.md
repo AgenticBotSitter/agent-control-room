@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**News-to-research product gap confirmed:** The borrowed collector saves discovered
+articles as `review_only`; the mounted research endpoint refuses them under the
+existing CR9D contract. The discovery integration regression now explicitly verifies
+that refusal instead of implying collection completion means task readiness. Owner
+direction is requested on allowing verification-first research tasks from unverified
+articles (recommended), while preserving unverified provenance, review and separate
+effect/publication approvals. No permission or verification rule has been loosened.
+See `CONTROL_CENTER_INTEGRATION.md` for the decision and alternative verifier path.
+
 **News is composed into private task startup:** Explicit `news` configuration now
 captures scoped source assignments, distinct same-primary coordinator/ingestion/worker
 logins, matching web integrity key and supplied authority/transport. Startup verifies

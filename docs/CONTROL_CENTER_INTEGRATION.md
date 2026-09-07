@@ -116,6 +116,22 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+### Open product decision: research on discovered articles
+
+The actual borrowed-collection-to-web path saves `review_only` articles. Under the
+current CR9D contract, `WebNewsService.prepare` refuses even `research_brief` with
+HTTP 409 until separate canonical-source verification has occurred. A regression
+now makes this end-to-end limitation explicit; successful collection/startup does
+not prove the requested news-to-research workflow.
+
+Owner direction has been requested on allowing verification-first research of an
+unverified article. Recommended: keep the article unverified, pass its exact retained
+discovery evidence as untrusted research input, and hold the result for review.
+Do not enable publication, setup execution or other consequential actions by this
+choice. Until approved and implemented in the normative contract and task boundaries,
+the existing refusal remains in force. Alternatively, retain the separate verifier
+gate and build its direct-page evidence path before any proposal.
+
 ### Startup composition
 
 `createPrivateTaskBootstrap` now accepts explicit top-level `news` configuration:
