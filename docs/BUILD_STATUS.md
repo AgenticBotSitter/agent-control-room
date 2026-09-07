@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**News submission now shares the transactional pg-boss adapter:** The native adapter was
+extracted without changing its fixed reference/recovery behavior. A feed-only wrapper
+keeps recovery unavailable and inserts the operational reference on the caller's SQL
+transaction, including cold-cache metadata reads. Existing/orphan operational IDs refuse
+submission instead of being adopted. Fifty native queue regressions and 27 installed-package
+checks pass; an additional focused check connects committed submission to feed pickup.
+The 62 workflow regressions, TypeScript, focused lint and VPS build pass. Independent
+source review found no introduced defect. Atomic evidence uses a synthetic intent marker
+in disposable PGlite, not the still-missing canonical feed admission/effect service.
+No production schema/role, startup configuration, live feed or provider was changed.
+Canonical admission, effect ownership, startup/role wiring, page verification and real
+Idea/ABS journeys remain unfinished.
+
 **News job pickup now reuses the installed pg-boss worker path:** Shared code owns
 single-item pickup, bounded concurrency, cancellation, drain and sanitized outcomes.
 The existing native wrapper preserves its reference/recovery contract; the separate feed

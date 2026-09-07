@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { startPgBossNativeTaskWorker } from '../../src/persistence/pg-boss-native-task-worker.ts';
 import { startPgBossAbsFeedWorker, absFeedJobId, ABS_FEED_QUEUE } from '../../src/persistence/pg-boss-abs-feed-worker.ts';
+import { preparePgBossAbsFeedSubmission } from '../../src/persistence/pg-boss-abs-feed-submission.ts';
 import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
 import { verifyPgBossNativeWorkerPermissions } from '../../src/persistence/pg-boss-native-task-permissions.ts';
 import { verifyNativeQueueWorkerDatabase } from '../../src/web/v1/private-database-preflight.ts';
@@ -297,6 +298,49 @@ test('feed pickup uses installed pg-boss with no automatic re-read after handler
   assert.equal(await f.boss.send(name, ref, { id: absFeedJobId(ref), retryLimit: 0 }), null);
   await worker.close(); assert.equal(worker.isAccepting(), false); assert.deepEqual(f.errors, []);
   // Operational retention and completion are not permanent effect-claim evidence.
+});
+
+test('feed submission and its caller marker commit or roll back together with installed pg-boss', async t => {
+  const f = await fixture(t), name = ABS_FEED_QUEUE.name;
+  await f.boss.createQueue(name, { retryLimit: 0 });
+  await f.raw.exec('CREATE TABLE synthetic_feed_intents(id text PRIMARY KEY)');
+  const port = db => ({ query: (sql, values) => db.query(sql, values) });
+  // Passing extra recovery at runtime must not expose the native retry operation.
+  const submit = await preparePgBossAbsFeedSubmission(PgBoss, port(f.raw), { backend: 'pglite', recovery: true });
+  t.after(() => submit.close());
+  assert.deepEqual(Object.keys(submit).sort(), ['close', 'enqueueInSession']);
+  const ref = { schema: 'control-room.abs-feed-job/v1', tenantId: 'tenant:feed', projectId: 'project:feed',
+    jobId: 'job:committed', attemptId: 'attempt:feed', effectId: 'effect:feed', operationDigest: sha256Digest('operation') };
+  const rolled = { ...ref, jobId: 'job:rollback', effectId: 'effect:rollback' };
+  await assert.rejects(f.raw.transaction(async tx => {
+    await tx.query('INSERT INTO synthetic_feed_intents VALUES ($1)', [rolled.jobId]);
+    await submit.enqueueInSession(port(tx), rolled); throw new Error('synthetic rollback');
+  }), /synthetic rollback/);
+  assert.equal((await f.raw.query('SELECT * FROM synthetic_feed_intents')).rows.length, 0);
+  assert.equal(await f.boss.getJobById(name, absFeedJobId(rolled)), null);
+  await f.raw.transaction(async tx => {
+    await tx.query('INSERT INTO synthetic_feed_intents VALUES ($1)', [ref.jobId]);
+    await submit.enqueueInSession(port(tx), ref);
+  });
+  assert.deepEqual((await f.raw.query('SELECT * FROM synthetic_feed_intents')).rows, [{ id: ref.jobId }]);
+  const saved = await f.boss.getJobById(name, absFeedJobId(ref));
+  assert.equal(saved.state, 'created'); assert.equal(saved.retryLimit, 0); assert.deepEqual(saved.data, ref);
+  let pickedUp = 0;
+  const worker = await startPgBossAbsFeedWorker(f.boss, { async collect(value) {
+    assert.deepEqual(value, ref); pickedUp++; return { disposition: 'held' };
+  } });
+  f.workers.push(worker);
+  await until(async () => (await f.boss.getJobById(name, absFeedJobId(ref)))?.state === 'completed');
+  assert.equal(pickedUp, 1); await worker.close();
+  await assert.rejects(f.raw.transaction(async tx => {
+    await tx.query('INSERT INTO synthetic_feed_intents VALUES ($1)', ['job:orphan-adoption']);
+    await submit.enqueueInSession(port(tx), ref);
+  }), /abs_feed_submission_unavailable/);
+  assert.equal((await f.raw.query('SELECT * FROM synthetic_feed_intents')).rows.length, 1);
+  await submit.close();
+  await assert.rejects(submit.enqueueInSession(port(f.raw), rolled), /abs_feed_submission_unavailable/);
+  assert.deepEqual(f.errors, []);
+  // Marker is deliberately synthetic: actual canonical admission is a separate service.
 });
 
 // A separate logical SQL port models ownership of a dedicated worker pool; PGlite

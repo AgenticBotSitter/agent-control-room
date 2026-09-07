@@ -25,6 +25,27 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Transactional feed submission through the shared adapter
+
+`preparePgBossAbsFeedSubmission` selects the fixed feed reference/queue profile through
+the extracted `preparePgBossBoundedSubmission`. Native IDs, validation, error behavior
+and opt-in bounded recovery remain unchanged. Feed construction forwards only backend:
+an extra runtime recovery field cannot expose recovery. Both metadata and insertion use
+the caller transaction through the existing async-local routing; late inactive-session
+queries fail. Automatic migrations, scheduling, notifications and supervision stay off.
+The queue must already exist; this component neither provisions it nor authorizes a job.
+
+Fifty native unit/regression checks and 27 installed-package checks pass. The feed test
+proves a supplied synthetic marker and queue row roll back together, commit together,
+and refuse duplicate/orphan adoption with rollback of the attempted new marker. A final
+focused rerun additionally proves that the committed reference reaches the feed worker.
+The wrapper has only enqueue/close and refuses post-close submission. This is actual
+pg-boss with disposable PGlite, not real PostgreSQL concurrency or canonical admission.
+Sixty-two workflow regressions, TypeScript, focused lint and VPS compilation pass.
+Independent source review found no concrete introduced defect. Real canonical feed
+approval/marker/outcome service, deployment role/startup wiring and live collection remain
+pending. No production, provider, listener, credential or source request occurred.
+
 ### Shared pg-boss worker with an explicit feed profile
 
 `pg-boss-bounded-worker` extracts the existing native pickup/cancellation/drain code;
