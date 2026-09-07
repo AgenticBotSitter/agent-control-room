@@ -8,6 +8,7 @@ import type { PrivatePostgresConfiguration } from "./private-postgres";
 export const privateWebSchemaDigest = "aac6f3f58ff464bf5d3a7227aa16efaf2beab0aba799db3b59b6248eff2f3a9f";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "control_abs_story_versions",
+  "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",

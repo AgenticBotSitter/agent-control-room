@@ -1,0 +1,52 @@
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
+import { WebSessionAuthority } from "./session-authority";
+import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { catalogProjectIdSchema } from "./project-wire";
+
+const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
+
+/** Private read composition for existing retained discussions, not an operator or provider adapter. */
+export class WebIdeaService {
+  private readonly authority: WebSessionAuthority;
+  private readonly key?: Uint8Array;
+  constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
+    integrityKey?: Uint8Array, clock: () => number = Date.now) {
+    this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
+    if (integrityKey !== undefined) {
+      if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("idea_key_invalid");
+      this.key = Uint8Array.from(integrityKey);
+    }
+  }
+  async list(identity: VerifiedWebIdentity, after?: string) {
+    if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("idea_lab.session_list", undefined, true);
+      if (!this.key) return { availability: "not_configured" as const, sessions: [], nextCursor: null,
+        execution: "not_configured" as const, observedAt: actor.now };
+      const page = await new IdeaLabProjectRegistryStoreV1(joined(tx), this.key).listSessionPage(this.scope.tenantId, this.scope.workspaceId, after);
+      return { availability: "configured" as const, sessions: page.sessions.map(session => ({
+        sessionId: session.sessionId, sessionDigest: session.sessionDigest, title: session.title, ideaSummary: session.ideaSummary,
+        targetCustomer: session.targetCustomer, participantCount: session.participants.length, maxRounds: session.maxRounds,
+        createdAt: session.createdAt,
+      })), nextCursor: page.nextCursor, execution: "not_configured" as const, observedAt: actor.now };
+    });
+  }
+  async detail(identity: VerifiedWebIdentity, sessionId: string) {
+    if (!catalogProjectIdSchema.safeParse(sessionId).success) throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      // Session IDs are not project IDs. A workspace-wide owner read grant is required.
+      actor.require("idea_lab.session_read", undefined, true);
+      if (!this.key) throw new Error("idea_not_configured");
+      const store = new IdeaLabProjectRegistryStoreV1(joined(tx), this.key);
+      const session = await store.getSession(this.scope.tenantId, sessionId);
+      if (!session || session.workspaceId !== this.scope.workspaceId) throw new WebAccessError("not_found");
+      const contributions = await store.listContributions(this.scope.tenantId, sessionId);
+      const synthesis = await store.getSynthesis(this.scope.tenantId, sessionId);
+      const decision = await store.getDecision(this.scope.tenantId, sessionId);
+      return { session, contributions, synthesis: synthesis ?? null, decision: decision ?? null,
+        execution: "not_configured" as const, observedAt: actor.now };
+    });
+  }
+}

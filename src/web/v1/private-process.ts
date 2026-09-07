@@ -8,6 +8,7 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { WebNewsService } from "./news-service";
+import { WebIdeaService } from "./idea-service";
 import { createTaskHttpHandler } from "./task-http";
 import { WebTaskReviewService } from "./task-review-service";
 import { WebTaskVerificationService } from "./task-verification-service";
@@ -99,6 +100,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
+  const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
+    options.ideaProjects?.integrityKey, clock);
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
@@ -122,6 +125,17 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = await keys.get();
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          const ideaRoute = /^\/api\/v1\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
+          if (ideaRoute) {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+              || url.searchParams.getAll("after").length > 1 || ideaRoute[1] && url.search)
+              throw new WebAccessError("invalid_request");
+            let sessionId: string | undefined;
+            try { sessionId = ideaRoute[1] === undefined ? undefined : decodeURIComponent(ideaRoute[1]); }
+            catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(sessionId === undefined ? await ideas.list(identity, url.searchParams.get("after") ?? undefined)
+              : await ideas.detail(identity, sessionId), { headers: privateResponseHeaders });
+          }
           const newsPrepare = /^\/api\/v1\/projects\/([^/]+)\/news\/prepare$/.exec(url.pathname);
           if (newsPrepare) {
             if (request.method !== "POST" || url.search || !request.body

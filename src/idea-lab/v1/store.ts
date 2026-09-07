@@ -95,7 +95,26 @@ export class IdeaLabProjectRegistryStoreV1 {
       `SELECT payload,session_auth_tag FROM control_idea_sessions WHERE tenant_id=$1 AND session_id=$2`, [tenantId,sessionId]);
     if (!result.rows[0]) return undefined;
     const session = parseIdeaLabSessionV1(result.rows[0].payload);
+    if (session.tenantId !== tenantId || session.sessionId !== sessionId) throw new IdeaLabErrorV1("integrity_failed");
     this.#verifyTag("session",session.tenantId,session.sessionId,session.sessionDigest,result.rows[0].session_auth_tag); return session;
+  }
+
+  /** Complete, cursor-based catalog for the private workspace; immutable session IDs order pages. */
+  async listSessionPage(tenantId: string, workspaceId: string, after?: string) {
+    ideaIdSchemaV1.parse(tenantId); ideaIdSchemaV1.parse(workspaceId);
+    if (after !== undefined) ideaIdSchemaV1.parse(after);
+    const rows = await this.#query<{ session_id: string; payload: unknown; session_auth_tag: string }>(
+      `SELECT session_id,payload,session_auth_tag FROM control_idea_sessions
+       WHERE tenant_id=$1 AND workspace_id=$2 AND ($3::text IS NULL OR session_id COLLATE "C" > $3 COLLATE "C")
+       ORDER BY session_id COLLATE "C" LIMIT 51`, [tenantId, workspaceId, after ?? null]);
+    const sessions = rows.rows.slice(0, 50).map(row => {
+      const session = parseIdeaLabSessionV1(row.payload);
+      if (session.tenantId !== tenantId || session.workspaceId !== workspaceId || session.sessionId !== row.session_id)
+        throw new IdeaLabErrorV1("integrity_failed");
+      this.#verifyTag("session", tenantId, session.sessionId, session.sessionDigest, row.session_auth_tag);
+      return session;
+    });
+    return { sessions, nextCursor: rows.rows.length > 50 ? sessions.at(-1)!.sessionId : null };
   }
 
   async listSessions(tenantId:string,workspaceId:string,limit=25):Promise<IdeaLabSessionV1[]>{
