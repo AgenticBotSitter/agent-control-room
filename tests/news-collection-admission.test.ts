@@ -20,6 +20,7 @@ import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { createNewsRefreshClient } from "../src/web/v1/news-refresh-client";
+import { createNewsDiscoveryIntegration } from "../src/web/v1/news-discovery-integration";
 
 // Routing evidence only: real restricted-login qualification has separate tests.
 function ingestionClient(db: DatabaseClient): DatabaseClient {
@@ -145,8 +146,10 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
             if (mode === "authority_revoked_at_commit") revoked = true;
             await check();
           }) };
-        const executor = createAbsFeedJobExecution({ coordinator: f.client, ingestion: guarded }, f.scope, f.key,
-          { assertCurrent(url) { if (revoked) throw new Error("source_revoked"); assert.ok(configuration.allowedOrigins.includes(new URL(url).origin + "/")); } }, f.clock, undefined, {
+        const executor = createNewsDiscoveryIntegration({ tenantId: f.scope.tenantId, workspaceId: f.scope.workspaceId,
+          assignments: [{ configuration, nodeId: f.scope.nodeId, executorId: f.scope.executorId, windowSeconds: 300 }] },
+        { coordinator: f.client, ingestion: guarded }, f.key, f.submission,
+          { assertCurrent(url) { if (revoked) throw new Error("source_revoked"); assert.ok(configuration.allowedOrigins.includes(new URL(url).origin + "/")); } }, {
             lookup: async host => { resolved.push(host); return [{ address: "8.8.8.8", family: 4 }]; },
             fetch: async url => {
               fetched.push(url.toString());
@@ -156,7 +159,21 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
                 ? '<html><head><link rel="alternate" type="application/rss+xml" href="https://feeds.example.org/?feed=rss"></head></html>'
                 : `<rss><channel><item><title>AI model release</title><link>https://example.org/news/model</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item></channel></rss>`);
             },
-          });
+          }, f.clock);
+        const assembled = createPrivateWebProcess({ ...startupConfig, news: { integrityKey: f.key }, clock: f.clock,
+          database: { client: f.client, close: async () => {} }, newsCollections: executor.web });
+        t.after(() => assembled.close());
+        const assembledDescriptor = await assembled.handle(request(path), () => new Response("shell"));
+        assert.equal(assembledDescriptor.status, 200);
+        assert.equal((await assembledDescriptor.json()).sourceDigest, planner.sourceDigest);
+        if (mode === "success") {
+          const assembledClient = createNewsRefreshClient(projectScope.projectId, source.id, async (url, init) =>
+            assembled.handle(request(String(url), init?.method ?? "GET", init?.body ? JSON.parse(String(init.body)) : undefined), () => new Response("shell")));
+          await assembledClient.propose(await assembledClient.describe(), "discovery-execution-001");
+          await assembledClient.approve();
+          assert.equal(assembledClient.state().jobId, plan.jobId); assert.equal(assembledClient.state().submitted, true);
+          assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 1);
+        }
         if (mode === "disabled_before_execution") {
           await assert.rejects(executor.collect(queued[0].reference, new AbortController().signal), /unavailable/);
           assert.equal(fetched.length, 0); return;
@@ -175,9 +192,46 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
           assert.deepEqual(fetched.slice(0, 2), [source.url, "https://feeds.example.org/?feed=rss"]);
           assert.ok(fetched.length <= configuration.limits.maxAttempts);
           assert.ok(fetched.every(url => configuration.allowedOrigins.includes(new URL(url).origin + "/")));
+          // A fresh refresh, not merely replay of direct-service admission, must
+          // traverse the assembled web bindings and reach the borrowed collector.
+          const freshClient = createNewsRefreshClient(projectScope.projectId, source.id, async (url, init) =>
+            assembled.handle(request(String(url), init?.method ?? "GET", init?.body ? JSON.parse(String(init.body)) : undefined), () => new Response("shell")));
+          await freshClient.propose(await freshClient.describe(), "discovery-assembled-fresh-001");
+          await freshClient.approve();
+          assert.equal(freshClient.state().submitted, true);
+          assert.notEqual(freshClient.state().jobId, plan.jobId);
+          const references = (await f.client.query<{ reference: AbsFeedJobReference }>("SELECT reference FROM synthetic_feed_queue")).rows;
+          assert.equal(references.length, 2);
+          const fresh = references.find(row => row.reference.jobId === freshClient.state().jobId)!;
+          assert.ok(fresh);
+          assert.equal((await executor.collect(fresh.reference, new AbortController().signal)).disposition, "delivered");
+          assert.ok(fetched.length > before);
+          assert.equal((await new PostgresAbsNewsStoreV1(f.client, projectScope, f.key).listStories()).stories.length, 1);
         }
       } finally { await f.db.close(); }
     });
+});
+
+test("discovery assembly is inert and refuses conflicting or cross-workspace routes", async () => {
+  let effects = 0;
+  const fail = async (): Promise<never> => { effects++; throw new Error("unexpected effect"); };
+  const db: DatabaseClient = { query: fail, transaction: fail, transactionWithPreCommitCheck: fail };
+  const configuration = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: "project:news",
+    source: { sourceId: "source:news", sourceLabel: "News", sourceKind: "discovery", endpointUrl: "https://example.org/" },
+    expectedRevision: 1, allowedOrigins: ["https://example.org/"],
+    limits: { timeoutMs: 10000, maxAttempts: 8, maxDocumentBytes: 4096, maxReservedBodyBytes: 32768 } };
+  const assignment = { configuration, nodeId: "node:news", executorId: "executor:news", windowSeconds: 300 };
+  const make = (assignments: unknown[]) => createNewsDiscoveryIntegration({ tenantId: "tenant:web", workspaceId: "workspace:web", assignments },
+    { coordinator: db, ingestion: { ...db } }, new Uint8Array(32), { enqueueInSession: fail },
+    { assertCurrent() { effects++; throw new Error("unexpected authority call"); } }, { lookup: fail, fetch: fail });
+  const integration = make([assignment]); assert.equal(integration.web.length, 1); assert.equal(effects, 0);
+  assert.throws(() => make([assignment, assignment]), /config_invalid/);
+  assert.throws(() => make([{ ...assignment, configuration: { ...configuration, workspaceId: "workspace:other" } }]), /config_invalid/);
+  assert.throws(() => make([assignment, { ...assignment, nodeId: "node:other",
+    configuration: { ...configuration, source: { ...configuration.source, sourceId: "source:other" } } }]), /assignment_conflict/);
+  await assert.rejects(integration.collect({ schema: "control-room.abs-feed-job/v1", tenantId: "tenant:web", projectId: "project:other",
+    jobId: "job:news", attemptId: "attempt:news", effectId: "effect:news", operationDigest: sha256Digest("effect") }, new AbortController().signal), /route_unavailable/);
+  assert.equal(effects, 0);
 });
 
 test("collection HTTP admission requires owner authentication and exact protected route", async t => {

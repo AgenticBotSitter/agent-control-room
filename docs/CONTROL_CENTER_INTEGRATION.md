@@ -118,6 +118,21 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ### Private web connection
 
+`createNewsDiscoveryIntegration` assembles per-source web operations and one routed
+`collect` callback for the existing news queue worker. The caller supplies separately
+verified coordinator/ingestion clients, a prepared transactional submission service,
+current-source authority and qualified transport ports. Construction opens nothing.
+Duplicate source assignments, cross-workspace scope and conflicting project workers
+are refused; execution requires a retained plan matching a registered configuration.
+The caller must stop/drain the worker before closing supplied resources. This helper
+does not replace production role preflight or own application startup. Basic startup
+rejects unsupported collection operations rather than silently ignoring them.
+An injected integration test now submits a fresh proposal and approval through these
+assembled HTTP bindings, consumes the queued reference with the borrowed collector,
+and confirms the same story is not duplicated after another completed refresh.
+This does not prove concurrent different-request deduplication, real queue polling,
+native networking, production bootstrap or browser interaction.
+
 The private process accepts explicitly supplied, project/source-bound collection
 operations and exposes GET `/api/v1/projects/:project/news/sources/:source/collection`
 plus POST `/propose` and `/approve` beneath it. GET describes the configured source,

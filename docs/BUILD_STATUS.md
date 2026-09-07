@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Shared discovery assembly:** `createNewsDiscoveryIntegration` now supplies the
+private web refresh bindings and existing queue collector from one validated set of
+project/source assignments. It reuses planning, admission, plan storage and borrowed
+discovery execution; no extra queue, scheduler or database is introduced. Construction
+is inert, conflicting assignments are refused, and queue references must match a
+registered retained configuration. Basic startup explicitly refuses collection
+operations it cannot own instead of silently dropping them. The preceding regression
+run passed 314 delivery tests, five startup tests, types, lint and VPS compilation.
+Independent source review accepted the implementation and replay bindings. The eight
+focused discovery tests also pass with fresh assembled proposal/approval, queue
+execution and repeated-story storage coverage (injected transport, not live startup). Native transport,
+resource-owning production startup and browser/full agent workflow remain unfinished.
+No live reads, services, GitHub writes or deployment occurred.
+
 **Visible per-source refresh controls:** Saved source cards now expose refresh options,
 allowed sites and limits, prepare, and explicit approve/queue controls. Unconfigured or
 unauthorized sources show unavailable states. The fixed-source browser client preserves
