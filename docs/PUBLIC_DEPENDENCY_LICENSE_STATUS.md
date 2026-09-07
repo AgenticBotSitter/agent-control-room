@@ -1,5 +1,31 @@
 # Dependency license observations
 
+## Current actionable summary
+
+At `4461a31`, full notice text has been read and retained for **all 26 production-root
+dependency snapshots** in the current lockfile. The consolidated
+[`research/runtime-notice-coverage.json`](research/runtime-notice-coverage.json) maps
+each peer-qualified snapshot to installed manifest hashes and exact notice text hashes:
+23 packages have root notice files (including both alternatives for type-fest), two use
+embedded README notices, and Postgres.js uses its pinned upstream notice. Seventeen
+distinct texts are retained without removing copyright/author attribution. Original
+project licensing is still undecided; no distribution-compliance clearance is claimed.
+
+The practical remainder is now:
+
+1. Retain applicable framework/browser-bundle/vendor and CSS-tooling notices with the
+   chosen source or built deliverable; the existing runtime map is not that full scope.
+2. Resolve outstanding development-package notice/provenance questions, particularly
+   the earlier Cloudflare tooling findings, without discarding useful build tools.
+3. Complete source/asset privacy and rights decisions and original-code license choice.
+4. Prepare and test the actual clean source candidate and usable synthetic demo, then
+   independent review and exact owner publication approval. A map of notice texts is
+   not proof of a working contributor setup.
+
+Prebuilt database/native/WASM archive redistribution is separately scoped future work,
+not an implicit requirement to package every installed cache file into the first source
+preview. No install, download, runtime behavior or package manifest changed in this pass.
+
 2026-09-06. Inspected installed packages at baseline `5e424f6`. No dependency changes,
 downloads/installations, project license selection or publication.
 

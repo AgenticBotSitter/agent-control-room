@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Runtime notice-text coverage completed for the selected lockfile graph:** All 26
+production-root snapshots now map to retained notice text: 23 package-root sources,
+two README sections, one immutable upstream source; 17 distinct texts. Evidence:
+`research/runtime-notice-coverage.json`. This closes location/text retention for that
+graph, not all dependency rights, source privacy, packaging or publication. The dependency
+review document now leads with a consolidated remaining-work summary. No package change,
+download, original-license choice or GitHub write.
+
 **Extension source pins identified; first preview scope clarified:** PGlite's pinned
 database build declares PostgreSQL 17.5 and four exact extension submodule commits.
 These are source inputs, not installed-binary equivalence. Recommended first preview
