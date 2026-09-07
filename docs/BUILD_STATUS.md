@@ -8,13 +8,28 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Protected article-to-task slice implemented locally:** `b98991a` / `91a82fe`
+mount `/projects/:projectId/news` and authenticated saved-story reads. Owners can
+prepare research/setup-guide drafts from exact retained versions, inspect all source
+references, and save ordinary proposed tasks through the existing retry-safe client.
+The SQL web role gains only SELECT on saved stories, not ingestion/proposal-store writes.
+Independent review caught a goal-limit mismatch and uncertain-save navigation risk;
+both were fixed and re-reviewed with no new concrete defect. Browser departure is
+guarded, not durable recovery after forced closure. No physical browser QA or deployment.
+`69817c3` also fixes Idea Lab's title-only operator prompt: full idea/customer context
+is preserved, with capacity rejection before session registration or panel invocation.
+Thirty-four focused workflow tests, full TypeScript and focused lint pass. News HTTP,
+SSR and simulated navigation checks are local evidence, not real-provider acceptance.
+Next: protected non-fixture Idea Lab integration and allowlisted source collection;
+live participants, large provenance attachments and end-to-end result/review remain open.
+
 **ABS PostgreSQL storage implemented locally:** `c522684` adds immutable story versions
 and source-bound proposals through the existing database stack. Store reopening, replay,
 pagination, identity/integrity checks and retained-source binding have regression tests.
 The private schema fingerprint was regenerated; 27 store/audit/database-role/rehearsal
 checks passed in disposable PGlite. Independent source review found no concrete store
 defect. No production DB, new SQL role grants, feed or listener was activated.
-Next: connect this store to authenticated private news pages and proposal controls;
+The authenticated news page and draft controls are now connected as described above;
 live participants/feeds and the complete Idea Lab/ABS user journeys remain unaccepted.
 
 **Owner reprioritized Idea Lab and ABS:** Work is on `codex/idea-abs-workflows`.
@@ -22,8 +37,8 @@ Discussion rounds now include prior opinions; an authenticated ABS intake and br
 client save source-backed ordinary task proposals without execution permission.
 Independent review findings were fixed and re-reviewed. Twenty-five focused tests,
 TypeScript and focused lint pass. See `IDEA_ABS_WORKFLOW_DELIVERY.md` for exact limits
-and remaining integration. Neither live workflow is complete: private page mounting,
-PostgreSQL news storage, real feeds/participants and end-to-end acceptance remain open.
+and remaining integration. PostgreSQL news storage and private news page mounting are
+now implemented; private Idea Lab, real feeds/participants and end-to-end acceptance remain open.
 
 **Public contributor source published:** Owner approved the exact release and repository
 protections. Public main is `cc565d2acf33883316a5784fd0c8ba56fe2eb389`; all 520 remote

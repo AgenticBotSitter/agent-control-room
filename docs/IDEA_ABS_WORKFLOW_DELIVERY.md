@@ -25,6 +25,39 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Protected saved-news workflow and full idea brief
+
+`b98991a` and `91a82fe` add a private project News page, authenticated GET list and
+read-only POST preparation. Research/setup-guide preparation reads an exact HMAC-checked
+retained story, rejects unreviewable sources and inactive projects, and returns a draft
+without storing a proposal or dispatching anything. The user inspects this draft and saves
+it through the ordinary task command; all source links/digests are retained in instructions.
+The preview proposal identifier is a draft reference, not a separately stored proposal.
+The web role gains SELECT only on `control_abs_story_versions`; ingestion and proposal
+storage remain inaccessible. Configuration accepts a supplied news integrity key but
+does not create one, collect sources, apply grants or activate a service.
+
+Independent source review found the 1,500/1,200 goal mismatch and navigation that could
+lose an uncertain save key. Both were fixed and re-reviewed without new concrete findings.
+Departure guarding preserves the active form, but is not persistence across forced closure
+or a user overriding the browser warning. Five news tests cover service/HTTP source-bound
+preparation and save/replay, revoked access, restricted role rights, SSR rendering and
+simulated navigation guards. Real browser interaction and production PostgreSQL remain untested.
+
+`69817c3` preserves title, full idea summary and target customer in the operator's prompt,
+instead of passing only the title. Capacity is checked before a new session is registered
+and again for older sessions before starting. The 800-character transport bound is unchanged;
+long briefs fail explicitly rather than losing owner context. A two-round fake-driver test
+proves all three fields reach all eight turns and oversized input creates no session/call.
+`pnpm test:idea-abs` now passes 34 tests. Full TypeScript and focused lint pass.
+The Idea Lab prompt correction also passed independent source review; older-session
+capacity rejection was source-inspected but is not directly covered by the added test.
+The final VPS artifact rebuilt successfully and six compiled/private-process checks
+passed. Twenty-six earlier audit/role/rehearsal/news checks passed (overlapping suites,
+not an additional unique-test total). No listener, feed, provider call or deployment.
+
+Earlier component evidence:
+
 Commits `db0bf3c` and `34e3bc8`; `pnpm test:idea-abs` runs 25 passing focused tests.
 Full TypeScript passes. Focused lint passes. The initial batch compiled for VPS and
 passed six compiled/private-process tests; these are not physical deployment evidence.
@@ -45,12 +78,13 @@ The recomputed full private schema fingerprint is
 `aac6f3f58ff464bf5d3a7227aa16efaf2beab0aba799db3b59b6248eff2f3a9f`.
 Store/audit/database-role/rehearsal tests passed 27 checks in disposable PGlite;
 this is not real PostgreSQL concurrent-worker or production migration acceptance.
-Authenticated application wiring and its deliberately scoped SQL grants remain open.
+Authenticated read/draft wiring and its SELECT-only role template are now implemented
+above; actual deployment/migration and source ingestion remain open.
 
-1. Mount a non-fixture private Idea Lab workspace and ABS source/proposal queue through
-   the authenticated application. Existing `/ideas` and ABS fixture UI are not live.
-2. Use PostgreSQL for operational source/proposal storage. Existing SQLite ABS stores
-   and live-read simulation coordinators must not become production write authorities.
+1. Mount a non-fixture private Idea Lab workspace through the authenticated application.
+   Private saved news is mounted; existing demo `/ideas` and ABS fixture UI are not live.
+2. Complete ingestion and operational use of the implemented PostgreSQL store. Existing
+   SQLite ABS stores and live-read simulation coordinators must not become production authorities.
 3. Configure allowlisted news sources and reuse the selected normalization/deduplication
    helpers. Retain source attribution, freshness and failures. Do not label a source as
    verified solely because it supplies a digest. Large source packages need the existing
