@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Independent demo review found a draft-loss bug:** A revision request lost before
+server acceptance could have its feedback cleared by history recovery. The working
+source now preserves that unrecorded draft, explains the outcome and allows explicit
+resubmission without an automatic retry. A new before-delivery failure assertion
+covers the gap. The review is recorded in `CONTRIBUTOR_DEMO_REVIEW.md`; candidate
+synchronization and verification remain next. The review is not release clearance.
+
+**Source distribution scope documented:** `THIRD_PARTY.md` separates the source-only
+preview from installed dependencies and later binary/container distributions. The
+staged source contains no native/WASM/font/archive payloads or private runtime logs;
+this does not replace final per-file rights/privacy review. Its durable template is
+`docs/public-launch-draft/THIRD_PARTY.md`, in addition to the reconstruction receipts.
+
 **Expanded candidate retains all 47 compiled regressions:** Its full selected standalone
 build/test command passes after demo integration. Contributor setup and README now
 describe the explicit launch command, terminal code, revision/history behavior,

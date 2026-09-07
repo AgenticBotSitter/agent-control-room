@@ -2,6 +2,15 @@
 
 ## Current actionable summary
 
+**Current source-only staging scope (2026-09-06):** The expanded candidate inventory
+contained 517 source/document files before adding `THIRD_PARTY.md`. Excluding explicit
+build/dependency directories, it contained no native/WASM/font/archive/image payloads,
+environment files, execution logs or workflows. The only vendored-directory entries
+were Control Center's LICENSE and NOTICE; its adapted curation source is outside this
+initial demo subset. The new public-facing scope note distinguishes installed npm
+packages from distributed source and later built artifacts. This reduces ambiguity,
+not the obligation to inspect actual release bytes; final review remains pending.
+
 **2026-09-06 owner decision:** Apache-2.0 is now approved and applied to original code
 in the isolated public candidate, with the agreed project attribution NOTICE. Earlier
 statements below that original-code licensing is undecided are historical. This decision

@@ -1,5 +1,10 @@
 import type { createContributorDemoBrowserClient } from "./browser-client";
 import type { createTaskBrowserClient } from "../web/v1/task-browser-client";
+import type { ContributorRevision } from "./revision";
+
+export function unrecordedContributorFeedback(history: { recordedParents: string[] }, intent?: ContributorRevision) {
+  return intent && !history.recordedParents.includes(intent.parentArtifactId) ? intent.feedback : undefined;
+}
 
 /** Read-only restoration. Each artifact is read through the existing scope/hash
  * verifier; a partial read is never returned as a complete history.
@@ -17,5 +22,6 @@ export async function loadContributorHistory(clients: {
     }
   }
   const last = history.entries.at(-1);
-  return { samples, unavailable: last?.state === "unavailable", feedback: last?.state === "unavailable" ? last.feedback ?? "" : "" };
+  return { samples, recordedParents: history.entries.flatMap(entry => entry.parentArtifactId === null ? [] : [entry.parentArtifactId]),
+    unavailable: last?.state === "unavailable", feedback: last?.state === "unavailable" ? last.feedback ?? "" : "" };
 }

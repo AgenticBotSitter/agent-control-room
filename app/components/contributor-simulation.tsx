@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { loadContributorHistory } from "../../src/contributor-demo/history-view";
+import { loadContributorHistory, unrecordedContributorFeedback } from "../../src/contributor-demo/history-view";
 import type { ContributorRevision } from "../../src/contributor-demo/revision";
 import { createContributorDemoBrowserClient } from "../../src/contributor-demo/browser-client";
 import { createTaskBrowserClient } from "../../src/web/v1/task-browser-client";
@@ -47,11 +47,13 @@ export function ContributorSimulation({ projectId, jobId }: { projectId: string;
   const busy = useRef(true), mounted = useRef(false), historyReady = useRef(false), failedRun = useRef(false);
   const applyHistory = useCallback((history: Awaited<ReturnType<typeof loadContributorHistory>>) => {
     const latest = history.samples.at(-1);
+    const unrecorded = unrecordedContributorFeedback(history, intent.current);
     artifact.current = latest?.artifactId; intent.current = undefined;
     historyReady.current = true; failedRun.current = history.unavailable;
     setText(latest?.text); setPrevious(history.samples.slice(0, -1).map(sample => sample.text));
-    setFeedback(history.feedback); setRevisionLocked(history.unavailable); setUncertain(history.unavailable);
-    setError(history.unavailable ? "This session contains a failed simulation. It has not been restarted. Earlier samples remain available." : undefined);
+    setFeedback(unrecorded ?? history.feedback); setRevisionLocked(history.unavailable); setUncertain(history.unavailable);
+    setError(history.unavailable ? "This session contains a failed simulation. It has not been restarted. Earlier samples remain available."
+      : unrecorded !== undefined ? "Your revision was not recorded. Your feedback is preserved; submit it again when ready. No retry was made." : undefined);
   }, []);
   useEffect(() => {
     let active = true;
