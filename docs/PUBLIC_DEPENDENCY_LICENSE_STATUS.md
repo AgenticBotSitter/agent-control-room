@@ -108,6 +108,46 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### PGlite development payloads and license-description difference
+
+At `ca332b5`, inspected installed `@electric-sql/pglite` **0.3.14** without importing
+or executing it. Its manifest declares Apache-2.0; its installed README's License
+section explicitly describes an Apache-2.0/PostgreSQL License choice and says changes
+to the PostgreSQL source are under the PostgreSQL License. Record both sources rather
+than silently changing metadata or treating the manifest as exhaustive. The current
+[official description](https://pglite.dev/docs/about) also describes PGlite as a WASM
+Postgres build; current documentation is not a substitute for version-specific rights.
+
+| Installed input | Size / observation | SHA-256 |
+|---|---|---|
+| package.json | Version and Apache-2.0 declaration | `a540c379fd1d820810793681d25fa7ad5dadfcee2b190d14a6553fdb469cfe3c` |
+| README.md | Embedded dual-license description | `b2cea4405c74047b42e92ff2a7590539ce40a378d6b48b3afa27b7f2edeb935a` |
+| dist/pglite.wasm | 8,859,436 bytes | `8140392c5f70c5aecb40f514db242fce4223cfdd5f37a2b101dbdc30208dc49d` |
+| dist/pglite.data | 4,939,155 bytes | `4703ec26f5710abb62db42acad229478b75c51ef7f3bb037286bb2bac139a930` |
+
+The distribution also contains **51 extension tar.gz archives**, totaling 1,235,651
+compressed bytes. Read-only `tar -tzf` listing found 336 archive members and no member
+whose name matched license/notice/copying/copyright. No archive was extracted or loaded.
+That filename result does not establish absent notices or uniform extension licensing;
+SQL/source headers and exact extension source versions still need examination if those
+payloads are redistributed. Examples include vector, pg_ivm and pgtap, alongside
+PostgreSQL-contributed extensions. Do not infer use from installation alone.
+
+A targeted literal import search for `@electric-sql/pglite/` in repository source,
+tests and scripts found no matches; root-package loading is already used by test
+fixtures. This does not exclude runtime-selected extensions or embedded core payloads.
+Keep PGlite available for contributor tests, not as production write authority. A
+source-only contributor installation and a distribution copying node_modules/WASM
+have different packaging scope; do not claim either is cleared by the bundle owner list.
+
+Read-only tag resolution found the relevant package release (not the similarly named
+pglite-sync release): `@electric-sql/pglite@0.3.14` peels to
+`6b7d56e56429259fb0241ffa17d484af2bddf00a`. Attempted web retrieval of that commit's
+`POSTGRES-LICENSE` returned a cache miss; the exact alternate text was not retained or
+treated as absent. Next: inspect that immutable release's license/build inputs and
+extension provenance before packaging its binary payloads. No download/install,
+license choice, service, credential access or production database change occurred.
+
 ### Two upstream notice sources pinned and retained
 
 At `05663eb`, resolved the public annotated release tags using read-only `git ls-remote`

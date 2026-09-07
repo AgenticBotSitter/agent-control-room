@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**PGlite binary scope recorded:** Installed 0.3.14 includes an 8.86 MB WASM module,
+4.94 MB data file and 51 extension archives. Read-only archive listing did not find
+notice-named members; that is not an absent-license finding. The installed README
+describes dual licensing while the manifest lists Apache-2.0. Exact input hashes and
+the immutable package release commit are recorded in `PUBLIC_DEPENDENCY_LICENSE_STATUS.md`.
+Alternate license retrieval/extension provenance remains open. PGlite stays dev/test-only;
+no package execution, download, production DB or original-license decision.
+
 **Two upstream notices pinned and downloaded with a log:** PostgreSQL client Unlicense
 and RSC plugin own MIT text are retained from immutable release commits in
 `research/pinned-upstream-notice-texts.json`. Checked 102 GiB free before fetching 2,315
