@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Feed submission permissions now pass installed-package testing:** The offline
+producer template requires the fixed non-retrying feed queue; an explicit `newsQueue`
+preflight option reuses existing pg-boss producer checks without recovery privileges.
+Canonical admission and actual queue insertion/rollback run under a restricted PGlite
+login. Queue job updates and native canonical task-queue insertion are denied. Twenty-nine
+installed-package tests and 49 coordinator/ingestion checks pass, plus TypeScript,
+focused lint and VPS build. Independent source review found no concrete defect.
+pg-boss shares operational job tables: SQL grants are not row-level queue-name isolation.
+Fixed adapters and canonical authority checks remain mandatory. Pickup in this new
+restricted-producer test explicitly switches to administrator; restricted feed worker
+pickup/startup is not qualified by it. No production grants, workers, network calls or
+GitHub writes occurred. **Next:** reuse the existing restricted operational worker
+profile for feed pickup, then connect configured startup and current-source authority.
+
 **Restricted news coordinator profile is verified locally:** An offline NOLOGIN role
 template and the existing exact-permission preflight now cover feed plans, owner
 admission and canonical start/settlement. The role cannot write articles, source

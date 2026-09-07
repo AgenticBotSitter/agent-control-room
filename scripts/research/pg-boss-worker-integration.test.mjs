@@ -36,6 +36,8 @@ import { CanonicalStore } from '../../src/persistence/canonical-store.ts';
 import { DOMAIN_CONTRACT_VERSION } from '../../src/domain/v1/index.ts';
 import { WebNewsCollectionPlanning } from '../../src/web/v1/news-collection-planning.ts';
 import { WebNewsCollectionAdmission } from '../../src/web/v1/news-collection-admission.ts';
+import { verifyNewsCoordinatorDatabase } from '../../src/web/v1/private-database-preflight.ts';
+import { startupConfig } from '../../tests/helpers/web-startup.ts';
 
 const root = process.env.CR_REUSE_EVAL_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
 assert.ok(isAbsolute(root), 'Package root must be absolute');
@@ -349,7 +351,7 @@ test('feed submission and its caller marker commit or roll back together with in
   // Marker is deliberately synthetic: actual canonical admission is a separate service.
 });
 
-test('owner feed admission commits canonical approval and installed queue atomically before pickup', async t => {
+for (const mode of ['owner', 'restricted']) test(`owner feed admission commits canonical approval and installed queue atomically before pickup: ${mode}`, async t => {
   const f = await taskFixture(() => fixtureNow), errors = [];
   let submit, worker;
   const boss = new PgBoss({ db: { async executeSql(sql, values) {
@@ -376,6 +378,26 @@ test('owner feed admission commits canonical approval and installed queue atomic
   await canonical.transition({ tenantId: scope.tenantId, kind: 'node', entityId: scope.nodeId, expectedVersion: 0, toState: 'active',
     transitionId: 'transition:feed-integration-active', idempotencyKey: 'feed-integration-active-001',
     actor: { actorId: 'identity:web', actorType: 'human' }, occurredAt: instant, recordPatch: { enrolledAt: instant } });
+  if (mode === 'restricted') {
+    await f.db.exec(await readFile('db/roles/news_coordinator_roles.sql', 'utf8'));
+    await f.db.exec(await readFile('db/roles/news_queue_producer_roles.sql', 'utf8'));
+    await f.db.exec(`CREATE ROLE feed_queue_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+      GRANT control_room_news_coordinator TO feed_queue_test; SET SESSION AUTHORIZATION feed_queue_test;
+      SET search_path=pg_catalog, public; SET statement_timeout='5s'; SET lock_timeout='2s';
+      SET transaction_timeout='10s'; SET idle_in_transaction_session_timeout='5s'`);
+    const checked = { ...f.client, transaction: work => f.client.transaction(tx => work({ async query(sql, values) {
+      const result = await tx.query(sql, values);
+      // Existing test-only PGlite TEMP metadata exception; production remains strict.
+      if (sql.includes('AS database_temp')) result.rows = result.rows.map(row => ({ ...row, database_temp: false }));
+      return result;
+    } })) };
+    const config = { ...startupConfig.database, username: 'feed_queue_test' };
+    await assert.rejects(verifyNewsCoordinatorDatabase(f.client, config, startupConfig, fixtureNow, { newsQueue: true }));
+    await verifyNewsCoordinatorDatabase(checked, config, startupConfig, fixtureNow, { newsQueue: true });
+    await assert.rejects(verifyNewsCoordinatorDatabase(checked, config, startupConfig, fixtureNow, { nativeQueue: true }));
+    await assert.rejects(f.client.query(`UPDATE ${spec.schema}.job_common SET state='created'`), /permission denied/);
+    await assert.rejects(f.client.query('INSERT INTO control_native_task_queue DEFAULT VALUES'), /permission denied/);
+  }
   const args = { jobId: plan.jobId, inputDigest: plan.inputDigest };
   let sent = false;
   const failing = new WebNewsCollectionAdmission(f.client, scope, key, { async enqueueInSession(tx, reference) {
@@ -394,6 +416,8 @@ test('owner feed admission commits canonical approval and installed queue atomic
   assert.equal(queued.state, 'created'); assert.equal(queued.retryLimit, 0); assert.deepEqual(queued.data, reference);
   assert.equal((await canonical.get(scope.tenantId, 'effect_intent', receipt.effectId)).state, 'authorized');
   assert.equal((await service.approve(f.identity, args)).replayed, true);
+  // Only the submission path is qualified under this role. Pickup has a separate role.
+  if (mode === 'restricted') await f.db.exec('SET SESSION AUTHORIZATION postgres');
   let pickups = 0;
   worker = await startPgBossAbsFeedWorker(boss, { async collect(value) {
     assert.deepEqual(value, reference); pickups++; return { disposition: 'held' };
