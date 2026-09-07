@@ -50,7 +50,12 @@ issue. They can proceed independently. Neither needs a real agent or our machine
   upstream license and why installed tooling is insufficient. Do not introduce a
   custom browser automation framework.
 - Local checks: `pnpm check:demo`, `pnpm test:demo`,
-  `pnpm test:build:demo`, plus the documented browser acceptance command.
+  `pnpm test:build:demo`. Until this package delivers a browser automation command,
+  start `pnpm demo` and manually check login, project/task creation, sample generation,
+  feedback/revision, refresh/history, isolation between two projects, archive and
+  normal shutdown/temporary-data cleanup. Include keyboard and narrow-screen checks.
+  Deliver and document a repeatable browser acceptance command as part of this package;
+  do not claim that command already exists in the base release.
 - Handoff: one cohesive PR with implementation, repeatable interaction tests and a
   short evidence table. Redact login codes; screenshots alone do not prove the flow.
 

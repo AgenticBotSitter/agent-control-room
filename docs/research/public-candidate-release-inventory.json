@@ -1,8 +1,8 @@
 {
   "scope": "Private evidence for staged source, not a public distribution or publication approval",
-  "candidateDigest": "13e3aca6a9a0d10b03ddc2250a5b98ace037dc2d4d95bdc48df3d4506ca3523e",
+  "candidateDigest": "0f90f99a697b681edb6bd98e93734041c32b3994c4d2e64dcadb90404926ef9d",
   "fileCount": 518,
-  "totalBytes": 3712343,
+  "totalBytes": 3712760,
   "excludedDirectoryNames": [
     "node_modules",
     ".git",
@@ -291,8 +291,8 @@
     },
     {
       "path": "WORK_PACKAGES.md",
-      "bytes": 11070,
-      "sha256": "1b6f0a10d5a68b0af2d0cd3a265201fce7299eed4b558f1f9dc1dd3adc6aa9c9",
+      "bytes": 11487,
+      "sha256": "4e397fe3731da6c975e513e41f079e97c8e9639cf644e704881f1270004c26c6",
       "priorContentReviewReceipt": null
     },
     {

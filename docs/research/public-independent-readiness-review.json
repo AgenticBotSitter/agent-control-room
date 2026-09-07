@@ -1,0 +1,128 @@
+{
+  "reviewer": "release_readiness_review",
+  "independent": true,
+  "publicationApproved": false,
+  "reviewedInventoryDigest": "13e3aca6a9a0d10b03ddc2250a5b98ace037dc2d4d95bdc48df3d4506ca3523e",
+  "scope": "Reviewer reports full-text review of 28 selected files and matching SHA256s. No test execution, network, dependency contents, live effects or imported-module exhaustive review.",
+  "disposition": "No new concrete release-blocking defect within selected scope; not complete security/license/release approval.",
+  "finding": {
+    "path": "WORK_PACKAGES.md",
+    "line": 53,
+    "issue": "DEMO-UX names a documented browser acceptance command absent from setup.",
+    "maintainerResponse": "Replaced ambiguous command with explicit manual scenario and made automation command a deliverable of the package. This changes one reviewed document after the review."
+  },
+  "files": [
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "5a8d1fa09515ef0076940a10187b6063a0a7be1ca871bd210c693160c7a5a143"
+    },
+    {
+      "path": "README.md",
+      "sha256": "19107014631eab441b5790f974f35284fbbae15fd55e470463beab2dd218e986"
+    },
+    {
+      "path": "ROADMAP.md",
+      "sha256": "be470d59e7efea5b00c9448eb00d1adf3b8d4c705c60375579944143abbd939c"
+    },
+    {
+      "path": "SETUP.md",
+      "sha256": "9b045db64b2d2073bd8153e45eebc305aef49f99e190d5c4a5af550561763c36"
+    },
+    {
+      "path": "THIRD_PARTY.md",
+      "sha256": "3938e2fd5bdb2e5240cbc72c2caef2042439ad2f8af6d8812682c1ccfb52cf41"
+    },
+    {
+      "path": "WORK_PACKAGES.md",
+      "sha256": "1b6f0a10d5a68b0af2d0cd3a265201fce7299eed4b558f1f9dc1dd3adc6aa9c9"
+    },
+    {
+      "path": "package.json",
+      "sha256": "d8abf232387ccea5a59e29a82feaa80ca4f61dc778bf77cc32ecc689ec697068"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "744e30d113cc31b44a487b1d68651fbed0ac376aaf08f3c2d92421d795b9f288"
+    },
+    {
+      "path": "tsconfig.vps.json",
+      "sha256": "bd428c5df3c6f35c7f95057434a1407b402b068426e9056323032c237ad9f6e2"
+    },
+    {
+      "path": "vite.contributor.config.ts",
+      "sha256": "4ddcd2002c35e2e943b6e8299bd86385a767acb253a59be1a10dc260820ef70e"
+    },
+    {
+      "path": "vite.vps.config.ts",
+      "sha256": "b0ef850cd6a472bb9b6f0f875888ba44a9ede922aff79deceb6f7d2b4368e87e"
+    },
+    {
+      "path": "contributor-demo/index.html",
+      "sha256": "c77bee9adc63195ac79c4f5c2d9b16b9bbcbf44a08c8d9f396ede95f99852683"
+    },
+    {
+      "path": "contributor-demo/main.tsx",
+      "sha256": "466b803918ec3bc3736566fb71251f2c677d6de161c8e640236e100355f8d4f7"
+    },
+    {
+      "path": "contributor-demo/view.tsx",
+      "sha256": "c3b00e808c19356a97482e7469379b386366a07f1250636bc1a2e5ed2654c3d1"
+    },
+    {
+      "path": "src/contributor-demo/application.ts",
+      "sha256": "ccf53bea3f0fe04aab056e9122c8001044bcea86f2a4eb66995f639d8c4794ce"
+    },
+    {
+      "path": "src/contributor-demo/browser-client.ts",
+      "sha256": "fbad6f493c48cb8a215b8aedfd35734f875c742f366df856a1075ceca8c6faa5"
+    },
+    {
+      "path": "src/contributor-demo/history-view.ts",
+      "sha256": "bf1739d05272946f678817e13a014832431e3028a5b1d7d08d43aca944446b7c"
+    },
+    {
+      "path": "src/contributor-demo/http.ts",
+      "sha256": "11c91a503164e99665cab70f9ee319b3f4a9e83b703d8fa98b40dcf91eaafb26"
+    },
+    {
+      "path": "src/contributor-demo/launcher.ts",
+      "sha256": "61722e115a115bf8751362bd8cfcd3ced44e0adca79159afd1dda38bbb2993d7"
+    },
+    {
+      "path": "src/contributor-demo/revision.ts",
+      "sha256": "6987a37632d415b5ae2d2a35dfc0a66a20e8a7c26a4b1286eaa1436080648126"
+    },
+    {
+      "path": "src/contributor-demo/runtime.ts",
+      "sha256": "ce447ed1959d270949588bba009ef9413823cd1cbb179bfa8fdb2386d0d02653"
+    },
+    {
+      "path": "src/contributor-demo/simulations.ts",
+      "sha256": "e8f72fede9ac2df1efcfb33781b7020dde7fd335ecdd11cb0d82266f7d063647"
+    },
+    {
+      "path": "tests/contributor-demo-build.test.mjs",
+      "sha256": "ba828bbafeaad41e214affcf2cfe3067d84d4fd418205cc74f16c889d36f55f1"
+    },
+    {
+      "path": "tests/contributor-demo-launcher.test.ts",
+      "sha256": "99f05cae9cae0ff484b55c788fc40cd7e26af7706587406d7290ceb6593c90c5"
+    },
+    {
+      "path": "tests/contributor-demo-runtime.test.ts",
+      "sha256": "72485168727f45727e90baf6b80194d9370257c393f3a4dc07620124629230fb"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "ad4d218a79f43c2ac6561110072c07b534b61634e78e663960c8e6acdd269822"
+    },
+    {
+      "path": "scripts/contributor-demo.mjs",
+      "sha256": "896588ff978edff124ff840ddae958cbe8e9b86c043f0f35f5a18171b5e9da6f"
+    },
+    {
+      "path": "scripts/build-vps.mjs",
+      "sha256": "0aa8746ae262eba1703eef667d0cf5483a440eb8a4dcc841d8f5b05ee32d12ae"
+    }
+  ]
+}

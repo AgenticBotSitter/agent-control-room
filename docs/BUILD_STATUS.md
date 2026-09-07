@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Independent contributor-readiness review completed:** A separate reviewer fully
+read 28 exact candidate docs/configuration/demo files and found no new concrete
+blocking defect within that scope. One ambiguous browser-test-command instruction
+was corrected into an explicit manual scenario plus an automation deliverable.
+Main agent reran 28 demo tests and full TypeScript checking successfully without
+downloads, listeners or provider calls. Original favicon and upstream MIT notice
+hashes match recorded provenance. Review scope, exact hashes and limitations are
+saved in `PUBLIC_CANDIDATE_REVALIDATION.md` and the independent review receipt.
+This is bounded review, not full source/privacy/license publication approval.
+
 **Contributor source map added:** The candidate architecture guide now maps actual
 UI, synthetic-result, persistence, server, launcher and test entry points. Every
 listed source path exists. Architecture and roadmap distinguish browser-refresh
