@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createIndustrySourceReader } from "../src/vendor/control-center/source-reader";
 import { safeFetchText } from "../src/vendor/control-center/safe-fetch";
+import { createControlCenterCollectionReader } from "../src/project-adapters/abs-news/v1/control-center-reader";
+import { absNewsCanonicalUrlSchemaV1, absNewsDiscoveryEndpointSchemaV1 } from "../src/project-adapters/abs-news/v1/schemas";
 import { AbsControlCenterIngestion } from "../src/project-adapters/abs-news/v1/control-center-ingestion";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { WebNewsService } from "../src/web/v1/news-service";
@@ -11,6 +13,34 @@ import type { DatabaseClient } from "../src/persistence/database";
 
 const source = { id: "source:borrowed", name: "Example", url: "https://example.org/feed" };
 const observed = new Date(now).toISOString();
+
+test("query-bearing source and discovered feed pass the complete borrowed collection path without changing story identity", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
+  const querySource = { ...source, url: "https://example.org/?section=ai" }, endpoint = "https://example.org/?feed=rss";
+  const key = new Uint8Array(32).fill(27), checked: string[] = [];
+  const reader = createControlCenterCollectionReader({ timeoutMs: 10_000, maxAttempts: 4, maxDocumentBytes: 4096, maxReservedBodyBytes: 16384 }, {
+    assertCurrent(url) { checked.push(url); if (![querySource.url, endpoint].includes(url)) throw new Error("not_allowed"); },
+  }, new AbortController().signal, {
+    lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async url => new Response(url.toString() === querySource.url
+      ? '<html><head><link rel="alternate" type="application/rss+xml" href="/?feed=rss"></head></html>'
+      : `<rss><channel><item><title>AI model</title><link>https://example.org/model</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item></channel></rss>`),
+  }, () => now);
+  const ingestion = new AbsControlCenterIngestion(f.client, { ...scope, source: querySource }, key);
+  const result = await ingestion.collect(reader, reader.signal, () => now);
+  assert.equal(result.inserted, 1); assert.ok(checked.includes(endpoint));
+  const restarted = new AbsControlCenterIngestion(f.client, { ...scope, source: querySource }, key);
+  assert.equal((await restarted.loadBaseline())?.endpoint, endpoint);
+  assert.equal((await restarted.loadBaseline())?.sourceUrl, querySource.url);
+  const story = (await new PostgresAbsNewsStoreV1(f.client, scope, key).listStories()).stories[0];
+  assert.equal(story.canonicalUrl, "https://example.org/model"); assert.equal(story.verificationState, "review_only");
+  assert.equal(absNewsCanonicalUrlSchemaV1.safeParse(endpoint).success, false);
+  const changed = new AbsControlCenterIngestion(f.client, { ...scope, source: { ...querySource, url: "https://example.org/?section=other" } }, key);
+  assert.equal(await changed.loadBaseline(), undefined);
+  for (const url of ["http://example.org/?feed=rss", "https://user:password@example.org/?feed=rss", "https://127.0.0.1/?feed=rss", "https://example.org:8443/?feed=rss", "https://example.org/?feed=rss#fragment"])
+    assert.equal(absNewsDiscoveryEndpointSchemaV1.safeParse(url).success, false, url);
+});
 
 test("collection composition loads restart memory automatically and abort cannot commit article or baseline changes", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());

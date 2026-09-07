@@ -3,6 +3,7 @@ import { safeFetchText } from "../../../vendor/control-center/safe-fetch";
 import type { PinnedFetchDependencies } from "../../../vendor/control-center/pinned-fetch";
 import { createIndustrySourceReader } from "../../../vendor/control-center/source-reader";
 import { captureAbsCurrentSourceAuthority, type AbsCurrentSourceAuthority } from "./current-source-authority";
+import { absNewsDiscoveryEndpointSchemaV1 } from "./schemas";
 
 const limitsSchema = z.object({ maxAttempts: z.number().int().min(1).max(1000),
   timeoutMs: z.number().int().min(1).max(30_000),
@@ -23,9 +24,7 @@ export function createControlCenterCollectionReader(value: unknown, source: AbsC
     // Discovery endpoints may legitimately contain queries (unlike canonical story
     // identities). Upstream DNS checks enforce public addresses; authority checks
     // the exact destination, including its path/query.
-    const target = new URL(url);
-    if (target.protocol !== "https:" || target.username || target.password || target.port || target.hash)
-      throw new Error("news_collection_destination_invalid");
+    absNewsDiscoveryEndpointSchemaV1.parse(new URL(url).toString());
     assertCurrent(url); deadline.throwIfAborted();
   };
   const reader = createIndustrySourceReader({ now, async readText(url, options) {

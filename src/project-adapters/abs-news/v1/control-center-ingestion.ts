@@ -4,7 +4,7 @@ import { projectWorkspaceSafeIdSchemaV1 as id, projectWorkspaceLabelSchemaV1 as 
   projectWorkspaceTimeSchemaV1 as time } from "../../../project-workspace/v1";
 import { sha256Digest } from "../../../security";
 import { curateIndustryDiscoveries, scoreIndustryDiscovery } from "../../../vendor/control-center/industry-curation";
-import { absNewsCanonicalUrlSchemaV1 } from "./schemas";
+import { absNewsCanonicalUrlSchemaV1, absNewsDiscoveryEndpointSchemaV1 } from "./schemas";
 import { canonicalizeAbsNewsDiscoveredUrlV1 } from "./collection";
 import { buildAbsNewsStoryV1 } from "./story";
 import type { AbsNewsStoryV1 } from "./types";
@@ -14,10 +14,10 @@ import { absDiscoveryCollectionLimit } from "./postgres-store";
 import type { createIndustrySourceReader } from "../../../vendor/control-center/source-reader";
 
 const configuration = z.object({ tenantId: id, workspaceId: id, projectId: id,
-  source: z.object({ id, name: label, url: absNewsCanonicalUrlSchemaV1 }).strict() }).strict();
-const resultSchema = z.object({ sourceUrl: absNewsCanonicalUrlSchemaV1, coverageComplete: z.boolean(), feedKind: z.enum(["rss", "atom"]).optional(),
+  source: z.object({ id, name: label, url: absNewsDiscoveryEndpointSchemaV1 }).strict() }).strict();
+const resultSchema = z.object({ sourceUrl: absNewsDiscoveryEndpointSchemaV1, coverageComplete: z.boolean(), feedKind: z.enum(["rss", "atom"]).optional(),
   snapshot: discoverySnapshotSchema.optional(),
-  status: z.object({ sourceId: id, source: label, mode: z.enum(["feed", "sitemap"]), endpoint: absNewsCanonicalUrlSchemaV1 }),
+  status: z.object({ sourceId: id, source: label, mode: z.enum(["feed", "sitemap"]), endpoint: absNewsDiscoveryEndpointSchemaV1 }),
   items: z.array(z.object({ title: z.string().max(20_000), summary: z.string().max(20_000), url: z.string().max(2_000),
     publishedAt: z.string().max(100), discoveredAt: time.optional() })).max(absDiscoveryCollectionLimit),
 });

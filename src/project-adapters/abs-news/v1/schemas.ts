@@ -26,6 +26,17 @@ function isCanonicalPublicHttpsUrl(value: string): boolean {
 
 export const absNewsCanonicalUrlSchemaV1 = z.string().min(12).max(2_000).refine(isCanonicalPublicHttpsUrl, "URL must be canonical public HTTPS without credentials, port, query, or fragment");
 
+/** Feed endpoints may use query selectors. Keep their exact query in provenance;
+ * do not relax the separate canonical article-identity schema. Not network authority. */
+export const absNewsDiscoveryEndpointSchemaV1 = z.string().min(12).max(2_000).refine(value => {
+  try {
+    const url = new URL(value);
+    if (url.href !== value) return false;
+    url.search = "";
+    return isCanonicalPublicHttpsUrl(url.toString());
+  } catch { return false; }
+}, "Feed endpoint must be canonical public HTTPS without credentials, custom port or fragment");
+
 export const absNewsSourceEvidenceSchemaV1 = z.object({
   evidenceId: projectWorkspaceSafeIdSchemaV1,
   sourceId: projectWorkspaceSafeIdSchemaV1,

@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Query-based feeds now pass the complete local collection path:** Reader,
+configuration, result and baseline storage share a dedicated public HTTPS endpoint
+schema that preserves query selectors. Article canonical identity rules are unchanged.
+An injected test follows source HTML to its alternate query-based feed, through
+borrowed DNS-pinned fetch/discovery and atomic article/baseline storage, then reloads
+that exact source memory. Changed source queries have separate baselines. Invalid
+private/IP, credential, HTTP, custom-port and fragment inputs remain rejected.
+This is fake-network/PGlite evidence, not live source or production DB qualification.
+The 298-entry delivery lane, types, focused lint and VPS compilation pass.
+Independent source review found no concrete introduced defect. Source settings,
+native transport qualification and application runtime wiring remain unfinished.
+
 **Application limits now wrap the borrowed reader:** Added a thin composition of
 the adopted discovery and HTTP modules with shared timeout/cancellation, HTTPS
 destination checks, existing synchronous source authority, physical-attempt cap

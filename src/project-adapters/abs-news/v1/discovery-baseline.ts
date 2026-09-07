@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { DatabaseSession } from "../../../persistence/database";
 import { hmacSha256Tag, sha256Digest } from "../../../security";
 import { projectWorkspaceTimeSchemaV1 as time } from "../../../project-workspace/v1";
-import { absNewsCanonicalUrlSchemaV1 as url } from "./schemas";
+import { absNewsDiscoveryEndpointSchemaV1 as url } from "./schemas";
 
 // Preserve upstream snapshot semantics; bound serialized state without truncation.
 export const discoverySnapshotSchema = z.object({ sourceUrl: url, endpoint: url,

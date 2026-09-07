@@ -74,8 +74,12 @@ there is no default connection or runtime mount. Reservation counts maximum deco
 body bytes per logical document, including failed documents, not total wire traffic.
 Redirect destinations are checked before DNS; each pinned attempt rechecks authority.
 Configured source persistence/UI and application startup/queue wiring remain open.
-Discovered endpoint query strings are accepted by the fetch guard but still need
-reconciliation with the stricter ingestion endpoint schema before live wiring.
+Source and discovered endpoint query strings now use one dedicated endpoint schema
+across fetch, ingestion and baseline storage. Exact queries are retained for source
+identity and evidence; article canonical URL rules remain unchanged. A full injected
+HTML-alternate-feed collection test proves query endpoints through restart storage.
+Only public feed selectors belong here, not private signed links or credentials;
+query support grants no access and exact-destination authority is still required.
 Current limits are decoded-body reservations, not a measurement of all bytes on
 the network; HTTP headers/redirect-body transport cleanup require native validation.
 
