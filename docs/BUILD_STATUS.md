@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Idea creation role and owned application composition implemented locally:** A fixed
+`control_room_idea_creation` role/preflight permits session/audit saves, not panel results,
+decisions or dispatch writes. The existing task coordinator optionally owns this separate
+resource, sharing admission, precommit interruption, draining and bounded cleanup.
+Combined application composition checks separate clients and matching read/write keys;
+the protected form now has a tested owned save/read/replay path. Fifty-six focused
+Idea/ABS tests and 23 task/compiled-app regressions pass; TypeScript, focused lint and
+VPS compilation pass. Independent implementation source review found no concrete defect.
+Tests use disposable PGlite, not independent production pools or live PostgreSQL races.
+The initial privilege-drift test's PGlite session reset failed and was corrected to the
+existing explicit test-admin switch; the corrected tests pass. No role was provisioned
+outside tests. Production bootstrap configuration, panel run/cancel/synthesis/decision,
+news ingestion and real-agent end-to-end acceptance remain open. No deployment or GitHub writes.
+
 **Owner creation form connected locally:** `758f00e` adds the New idea form, explicit
 availability based on configured storage/coordinator and current owner permissions,
 and exact body/key recovery after a lost save response. A pending save cannot be

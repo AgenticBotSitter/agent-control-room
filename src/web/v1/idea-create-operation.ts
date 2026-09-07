@@ -9,7 +9,7 @@ import { ideaLabelSchemaV1, ideaTextSchemaV1, ideaParticipantSchemaV1 } from "..
 import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 
-const inputSchema = z.object({ title: ideaLabelSchemaV1, ideaSummary: ideaTextSchemaV1,
+export const ideaCreationInputSchema = z.object({ title: ideaLabelSchemaV1, ideaSummary: ideaTextSchemaV1,
   targetCustomer: z.string().min(1).max(300), maxRounds: z.number().int().min(1).max(3),
   maxDurationSeconds: z.number().int().min(60).max(900), maxCostUsd: z.number().min(0).max(25),
 }).strict();
@@ -32,7 +32,7 @@ export class IdeaSessionCreationService {
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
   }
   async create(identity: VerifiedWebIdentity, value: unknown, key: string) {
-    const input = inputSchema.safeParse(value);
+    const input = ideaCreationInputSchema.safeParse(value);
     if (!input.success || !/^[A-Za-z0-9:_-]{8,160}$/.test(key)) throw new WebAccessError("invalid_request");
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("idea_lab.session_create", undefined, true);

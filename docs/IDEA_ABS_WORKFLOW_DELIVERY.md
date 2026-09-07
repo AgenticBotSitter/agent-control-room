@@ -150,6 +150,20 @@ concrete finding. No independent test execution or live acceptance is inferred.
 
 ## Still required for the requested outcome
 
+Creation composition update: the fixed offline `idea_creation_roles.sql` template and
+`verifyIdeaCreationDatabase` cover only session creation/audit/session-authority needs.
+The existing task lifecycle optionally owns this distinct resource and protects its
+transactions with existing admission/precommit/drain/close handling. The combined
+application rejects aliased clients, missing read configuration and differing integrity
+keys, and mounts the owned save operation. No new service, queue or execution rights.
+Standard production bootstrap still does not provision/configure this optional resource.
+`pnpm test:idea-abs` passes 56 tests. Separate task/private-process/compiled-app tests
+pass 23 checks; TypeScript, focused lint and VPS compilation pass. Independent source
+review found no concrete implementation defect; final added HTTP-composition and
+failed/stalled-close tests were main-agent verified. Role tests have the existing explicit
+PGlite-only TEMP-metadata exception and are not production acceptance. Lifecycle tests
+use distinct wrappers over one disposable database, not distinct live PostgreSQL pools.
+
 Storage update (`c522684`): migration 0059 and `PostgresAbsNewsStoreV1` now implement
 immutable source versions, exact source/proposal reads, bounded pagination, and
 source-bound proposal retention using the existing DatabaseClient/PostgreSQL stack.
@@ -164,7 +178,8 @@ this is not real PostgreSQL concurrent-worker or production migration acceptance
 Authenticated read/draft wiring and its SELECT-only role template are now implemented
 above; actual deployment/migration and source ingestion remain open.
 
-1. Add protected Idea Lab create/run/cancel/synthesize/owner-decision commands. Private
+1. Finish production configuration for implemented protected creation, then add protected
+   Idea Lab run/cancel/synthesize/owner-decision commands. Private
    saved Idea and news pages are mounted; the separate demo build is not a live operator.
 2. Complete ingestion and operational use of the implemented PostgreSQL store. Existing
    SQLite ABS stores and live-read simulation coordinators must not become production authorities.
