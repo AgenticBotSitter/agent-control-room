@@ -248,6 +248,31 @@ export class IdeaLabBotCoordinatorV1 {
       } catch {
         return this.ledger.failDefinite(run.runId, "discussion_context_unavailable", this.clock());
       }
+      if (liveAdmission) {
+        // A panel may outlive its evidence or owner window. Recheck before each
+        // new marker; same-admission consumption is an inert authority replay.
+        try {
+          const checkedAt = this.clock();
+          parseIdeaLabLivePanelAdmissionV1(liveAdmission, session, evidence, run.runId, checkedAt);
+          if (timeMillisecondsV1(participantEvidence.capturedAt) > timeMillisecondsV1(checkedAt)
+            || timeMillisecondsV1(participantEvidence.expiresAt) <= timeMillisecondsV1(checkedAt)
+            || !await this.providerEvidenceAuthority!.verify(participantEvidence, checkedAt)
+            || !await this.livePanelAdmissionAuthority!.consume({ admission: liveAdmission, session, evidence, now: checkedAt })) {
+            throw new IdeaLabErrorV1("authorization_denied");
+          }
+          // Verification can wait on storage. Do not use an expired observation
+          // merely because it was current before that wait.
+          const current = this.clock();
+          parseIdeaLabLivePanelAdmissionV1(liveAdmission, session, evidence, run.runId, current);
+          if (timeMillisecondsV1(current) < timeMillisecondsV1(checkedAt)
+            || timeMillisecondsV1(participantEvidence.expiresAt) <= timeMillisecondsV1(current)) throw new IdeaLabErrorV1("authorization_denied");
+        } catch {
+          return this.ledger.failDefinite(run.runId, "panel_authority_unavailable_before_provider", this.clock());
+        }
+      }
+      if (timeMillisecondsV1(this.clock()) - timeMillisecondsV1(run.startedAt) >= session.maxDurationSeconds * 1000) {
+        return this.ledger.failDefinite(run.runId, "budget_exhausted_before_provider", this.clock());
+      }
       const attemptId = `attempt.idea:${sha256Digest({ runId: run.runId, participantId: participant.participantId, round }).slice(7, 31)}`;
       const startedAt = this.clock(), markerDigest = sha256Digest({ runDigest: run.runDigest, attemptId,
         evidenceDigest: participantEvidence.evidenceDigest, startedAt });

@@ -25,6 +25,26 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Between-turn live authority and time checks
+
+Inspection before live start composition found that the coordinator validated admission
+only at panel entry. It now revalidates the exact admission and selected participant's
+evidence before each new marker. Existing same-admission/same-run `consume` replay
+checks current sealed/native decisions before returning inertly; it does not mint another
+owner window. Expiry, revocation or verification failure records a definite pre-next-call
+failure, preserving already settled contributions and truthful provider-contact history.
+
+Post-await time checks prevent expiry during verification from authorizing another turn.
+Independent review identified a missing elapsed-session-budget check after those waits;
+the common deadline check now runs immediately before the marker. A regression crosses
+the session deadline while admission stays valid and proves zero calls/markers. Twenty-five
+admission/coordinator tests pass, and the preceding authority-store-inclusive run passed
+37 checks before this final deadline regression was added. TypeScript passes. Re-review
+found no concrete residual defect. These are synthetic seams and PGlite tests, not live
+provider acceptance. Authorization is checked at admission points, not continuously;
+revocation after a successful check cannot retroactively cancel an already-started call.
+No new web start operation or native qualification was enabled by this correction.
+
 ### Owner decision form and exact-request recovery
 
 The private Idea page now offers Create a project, Save for later or Reject for an

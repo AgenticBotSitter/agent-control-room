@@ -11,6 +11,7 @@ import {
   IdeaLabErrorV1,
   IdeaLabProjectRegistryStoreV1,
   buildIdeaLabFixtureV1,
+  buildIdeaLabSessionV1,
   buildIdeaLabHermes021RuntimeCandidateV1,
   buildIdeaLabLivePanelAdmissionCandidateV1,
   buildRepositoryFakeProviderEvidenceV1,
@@ -25,7 +26,7 @@ const now = "2026-08-31T20:00:30.000Z";
 const expires = "2026-08-31T20:10:00.000Z";
 const digest = (label: string) => sha256Digest({ label });
 
-async function setup() {
+async function setup(maxDurationSeconds?: number) {
   const raw = new PGlite();
   for (const file of (await readdir(resolve("db/migrations"))).filter((name) => name.endsWith(".sql")).sort()) {
     await raw.exec(await readFile(resolve("db/migrations", file), "utf8"));
@@ -36,6 +37,12 @@ async function setup() {
   const registry = new IdeaLabProjectRegistryStoreV1(db, key);
   const ledger = new IdeaLabBotRunStoreV1(db, key);
   const fixture = buildIdeaLabFixtureV1();
+  if (maxDurationSeconds !== undefined) {
+    const source = fixture.session;
+    fixture.session = buildIdeaLabSessionV1({ ...Object.fromEntries(
+      "sessionId tenantId workspaceId title ideaSummary targetCustomer participants maxRounds maxCostUsd createdByIdentityDigest createdAt"
+        .split(" ").map(name => [name, (source as unknown as Record<string, unknown>)[name]])), maxDurationSeconds });
+  }
   await registry.registerSession(fixture.session);
   const fakeEvidence = fixture.session.participants.map((participant, index) =>
     buildRepositoryFakeProviderEvidenceV1(fixture.session, participant, {
@@ -100,6 +107,22 @@ function completedResult(markerDigest: string) {
     providerContacted: true,
   };
 }
+
+test("slow authority recheck cannot start a turn after the session deadline", async () => {
+  const target = await setup(60); let current = now, calls = 0, checks = 0;
+  try {
+    const coordinator = new IdeaLabBotCoordinatorV1(target.ledger, target.registry, {
+      mode: "hermes_bot_mode_filtered", async invoke(input) { calls++; return completedResult(input.markerDigest); },
+    }, () => current, { async verify() { return true; } }, { async consume() {
+      checks++; if (checks === 2) current = "2026-08-31T20:01:30.000Z"; return true;
+    } });
+    const run = await coordinator.execute({ runId: target.admission.runId, session: target.fixture.session,
+      evidence: target.evidence, liveAdmission: target.admission, safePrompt: "Evaluate safely." });
+    assert.ok(Date.parse(current) < Date.parse(target.admission.expiresAt));
+    assert.equal(calls, 0); assert.equal(run.attempts.length, 0);
+    assert.equal(run.state, "failed_definite"); assert.equal(run.safeCode, "budget_exhausted_before_provider");
+  } finally { await target.raw.close(); }
+});
 
 test("CR12B-IDEA-070 pins a disabled Hermes 0.21 owner packet with no live authority", () => {
   const packet = parseIdeaLabHermes021PanelPacketV1(ideaLabHermes021PanelPacketV1);
@@ -168,12 +191,39 @@ test("CR12B-IDEA-070 admits only an exact verified synthetic live seam and retai
       evidence: target.evidence, liveAdmission: target.admission, safePrompt: "Evaluate safely." });
     assert.equal(run.state, "completed");
     assert.equal(calls, 8);
-    assert.equal(providerChecks, target.fixture.session.participants.length);
-    assert.equal(admissionChecks, 1);
+    assert.equal(providerChecks, target.fixture.session.participants.length + calls);
+    assert.equal(admissionChecks, 1 + calls);
     const contributions = await target.registry.listContributions(target.fixture.session.tenantId, target.fixture.session.sessionId);
     assert.equal(contributions.length, 8);
     assert.ok(contributions.every((item) => item.sourceMode === "provider_filtered" && item.providerContacted));
   } finally { await target.raw.close(); }
+});
+
+test("live seam stops before a second turn when authority expires, is revoked or fails", async t => {
+  for (const mode of ["expired", "revoked", "provider_revoked", "verification_failed", "expired_during_check"] as const) await t.test(mode, async () => {
+    const target = await setup(); let current = now, calls = 0;
+    try {
+      const coordinator = new IdeaLabBotCoordinatorV1(target.ledger, target.registry, {
+        mode: "hermes_bot_mode_filtered", async invoke(input) {
+          calls++; if (mode === "expired") current = target.admission.expiresAt;
+          return completedResult(input.markerDigest);
+        },
+      }, () => current, { async verify() { return !(calls && mode === "provider_revoked"); } }, {
+        async consume() {
+          if (calls && mode === "verification_failed") throw new Error("synthetic unavailable verifier");
+          if (calls && mode === "expired_during_check") current = target.admission.expiresAt;
+          return !(calls && mode === "revoked");
+        },
+      });
+      const run = await coordinator.execute({ runId: target.admission.runId, session: target.fixture.session,
+        evidence: target.evidence, liveAdmission: target.admission, safePrompt: "Evaluate safely." });
+      assert.equal(calls, 1); assert.equal(run.state, "failed_definite");
+      assert.equal(run.safeCode, "panel_authority_unavailable_before_provider");
+      assert.equal(run.attempts.length, 1); assert.equal(run.attempts[0]!.state, "completed");
+      assert.equal(run.providerContacted, true);
+      assert.equal((await target.registry.listContributions(target.fixture.session.tenantId, target.fixture.session.sessionId)).length, 1);
+    } finally { await target.raw.close(); }
+  });
 });
 
 test("CR12B-IDEA-070 rejects scope, budget, time, identity, digest, accessor, and credential-material drift before contact", async () => {

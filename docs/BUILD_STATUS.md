@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Live coordinator rechecks authority between turns:** Before each new provider marker,
+the existing coordinator verifies the selected participant's current evidence and replays
+the same admission against the existing server authority. Expired/revoked/unavailable
+authority records a definite pre-next-call stop while preserving earlier contributions.
+Time is checked again after verification waits, including the session deadline. Review
+caught that latter missing deadline fence; it is fixed and covered by a zero-call test.
+Twenty-five admission/coordinator checks and TypeScript pass; source re-review found no
+remaining concrete defect. All calls in these tests are injected, not native provider
+calls. Checks are point-in-time, not continuous revocation monitoring or physical
+cancellation. The live start composition and accepted owner effect window remain
+unconfigured; synthesis integration, news ingestion and real end-to-end acceptance
+remain open. No new authority, deployment, listener, credentials or GitHub writes.
+
 **Owner decision controls added to the private Idea page:** Eligible saved discussions
 now offer Create a project, Save for later and Reject, with project title/summary fields
 and a direct link to the resulting workspace. Current server permissions determine
