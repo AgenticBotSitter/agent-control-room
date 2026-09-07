@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Runtime dependency scope narrowed from the lockfile:** The five production roots
+reach 26 exact snapshots, including optional edges, versus the earlier 476 installed
+package observations. Metadata is 22 MIT, two ISC, one Unlicense and one MIT/CC0 choice;
+pg-types and pgpass add root-notice location follow-ups. Generated-code literal imports
+identify external server packages but cannot identify bundled third-party code. Details
+and limits are in `PUBLIC_DEPENDENCY_LICENSE_STATUS.md`. No install, dependency removal,
+license selection or publication; final bundle/native/WASM accounting remains open.
+
 **Mobile action-limit labels no longer deliberately hidden:** Removed small-screen
 rules hiding prototype/simulation badges, including the shared connection panel's
 read-only/no-connect label. Labels use .875rem wrapping text with constrained width;

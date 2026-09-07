@@ -108,6 +108,74 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Runtime lockfile reachability at `2246647`
+
+A read-only traversal of importer `.` production dependencies in `pnpm-lock.yaml`
+resolved **26 distinct snapshot keys**, following both `dependencies` and
+`optionalDependencies` recursively. Peer-qualified snapshot keys were preserved; every
+visited key resolved. The lockfile SHA-256 remains
+`51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0`.
+The existing ESLint dependency's installed `js-yaml` parser read the lock; no parser,
+package or service was installed. `pnpm list --prod --depth Infinity --json` could not
+open its local SQLite database, so its error was not treated as a dependency listing.
+
+| Reachable package / version | Installed license declaration | Root notice file observed |
+|---|---|---|
+| cron-parser 5.10.0 | MIT | LICENSE |
+| luxon 3.7.2 | MIT | LICENSE.md |
+| non-error 0.1.0 | MIT | license |
+| pg-boss 12.30.0 | MIT | LICENSE |
+| pg-cloudflare 1.4.0 | MIT | LICENSE |
+| pg-connection-string 2.14.0 | MIT | LICENSE |
+| pg-int8 1.0.1 | ISC | LICENSE |
+| pg-pool 3.14.0 (pg 8.23.0 peer) | MIT | LICENSE |
+| pg-protocol 1.16.0 | MIT | LICENSE |
+| pg-types 2.2.0 | MIT | Not found at root |
+| pg 8.23.0 | MIT | LICENSE |
+| pgpass 1.0.5 | MIT | Not found at root |
+| postgres-array 2.0.0 | MIT | license |
+| postgres-bytea 1.0.1 | MIT | license |
+| postgres-date 1.0.7 | MIT | license |
+| postgres-interval 1.2.0 | MIT | license |
+| postgres 3.4.7 | Unlicense | Not found at root; upstream location above |
+| react-dom 19.2.6 (react 19.2.6 peer) | MIT | LICENSE |
+| react 19.2.6 | MIT | LICENSE |
+| scheduler 0.27.0 | MIT | LICENSE |
+| serialize-error 13.0.1 | MIT | license |
+| split2 4.2.0 | ISC | LICENSE |
+| tagged-tag 1.0.0 | MIT | license |
+| type-fest 5.9.0 | MIT OR CC0-1.0 | license-cc0 and license-mit |
+| xtend 4.0.2 | MIT | LICENSE |
+| zod 4.1.12 | MIT | LICENSE |
+
+Totals: 22 MIT declarations, two ISC, one Unlicense and one alternative MIT/CC0.
+These are installed metadata/root filename observations, not full notice text review
+or source provenance clearance. `pg-types` and `pgpass` add two concrete notice-location
+follow-ups. A filename's absence is not proof that no license applies. Optional edges
+are included conservatively; this is not evidence every package executes on this host.
+
+The previous 476-package store scan and this 26-snapshot graph answer different
+questions. Neither is the final bundle inventory. Do not strip development dependencies:
+the contributor preview needs its compiler, framework, tests and CSS build tooling.
+Do not remove the `pg` subtree as a duplicate of Postgres.js: pg-boss brings its own
+database-driver dependency; replacing that would be upstream modification, not cleanup.
+
+### Current compiled import boundary
+
+Parsed all generated `.js` files under `dist-vps/server` and `dist-vps/client` using
+the already-installed TypeScript parser, inspecting literal imports, exports, dynamic
+imports and direct `require` calls. The build is the fresh local output recorded at
+`2246647`. Excluding Node built-ins, server external specifiers observed were `pg-boss`,
+`react`, `react-dom`, `react-dom/server.edge`, and `react/jsx-runtime`. No bare external
+package specifier was observed in the client output.
+
+This does **not** mean the client has no third-party code or that bundled Postgres.js,
+Zod/framework code is absent. Bundling removes the original package import names.
+Computed imports, runtime-selected paths and bundled module identities are not established
+by this literal-import pass. Next use build module provenance or equivalent exact output
+accounting to distinguish bundled browser/server code from external runtime packages.
+Continue the separate native/WASM/tooling review before any packaged-binary claim.
+
 1. Identify the final source versus built-artifact distribution scope. Development
    dependencies and bundled output differ; do not assume devDependencies cannot be
    present in the shipped artifact.
