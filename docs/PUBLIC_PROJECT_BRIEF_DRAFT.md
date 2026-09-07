@@ -1,7 +1,9 @@
 # Agent Control Room
 
-Local public-facing draft. Not published. Project name, license, maintainer contact and
+Local public-facing draft. Not published. Project name, license and
 repository address await confirmation. Remove this drafting note only after review.
+
+Project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).
 
 ## One place for projects and the agents working on them
 

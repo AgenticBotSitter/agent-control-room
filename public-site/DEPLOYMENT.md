@@ -102,7 +102,10 @@ Do not enable automation or paid usage without the owner's explicit approval.
 
 ## Content decisions still pending
 
-The public source repository, contribution links, maintainer credit, contact information
+General project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com),
+confirmed by the owner. This is not a tested private vulnerability-reporting channel.
+
+The public source repository, contribution links, maintainer credit
 and project license should be added only when confirmed and ready. This private handoff
 does not license or publish the Control Room application's source. No third-party images,
 fonts or script libraries are included in this static page.

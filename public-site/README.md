@@ -1,8 +1,9 @@
 # Public welcome page — unpublished source
 
 This separate static page is an information-only draft. It is not the Control Room
-application or a public source release. No domain, GitHub address, license or public
-contact has been assumed. No DNS or hosting configuration has been changed.
+application or a public source release. No deployment domain, public source link or
+license has been assumed. The owner confirmed the project contact as
+Alastair@agenticbotsitter.com. No DNS or hosting configuration has been changed.
 
 Only `index.html` and `styles.css` belong in a future welcome-page deployment. Do not
 serve the repository root, `app/`, `private-app/`, `dist/server/`, local databases,

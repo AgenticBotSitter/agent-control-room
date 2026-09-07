@@ -1,10 +1,14 @@
 # Contributing to Agent Control Room
 
 **Draft for the planned public repository.** The public source, project license,
-maintainer/contact details and clean setup instructions are not published yet. These
+maintainer roles and clean setup instructions are not published yet. These
 instructions are a proposed workflow, not an invitation to access a private repository
 or run agents against an existing installation. Remove this draft notice only after
 those prerequisites are in place and the guide is reviewed for publication.
+
+General project questions: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).
+Do not send credentials or private installation records. Private vulnerability reporting
+will be described separately in the reviewed security policy.
 
 ## What we are building
 

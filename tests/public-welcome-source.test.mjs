@@ -21,11 +21,21 @@ test("all local links resolve and sections have accessible headings", () => {
   assert.equal(ids.length, new Set(ids).size);
   for (const [, href] of html.matchAll(/\bhref="([^"]+)"/g)) {
     if (href.startsWith("#")) assert.ok(ids.includes(href.slice(1)));
-    else assert.equal(href, "styles.css");
+    else assert.ok(["styles.css", "mailto:Alastair@agenticbotsitter.com"].includes(href));
   }
   for (const [, label] of html.matchAll(/aria-labelledby="([^"]+)"/g)) assert.ok(ids.includes(label));
   assert.equal([...html.matchAll(/<h1\b/g)].length, 1);
   assert.match(html, /class="skip" href="#main"/);
   assert.match(css, /:focus-visible/);
   assert.match(css, /@media \(max-width: 40rem\)/);
+});
+
+test("confirmed project contact is consistent without adding mail forms or credentials", () => {
+  const address = "Alastair@agenticbotsitter.com";
+  assert.ok(html.includes(`href="mailto:${address}">${address}</a>`));
+  for (const path of ["public-site/README.md", "public-site/DEPLOYMENT.md",
+    "docs/PUBLIC_PROJECT_BRIEF_DRAFT.md", "docs/PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md"]) {
+    assert.ok(readFileSync(new URL(`../${path}`, import.meta.url), "utf8").includes(address), path);
+  }
+  assert.equal([...html.matchAll(/href="mailto:/g)].length, 1);
 });

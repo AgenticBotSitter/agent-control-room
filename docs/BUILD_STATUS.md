@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Confirmed project contact applied locally:** The welcome page, deployment instructions
+and public README/contributor drafts use `Alastair@agenticbotsitter.com`. The page adds
+one ordinary mail link, no form, script or mail credentials. All three welcome-source
+checks and whitespace validation pass. The handoff records this as pending the next
+batched website update; no GitHub push, deployment or test email was sent. This general
+contact does not certify a private vulnerability-reporting channel.
+
 **Saved simulation revisions now checked against persisted review targets:** The
 existing proposal-to-revision/review rehearsal uses the existing private disposable
 filesystem adapter for both result files. Reopened reads match each exact byte hash

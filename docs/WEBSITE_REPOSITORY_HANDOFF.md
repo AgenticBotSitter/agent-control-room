@@ -29,3 +29,11 @@ the website repository unless the owner explicitly changes this policy. Normal g
 pushes/pulls are not Actions runner minutes; triggered workflows can consume them.
 Do not treat a daily run count as a reliable minute budget or enable paid overages.
 This scoped upload does not lift the pause on unrelated Control Room GitHub writes.
+
+## Pending batched website update
+
+The owner subsequently confirmed Alastair@agenticbotsitter.com as the general project
+contact. Local `public-site/index.html` and `public-site/DEPLOYMENT.md` now include it;
+these changes have not been transferred to the website repository or deployed. On the
+next website update, map DEPLOYMENT.md to that repository's README.md as before, and
+keep Actions disabled. Mail forwarding is owner-reported, not delivery-tested here.
