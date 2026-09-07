@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Core branding triage narrowed the real work:** No targeted personal-brand/identity/
+domain/home-path matches in 295 application-closure files; the selected test closure
+only matched an assertion excluding old brands. This is not full privacy clearance.
+A disposable PGlite probe applied 55 migrations without the two optional content
+adapter migrations and found no content-adapter tables. [Findings](CONTENT_WORKFLOW_GENERALIZATION.md)
+support a core-only schema rehearsal next; application/role compatibility is unproved.
+No existing migration, fixture default, data or production service changed.
+
 **Contributor workflow guide drafted:** [Guide](PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md)
 covers ready/assigned work, platform prerequisites, scoped changes, reuse attribution,
 test evidence, multiple independent PRs, blocked handoff and maintainer review. It

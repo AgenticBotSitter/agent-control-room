@@ -52,6 +52,30 @@ Do not add a parallel compatibility system solely to rush the first public demo.
 
 ## Practical delivery order
 
+### Core-source triage and isolated schema probe
+
+At `d68de79`, the current application import closure contained 295 files. A targeted
+literal scan found no occurrences of the known personal brands, owner name/account,
+private domain, agent nicknames or common absolute home-directory prefixes. The 378-file
+compiled-test closure found two brand mentions in `tests/vps-built-handler.test.mjs`,
+where the assertion checks that those brands are absent from rendered output. This is
+limited triage, not a credential scanner, complete personal-data detection or content
+clearance. Encoded values, other names and runtime data are not covered. The historical
+inventory's per-file reviews remain pending.
+
+SQL inspection found the adapter branding in its two existing migrations. A disposable
+PGlite probe applied the other 55 migrations in their existing order, omitting only
+`0025_cr9a_content_blooms_sync.sql` and `0026_cr9a_content_blooms_placement.sql`. All 55
+applied successfully and no `control_content_blooms%` tables existed afterward. The
+database was closed; no files, production database or migration history were changed.
+
+This supports testing a **separate core-only contributor schema** without renaming the
+private adapter tables. It does not prove application startup, role gates or complete
+test compatibility with that schema. Those checks are the next prerequisite before
+adopting a selected migration set. Preserve the full private migration sequence and
+adapter tests. Do not silently change the shared fixture's default migrations, or
+claim optional modules work against a schema that deliberately omits their tables.
+
 1. First public core demo uses ordinary generic projects and the existing core task
    services, not this external-source adapter. Preserve its code privately while the
    optional module is reviewed; do not delete it or claim it has been generalized.
