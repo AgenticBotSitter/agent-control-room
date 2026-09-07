@@ -116,6 +116,34 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+### Discovery job integration contract
+
+The existing plan builder/store now accepts `control-room.abs-discovery-plan/v1`
+alongside the unchanged legacy single-feed plan. It produces ordinary proposed
+request/workflow/job records, with `abs-news-discovery/v1`, `abs.news.discover` and
+`news.public_discovery.read`. Job type and existing immutable plan storage are reused;
+no second scheduler, queue table or persistence engine is introduced.
+
+The complete input digest binds the source ID/name/URL, saved revision, project,
+up to 16 explicit public HTTPS origins, shared deadline, physical-attempt ceiling,
+per-document decoded-body ceiling and aggregate decoded-body reservations. Origin
+entries are exact, unique and include the source origin; no hostname suffix wildcard,
+private address, credentials, path or query is allowed in an origin. Feed endpoints
+can retain public query selectors. Within approved origins, the borrowed algorithms
+may discover new paths/queries; additional origins require a different approved plan.
+This distinction is necessary for HTML alternate feeds and sitemap discovery.
+
+Authenticated proposal reuses the existing owner/project checks and saves only when
+the source is enabled and the revision/name/URL match. The plan is still proposed:
+no lease, approval, network or queue action is created. Legacy admission and execution
+explicitly reject discovery plans. Next, compose the discovery executor and carry the
+same bounded plan through existing attempt/settlement checks; do not merely remove
+those rejection checks. Native transport cleanup and runtime qualification remain open.
+Offline coordinator grants/preflight now add source-settings SELECT only. Restricted
+role tests prove proposal, replay and saved-plan retrieval, with settings INSERT denied.
+Disabling a source as owner then retrying as the restricted coordinator is refused.
+No production permission change has been applied.
+
 The job-facing `createControlCenterCollection` now exposes single-use `collect(signal)`
 and memoized bounded `close()`, composing the configured collector and borrowed reader.
 It starts nothing at construction and requires supplied transport/current authority.

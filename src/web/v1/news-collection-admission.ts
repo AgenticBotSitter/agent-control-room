@@ -47,6 +47,9 @@ export class WebNewsCollectionAdmission {
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
       const work = await new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(input.jobId);
       if (!work || work.job.inputDigest !== input.inputDigest || work.job.authority.allowedExecutor !== executorId) throw new WebAccessError("conflict");
+      // Discovery has a separate capability and multi-destination contract. Legacy
+      // admission stays closed to it until that executor is explicitly composed.
+      if (work.plan.schema !== "control-room.abs-feed-plan/v1") throw new WebAccessError("conflict");
       const canonical = new CanonicalStore(joined(tx)), suffix = sha256Digest({ tenantId, projectId, jobId: input.jobId, inputDigest: input.inputDigest }).slice(7, 47);
       const effectId = `effect:abs-feed:${suffix}`, attemptId = `attempt:abs-feed:${suffix}`, approvalId = `approval:abs-feed:${suffix}`;
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };

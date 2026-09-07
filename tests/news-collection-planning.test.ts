@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { WebNewsCollectionPlanning } from "../src/web/v1/news-collection-planning";
 import { WebProjectService } from "../src/web/v1/project-service";
 import { AbsFeedPlanStore } from "../src/project-adapters/abs-news/v1/feed-plan-store";
@@ -7,8 +8,66 @@ import { taskFixture } from "./helpers/web-task";
 import { now } from "./helpers/web-foundation";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { sha256Digest } from "../src/security";
+import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
+import { verifyAbsFeedJobPlan } from "../src/project-adapters/abs-news/v1/feed-job-plan";
+import { WebNewsCollectionAdmission } from "../src/web/v1/news-collection-admission";
+import { createAbsFeedJobExecution } from "../src/project-adapters/abs-news/v1/feed-job-execution";
 
 const key = new Uint8Array(32).fill(61);
+
+test("borrowed discovery proposals reuse ordinary plan storage and bind saved revision, origins and budgets", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
+  const settings = new PostgresNewsSourceSettings(f.client, scope, key);
+  const source = { id: "source:discovery", name: "Example", url: "https://example.org/?section=ai", enabled: true };
+  await settings.save(source, 0, new Date(now).toISOString());
+  await f.db.exec(await readFile("db/roles/news_coordinator_roles.sql", "utf8"));
+  await f.db.exec(`CREATE ROLE discovery_planner_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+    GRANT control_room_news_coordinator TO discovery_planner_test; SET SESSION AUTHORIZATION discovery_planner_test`);
+  await assert.rejects(f.client.query("INSERT INTO control_abs_source_settings SELECT * FROM control_abs_source_settings"), /permission denied/);
+  const configuration = { ...scope, source: { sourceId: source.id, sourceLabel: source.name, sourceKind: "discovery", endpointUrl: source.url },
+    expectedRevision: 1, allowedOrigins: ["https://example.org/", "https://feeds.example.org/"],
+    limits: { timeoutMs: 10000, maxAttempts: 12, maxDocumentBytes: 4096, maxReservedBodyBytes: 49152 } };
+  const template = { configuration, executorId: "executor:discovery", windowSeconds: 300 };
+  const service = new WebNewsCollectionPlanning(f.client, template, key, () => now);
+  const request = { sourceDigest: service.sourceDigest, idempotencyKey: "discovery-proposal-001" };
+  const first = await service.propose(f.identity, request);
+  assert.equal((await service.propose(f.identity, request)).replayed, true);
+  const store = new AbsFeedPlanStore(f.client, scope, key), work = await store.get(first.jobId);
+  assert.ok(work); assert.equal(work.plan.schema, "control-room.abs-discovery-plan/v1");
+  assert.equal(work.job.specVersion, "abs-news-discovery/v1");
+  assert.equal(work.job.requiredCapability, "news.public_discovery.read");
+  assert.deepEqual(work.job.authority.allowedOperations, ["abs.news.discover"]);
+  assert.deepEqual(work.job.authority.allowedNetworkDestinations, ["https://example.org:443", "https://feeds.example.org:443"]);
+  assert.deepEqual(verifyAbsFeedJobPlan(work.job, work.plan), configuration);
+  const assignment = { ...scope, executorId: template.executorId, nodeId: "node:discovery" };
+  let enqueued = false, sourceChecked = false;
+  const admission = new WebNewsCollectionAdmission(f.client, assignment, key, {
+    async enqueueInSession() { enqueued = true; },
+  }, () => now);
+  await assert.rejects(admission.approve(f.identity, { jobId: first.jobId, inputDigest: first.inputDigest }), /conflict/);
+  const executor = createAbsFeedJobExecution({ coordinator: f.client, ingestion: { ...f.client } }, assignment, key,
+    { assertCurrent() { sourceChecked = true; } }, () => now);
+  await assert.rejects(executor.collect({ schema: "control-room.abs-feed-job/v1", tenantId: scope.tenantId, projectId: scope.projectId,
+    jobId: first.jobId, attemptId: "attempt:discovery", effectId: "effect:discovery", operationDigest: sha256Digest("discovery") }, new AbortController().signal), /abs_feed_execution_unavailable/);
+  assert.equal(enqueued, false); assert.equal(sourceChecked, false);
+  assert.deepEqual((await new AbsFeedPlanStore(f.client, scope, key).get(first.jobId))?.plan, work.plan);
+  for (const change of [
+    { ...configuration, expectedRevision: 2 },
+    { ...configuration, allowedOrigins: ["https://example.org/"] },
+    { ...configuration, limits: { ...configuration.limits, maxAttempts: 13 } },
+  ]) assert.throws(() => verifyAbsFeedJobPlan(work.job, { ...work.plan, configuration: change }));
+  for (const allowedOrigins of [["https://example.org/", "https://example.org/"], ["https://other.example.org/"],
+    ["https://example.org/path"], ["https://127.0.0.1/"], ["https://example.org/?secret=x"]])
+    assert.throws(() => new WebNewsCollectionPlanning(f.client, { ...template, configuration: { ...configuration, allowedOrigins } }, key));
+  await f.db.exec("SET SESSION AUTHORIZATION postgres");
+  await settings.save({ ...source, enabled: false }, 1, new Date(now).toISOString());
+  await f.db.exec("SET SESSION AUTHORIZATION discovery_planner_test");
+  await assert.rejects(service.propose(f.identity, { ...request, idempotencyKey: "discovery-proposal-002" }), /conflict/);
+  assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 1);
+  for (const table of ["control_attempts", "control_effect_intents", "control_approvals", "control_outbox"])
+    assert.equal((await f.client.query(`SELECT * FROM ${table}`)).rows.length, 0);
+});
 async function fixture() {
   let current = now;
   const f = await taskFixture(() => current), scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };

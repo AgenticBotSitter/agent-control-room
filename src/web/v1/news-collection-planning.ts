@@ -4,6 +4,8 @@ import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { sha256Digest } from "../../security";
 import { appendAuditWith } from "../../audit/audit-store";
 import { absFeedCollectionConfigurationSchema } from "../../project-adapters/abs-news/v1/feed-collection";
+import { absDiscoveryJobConfigurationSchema } from "../../project-adapters/abs-news/v1/discovery-job-configuration";
+import { PostgresNewsSourceSettings } from "../../project-adapters/abs-news/v1/source-settings";
 import { AbsFeedPlanStore } from "../../project-adapters/abs-news/v1/feed-plan-store";
 import { buildAbsFeedProposedWork } from "../../project-adapters/abs-news/v1/feed-job-plan";
 import { WebSessionAuthority } from "./session-authority";
@@ -11,7 +13,7 @@ import { WebProjectService } from "./project-service";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 
 const inputSchema = z.object({ sourceDigest: digestSchema, idempotencyKey: localId.refine(value => value.length >= 12) }).strict();
-const templateSchema = z.object({ configuration: absFeedCollectionConfigurationSchema,
+const templateSchema = z.object({ configuration: z.union([absFeedCollectionConfigurationSchema, absDiscoveryJobConfigurationSchema]),
   executorId: localId.refine(value => value !== "executor:unassigned"), windowSeconds: z.number().int().min(60).max(3600) }).strict();
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -44,6 +46,12 @@ export class WebNewsCollectionPlanning {
       await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, workspaceId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
+      if ("limits" in configuration) {
+        const setting = await new PostgresNewsSourceSettings(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(configuration.source.sourceId);
+        if (!setting?.source.enabled || setting.revision !== configuration.expectedRevision
+          || setting.source.name !== configuration.source.sourceLabel || setting.source.url !== configuration.source.endpointUrl)
+          throw new WebAccessError("conflict");
+      }
       const suffix = sha256Digest({ tenantId, workspaceId, projectId, ownerId: actor.id, requestKey: input.idempotencyKey }).slice(7, 47);
       const jobId = `job:abs-feed:${suffix}`, store = new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
       const prior = await store.get(jobId);
@@ -54,7 +62,7 @@ export class WebNewsCollectionPlanning {
           throw new WebAccessError("conflict");
         return { jobId, inputDigest: prior.job.inputDigest, sourceDigest: input.sourceDigest, replayed: true, startsWork: false as const };
       }
-      const work = buildAbsFeedProposedWork({ plan: { schema: "control-room.abs-feed-plan/v1", jobId, configuration, plannedAt: actor.now },
+      const work = buildAbsFeedProposedWork({ plan: { schema: "limits" in configuration ? "control-room.abs-discovery-plan/v1" : "control-room.abs-feed-plan/v1", jobId, configuration, plannedAt: actor.now },
         requestId: `request:abs-feed:${suffix}`, workflowId: `workflow:abs-feed:${suffix}`, ownerId: actor.id, executorId,
         expiresAt: new Date(Date.parse(actor.now) + windowSeconds * 1000).toISOString() });
       await store.saveProposed(work);

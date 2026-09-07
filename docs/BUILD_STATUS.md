@@ -8,6 +8,21 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Discovery proposals reuse ordinary jobs:** The existing plan builder, authenticated
+proposal service and immutable plan store now accept a separate discovery plan. It
+binds the saved enabled source revision/name/URL, explicit public HTTPS origins and
+shared read/attempt/body limits under a distinct spec/capability/operation. Legacy
+single-feed plans retain their shape and are not silently widened. Legacy admission
+and execution explicitly refuse discovery pending executor composition. Tests cover
+persist/restart/replay, changed budgets/origins/revision, malformed origins, disabled
+sources and no legacy dispatch. Review identified missing coordinator settings reads;
+offline grants/preflight now add SELECT only, and actual restricted-role proposals
+pass with settings INSERT denied. No live role changes occurred.
+All 305 delivery tests, 54 focused planning/admission tests, types, focused lint and
+VPS compilation pass. Independent re-review found no new concrete defect. Next:
+connect discovery execution to existing attempt/settlement and admission, then refresh
+UI/runtime and end-to-end acceptance. Work remains local, with no native source calls.
+
 **Borrowed collector job-facing lifecycle:** `createControlCenterCollection` composes
 the saved-source collector with an inert, single-use collect/close interface. It
 captures configuration and transport callbacks, shares cancellation with reading and

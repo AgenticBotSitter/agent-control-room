@@ -31,6 +31,7 @@ export function createAbsFeedJobExecution(databases: { coordinator: DatabaseClie
       throw new Error("abs_feed_execution_unavailable");
     const work = await plans.get(reference.jobId);
     if (!work || work.job.authority.allowedExecutor !== scope.executorId) throw new Error("abs_feed_execution_unavailable");
+    if (work.plan.schema !== "control-room.abs-feed-plan/v1") throw new Error("abs_feed_execution_unavailable");
     const endpoint = work.plan.configuration.source.endpointUrl;
     assertSource(endpoint); if (signal.aborted) throw new Error("abs_feed_execution_unavailable");
     const startedAt = clock();

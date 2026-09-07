@@ -13,7 +13,7 @@ GRANT SELECT ON tenants, workspaces, projects, control_manual_project_heads, con
   control_role_grants, control_web_sessions, control_requests, control_workflows, control_jobs,
   control_attempts, control_leases, control_nodes, control_job_dependencies, control_transition_events,
   control_outbox, control_approvals, control_effect_intents, control_approval_consumptions,
-  control_policy_decisions, control_abs_feed_plans, audit_events, control_audit_chain_heads TO control_room_news_coordinator;
+  control_policy_decisions, control_abs_feed_plans, control_abs_source_settings, audit_events, control_audit_chain_heads TO control_room_news_coordinator;
 GRANT INSERT ON control_web_sessions, control_requests, control_workflows, control_jobs, control_attempts,
   control_leases, control_transition_events, control_outbox, control_approvals, control_effect_intents,
   control_approval_consumptions, control_policy_decisions, control_abs_feed_plans, audit_events,
