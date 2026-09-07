@@ -5,7 +5,7 @@ import { createIndustrySourceReader } from "../../../vendor/control-center/sourc
 import { captureAbsCurrentSourceAuthority, type AbsCurrentSourceAuthority } from "./current-source-authority";
 import { absNewsDiscoveryEndpointSchemaV1 } from "./schemas";
 
-const limitsSchema = z.object({ maxAttempts: z.number().int().min(1).max(1000),
+export const controlCenterCollectionLimitsSchema = z.object({ maxAttempts: z.number().int().min(1).max(1000),
   timeoutMs: z.number().int().min(1).max(30_000),
   maxDocumentBytes: z.number().int().min(1).max(50 * 1024 * 1024),
   maxReservedBodyBytes: z.number().int().min(1).max(100 * 1024 * 1024),
@@ -15,7 +15,7 @@ const limitsSchema = z.object({ maxAttempts: z.number().int().min(1).max(1000),
  * conservatively reserved per document, not a claim of wire-byte accounting. */
 export function createControlCenterCollectionReader(value: unknown, source: AbsCurrentSourceAuthority,
   signal: AbortSignal, dependencies: Required<Pick<PinnedFetchDependencies, "lookup" | "fetch">>, now: () => number = Date.now) {
-  const limits = limitsSchema.parse(value), assertCurrent = captureAbsCurrentSourceAuthority(source);
+  const limits = controlCenterCollectionLimitsSchema.parse(value), assertCurrent = captureAbsCurrentSourceAuthority(source);
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(limits.timeoutMs)]);
   const lookup = dependencies.lookup.bind(dependencies), fetch = dependencies.fetch.bind(dependencies);
   let attempts = 0, reservedBodyBytes = 0;

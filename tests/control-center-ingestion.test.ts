@@ -6,6 +6,7 @@ import { createControlCenterCollectionReader } from "../src/project-adapters/abs
 import { absNewsCanonicalUrlSchemaV1, absNewsDiscoveryEndpointSchemaV1 } from "../src/project-adapters/abs-news/v1/schemas";
 import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
 import { collectConfiguredControlCenterSource } from "../src/project-adapters/abs-news/v1/configured-collection";
+import { createControlCenterCollection } from "../src/project-adapters/abs-news/v1/control-center-collection";
 import { AbsControlCenterIngestion } from "../src/project-adapters/abs-news/v1/control-center-ingestion";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { WebNewsService } from "../src/web/v1/news-service";
@@ -15,6 +16,56 @@ import type { DatabaseClient } from "../src/persistence/database";
 
 const source = { id: "source:borrowed", name: "Example", url: "https://example.org/feed" };
 const observed = new Date(now).toISOString();
+
+test("borrowed collection lifecycle is inert, single-use and close cancels without publishing", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
+  const key = new Uint8Array(32).fill(30);
+  await new PostgresNewsSourceSettings(f.client, scope, key).save({ ...source, enabled: true }, 0, observed);
+  const config = { ...scope, sourceId: source.id, expectedRevision: 1,
+    limits: { timeoutMs: 10_000, maxAttempts: 4, maxDocumentBytes: 4096, maxReservedBodyBytes: 16384 } };
+  let calls = 0;
+  let started!: () => void;
+  const reading = new Promise<void>(resolve => { started = resolve; });
+  const ports = { lookup: async () => [{ address: "8.8.8.8", family: 4 as const }],
+    fetch: async (_url: URL, _address: { address: string; family: number }, init: RequestInit) => {
+      calls++; started();
+      return new Promise<Response>((_resolve, reject) => {
+        if (init.signal?.aborted) reject(new Error("aborted"));
+        else init.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    } };
+  const create = () => createControlCenterCollection(f.client, config, key, { assertCurrent(url) { assert.equal(url, source.url); } }, ports, () => now);
+  const unused = create();
+  await unused.close(); await assert.rejects(unused.collect(new AbortController().signal));
+  assert.equal(calls, 0);
+  const collection = create(), result = collection.collect(new AbortController().signal);
+  const rejected = assert.rejects(result);
+  await reading;
+  await assert.rejects(collection.collect(new AbortController().signal));
+  const closing = collection.close(); assert.equal(collection.close(), closing);
+  await closing; await rejected;
+  assert.equal(calls, 1);
+  assert.equal((await new PostgresAbsNewsStoreV1(f.client, scope, key).listStories()).stories.length, 0);
+  assert.equal(await new AbsControlCenterIngestion(f.client, { ...scope, source }, key).loadBaseline(), undefined);
+});
+
+test("borrowed collection lifecycle returns the persisted receipt before successful close", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
+  const key = new Uint8Array(32).fill(31);
+  await new PostgresNewsSourceSettings(f.client, scope, key).save({ ...source, enabled: true }, 0, observed);
+  const collection = createControlCenterCollection(f.client, { ...scope, sourceId: source.id, expectedRevision: 1,
+    limits: { timeoutMs: 10_000, maxAttempts: 4, maxDocumentBytes: 4096, maxReservedBodyBytes: 16384 } }, key,
+  { assertCurrent(url) { assert.equal(url, source.url); } }, {
+    lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async () => new Response(`<rss><channel><item><title>AI model</title><link>https://example.org/model</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item></channel></rss>`),
+  }, () => now);
+  const result = await collection.collect(new AbortController().signal);
+  assert.equal(result.inserted, 1); await collection.close();
+  assert.ok(await new PostgresAbsNewsStoreV1(f.client, scope, key).verifyCollectionReceipt(result.receipt));
+  await assert.rejects(collection.collect(new AbortController().signal));
+});
 
 test("configured collection uses the saved source and refuses disabled or changed revisions", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());

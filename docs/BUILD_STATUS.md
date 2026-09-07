@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Borrowed collector job-facing lifecycle:** `createControlCenterCollection` composes
+the saved-source collector with an inert, single-use collect/close interface. It
+captures configuration and transport callbacks, shares cancellation with reading and
+persistence, and returns the existing verifiable collection receipt. Tests cover close
+before start, duplicate refusal, active cancellation with no publication, and successful
+receipt verification. Initial type checks found two callback/fixture typing issues;
+corrected before final verification. All 304 delivery tests, types, focused lint and
+VPS compilation pass. Independent source review found no concrete introduced defect.
+No native transport or refresh route is enabled; physical transport cleanup is not
+qualified by logical cancellation. Existing single-feed jobs cannot silently authorize
+upstream discovery fan-out. The next job integration must bind discovery limits and
+source revision explicitly while reusing the existing queue and settlement machinery.
+
 **Saved source to borrowed collector composition:** `collectConfiguredControlCenterSource`
 loads an enabled source at the requested revision, runs the supplied bounded borrowed
 reader, and rechecks that revision around the atomic save. Disabling a source during

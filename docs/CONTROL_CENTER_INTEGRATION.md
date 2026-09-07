@@ -116,6 +116,16 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+The job-facing `createControlCenterCollection` now exposes single-use `collect(signal)`
+and memoized bounded `close()`, composing the configured collector and borrowed reader.
+It starts nothing at construction and requires supplied transport/current authority.
+Tests exercise cancellation and verifiable completion without native requests.
+Logical settlement is not evidence of physical socket cleanup. Existing
+`abs-feed-plan/v1` grants a single fixed RSS/Atom collection; do not inject this broader
+discovery collector under that unchanged job contract. The next integration must bind
+source revision, permitted discovery destinations and total limits in the durable plan,
+then reuse the existing pg-boss dispatch and attempt settlement, not add another queue.
+
 Configured collection now composes saved source settings with the borrowed reader
 through `collectConfiguredControlCenterSource`. The caller supplies an already
 authorized bounded reader and expected source revision. Missing, disabled or changed
