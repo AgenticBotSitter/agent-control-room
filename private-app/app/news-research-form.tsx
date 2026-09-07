@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
-import { newsResearchPreviewSchema, type NewsPage } from "../../src/web/v1/news-wire";
+import { newsResearchPreviewSchema, newsArticleActions, type NewsArticleAction, type NewsPage } from "../../src/web/v1/news-wire";
 import type { TaskDraft, TaskReceipt } from "../../src/web/v1/task-wire";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
 
@@ -11,7 +11,7 @@ export function NewsResearchForm({ projectId, story, close }: {
   projectId: string; story: NewsPage["stories"][number]; close: () => void;
 }) {
   const [client] = useState(() => createTaskBrowserClient());
-  const [action, setAction] = useState<"research_brief" | "setup_guide">("research_brief");
+  const [action, setAction] = useState<NewsArticleAction>("research_brief");
   const [goal, setGoal] = useState("Check the claims in this article, explain what matters, and cite reliable sources.");
   const [draft, setDraft] = useState<TaskDraft>();
   const [receipt, setReceipt] = useState<TaskReceipt>();
@@ -50,7 +50,7 @@ export function NewsResearchForm({ projectId, story, close }: {
         <button type="button" disabled={busy || client.hasPending()} onClick={() => setDraft(undefined)}>Change request</button></>
         : <form onSubmit={event => { event.preventDefault(); void prepare(); }}>
           <label>What should the agent prepare?<select value={action} disabled={busy} onChange={event => setAction(event.target.value as typeof action)}>
-            <option value="research_brief">Research this</option><option value="setup_guide">Write a setup guide</option>
+            {newsArticleActions.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select></label>
           <label>Your instructions<textarea value={goal} onChange={event => setGoal(event.target.value)} required maxLength={1200} disabled={busy} /></label>
           <p>Source links and evidence references will be included. This does not authorize execution or publication.</p>

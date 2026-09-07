@@ -8,7 +8,7 @@ import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/post
 import { buildAbsNewsSyntheticWorkspaceV1 } from "../src/project-adapters/abs-news/v1/index";
 import { sha256Digest } from "../src/security/digest";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
-import { newsPageSchema, newsResearchPreviewSchema } from "../src/web/v1/news-wire";
+import { newsPageSchema, newsResearchPreviewSchema, newsArticleActions } from "../src/web/v1/news-wire";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NewsResearchForm } from "../private-app/app/news-research-form";
@@ -16,6 +16,39 @@ import { PrivateNewsWorkspace, NewsSourceHealth } from "../private-app/app/news-
 import { installNewsNavigationGuard } from "../src/web/v1/news-navigation-guard";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(37);
+
+test("all four article actions prepare and save ordinary proposed tasks with exact evidence", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const projectId = f.project.projectId, story = storyFor(projectId);
+  const store = new PostgresAbsNewsStoreV1(f.client, { ...scope, projectId }, key);
+  await store.saveStory(story);
+  const service = new WebNewsService(f.client, scope, { integrityKey: key }, () => now);
+  const deliverables = { research_brief: "report", setup_guide: "setup_guide", product_comparison: "comparison", abs_article_draft: "article_draft" };
+  const jobs = new Set<string>();
+  for (const action of newsArticleActions) {
+    const input = { storyId: story.storyId, storyDigest: story.storyDigest, action: action.id, goal: "Explain the evidence and useful next steps." };
+    const preview = newsResearchPreviewSchema.parse(await service.prepare(f.identity, projectId, input));
+    assert.match(preview.draft.instructions, new RegExp(`Deliverable: ${deliverables[action.id]}`));
+    assert.ok(preview.draft.instructions.includes(story.storyDigest));
+    assert.match(preview.draft.instructions, /does not authorize tools, network access, installation or publication/);
+    const saved = await f.tasks.propose(f.identity, projectId, preview.draft, `article-four-${action.id}`);
+    jobs.add(saved.receipt.jobId);
+    const replay = await f.tasks.propose(f.identity, projectId, preview.draft, `article-four-${action.id}`);
+    assert.equal(replay.receipt.jobId, saved.receipt.jobId);
+    const detail = await f.tasks.detail(f.identity, projectId, saved.receipt.jobId);
+    assert.equal(detail.task.state, "proposed"); assert.deepEqual(detail.attempts, []);
+  }
+  assert.equal(jobs.size, 4);
+  const { storyDigest: _digest, ...body } = story; void _digest;
+  const unverified = { ...body, verificationState: "review_only" as const };
+  await store.saveStory({ ...unverified, storyDigest: sha256Digest(unverified) });
+  for (const action of newsArticleActions) await assert.rejects(service.prepare(f.identity, projectId, {
+    storyId: story.storyId, storyDigest: sha256Digest(unverified), action: action.id, goal: "Check this." }), /conflict/);
+  assert.equal((await f.client.query("SELECT * FROM control_attempts")).rows.length, 0);
+  const html = renderToStaticMarkup(createElement(NewsResearchForm, { projectId,
+    story: (await service.list(f.identity, projectId)).stories[0], close() {} }));
+  for (const action of newsArticleActions) assert.ok(html.includes(action.label));
+});
 function storyFor(projectId: string) {
   const { storyDigest: _digest, ...source } = buildAbsNewsSyntheticWorkspaceV1().stories[0]; void _digest;
   const body = { ...source, ...scope, projectId }; return { ...body, storyDigest: sha256Digest(body) };

@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Four article actions use ordinary project tasks:** The private news form now
+offers research, setup guide, product comparison and article draft. The latter two
+reuse existing proposal catalog entries; no new task system or execution permission
+was added. Tests exercise every action through authenticated preparation and ordinary
+task save/replay, with exact source evidence and review-only refusals. Agent execution,
+result/review acceptance, canonical verification and publication are not claimed.
+The 287-entry delivery lane, types, focused lint and VPS compilation pass; independent
+source review found no concrete defect. Next: durable reading/source controls and
+the remaining collection-to-verified-article connection.
+
 **Borrowed reading flow reaches the private news page:** Retained the complete
 upstream industry library module and adapted its daily-snapshot presentation to
 our project news records/theme. The page now offers recent/history/archive views,

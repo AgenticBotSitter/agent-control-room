@@ -82,7 +82,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter }: { projec
           <p>{story.summary}</p><p>{story.verificationState === "verified" ? "Source evidence retained" : "Source needs review"} · {story.queue.replaceAll("_", " ")}</p>
           <p>{story.sourceLabel ?? new URL(story.canonicalUrl).hostname}{story.publishedAt ? ` · Published ${story.publishedAt}` : story.discoveredAt ? ` · Discovered ${story.discoveredAt}` : " · Date unknown"}</p>
           <button type="button" disabled={!!selected || !page.canPrepare || story.verificationState !== "verified"}
-            onClick={() => setSelected(story)}>Research or write a setup guide</button>
+            onClick={() => setSelected(story)}>Research, compare or draft</button>
         </article>)}
         {page.nextCursor ? <a href={`${base}/news?${new URLSearchParams({ after: page.nextCursor, ...(sourceAfter ? { sourceAfter } : {}) })}`}>Next saved stories</a> : null}
       </>}

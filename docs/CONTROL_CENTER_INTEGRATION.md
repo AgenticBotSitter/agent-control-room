@@ -81,6 +81,14 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+Article action connection: the existing authenticated prepare/save flow now exposes
+research, setup guide, product comparison and article draft, using the existing
+ABS action/proposal catalog and ordinary project tasks. Four-action tests save and
+replay distinct proposed tasks with retained source evidence; unverified stories
+are refused for every action. No separate upstream reminder/task system was adopted.
+This proves preparation and local persistence, not an agent run/result/review or
+publication. Canonical verification of newly collected stories remains required.
+
 1. Adopt discovery/curation cohort with provenance, upstream fixture coverage and
    focused adapter tests; record every deliberate upstream change.
 2. One visible project news page supports configured sources, saved stories, fresh/

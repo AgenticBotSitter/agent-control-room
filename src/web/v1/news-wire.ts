@@ -9,9 +9,16 @@ export const newsSourceSchema = z.object({ sourceId: id, label: z.string().min(1
 }).strict().refine(s => (s.state !== "unavailable" || s.itemCount === undefined)
   && (!s.lastSuccessfulAt || Date.parse(s.lastSuccessfulAt) <= Date.parse(s.checkedAt)));
 
+export const newsArticleActions = [
+  { id: "research_brief", label: "Research this" },
+  { id: "setup_guide", label: "Write a setup guide" },
+  { id: "product_comparison", label: "Compare products" },
+  { id: "abs_article_draft", label: "Draft an article" },
+] as const;
+export type NewsArticleAction = typeof newsArticleActions[number]["id"];
 export const newsResearchInputSchema = z.object({ storyId: id,
   storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  action: z.enum(["research_brief", "setup_guide"]), goal: z.string().trim().min(1).max(1200),
+  action: z.enum(["research_brief", "setup_guide", "product_comparison", "abs_article_draft"]), goal: z.string().trim().min(1).max(1200),
 }).strict();
 export const newsResearchPreviewSchema = z.object({ projectId: id, storyId: id,
   storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), draft: taskDraftSchema,
