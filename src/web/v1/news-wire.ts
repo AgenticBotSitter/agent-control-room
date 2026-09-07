@@ -2,6 +2,13 @@ import { z } from "zod";
 import { projectViewSchema, catalogProjectIdSchema as id } from "./project-wire";
 import { taskDraftSchema } from "./task-wire";
 
+export const newsSourceSchema = z.object({ sourceId: id, label: z.string().min(1).max(180),
+  mode: z.enum(["synthetic", "configured"]), state: z.enum(["available", "partial", "stale", "unavailable", "disabled"]),
+  checkedAt: z.string().datetime({ offset: true }), lastSuccessfulAt: z.string().datetime({ offset: true }).optional(),
+  itemCount: z.number().int().min(0).max(1_000_000).optional(),
+}).strict().refine(s => (s.state !== "unavailable" || s.itemCount === undefined)
+  && (!s.lastSuccessfulAt || Date.parse(s.lastSuccessfulAt) <= Date.parse(s.checkedAt)));
+
 export const newsResearchInputSchema = z.object({ storyId: id,
   storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   action: z.enum(["research_brief", "setup_guide"]), goal: z.string().trim().min(1).max(1200),
@@ -13,6 +20,7 @@ export const newsResearchPreviewSchema = z.object({ projectId: id, storyId: id,
 
 export const newsPageSchema = z.object({ project: projectViewSchema,
   availability: z.enum(["configured", "not_configured"]), observedAt: z.string().datetime(), canPrepare: z.boolean(),
+  sources: z.array(newsSourceSchema).max(50), sourcesNextCursor: id.nullable(),
   stories: z.array(z.object({ storyId: id, storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     title: z.string().min(1).max(240), summary: z.string().max(4000),
     canonicalUrl: z.string().url().max(2048).refine(value => {
@@ -20,5 +28,5 @@ export const newsPageSchema = z.object({ project: projectViewSchema,
     }), queue: z.enum(["important_now", "earlier", "archive"]), verificationState: z.enum(["verified", "review_only"]),
     publishedAt: z.string().datetime({ offset: true }).optional(),
   }).strict()).max(50), nextCursor: id.nullable(),
-}).strict().refine(page => page.availability !== "not_configured" || (!page.stories.length && page.nextCursor === null && !page.canPrepare));
+}).strict().refine(page => page.availability !== "not_configured" || (!page.stories.length && !page.sources.length && page.sourcesNextCursor === null && page.nextCursor === null && !page.canPrepare));
 export type NewsPage = z.infer<typeof newsPageSchema>;

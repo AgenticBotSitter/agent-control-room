@@ -204,11 +204,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const newsRoute = /^\/api\/v1\/projects\/([^/]+)\/news$/.exec(url.pathname);
           if (newsRoute) {
-            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
-              || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after" && key !== "sourceAfter")
+              || url.searchParams.getAll("after").length > 1 || url.searchParams.getAll("sourceAfter").length > 1) throw new WebAccessError("invalid_request");
             let projectId: string;
             try { projectId = decodeURIComponent(newsRoute[1]); } catch { throw new WebAccessError("invalid_request"); }
-            return Response.json(await news.list(identity, projectId, url.searchParams.get("after") ?? undefined),
+            return Response.json(await news.list(identity, projectId, url.searchParams.get("after") ?? undefined, url.searchParams.get("sourceAfter") ?? undefined),
               { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me/tasks") {
@@ -285,11 +285,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             throw new WebAccessError("invalid_request");
           if (jobId) await tasks.detail(identity, id, jobId); else await tasks.authorize(identity, id);
         } else if (newsPage) {
-          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1)
+          if ([...url.searchParams.keys()].some(key => key !== "after" && key !== "sourceAfter") || url.searchParams.getAll("after").length > 1 || url.searchParams.getAll("sourceAfter").length > 1)
             throw new WebAccessError("invalid_request");
           let id: string;
           try { id = decodeURIComponent(newsPage[1]); } catch { throw new WebAccessError("invalid_request"); }
-          await news.list(identity, id, url.searchParams.get("after") ?? undefined);
+          await news.list(identity, id, url.searchParams.get("after") ?? undefined, url.searchParams.get("sourceAfter") ?? undefined);
         } else if (detail) {
           let id: string;
           try { id = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }

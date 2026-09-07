@@ -12,7 +12,7 @@ import { newsPageSchema, newsResearchPreviewSchema } from "../src/web/v1/news-wi
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NewsResearchForm } from "../private-app/app/news-research-form";
-import { PrivateNewsWorkspace } from "../private-app/app/news-workspace";
+import { PrivateNewsWorkspace, NewsSourceHealth } from "../private-app/app/news-workspace";
 import { installNewsNavigationGuard } from "../src/web/v1/news-navigation-guard";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(37);
@@ -63,7 +63,7 @@ test("private news routes require current access and grant only retained-source 
   assert.equal((await handle(request(path))).status, 200);
   assert.equal((await handle(request(`/projects/${project.projectId}/news`))).status, 200);
   assert.equal(renders, 1);
-  for (const suffix of ["?after=one&after=two", "?other=value", "?after="])
+  for (const suffix of ["?after=one&after=two", "?other=value", "?after=", "?sourceAfter=", "?sourceAfter=one&sourceAfter=two"])
     assert.equal((await handle(request(path + suffix))).status, 400);
   assert.equal((await handle(request(path, "POST", {}))).status, 400);
   assert.equal((await handle(request(path + "/prepare"))).status, 400);
@@ -74,12 +74,37 @@ test("private news routes require current access and grant only retained-source 
   const anonymous = request(path); anonymous.headers.delete("cf-access-jwt-assertion");
   assert.equal((await handle(anonymous)).status, 401);
   for (const sql of ["SELECT * FROM control_abs_research_proposals", "INSERT INTO control_abs_story_versions DEFAULT VALUES",
+    "INSERT INTO control_abs_source_observations DEFAULT VALUES", "DELETE FROM control_abs_source_observations",
     "UPDATE control_abs_story_versions SET payload='{}'::jsonb", "DELETE FROM control_abs_story_versions"])
     await assert.rejects(f.client.query(sql));
   assert.equal((await handle(request("/api/v1/session/logout", "POST"))).status, 204);
   assert.equal((await handle(request(path))).status, 401);
   assert.equal((await handle(request(`/projects/${project.projectId}/news`))).status, 401);
   assert.equal(renders, 1);
+});
+
+test("news source-health projection is scoped, paginated and distinguishes failure from an empty check", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const store = new PostgresAbsNewsStoreV1(f.client, { ...scope, projectId: f.project.projectId }, key);
+  const checkedAt = new Date(now).toISOString();
+  for (let i = 0; i < 51; i++) await store.saveSourceStatus({ sourceId: `source:${String(i).padStart(3, "0")}`,
+    sourceKind: "rss", label: `Source ${i}`, mode: "configured", state: i ? "available" : "unavailable",
+    safeStatusCode: i ? "feed_parsed" : "read_failed", checkedAt,
+    ...(i ? { itemCount: 0, lastSuccessfulAt: checkedAt } : {}), grantsNetworkAuthority: false });
+  const service = new WebNewsService(f.client, scope, { integrityKey: key }, () => now);
+  const page = newsPageSchema.parse(await service.list(f.identity, f.project.projectId));
+  assert.equal(page.sources.length, 50); assert.equal(page.sourcesNextCursor, "source:049");
+  assert.equal(page.sources[0].itemCount, undefined); assert.equal(page.sources[1].itemCount, 0);
+  const html = renderToStaticMarkup(createElement(NewsSourceHealth, { sources: page.sources }));
+  assert.ok(html.includes("Last check failed")); assert.ok(html.includes("Article count unknown"));
+  assert.ok(html.includes("0 articles in that check")); assert.ok(html.includes("Not recorded"));
+  assert.ok(!JSON.stringify(page).includes("read_failed")); // Internal status codes are not presentation data.
+  const next = newsPageSchema.parse(await service.list(f.identity, f.project.projectId, undefined, page.sourcesNextCursor!));
+  assert.equal(next.sources.length, 1); assert.equal(next.sourcesNextCursor, null);
+  await assert.rejects(service.list(f.identity, "project:other"));
+  const disabled = newsPageSchema.parse(await new WebNewsService(f.client, scope, {}, () => now).list(f.identity, f.project.projectId));
+  assert.deepEqual(disabled.sources, []); assert.equal(disabled.sourcesNextCursor, null);
+  assert.equal(newsPageSchema.safeParse({ ...page, sources: [{ ...page.sources[0], itemCount: 0 }] }).success, false);
 });
 
 test("authenticated article to preview to saved-task HTTP journey preserves evidence and idempotency", async t => {

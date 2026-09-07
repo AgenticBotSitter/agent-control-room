@@ -29,19 +29,24 @@ export class WebNewsService {
       this.key = Uint8Array.from(options.integrityKey);
     }
   }
-  async list(identity: VerifiedWebIdentity, projectId: string, after?: string) {
+  async list(identity: VerifiedWebIdentity, projectId: string, after?: string, sourceAfter?: string) {
     if (!catalogProjectIdSchema.safeParse(projectId).success
-      || after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new WebAccessError("invalid_request");
+      || after !== undefined && !catalogProjectIdSchema.safeParse(after).success
+      || sourceAfter !== undefined && !catalogProjectIdSchema.safeParse(sourceAfter).success) throw new WebAccessError("invalid_request");
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (!this.key) return { project, availability: "not_configured" as const, stories: [], nextCursor: null,
-        observedAt: actor.now, canPrepare: false };
+        observedAt: actor.now, canPrepare: false, sources: [], sourcesNextCursor: null };
       const store = new PostgresAbsNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
       const page = await store.listStories(after);
+      const sourcePage = await store.listSourceStatuses(sourceAfter);
+      const sources = sourcePage.statuses.map(({ sourceId, label, mode, state, checkedAt, lastSuccessfulAt, itemCount }) =>
+        ({ sourceId, label, mode, state, checkedAt, ...(lastSuccessfulAt ? { lastSuccessfulAt } : {}), ...(itemCount !== undefined ? { itemCount } : {}) }));
       const stories = page.stories.map(({ storyId, storyDigest, title, summary, canonicalUrl, queue, verificationState, publishedAt }) =>
         ({ storyId, storyDigest, title, summary, canonicalUrl, queue, verificationState, ...(publishedAt ? { publishedAt } : {}) }));
       return newsPageSchema.parse({ project, availability: "configured", stories, nextCursor: page.nextCursor, observedAt: actor.now,
+        sources, sourcesNextCursor: sourcePage.nextCursor,
         canPrepare: project.lifecycle === "active" && actor.can("tasks.propose", projectId) });
     });
   }

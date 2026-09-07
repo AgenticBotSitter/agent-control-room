@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**News page now shows retained source health:** An expandable section keeps article
+actions visible while showing check times, last recorded success, test-data labels and
+unknown counts after failure. Source and story cursors paginate independently through
+the existing authenticated route. The web role/preflight adds source-observation SELECT
+only; existing installations need an explicit reviewed role upgrade, not automatic grants.
+Sixty-two workflow checks, 19 startup checks and compiled checks pass, along with
+TypeScript, focused lint and VPS compilation. Independent source review found no concrete
+introduced defect. Tests cover retained SQL/API data and static markup, not mounted browser
+interaction. Sites guidance preserved existing private layout and local-only hosting;
+no preview or deployment. Refresh reads saved observations, never fetches news. Live
+retrieval, managed ingestion and canonical-page verification remain unfinished.
+
 **Source health is now durable alongside news articles:** Migration 0060 adds scoped,
 append-only PostgreSQL source observations. The existing store saves a collection and
 its status atomically, validates matching source provenance, and exposes paginated latest

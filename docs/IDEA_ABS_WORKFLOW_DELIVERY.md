@@ -25,6 +25,30 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Source-health projection on the news page
+
+The existing authenticated news service reads source observations using its scoped
+PostgreSQL store. Only display fields cross the wire: source label, ID, mode, last outcome,
+check/success timestamps and optional count. Internal status codes, URLs and credentials
+are not exposed. `sourceAfter` is independent from story `after`; both API and page routes
+reject duplicate/invalid cursors. Next-source and next-story links preserve the other
+cursor, and browser validation checks ordering and final cursor identity.
+
+An expandable Source checks section avoids pushing article actions below many status
+cards. Labels describe the last saved check, not current availability; failure means
+Article count unknown, not zero. Empty histories explicitly say no saved checks. Refresh
+only rereads saved data. The offline web role and exact preflight add SELECT on source
+observations, not INSERT/UPDATE/DELETE. Existing installations must explicitly upgrade
+their reviewed role; startup never grants itself access.
+
+Sixty-two workflow tests and 19 startup tests pass, plus compiled checks, TypeScript,
+focused lint and VPS build. Source tests cover 51-source pagination, no-key configuration,
+project isolation, count semantics, minimized projection, and invalid HTTP cursors. Existing
+restricted-login tests assert source writes remain denied. Independent source review found
+no concrete introduced defect. Static markup is not mounted browser interaction evidence.
+The Sites skill kept established controls and private local hosting; no preview, live
+collection, provider contact or deployment occurred.
+
 ### Retained source observations and collection atomicity
 
 Migration 0060 adds source-history metadata to the existing PostgreSQL authority, with
