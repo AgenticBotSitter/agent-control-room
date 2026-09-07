@@ -55,6 +55,11 @@ SSH keys into chat. Domain access is needed only when deployment/DNS is separate
 
 ## Launch package to finish locally
 
+The [local staging index](public-launch-draft/README.md) now maps the proposed public
+files to their draft sources, with explicit remaining decisions. Architecture,
+governance, security-reporting, PR and ready-work templates are drafted there. They
+are not installed as active repository policies or copied to `.github`.
+
 Reuse `PUBLIC_PROJECT_BRIEF_DRAFT.md`, `PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md` and
 `AGENT_CONTROL_ROOM_MODULE_ROADMAP.md`; do not publish internal build logs wholesale.
 

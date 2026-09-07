@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Public contributor package drafted locally:** `docs/public-launch-draft/` adds a
+staging index, generic architecture overview, proposed governance/security policies,
+PR template and ready-work template. It reuses the existing README/contributor drafts
+and explicitly separates confirmed assignment, implementation, independent review,
+merge and deployment. No active `.github` configuration, identity, license grant or
+reporting contact was invented. Local links and whitespace were checked. Owner choices,
+moderation policy, public roadmap/setup, exact source/rights review, clean-install/demo
+acceptance and publication approval remain. No website, repository or DNS was published.
+
 **Full local regression and actual review-store/etcd-port rehearsal passed:** The
 fresh-project synthetic result/revision/independent-acceptance test now uses the actual
 Completion Gate store with the scoped etcd adapter and a scripted exact-CAS RPC peer.
