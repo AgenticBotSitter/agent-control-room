@@ -23,7 +23,9 @@ outside the public release.
 **Done when:** Someone without maintainer access can start from a clean checkout, prepare
 the pinned dependencies, run documented checks and complete the documented synthetic
 project/task/result/revision flow. The demo distinguishes simulated work from real agents,
-survives the restarts it claims to support, and has bounded cleanup instructions.
+preserves history through browser refresh within a running session, and has bounded
+cleanup instructions. Process restart intentionally begins a new disposable demo;
+durable application recovery belongs to the operational milestones below.
 
 **Useful contributions:** Setup-guide reproduction, accessible project/task controls,
 error/retry usability, generic fixtures and attribution review. Source selection and

@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor source map added:** The candidate architecture guide now maps actual
+UI, synthetic-result, persistence, server, launcher and test entry points. Every
+listed source path exists. Architecture and roadmap distinguish browser-refresh
+history from process restart, which creates a new disposable demo. Durable drafts,
+candidate copies, reconstruction records and file inventory are synchronized. This
+changes documentation only, not persistence behavior or live connector readiness.
+
 **Dependency notice evidence reconciled against the candidate:** All 28 direct
 installed manifests and the frozen lockfile match earlier retained research. The
 23 packaged-root notice sets match; the other five have existing pinned upstream

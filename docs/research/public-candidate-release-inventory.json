@@ -1,8 +1,8 @@
 {
   "scope": "Private evidence for staged source, not a public distribution or publication approval",
-  "candidateDigest": "8c50e63b3e368bf2f88716fafc1b55ebcde8a41e9a9f3f4f88ce64c882c263f7",
+  "candidateDigest": "13e3aca6a9a0d10b03ddc2250a5b98ace037dc2d4d95bdc48df3d4506ca3523e",
   "fileCount": 518,
-  "totalBytes": 3710428,
+  "totalBytes": 3712343,
   "excludedDirectoryNames": [
     "node_modules",
     ".git",
@@ -273,8 +273,8 @@
     },
     {
       "path": "ROADMAP.md",
-      "bytes": 6851,
-      "sha256": "fb01a3285a6853089bb45d88b55daeaf3ad45d75671c143dafc39da77cb33914",
+      "bytes": 7009,
+      "sha256": "be470d59e7efea5b00c9448eb00d1adf3b8d4c705c60375579944143abbd939c",
       "priorContentReviewReceipt": null
     },
     {
@@ -759,8 +759,8 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "bytes": 3924,
-      "sha256": "4937b171ce08c519760484724558fff2978d56577a5fa47961f12cc5ba27a19b",
+      "bytes": 5681,
+      "sha256": "ad4d218a79f43c2ac6561110072c07b534b61634e78e663960c8e6acdd269822",
       "priorContentReviewReceipt": null
     },
     {

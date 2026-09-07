@@ -34,6 +34,27 @@ Unknown delivery outcomes must stay unknown until reconciled. Reconnecting, refr
 the browser or losing a response must not automatically submit the same real work again.
 Reported agent completion is not proof of independent verification or owner acceptance.
 
+## Find your starting point in this source preview
+
+This is the disposable demo subset, not a complete installed fleet controller.
+The same tree includes operational components for review; their presence does not
+mean they are configured, qualified or safe to start with demo settings.
+
+| Area | Where to start | What contributors should know |
+| --- | --- | --- |
+| Demo browser shell | `contributor-demo/main.tsx`, `contributor-demo/view.tsx` | React entry and project/task view composition |
+| Shared project/task UI | `app/components/`, `app/local-preview/`, `private-app/app/` | Reused presentation; avoid changing authority to fix a display issue |
+| Simulated results and revisions | `src/contributor-demo/` | Synthetic sample generation, protected history reads and revision handling; no real agent execution |
+| Temporary local state | `src/local-pilot/v1/runtime.ts`, `db/migrations/` | Demo PGlite setup; do not apply operator role scripts to prepare the demo |
+| Protected application interfaces | `src/web/v1/` | Server-side access checks and task/result services; security-sensitive changes need scoped review |
+| Explicit startup | `scripts/contributor-demo.mjs` | Starts only via the documented demo command; builds do not start the service |
+| Acceptance examples | `tests/contributor-demo-runtime.test.ts`, `tests/contributor-demo-build.test.mjs` | Automated synthetic evidence, not live-provider acceptance |
+
+Read [contributor setup](../SETUP.md) before running anything. In the current demo,
+browser refresh restores samples within the running session. Normal shutdown removes
+the temporary database; restarting the process is a new disposable session, not
+durable recovery. Do not use it for important work or production credentials.
+
 ## Trust boundaries
 
 - Authenticate and authorize each operation at the server, including after permissions change.
