@@ -1,0 +1,132 @@
+{
+  "schema": "control-room.public-release-review-coverage/v1",
+  "candidateDigest": "652583805bf0586310b82d78eda69d6cb50a5102c69d6642a27039a1ea40813a",
+  "fileCount": 520,
+  "contentReviewedUniqueFiles": 496,
+  "unchangedReadinessMatches": 25,
+  "fullTextMixedScopeUniqueFiles": 519,
+  "structuralLockfileObservations": 1,
+  "coveredUniqueFiles": 520,
+  "uncovered": [],
+  "publicationApproved": false,
+  "limits": "Coverage only, not proof of all security properties or license/legal clearance. Full-text content and contributor-readiness scopes differ; lockfile structurally scanned, not manually read line by line. Old mismatched review hashes excluded.",
+  "checks": [
+    "All 520 candidate file hashes match current inventory.",
+    "Four reconstruction receipts reproduce all 520 source/document files exactly.",
+    "Seven local contributor/welcome document tests passed; not runtime acceptance."
+  ],
+  "receipts": [
+    {
+      "path": "docs/research/public-independent-architecture-content-review.json",
+      "exactMatches": 1
+    },
+    {
+      "path": "docs/research/public-independent-domain-content-review.json",
+      "exactMatches": 40
+    },
+    {
+      "path": "docs/research/public-independent-frontier-completion-content-review.json",
+      "exactMatches": 37
+    },
+    {
+      "path": "docs/research/public-independent-harness-bridge-content-review.json",
+      "exactMatches": 50
+    },
+    {
+      "path": "docs/research/public-independent-idea-lab-content-review.json",
+      "exactMatches": 29
+    },
+    {
+      "path": "docs/research/public-independent-node-content-review.json",
+      "exactMatches": 53
+    },
+    {
+      "path": "docs/research/public-independent-registry-persistence-content-review.json",
+      "exactMatches": 18
+    },
+    {
+      "path": "docs/research/public-independent-ui-tests-content-review.json",
+      "exactMatches": 34
+    },
+    {
+      "path": "docs/research/public-independent-web-first-content-review.json",
+      "exactMatches": 23
+    },
+    {
+      "path": "docs/research/public-independent-web-private-content-review.json",
+      "exactMatches": 24
+    },
+    {
+      "path": "docs/research/public-independent-web-task-content-review.json",
+      "exactMatches": 34
+    },
+    {
+      "path": "docs/research/public-source-content-review-01.json",
+      "exactMatches": 7
+    },
+    {
+      "path": "docs/research/public-source-content-review-02.json",
+      "exactMatches": 12
+    },
+    {
+      "path": "docs/research/public-source-content-review-03.json",
+      "exactMatches": 13
+    },
+    {
+      "path": "docs/research/public-source-content-review-04.json",
+      "exactMatches": 14
+    },
+    {
+      "path": "docs/research/public-source-content-review-05.json",
+      "exactMatches": 3
+    },
+    {
+      "path": "docs/research/public-source-content-review-06.json",
+      "exactMatches": 4
+    },
+    {
+      "path": "docs/research/public-source-content-review-07.json",
+      "exactMatches": 0
+    },
+    {
+      "path": "docs/research/public-source-content-review-08.json",
+      "exactMatches": 12
+    },
+    {
+      "path": "docs/research/public-source-content-review-09.json",
+      "exactMatches": 7
+    },
+    {
+      "path": "docs/research/public-source-content-review-10.json",
+      "exactMatches": 30
+    },
+    {
+      "path": "docs/research/public-source-content-review-11.json",
+      "exactMatches": 19
+    },
+    {
+      "path": "docs/research/public-source-content-review-12.json",
+      "exactMatches": 11
+    },
+    {
+      "path": "docs/research/public-source-content-review-13.json",
+      "exactMatches": 3
+    },
+    {
+      "path": "docs/research/public-source-content-review-14.json",
+      "exactMatches": 11
+    },
+    {
+      "path": "docs/research/public-source-content-review-15.json",
+      "exactMatches": 18
+    },
+    {
+      "path": "docs/research/public-source-content-review-16.json",
+      "exactMatches": 9
+    },
+    {
+      "path": "docs/research/public-source-content-review-17.json",
+      "exactMatches": 2
+    }
+  ]
+}

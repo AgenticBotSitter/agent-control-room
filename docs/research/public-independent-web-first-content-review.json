@@ -1,0 +1,103 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_domain_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "Full text read for exactly listed files; exact current source hashes verified. No unread portions in listed files.",
+  "finding": "No embedded private identities, operational credentials or unexpected attribution. Relative Cloudflare routes, return.invalid and private/loopback range checks are generic. Remaining 58 web files not covered by this receipt.",
+  "limitations": "Content/wording evidence only. No runtime, network, credentials, installs or writes. Not functionality, security design, license or final release approval. Imported code outside listed files not included.",
+  "entries": [
+    {
+      "path": "src/web/v1/access-key-cache.ts",
+      "sha256": "957522108a0c0f8b0bb6d9e363dbd071e16a5a7159133e84a54b8ae7d9fbf0e9"
+    },
+    {
+      "path": "src/web/v1/access-verifier.ts",
+      "sha256": "4f530f5add22cce9b3f50474870368121c31d4490b949877c66d72447cbe0298"
+    },
+    {
+      "path": "src/web/v1/bounded-database.ts",
+      "sha256": "65255b968dbb1f26b03e668de67bc9332cad17d0793bfb364930d0812e9548d4"
+    },
+    {
+      "path": "src/web/v1/browser-client.ts",
+      "sha256": "fba27d5e65ed4fb6322c0dd8829a5d9776a69e1049ceeafd3b9967b6304006c4"
+    },
+    {
+      "path": "src/web/v1/browser-json.ts",
+      "sha256": "fd26314fe3d31c353e0880e80711132adb91c51bef8c934ae0033cd4d738cd5b"
+    },
+    {
+      "path": "src/web/v1/connection-browser-client.ts",
+      "sha256": "59211cade015a179c04231590a2d979427b57608b8959a2e834a5be50bb4a6c3"
+    },
+    {
+      "path": "src/web/v1/connection-service.ts",
+      "sha256": "85dbfd01826f08819ba8fed560b9fb07a66febd7706f24fe088d79b2b443001f"
+    },
+    {
+      "path": "src/web/v1/http-common.ts",
+      "sha256": "3d8372bf7b297d23e56a3578f7a979248acaf50f21c349ebd02de5292f4801a6"
+    },
+    {
+      "path": "src/web/v1/installed-native-queue.ts",
+      "sha256": "28dbdc5baa5de7d7f239f35e14b941e5710c18ac43df625fdc96e4d9f4fd8164"
+    },
+    {
+      "path": "src/web/v1/managed-native-input.ts",
+      "sha256": "6ca28b5fdacfc5b1941fb8518e74f10e86e297c6186b0b57eceed407b789e7e4"
+    },
+    {
+      "path": "src/web/v1/managed-native-sessions.ts",
+      "sha256": "8d983466724643f93ec152f8b9238aacf224e218f6b642582328f68d38994f88"
+    },
+    {
+      "path": "src/web/v1/native-approval-packet-store.ts",
+      "sha256": "d62a23c0d0e4e6e5dc0631cdfca607e8285e4fd912aa22a99e579644e7369e1b"
+    },
+    {
+      "path": "src/web/v1/native-delivery-envelope.ts",
+      "sha256": "659a9efe2ecb8c4a1659acc5880b1a81388685d71da576a9b1d02f67cc708ac2"
+    },
+    {
+      "path": "src/web/v1/native-delivery-preparation.ts",
+      "sha256": "9cca0e9431d870d7932bb664bb4af13140474c824ace0c6938b34a64e578d2f9"
+    },
+    {
+      "path": "src/web/v1/native-delivery-receipt.ts",
+      "sha256": "20f17fa9bd1dc49786a7f527b39a70d2ad7f24f368cc2104ea8328a4cc58e135"
+    },
+    {
+      "path": "src/web/v1/native-evidence-receiver.ts",
+      "sha256": "8279a737fb165326a732a040328590e40ba7ea645fff71fb1ec5a65dfd1d0c4f"
+    },
+    {
+      "path": "src/web/v1/native-http-host.ts",
+      "sha256": "31fe7cd346d50e34dcd277a1431a42208f18bd75f8cbcece4991b50346f1342c"
+    },
+    {
+      "path": "src/web/v1/native-http-node-handler.ts",
+      "sha256": "f069954978b44089fa9f2c73ae6c5a7ca0595465adaded0c103189f8f11ce5cb"
+    },
+    {
+      "path": "src/web/v1/native-https-service.ts",
+      "sha256": "37f67f859ff0a53002fbb42742ddc769950c4b9f45a6b9f4bb80ecb4dce9a34f"
+    },
+    {
+      "path": "src/web/v1/native-queue-authority.ts",
+      "sha256": "26cecb9b96d60b7d0eba8101e15493c347a8b72089672b0aba466caf98280393"
+    },
+    {
+      "path": "src/web/v1/native-queue-worker-startup.ts",
+      "sha256": "b46b1dc78a3835aec33252f232dee3cafc7dcc360d629b3b37c552070e4bb878"
+    },
+    {
+      "path": "src/web/v1/native-task-queue.ts",
+      "sha256": "1d4b0a7a9d32289ed101225a45d9aa3da281dd1c38c69bfb40991ffe4186935a"
+    },
+    {
+      "path": "src/web/v1/native-transmission-intent.ts",
+      "sha256": "fc14648c84e74b207e51c095afa69fa806e157824ea15130b2a1104771978725"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "control-room.lockfile-content-observation/v1",
+  "path": "pnpm-lock.yaml",
+  "sha256": "51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0",
+  "reviewMode": "structural_scan_and_retained_hash_match_not_full_manual_line_review",
+  "publicationApproved": false,
+  "observations": [
+    "5742 split lines; 604 resolution entries, every one an integrity-only sha512 field.",
+    "Search for URL, local file/link, Git download, credential and private home-path forms found only the public ESLint deprecation URL and package js-tokens names.",
+    "No non-integrity resolution form observed; hash identical to retained prior dependency/notice reconciliation."
+  ],
+  "limitations": "This does not inspect dependency code or prove absence of all secrets, vulnerabilities or licensing issues. No dependency installation or network occurred."
+}

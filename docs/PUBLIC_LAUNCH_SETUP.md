@@ -33,16 +33,13 @@ contributor release. The separate website repository does not supply application
 1. **Freeze and inspect the exact candidate.** The private evidence file
    [release inventory](research/public-candidate-release-inventory.json) identifies
    all 520 current source/document files and their hashes, excluding installed
-   dependencies and build output. Sixteen numbered content-review receipts match 173
-   files byte-for-byte; five independent module receipts cover another 209,
-   totaling 382 unique files. A separate reconciliation of the earlier independent
-   readiness review matches 26 current files and adds 24 distinct paths, for a mixed-scope
-   union of 406. WORK_PACKAGES and package.json changed and are excluded from that prior
-   independent review; receipt 14 records their current primary content reread.
-   This is evidence coverage, not a claim that the other 114
-   files were never inspected or that all matched files have security clearance.
-   Reuse other bounded reviews where their scope and exact bytes can be established;
-   inspect the remaining gaps. Do not mistake automated scans for manual review.
+   dependencies and build output. Current scoped evidence covers all 520 files:
+   496 have content-review matches, 23 additional paths have unchanged full-text
+   readiness review, and the lockfile has separate structural/hash checks. See
+   `research/public-release-review-coverage.json`. The file-review backlog is closed;
+   do not repeat it unless bytes change. This is not blanket security/legal clearance.
+   All four reconstruction receipts reproduce the current candidate exactly. Keep
+   this inventory synchronized with final documentation edits before publication.
 
 2. **Close source-distribution rights and privacy findings.** Preserve the full
    Apache license, project NOTICE and upstream notices. The 28 installed direct

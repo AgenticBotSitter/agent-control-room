@@ -1,0 +1,27 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full LICENSE and architecture content inspected. Architecture has a new limitation disclosure; prior independent review does not cover the changed bytes. No runtime or network operations.",
+  "entries": [
+    {
+      "path": "LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full Apache-2.0 text including unfilled instructional appendix, no private identity. Matches retained approved license hash.",
+      "remaining": [
+        "final_publication_acceptance"
+      ]
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "8e741b3997537ae0b39d269a0ea2e59389d173f7478f9f182c035d3dc0448266",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full architecture guide read; public limitation note added for historical evidence pins. Does not copy private pins or history or relax checks.",
+      "remaining": [
+        "final_publication_acceptance"
+      ]
+    }
+  ]
+}

@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Candidate file-review backlog closed:** Exact-source content/readiness evidence now
+covers 519 of 520 files; the lockfile has separate structural and retained-hash checks.
+`research/public-release-review-coverage.json` records all scopes without treating
+them as blanket security or legal approval. All source hashes match the current
+inventory; all four reconstruction receipts reproduce the complete tree exactly.
+The public architecture draft now explains historical acceptance pins without exposing
+private evidence or weakening checks; its exact new wording passed independent review.
+Seven local handoff/welcome document tests pass. No new runtime, download or public
+changes. Next: finalize the release-facing documents and repository security choices,
+then obtain exact-snapshot publication approval and upload one coherent source batch.
+The source is still a pre-alpha demo, not completed live multi-machine orchestration.
+
 **Larger independent source review completed:** Three reviewers fully read 116 files
 across Idea Lab, ready-frontier/completion-gate, harness, bridge and local pilot. Main
 fully read 18 fixture and nine security source files. All newly recorded hashes match

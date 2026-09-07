@@ -1,0 +1,15 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_node_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "Full text read for exactly listed files; exact current source hashes verified. No unread portions in listed files.",
+  "finding": "Current historical-evidence wording clearly states private records are not distributed, live qualification is not established, no private hashes copied, and no checks should be bypassed. No actionable wording finding.",
+  "limitations": "Content/wording evidence only. No runtime, network, credentials, installs or writes. Not functionality, security design, license or final release approval. Imported code outside listed files not included.",
+  "entries": [
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "8e741b3997537ae0b39d269a0ea2e59389d173f7478f9f182c035d3dc0448266"
+    }
+  ]
+}

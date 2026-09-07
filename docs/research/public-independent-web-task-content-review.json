@@ -1,0 +1,147 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_node_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "All 34 task-* web files, 3708 lines, full text through EOF. Exact inventory hashes verified.",
+  "finding": "No embedded private identities, actual credentials, private live endpoints or unexpected vendored text. Browser routes are relative same-origin; operational keys/endpoints/prompts/evidence are supplied inputs.",
+  "limitations": "No unread portions or unresolved truncation. No writes/tests/network/credentials/runtime/bootstrap. Content evidence only, not functionality, security design, provenance or release approval.",
+  "entries": [
+    {
+      "path": "src/web/v1/task-approval-browser-client.ts",
+      "sha256": "3dd8a221221af98f83128b0473441eec3fca6a6e61e2f047ea31a2363988c8e4"
+    },
+    {
+      "path": "src/web/v1/task-approval-editor.ts",
+      "sha256": "83b419c23950c161b5eb1381b4c2c0fa80009e102ae1e606021c1f3e032a45d3"
+    },
+    {
+      "path": "src/web/v1/task-approval-http.ts",
+      "sha256": "02d72b8a3c13f6f928168888cd15da7ba15daabcee05886e2cb63cfc8085cefa"
+    },
+    {
+      "path": "src/web/v1/task-approval-wire.ts",
+      "sha256": "2d4a1212e6b101811318051edeb0e87c233088b1a3dd73b36dce4ea934647b13"
+    },
+    {
+      "path": "src/web/v1/task-assignment-browser-client.ts",
+      "sha256": "7f7f3b0bbb87e1f69a8c9dd5b2eefb65c098b5de6d8ddb6ab2a38ef8f0f3d943"
+    },
+    {
+      "path": "src/web/v1/task-assignment-coordinator.ts",
+      "sha256": "18d49dd97aa4b893b1c751df0155752e916d00208e5ed3cdb6a444b455bd9d99"
+    },
+    {
+      "path": "src/web/v1/task-assignment-wire.ts",
+      "sha256": "44e6f33589c838f9b8c983c35fbd3b5aab956b1f906693e085732c88442e6cef"
+    },
+    {
+      "path": "src/web/v1/task-attention-wire.ts",
+      "sha256": "dacad89cb6f5d16ed2aecfba72cec051af389d2fdcf76f437dc2614fa2396800"
+    },
+    {
+      "path": "src/web/v1/task-browser-client.ts",
+      "sha256": "0a8b70546e409f63b9e4c05b85bff4883ba25057ba7017cb5a54a8d65ad43849"
+    },
+    {
+      "path": "src/web/v1/task-coordinator-interruption.ts",
+      "sha256": "a5ccb6aa47bbc037519bd4bec41fae003c1f37c38145bf0ee832e207e136d5cc"
+    },
+    {
+      "path": "src/web/v1/task-coordinator-lifecycle.ts",
+      "sha256": "cc2be826d099fcf58ac9e81ffd4a335d8c3e365e0e6b1cbf75bfc58d6e7f0d4b"
+    },
+    {
+      "path": "src/web/v1/task-delivery-wire.ts",
+      "sha256": "701dc1e3ed41b4f88c1eacf127db6229edbe37a72ce6c50dd0c8feb925085376"
+    },
+    {
+      "path": "src/web/v1/task-execution-planner.ts",
+      "sha256": "efda4867092b82abdc55b5238efdc6297dd54ba3c822c84420dfbf740389d2d3"
+    },
+    {
+      "path": "src/web/v1/task-http.ts",
+      "sha256": "8769337a35bdfa25233ca71820609aa707d0ca7d5a0c75cd66b06c2f29154a1d"
+    },
+    {
+      "path": "src/web/v1/task-planning-browser-client.ts",
+      "sha256": "718b7a0ea94ef0acac7c68c9f540c7a99dfc3dc1e9a3e452438d05e4eefde615"
+    },
+    {
+      "path": "src/web/v1/task-planning-wire.ts",
+      "sha256": "516e469b2e373bf3a172427d4a3418d9a6ca4935057bc0d6669944ded450fab9"
+    },
+    {
+      "path": "src/web/v1/task-quality-coordinator.ts",
+      "sha256": "397173e1ec9b95b47a55f515676b10394a34cf966f00daa7e1375d3ae4a7adcb"
+    },
+    {
+      "path": "src/web/v1/task-result-coordinator.ts",
+      "sha256": "da9e2dea7a0c372c3d7c163c22df4e46ea750d0f634a13a5df2c5a584097ef5b"
+    },
+    {
+      "path": "src/web/v1/task-result-wire.ts",
+      "sha256": "3813e961ef414b405d7870347d2cfc97ef6134c80c47609a008873f5fcc08828"
+    },
+    {
+      "path": "src/web/v1/task-review-browser-client.ts",
+      "sha256": "a915a8b0b02b008ecd9c810fd36b73dc1a887e6289ec428ff4b5bba71bba925d"
+    },
+    {
+      "path": "src/web/v1/task-review-service.ts",
+      "sha256": "d3f8c6adcb365cecc11968d985800cb4d32223afbdc65dcbe42f65fee03e861c"
+    },
+    {
+      "path": "src/web/v1/task-review-wire.ts",
+      "sha256": "036136ca78e592bfb6e86357a3eb34bba11e1e3aaee1684a52fc2dd4e34273e7"
+    },
+    {
+      "path": "src/web/v1/task-review-workspace.ts",
+      "sha256": "fea0d36e1e7bcb32f04c7269cf790ec0fa9798a829b93c9bba4fddf5334fb9eb"
+    },
+    {
+      "path": "src/web/v1/task-revision-browser-client.ts",
+      "sha256": "6216974bb74869409b3c4c965a0293be5dc434e214448b0b60efedb6f0b9f0c0"
+    },
+    {
+      "path": "src/web/v1/task-revision-operation.ts",
+      "sha256": "2e3ec182ae9dd00473d2a08e15fe61a5db383c37dbf5670321c00f67a606dbcc"
+    },
+    {
+      "path": "src/web/v1/task-revision-wire.ts",
+      "sha256": "35a4ffb85f172ed9054e3720b6b612ff270d8d61eafadfe6e03f57442527bf5d"
+    },
+    {
+      "path": "src/web/v1/task-service.ts",
+      "sha256": "26c49fa1bc808b287e64619134e5c03f25e69a41395733d6b2ed409188736aa8"
+    },
+    {
+      "path": "src/web/v1/task-submission-browser-client.ts",
+      "sha256": "344a96a44e06ad383a32ff46475ad29069175d3320b7875f83a04d0009ea8008"
+    },
+    {
+      "path": "src/web/v1/task-submission-wire.ts",
+      "sha256": "ba93446fa246726e7f293c087dceae0c4b020cf14fa7d3d94f433c9a7a750c4f"
+    },
+    {
+      "path": "src/web/v1/task-verification-browser-client.ts",
+      "sha256": "20289b8c6ed3545d4a08ee852ba2eba47163cd371aabbf585e8e3206287f20f7"
+    },
+    {
+      "path": "src/web/v1/task-verification-service.ts",
+      "sha256": "b03f1a44ddd5a9293976d5827fc408c08ffc5fcfaea2530b2c9475b59f5d259e"
+    },
+    {
+      "path": "src/web/v1/task-verification-wire.ts",
+      "sha256": "53acac2f7f7f01f062ee5bba7a2857b034e1a46c42f2bede90a1ab40f32ce799"
+    },
+    {
+      "path": "src/web/v1/task-verification-workspace.ts",
+      "sha256": "745fa42c27256acf21baf01d2610ff8d31a2ad4d7f29d928d08c67a798c96a0b"
+    },
+    {
+      "path": "src/web/v1/task-wire.ts",
+      "sha256": "07a4c2f857f9fa80dbfb2d865f0f42a37f1eda26e8ae7d7e690487f05c89710b"
+    }
+  ]
+}

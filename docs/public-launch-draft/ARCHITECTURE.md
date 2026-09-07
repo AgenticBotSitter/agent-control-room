@@ -57,6 +57,22 @@ durable recovery. Do not use it for important work or production credentials.
 
 ## Trust boundaries
 
+### Historical qualification references
+
+Some compatibility and activation contracts retain commit identifiers and review
+digests from development before this public source snapshot. The underlying private
+review records and Git history are not distributed. Those constants preserve the
+identity of the original checks; they are not publicly reproducible qualification
+evidence and do not establish that your installation can run live agents.
+
+Use the documented disposable demo and its tests to evaluate this preview. Do not
+remove these checks, substitute arbitrary hashes or invent acceptance records to
+enable live execution. Public live-connector work must provide reviewed setup and
+fresh, reproducible qualification for its supported runtime and platform. This
+limitation does not require access to a maintainer's private records or credentials.
+
+### Operating rules
+
 - Authenticate and authorize each operation at the server, including after permissions change.
 - Network membership, a private URL and a successful login do not grant unlimited execution.
 - Keep private credentials out of the browser, jobs, artifacts, source and diagnostic reports.

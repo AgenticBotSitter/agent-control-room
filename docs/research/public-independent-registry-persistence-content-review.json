@@ -1,0 +1,83 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_node_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "All 18 connection-registry/persistence files, 5381 lines, full text with no unresolved truncation. Exact candidate hashes match.",
+  "finding": "No embedded private host/account/project values, operational credentials, private live endpoints or unexpected vendored text. Loopback address and deterministic runtime self-check sentinel are not private operational configuration. PGlite descriptor pins are identified provenance references; upstream derivation not verified.",
+  "limitations": "No unread files. Source-content evidence only, not security/design/correctness, migration, legal/provenance or publication approval. No writes/tests/network/credentials/runtime/bootstrap/installs.",
+  "entries": [
+    {
+      "path": "src/connection-registry/v1/intake.ts",
+      "sha256": "3bae2c43588deb8a0b7f21b3689970c6c1ef6dc7e9da2c95168909c03a7e8d01"
+    },
+    {
+      "path": "src/connection-registry/v1/node-delivery.ts",
+      "sha256": "8af73346c565adf926164f07170f1c0e892f54600cba69866ecb34ce3921283f"
+    },
+    {
+      "path": "src/connection-registry/v1/node-ingress.ts",
+      "sha256": "31c05a4a5d6fce6376ef86859bcb19c7045ea3d0944b96f6d16081a8a5b3f4cd"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-framing.ts",
+      "sha256": "5736d39caa7e552b71b874300a9f65c456524b31adf95d9a59ca8b4e7b0881c3"
+    },
+    {
+      "path": "src/connection-registry/v1/store.ts",
+      "sha256": "514072bbe68ad49f64d3b1befe39cf7e67968e5405c76b2e5b985df36313e0f4"
+    },
+    {
+      "path": "src/connection-registry/v1/transport-admission.ts",
+      "sha256": "69362ae7500ea54f486b666a877d066c143081d3a02d3dc19870f2088b7c1a9b"
+    },
+    {
+      "path": "src/persistence/canonical-store.ts",
+      "sha256": "2809f905c1d7b07eba39368da9048ce30e190848d115f9b49ff7db9c819a46c8"
+    },
+    {
+      "path": "src/persistence/database.ts",
+      "sha256": "6b122a7ba367976fa68f7f0344307dc65e3cc29df345689e8854a833f9de515d"
+    },
+    {
+      "path": "src/persistence/native-task-completion.ts",
+      "sha256": "08092a9e70e021b6db11843d704557796604a88751ac1fc06ea950cd96e2bdba"
+    },
+    {
+      "path": "src/persistence/native-task-submission.ts",
+      "sha256": "1042c0fe9ccda7fb14ed296d8d5db5c67e01f29a53dfa83f5080a894316f1ef1"
+    },
+    {
+      "path": "src/persistence/operation-signal.ts",
+      "sha256": "f08f4f04f3c77841535586825f1001531d0cf8db2ba6aa0d90ce39ee3a185989"
+    },
+    {
+      "path": "src/persistence/pg-boss-application-permissions.ts",
+      "sha256": "ba7361fb5d5f4dd57e4955f03b8bfe46fad4a10f22920c901627d69adb4cd96f"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-permissions.ts",
+      "sha256": "5e049dcbce34a0d28077c5b26c1947bd9b042ced2300c3677fb3fca482d61c89"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-runtime.ts",
+      "sha256": "b93f96991bff5a6e7cf50e08f307f0fd14f3963e277563022748c5812b55a81f"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-submission.ts",
+      "sha256": "20b342a21e47577b855e534a6a54ce0b1f8be2fdce421183ab975b77a377f817"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-worker.ts",
+      "sha256": "0fbe9f1a295b698a207c6ac15ad94bd42281e561ead4c814261188953191fa66"
+    },
+    {
+      "path": "src/persistence/pg-boss-schema-inspection.ts",
+      "sha256": "e27162b81482a1f23629264b8bb2f877b6eef866d35e8960548e01475c845a55"
+    },
+    {
+      "path": "src/persistence/pglite-provenance.ts",
+      "sha256": "773145d225c468fd578f5f5cf8d6116b9053f0617bb8ec5025ad2afb501df900"
+    }
+  ]
+}

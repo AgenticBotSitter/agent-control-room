@@ -29,4 +29,8 @@ new reproducible qualification evidence belong to the later live-integration wor
 Any original private evidence stays private. This finding is a provenance and
 reproducibility limitation, not by itself evidence of leaked authentication material.
 
-No candidate bytes, protocol rules or GitHub files were changed during investigation.
+The subsequent public architecture clarification is now present in the candidate,
+durable draft and reconstruction receipt. Independent review of its exact hash
+found no actionable wording issue; see the architecture content-review receipt.
+No protocol rules or GitHub files were changed. The public text contains none of
+the private commit values above and makes no live qualification claim.

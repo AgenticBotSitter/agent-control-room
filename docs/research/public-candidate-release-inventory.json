@@ -1,8 +1,8 @@
 {
   "scope": "Private evidence for staged source, not a public distribution or publication approval",
-  "candidateDigest": "92741e1a836800f4ffdd9de754584229cf99a0b6d9f1e5cb58e5507874d15b39",
+  "candidateDigest": "652583805bf0586310b82d78eda69d6cb50a5102c69d6642a27039a1ea40813a",
   "fileCount": 520,
-  "totalBytes": 3716033,
+  "totalBytes": 3716908,
   "excludedDirectoryNames": [
     "node_modules",
     ".git",
@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Sixteen numbered content receipts match 173 exact files. Five independent module receipts cover 209 additional files: 382 unique content-reviewed files. Prior readiness review matches 26 current files, adding 24 distinct paths for a mixed-scope union of 406. Nine historical numbered entries with changed/absent bytes are excluded. Two changed readiness files have primary content rereads, not renewed independent approval. Scope-specific evidence is not correctness, license or publication approval.",
-  "exactPriorReviewMatches": 173,
+  "manualReviewCoverageMeaning": "Seventeen numbered receipts match 175 exact files. Combined numbered/independent content reviews cover 496 unique files. Twenty-five unchanged readiness matches add 23 paths for 519 full-text mixed-scope files; the lockfile has separate structural/hash evidence. All 520 have scoped review evidence in public-release-review-coverage.json, not blanket correctness/security/license/publication approval. Historical mismatched entries are excluded.",
+  "exactPriorReviewMatches": 175,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -257,7 +257,7 @@
       "path": "LICENSE",
       "bytes": 11358,
       "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-17.json"
     },
     {
       "path": "NOTICE",
@@ -765,9 +765,9 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "bytes": 5681,
-      "sha256": "ad4d218a79f43c2ac6561110072c07b534b61634e78e663960c8e6acdd269822",
-      "priorContentReviewReceipt": null
+      "bytes": 6556,
+      "sha256": "8e741b3997537ae0b39d269a0ea2e59389d173f7478f9f182c035d3dc0448266",
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-17.json"
     },
     {
       "path": "middleware.ts",

@@ -1,0 +1,147 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_readiness_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "Full text read for exactly listed files; exact current source hashes verified. No unread portions in listed files.",
+  "finding": "No embedded private data, actual credentials, private live endpoint or unexpected vendored attribution. Certificates, generated/repeated key bytes, example domains and 100.64.0.1 are injected synthetic test data, not observed live host values.",
+  "limitations": "Content/wording evidence only. No runtime, network, credentials, installs or writes. Not functionality, security design, license or final release approval. Imported code outside listed files not included.",
+  "entries": [
+    {
+      "path": "app/components/contributor-simulation.tsx",
+      "sha256": "44280b54813729bb7c40ac1fd06db755e8330f5d3c3550bc5de7547d015c23fe"
+    },
+    {
+      "path": "app/components/local-pilot-owner-session.tsx",
+      "sha256": "7056ff3fa99d40a28092fff3aff36f5317520a7bf0159a4ba4cbf45697bdaa18"
+    },
+    {
+      "path": "app/components/project-catalog.tsx",
+      "sha256": "781ca8b5c7934ff6c4f57286b429be1bf0b6d20dff185b98520340c214223447"
+    },
+    {
+      "path": "app/local-preview/workspace.tsx",
+      "sha256": "5edca9c2279a4280b641b733614d45cc5435a8375858c78092d6c7d981bf62b2"
+    },
+    {
+      "path": "private-app/app/task-panels.tsx",
+      "sha256": "f311f16b5346eadf835c80d539da7a615babe47ebd15c703daaab2270d5dbdfc"
+    },
+    {
+      "path": "scripts/run-private-vps.mjs",
+      "sha256": "e614be53aea37c81ad3e3fc42309c2af7835d6a5f4650fafab0820d8600fc86f"
+    },
+    {
+      "path": "styles/control-room.css",
+      "sha256": "b3754e1d908ac148d3433f5fce147f046557fde820bca16ff1d49726dc2028c7"
+    },
+    {
+      "path": "tests/audit-required-hashes.test.mjs",
+      "sha256": "fa2aeafcf9fc351319bf1c04f5008aaffcc322ad6d8ac6f667cf272ce61ef4f2"
+    },
+    {
+      "path": "tests/local-preview-panels.test.tsx",
+      "sha256": "cf15a137720428f2360d9d8b830a372affa681831a4e573f001684421c83b291"
+    },
+    {
+      "path": "tests/private-vps-launcher.test.mjs",
+      "sha256": "14a9cf9d00a2324f252c17fe41d8d586b7514817dad72d2367168be253f07621"
+    },
+    {
+      "path": "tests/vps-build-profile.test.ts",
+      "sha256": "71d233562531ef898a2e4b71b42132822e50ffc6bb204e8240829e669875f884"
+    },
+    {
+      "path": "tests/vps-built-approval.test.mjs",
+      "sha256": "cbfa5c16cc79b1dedf02f27e881a1d2e0aefe95e66b8aaa50a65acb052c52e88"
+    },
+    {
+      "path": "tests/vps-built-assignment.test.mjs",
+      "sha256": "bd8a51dc696745d130974169bff2ad25419501f84d605a49b09fbf1ab40ceeeb"
+    },
+    {
+      "path": "tests/vps-built-capacity-release.test.mjs",
+      "sha256": "d28ec88af24225412177c8cd6550495e64136595e7455581d3720cccf048557b"
+    },
+    {
+      "path": "tests/vps-built-core-schema.test.mjs",
+      "sha256": "4ee02cff9b30a337085de47be1d727691c7c068511076b1846243dc64a971696"
+    },
+    {
+      "path": "tests/vps-built-handler.test.mjs",
+      "sha256": "6fb4b0ad94a2b00cdc514f3a3099d425b1c6ac3ce7eb1574458cd41b9b7422b3"
+    },
+    {
+      "path": "tests/vps-built-launcher.test.mjs",
+      "sha256": "b259ffda71dc520670871eb70a297a39b406602696d3f7447c3d0861ba824457"
+    },
+    {
+      "path": "tests/vps-built-managed-native-sessions.test.mjs",
+      "sha256": "bf9abf4735012da515ca96d541422167523335ae1b686404ffa704701ed15fe0"
+    },
+    {
+      "path": "tests/vps-built-native-evidence.test.mjs",
+      "sha256": "1d56f7816ec66cb5e91d786574dc7e5ca373494f1d58b387653f99cd68c2c557"
+    },
+    {
+      "path": "tests/vps-built-owner-review.test.mjs",
+      "sha256": "33a03e362073f26c257ecac709b660bae84600c19c3cfc68c9934fab4a6c7385"
+    },
+    {
+      "path": "tests/vps-built-owner-revision-interface.test.mjs",
+      "sha256": "631d48775c52618abe713058f2b549d356e059fe9d5e26bcb2ee597c4f99924f"
+    },
+    {
+      "path": "tests/vps-built-planning.test.mjs",
+      "sha256": "a645081b207229777dd3ef646e626420d055db4a092c2cd50847be13aff4f195"
+    },
+    {
+      "path": "tests/vps-built-preparation.test.mjs",
+      "sha256": "f2fa1692a2e4cd46d64934617d9bc954f9d035ca11d20301dba765fb3d2a1723"
+    },
+    {
+      "path": "tests/vps-built-quality.test.mjs",
+      "sha256": "b298401fa614321470287431d7980aaddddb0b58d9a214513720c04693802a76"
+    },
+    {
+      "path": "tests/vps-built-rehearsal.test.mjs",
+      "sha256": "fefad6161b72f7f96901e84ac780e7de171f7baf1d24b0371b11e9d472e34d3e"
+    },
+    {
+      "path": "tests/vps-built-result-ownership.test.mjs",
+      "sha256": "d1f8ddc5a549bb5a61bfc87bb66afadaee4cb60e8783ab76c5ce51845a121739"
+    },
+    {
+      "path": "tests/vps-built-results.test.mjs",
+      "sha256": "0821c0eb0c85419652efdc92be7bbbb2d8e03bf70d36bd5f71eaeb72b561ff2f"
+    },
+    {
+      "path": "tests/vps-built-revised-result.test.mjs",
+      "sha256": "4a484a2ba9f0bfc896b6e5666129f5ac4896f7fac4bf684f827584a3c4a632d1"
+    },
+    {
+      "path": "tests/vps-built-revision-planning.test.mjs",
+      "sha256": "94d9f73923da3792eb49e59c58bab33130072928118be561eef0c4c207396026"
+    },
+    {
+      "path": "tests/vps-built-serving.test.mjs",
+      "sha256": "aea48243d6c180fba8227be2afce0362882051d2c40c12b83dc7071cc55097d7"
+    },
+    {
+      "path": "tests/vps-built-startup.test.mjs",
+      "sha256": "e7c80e3e7383b1bb76e5ee42fe569d4441546340b34d41b190d2b9e53a56274b"
+    },
+    {
+      "path": "tests/vps-built-task-application.test.mjs",
+      "sha256": "d84000179cdb7f9f36983b4cf78c53882052a2c632e5cc01f7fcc84a37729f83"
+    },
+    {
+      "path": "tests/vps-built-task-startup.test.mjs",
+      "sha256": "99fdd5902a816e3ee588c03193c55ffeb23b1d40e8f9a7e1f64ddf2accf8ea59"
+    },
+    {
+      "path": "tests/web-private-serving.test.ts",
+      "sha256": "48c22bb800e72abcd17105230fb575d2f9dddcbc6a9421ba9ecce182c937e59a"
+    }
+  ]
+}

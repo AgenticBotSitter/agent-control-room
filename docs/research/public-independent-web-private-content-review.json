@@ -1,0 +1,107 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_domain_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "24 web private/project/session files, 194715 bytes, full text through EOF without truncation. Matches exact inventory hashes.",
+  "finding": "No embedded private identities, actual credentials, private live endpoints or unexpected attribution. Rehearsal identities, invalid origins and coordinates-only-not-a-credential are synthetic. Schema fingerprint derives from candidate migrations, not a secret.",
+  "limitations": "No unread portions of listed files. Task files separately reviewed by another reviewer. Imported content outside this scope excluded. No writes/runtime/network/tests. Not correctness, security design, license or final release approval.",
+  "entries": [
+    {
+      "path": "src/web/v1/private-assets.ts",
+      "sha256": "57d4125367d50fb868a52785078c8f73c2a619362c5315269611ebed32fed381"
+    },
+    {
+      "path": "src/web/v1/private-database-preflight.ts",
+      "sha256": "1d5ecfba03bb6a3516fbf2a50c0197ba9e0d9bb6f1c9004bcee5dfb3be0ab61b"
+    },
+    {
+      "path": "src/web/v1/private-database-rehearsal.ts",
+      "sha256": "d74c3f2bfdaea0840acf20a63e584fd8406ee0398b00e99f765b776fbf988bbe"
+    },
+    {
+      "path": "src/web/v1/private-fixture-preparation.ts",
+      "sha256": "0fe8e61c10c9e969ff1c44fd459807560887ef8417d7888dcc690d41f8c051ce"
+    },
+    {
+      "path": "src/web/v1/private-host-lifecycle.ts",
+      "sha256": "bfbcca4dcc218514c0e04a10127f51fe9eb49a395c700a2ccdb2715d538794ae"
+    },
+    {
+      "path": "src/web/v1/private-host-shutdown.ts",
+      "sha256": "962112da95badbeae33de1c41c57faeeb1fe54d50282be8e36ea8eff5c302573"
+    },
+    {
+      "path": "src/web/v1/private-node-handler.ts",
+      "sha256": "f6300f24f65c1759ea2fd2adc78a27df7f997cdbda4c3cee99e0b80758cd3337"
+    },
+    {
+      "path": "src/web/v1/private-postgres.ts",
+      "sha256": "ca388a9b5334daa94e92a38f5b5eb144c1ab6b4bb5b318b9c64be85a05e9cd34"
+    },
+    {
+      "path": "src/web/v1/private-process.ts",
+      "sha256": "146316ca71b9ade91686fc10ed6362a0a5e437e8a9323e96f37d6d3ea78b95e9"
+    },
+    {
+      "path": "src/web/v1/private-rehearsal-checks.ts",
+      "sha256": "0ea483c77246860c482ddd1e53d70beddd517d6192df03d02a7dff081f18b31a"
+    },
+    {
+      "path": "src/web/v1/private-rehearsal-fixture.ts",
+      "sha256": "6ff8a577e5ab7c3b39fe96ee1ef93fb2630ebb98b73f4fcd4bb0af0caeea3e1a"
+    },
+    {
+      "path": "src/web/v1/private-rehearsal-probe.ts",
+      "sha256": "c89ddfb7200e23bd1128b074ee08f58f22a8d74b83eacbc2f812971dc195992c"
+    },
+    {
+      "path": "src/web/v1/private-serving.ts",
+      "sha256": "cb5440263aa585097829eeb6ed0439cbcacbd3d68893c71e19c0772843c73d1c"
+    },
+    {
+      "path": "src/web/v1/private-startup.ts",
+      "sha256": "03da24a90923257e8faad6ebd7b27c0a07ee5d3c7ef989f61abb309bcc4d05c4"
+    },
+    {
+      "path": "src/web/v1/private-task-application.ts",
+      "sha256": "fea08077198c8015e9d1d9f7619f0c3420eac54be7b4f25975d9a3cc73fe0c11"
+    },
+    {
+      "path": "src/web/v1/private-task-host.ts",
+      "sha256": "1539cd0def82d51b03e32acb1f9d114a886dbcb39f0976de8cc3188a63e45e0a"
+    },
+    {
+      "path": "src/web/v1/private-task-startup.ts",
+      "sha256": "20266faa3a400b1b494e55f9b3d54de2867eac2beaa16ee801b387fa57cd6b62"
+    },
+    {
+      "path": "src/web/v1/private-task-worker-application.ts",
+      "sha256": "f7bea75e897e1e16a331bda5375cb461abbb405a176bd7bdaea7e47a695c2b4d"
+    },
+    {
+      "path": "src/web/v1/project-http.ts",
+      "sha256": "15b391f73800d8247a0f39cd00eb6e36b76800bd234c93b20c3c04e58bd92819"
+    },
+    {
+      "path": "src/web/v1/project-service.ts",
+      "sha256": "bb385d9828c1ce74b4e65d419f78b6634905a1156e3c0ac74291548df4475de2"
+    },
+    {
+      "path": "src/web/v1/project-wire.ts",
+      "sha256": "2058c793ea42e3ea9a969c3511d8c98c8b2474720c5805db402429ba22e8838a"
+    },
+    {
+      "path": "src/web/v1/queue-attention-browser-client.ts",
+      "sha256": "644ef54d7c6a55c9244408d6ad9f48d84aa2656e96d78b4dae0c215547c93431"
+    },
+    {
+      "path": "src/web/v1/queue-attention-wire.ts",
+      "sha256": "30393e668dc28c012baea59ccea907ed8649671a16cdd6592faafa5037b78c23"
+    },
+    {
+      "path": "src/web/v1/session-authority.ts",
+      "sha256": "db85de9fe29a111d5178e9d0570f34ac8547a5d43d55ce28101d49e2a71fc12b"
+    }
+  ]
+}

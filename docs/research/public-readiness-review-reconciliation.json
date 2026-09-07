@@ -1,5 +1,6 @@
 {
   "schema": "control-room.review-reconciliation/v1",
+  "supersededBy": "docs/research/public-release-review-coverage.json (architecture later changed and received separate exact independent review)",
   "sourceReceipt": "docs/research/public-independent-readiness-review.json",
   "scope": "Reuses prior full-text contributor-readiness review only where exact candidate hashes still match. Not new independent review or privacy/security certification.",
   "publicationApproved": false,
