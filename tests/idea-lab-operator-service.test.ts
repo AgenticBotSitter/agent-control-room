@@ -14,6 +14,30 @@ const createInput={commandId:"command.idea:create-1",title:"AI desk for independ
 async function setup(){const raw=new PGlite();for(const file of(await readdir(resolve("db/migrations"))).filter(file=>file.endsWith(".sql")).sort())await raw.exec(await readFile(resolve("db/migrations",file),"utf8"));await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:owner','Owner')`);await raw.query(`INSERT INTO workspaces(id,tenant_id,display_name) VALUES ('workspace:control-room','tenant:owner','Control Room')`);await raw.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,project_types,supported_read_operations,supported_commands,redaction_policy_version,cursor_retention_days) VALUES($1,'tenant:owner','control_room_native_ideas','control-room-idea-lab-session/v1','control_room_native','fixture','["business_validation"]'::jsonb,'["read_project"]'::jsonb,'[]'::jsonb,'redaction-v1',30)`,[CONTROL_ROOM_IDEA_ADAPTER_V1]);const db=adaptPglite(raw),fixture=buildIdeaLabFixtureV1();let current=times[1]!;const calls={count:0},fake=new DeterministicIdeaLabFakeDriverV1(),driver={mode:"repository_fake" as const,async invoke(input:Parameters<DeterministicIdeaLabFakeDriverV1["invoke"]>[0]){calls.count+=1;return fake.invoke(input);}};const make=()=>new IdeaLabProtectedOperatorServiceV1(db,key,{workspaceId:"workspace:control-room",participants:fixture.session.participants,driver,clock:()=>current}),service=make();return{raw,db,service,calls,reopen:make,setTime(value:string){current=value;}};}
 async function owner(target:Awaited<ReturnType<typeof setup>>){await new SecurityStore(target.db).bootstrapOwner({...authentication,identityId:"identity:owner",grantId:"grant:owner",displayName:"Owner",now:times[1]!});}
 
+test("operator discussion preserves the full idea and customer in every round and rejects over-capacity briefs before saving", async t => {
+  const target = await setup(); t.after(() => target.raw.close()); await owner(target);
+  const prompts: { round: number; text: string }[] = [], fake = new DeterministicIdeaLabFakeDriverV1();
+  const service = new IdeaLabProtectedOperatorServiceV1(target.db, key, {
+    workspaceId: "workspace:control-room", participants: buildIdeaLabFixtureV1().session.participants,
+    clock: () => times[1]!, driver: { mode: "repository_fake", async invoke(input) {
+      prompts.push({ round: input.round, text: input.safePrompt }); return fake.invoke(input);
+    } },
+  });
+  await assert.rejects(service.create({ ...createInput, commandId: "command.idea:oversized", ideaSummary: "x".repeat(1000), maxRounds: 2 }, authentication),
+    error => error instanceof IdeaLabOperatorServiceErrorV1 && error.safeCode === "invalid_operator_request");
+  assert.equal((await target.raw.query("SELECT * FROM control_idea_sessions")).rows.length, 0);
+  assert.equal(prompts.length, 0);
+  const created = await service.create({ ...createInput, maxRounds: 2 }, authentication);
+  await service.start({ commandId: "command.idea:full-brief", sessionId: created.sessionId, requestedAt: times[1] }, authentication);
+  assert.equal(prompts.length, 8);
+  for (const prompt of prompts) {
+    assert.ok(prompt.text.includes(createInput.ideaSummary));
+    assert.ok(prompt.text.includes(createInput.targetCustomer));
+    assert.ok(prompt.text.includes(createInput.title)); assert.ok(prompt.text.length <= 800);
+    if (prompt.round === 2) assert.ok(prompt.text.includes("Quoted peer excerpts"));
+  }
+});
+
 test("CR12B-IDEA-040 creates, runs, synthesizes, and owner-promotes one monitored project",async()=>{const target=await setup();try{await owner(target);const created=await target.service.create(createInput,authentication);assert.equal(created.state,"ready");assert.equal(created.providerContacted,false);
   target.setTime(times[2]!);const started=await target.service.start({commandId:"command.idea:start-1",sessionId:created.sessionId,requestedAt:times[2]},authentication);assert.equal(started.state,"panel_complete");assert.equal(started.messagesUsed,4);assert.equal(target.calls.count,4);
   target.setTime(times[3]!);const synthesized=await target.service.synthesize({commandId:"command.idea:synthesis-1",sessionId:created.sessionId,requestedAt:times[3]},authentication);assert.equal(synthesized.state,"synthesized");assert.ok(synthesized.synthesisDigest);

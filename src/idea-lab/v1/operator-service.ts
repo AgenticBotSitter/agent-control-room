@@ -7,6 +7,7 @@ import { buildIdeaLabBotRunV1, buildRepositoryFakeProviderEvidenceV1, IdeaLabBot
   type IdeaLabBotRunV1 } from "./coordinator";
 import { IdeaLabBotRunStoreV1 } from "./coordinator-store";
 import { IdeaLabErrorV1 } from "./errors";
+import { buildIdeaLabOwnerPromptV1 } from "./discussion-prompt";
 import { parseExactIdeaLabV1 } from "./exact";
 import { capturedIdeaTimeFromMillisecondsV1, capturedIdeaTimeMillisecondsV1, capturedIdeaTimeNowV1,
   IDEA_LAB_SESSION_PROJECTION_V1,
@@ -71,16 +72,19 @@ export class IdeaLabProtectedOperatorServiceV1 {
       ideaSummary:input.ideaSummary,targetCustomer:input.targetCustomer,participants:this.#participants,maxRounds:input.maxRounds,
       maxDurationSeconds:input.maxDurationSeconds,maxCostUsd:input.maxCostUsd,
       createdByIdentityDigest:sha256Digest({tenantId:authentication.tenantId,identityId:policy.identityId,purpose:"idea_lab_creator_v1"}),createdAt:input.requestedAt});
+    try { buildIdeaLabOwnerPromptV1(session); } catch { throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request"); }
     try{await this.#registry.registerSession(session);return this.project(session,undefined,undefined,undefined,session.createdAt);}
     catch(error){if(error instanceof IdeaLabErrorV1&&error.safeCode==="duplicate_record")throw new IdeaLabOperatorServiceErrorV1("state_conflict");throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
   }
   async start(value:unknown,authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1>{
     const {input,session,now}=await this.#command(value,authentication,"idea_lab.panel_start");
     const existingRun=await this.#ledger.get(this.runId(session));if(existingRun&&["completed","cancelled","failed_definite","ambiguous"].includes(existingRun.state))return this.current(session,existingRun,now);
+    let safePrompt: string;
+    try { safePrompt = buildIdeaLabOwnerPromptV1(session); } catch { throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request"); }
     const expiry = capturedIdeaTimeFromMillisecondsV1(capturedIdeaTimeMillisecondsV1(input.requestedAt)! + 300_000);
     if (!expiry) throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request");
     const evidence=session.participants.map((participant,index)=>buildRepositoryFakeProviderEvidenceV1(session,participant,{evidenceId:`evidence.idea:${sha256Digest({commandId:input.commandId,index}).slice(7,31)}`,capturedAt:input.requestedAt,expiresAt:expiry}));
-    try{const run=await this.#coordinator.execute({runId:this.runId(session),session,evidence,safePrompt:`Evaluate the bounded idea titled ${session.title}. Retain only a safe structured contribution.`});return this.current(session,run,now);}
+    try{const run=await this.#coordinator.execute({runId:this.runId(session),session,evidence,safePrompt});return this.current(session,run,now);}
     catch(error){if(error instanceof IdeaLabErrorV1&&["duplicate_record","state_conflict"].includes(error.safeCode))throw new IdeaLabOperatorServiceErrorV1("state_conflict");throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
   }
   async cancel(value:unknown,authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1>{
