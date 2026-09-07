@@ -12,7 +12,8 @@ the existing organization and uploading setup instructions for the VPS agent.
 - Workflow runs after upload: zero. No workflows, PR, runner, schedule or deployment.
 - Existing private Control Room and public product repositories were not pushed or changed.
 - Johnny Five needs his own authorized repository access; none was granted or copied here.
-- Domain and actual VPS deployment remain to be confirmed separately.
+- Owner subsequently confirmed `agentcontrolroom.xyz`; actual DNS/HTTPS and VPS
+  deployment remain unverified and separately scoped.
 
 ## Transfer accounting
 
@@ -37,3 +38,9 @@ contact. Local `public-site/index.html` and `public-site/DEPLOYMENT.md` now incl
 these changes have not been transferred to the website repository or deployed. On the
 next website update, map DEPLOYMENT.md to that repository's README.md as before, and
 keep Actions disabled. Mail forwarding is owner-reported, not delivery-tested here.
+
+The owner also confirmed `agentcontrolroom.xyz` as the purchased welcome-page domain;
+the `.com` name is not owned. The local deployment instructions now reflect this and
+must accompany the next batched transfer. The initial remote README still has the old
+domain question until that update is uploaded. Do not infer a private-app hostname or
+publish a private-app link from this public welcome-page domain decision.

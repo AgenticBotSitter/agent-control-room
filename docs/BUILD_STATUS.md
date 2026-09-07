@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Welcome-page domain confirmed:** Owner clarified `agentcontrolroom.xyz` is the
+purchased domain; `.com` is not owned. Local deployment/setup/copy documents now use
+that decision and retain `Alastair@agenticbotsitter.com` as the separate contact email.
+Four welcome-source/document checks and whitespace checks pass. The website handoff
+records the domain/contact edits as pending one batched remote update. No DNS change,
+hosting verification, private-app hostname selection, deployment or GitHub write.
+
 **Confirmed project contact applied locally:** The welcome page, deployment instructions
 and public README/contributor drafts use `Alastair@agenticbotsitter.com`. The page adds
 one ordinary mail link, no form, script or mail credentials. All three welcome-source

@@ -44,8 +44,10 @@ scheduled pull, GitHub workflow or automatic deployment is needed.
 
 ## Confirm the destination before deploying
 
-The owner has mentioned both `AgentControlRoom.com` and `agentcontrolroom.xyz`.
-Confirm the intended domain and DNS control; neither is a default deployment target.
+The owner confirmed **`agentcontrolroom.xyz`** as the purchased domain for this
+public welcome page. The `.com` name is not owned and must not be used.
+Verify DNS control and the actual server configuration before deployment; the owner's
+domain confirmation is not evidence that DNS or HTTPS has already been configured.
 Inspect the existing virtual host and document root. Do not overwrite an existing
 website, change unrelated DNS, or expose the private Control Room application.
 

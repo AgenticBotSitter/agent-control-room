@@ -39,3 +39,12 @@ test("confirmed project contact is consistent without adding mail forms or crede
   }
   assert.equal([...html.matchAll(/href="mailto:/g)].length, 1);
 });
+
+test("deployment handoff uses the owner-confirmed xyz domain without the stale domain question", () => {
+  for (const path of ["public-site/DEPLOYMENT.md", "public-site/README.md",
+    "docs/WEBSITE_REPOSITORY_HANDOFF.md", "docs/PUBLIC_LAUNCH_SETUP.md", "docs/PUBLIC_WEBSITE_COPY_DRAFT.md"]) {
+    const text = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+    assert.ok(text.includes("agentcontrolroom.xyz"), path);
+    assert.doesNotMatch(text, /AgentControlRoom\.com|Confirm which is owned|neither is a default deployment target/i);
+  }
+});

@@ -42,10 +42,10 @@ Official instructions: [organization creation](https://docs.github.com/en/organi
 
 - Organization URL and repository URL, if created.
 - Confirmed product name and preferred public maintainer name/credit.
-- Confirmed domain: this conversation now says AgentControlRoom.com; the earlier
-  recorded domain was agentcontrolroom.xyz. Confirm which is owned and intended.
+- Confirmed welcome-page domain: `agentcontrolroom.xyz`. The owner clarified that
+  `.com` was taken and is not owned. DNS/HTTPS configuration still needs verification.
 - Domain registrar and DNS provider names. Do not send passwords, DNS tokens or keys.
-- Public website/contact email or preferred contact method, if desired.
+- Confirmed general project email: `Alastair@agenticbotsitter.com`.
 - Original-code license decision; the Apache-2.0 recommendation is not yet approval.
 
 Use existing local GitHub authentication if it grants the needed organization access.

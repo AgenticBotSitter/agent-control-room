@@ -1,6 +1,7 @@
 # Agent Control Room — public welcome page copy
 
-Local draft. Domain, repository URL, attribution and license await owner confirmation.
+Local draft. Welcome-page domain: `agentcontrolroom.xyz`, confirmed by the owner.
+Repository URL, attribution and license await owner confirmation.
 Do not publish this drafting note. No website has been deployed or domain ownership verified.
 
 Implemented locally as the separate [static welcome page](../public-site/index.html).

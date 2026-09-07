@@ -1,8 +1,9 @@
 # Public welcome page — unpublished source
 
 This separate static page is an information-only draft. It is not the Control Room
-application or a public source release. No deployment domain, public source link or
-license has been assumed. The owner confirmed the project contact as
+application or a public source release. The owner confirmed `agentcontrolroom.xyz`
+as the welcome-page domain. No public source link or license has been assumed.
+The owner confirmed the project contact as
 Alastair@agenticbotsitter.com. No DNS or hosting configuration has been changed.
 
 Only `index.html` and `styles.css` belong in a future welcome-page deployment. Do not
@@ -16,7 +17,7 @@ is a sibling file so the page is not dependent on the application build or crede
 
 Before publication:
 
-1. Confirm domain ownership, intended domain and current site content. Do not overwrite
+1. Verify DNS control for `agentcontrolroom.xyz` and current site content. Do not overwrite
    an existing website or infer that the domain is unused.
 2. Confirm the public repository and contribution destinations. Replace the forthcoming
    notices with real links only when those resources are available.
