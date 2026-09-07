@@ -63,8 +63,11 @@ and producer. They do not substitute for real pg-boss acceptance.
 After authorized real setup, verify `/ideas` offers New idea for the scoped owner, save
 and reopen a harmless draft, confirm a retry returns the original session, and confirm
 logout revokes access. None of those production checks has run in this block.
-The owner decision command is mounted by the managed Idea resource after preflight;
-its browser controls and multi-bot execution remain unfinished integration. Promotion
+The owner decision command is mounted by the managed Idea resource after preflight.
+The private detail page offers a choice form when a synthesis exists, no decision is
+already saved, any retained run is complete, and current owner permissions allow it.
+Project creation is a separately permission-checked option. Multi-bot execution remains
+unfinished integration. Promotion
 requires the existing `CONTROL_ROOM_IDEA_ADAPTER_V1` registry entry established by later
 approved operator setup; this operation does not create an adapter or repair missing setup.
 An older creation-only role must be explicitly reviewed/upgraded before this version

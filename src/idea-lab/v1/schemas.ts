@@ -140,6 +140,9 @@ export const projectCreationSpecSchemaV1 = z.object({
   projectId: ideaIdSchemaV1, workspaceName: ideaLabelSchemaV1, title: ideaLabelSchemaV1,
   summary: z.string().min(1).max(600), projectKind: ideaCodeSchemaV1, priority: z.number().int().min(0).max(100),
 }).strict();
+export const ideaOwnerIntentSchemaV1 = z.object({ decision: z.enum(["create_project", "save", "reject"]),
+  safeReasonCode: ideaCodeSchemaV1, project: projectCreationSpecSchemaV1.optional(),
+}).strict();
 
 export const ideaDecisionSchemaV1 = z.object({
   contractVersion: z.literal(IDEA_LAB_DECISION_V1), decisionId: ideaIdSchemaV1, sessionId: ideaIdSchemaV1,

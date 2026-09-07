@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
+import { ideaOwnerIntentSchemaV1 } from "../../idea-lab/v1/schemas";
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), text = z.string().min(1).max(2000);
 export const ideaCreateDraftSchema = z.object({ title: z.string().trim().min(1).max(120), ideaSummary: z.string().trim().min(1).max(800),
   targetCustomer: z.string().trim().min(1).max(300), maxRounds: z.number().int().min(1).max(3),
@@ -17,6 +18,12 @@ export const ideaStopReceiptSchema = z.object({ sessionId: id, sessionDigest: di
   cancellationRequestedAt: z.string().datetime({ offset: true }).nullable(), startsWork: z.literal(false),
 }).strict();
 export type IdeaStopReceipt = z.infer<typeof ideaStopReceiptSchema>;
+export const ideaDecisionDraftSchema = z.object({ sessionDigest: digest, synthesisDigest: digest,
+  intent: ideaOwnerIntentSchemaV1 }).strict().refine(v => (v.intent.decision === "create_project") === !!v.intent.project);
+export const ideaDecisionReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
+  decisionDigest: digest, decision: z.enum(["create_project", "save", "reject"]), projectId: id.nullable(),
+  replayed: z.boolean(), startsWork: z.literal(false) }).strict().refine(v => (v.decision === "create_project") === !!v.projectId);
+export type IdeaDecisionReceipt = z.infer<typeof ideaDecisionReceiptSchema>;
 const summary = z.object({ sessionId: id, sessionDigest: digest, title: z.string().min(1).max(120),
   ideaSummary: text, targetCustomer: z.string().min(1).max(300), createdAt: z.string().datetime({ offset: true }) });
 export const ideaPageSchema = z.object({ availability: z.enum(["configured", "not_configured"]),
@@ -46,10 +53,12 @@ run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
 }).strict().nullable(),
 decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decision: z.enum(["create_project", "save", "reject"]), project: z.object({ projectId: id }).optional(),
-}).nullable(), canStop: z.boolean(), execution: z.literal("not_configured"), observedAt: z.string().datetime(),
+}).nullable(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.literal("not_configured"), observedAt: z.string().datetime(),
 }).strict().refine(value => {
   const { session, contributions, synthesis, decision, run } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
+    && (!value.canPromote || value.canDecide)
+    && (!value.canDecide || !!synthesis && !decision && (!run || run.state === "completed"))
     && (!run || run.sessionId === session.sessionId && run.sessionDigest === session.sessionDigest
       && run.maxMessages === session.maxRounds * session.participants.length && run.messagesUsed <= run.maxMessages
       && run.messagesUsed === run.attempts.filter(a => a.state === "completed").length

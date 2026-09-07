@@ -4,6 +4,11 @@ import { taskFixture } from "./helpers/web-task";
 import { now, request } from "./helpers/web-foundation";
 import { startupConfig } from "./helpers/web-startup";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
+import { createIdeaDecisionClient } from "../src/web/v1/idea-decision-client";
+import { ideaDetailSchema } from "../src/web/v1/idea-wire";
+import { IdeaDecisionForm } from "../private-app/app/idea-decision-form";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project";
 import { WebIdeaDecisionOperation } from "../src/web/v1/idea-decision-operation";
 import { WebSessionAuthority } from "../src/web/v1/session-authority";
@@ -128,11 +133,40 @@ test("decision HTTP route requires an explicitly supplied operation, same origin
   assert.equal((await handle(request(path, "POST", { ...f.value, extra: true }))).status, 400);
   assert.equal((await handle(request(path, "POST", { ...f.value, intent: { ...f.value.intent,
     project: { ...f.value.intent.project, projectId: "project.idea:web" } } }))).status, 409);
-  const saved = await handle(request(path, "POST", f.value));
-  assert.equal(saved.status, 201, await saved.clone().text());
-  assert.equal(saved.headers.get("cache-control"), "no-store");
+  const detail = ideaDetailSchema.parse(await (await handle(request(`/api/v1/ideas/${encodeURIComponent(f.session.sessionId)}`))).json());
+  assert.equal(detail.canDecide, true); assert.equal(detail.canPromote, true);
+  const html = renderToStaticMarkup(createElement(IdeaDecisionForm, { detail }));
+  for (const label of ["Create a project", "Save for later", "Reject this idea", "Save my decision"]) assert.ok(html.includes(label));
+  assert.equal(renderToStaticMarkup(createElement(IdeaDecisionForm, { detail: { ...detail, canPromote: false } })).includes("Create a project"), false);
+  assert.equal(ideaDetailSchema.safeParse({ ...detail, canDecide: false, canPromote: true }).success, false);
+  let lost = true, calls = 0;
+  const client = createIdeaDecisionClient(async (url, options) => {
+    calls++; assert.equal(String(url), path); assert.equal(options?.redirect, "error");
+    const response = await handle(request(path, "POST", JSON.parse(String(options?.body))));
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    if (lost) { lost = false; assert.equal(response.status, 201); throw new Error("synthetic lost response"); }
+    return response;
+  });
+  await assert.rejects(client.decide(f.session.sessionId, f.value), /uncertain/); assert.equal(calls, 1);
+  await assert.rejects(client.decide(f.session.sessionId, { ...f.value, intent: { decision: "reject", safeReasonCode: "changed" } }), /uncertain/);
+  assert.equal(calls, 1); assert.equal((await client.retry()).replayed, true); assert.equal(client.hasPending(), false);
   const replayed = await handle(request(path, "POST", f.value)); assert.equal(replayed.status, 200);
   assert.equal((await replayed.json()).startsWork, false);
+  assert.equal((await (await handle(request(`/api/v1/ideas/${encodeURIComponent(f.session.sessionId)}`))).json()).canDecide, false);
   await handle(request("/api/v1/session/logout", "POST"));
   assert.equal((await handle(request(path, "POST", f.value))).status, 401);
+});
+
+test("decision client holds a mismatched receipt and later denial without automatically retrying", async () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  const value = { sessionDigest: digest, synthesisDigest: digest, intent: { decision: "save", safeReasonCode: "selected" } };
+  let calls = 0;
+  const client = createIdeaDecisionClient(async () => {
+    calls++;
+    return calls === 1 ? Response.json({ sessionId: "idea:wrong", sessionDigest: digest, synthesisDigest: digest,
+      decisionDigest: digest, decision: "save", projectId: null, replayed: false, startsWork: false }) : new Response(null, { status: 403 });
+  });
+  await assert.rejects(client.decide("idea:chosen", value), /uncertain/); assert.equal(calls, 1);
+  assert.equal(client.hasPending(), true); await assert.rejects(client.retry(), /access_denied/);
+  assert.equal(client.hasPending(), true); assert.equal(calls, 2);
 });

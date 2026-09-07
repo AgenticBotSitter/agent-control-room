@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner decision controls added to the private Idea page:** Eligible saved discussions
+now offer Create a project, Save for later and Reject, with project title/summary fields
+and a direct link to the resulting workspace. Current server permissions determine
+availability; every command still reauthorizes. The client binds exact session/synthesis,
+choice and project ID, holds uncertainty through later denials, and never automatically
+retries. The form disables editing/refresh and reuses the existing navigation guard
+while a save is unresolved. The 61-test workflow suite and eighteen focused page/decision/history checks, TypeScript,
+focused lint and VPS compilation pass. Independent source review found no concrete
+defect. Tests use injected HTTP, PGlite and static markup, not mounted browser interaction
+or real agents; forced-close draft recovery remains unsupported. Next: admitted live
+panel start and synthesis integration, then allowlisted news ingestion and complete
+real-agent journeys. No hosting migration, deployment, native call or GitHub writes.
+
 **Owner decisions now use the managed Idea resource:** The existing optional pool
 owns decision requests with shared admission, input capture, guarded transactions and
 cleanup. Its fixed role/preflight includes the policy/permit/project/lifecycle records

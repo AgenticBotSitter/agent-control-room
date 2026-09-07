@@ -6,8 +6,9 @@ import { BrowserRequestError, browserErrorMessage } from "../../src/web/v1/brows
 import { PrivateHeader } from "./private-header";
 import { IdeaCreateForm } from "./idea-create-form";
 import { IdeaStopControl } from "./idea-stop-control";
+import { IdeaDecisionForm } from "./idea-decision-form";
 
-export function IdeaDiscussion({ detail, refresh }: { detail: IdeaDetail; refresh?: () => void }) {
+export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void }) {
   const { session, contributions, synthesis, decision, run } = detail;
   return <><h1>{session.title}</h1><p>{session.ideaSummary}</p><p>For: {session.targetCustomer}</p>
     <p>Saved discussion. Starting live panels is not connected on this installation.</p>
@@ -39,7 +40,8 @@ export function IdeaDiscussion({ detail, refresh }: { detail: IdeaDetail; refres
     <section className="private-panel"><h2>Your decision</h2>{decision ? <>
       <p>{decision.decision === "create_project" ? "Promoted to a project" : decision.decision === "save" ? "Saved for later" : "Rejected"}</p>
       {decision.project ? <a href={`/projects/${encodeURIComponent(decision.project.projectId)}`}>Open project workspace</a> : null}
-    </> : <p>No owner decision saved yet.</p>}</section></>;
+    </> : detail.canDecide ? <IdeaDecisionForm key={session.sessionId} detail={detail} pendingChanged={pendingChanged} />
+      : <p>No owner decision saved yet. Decision controls require a saved synthesis, eligible discussion and current owner access.</p>}</section></>;
 }
 
 export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string; after?: string }) {
@@ -47,6 +49,7 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
   const [page, setPage] = useState<IdeaPage>(), [detail, setDetail] = useState<IdeaDetail>();
   const [error, setError] = useState<string>(), [refresh, setRefresh] = useState(0);
   const [creating, setCreating] = useState(false);
+  const [decisionPending, setDecisionPending] = useState(false);
   useEffect(() => {
     let active = true; const abort = new AbortController();
     void (async () => {
@@ -61,9 +64,9 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
   }, [client, sessionId, after, refresh]);
   return <><PrivateHeader /><main className="private-main">
     <nav aria-label="Idea pages"><a href="/ideas">All saved ideas</a></nav>
-    <button type="button" disabled={creating} onClick={() => { setPage(undefined); setDetail(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved discussion</button>
+    <button type="button" disabled={creating || decisionPending} onClick={() => { setPage(undefined); setDetail(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved discussion</button>
     {creating ? <IdeaCreateForm close={() => { setCreating(false); setPage(undefined); setRefresh(v => v + 1); }} /> : null}
-    {error ? <p role="alert">{error}</p> : detail ? <IdeaDiscussion detail={detail} refresh={() => setRefresh(v => v + 1)} /> : page ? <>
+    {error ? <p role="alert">{error}</p> : detail ? <IdeaDiscussion detail={detail} refresh={() => setRefresh(v => v + 1)} pendingChanged={setDecisionPending} /> : page ? <>
       <h1>Idea Lab</h1><p>Explore saved discussions and the projects you chose to pursue.</p>
       {page.availability === "not_configured" ? <p>Idea storage is not configured. No sample discussions are shown.</p>
         : <>{page.canCreate ? <button type="button" disabled={creating} onClick={() => setCreating(true)}>New idea</button>

@@ -25,6 +25,26 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Owner decision form and exact-request recovery
+
+The private Idea page now offers Create a project, Save for later or Reject for an
+eligible retained synthesis. Project creation uses editable title/summary and a stable
+session-derived project ID; the receipt links to the existing project workspace. Server
+capability flags distinguish decision access from project creation access, without
+granting authority in the browser. The intent schema is shared from browser-safe domain
+schemas, not imported from a server service into the client bundle.
+
+The browser client retains exact session/synthesis/intent after uncertain responses,
+refuses changed choices, validates receipt scope/outcome/project, and does not auto-retry.
+Editing and parent refresh are disabled while held; the existing navigation warning is
+reused. Forced closing or overriding a leave warning does not preserve the in-memory
+request, but committed decisions remain readable. Tests exercise injected HTTP response
+loss, explicit recovery, mismatch/later denial, eligibility fields and static form labels.
+Eighteen focused page/decision/history tests pass, plus TypeScript, focused lint and VPS
+compilation. Independent source review found no concrete defect; no mounted-browser
+interaction or live-panel acceptance is claimed. The Sites skill influenced native form
+accessibility and reuse of the established layout, not authentication, storage or hosting.
+
 ### Managed owner decision resource and SQL permissions
 
 The existing optional Idea pool now owns the decision operation through the same
