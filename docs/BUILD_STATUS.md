@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Two upstream notices pinned and downloaded with a log:** PostgreSQL client Unlicense
+and RSC plugin own MIT text are retained from immutable release commits in
+`research/pinned-upstream-notice-texts.json`. Checked 102 GiB free before fetching 2,315
+bytes; URLs, commits, sizes, hashes and cleanup guidance retained. Read-only public tag
+lookup and notice requests only. Full npm/source equivalence and distribution-wide
+attribution remain open; no original license choice, installation or publication.
+
 **Two runtime notice-location gaps resolved:** pg-types 2.2.0 and pgpass 1.0.5 both
 include full MIT notices inside their installed READMEs. Exact sections, README hashes
 and manifest hashes are retained in `research/embedded-runtime-notice-texts.json`.

@@ -108,6 +108,29 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Two upstream notice sources pinned and retained
+
+At `05663eb`, resolved the public annotated release tags using read-only `git ls-remote`
+and retained notice text from each peeled commit, rather than mutable tag/main URLs:
+
+| Package | Release commit | Retained notice |
+|---|---|---|
+| postgres 3.4.7 | `9b92b65da6a5121545581a6dd5de859c2a70177f` | [UNLICENSE](https://raw.githubusercontent.com/porsager/postgres/9b92b65da6a5121545581a6dd5de859c2a70177f/UNLICENSE), 1,212 bytes |
+| @vitejs/plugin-rsc 0.5.26 | `65d378fc4d9bd8d383dc7598817261b3bdcb0861` | [Plugin repository LICENSE](https://raw.githubusercontent.com/vitejs/vite-plugin-react/65d378fc4d9bd8d383dc7598817261b3bdcb0861/LICENSE), 1,103 bytes |
+
+[`research/pinned-upstream-notice-texts.json`](research/pinned-upstream-notice-texts.json)
+is the download log and retained exact-text artifact: URLs, commits, tags, byte sizes,
+SHA-256 hashes, date and cleanup guidance. Disk check before download reported 102 GiB
+available. Total downloaded notice content was 2,315 bytes. No package, repository clone,
+installation, GitHub write or Actions run occurred. Initial sandbox DNS failure on the
+read-only tag lookup was resolved through scoped network permission, not remote mutation.
+
+These resolve immutable source location and text retention for the two notices. They
+do not prove the entire installed npm package corresponds to that source commit, or
+resolve every bundled/vendor attribution. The plugin's own Vite-contributor MIT text
+and its separate installed React vendor notice must not be conflated. Neither this
+Unlicense nor this MIT notice selects a license for original Agent Control Room code.
+
 ### Embedded README notices resolve two location gaps
 
 At `ec74c11`, inspected the installed README license sections for **pg-types 2.2.0**
