@@ -2,6 +2,20 @@
 
 ## Current actionable summary
 
+At `bb5c209`, **all 28 current direct dependencies have a resolved root notice-text
+location**. `research/direct-notice-retention.json` now preserves 16 distinct complete
+installed root texts (142,018 bytes) across 23 packages and references the five existing
+immutable-upstream evidence records for missing package roots. Current root manifest,
+installed manifest and notice hashes were checked. This is comprehensive direct-root
+retention, not comprehensive license review: texts added by this consolidation are
+explicitly marked retained/not newly full-text reviewed. No download or install.
+
+Prioritize Vite's 108,466-byte multi-component LICENSE.md for full-text/vendor review,
+then the other newly retained development texts. Do not repeat missing-root searches
+for the five packages already resolved. The actual candidate still needs applicable
+notice delivery and transitive/bundled/native scope decisions; this private inventory
+is not itself a completed public attribution file or a grant for original project code.
+
 At `4461a31`, full notice text has been read and retained for **all 26 production-root
 dependency snapshots** in the current lockfile. The consolidated
 [`research/runtime-notice-coverage.json`](research/runtime-notice-coverage.json) maps

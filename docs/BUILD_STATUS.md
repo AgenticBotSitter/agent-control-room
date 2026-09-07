@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**All direct dependency root notices located and retained:** The 28-package inventory
+now maps 23 installed-root sources and five existing immutable upstream records.
+Sixteen full root texts total 142,018 bytes; package and notice hashes verified.
+`research/direct-notice-retention.json` explicitly distinguishes retention from review.
+Vite's bundled 108 KB notice is the largest next full-text review; no repeated root
+searches needed. No download, dependency change, original-license choice or publication.
+
 **Next lint root notice gap resolved; PostCSS notice retained:** Fixed-release Next.js
 license and package manifest are saved with the download log (1,794 bytes; 102 GiB
 free checked first). Manifest exactly matches the installed lint package. PostCSS's
