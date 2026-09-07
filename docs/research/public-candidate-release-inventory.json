@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Ten numbered content receipts match 102 exact files. Separate independent domain/node receipts cover 93 additional files: 195 unique files across 12 receipts. Other bounded reviews are separate evidence. Content review is not correctness, license or publication approval.",
-  "exactPriorReviewMatches": 102,
+  "manualReviewCoverageMeaning": "Eleven numbered content receipts match 121 exact files. Separate independent domain/node receipts cover 93 additional files: 214 unique files across 13 receipts. Other bounded reviews are separate evidence. Content review is not correctness, license or publication approval.",
+  "exactPriorReviewMatches": 121,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -593,115 +593,115 @@
       "path": "db/migrations/0040_cr14b_private_web_lock_support.sql",
       "bytes": 1455,
       "sha256": "83e4240a53a77e86f967581c1f3405de77a12143dd7e4271c93a7e29a498a12b",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0041_cr14c_private_task_proposals.sql",
       "bytes": 3652,
       "sha256": "9825891d9f8ef1423a12465af39569f6d33a0b63a3960a4bdbccb44cc8b5beba",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0042_cr14c_private_task_results.sql",
       "bytes": 1573,
       "sha256": "16c8ca4e23839b4e1b1ca15140031859c97723cf5488941dd4a627a878f771b8",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0043_cr14c_owner_result_review.sql",
       "bytes": 3336,
       "sha256": "27435749e36b4e91fffd3468e06f39b15e344a8cea73bbadc78a2e8f80e2eb73",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0044_cr14c_native_review_plans.sql",
       "bytes": 946,
       "sha256": "86513cbb56cf0c011318db34943f9851b3c48dab5ba7bf26b64e6a1bf61bac09",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0045_cr14c_task_execution_plans.sql",
       "bytes": 994,
       "sha256": "c31ba47121ec94e63a4c1b129d95bebcb59061630006af639c9e6825dd6645fb",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0046_cr14c_coordinator_lock_support.sql",
       "bytes": 2063,
       "sha256": "6c864ac7e94dbb5becce6ebaed1de22bf4ed213f30f07b13cff945f399c2b0dc",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0047_cr14c_native_approval_packets.sql",
       "bytes": 950,
       "sha256": "e8257bd352c5971ad421f54d317fe138c90617661f5bc6e25d5ff81f4381852a",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0048_cr14c_native_task_queue.sql",
       "bytes": 974,
       "sha256": "baa999af03fe2e9b6ef27ef226a06cee785842e8d5e11d2079220cb9551bc9a1",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0049_cr14c_native_delivery_preparations.sql",
       "bytes": 926,
       "sha256": "140a5651a01edecfef9248d72149019885209fcbff47a789a2fd6985c601723b",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0050_cr14c_native_delivery_envelopes.sql",
       "bytes": 983,
       "sha256": "f0e11f0a20c21e7c9c50a603c4dd187b3d24cc0497561127f39386960fdcdd28",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0051_cr14c_native_transmission_intents.sql",
       "bytes": 929,
       "sha256": "6d2a4e4dd6494e0e075b47d0ebedf470591debff8807da1877782f8bb8761a81",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0052_cr14c_native_delivery_receipts.sql",
       "bytes": 916,
       "sha256": "acb6f70c05654a5a5d892ed7ae35f55bf76da3a271c41a7440717f2ca103ce62",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0053_cr14c_owner_result_verification.sql",
       "bytes": 1905,
       "sha256": "b19e78325e83a61378632674e09a938a4f4c1351b6f54bbcae345640bde3f7c1",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0054_cr14c_quality_coordinator.sql",
       "bytes": 1779,
       "sha256": "425beeff9e7fc5762ff62f23ef702b817638581a39dd6644d5362ac90e98579f",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0055_cr14c_native_result_writer.sql",
       "bytes": 3742,
       "sha256": "235646625730e102baefc918b65cddfdd4edc9546c689732ec8d0f4d4f39062c",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0056_cr14c_native_evidence_locks.sql",
       "bytes": 324,
       "sha256": "db8dde9b3adb0a29191d7ef6f2d29dc7f06592ed98890d96673cdd123f0caf59",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0057_cr14c_protocol_replay_lock.sql",
       "bytes": 196,
       "sha256": "0ff887f53c954a5011f8255fd7f0305692f324a028919280e42e9e3e980c46c5",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/migrations/0058_audit_chain_required_hashes.sql",
       "bytes": 528,
       "sha256": "0d757ee0e751c3ef0f5a71524ce0184a7c9bea581aa46fbd7204de166b3460ac",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-11.json"
     },
     {
       "path": "db/roles/native_evidence_roles.sql",

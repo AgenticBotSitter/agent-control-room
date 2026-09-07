@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Migration content pass finished:** Full text of migrations 0040–0058 was inspected
+and recorded in `research/public-source-content-review-11.json`, completing the
+numbered migration content pass. No private values or live endpoints were found.
+No SQL was executed. Eleven numbered receipts plus the two independent module
+receipts now cover 214 unique exact candidate files; 306 remain outside this set.
+This does not supersede database correctness or source-publication acceptance.
+
 **Publication-content review expanded:** Ten numbered receipts now match 102 exact
 candidate files, including migrations 0010–0039. Two independent reviewers completed
 another 93 files across domain, scheduler, project, operator and node modules. No
