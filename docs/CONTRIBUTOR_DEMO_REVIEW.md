@@ -18,5 +18,10 @@ preservation, unchanged history and separate handling of an accepted revision.
 
 The keyed parent was checked and rules out the reviewer's initial unkeyed scope
 reuse concern. No other concrete issue was established in the bounded review.
-Remediation still needs candidate synchronization and verification; code-level
-tests are not browser interaction evidence or independent re-review.
+The remediation was synchronized into the candidate and its strict type check,
+28 demo tests and two compiled-demo tests pass. The same independent reviewer
+rechecked the changed candidate code and confirmed this specific P2 addressed:
+missing-child detection precedes clearing intent, preserves feedback, explains the
+outcome and unlocks explicit resubmission. The test exercises the recovery helper,
+not mounted React interactions. This closes only this finding, not browser
+acceptance or a complete independent release review.

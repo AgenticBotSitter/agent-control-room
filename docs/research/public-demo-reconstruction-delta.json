@@ -1,10 +1,10 @@
 {
   "description": "PRIVATE reconstruction delta applied after public-candidate-reconstruction.json; never publish.",
-  "sourceCommit": "40d3b98",
+  "sourceCommit": "1ff1ee7ac2aa404b14915172fe90160df4613be0",
   "sourceFiles": [
     {
       "path": "app/components/contributor-simulation.tsx",
-      "sha256": "36fe60aa182ef1209143c371e4f95733241eabfe7bee922f709d4a8d891c2464"
+      "sha256": "44280b54813729bb7c40ac1fd06db755e8330f5d3c3550bc5de7547d015c23fe"
     },
     {
       "path": "app/components/local-pilot-owner-session.tsx",
@@ -64,7 +64,7 @@
     },
     {
       "path": "src/contributor-demo/history-view.ts",
-      "sha256": "6f8f2d65d30c37efa6c28379922ff14feb3665a60bfa0d64db942bc164162cec"
+      "sha256": "bf1739d05272946f678817e13a014832431e3028a5b1d7d08d43aca944446b7c"
     },
     {
       "path": "src/contributor-demo/http.ts",
@@ -188,7 +188,7 @@
     },
     {
       "path": "tests/contributor-demo-runtime.test.ts",
-      "sha256": "42ba3a71699a7c58f5868943a9f41162d9a93052123141436580059d4eb01088"
+      "sha256": "72485168727f45727e90baf6b80194d9370257c393f3a4dc07620124629230fb"
     },
     {
       "path": "tests/local-preview-panels.test.tsx",
@@ -235,6 +235,11 @@
       "path": "SETUP.md",
       "body": "# Contributor setup — local candidate\n\nThis candidate is not yet a published release. Original code is licensed under Apache-2.0;\nthird-party licenses remain applicable. These instructions cover\nthe disposable local demo and synthetic integration tests, not a production installation.\n\n## Requirements\n\n- Node.js 22.13.0 or newer (current rehearsal: Node 22.22.3 on macOS).\n- pnpm 11.19.0.\n- Access to the public npm registry for dependencies not already cached.\n\nFrom this source directory:\n\n```sh\nCI=true pnpm install --frozen-lockfile\npnpm check\npnpm check:demo\npnpm test:demo\npnpm test:build:demo\npnpm test\n```\n\nIf pnpm is not installed, `npx --yes pnpm@11.19.0` can replace `pnpm` in the commands\nabove. It may download the pinned package manager; do not substitute the newest release.\nKeep the lockfile and disabled dependency-build policy unchanged.\n\nIn Windows PowerShell, set `$env:CI = \"true\"` and then run\n`pnpm install --frozen-lockfile` instead of the Unix-style first line. The current\nisolated rehearsal is on macOS; Windows and Linux installation acceptance is pending.\n\n`pnpm check` checks the standalone TypeScript source. `pnpm test` builds the standalone\napplication and runs its selected compiled integration tests with synthetic/disposable\nresources. It is not the full private-development test suite. No GitHub credentials,\nagent authentication or production database should be supplied for these checks.\n\nTo compile without running the selected tests:\n\n```sh\npnpm build\n```\n\nThe output is `dist-vps`. A successful build does not configure a running application.\nThe operational launcher requires trusted operator configuration and real resources;\ndo not use it as a demo quick start or supply fake production credentials.\n\n## Try the disposable demo\n\nAfter preparing dependencies, run:\n\n```sh\npnpm demo\n```\n\nThe command builds the browser files and starts the demo at\n`http://127.0.0.1:3000/local-preview`. It listens only on this computer. If port\n3000 is occupied, stop your own conflicting server or use a separate session later;\nthe launcher will not stop another application or select a different port.\n\nThe terminal prints a one-time code after startup. Paste it into the page's\n**One-time owner code** field. Keep it out of shared screenshots, logs and issues.\nNo Keychain access, agent credentials, paid provider or production database is needed.\n\nCreate a project, save a proposed task, open it and choose **Simulate this task**.\nInspect the labelled sample, enter feedback and request a revised sample. Earlier\nsamples remain available; reopening the task reads history without rerunning work.\nFeedback is reproduced as sample text, not executed by an agent.\n\nPress Ctrl+C in the launch terminal to stop the server and remove this session's\ntemporary database. SIGTERM uses the same cleanup. A forced kill or crash can leave\ntemporary data; a cleanup warning means deletion was not confirmed. Do not store\nimportant work in this demo. The current demo login lasts 15 minutes; after expiry,\nrestart for a fresh disposable session and code. This is not the planned production\nlogin experience.\n\n## Still awaiting acceptance\n\nThe demo command and its simulated flow pass automated tests, but real listener and\nbrowser acceptance are not yet complete. There is no supported `pnpm dev` or\n`pnpm start` command here. Hermes and Codex live compatibility, PostgreSQL deployment,\nproduction owner login, approval key custody\nand independent integrity storage require separate configuration and acceptance.\n\nTests of simulated behavior do not prove live-agent compatibility or production safety.\nDo not publish this candidate as an operational release or run it against private data.\n\n## Contributor workflow and cost\n\nRun checks locally, use a branch per independently reviewable outcome, and batch\nmeaningful pushes and PR updates. Small local commits do not consume Actions minutes.\nThis candidate contains no GitHub Actions workflows. Never add scheduled jobs,\nautomatic deployment, secrets or self-hosted public-PR runners without maintainer review.\n\n## Local cleanup\n\nStop any process you explicitly started before cleaning its data. Preserve your source\nedits. Dependencies (`node_modules`) and generated output (`dist-vps` and\n`dist-contributor`) can be recreated;\ninspect exact paths before removing them. Do not delete a shared package cache, home\ndirectory or another checkout. Temporary rehearsal logs are not release content.\n",
       "sha256": "f3d2f1becc0afb9dc7440d220fd19a6cb456a96a43827b8ecaf765daa5729dbd"
+    },
+    {
+      "path": "THIRD_PARTY.md",
+      "body": "# Third-party code and distribution scope\n\nAgent Control Room's Apache-2.0 license covers its original project code. It does\nnot replace the licenses of third-party software.\n\n## What this source preview contains\n\nThis candidate is source code and contributor documentation. Its proposed source\nfile set excludes installed dependencies, compiled browser/server output, native\nmodules, WASM payloads, fonts and container images. Those local build products are\nnot public release assets merely because they exist in a developer's checkout.\n\n`package.json` and `pnpm-lock.yaml` declare the separately installed dependencies.\nPreparing the project downloads or reuses those packages under their own licenses.\nKeep their accompanying notices intact. A package being a development dependency\ndoes not mean its code cannot appear in a later compiled build.\n\nThe retained [Control Center attribution](third_party/control-center/NOTICE.md)\nand [MIT license](third_party/control-center/LICENSE) document the project's upstream\ncuration adaptation. That adapted curation implementation is not included in this\ninitial demo source subset; these notices do not imply the news module is ready.\n\n## Before distributing additional artifacts\n\nIf a release adds bundled JavaScript, a container, native libraries, WASM, fonts,\nimages or vendored source, review that exact artifact's contents and applicable\nnotices/source obligations first. The source-preview inventory is not clearance\nfor those different distributions. Do not copy an installed dependency tree into\na release or assume the project LICENSE covers it.\n\nThird-party review is still pending for this candidate. Do not describe this file\nas legal certification, a complete software bill of materials or publication approval.\n",
+      "sha256": "3938e2fd5bdb2e5240cbc72c2caef2042439ad2f8af6d8812682c1ccfb52cf41"
     }
   ],
   "publicationApproved": false

@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Reviewed recovery fix verified in the isolated candidate:** The candidate contains
+the unaccepted-feedback preservation fix and passes strict types, all 28 demo tests
+and both compiled-demo tests. Independent re-review confirms the specific P2 is
+addressed by inspection, with mounted-browser behavior still unverified. The private
+reconstruction delta now tracks source at `1ff1ee7` and includes the third-party scope
+document. No listener, provider call or public upload was performed.
+
 **Independent demo review found a draft-loss bug:** A revision request lost before
 server acceptance could have its feedback cleared by history recovery. The working
 source now preserves that unrecorded draft, explains the outcome and allows explicit
