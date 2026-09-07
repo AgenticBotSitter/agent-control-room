@@ -124,8 +124,9 @@ audience. This change extends that bridge; it does not duplicate Cloudflare rout
 6. Deliver a batched deployment/rollback handoff with exact releases, configuration
    inventory (no secrets), service ownership and acceptance receipts. Keep Actions off.
 
-No browser/native integration, DNS/account write, deployment, new download or GitHub
-activity occurred in preparing this packet. Website-only readiness must remain
+Original packet preparation involved no browser/native integration, DNS/account write,
+deployment, new download or GitHub activity. Subsequent approved account changes are
+recorded below. Website-only readiness must remain
 distinct from agent execution readiness. Closing a browser tab never cancels work.
 
 ### Read-only account inspection after the single-address decision
@@ -142,6 +143,25 @@ the new method to account members and retain explicit owner-only application pol
 do not authorize all account members as Control Room owners. MFA and live acceptance
 remain unfinished. Do not copy account identifiers or unrelated application details
 into this handoff.
+
+### Approved login-provider setup
+
+After the owner authorized preserving existing login behavior and adding restricted
+Cloudflare login, both pre-existing applications with "Accept all available identity
+providers" enabled were changed to explicitly select their sole existing One-time
+PIN provider. Both saves displayed "Application successfully configured". Their
+access policies, destinations, durations and service-token rule were not edited.
+The remaining existing application already selected providers explicitly and was
+left unchanged. These are configuration observations, not live login/agent tests.
+
+The Cloudflare login method was then saved with "Restrict to account members" On.
+The provider inventory displayed the new Cloudflare entry alongside One-time PIN;
+reopening its stored settings confirmed the restriction remained On. Intermittent
+browser action detachments were resolved through observed state and supported
+keyboard controls; no uncertain save was repeated. This does not establish MFA,
+owner-only Control Room membership, application policy, DNS/tunnel configuration,
+origin availability or successful real login. No website deployment or GitHub write
+was performed. No account identifiers or private hostname values are retained here.
 
 ## Public copy checkpoint
 

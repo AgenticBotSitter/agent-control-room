@@ -11,7 +11,14 @@ component acceptance. This file reports current product readiness and the next b
 **Current owner decision:** Deploy only one private application address on the owner's
 separate existing domain, selected in the private conversation. Keep the public project
 domain informational with no private login link. Use Cloudflare Access and the owner's
-Cloudflare login with MFA; inspect actual account configuration before enabling it.
+Cloudflare login with MFA. The Cloudflare login provider is now saved in the actual
+account, with account-member restriction verified On after reopening its settings.
+The two existing apps that accepted all providers were explicitly pinned to their
+previous One-time PIN provider before adding it; both saves reported success. Their
+access policies and machine service-token rule were left unchanged. The third app
+already used an explicit provider selection and was not modified. Control Room's
+owner-only Access application, MFA enforcement, DNS/ingress and live acceptance are
+not yet configured or proven by this provider setup.
 Do not deploy a second private address or populate `secondaryAccess`. The optional
 dual-address code remains unused. Hostnames stay out of public export configuration.
 Workplace use remains subject to employer policy, not assumed from domain reachability.
