@@ -132,6 +132,41 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
   assert.match(revisedHtml, /Still needed: Scenario Content/);
   assert.match(revisedHtml, /no execution authority/);
   assert.doesNotMatch(revisedHtml, /Quality review complete|<button|memory:\/\//);
+  const verification = { schemaVersion: profile.schemaVersion, id: "verification:simulation:content", tenantId, projectId,
+    targetId: revised.id, targetDigest: sha256Digest(revised), acceptanceProfileId: profile.id,
+    acceptanceProfileDigest: sha256Digest(profile), scenarioId: "scenario:content", outcome: "passed",
+    verifier: { actorId: "service:synthetic-verifier", actorType: "service" },
+    evidenceDigests: [second.manifest.contentHash], verifiedAt: at(7), grantsApproval: false, grantsExecutionAuthority: false };
+  // Evidence from the earlier artifact, or the producer checking itself, cannot
+  // satisfy the new revision's independent verification requirement.
+  await assert.rejects(store.recordVerification({ ...verification, targetDigest: sha256Digest(target) }));
+  await assert.rejects(store.recordVerification({ ...verification, verifier: producer }));
+  assert.deepEqual((await store.snapshot(tenantId, revised.id)).missingVerificationScenarioIds, ["scenario:content"]);
+  await store.recordVerification(verification);
+  assert.equal((await store.snapshot(tenantId, revised.id)).status, "pending");
+  assert.doesNotMatch(await renderStoredReviews(), /Quality review complete/);
+  const acceptance = { schemaVersion: profile.schemaVersion, id: "review:simulation:accepted", tenantId, projectId,
+    targetId: revised.id, targetDigest: sha256Digest(revised), acceptanceProfileId: profile.id,
+    acceptanceProfileDigest: sha256Digest(profile), reviewer: { actorId: "identity:web", actorType: "human" },
+    authority: "completion_gate", decision: "accepted", assessedRisk: "low", effectiveRisk: "low",
+    evidenceDigests: [second.manifest.contentHash], findingIds: [], reviewedAt: at(8),
+    grantsApproval: false, grantsExecutionAuthority: false };
+  await store.recordReview(acceptance);
+  assert.equal((await store.recordReview(acceptance)).replayed, true);
+  assert.equal((await store.recordVerification(verification)).replayed, true);
+  const completed = await store.snapshot(tenantId, revised.id);
+  assert.equal(completed.status, "ready");
+  assert.deepEqual(completed.acceptedReviewIds, [acceptance.id]);
+  assert.deepEqual(completed.missingVerificationScenarioIds, []);
+  assert.deepEqual(completed.openFindingIds, []);
+  assert.equal(completed.grantsApproval, false);
+  assert.equal(completed.grantsExecutionAuthority, false);
+  assert.equal((await store.snapshot(tenantId, target.id)).status, "superseded");
+  const completedHtml = await renderStoredReviews();
+  assert.match(completedHtml, /Quality review complete/);
+  assert.match(completedHtml, /Simulation only/);
+  assert.match(completedHtml, /no execution authority/);
+  assert.doesNotMatch(completedHtml, /<button|memory:\/\//);
   // Reusing completion storage must not turn the demonstration into an operational run.
   assert.deepEqual(await f.tasks.detail(f.identity, projectId, receipt.jobId), source);
   for (const table of ["control_attempts", "control_leases", "control_harness_runs", "control_native_artifact_receipts", "control_effect_intents"])

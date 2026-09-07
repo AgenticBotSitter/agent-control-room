@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Fresh-proposal rehearsal now reaches reviewed completion:** Extended the existing
+task-service test through independent verification and acceptance of the revised
+artifact. Old-target evidence and producer self-verification are rejected; verification
+alone stays pending; exact replay does not duplicate acceptance. The stored review
+panel reports quality complete while the operational proposal remains unchanged and
+has no native attempts, leases or effect intents. All 12 task-service tests, strict
+type checking and focused lint pass. This is test coverage, not an interactive demo.
+Next remains usable synthetic application wiring; no license selected or publication.
+
 **Draft dependency attribution assembled:** 36 distinct notice texts now have a single
 189 KB draft delivery file, with exact source mapping and verified wording/labels.
 LF normalization is explicit; original notice records are unchanged. See
