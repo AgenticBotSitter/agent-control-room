@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Disposable demo request routing connected without a listener:** Extracted the existing
+local login/status handlers into an explicitly supplied runtime module; the existing
+application route keeps its configuration behavior. Contributor routing mounts only
+login/status and project/task endpoints, rejects other origins and unknown routes,
+and reuses canonical authorization. Login input now uses the existing streaming JSON
+bound rather than buffering before checking size. Five focused tests pass, covering
+login, oversized/extra input, one-use code, authenticated project creation/replay,
+cross-origin denial, absent native route, shutdown and existing pilot regressions.
+Strict types, focused lint and whitespace checks pass. No server/browser launch or
+public candidate export yet; result/revision simulation and UI remain next work.
+
 **Credential-free disposable demo composition added locally:** A small contributor-demo
 factory reuses the existing local synthetic runtime with generated in-memory keys, a
 one-time owner code and a fresh temporary database. It never discovers credentials,
