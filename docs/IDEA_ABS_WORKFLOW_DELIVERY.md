@@ -25,6 +25,30 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Shared pg-boss worker with an explicit feed profile
+
+`pg-boss-bounded-worker` extracts the existing native pickup/cancellation/drain code;
+the native wrapper preserves exact schema, identifiers, error codes and separately
+verified bounded recovery. `startPgBossAbsFeedWorker` uses the same implementation with
+the fixed `abs-feed-collection` profile, zero retries and no recovery callback. Queue
+data contains tenant/project/job/attempt/effect locators and operation digest only. It
+cannot carry a URL, source contents, credentials or permission. Stable operational UUIDs
+bind every reference field but do not replace permanent canonical effect claims.
+
+The trusted feed handler must re-read canonical approval/source/job state, own a durable
+marker, await reader cleanup and persist its outcome before reporting delivered or held.
+That handler and transactional submission are still missing; this wrapper is not mounted.
+No production queue/role is provisioned and existing startup is not silently widened.
+
+Sixty-six queue unit/regression checks pass. Twenty-six installed pg-boss 12.30.0
+integration checks include the new feed worker running against disposable PGlite: a
+held collection completes operationally, an uncertain callback fails with retryCount zero,
+and an identical operational ID is refused while retained. This is not proof of permanent
+duplicate-effect prevention or real PostgreSQL concurrency. Sixty-two workflow regressions,
+TypeScript, focused lint and VPS compilation pass. Independent source review found no
+implementation defect; its test-description issue was fixed by supplying a truly unrelated
+next reference. No live source, native bot, listener, provider or deployment was used.
+
 ### Immediate authority assertion contract
 
 Reader and collection now require `assertCurrent` to return `undefined`, not TypeScript

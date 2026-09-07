@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**News job pickup now reuses the installed pg-boss worker path:** Shared code owns
+single-item pickup, bounded concurrency, cancellation, drain and sanitized outcomes.
+The existing native wrapper preserves its reference/recovery contract; the separate feed
+wrapper accepts only immutable job/effect locators and refuses all retries. It cannot
+accept a URL or grant source authority. Sixty-six queue checks, 26 installed-package
+integration checks and 62 workflow regressions pass, plus TypeScript, focused lint and
+VPS build. Independent source review found no implementation defect; a test now uses a
+genuinely unrelated next job after the reviewer noted its misleading original description.
+Installed-package evidence uses disposable PGlite and synthetic handlers, not live feeds.
+Durable canonical feed admission/effect marking, transactional submission, startup/role
+wiring, page verification and real-agent journeys remain open. No production queue was
+created; the feed worker is not mounted and does not construct a reader.
+
 **Source authority wiring now rejects asynchronous assertions:** The reader and collection
 share a captured, explicitly synchronous guard. A mistakenly returned Promise cannot
 authorize DNS, requests or saved failure outcomes; rejected native Promises are observed

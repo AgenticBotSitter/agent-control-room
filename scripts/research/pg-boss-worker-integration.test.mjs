@@ -8,6 +8,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { startPgBossNativeTaskWorker } from '../../src/persistence/pg-boss-native-task-worker.ts';
+import { startPgBossAbsFeedWorker, absFeedJobId, ABS_FEED_QUEUE } from '../../src/persistence/pg-boss-abs-feed-worker.ts';
 import { startPgBossNativeTaskRuntime } from '../../src/persistence/pg-boss-native-task-runtime.ts';
 import { verifyPgBossNativeWorkerPermissions } from '../../src/persistence/pg-boss-native-task-permissions.ts';
 import { verifyNativeQueueWorkerDatabase } from '../../src/web/v1/private-database-preflight.ts';
@@ -274,6 +275,29 @@ async function fixture(t) {
   const get = id => boss.getJobById(spec.name, id);
   return { raw, boss, send, start, get, errors, workers };
 }
+
+test('feed pickup uses installed pg-boss with no automatic re-read after handler uncertainty', async t => {
+  const f = await fixture(t), name = ABS_FEED_QUEUE.name;
+  await f.boss.createQueue(name, { retryLimit: 0 });
+  const ref = { schema: 'control-room.abs-feed-job/v1', tenantId: 'tenant:feed', projectId: 'project:feed',
+    jobId: 'job:feed', attemptId: 'attempt:feed', effectId: 'effect:feed', operationDigest: sha256Digest('operation') };
+  const failed = { ...ref, jobId: 'job:failed', effectId: 'effect:failed' }, calls = [];
+  const worker = await startPgBossAbsFeedWorker(f.boss, { async collect(value) {
+    calls.push(value.jobId); assert.equal(Object.isFrozen(value), true);
+    if (value.jobId === failed.jobId) throw new Error('synthetic collection uncertainty');
+    return { disposition: 'held' };
+  } });
+  f.workers.push(worker);
+  for (const value of [ref, failed]) assert.equal(await f.boss.send(name, value, { id: absFeedJobId(value), retryLimit: 0 }), absFeedJobId(value));
+  await until(async () => (await f.boss.getJobById(name, absFeedJobId(ref)))?.state === 'completed'
+    && (await f.boss.getJobById(name, absFeedJobId(failed)))?.state === 'failed');
+  const row = await f.boss.getJobById(name, absFeedJobId(failed));
+  assert.equal(row.retryCount, 0); assert.equal(row.retryLimit, 0);
+  assert.deepEqual([...calls].sort(), [ref.jobId, failed.jobId].sort());
+  assert.equal(await f.boss.send(name, ref, { id: absFeedJobId(ref), retryLimit: 0 }), null);
+  await worker.close(); assert.equal(worker.isAccepting(), false); assert.deepEqual(f.errors, []);
+  // Operational retention and completion are not permanent effect-claim evidence.
+});
 
 // A separate logical SQL port models ownership of a dedicated worker pool; PGlite
 // has one in-memory engine, so this is not proof of PostgreSQL roles/pool isolation.
