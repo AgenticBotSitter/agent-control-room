@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner priority reset: public contributor launch before more feature work.** The
+owner explicitly requested a usable public source repository with MVP-first substantial
+work packages. Live inspection confirms `AgenticBotSitter/agent-control-room` is public
+and currently contains only its two-line README. Actions were enabled; they have now
+been disabled and the setting read back successfully. No source or draft documents
+were uploaded in this step. `docs/public-launch-draft/WORK_PACKAGES.md` defines larger
+MVP outcomes and future Claude Code/OpenClaw/other-harness tracks, with local tests,
+batched reviews and no default Actions. These are not ready assignments until an exact
+public source base and reproducible setup exist. Original-code license selection was
+asked of the owner; source privacy/rights review and clean candidate preparation remain
+maintainer work. Do not drift back into simulator features before finishing this launch
+work or identifying an actual required owner decision. A README-only announcement is
+not the requested runnable contributor release.
+
 **Browser client can read protected simulation results:** The existing task browser
 client and local transport now support the separate exact-artifact simulation route,
 using the same bounded/no-store/same-origin requests with no retry. A strict response

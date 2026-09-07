@@ -48,6 +48,10 @@ Unit tests or an in-memory integrity checkpoint cannot substitute for operationa
 
 ## 3. Productive workers across machines
 
+Hermes and Codex are the initial priority. Claude Code and OpenClaw are proposed
+community adapter tracks, not supported configurations today. Other harnesses can
+propose adapters against the same reviewed contracts. See [work packages](WORK_PACKAGES.md).
+
 **Deliver:** Qualified platform/runtime combinations, independently registered workers,
 continuous eligible pickup, bounded concurrency and useful status/recovery reporting.
 

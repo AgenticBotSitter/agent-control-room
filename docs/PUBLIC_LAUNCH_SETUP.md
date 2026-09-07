@@ -6,6 +6,14 @@ license and contact remain owner decisions. No account, repository or DNS change
 
 ## Recommended structure
 
+**Current state:** `AgenticBotSitter` and its public `agent-control-room` repository
+already exist. Do not create another organization. The product repository currently
+has only its initial README; Actions are now disabled. The separate private
+`agent-control-room-website` repository is the static website handoff, not application
+source. The creation instructions below are historical setup guidance, not remaining
+owner actions. Current remaining decisions/work are license selection, reviewed source
+export, clean-checkout verification and ready contributor assignments.
+
 Keep the existing personal GitHub login. Create a separate **GitHub Free organization**
 for the project, with that login as its owner. Proposed display name: Agent Control Room.
 Try `AgentControlRoom` as the handle; availability has not been checked. If unavailable,

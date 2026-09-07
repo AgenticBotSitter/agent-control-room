@@ -13,6 +13,7 @@ and reproducibility review. Nothing here enables GitHub Actions or changes repos
 | CONTRIBUTING.md | [Contributor guide](../PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md) | Confirm license/contribution policy and link verified setup |
 | docs/ARCHITECTURE.md | [Architecture](ARCHITECTURE.md) | Technical review against the exact exported source |
 | ROADMAP.md | [Roadmap](ROADMAP.md) | Confirm milestone evidence and turn scoped work into ready issues after source release |
+| WORK_PACKAGES.md | [Substantial contributor packages](WORK_PACKAGES.md) | Fill exact public base, prerequisites, allowed files and acceptance commands before issuing ready assignments |
 | GOVERNANCE.md | [Governance](GOVERNANCE.md) | Owner approves policy and names accountable maintainers |
 | SECURITY.md | [Security policy](SECURITY.md) | Establish and test a monitored private reporting channel |
 | .github/PULL_REQUEST_TEMPLATE.md | [PR template](PULL_REQUEST_TEMPLATE.md) | Confirm contributor workflow |
