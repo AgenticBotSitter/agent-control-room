@@ -138,6 +138,10 @@ next-page links preserve both. Ranked pagination anchors on the retained story I
 a missing or newly excluded anchor returns no records and requires starting over.
 Concurrent collection updates are not a frozen snapshot. Tests compare a 63-story
 two-page cohort against upstream ordering and require no omissions/duplicates.
+Timestamp fractions are truncated to three digits before PostgreSQL parsing so
+its higher-precision rounding cannot disagree with the borrowed JavaScript
+millisecond rules. A boundary regression uses nanosecond-precision input and compares
+the selected records directly against upstream freshness and sorting functions.
 
 ### Open product decision: research on discovered articles
 

@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Borrowed date compatibility:** Database freshness/ranking now truncates fractional
+seconds to JavaScript milliseconds before PostgreSQL parses timestamps. This avoids
+database rounding moving a story across the upstream freshness boundaries. A
+nanosecond-precision regression compares saved results directly with borrowed
+freshness/sorting functions. Six storage tests, types and lint pass. No story data,
+evidence, permission or native-runtime state is changed by this query adaptation.
+All 318 delivery tests also pass; this remains local PGlite/injected evidence, not
+production PostgreSQL or browser acceptance.
+
 **Whole-library sorting:** Most important, Newest and Oldest now select pages by
 saved priority/date rank across the chosen library view. Switching order resets
 the cursor, and links retain view/order. Existing clients default to ID ordering.

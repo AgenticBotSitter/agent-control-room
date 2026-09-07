@@ -5,6 +5,7 @@ import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/post
 import { buildAbsNewsSyntheticWorkspaceV1, buildAbsNewsWorkOrderProposalV1 } from "../src/project-adapters/abs-news/v1/index";
 import { sha256Digest } from "../src/security";
 import { sortIndustryItems } from "../src/vendor/control-center/industry";
+import { isFreshTimestamp, INDUSTRY_FRESHNESS_HOURS } from "../src/vendor/control-center/freshness";
 
 async function setup() {
   const f = await taskFixture(), scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
@@ -106,4 +107,22 @@ test("whole-library sorting paginates by rank rather than ID and matches borrowe
     assert.deepEqual([...first.stories, ...second.stories].map(story => story.storyId), sortIndustryItems(items, order).map(story => story.id));
     assert.deepEqual((await f.open().listStories("story:missing", { view: "history", observedAt, order })).stories, []);
   }
+});
+
+test("database dates retain JavaScript millisecond semantics without rounding high-precision timestamps", async t => {
+  const f = await setup(); t.after(() => f.db.close());
+  const observedAt = "2026-09-07T12:00:00.000Z";
+  const times = ["2026-09-07T12:10:00.000999999Z", "2026-09-07T12:10:00.001Z",
+    "2026-09-06T12:00:00.000000001Z", "2026-09-06T11:59:59.999999999Z"];
+  const items = [];
+  for (let index = 0; index < times.length; index++) {
+    const { storyDigest: _digest, ...body } = { ...f.story, storyId: `story:precision:${index}`,
+      queue: "earlier" as const, publishedAt: times[index] }; void _digest;
+    await f.open().saveStory({ ...body, storyDigest: sha256Digest(body) });
+    items.push({ id: body.storyId, title: body.title, summary: body.summary, url: body.canonicalUrl,
+      source: body.sourceLabel, publishedAt: body.publishedAt, importanceScore: body.priorityScore });
+  }
+  const page = await f.open().listStories(undefined, { view: "fresh", order: "newest", observedAt });
+  const expected = sortIndustryItems(items.filter(item => isFreshTimestamp(item.publishedAt, INDUSTRY_FRESHNESS_HOURS, Date.parse(observedAt))), "newest");
+  assert.deepEqual(page.stories.map(story => story.storyId), expected.map(item => item.id));
 });

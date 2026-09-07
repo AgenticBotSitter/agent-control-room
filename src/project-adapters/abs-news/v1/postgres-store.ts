@@ -198,16 +198,18 @@ export class PostgresAbsNewsStoreV1 {
     const now = Date.parse(selected.observedAt);
     const rows = await this.db.query<Row & { story_id: string; story_digest: string }>(`WITH latest AS (SELECT DISTINCT ON (story_id COLLATE "C") story_id,story_digest,payload,auth_tag
       FROM control_abs_story_versions WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3
-      ORDER BY story_id COLLATE "C",sequence DESC), filtered AS (
-      SELECT * FROM latest WHERE $5='all'
+      ORDER BY story_id COLLATE "C",sequence DESC), dated AS (
+      SELECT *, regexp_replace(COALESCE(payload->>'publishedAt',payload->>'discoveredAt'),
+        '(\\.[0-9]{3})[0-9]+', '\\1')::timestamptz AS story_time FROM latest), filtered AS (
+      SELECT * FROM dated WHERE $5='all'
         OR ($5='archive' AND payload->>'queue'='archive')
         OR ($5='history' AND payload->>'queue'<>'archive')
         OR ($5='fresh' AND payload->>'queue'<>'archive'
-          AND COALESCE(payload->>'publishedAt',payload->>'discoveredAt')::timestamptz BETWEEN $6::timestamptz AND $7::timestamptz)),
+          AND story_time BETWEEN $6::timestamptz AND $7::timestamptz)),
       ranked AS (SELECT *, row_number() OVER (ORDER BY
         CASE WHEN $8='important' THEN (payload->>'priorityScore')::numeric END DESC,
-        CASE WHEN $8 IN ('important','newest') THEN COALESCE(payload->>'publishedAt',payload->>'discoveredAt')::timestamptz END DESC,
-        CASE WHEN $8='oldest' THEN COALESCE(payload->>'publishedAt',payload->>'discoveredAt')::timestamptz END ASC,
+        CASE WHEN $8 IN ('important','newest') THEN story_time END DESC,
+        CASE WHEN $8='oldest' THEN story_time END ASC,
         story_id COLLATE "C") AS ordinal FROM filtered)
       SELECT story_id,story_digest,payload,auth_tag FROM ranked
       WHERE $4::text IS NULL OR ($8='id' AND story_id COLLATE "C">$4 COLLATE "C")
