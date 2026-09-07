@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { fixture, now, origin, trust } from "./web-foundation";
+import { fixture, now, origin, trust, type WebFixtureMigrationProfile } from "./web-foundation";
 import { seedWebIdea, webIdeaKey } from "./web-idea-project";
 import { seedWebConnection, seedWebSignal, webConnectionKeys } from "./web-connection";
 import type { PrivateStartupConfiguration } from "../../src/web/v1/private-startup";
@@ -11,8 +11,8 @@ export const startupConfig: PrivateStartupConfiguration = {
   database: { host: "127.0.0.1", port: 5432, database: "template1", username: "web_test", password: "synthetic-only", majorVersion: 17 },
   ideaProjects: { integrityKey: webIdeaKey }, connections: webConnectionKeys,
 };
-export async function limitedWebFixture() {
-  const f = await fixture();
+export async function limitedWebFixture(migrationProfile: WebFixtureMigrationProfile = "full") {
+  const f = await fixture(() => now, migrationProfile);
   await seedWebIdea(f.client); await seedWebConnection(f.client); await seedWebSignal(f.client);
   await f.db.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
   await f.db.exec(`CREATE ROLE web_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;

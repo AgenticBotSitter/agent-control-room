@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Core-only application rehearsal found a schema gate:** Omitting the two content
+adapter migrations changes the fixed structural fingerprint, so compiled startup
+correctly refuses the smaller schema before installation and closes its pool. The
+new regression retains that negative result and verifies the full schema's protected
+project/task/logout flow. [Decision needed](CONTENT_WORKFLOW_GENERALIZATION.md): do
+not export a reduced schema without a reviewed profile. Full defaults, production
+preflight and migrations are unchanged. Fresh build, all 47 compiled tests, full
+TypeScript and targeted lint pass; no physical listener or production DB used.
+
 **Core branding triage narrowed the real work:** No targeted personal-brand/identity/
 domain/home-path matches in 295 application-closure files; the selected test closure
 only matched an assertion excluding old brands. This is not full privacy clearance.

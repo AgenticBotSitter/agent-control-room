@@ -76,6 +76,28 @@ adopting a selected migration set. Preserve the full private migration sequence 
 adapter tests. Do not silently change the shared fixture's default migrations, or
 claim optional modules work against a schema that deliberately omits their tables.
 
+### Application rehearsal result: smaller schema is not currently accepted
+
+The follow-up application test initially failed with
+`private_startup_prerequisites_failed`. Inspection found the cause:
+`src/web/v1/private-database-preflight.ts` binds startup to `privateWebSchemaDigest`,
+the structural fingerprint of the full schema. Removing the optional tables changes
+that fingerprint even though the other migrations apply successfully.
+
+The new compiled schema test preserves this negative result: the smaller schema has
+a different digest, startup refuses it before installation and closes its pool. The
+full default schema passes the same bootstrap, rejects unsigned access, creates and
+reads a proposed task, renders its page, enforces logout and closes normally. Test
+helpers now expose an explicit `without-external-content` migration profile solely
+for this rehearsal; their default remains the full sequence. No production preflight,
+schema fingerprint or migration was changed.
+
+Therefore, do not omit those migrations from a runnable candidate yet. A genuinely
+smaller schema needs an explicitly reviewed schema profile and corresponding permission,
+startup and migration evidence, not a caller-supplied expected digest or a bypass.
+Alternatively retain the currently accepted full schema while its naming/distribution
+decision is resolved. Neither alternative is silently adopted by this test.
+
 1. First public core demo uses ordinary generic projects and the existing core task
    services, not this external-source adapter. Preserve its code privately while the
    optional module is reviewed; do not delete it or claim it has been generalized.

@@ -22,9 +22,12 @@ export function request(path = "/api/v1/projects", method = "GET", value?: unkno
   return new Request(`${origin}${path}`, { method, headers: { "cf-access-jwt-assertion": jwt, origin,
     "content-type": "application/json", "idempotency-key": key }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) });
 }
-export async function fixture(clock = () => now) {
+export type WebFixtureMigrationProfile = "full" | "without-external-content";
+export async function fixture(clock = () => now, migrationProfile: WebFixtureMigrationProfile = "full") {
   const db = new PGlite();
-  for (const file of (await readdir("db/migrations")).filter(f => f.endsWith(".sql")).sort())
+  const omitted = migrationProfile === "without-external-content"
+    ? new Set(["0025_cr9a_content_blooms_sync.sql", "0026_cr9a_content_blooms_placement.sql"]) : new Set<string>();
+  for (const file of (await readdir("db/migrations")).filter(f => f.endsWith(".sql") && !omitted.has(f)).sort())
     await db.exec(await readFile(`db/migrations/${file}`, "utf8"));
   await db.query("INSERT INTO tenants(id,display_name) VALUES('tenant:web','Test tenant')");
   await db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:web','tenant:web','Test workspace')");
