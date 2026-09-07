@@ -149,6 +149,26 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Vite's three declared patches inspected
+
+At `648d96f`, retrieved the exact release's pnpm-workspace.yaml and all three declared
+patches, not just sirv. Full inert texts are retained in
+`research/vite-upstream-patch-review.json`. The patch SHA-256 values match the source
+lock's previously observed patch_hash values for sirv 3.0.2, chokidar 3.6.0 and
+dotenv-expand 13.0.0. Download log: 7,514 bytes after checking 102 GiB free.
+
+Read all three patches. Sirv adds a development lookup shouldServe callback and avoids
+an extra directory separator. Chokidar skips ignored-file callbacks; dotenv-expand
+uses the full parsed input in its expansion. The patches change code/types, not license
+files or copyright notices. Preserve component notices plus Vite's attribution for
+modifications. No patch was applied, no downloaded scripts executed, and no installed
+package changed. These observations do not qualify their runtime security or make a
+development server a production protection boundary.
+
+This resolves the particular unknown sirv patch and the other two declared patch
+contents. The full Vite bundle has not been reproduced; remaining MIT/ISC text review
+and final notice delivery still stand. No new original-project license was chosen.
+
 ### Four Vite notice locations resolved through release sources
 
 At `abb55eb`, Vite v8.0.13 peels to

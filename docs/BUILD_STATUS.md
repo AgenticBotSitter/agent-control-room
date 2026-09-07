@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Vite patch provenance checked:** Read all three patches declared by the exact release
+(sirv, chokidar, dotenv-expand); their hashes match the source-lock patch identifiers.
+They modify code/types, not licensing files. Inert source and download log retained in
+`research/vite-upstream-patch-review.json`. No patches applied or packages changed.
+Remaining bundled text review and final notice delivery are still open.
+
 **Four Vite notice locations resolved:** Exact release lock/registry records identify
 all four versions and matching integrity values. Immutable-source MIT notices are
 retained for Polka/sirv; string-hash's CC0 dedication is in its release README.
