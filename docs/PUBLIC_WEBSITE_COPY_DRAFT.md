@@ -3,6 +3,10 @@
 Local draft. Domain, repository URL, attribution and license await owner confirmation.
 Do not publish this drafting note. No website has been deployed or domain ownership verified.
 
+Implemented locally as the separate [static welcome page](../public-site/index.html).
+See [deployment boundaries](../public-site/README.md). Source checks pass; browser QA,
+destination confirmation and publication remain outstanding.
+
 ## Agent Control Room
 
 ### One place for your projects and AI agents

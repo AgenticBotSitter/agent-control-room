@@ -30,7 +30,8 @@ defaults or private project names. They are not a license grant or security cert
 - Verified quick start, development setup, supported-platform matrix and connector guides.
 - Exact third-party notice package and resolved asset rights for the selected source tree.
 - Private vulnerability reporting tested before soliciting security reports.
-- Website implementation and confirmed public links; [copy is drafted](../PUBLIC_WEBSITE_COPY_DRAFT.md).
+- Website browser acceptance and confirmed public links; [static implementation](../../public-site/README.md)
+  and [copy](../PUBLIC_WEBSITE_COPY_DRAFT.md) are prepared locally.
 
 An information-only announcement can precede the source release if approved separately.
 It must not contain a nonworking installation button or claim that contributions can

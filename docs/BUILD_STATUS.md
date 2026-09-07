@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Separate public welcome page implemented locally:** `public-site/index.html` and
+`styles.css` contain the project introduction, feature goals, honest pre-alpha status
+and contribution invitation. No guessed GitHub/domain links, private-app navigation,
+scripts, forms, external assets or tracking. The Sites skill guided the standalone
+information surface; existing application/build/hosting configuration is unchanged.
+Two source-boundary/link tests pass and are registered in posttest. The authored
+static files require no dependency build. Browser rendering/accessibility acceptance,
+confirmed destinations, hosting headers and publication remain outstanding. Only the
+two static files are candidates for a separately approved welcome-page deployment;
+the repository/application directories must never be served with them.
+
 **Public contributor package drafted locally:** `docs/public-launch-draft/` adds a
 staging index, generic architecture overview, proposed governance/security policies,
 PR template and ready-work template. It reuses the existing README/contributor drafts
