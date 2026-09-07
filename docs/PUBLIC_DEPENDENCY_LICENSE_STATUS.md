@@ -135,6 +135,23 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Next lint root notice and PostCSS notice retained
+
+At `8c24388`, Next.js tag v16.2.6 resolves to immutable commit
+`ee6e79b1792a4d401ddf2480f40a83549fe8e722`. Its root MIT notice and lint-package
+manifest are retained verbatim in `research/next-postcss-notice-evidence.json`, with
+URLs, hashes, byte counts and cleanup guidance. The upstream manifest is byte-identical
+to the installed @next/eslint-plugin-next 16.2.6 manifest. That supports provenance
+but does not prove equivalence of the generated dist files. The root-text gap is now
+resolved, alongside the earlier Postgres.js, RSC and Cloudflare root-text gaps.
+
+Downloaded 1,794 bytes after checking 102 GiB free; manifests were parsed as data,
+not executed. Also retained the installed PostCSS 8.5.26 root MIT notice (1,095 bytes),
+resolved through the existing Tailwind PostCSS package, without a download. All exact
+notice text, sizes and hashes were checked. These records preserve public upstream
+author attribution; they contain no owner credentials or deployment configuration.
+Nested vendors, final delivery notices, assets and original-code rights remain separate.
+
 ### Tailwind root notice coverage
 
 At `9c1a238`, read the complete installed root MIT texts for `tailwindcss`,

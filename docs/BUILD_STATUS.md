@@ -8,6 +8,12 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Next lint root notice gap resolved; PostCSS notice retained:** Fixed-release Next.js
+license and package manifest are saved with the download log (1,794 bytes; 102 GiB
+free checked first). Manifest exactly matches the installed lint package. PostCSS's
+installed MIT text is also retained. See `research/next-postcss-notice-evidence.json`.
+No package execution/install, GitHub write or original-project license selection.
+
 **Tailwind root notices retained:** Four installed Tailwind 4.2.1 packages share one
 full MIT text, now retained with exact package hashes in
 `research/tailwind-notice-evidence.json`. No downloads or installed files changed.

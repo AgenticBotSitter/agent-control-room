@@ -1,0 +1,47 @@
+{
+  "schema": "control-room.notice-evidence/v1",
+  "observedAt": "2026-09-06",
+  "publicationApproved": false,
+  "originalProjectLicenseSelected": false,
+  "downloadLog": {
+    "freeSpaceBefore": "102 GiB",
+    "retainedDownloadedBytes": 1794,
+    "retention": "Two immutable upstream files retained verbatim in this JSON; no separate download directory or installed package changes.",
+    "cleanup": "Keep while lint-tool provenance is relevant; remove only this evidence record after confirming its notices are retained where needed. No automated cleanup.",
+    "executedDownloadedCode": false
+  },
+  "next": {
+    "name": "@next/eslint-plugin-next",
+    "version": "16.2.6",
+    "tag": "v16.2.6",
+    "tagObject": "3376b86aa968cb9b70b88c5eacd903174b46275d",
+    "commit": "ee6e79b1792a4d401ddf2480f40a83549fe8e722",
+    "installedManifestMatchesUpstreamBytes": true,
+    "builtPackageSourceEquivalenceProved": false,
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/vercel/next.js/ee6e79b1792a4d401ddf2480f40a83549fe8e722/license.md",
+        "bytes": 1079,
+        "sha256": "ee765244e2d59f5234d474f62e0766fa0c8b99af967fdd4c0cb8dcb0c76ea224",
+        "text": "The MIT License (MIT)\n\nCopyright (c) 2025 Vercel, Inc.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/vercel/next.js/ee6e79b1792a4d401ddf2480f40a83549fe8e722/packages/eslint-plugin-next/package.json",
+        "bytes": 715,
+        "sha256": "1cf80a11fcaf678a33a75ee4fccb734f2ffa8bc67f5142591ec46fb98a515e69",
+        "text": "{\n  \"name\": \"@next/eslint-plugin-next\",\n  \"version\": \"16.2.6\",\n  \"description\": \"ESLint plugin for Next.js.\",\n  \"main\": \"dist/index.js\",\n  \"types\": \"dist/index.d.ts\",\n  \"license\": \"MIT\",\n  \"repository\": {\n    \"url\": \"vercel/next.js\",\n    \"directory\": \"packages/eslint-plugin-next\"\n  },\n  \"files\": [\n    \"dist\"\n  ],\n  \"dependencies\": {\n    \"fast-glob\": \"3.3.1\"\n  },\n  \"devDependencies\": {\n    \"@types/eslint\": \"9.6.1\",\n    \"eslint\": \"9.37.0\"\n  },\n  \"scripts\": {\n    \"dev\": \"pnpm build\",\n    \"build\": \"swc -d dist src && pnpm types\",\n    \"types\": \"tsc src/index.ts --skipLibCheck --declaration --emitDeclarationOnly --esModuleInterop --declarationDir dist\",\n    \"prepublishOnly\": \"cd ../../ && turbo run build\"\n  }\n}\n"
+      }
+    ]
+  },
+  "postcss": {
+    "source": "existing_installed_package_resolved_from_tailwind_postcss",
+    "name": "postcss",
+    "version": "8.5.26",
+    "declaredLicense": "MIT",
+    "manifestSha256": "e0f23518d0e8fc0570ac68438eff7ecc7554774de3194af6f54f502e33f0c25b",
+    "noticePath": "LICENSE",
+    "bytes": 1095,
+    "sha256": "5be1f3465bba68a626777f984878814aaf35e7ef8e9fd314d469bcf887050fb8",
+    "text": "The MIT License (MIT)\n\nCopyright 2013 Andrey Sitnik <andrey@sitnik.es>\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the \"Software\"), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software is furnished to do so,\nsubject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS\nFOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR\nCOPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER\nIN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN\nCONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
+  }
+}
