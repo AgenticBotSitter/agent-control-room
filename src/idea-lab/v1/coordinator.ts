@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { buildIdeaLabDiscussionPromptV1 } from "./discussion-prompt";
+import { assertIdeaLabDiscussionCapacityV1, buildIdeaLabDiscussionPromptV1 } from "./discussion-prompt";
 import { sha256Digest } from "../../security";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
@@ -190,7 +190,7 @@ export class IdeaLabBotCoordinatorV1 {
   async execute(input: { runId: string; session: unknown; evidence: unknown[]; safePrompt: string;
     liveAdmission?: unknown; cancelRequested?: () => boolean }): Promise<IdeaLabBotRunV1> {
     const session = parseIdeaLabSessionV1(input.session);
-    if (input.safePrompt.length < 1 || input.safePrompt.length > 800) throw new IdeaLabErrorV1("invalid_input");
+    assertIdeaLabDiscussionCapacityV1(session, input.safePrompt);
     const evidence = input.evidence.map((item) => parseIdeaLabProviderSessionEvidenceV1(item, session));
     if (evidence.length !== session.participants.length || evidence.some((item) => item.mode !== this.driver.mode)
       || new Set(evidence.map((item) => item.participantId)).size !== session.participants.length

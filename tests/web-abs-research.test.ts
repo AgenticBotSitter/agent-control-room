@@ -6,6 +6,7 @@ import { buildAbsNewsSyntheticWorkspaceV1, buildAbsNewsWorkOrderProposalV1 } fro
 import { sha256Digest } from "../src/security";
 import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
 import { origin, token } from "./helpers/web-foundation";
+import { absResearchTaskDraft } from "../src/web/v1/abs-research-draft";
 
 function proposal(projectId: string) {
   const { storyDigest: _digest, ...original } = buildAbsNewsSyntheticWorkspaceV1().stories[0];
@@ -66,4 +67,23 @@ test("browser recovers a lost ABS save response without creating a second task o
   const receipt = await client.retrySave();
   assert.equal(receipt.startsWork, false); assert.equal(client.hasPending(), false);
   assert.equal((await f.tasks.list(f.identity, f.project.projectId)).tasks.length, 1);
+});
+
+test("long ABS titles are retained in full; oversized provenance is held without a network request", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const p = proposal(f.project.projectId);
+  const { proposalDigest: _digest, ...body } = { ...p, requestedTitle: "A".repeat(240) }; void _digest;
+  const long = { ...body, proposalDigest: sha256Digest(body) };
+  const response = await f.handler(request(`${f.path}/from-abs`, "POST", long));
+  assert.equal(response.status, 201);
+  const { receipt } = await response.json();
+  const detail = await f.tasks.detail(f.identity, f.project.projectId, receipt.jobId);
+  assert.equal(detail.task.title.length, 120);
+  assert.ok(detail.instructions.includes(long.requestedTitle));
+  const large = { ...p, sourceUrls: Array.from({ length: 32 }, (_, i) => `https://example.org/${i}/${"a".repeat(150)}`) };
+  assert.throws(() => absResearchTaskDraft(large));
+  let calls = 0;
+  const client = createTaskBrowserClient(async () => { calls++; throw new Error(); });
+  await assert.rejects(client.proposeAbsResearch(f.project.projectId, large), { code: "invalid_request" });
+  assert.equal(calls, 0); assert.equal(client.hasPending(), false);
 });

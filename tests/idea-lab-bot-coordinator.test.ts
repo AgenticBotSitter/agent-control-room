@@ -12,6 +12,16 @@ import {
 } from "../src/idea-lab/v1/index.ts";
 
 const key=new Uint8Array(32).fill(0x51),now="2026-08-31T16:00:30.000Z",expires="2026-08-31T16:10:30.000Z";
+
+test("infeasible multi-round prompt is rejected before ledger preparation or provider contact", async()=>{
+  const target=await setup();try {
+    let calls=0;const coordinator=new IdeaLabBotCoordinatorV1(target.ledger,target.registry,
+      {mode:"repository_fake",async invoke(){calls++;throw new Error("must not invoke");}},()=>now);
+    await assert.rejects(coordinator.execute({runId:"idea-run:oversize",session:target.fixture.session,
+      evidence:target.evidence,safePrompt:"x".repeat(800)}),e=>e instanceof IdeaLabErrorV1&&e.safeCode==="invalid_input");
+    assert.equal(calls,0);assert.equal(await target.ledger.get("idea-run:oversize"),undefined);
+  }finally{await target.raw.close();}
+});
 async function setup(){const raw=new PGlite();for(const file of (await readdir(resolve("db/migrations"))).filter(f=>f.endsWith(".sql")).sort())await raw.exec(await readFile(resolve("db/migrations",file),"utf8"));
   await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:owner','Owner')`);await raw.query(`INSERT INTO workspaces(id,tenant_id,display_name) VALUES ('workspace:control-room','tenant:owner','Control Room')`);
   const db=adaptPglite(raw),registry=new IdeaLabProjectRegistryStoreV1(db,key),ledger=new IdeaLabBotRunStoreV1(db,key),fixture=buildIdeaLabFixtureV1();await registry.registerSession(fixture.session);

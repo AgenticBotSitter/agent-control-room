@@ -1,5 +1,6 @@
 import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
 import type { AbsNewsWorkOrderProposalV1 } from "../../project-adapters/abs-news/v1/types";
+import { absResearchTaskDraft } from "./abs-research-draft";
 import { readBrowserJson as json } from "./browser-json";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskCommandSchema, taskDetailSchema, taskDraftSchema, taskPageSchema, type TaskReceipt } from "./task-wire";
@@ -90,6 +91,7 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
       let body: string;
       try {
         if (proposal.projectId !== projectId) throw new Error();
+        absResearchTaskDraft(proposal);
         body = JSON.stringify(proposal);
         if (new TextEncoder().encode(body).length > 24_576) throw new Error();
       } catch { throw new BrowserRequestError("invalid_request"); }
