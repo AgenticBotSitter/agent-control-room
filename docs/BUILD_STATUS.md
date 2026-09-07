@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Cloudflare build-tool root notices retrieved:** Both installed release tags resolve
+to one immutable workers-sdk commit. Full MIT/Apache texts and version-matching package
+manifests are retained in `research/cloudflare-notice-evidence.json` (18,855 bytes,
+logged after disk check). This resolves root-text retrieval, not full package provenance
+or nested vendor clearance. Original Agent Control Room license remains undecided;
+no installation, code execution, GitHub write or publication.
+
 **Runtime notice-text coverage completed for the selected lockfile graph:** All 26
 production-root snapshots now map to retained notice text: 23 package-root sources,
 two README sections, one immutable upstream source; 17 distinct texts. Evidence:

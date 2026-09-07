@@ -15,8 +15,9 @@ The practical remainder is now:
 
 1. Retain applicable framework/browser-bundle/vendor and CSS-tooling notices with the
    chosen source or built deliverable; the existing runtime map is not that full scope.
-2. Resolve outstanding development-package notice/provenance questions, particularly
-   the earlier Cloudflare tooling findings, without discarding useful build tools.
+2. Complete development-package provenance and nested/bundled notice review. The
+   earlier Cloudflare root-text retrieval gaps are now resolved below; they no longer
+   need repeated location searches. Do not discard useful build tools.
 3. Complete source/asset privacy and rights decisions and original-code license choice.
 4. Prepare and test the actual clean source candidate and usable synthetic demo, then
    independent review and exact owner publication approval. A map of notice texts is
@@ -133,6 +134,27 @@ then trace these specific paths into that deliverable and retain the required no
 Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
+
+### Cloudflare root notice retrieval gaps resolved
+
+At `ac4dbfa`, public annotated tags for `wrangler@4.92.0` and
+`@cloudflare/vite-plugin@1.37.1` both peeled to commit
+`a3fa623f2abf192e57d876c727bfa107aa297ec9` in workers-sdk. Direct immutable-source
+retrieval succeeded for `LICENSE-MIT`, `LICENSE-APACHE` and both package manifests.
+Read the full license texts; the manifests confirm the requested versions and their
+MIT / MIT OR Apache-2.0 declarations respectively. Previous failed web-cache/tag-body
+retrievals remain historical, not unresolved root-text locations.
+
+[`research/cloudflare-notice-evidence.json`](research/cloudflare-notice-evidence.json)
+retains the four exact files as text, including URLs, sizes, hashes, commit, release tags
+and cleanup guidance. Total retained content: 18,855 bytes after checking 102 GiB free.
+The downloaded package manifests were parsed as data, never executed. No package install,
+CI, credential operation, repository clone, push or publication occurred.
+
+These root notices do not establish a complete npm-to-source binary correspondence or
+cover every nested/generated vendor component. Retain applicable notices with the final
+deliverable and continue its scoped dependency review. Retaining Apache text for an
+upstream tool is not choosing Apache-2.0 for original Agent Control Room code.
 
 ### PGlite extension pins and preview scope recommendation
 
