@@ -6,6 +6,23 @@ import ts from "typescript";
 import { loadConfigFromFile } from "vite";
 import { selectBuildTarget } from "../src/config/build-target.ts";
 
+test("shared action-boundary labels retain readable wrapping rules at mobile breakpoints", () => {
+  const css = readFileSync("styles/control-room.css", "utf8");
+  const labels = css.match(/\.prototype-badge, \.simulation-only\s*\{([^}]+)\}/)?.[1];
+  assert.ok(labels);
+  assert.match(labels, /font-size:\s*\.875rem/);
+  assert.match(labels, /max-width:\s*100%/);
+  assert.match(labels, /min-width:\s*0/);
+  assert.match(labels, /overflow-wrap:\s*anywhere/);
+  assert.match(labels, /white-space:\s*normal/);
+  assert.match(css, /\.hero-section, \.section-heading\s*\{\s*flex-wrap:\s*wrap;/);
+  // Source-level regression for the removed hiding rules, not a rendered CSS cascade audit.
+  for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/\.(?:simulation-only|prototype-badge)\b/.test(rule[1])) continue;
+    assert.doesNotMatch(rule[2], /display:\s*none|visibility:\s*hidden|opacity:\s*0(?:\s|;|$)/);
+  }
+});
+
 test("build target defaults to Sites and explicitly selects Node without accepting an unknown target", () => {
   assert.equal(selectBuildTarget(undefined), "sites");
   assert.equal(selectBuildTarget("vps-node"), "vps-node");

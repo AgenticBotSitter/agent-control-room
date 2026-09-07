@@ -2,6 +2,12 @@
 
 ## Shared stylesheet review and refreshed browser bytes
 
+Follow-up to batch 05: the two mobile hiding rules have now been removed, with .875rem
+wrapping badges and wrapping heading rows. Source and compiled-serving regressions
+check their presence and removal of direct hiding declarations. No browser layout audit
+has been run; phone/200% text enlargement and the wider small-text issues remain.
+The batch 05 CSS hash records its reviewed pre-fix bytes, not the edited stylesheet.
+
 [Batch 05](research/public-source-content-review-05.json) records five exact committed
 files at `0097f69`: shared CSS, shared JSON reader and three browser clients. Two entries
 refresh batch 04; the total is 53 distinct observed paths, not 53 approved exports.

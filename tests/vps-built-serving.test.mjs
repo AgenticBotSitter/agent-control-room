@@ -44,6 +44,12 @@ test("compiled Node bridge reaches authenticated SQL routes without a physical l
     const references = [...page.body().matchAll(/(?:src|href)="(\/_next\/static\/[^"?#]+)"/g)].map(match => match[1]);
     assert.ok(references.some(path => path.endsWith(".js"))); assert.ok(references.some(path => path.endsWith(".css")));
     for (const path of references) assert.equal(assets.respond(path, "GET")?.status, 200, path);
+    const css = (await Promise.all(references.filter(path => path.endsWith(".css"))
+      .map(path => assets.respond(path, "GET").text()))).join("\n");
+    const labelRules = [...css.matchAll(/([^{}]*\.(?:simulation-only|prototype-badge)[^{}]*)\{([^{}]*)\}/g)];
+    assert.ok(labelRules.length > 0, "served CSS includes the action-boundary label rules");
+    assert.ok(labelRules.some(rule => /font-size:\s*\.875rem/.test(rule[2]) && /overflow-wrap:\s*anywhere/.test(rule[2])));
+    for (const rule of labelRules) assert.doesNotMatch(rule[2], /display:\s*none|visibility:\s*hidden/);
     const head = await send(new Request(request("/projects"), { method: "HEAD" }));
     assert.equal(head.output.statusCode, 200); assert.equal(head.body(), "");
     const logout = await send(request("/api/v1/session/logout", "POST")); assert.equal(logout.output.statusCode, 204);

@@ -205,13 +205,18 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .operator-data-status.available { color: var(--green); }
 .operator-data-status.unavailable { color: var(--amber); }
 .prototype-badge, .simulation-only {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface);
   color: var(--muted);
   padding: 7px 11px;
-  font-size: 10px;
+  font-size: .875rem;
+  line-height: 1.4;
   font-weight: 700;
   letter-spacing: .06em;
   text-transform: uppercase;
@@ -919,7 +924,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .scope-control { min-width: 0; flex: 1; }
   .scope-control select { width: min(100%, 390px); }
   .hero-section { align-items: flex-start; padding-top: 28px; }
-  .prototype-badge { display: none; }
+  .hero-section, .section-heading { flex-wrap: wrap; }
   .dashboard-columns, .lower-columns { grid-template-columns: 1fr; }
   .completion-gate-header, .completion-gate-grid { grid-template-columns: 1fr; }
   .completion-previews > ol { grid-template-columns: 1fr 1fr; }
@@ -963,7 +968,6 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .metric-card { padding: 13px; }
   .project-card { padding: 15px; }
   .fairness-card { grid-column: auto; }
-  .simulation-only { display: none; }
   .panel, .capacity-panel { padding: 15px; }
   .agent-grid { grid-template-columns: 1fr; }
   .page-footer { display: grid; gap: 4px; }

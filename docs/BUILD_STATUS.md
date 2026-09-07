@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Mobile action-limit labels no longer deliberately hidden:** Removed small-screen
+rules hiding prototype/simulation badges, including the shared connection panel's
+read-only/no-connect label. Labels use .875rem wrapping text with constrained width;
+their heading rows can wrap below 840px. Existing layout/theme and all authority checks
+remain. Ten source/profile/connection tests, targeted lint and fresh standalone build
+pass. Both compiled-serving tests pass, including the served-CSS label regression.
+Logs: `/private/tmp/cr-mobile-label-tests.log`, `/private/tmp/cr-mobile-label-build.log`,
+`/private/tmp/cr-mobile-label-compiled-tests.log`. This is not actual
+phone, zoom, contrast or full accessibility acceptance. Batch 05 stylesheet hash remains
+historical after this edit; project-vocabulary adaptation and wider readability remain.
+
 **Shared styles reviewed; concrete public-candidate gaps found:** Batch 05 records five
 exact-file observations at `0097f69`, refreshing two browser hashes and bringing coverage
 to 53 distinct paths. Shared CSS still has project-specific vocabulary and hides a
