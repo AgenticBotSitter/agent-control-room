@@ -21,9 +21,18 @@ export interface PrivateClientAssets {
  * replacement of the release is outside this boundary, not defeated by pathname checks.
  */
 export async function loadPrivateClientAssets(clientDirectory: string): Promise<PrivateClientAssets> {
+  return loadClientAssets(clientDirectory, false);
+}
+
+/** Explicit demo build only. Adds its single entry document, never arbitrary HTML. */
+export async function loadContributorClientAssets(clientDirectory: string): Promise<PrivateClientAssets> {
+  return loadClientAssets(clientDirectory, true);
+}
+
+async function loadClientAssets(clientDirectory: string, demo: boolean): Promise<PrivateClientAssets> {
   try {
     const root = resolve(clientDirectory);
-    if (basename(root) !== "client" || basename(dirname(root)) !== "dist-vps"
+    if (basename(root) !== "client" || basename(dirname(root)) !== (demo ? "dist-contributor" : "dist-vps")
       || await realpath(root) !== root || !(await lstat(root)).isDirectory()) throw new Error();
     const assets = new Map<string, { bytes: Buffer; type: string }>();
     let total = 0, inspected = 0;
@@ -32,7 +41,7 @@ export async function loadPrivateClientAssets(clientDirectory: string): Promise<
       const path = join(root, relative), stat = await lstat(path);
       if (stat.isSymbolicLink() || await realpath(path) !== path) throw new Error();
       if (stat.isDirectory()) {
-        if (relative === "favicon.svg") throw new Error();
+        if (relative === "favicon.svg" || relative === "index.html") throw new Error();
         for (const name of (await readdir(path)).sort()) {
           if (!/^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,180}$/.test(name)) throw new Error();
           await visit(`${relative}/${name}`, depth + 1);
@@ -40,7 +49,7 @@ export async function loadPrivateClientAssets(clientDirectory: string): Promise<
         return;
       }
       if (!stat.isFile()) throw new Error();
-      const type = types[extname(relative)];
+      const type = demo && relative === "index.html" ? "text/html; charset=utf-8" : types[extname(relative)];
       // Source maps, manifests, HTML, config and arbitrary public/ files are not published.
       if (!type) return;
       if (assets.size >= 512 || stat.size > maxFileBytes || (total += stat.size) > maxTotalBytes) throw new Error();
@@ -63,6 +72,7 @@ export async function loadPrivateClientAssets(clientDirectory: string): Promise<
     // Never traverse the server tree or treat the whole release/public directory as public.
     await visit("_next/static", 0);
     await visit("favicon.svg", 0);
+    if (demo) await visit("index.html", 0);
     if (assets.size < 2) throw new Error();
     const hash = createHash("sha256");
     for (const [path, asset] of assets) hash.update(JSON.stringify([path, asset.type, asset.bytes.length,

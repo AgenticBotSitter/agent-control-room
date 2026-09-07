@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Built demo frontend and disposable backend assembled:** The contributor application
+loads the fixed `dist-contributor/client` snapshot through the existing bounded asset
+loader, adding only its exact index document. Production loading still requires the
+`dist-vps/client` root and excludes HTML. The assembled request handler serves the
+existing page/assets and authenticated demo API; arbitrary file routes return 404,
+unauthenticated project reads return 401, and shutdown drains then removes demo data.
+Nineteen built-demo/asset/transport tests, strict types, focused lint and whitespace
+checks pass. These use in-memory Node exchanges, not a network listener or browser.
+`test:build:demo` now includes assembled-application verification. Start/stop launcher,
+revision flow, browser acceptance and public candidate expansion remain unfinished.
+
 **Standalone contributor frontend now compiles:** `build:demo` uses installed Vite/React
 to compose the existing owner login, project/task workspace and explicit simulation
 panel, preserving existing styles. Output is isolated in ignored `dist-contributor/client`;
