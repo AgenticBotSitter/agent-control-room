@@ -34,12 +34,14 @@ contributor release. The separate website repository does not supply application
    [release inventory](research/public-candidate-release-inventory.json) identifies
    all 520 current source/document files and their hashes, excluding installed
    dependencies and build output. Current scoped evidence covers all 520 files:
-   496 have content-review matches, 23 additional paths have unchanged full-text
+   501 have content-review matches, 18 additional paths have unchanged full-text
    readiness review, and the lockfile has separate structural/hash checks. See
    `research/public-release-review-coverage.json`. The file-review backlog is closed;
    do not repeat it unless bytes change. This is not blanket security/legal clearance.
    All four reconstruction receipts reproduce the current candidate exactly. Keep
-   this inventory synchronized with final documentation edits before publication.
+   this inventory synchronized with any further edits before publication. Finalized
+   release documents are included in candidate digest
+   `e352f4d5608ec7bd96aadf709b690a01cd203b92bab73b577b26000085e0386a`.
 
 2. **Close source-distribution rights and privacy findings.** Preserve the full
    Apache license, project NOTICE and upstream notices. The 28 installed direct
@@ -59,6 +61,9 @@ contributor release. The separate website repository does not supply application
    pretending they are publicly reproducible live qualifications. See the private
    finding in `PUBLIC_HISTORICAL_CONTRACT_REFERENCES.md`; do not copy its private
    investigation wholesale into public docs or silently change contract constants.
+   These seven documents are now finalized locally and independently reviewed at
+   their current hashes; all 16 relative links resolve. The contributor guide gives
+   a contact fallback without claiming private reporting is already enabled.
 
 4. **Complete exact-tree acceptance.** Retain the successful strict type checks,
    30 demo tests, two earlier built-demo tests, 49 standalone tests and owner-approved
@@ -78,6 +83,9 @@ contributor release. The separate website repository does not supply application
    allowed paths, prerequisites, checks and reviewing maintainer. Use ordinary
    confirmed assignments; do not revive the private automated jobber queue.
    Contributors can take another independent assignment while review is pending.
+   Three complete issue drafts are saved in `PUBLIC_CONTRIBUTOR_ASSIGNMENTS.md`.
+   Replace their public-commit placeholders after the upload is verified; do not
+   advertise them as ready while the application source is unavailable.
 
 ## Repository protection decision still pending
 

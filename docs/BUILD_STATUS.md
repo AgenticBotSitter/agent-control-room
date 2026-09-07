@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Release-facing documents finalized locally:** README, contributor guide, setup,
+roadmap, work packages, architecture and third-party scope now describe the actual
+pre-alpha source preview. Independent review covered their exact current bytes and
+16 relative links. Current inventory digest is
+`e352f4d5608ec7bd96aadf709b690a01cd203b92bab73b577b26000085e0386a`.
+Scoped evidence covers 501 content-reviewed files plus 18 additional readiness
+paths and one structurally checked lockfile. Three substantial contributor issues
+are prepared in `PUBLIC_CONTRIBUTOR_ASSIGNMENTS.md`, not posted or assigned.
+The public repository was rechecked: README only, no open issues/PRs, Actions disabled.
+Next external step requires exact-snapshot publication approval; repository security
+settings remain a separate pending decision. No private history will be published.
+
 **Candidate file-review backlog closed:** Exact-source content/readiness evidence now
 covers 519 of 520 files; the lockfile has separate structural and retained-hash checks.
 `research/public-release-review-coverage.json` records all scopes without treating

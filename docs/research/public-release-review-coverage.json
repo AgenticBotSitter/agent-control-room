@@ -1,9 +1,9 @@
 {
   "schema": "control-room.public-release-review-coverage/v1",
-  "candidateDigest": "652583805bf0586310b82d78eda69d6cb50a5102c69d6642a27039a1ea40813a",
+  "candidateDigest": "e352f4d5608ec7bd96aadf709b690a01cd203b92bab73b577b26000085e0386a",
   "fileCount": 520,
-  "contentReviewedUniqueFiles": 496,
-  "unchangedReadinessMatches": 25,
+  "contentReviewedUniqueFiles": 501,
+  "unchangedReadinessMatches": 20,
   "fullTextMixedScopeUniqueFiles": 519,
   "structuralLockfileObservations": 1,
   "coveredUniqueFiles": 520,
@@ -18,7 +18,7 @@
   "receipts": [
     {
       "path": "docs/research/public-independent-architecture-content-review.json",
-      "exactMatches": 1
+      "exactMatches": 0
     },
     {
       "path": "docs/research/public-independent-domain-content-review.json",
@@ -43,6 +43,10 @@
     {
       "path": "docs/research/public-independent-registry-persistence-content-review.json",
       "exactMatches": 18
+    },
+    {
+      "path": "docs/research/public-independent-release-docs-content-review.json",
+      "exactMatches": 7
     },
     {
       "path": "docs/research/public-independent-ui-tests-content-review.json",
@@ -114,7 +118,7 @@
     },
     {
       "path": "docs/research/public-source-content-review-14.json",
-      "exactMatches": 11
+      "exactMatches": 10
     },
     {
       "path": "docs/research/public-source-content-review-15.json",
@@ -126,7 +130,7 @@
     },
     {
       "path": "docs/research/public-source-content-review-17.json",
-      "exactMatches": 2
+      "exactMatches": 1
     }
   ]
 }

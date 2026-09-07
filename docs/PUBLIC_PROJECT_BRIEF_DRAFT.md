@@ -1,12 +1,11 @@
 # Agent Control Room
 
-Local public-facing candidate. Apache-2.0 is approved; source publication is pending.
-Do not present this candidate as an operational release.
+Pre-alpha contributor source preview. Try the disposable local demo and help finish
+the live project-to-agent workflow. This is not a production-ready installation.
 
 Project website: [agentcontrolroom.xyz](https://agentcontrolroom.xyz).
 
 Repository: [AgenticBotSitter/agent-control-room](https://github.com/AgenticBotSitter/agent-control-room).
-These are project destinations, not a claim that the website is deployed or source uploaded.
 
 Maintainer: Alastair Fraser. Main website: [agenticbotsitter.com](https://agenticbotsitter.com).
 
@@ -33,18 +32,18 @@ agents. You remain in control of permissions, budgets and consequential actions.
 
 ## Honest status
 
-This is a pre-alpha project, not a production-ready fleet manager. The private development
-tree has implemented project/task interfaces, queue integration, connector components,
+This is a pre-alpha project, not a production-ready fleet manager. The source includes
+project/task interfaces, queue integration, connector components,
 result/review flows and extensive automated tests using disposable or simulated resources.
 Those results do not establish live compatibility on your machine.
 
-The isolated source candidate includes an explicit `pnpm demo` command for a local,
+This source preview includes an explicit `pnpm demo` command for a local,
 disposable project/task/sample/revision experience. It passes strict type checking,
-28 demo tests and two compiled-demo tests on macOS. One owner-approved local browser
+30 demo tests and two compiled-demo tests on macOS. One owner-approved local browser
 trial also completed login, project/task creation, sample revision, refresh recovery,
 separate project tabs and archiving, followed by verified shutdown/data cleanup.
 That is synthetic demo evidence, not live-agent or multi-machine acceptance.
-No working public download, supported agent-runtime version or release date is announced here.
+No live agent-runtime/platform combination is claimed supported by this preview.
 
 ## Contributor starting points
 
@@ -101,7 +100,7 @@ understanding the change, testing it and respecting upstream licenses.
 Original Agent Control Room code in this candidate is licensed under the
 [Apache License, Version 2.0](LICENSE). See [project attribution](NOTICE).
 Third-party code and dependencies retain their own licenses and notices; the project
-license does not relicense them. Final third-party distribution review is still pending.
+license does not relicense them. See [third-party distribution scope](THIRD_PARTY.md).
 Your installation, project records, agent credentials and business data are not
-published with the application. A private security-reporting route must be established
-before launch.
+published with the application. Do not put vulnerabilities, credentials or private
+installation details in public issues. The contributor guide explains private contact.

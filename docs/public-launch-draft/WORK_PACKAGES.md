@@ -1,7 +1,7 @@
 # Contributor work packages
 
-Draft for the first runnable public source release. These are substantial outcomes,
-not currently assigned or ready-to-claim issues. A maintainer must add the exact public
+These are substantial contribution outcomes, not automatic assignments or claims.
+Check the repository's ready issues for work currently available. A maintainer must add the exact public
 base commit, allowed files, reviewing maintainer and runnable acceptance commands before
 marking a package ready. Never point contributors at the private development checkout.
 

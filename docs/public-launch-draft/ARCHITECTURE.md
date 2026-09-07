@@ -1,7 +1,7 @@
 # Agent Control Room architecture
 
-Unpublished draft. Describes the intended architecture and contribution boundaries,
-not a claim that a production installation or every connector is supported today.
+This guide describes the architecture and contribution boundaries of the pre-alpha
+source preview, not a claim that production or every connector is supported today.
 
 ## One application, many projects and workers
 

@@ -1,8 +1,8 @@
 # Agent Control Room roadmap
 
-Unpublished draft for maintainer review. Pre-alpha: the public runnable source release
-and live multi-machine acceptance are not complete. These milestones preserve the full
-product direction; they are not release dates or claims of supported configurations.
+Pre-alpha roadmap. The source preview supplies a disposable demo; independent setup
+reproduction and live multi-machine acceptance remain open. These milestones preserve
+the full product direction, not release dates or claims of supported configurations.
 
 ## What finished should look like
 

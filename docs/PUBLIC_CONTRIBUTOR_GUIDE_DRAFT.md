@@ -1,14 +1,14 @@
 # Contributing to Agent Control Room
 
-**Draft for the planned public repository.** Apache-2.0 is approved. The public source,
-maintainer roles and clean setup instructions are not published yet. These
-instructions are a proposed workflow, not an invitation to access a private repository
-or run agents against an existing installation. Remove this draft notice only after
-those prerequisites are in place and the guide is reviewed for publication.
+This guide covers contributions to the pre-alpha source preview under Apache-2.0.
+Alastair Fraser is the maintaining owner. Work in your own checkout with disposable
+data; contributing does not grant access to a maintainer's machines or agents.
 
 General project questions: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).
-Do not send credentials or private installation records. Private vulnerability reporting
-will be described separately in the reviewed security policy.
+Do not send credentials or private installation records. If the repository offers
+private vulnerability reporting, use its Security tab. Until that route is enabled,
+email the project contact to arrange private reporting without including exploit
+details or sensitive data in the initial message. Never use a public issue for secrets.
 
 ## What we are building
 
@@ -18,7 +18,7 @@ different agent runtimes; optional workflows add ideas, research, news and conte
 We prefer proven libraries and thin integrations over new custom infrastructure.
 
 A passing test is useful evidence, not proof of a live deployment. The developer preview
-will use clearly labeled synthetic work; production and native-runtime readiness are
+uses clearly labeled synthetic work; production and native-runtime readiness are
 tracked separately. Do not claim a real agent worked just because a fixture completed.
 
 ## Choose work you can complete
@@ -122,10 +122,12 @@ credentials or on private agent hosts. Contributor tests use disposable resource
 Report vulnerabilities through the project's designated private reporting route once
 published; never post exploits containing private data or credentials in normal issues.
 
-## Maintainer prerequisites before publishing this guide
+## License and contribution terms
 
-Publish the approved Apache-2.0 license and clarify any contribution/sign-off policy; establish the
-public repository, responsible reviewers and private vulnerability-reporting contact;
-rehearse and link the exact setup guide; and publish a truthful supported-platform/status
-matrix. Do not collect contributions under an unspecified license or advertise a demo
-that cannot yet be reproduced from the public source.
+Original project code uses [Apache-2.0](LICENSE); third-party notices remain applicable.
+Submit only work you have the right to contribute. Contributions intentionally submitted
+for inclusion follow the project's license terms. This preview does not add a separate
+CLA or DCO sign-off requirement. Discuss license exceptions before submitting code.
+
+Ready assignments name their reviewing maintainer. Assistant reviews support that
+maintainer; they do not create additional human maintainers or merge permissions.

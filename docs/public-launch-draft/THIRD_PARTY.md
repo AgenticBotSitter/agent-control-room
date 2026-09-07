@@ -5,7 +5,7 @@ not replace the licenses of third-party software.
 
 ## What this source preview contains
 
-This candidate is source code and contributor documentation. Its proposed source
+This preview distributes source code and contributor documentation. Its source
 file set excludes installed dependencies, compiled browser/server output, native
 modules, WASM payloads, fonts and container images. Those local build products are
 not public release assets merely because they exist in a developer's checkout.
@@ -28,5 +28,5 @@ notices/source obligations first. The source-preview inventory is not clearance
 for those different distributions. Do not copy an installed dependency tree into
 a release or assume the project LICENSE covers it.
 
-Third-party review is still pending for this candidate. Do not describe this file
-as legal certification, a complete software bill of materials or publication approval.
+This file explains the source-preview scope. It is not legal certification, a
+complete software bill of materials or clearance for additional distribution formats.

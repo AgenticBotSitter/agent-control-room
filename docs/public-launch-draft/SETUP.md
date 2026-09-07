@@ -1,7 +1,7 @@
-# Contributor setup — local candidate
+# Contributor setup
 
-This candidate is not yet a published release. Original code is licensed under Apache-2.0;
-third-party licenses remain applicable. These instructions cover
+Original code is licensed under Apache-2.0; third-party licenses remain applicable.
+These instructions cover
 the disposable local demo and synthetic integration tests, not a production installation.
 
 ## Requirements

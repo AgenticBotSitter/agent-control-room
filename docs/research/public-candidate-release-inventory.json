@@ -1,8 +1,8 @@
 {
   "scope": "Private evidence for staged source, not a public distribution or publication approval",
-  "candidateDigest": "652583805bf0586310b82d78eda69d6cb50a5102c69d6642a27039a1ea40813a",
+  "candidateDigest": "e352f4d5608ec7bd96aadf709b690a01cd203b92bab73b577b26000085e0386a",
   "fileCount": 520,
-  "totalBytes": 3716908,
+  "totalBytes": 3716881,
   "excludedDirectoryNames": [
     "node_modules",
     ".git",
@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Seventeen numbered receipts match 175 exact files. Combined numbered/independent content reviews cover 496 unique files. Twenty-five unchanged readiness matches add 23 paths for 519 full-text mixed-scope files; the lockfile has separate structural/hash evidence. All 520 have scoped review evidence in public-release-review-coverage.json, not blanket correctness/security/license/publication approval. Historical mismatched entries are excluded.",
-  "exactPriorReviewMatches": 175,
+  "manualReviewCoverageMeaning": "Seventeen numbered receipts match 173 exact files. Combined numbered/independent content reviews cover 501 unique files. Twenty unchanged readiness matches add 18 paths for 519 full-text mixed-scope files; the lockfile has separate structural/hash evidence. All 520 have scoped review evidence in public-release-review-coverage.json, not blanket correctness/security/license/publication approval. Historical mismatched entries are excluded.",
+  "exactPriorReviewMatches": 173,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -249,8 +249,8 @@
     },
     {
       "path": "CONTRIBUTING.md",
-      "bytes": 7198,
-      "sha256": "5a8d1fa09515ef0076940a10187b6063a0a7be1ca871bd210c693160c7a5a143",
+      "bytes": 7288,
+      "sha256": "ec0ee9935dcbb4cd9e0cd9f402b0cfda5b2c815325cfcbe81bbda0f188dd6e88",
       "priorContentReviewReceipt": null
     },
     {
@@ -267,33 +267,33 @@
     },
     {
       "path": "README.md",
-      "bytes": 5972,
-      "sha256": "19107014631eab441b5790f974f35284fbbae15fd55e470463beab2dd218e986",
+      "bytes": 5918,
+      "sha256": "4b4d4a31161015b7067461e78a0770dcd3c9b8bbd9dc26dbb00c22a7b6e756fa",
       "priorContentReviewReceipt": null
     },
     {
       "path": "ROADMAP.md",
-      "bytes": 7009,
-      "sha256": "be470d59e7efea5b00c9448eb00d1adf3b8d4c705c60375579944143abbd939c",
+      "bytes": 7005,
+      "sha256": "bc01337a57ded149542138fe5cd448bf84a74a57d5ddd574cfe80ccd52fab41f",
       "priorContentReviewReceipt": null
     },
     {
       "path": "SETUP.md",
-      "bytes": 4965,
-      "sha256": "9b045db64b2d2073bd8153e45eebc305aef49f99e190d5c4a5af550561763c36",
+      "bytes": 4898,
+      "sha256": "9eb012f4f615a4f051832b5c4f01f9b03b765bb7da72ae501257724ad584f6d9",
       "priorContentReviewReceipt": null
     },
     {
       "path": "THIRD_PARTY.md",
-      "bytes": 1770,
-      "sha256": "3938e2fd5bdb2e5240cbc72c2caef2042439ad2f8af6d8812682c1ccfb52cf41",
+      "bytes": 1763,
+      "sha256": "37e7624d5bf9d7b8a95e3a930d2af12309f1805636cca1f6d1dc8a32ac6062fa",
       "priorContentReviewReceipt": null
     },
     {
       "path": "WORK_PACKAGES.md",
-      "bytes": 11487,
-      "sha256": "4e397fe3731da6c975e513e41f079e97c8e9639cf644e704881f1270004c26c6",
-      "priorContentReviewReceipt": "docs/research/public-source-content-review-14.json"
+      "bytes": 11502,
+      "sha256": "8f1197764d6b071a9dc0905178bbc683cf246ce72f06c501bfc4a35c79e7e0be",
+      "priorContentReviewReceipt": null
     },
     {
       "path": "app/components/connection-center.tsx",
@@ -766,8 +766,8 @@
     {
       "path": "docs/ARCHITECTURE.md",
       "bytes": 6556,
-      "sha256": "8e741b3997537ae0b39d269a0ea2e59389d173f7478f9f182c035d3dc0448266",
-      "priorContentReviewReceipt": "docs/research/public-source-content-review-17.json"
+      "sha256": "172f4ae1ab166d877ca74bc8faaef7b05b9281dd4b4012535084f0cb9b856c93",
+      "priorContentReviewReceipt": null
     },
     {
       "path": "middleware.ts",

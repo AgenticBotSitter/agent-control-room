@@ -1,0 +1,39 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_readiness_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "Full text of seven revised release docs, 44930 bytes /729 lines; all16 relative Markdown links resolved.",
+  "finding": "No concrete wording defects. Live support unclaimed, demo evidence distinguished, assignments require confirmation, historical pins disclosed, approved contact correct, original/third-party licensing scopes distinct.",
+  "limitations": "Read-only documentation review, not legal/full-release approval. Test/browser claims reviewed for wording, not reproduced. External links and GitHub settings not fetched.",
+  "entries": [
+    {
+      "path": "README.md",
+      "sha256": "4b4d4a31161015b7067461e78a0770dcd3c9b8bbd9dc26dbb00c22a7b6e756fa"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "ec0ee9935dcbb4cd9e0cd9f402b0cfda5b2c815325cfcbe81bbda0f188dd6e88"
+    },
+    {
+      "path": "SETUP.md",
+      "sha256": "9eb012f4f615a4f051832b5c4f01f9b03b765bb7da72ae501257724ad584f6d9"
+    },
+    {
+      "path": "ROADMAP.md",
+      "sha256": "bc01337a57ded149542138fe5cd448bf84a74a57d5ddd574cfe80ccd52fab41f"
+    },
+    {
+      "path": "WORK_PACKAGES.md",
+      "sha256": "8f1197764d6b071a9dc0905178bbc683cf246ce72f06c501bfc4a35c79e7e0be"
+    },
+    {
+      "path": "THIRD_PARTY.md",
+      "sha256": "37e7624d5bf9d7b8a95e3a930d2af12309f1805636cca1f6d1dc8a32ac6062fa"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "172f4ae1ab166d877ca74bc8faaef7b05b9281dd4b4012535084f0cb9b856c93"
+    }
+  ]
+}
