@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Shared styles reviewed; concrete public-candidate gaps found:** Batch 05 records five
+exact-file observations at `0097f69`, refreshing two browser hashes and bringing coverage
+to 53 distinct paths. Shared CSS still has project-specific vocabulary and hides a
+read-only/simulation label at mobile width; many text rules need readability validation.
+See `PUBLIC_EXPORT_INVENTORY_STATUS.md` for scoped adaptation and acceptance work.
+No raw private values observed in the four browser files. CSS is proposed for adaptation,
+not publication. No UI change, new license, export, live operation or GitHub write.
+
 **Browser response bounds implemented locally:** Project, connection and task clients
 now reuse one browser-only JSON reader, extracted from the task client: 1 MiB byte cap,
 10-second body deadline, strict UTF-8 and JSON media type. A valid prefix without EOF

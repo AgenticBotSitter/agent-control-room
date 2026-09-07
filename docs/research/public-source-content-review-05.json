@@ -1,0 +1,79 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "baseline": "0097f6932bf4dad3e4622571d82a0cf898334b21",
+  "source": "tracked_committed_bytes",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full text of shared stylesheet and four browser client/reader files. Refreshes two earlier client hashes; identifies required stylesheet adaptation. Observations are not licensing, independent security or visual acceptance.",
+  "entries": [
+    {
+      "path": "styles/control-room.css",
+      "sha256": "76da698b2b9909f8aca17203d435f39ef1b7974ff88e2c04494500784b0a4045",
+      "contentReview": "project_specific_vocabulary_observed",
+      "proposedDisposition": "adapt_before_candidate",
+      "observation": "Full stylesheet inspected. No credential, private host locator or external URL/font load observed; Tailwind package import requires dependency review. Contains Wayfarer/ABS comments and selectors plus accent-bloom names. Shared CSS still carries optional/private-view vocabulary. Small-screen rules hide simulation-only and prototype-badge; many controls use 6-11px type. These require scoped generalization and visual/accessibility validation, not blanket approval.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision",
+        "scoped_brand_generalization",
+        "mobile_disclaimer_visibility",
+        "visual_and_accessibility_validation"
+      ]
+    },
+    {
+      "path": "src/web/v1/browser-json.ts",
+      "sha256": "fd26314fe3d31c353e0880e80711132adb91c51bef8c934ae0033cd4d738cd5b",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Browser-only shared bounded reader; no imports, credentials or external addresses. Limits and fixed error labels are generic. Extracted from existing task reader; selected tests cover size, UTF-8, stalled EOF and cancellation. Not comprehensive behavioral clearance.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "src/web/v1/browser-client.ts",
+      "sha256": "fba27d5e65ed4fb6322c0dd8829a5d9776a69e1049ceeafd3b9967b6304006c4",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Refreshes batch 04 after bounded-reader adoption. Relative same-origin project/session paths and generic messages; no embedded private values. Exact uncertain save identity retained. Logout remains coupled to configured Access edge.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "src/web/v1/connection-browser-client.ts",
+      "sha256": "59211cade015a179c04231590a2d979427b57608b8959a2e834a5be50bb4a6c3",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Refreshes batch 04 after bounded-reader adoption. Fixed relative endpoint and generic errors; projection comes from supplied response. No embedded credential, private hostname or actual roster.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "src/web/v1/task-browser-client.ts",
+      "sha256": "c144b959958575529baddfab49307026214866c2033fa55be7ff0bb264d1ae50",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic task/results paths, supplied identifiers, matching result hash and explicit retry identity. No embedded private records or host values. Uses shared bounded reader; page-memory pending state is not durable across reload. Imported contracts/services require separate review.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    }
+  ]
+}

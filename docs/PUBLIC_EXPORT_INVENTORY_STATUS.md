@@ -1,5 +1,31 @@
 # Complete tracked-path planning inventory
 
+## Shared stylesheet review and refreshed browser bytes
+
+[Batch 05](research/public-source-content-review-05.json) records five exact committed
+files at `0097f69`: shared CSS, shared JSON reader and three browser clients. Two entries
+refresh batch 04; the total is 53 distinct observed paths, not 53 approved exports.
+The changed project/connection hashes now have refreshed observations without altering
+their historical reports. Browser source contains no embedded private values observed.
+
+The stylesheet requires adaptation, not automatic inclusion. It contains Wayfarer/ABS
+comments and selectors and `accent-bloom` styling. These are presentation vocabulary,
+not private records; preserve reusable media/news features and private originals. Rename
+or separate module styles together with their actual consumers in the eventual candidate,
+not through a repository-wide replacement of protocol or SQL identifiers.
+
+It also hides `.simulation-only` below 620px and `.prototype-badge` below 840px. The
+former is used by the shared Connection Center for its read-only/no-connect label, not
+just decoration. Preserve essential demonstration/action-limit labels at narrow widths;
+do not use this CSS unchanged for the promised clearly synthetic contributor demo.
+Numerous 6-11px text rules require readability/reflow review. These findings do not
+claim a browser-observed accessibility failure; no browser session was exercised.
+
+Only the Tailwind package import was observed, with no external URL/font asset load in
+this stylesheet. Font-family names are fallbacks, not included font licenses. Package
+rights remain separate. Remaining action: scoped styles/consumer adaptation, then actual
+narrow-screen and enlarged-text validation, alongside deeper service/SQL/rights review.
+
 ## Browser schemas and clients
 
 [Batch 04](research/public-source-content-review-04.json) covers thirteen wire schemas
