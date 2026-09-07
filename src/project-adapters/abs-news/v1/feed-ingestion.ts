@@ -63,7 +63,8 @@ export class AbsFeedIngestionService {
         checkedAt, ...(lastSuccessfulAt ? { lastSuccessfulAt } : {}),
         ...(decoded ? { itemCount: decoded.stories.length } : {}), grantsNetworkAuthority: false,
       });
-      return { ...result, rejectedCount: decoded?.rejectedCount ?? null, duplicateCount: decoded?.duplicateCount ?? null,
+      return { ...result, discoveryCuration: decoded?.discoveryCuration ?? null,
+        rejectedCount: decoded?.rejectedCount ?? null, duplicateCount: decoded?.duplicateCount ?? null,
         startsWork: false as const };
     });
   }

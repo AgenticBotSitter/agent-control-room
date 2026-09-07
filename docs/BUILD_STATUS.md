@@ -8,6 +8,23 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Active direction changed: integrate Control Center, not rebuild its news product.**
+See `CONTROL_CENTER_INTEGRATION.md` for the source-backed adoption map and full
+completion gates. The complete MIT `industry-curation.ts` is now vendored unchanged
+at upstream `d13e79e866cc33a1fddfe84f563ce2fb9a2113e0`, with matching SHA256 and retained
+license. Feed decoding now uses upstream scoring instead of constant 35 and invokes
+the complete discovery curation pipeline. Ingestion returns that advisory selection;
+all valid stories remain stored and review-only. The verified digest hard-cap contract
+is unchanged. Eleven decoder/ingestion checks, the 256-entry Idea/ABS delivery lane,
+TypeScript, focused lint, diff checks and VPS build pass. This is local adapter evidence,
+not an upstream full-app qualification or finished UI. Download/storage ledger updated;
+no dependencies installed or live requests to news sources made.
+**Next:** adopt the upstream feed/HTML/sitemap discovery cohort and its tests through
+reader/snapshot adapters, then its reading-view flow and ordinary article-to-agent
+actions. Do not resume the custom application-startup sequence below by default.
+Keep current model/effort. Full integration is not complete; live effects still need
+separate scoped authority. Existing implementation remains saved for selective reuse.
+
 **Feed worker startup is verified locally with the installed package:** Reused the
 native bootstrap behind fixed native/feed wrappers. Feed configuration requires
 separate coordinator, ingestion and worker login names on one configured primary;

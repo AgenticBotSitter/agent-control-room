@@ -5,12 +5,28 @@ import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/post
 import { WebNewsService } from "../src/web/v1/news-service";
 import { taskFixture } from "./helpers/web-task";
 import { now } from "./helpers/web-foundation";
+import { scoreIndustryDiscovery } from "../src/vendor/control-center/industry-curation";
 
 const input = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: "project:feed",
   source: { sourceId: "source:news", sourceLabel: "Example News", sourceKind: "rss", endpointUrl: "https://example.org/feed" },
   observedAt: "2026-09-07T12:00:00.000Z", maxBytes: 65536, maxItems: 100 };
 const item = (url: string, title = "New model") => `<item><title>${title}</title><link>${url}</link><description>A short report</description><pubDate>Mon, 07 Sep 2026 10:00:00 GMT</pubDate></item>`;
 const rss = (items: string) => `<rss version="2.0"><channel><title>Example</title><link>https://example.org/</link><description>News</description>${items}</channel></rss>`;
+
+test("complete upstream curation ranks discovery without deleting excluded stories or granting verification", async () => {
+  const result = await decodeAbsFeed({ ...input, xml: rss(item("https://example.org/release", "New model release")
+    + item("https://example.org/privacy", "Privacy policy")) });
+  const release = result.stories.find(story => story.canonicalUrl.endsWith("/release"))!;
+  const privacy = result.stories.find(story => story.canonicalUrl.endsWith("/privacy"))!;
+  assert.equal(release.priorityScore, scoreIndustryDiscovery({ title: release.title, summary: release.summary,
+    url: release.canonicalUrl, source: release.sourceLabel, kind: "rss", publishedAt: release.publishedAt,
+    discoveredAt: release.discoveredAt }, { now: Date.parse(input.observedAt) }).score);
+  assert.ok(release.priorityScore > privacy.priorityScore);
+  assert.deepEqual(result.discoveryCuration.selectedStoryIds, [release.storyId]);
+  assert.deepEqual(result.discoveryCuration.excludedStoryIds, [privacy.storyId]);
+  assert.equal(result.stories.length, 2); assert.equal(result.discoveryCuration.grantsVerification, false);
+  assert.ok(result.stories.every(story => story.verificationState === "review_only" && !story.grantsExecutionAuthority));
+});
 
 test("upstream RSS parser retains minimized provenance and stable canonical identity without verification", async () => {
   const result = await decodeAbsFeed({ ...input, xml: rss(item("https://example.org/story?utm_source=rss")) });

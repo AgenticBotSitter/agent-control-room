@@ -7,6 +7,7 @@ import { absNewsCanonicalUrlSchemaV1 } from "./schemas";
 import { canonicalizeAbsNewsDiscoveredUrlV1 } from "./collection";
 import { buildAbsNewsStoryV1 } from "./story";
 import type { AbsNewsStoryV1 } from "./types";
+import { curateIndustryDiscoveries, scoreIndustryDiscovery } from "../../../vendor/control-center/industry-curation";
 
 export const absFeedInputSchema = z.object({
   tenantId: id, workspaceId: id, projectId: id,
@@ -67,7 +68,9 @@ export async function decodeAbsFeed(value: unknown) {
         storyId: digestId("story.abs", { ...scope, canonicalUrl }),
         clusterId: digestId("cluster.abs", { canonicalUrl }), sourceLabel: source.sourceLabel,
         queue: "earlier", discoveredAt: observedAt, lastVerifiedAt: observedAt,
-        verificationState: "review_only", priorityScore: 35, coverageCount: 1,
+        verificationState: "review_only", priorityScore: scoreIndustryDiscovery({ title, summary, url: canonicalUrl,
+          source: source.sourceLabel, kind: source.sourceKind, publishedAt, discoveredAt: observedAt },
+        { now: Date.parse(observedAt) }).score, coverageCount: 1,
         contentDigest, sourceEvidence: [{ evidenceId: digestId("evidence.abs", evidence),
           sourceId: source.sourceId, sourceKind: source.sourceKind, sourceLabel: source.sourceLabel,
           canonicalUrl, observedAt, evidenceDigest: sha256Digest(evidence),
@@ -77,7 +80,18 @@ export async function decodeAbsFeed(value: unknown) {
       urls.add(canonicalUrl); stories.push(story);
     } catch { rejectedCount++; }
   }
-  return { stories, sourceId: source.sourceId, feedDigest, byteCount,
+  // Upstream curation is discovery presentation, not verification or durable identity.
+  // Retain every valid story even when upstream deduplicates, excludes or defers it.
+  const curated = curateIndustryDiscoveries(stories.map(story => ({ id: story.storyId,
+    title: story.title, summary: story.summary, url: story.canonicalUrl, source: story.sourceLabel,
+    kind: source.sourceKind, publishedAt: story.publishedAt, discoveredAt: story.discoveredAt })),
+  { now: Date.parse(observedAt), limit: Math.min(maxItems, 30) });
+  const discoveryCuration = { engine: "control-center/industry-curation" as const,
+    selectedStoryIds: curated.selected.map(candidate => candidate.item.id),
+    deferredStoryIds: curated.deferred.map(candidate => candidate.item.id),
+    excludedStoryIds: curated.excluded.map(candidate => candidate.item.id),
+    deduplicatedCount: curated.deduplicatedCount, grantsVerification: false as const };
+  return { stories, discoveryCuration, sourceId: source.sourceId, feedDigest, byteCount,
     inputItemCount: feed.items.length, rejectedCount, duplicateCount,
     state: rejectedCount ? "partial" as const : "available" as const,
     observedAt, startsWork: false as const };

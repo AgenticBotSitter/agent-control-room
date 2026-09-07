@@ -1,5 +1,16 @@
 # Control Center attribution and adaptation
 
+## Complete curation module adoption (2026-09-07)
+
+`src/vendor/control-center/industry-curation.ts` now retains the complete original
+`lib/industry-curation.ts` from the revision below, without implementation changes.
+The feed decoder uses its scoring and complete discovery curation (deduplication,
+ranking, diversity, exclusions and deferral). These are discovery recommendations:
+all valid stories remain stored, canonical IDs are unchanged, and ranking never
+grants verification or task authority. Its soft source-diversity behavior is retained
+for discovery; the existing verified digest contract is not silently replaced.
+The smaller event adaptation below remains used by that verified digest.
+
 Source: https://github.com/mreflow/control-center
 Revision: `d13e79e866cc33a1fddfe84f563ce2fb9a2113e0`
 Original file: `lib/industry-curation.ts`

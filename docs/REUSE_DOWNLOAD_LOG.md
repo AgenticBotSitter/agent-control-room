@@ -1,5 +1,16 @@
 # Reuse evaluation download and cleanup ledger
 
+## Full Control Center curation adoption — 2026-09-07
+
+Pre-acquisition available space: 140 GiB. Retained one 512-line source file at
+`src/vendor/control-center/industry-curation.ts`; no package install or service.
+Source: `https://raw.githubusercontent.com/mreflow/control-center/d13e79e866cc33a1fddfe84f563ce2fb9a2113e0/lib/industry-curation.ts`.
+SHA256: `ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962`.
+This matches the earlier E03 original exactly. Existing MIT license retained under
+`third_party/control-center`; notice updated. This file is now used, not disposable.
+Other workflow/source inspections in the preceding review were read into tool output
+only; no new retained evaluation directory or installed dependencies to clean up.
+
 Started 2026-09-06. Owner authorized needed downloads for the reuse plan, with a storage check and a complete acquisition/cleanup record. This does not authorize provider calls, persistent services or production deployment. E01–E36 preserved application dependencies; E37 adds the pinned tested queue dependency locally.
 
 ## Storage before acquisition
