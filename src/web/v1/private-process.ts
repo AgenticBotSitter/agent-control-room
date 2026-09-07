@@ -1,12 +1,13 @@
 import type { DatabaseClient } from "../../persistence/database";
 import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
 import { createAccessVerifier, requireSameOrigin, WebAccessError } from "./access-verifier";
-import { privateResponseHeaders, webFailure } from "./http-common";
+import { privateResponseHeaders, webFailure, readBoundedJson } from "./http-common";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
+import { WebNewsService } from "./news-service";
 import { createTaskHttpHandler } from "./task-http";
 import { WebTaskReviewService } from "./task-review-service";
 import { WebTaskVerificationService } from "./task-verification-service";
@@ -26,6 +27,8 @@ export interface PrivateWebProcessOptions {
   database: { client: DatabaseClient; close: () => Promise<void> };
   /** Optional existing registry integrity key, supplied privately; never loaded or created by this process. */
   ideaProjects?: { integrityKey: Uint8Array };
+  /** Read-only retained ABS source verification. Does not configure collection. */
+  news?: { integrityKey: Uint8Array };
   /** Existing enrollment/signal keys, supplied privately. Absence is unavailable, not an empty roster. */
   connections?: WebConnectionKeys;
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
@@ -94,6 +97,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+  const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
+    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
@@ -117,6 +122,25 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = await keys.get();
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          const newsPrepare = /^\/api\/v1\/projects\/([^/]+)\/news\/prepare$/.exec(url.pathname);
+          if (newsPrepare) {
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
+              throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(newsPrepare[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await news.prepare(identity, projectId, await readBoundedJson(request.body, 8192)),
+              { headers: privateResponseHeaders });
+          }
+          const newsRoute = /^\/api\/v1\/projects\/([^/]+)\/news$/.exec(url.pathname);
+          if (newsRoute) {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+              || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(newsRoute[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await news.list(identity, projectId, url.searchParams.get("after") ?? undefined),
+              { headers: privateResponseHeaders });
+          }
           if (url.pathname === "/api/v1/needs-me/tasks") {
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
               || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
@@ -172,6 +196,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
         const taskPage = /^\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);
+        const newsPage = /^\/projects\/([^/]+)\/news$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
         if (taskPage) {
           let id: string, jobId: string | undefined;
@@ -181,6 +206,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             || jobId && url.search || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
             throw new WebAccessError("invalid_request");
           if (jobId) await tasks.detail(identity, id, jobId); else await tasks.authorize(identity, id);
+        } else if (newsPage) {
+          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1)
+            throw new WebAccessError("invalid_request");
+          let id: string;
+          try { id = decodeURIComponent(newsPage[1]); } catch { throw new WebAccessError("invalid_request"); }
+          await news.list(identity, id, url.searchParams.get("after") ?? undefined);
         } else if (detail) {
           let id: string;
           try { id = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }
