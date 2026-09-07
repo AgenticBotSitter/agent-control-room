@@ -80,3 +80,14 @@ test('compiled-test inventory follows selected tests and helpers without executi
     assert.equal(report.entries.find(entry => entry.path === file).reason, 'application_or_build_import');
   assert.equal(report.publicationApproved, false);
 });
+test('contributor inventory includes its explicit launcher, browser and verification closure', () => {
+  const report = JSON.parse(execFileSync(process.execPath, ['scripts/research/public-export-inventory.mjs',
+    '--with-compiled-tests', '--with-contributor-demo'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
+  for (const file of ['scripts/contributor-demo.mjs', 'contributor-demo/index.html', 'contributor-demo/view.tsx',
+    'src/contributor-demo/history-view.ts', 'src/contributor-demo/launcher.ts', 'src/local-pilot/v1/session-http.ts',
+    'app/components/contributor-simulation.tsx', 'tests/contributor-demo-runtime.test.ts']) {
+    assert.equal(report.entries.find(entry => entry.path === file)?.reason, 'application_or_build_import');
+  }
+  assert.equal(report.publicationApproved, false);
+  assert.ok(report.unresolved.every(entry => entry.file.startsWith('dist-vps/')));
+});

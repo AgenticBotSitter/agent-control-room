@@ -1,0 +1,459 @@
+{
+  "description": "PRIVATE expansion review inventory. Not a publication allowlist.",
+  "baseline": "904748a297c1ed5f3debe8c3d68dcb96e90619f3",
+  "publicationApproved": false,
+  "closureCount": 461,
+  "additions": [
+    {
+      "path": "app/components/contributor-simulation.tsx",
+      "sha256": "36fe60aa182ef1209143c371e4f95733241eabfe7bee922f709d4a8d891c2464",
+      "review": "pending"
+    },
+    {
+      "path": "app/components/local-pilot-owner-session.tsx",
+      "sha256": "7056ff3fa99d40a28092fff3aff36f5317520a7bf0159a4ba4cbf45697bdaa18",
+      "review": "pending"
+    },
+    {
+      "path": "app/local-preview/workspace.tsx",
+      "sha256": "5edca9c2279a4280b641b733614d45cc5435a8375858c78092d6c7d981bf62b2",
+      "review": "pending"
+    },
+    {
+      "path": "contributor-demo/index.html",
+      "sha256": "c77bee9adc63195ac79c4f5c2d9b16b9bbcbf44a08c8d9f396ede95f99852683",
+      "review": "pending"
+    },
+    {
+      "path": "contributor-demo/main.tsx",
+      "sha256": "466b803918ec3bc3736566fb71251f2c677d6de161c8e640236e100355f8d4f7",
+      "review": "pending"
+    },
+    {
+      "path": "contributor-demo/view.tsx",
+      "sha256": "c3b00e808c19356a97482e7469379b386366a07f1250636bc1a2e5ed2654c3d1",
+      "review": "pending"
+    },
+    {
+      "path": "scripts/contributor-demo.mjs",
+      "sha256": "896588ff978edff124ff840ddae958cbe8e9b86c043f0f35f5a18171b5e9da6f",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-center/v1/index.ts",
+      "sha256": "222cd3baa550602c4fc58190e0488043fd15db3ee6ef742176b4b6162bdffb62",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/index.ts",
+      "sha256": "91eea94473dcb429f9f5006a10dafcfbbf05f6f39a7e1011a35f67fe708b9dcf",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/intake.ts",
+      "sha256": "3bae2c43588deb8a0b7f21b3689970c6c1ef6dc7e9da2c95168909c03a7e8d01",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/node-delivery.ts",
+      "sha256": "8af73346c565adf926164f07170f1c0e892f54600cba69866ecb34ce3921283f",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/node-ingress.ts",
+      "sha256": "31c05a4a5d6fce6376ef86859bcb19c7045ea3d0944b96f6d16081a8a5b3f4cd",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-atomic-native-observation-composition-contract.ts",
+      "sha256": "86342776ece7afd1deb0039f81f1f2112da7a9dac3763f595b34f24e62ed0268",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-atomic-source-lookup-bridge-contract.ts",
+      "sha256": "0ffa3864bac020b9371b2ff58bfd4fd79c773ccafbaa3a01e8d4940eb6f78b32",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-exclusive-port-custody.ts",
+      "sha256": "df2de9aaa8c0e462dc4f45896bc4dc8a7b8dc1684215d895494d32db66eef35f",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-framing.ts",
+      "sha256": "5736d39caa7e552b71b874300a9f65c456524b31adf95d9a59ca8b4e7b0881c3",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-fresh-spend-recheck-composition-contract.ts",
+      "sha256": "1c4c9eebcb9d28a03c07305c25608e3209757f091b6ab4002036894c846bc78b",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-invocation-authorization-store.ts",
+      "sha256": "4d8edb26e9d1159da003fefd59c75200d1bb3a637a3338af25dbb306a91cfacd",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-listener-lifecycle.ts",
+      "sha256": "e3450db71e3bba09bbc95cae2fbe9e0e6423bc7837fb7850cd87300e40b3331b",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-listener-session.ts",
+      "sha256": "ae83072bc25e035c901ff1981e0385614c83c1d4130cb9c26032661bcea483fe",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-composition-shell-contract.ts",
+      "sha256": "97728422ff49ced75f8bae80431000b8779e52b7461dd76d154b5f309c2030a5",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-driver-contract.ts",
+      "sha256": "34691d445516719911e5f9f72eafca972cb27ef83dc666757928e9f3fd09e61f",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-factory-retrieval-bridge-contract.ts",
+      "sha256": "cf09a971b560ce051776a447b692fd3e942dd4ab7a0b788b813cb85b5f1c4ee0",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-issuer-composition-implementation.ts",
+      "sha256": "cda0d2fdeae2a0c4cbc619d22b375ecfa9c508dc8d58e024eca85bb5b56707fa",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-listener-adapter.ts",
+      "sha256": "947e02d395e2ceff331f802277447f9490af1ca6d2940d80c96f7e18136b43c2",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-retained-resource-adapter.ts",
+      "sha256": "66f163ab750ab40294e3e89e1cbd0b9ed44de79801bdd6345a549bbadf167a24",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-retained-resource-issuer-composition-contract.ts",
+      "sha256": "cd6214e59a74045142c5fc5dae1e47389df14e35219635ef8eb50060529ed1e7",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-retained-resource-issuer-contract.ts",
+      "sha256": "144fc0e3b09ec9c08c5bde1cb0a84c9bebae3ae2f1e215609719e9f3dde8c7da",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-native-retained-resource-issuer-state-machine.ts",
+      "sha256": "54043cf5cccd149ada284c5e57203fb28f2581221df5049e612ca77aa1aa81d8",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-observation-attestation-pipeline-contract.ts",
+      "sha256": "373e2e9578391ad027eedff6478fe3bc85079281be03a360f5e38ce9092cd308",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-one-use-native-observation-invocation-contract.ts",
+      "sha256": "b3d39ab312392f5c30389c8babda13f7bd7543b72d41939b05bbdef96254c1c5",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-owner-native-authorization-contract.ts",
+      "sha256": "9d7ee2a92586827a0bbb59b0ef3ffbe620d735acbdd2d22554b5cabe0fc6c512",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-owner-present-issuer-contract.ts",
+      "sha256": "59c44ac4dc0f66a9888a251a7dfeb2539d4418885f9aebb6b26e5644380c342a",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-physical-qualification-candidate-contract.ts",
+      "sha256": "88b5d74d8bd7967b8cb45c8d8915861aafe8e211ca1a128d1c74fef3f5ad0720",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-physical-qualification-readiness.ts",
+      "sha256": "038ce290f7f887f83504584959b7bb092cd585be2f78aee5351fbd8b51adbc6e",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-private-locator-broker.ts",
+      "sha256": "1f19a4b6d9c18339d8f64394df496e64c303b76529d6d013e9535f0f44facd6b",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-retained-resource-driver-port.ts",
+      "sha256": "5ca5fe7ba89263e17de6ec0a726bcb09c13a1231e62ccc170dd452cc8761364c",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-retained-resource-handoff.ts",
+      "sha256": "63130065b6273ff770434ed625817e5db1377dfa79adf2a3014c98cd80f6be06",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-single-source-invocation-handoff-contract.ts",
+      "sha256": "48a942bfa04da9322189ad76b1609469399ffdcc7bfe34bb8097ac8a9bed99dd",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-target-runtime-attestation.ts",
+      "sha256": "f5666ef30114e6e9ceef9e8460e19aa2ed82ef10fd5e3e1408b6fcd0d10e10b9",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-target-runtime-observation-trust-contract.ts",
+      "sha256": "698a70340a626b5c8f08b79062a266e78e64bdb3881821a7749d15fbda9cfb9f",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-trust-manifest-anchor-contract.ts",
+      "sha256": "2f0e3544940160fbdf90c45d3ca0332220f62334202c0d0fab96f13682b6332d",
+      "review": "pending"
+    },
+    {
+      "path": "src/connection-registry/v1/transport-admission.ts",
+      "sha256": "69362ae7500ea54f486b666a877d066c143081d3a02d3dc19870f2088b7c1a9b",
+      "review": "pending"
+    },
+    {
+      "path": "src/contributor-demo/application.ts",
+      "sha256": "ccf53bea3f0fe04aab056e9122c8001044bcea86f2a4eb66995f639d8c4794ce",
+      "review": "pending"
+    },
+    {
+      "path": "src/contributor-demo/browser-client.ts",
+      "sha256": "fbad6f493c48cb8a215b8aedfd35734f875c742f366df856a1075ceca8c6faa5",
+      "review": "pending"
+    },
+    {
+      "path": "src/contributor-demo/history-view.ts",
+      "sha256": "6f8f2d65d30c37efa6c28379922ff14feb3665a60bfa0d64db942bc164162cec",
+      "review": "pending"
+    },
+    {
+      "path": "src/contributor-demo/http.ts",
+      "sha256": "11c91a503164e99665cab70f9ee319b3f4a9e83b703d8fa98b40dcf91eaafb26",
+      "review": "pending"
+    },
+    {
+      "path": "src/contributor-demo/launcher.ts",
+      "sha256": "61722e115a115bf8751362bd8cfcd3ced44e0adca79159afd1dda38bbb2993d7",
+      "review": "pending"
+    },
+    {
+      "path": "src/contributor-demo/revision.ts",
+      "sha256": "6987a37632d415b5ae2d2a35dfc0a66a20e8a7c26a4b1286eaa1436080648126",
+      "review": "pending"
+    },
+    {
+      "path": "src/contributor-demo/runtime.ts",
+      "sha256": "ce447ed1959d270949588bba009ef9413823cd1cbb179bfa8fdb2386d0d02653",
+      "review": "pending"
+    },
+    {
+      "path": "src/contributor-demo/simulations.ts",
+      "sha256": "e8f72fede9ac2df1efcfb33781b7020dde7fd335ecdd11cb0d82266f7d063647",
+      "review": "pending"
+    },
+    {
+      "path": "src/local-pilot/v1/browser-transport.ts",
+      "sha256": "ace8ed3186465fc8481c7358a7cfc9ee9f8950407ba6c8063a468f2d6e368218",
+      "review": "pending"
+    },
+    {
+      "path": "src/local-pilot/v1/project-task-http.ts",
+      "sha256": "05766f9eb451a679f2ca6e8cbf36bb35660fea9a2aa0514f515375848093b3e0",
+      "review": "pending"
+    },
+    {
+      "path": "src/local-pilot/v1/project-tasks.ts",
+      "sha256": "9da6ecd62fb02987a647187af55cb09d4d183137cc779093d6c64653cb9e8503",
+      "review": "pending"
+    },
+    {
+      "path": "src/local-pilot/v1/runtime.ts",
+      "sha256": "171ee415dc4cef6360399a5b544222373f8bbb14212ee9f768550b254ef74bd4",
+      "review": "pending"
+    },
+    {
+      "path": "src/local-pilot/v1/session-http.ts",
+      "sha256": "ada8de8faa969b8719cfee81c4a69516644f596d8bd53d5cd5b69cac61bd865d",
+      "review": "pending"
+    },
+    {
+      "path": "src/local-pilot/v1/synthetic-result-read.ts",
+      "sha256": "19cc29808f44012196029628d0d98da46aca68186e0c08ef19c65d7df624e4ed",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-events/v1/contracts.ts",
+      "sha256": "ad782a5b1ffda518102f4ab57229a162f18cb66503b18452dde96ded20572247",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-events/v1/errors.ts",
+      "sha256": "1d2f285a2e3b235c90874978a89714eb18247f75ac4448ff5b30d1b743c26b37",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-events/v1/idea-lab-reconciler.ts",
+      "sha256": "ee1c16518c6745bf2865267bdd163f712e836b46422351f7dd73161a7539d924",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-events/v1/index.ts",
+      "sha256": "ebabf2d3f268c4351b39704935b0077752ed324ee23a45cd414b9b285fa58689",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-events/v1/schemas.ts",
+      "sha256": "56b431d06fe98fdc044110490fef8f8c90439c24c13fe1c932e9f2a924dfefd7",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-events/v1/sse.ts",
+      "sha256": "e2c97e58b84bef3ddecee27e125661f3154b29adaae5a6d8d5048d9b3809b51c",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-events/v1/store.ts",
+      "sha256": "27f64ccfba644e1d23f148f3ae09ba57afea2bc6e0248d0dab1e6af7a8a8690e",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-events/v1/types.ts",
+      "sha256": "6e9037a20463528021e5fa4ae5df146de57cb090b88eb3f8015329f9bd73b90a",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/catalog-session.ts",
+      "sha256": "bb9eef82efa444141bf46e016fc73a5057726e474483d25a0072eac742590ac6",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/errors.ts",
+      "sha256": "78ff50cc25cb3cacb01a3576393c94e4fbd5456fb583a73173c208b0084d1317",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/exact.ts",
+      "sha256": "ea3f14ed1bc5c9403886383de6b147f27d3e6006a139cea6574a192ac16d82be",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/http-client.ts",
+      "sha256": "2c4c76c211db66d48abf742a7d7b5f788c6689af41182b9b8a75d3936822438e",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/index.ts",
+      "sha256": "5bf2602d3c65f98acf9b4b7fa65341db16b0e3771e577028b0dcdbcf0ca421b6",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/read-service.ts",
+      "sha256": "c0513684db0f0dd25d5f5df72eee4cea869646e6951b02a796df143598ac7e9d",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/schemas.ts",
+      "sha256": "6ebc5ac4c009fba64fa4dd85b9fb6cebbfc42dab6eb45557bb664b3e7888b100",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/types.ts",
+      "sha256": "2c4b4e900d3bddc07620ee8eeb98a062260b74585a1bd9ef5483d6a8600a0bf1",
+      "review": "pending"
+    },
+    {
+      "path": "src/project-workspace/v1/workspace.ts",
+      "sha256": "6b0b5bf59080b4748d3b1da5f07113a66ddc487f0c4b52cab6c91a7b9bd92c32",
+      "review": "pending"
+    },
+    {
+      "path": "tests/contributor-demo-build.test.mjs",
+      "sha256": "ba828bbafeaad41e214affcf2cfe3067d84d4fd418205cc74f16c889d36f55f1",
+      "review": "pending"
+    },
+    {
+      "path": "tests/contributor-demo-launcher.test.ts",
+      "sha256": "99f05cae9cae0ff484b55c788fc40cd7e26af7706587406d7290ceb6593c90c5",
+      "review": "pending"
+    },
+    {
+      "path": "tests/contributor-demo-runtime.test.ts",
+      "sha256": "42ba3a71699a7c58f5868943a9f41162d9a93052123141436580059d4eb01088",
+      "review": "pending"
+    },
+    {
+      "path": "tests/local-preview-panels.test.tsx",
+      "sha256": "cf15a137720428f2360d9d8b830a372affa681831a4e573f001684421c83b291",
+      "review": "pending"
+    },
+    {
+      "path": "tests/web-private-serving.test.ts",
+      "sha256": "48c22bb800e72abcd17105230fb575d2f9dddcbc6a9421ba9ecce182c937e59a",
+      "review": "pending"
+    },
+    {
+      "path": "vite.contributor.config.ts",
+      "sha256": "4ddcd2002c35e2e943b6e8299bd86385a767acb253a59be1a10dc260820ef70e",
+      "review": "pending"
+    }
+  ],
+  "differences": [
+    {
+      "path": "src/web/v1/private-assets.ts",
+      "sha256": "57d4125367d50fb868a52785078c8f73c2a619362c5315269611ebed32fed381",
+      "review": "preserve candidate adaptations; compare before replacing"
+    },
+    {
+      "path": "src/web/v1/private-database-preflight.ts",
+      "sha256": "38861a0268dd1030d5f2aa02db00d69fb85e361d9b49699999b10afaed730ad2",
+      "review": "preserve candidate adaptations; compare before replacing"
+    },
+    {
+      "path": "src/web/v1/private-node-handler.ts",
+      "sha256": "f6300f24f65c1759ea2fd2adc78a27df7f997cdbda4c3cee99e0b80758cd3337",
+      "review": "preserve candidate adaptations; compare before replacing"
+    },
+    {
+      "path": "src/web/v1/private-serving.ts",
+      "sha256": "cb5440263aa585097829eeb6ed0439cbcacbd3d68893c71e19c0772843c73d1c",
+      "review": "preserve candidate adaptations; compare before replacing"
+    },
+    {
+      "path": "tests/helpers/web-foundation.ts",
+      "sha256": "96c967ea33ec85ff4c88aee0fdfc3e7705a3a11dd9eafe053a98df78373a48ab",
+      "review": "preserve candidate adaptations; compare before replacing"
+    },
+    {
+      "path": "tests/vps-built-core-schema.test.mjs",
+      "sha256": "8222625470af14bbec2ba2c6d8d8fe66628675bfc1a72cc58c571d1ec416a0b4",
+      "review": "preserve candidate adaptations; compare before replacing"
+    },
+    {
+      "path": "tests/vps-built-handler.test.mjs",
+      "sha256": "9c2a5b33459c1c8694aee3ea1252796ea995096ff5acf626f7634108cf483310",
+      "review": "preserve candidate adaptations; compare before replacing"
+    }
+  ],
+  "dynamic": [
+    {
+      "file": "src/persistence/database.ts",
+      "line": 51
+    },
+    {
+      "file": "src/local-pilot/v1/runtime.ts",
+      "line": 257
+    },
+    {
+      "file": "scripts/run-private-vps.mjs",
+      "line": 30
+    }
+  ]
+}

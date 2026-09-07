@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Public demo package gap measured:** The read-only export inventory now includes the
+demo launcher, browser entry and tests. Against the staged candidate, the combined
+461-file import closure identifies 80 additions and seven differences. The private
+expansion receipt records paths/hashes without approving publication. Existing
+schema/privacy adaptations must survive the update. Four inventory tests pass;
+candidate content review, expansion and isolated rehearsal remain ahead.
+
 **Page history recovery connected:** Opening the simulation panel first reads the
 current session's revision chain and verifies each sample through the existing
 protected artifact reader. The latest sample and earlier versions are restored;

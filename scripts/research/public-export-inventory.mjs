@@ -8,8 +8,9 @@ import { publicExportImports } from './public-export-imports.mjs';
 
 const root = process.cwd();
 const args = process.argv.slice(2);
-if (args.length > 1 || args.length === 1 && args[0] !== '--with-compiled-tests') throw new Error('Unknown inventory option');
-const includeCompiledTests = args.length === 1;
+if (new Set(args).size !== args.length || args.some(arg => !['--with-compiled-tests', '--with-contributor-demo'].includes(arg))) throw new Error('Unknown inventory option');
+const includeCompiledTests = args.includes('--with-compiled-tests');
+const includeContributorDemo = args.includes('--with-contributor-demo');
 const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 const baseline = git(['rev-parse', 'HEAD']).trim();
 const files = git(['ls-files', '-z']).split('\0').filter(Boolean).sort();
@@ -33,6 +34,11 @@ const testSeeds = includeCompiledTests ? [...new Set([
   'tests/vps-build-profile.test.ts', 'tests/private-vps-launcher.test.mjs',
 ])] : [];
 seeds.push(...testSeeds);
+const demoSeeds = includeContributorDemo ? ['scripts/contributor-demo.mjs', 'vite.contributor.config.ts',
+  'contributor-demo/index.html', 'contributor-demo/main.tsx', 'tests/contributor-demo-launcher.test.ts',
+  'tests/contributor-demo-runtime.test.ts', 'tests/contributor-demo-build.test.mjs',
+  'tests/local-preview-panels.test.tsx', 'tests/web-private-serving.test.ts'] : [];
+seeds.push(...demoSeeds);
 const pending = [...seeds], closure = new Set(), unresolved = [], dynamic = [], external = new Set();
 while (pending.length) {
   const file = pending.pop();
@@ -85,4 +91,4 @@ console.log(JSON.stringify({ schema: 'control-room.public-export-planning-invent
     'Built-output imports from the launcher are expected outside tracked source; builds must supply them.',
     'Untracked and ignored files are not inventoried; never copy them implicitly.',
     'Private planning report; contains internal paths and must not be published.'],
-  closureCount: closure.size, compilerSeeds, testSeeds, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));
+  closureCount: closure.size, compilerSeeds, testSeeds, demoSeeds, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));

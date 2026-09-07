@@ -1,5 +1,32 @@
 # Local public source candidate staging
 
+## Contributor demo expansion review (2026-09-06)
+
+At private baseline `904748a297c1ed5f3debe8c3d68dcb96e90619f3`, the compiler-parser
+inventory now accepts `--with-contributor-demo` alongside `--with-compiled-tests`.
+It includes the explicit HTML/browser entry, launcher, build configuration and demo
+tests, without executing them. Four inventory tests pass. The combined import closure
+contains 461 tracked files: 80 are absent from the staged candidate and seven differ.
+Exact additions and current hashes are recorded in the private
+`docs/research/public-demo-expansion-review.json`; this is not a public allowlist.
+
+The seven differences must not be blindly replaced. The database preflight and two
+built tests include earlier candidate schema/privacy adaptations. Preserve those;
+review the actual demo asset/transport/serving changes and helper differences.
+The demo's reused local runtime also pulls connection-registry, project-event and
+workspace code into scope. Import reachability is not proof of publication safety.
+
+Only nine unique missing import paths were found, all generated `dist-vps/server`
+outputs supplied by the existing build. The two runtime dynamic imports resolve the
+fixed installed PGlite package; the production launcher has its separately reviewed
+built-entry import. Runtime SQL reads, CSS/assets, package scripts, fixture/privacy
+content and distribution notices still need candidate-specific review.
+
+No candidate files were overwritten, no new dependency was downloaded, and nothing
+was published. Next: inspect/adapt the expansion, preserve the existing candidate
+license and generalization, rehearse the complete isolated demo, then independent
+review of exact candidate bytes before publication.
+
 ## First isolated snapshot
 
 ## Approved license application (2026-09-06)
