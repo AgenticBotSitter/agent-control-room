@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Credential-free disposable demo composition added locally:** A small contributor-demo
+factory reuses the existing local synthetic runtime with generated in-memory keys, a
+one-time owner code and a fresh temporary database. It never discovers credentials,
+accesses Keychain or starts a listener. Two tests pass: real cookie authentication,
+one-use code, project/task proposal without attempts, repeated close and confirmed data
+removal, plus invalid-root rejection. Strict application types and focused lint pass.
+The test is registered in the normal local lifecycle. This code is not yet exported
+into the 467-file candidate or wired into browser startup; simulation execution/results/
+revision UI and browser acceptance remain unfinished. Abrupt termination may leave
+temporary data; no automatic crash-cleanup claim is made.
+
 **Public candidate now has a durable reconstruction record:** All 467 current source
 files were reconstructed in memory from the recorded private base plus 17 additions/
 changes and two superseded paths, then byte/hash checked against the candidate. The
