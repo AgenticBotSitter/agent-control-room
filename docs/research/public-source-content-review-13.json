@@ -1,0 +1,36 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full text of audit-store, audit types and native-results read. No runtime execution, artifact transfer, SQL or network. Not correctness or legal approval.",
+  "entries": [
+    {
+      "path": "src/artifacts/v1/native-results.ts",
+      "sha256": "313b037dad9bf0e78dddf32096f2509a1b7dfc6389b043b6fb94a96d18151ffc",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generic audit or artifact persistence with supplied keys and records, parameterized queries and computed IDs. No embedded credentials, real artifact data or configured private storage endpoint.",
+      "remaining": [
+        "final_publication_review"
+      ]
+    },
+    {
+      "path": "src/audit/audit-store.ts",
+      "sha256": "8f00a94b2eb2755b29c2e3b2d0d3d1a454ba96fb8bba3147754df93f13896fac",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generic audit or artifact persistence with supplied keys and records, parameterized queries and computed IDs. No embedded credentials, real artifact data or configured private storage endpoint.",
+      "remaining": [
+        "final_publication_review"
+      ]
+    },
+    {
+      "path": "src/audit/types.ts",
+      "sha256": "710f96519f5fe8915e793b7a401ecd56616241b7c45f87fb9b2eebd9b3229cad",
+      "contentReview": "no_private_values_observed",
+      "observation": "Generic audit or artifact persistence with supplied keys and records, parameterized queries and computed IDs. No embedded credentials, real artifact data or configured private storage endpoint.",
+      "remaining": [
+        "final_publication_review"
+      ]
+    }
+  ]
+}

@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Twelve numbered content receipts match 132 exact files. Separate independent domain/node receipts cover 93 additional files: 225 unique files across 14 receipts. Other bounded reviews are separate evidence. Content review is not correctness, license or publication approval.",
-  "exactPriorReviewMatches": 132,
+  "manualReviewCoverageMeaning": "Thirteen numbered content receipts match 135 exact files. Separate independent domain/node receipts cover 93 additional files: 228 unique content-reviewed files. Prior readiness review matches 26 current files, adding 24 distinct paths for a mixed-scope union of 252. Two changed readiness files are excluded. Scope-specific evidence is not correctness, license or publication approval.",
+  "exactPriorReviewMatches": 135,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -1001,19 +1001,19 @@
       "path": "src/artifacts/v1/native-results.ts",
       "bytes": 14862,
       "sha256": "313b037dad9bf0e78dddf32096f2509a1b7dfc6389b043b6fb94a96d18151ffc",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-13.json"
     },
     {
       "path": "src/audit/audit-store.ts",
       "bytes": 9112,
       "sha256": "8f00a94b2eb2755b29c2e3b2d0d3d1a454ba96fb8bba3147754df93f13896fac",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-13.json"
     },
     {
       "path": "src/audit/types.ts",
       "bytes": 846,
       "sha256": "710f96519f5fe8915e793b7a401ecd56616241b7c45f87fb9b2eebd9b3229cad",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-13.json"
     },
     {
       "path": "src/completion-gate/v1/async-staged-checkpoint.ts",
