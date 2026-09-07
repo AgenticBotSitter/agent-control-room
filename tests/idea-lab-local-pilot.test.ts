@@ -107,6 +107,9 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   await assert.rejects(browserProjects.create(ordinaryDraft),{code:"uncertain"});
   assert.deepEqual(await browserProjects.retryPending(),ordinary.project);
   const browserTasks=createTaskBrowserClient(browserTransport,()=>"pilot-propose-task-0001");
+  const browserSimulation=await browserTasks.syntheticResult(ordinary.project.projectId,proposed.receipt.jobId,simulation.manifest.id);
+  assert.equal(browserSimulation.text,simulationBody.text);
+  assert.equal(browserSimulation.simulationOnly,true);
   loseResponse=true;
   await assert.rejects(browserTasks.propose(ordinary.project.projectId,taskDraft),{code:"uncertain"});
   assert.deepEqual(await browserTasks.retrySave(),proposed.receipt);

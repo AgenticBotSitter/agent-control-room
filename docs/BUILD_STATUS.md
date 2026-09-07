@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Browser client can read protected simulation results:** The existing task browser
+client and local transport now support the separate exact-artifact simulation route,
+using the same bounded/no-store/same-origin requests with no retry. A strict response
+schema requires simulation-only/untrusted labels and false approval/execution flags;
+the client checks selected IDs, UTF-8 byte length and SHA-256 before returning content.
+The real local handler/PGlite integration now exercises that browser client. Twelve
+selected transport/result-browser tests plus the two pilot runtime tests pass; both
+strict type checks, focused lint and whitespace checks pass. Changed content, scope,
+labels and extra locator fields are rejected. No page controls, durable startup source,
+browser-interaction acceptance, provider call or GitHub write are claimed in this block.
+
 **Simulation reads now have an authenticated local route:** The local workspace
 handler accepts the separate read-only `synthetic_result` resource, requiring the
 existing owner cookie and canonical task/project/content grants before reading

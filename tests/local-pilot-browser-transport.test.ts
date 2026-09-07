@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { createLocalPilotBrowserTransportV1 } from "../src/local-pilot/v1/browser-transport";
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
@@ -17,6 +18,7 @@ test("pilot transport maps bounded reads and preserves request options and respo
     ["/project%3Aexample/tasks/job%3Aexample", { resource: "task", projectId: "project:example", jobId: "job:example" }],
     ["/project%3Aexample/tasks/job%3Aexample/results", { resource: "results", projectId: "project:example", jobId: "job:example" }],
     ["/project%3Aexample/tasks/job%3Aexample/results/artifact%3Aexample", { resource: "results", projectId: "project:example", jobId: "job:example", artifactId: "artifact:example" }],
+    ["/project%3Aexample/tasks/job%3Aexample/synthetic-results/artifact%3Aexample", { resource: "synthetic_result", projectId: "project:example", jobId: "job:example", artifactId: "artifact:example" }],
   ] as const) {
     const init: RequestInit = { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal };
     assert.equal(await transport(`/api/v1/projects${path}`, init), response);
@@ -52,6 +54,7 @@ test("unsupported paths, methods, malformed drafts and ambiguous queries never r
     "/api/v1/projects-other", "/api/v1/projects/", "/api/v1/projects/project%2Fescape",
     "/api/v1/projects/project%ZZ", "/api/v1/projects/project:example/tasks/job:example/results?after=job:next",
     "/api/v1/projects/project:example/lifecycle/job:example/results", "/api/v1/projects/project:example/tasks/job:example/reviews",
+    "/api/v1/projects/project:example/tasks/job:example/synthetic-results",
     "/api/v1/projects/project:example/lifecycle", "/api/v1/projects#ignored",
     "/api/v1/projects?after=project:one&after=project:two", "/api/v1/projects?unknown=yes",
     "/api/v1/projects?after=", "/api/v1/projects?after=project:one?extra",
@@ -64,6 +67,29 @@ test("unsupported paths, methods, malformed drafts and ambiguous queries never r
     await assert.rejects(transport("/api/v1/projects", init));
   }
   assert.equal(calls, 0);
+});
+
+test("simulation browser reads reject changed bytes, scope, labels and unexpected fields without retries", async () => {
+  const text = "SIMULATED café";
+  const value = { schema: "control-room.local-synthetic-result/v1", tenantId: "tenant:example", projectId: "project:example",
+    jobId: "job:example", artifactId: "artifact:example", text, contentHash: `sha256:${createHash("sha256").update(text).digest("hex")}`,
+    sizeBytes: Buffer.byteLength(text), simulationOnly: true, untrustedContent: true, grantsApproval: false, grantsExecutionAuthority: false };
+  let response = value, calls = 0;
+  const client = createTaskBrowserClient(createLocalPilotBrowserTransportV1(async (_input, init) => {
+    calls++; assert.equal(init?.method, "GET"); assert.equal(init?.cache, "no-store");
+    assert.equal(init?.credentials, "same-origin"); assert.equal(init?.redirect, "error");
+    assert.equal(init?.body, undefined); assert.ok(init?.signal);
+    return Response.json(response);
+  }));
+  assert.deepEqual(await client.syntheticResult(value.projectId, value.jobId, value.artifactId), value);
+  for (const change of [{ text: "changed" }, { projectId: "project:other" }, { artifactId: "artifact:other" },
+    { simulationOnly: false }, { grantsApproval: true }, { grantsExecutionAuthority: true },
+    { sizeBytes: 65_537 }, { opaqueLocator: "file:private" }]) {
+    response = { ...value, ...change };
+    const before = calls;
+    await assert.rejects(client.syntheticResult(value.projectId, value.jobId, value.artifactId), { code: "unavailable" });
+    assert.equal(calls, before + 1);
+  }
 });
 
 test("canonical project and task clients retain exact saves through a lost pilot response", async () => {

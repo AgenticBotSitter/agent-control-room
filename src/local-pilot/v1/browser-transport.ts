@@ -12,7 +12,7 @@ export function createLocalPilotBrowserTransportV1(transport: typeof fetch = fet
       || input.includes("\\")) throw invalid();
     const [pathname, query = "", extra] = input.split("?");
     if (extra !== undefined) throw invalid();
-    const match = /^\/api\/v1\/projects(?:\/([^/]+)(?:\/(lifecycle|tasks)(?:\/([^/]+)(?:\/(results)(?:\/([^/]+))?)?)?)?)?$/.exec(pathname);
+    const match = /^\/api\/v1\/projects(?:\/([^/]+)(?:\/(lifecycle|tasks)(?:\/([^/]+)(?:\/(results|synthetic-results)(?:\/([^/]+))?)?)?)?)?$/.exec(pathname);
     if (!match) throw invalid();
     const decodeId = (value: string | undefined) => value === undefined ? undefined
       : catalogProjectIdSchema.parse(decodeURIComponent(value));
@@ -22,6 +22,8 @@ export function createLocalPilotBrowserTransportV1(transport: typeof fetch = fet
     const results = match[4] !== undefined;
     const artifactId = decodeId(match[5]);
     if (results && action !== "tasks") throw invalid();
+    const synthetic = match[4] === "synthetic-results";
+    if (synthetic && !artifactId) throw invalid();
     const method = init?.method ?? "GET";
     const params = new URLSearchParams(query);
     let body: string | undefined;
@@ -33,7 +35,7 @@ export function createLocalPilotBrowserTransportV1(transport: typeof fetch = fet
         || !list && params.has("after")) throw invalid();
       const after = params.has("after") ? catalogProjectIdSchema.parse(params.get("after")) : undefined;
       const mapped = new URLSearchParams({ resource: projectId === undefined ? "projects"
-        : results ? "results" : action === "tasks" ? jobId === undefined ? "tasks" : "task" : "project" });
+        : synthetic ? "synthetic_result" : results ? "results" : action === "tasks" ? jobId === undefined ? "tasks" : "task" : "project" });
       if (projectId !== undefined) mapped.set("projectId", projectId);
       if (jobId !== undefined) mapped.set("jobId", jobId);
       if (artifactId !== undefined) mapped.set("artifactId", artifactId);

@@ -3,6 +3,7 @@ import { readBrowserJson as json } from "./browser-json";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskCommandSchema, taskDetailSchema, taskDraftSchema, taskPageSchema, type TaskReceipt } from "./task-wire";
 import { taskResultsPageSchema, taskResultContentSchema } from "./task-result-wire";
+import { syntheticResultSchemaV1 } from "../../local-pilot/v1/synthetic-result-wire";
 
 export const taskErrorMessage: Record<BrowserFailureCode, string> = {
   authentication_required: "Your session has ended. Sign in again to see your tasks.",
@@ -85,6 +86,18 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
     },
     // Explicit owner interaction only. Polling, reconnect and focus never invoke this method.
     retrySave: commit,
+    async syntheticResult(projectId: string, jobId: string, artifactId: string) {
+      try {
+        checkId(projectId); checkId(jobId); checkId(artifactId);
+        const value = syntheticResultSchemaV1.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/synthetic-results/${encodeURIComponent(artifactId)}`));
+        if (value.projectId !== projectId || value.jobId !== jobId || value.artifactId !== artifactId) throw new Error();
+        const bytes = new TextEncoder().encode(value.text);
+        const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+          .map(byte => byte.toString(16).padStart(2, "0")).join("");
+        if (bytes.byteLength !== value.sizeBytes || `sha256:${hash}` !== value.contentHash) throw new Error();
+        return value;
+      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+    },
     async results(projectId: string, jobId: string) {
       try {
         checkId(projectId); checkId(jobId);
