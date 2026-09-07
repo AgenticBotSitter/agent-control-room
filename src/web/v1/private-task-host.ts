@@ -59,6 +59,7 @@ export function createPrivateTaskHost(dependencies: Parameters<typeof createPriv
         requireActive();
       }
       service = createPrivateNodeService({ origin, port, handler, assets, createServer,
+        secondaryOrigin: input.configuration.web.secondaryAccess?.origin,
         application: { isReady: ready, close: closeApplication } });
       await service.start();
       requireActive();

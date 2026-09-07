@@ -2,6 +2,7 @@ import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "./private-postgres";
 import { verifyPrivateDatabase } from "./private-database-preflight";
 import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./private-process";
+import { captureWebOrigins } from "./access-verifier";
 
 export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning" | "assignment" | "revisions" | "ideaCreation" | "newsCollections"> & {
   database: PrivatePostgresConfiguration; ownerIdentityId: string;
@@ -13,12 +14,14 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
   const reference = (value: string) => { if (typeof value !== "string" || !value.trim() || value.length > 256) throw new Error(); return value; };
   const key = (value: Uint8Array) => { if (!(value instanceof Uint8Array) || value.length !== 32) throw new Error(); return new Uint8Array(value); };
   try {
+    const sites = captureWebOrigins({ origin: input.origin, audience: input.audience }, input.secondaryAccess);
     // The production bootstrap owns only the restricted web pool. Do not silently discard or
     // pretend to configure a privileged planning dependency through this startup profile.
     if ("planning" in input || "assignment" in input || "revisions" in input || "ideaCreation" in input || "newsCollections" in input) throw new Error();
     if (!Number.isSafeInteger(input.maxSessionSeconds) || input.maxSessionSeconds < 1 || input.maxSessionSeconds > 604800
       || typeof input.loadKeys !== "function") throw new Error();
     return Object.freeze({ origin: exactOrigin(input.origin), issuer: exactOrigin(input.issuer), audience: reference(input.audience),
+      ...(sites[1] ? { secondaryAccess: sites[1] } : {}),
       tenantId: reference(input.tenantId), workspaceId: reference(input.workspaceId), ownerIdentityId: reference(input.ownerIdentityId),
       maxSessionSeconds: input.maxSessionSeconds, loadKeys: input.loadKeys,
       database: validatePrivatePostgresConfiguration(input.database),

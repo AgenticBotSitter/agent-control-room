@@ -5,6 +5,33 @@ import { readBoundedJson } from "../src/web/v1/http-common.ts";
 import { fixture, now, trust, origin, request, token } from "./helpers/web-foundation.ts";
 
 const render = () => new Response("private shell");
+
+test("two configured private addresses share projects and tasks without sharing audience authority", async t => {
+  const f = await fixture(); let closes = 0;
+  const secondary = { origin: "https://second.example.org", audience: "secondary-app" };
+  const app = createPrivateWebProcess({ origin, ...trust, secondaryAccess: secondary, tenantId: "tenant:web", workspaceId: "workspace:web",
+    database: { client: f.client, close: async () => { closes++; await f.db.close(); } }, loadKeys: async () => trust.keys, clock: () => now });
+  t.after(() => app.close());
+  const other = (path: string, method = "GET", body?: unknown, audience = "secondary-app") => new Request(`https://second.example.org${path}`, {
+    method, headers: { origin: "https://second.example.org", "content-type": "application/json", "idempotency-key": "dual-origin-task-0001",
+      "cf-access-jwt-assertion": token({ aud: [audience] }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  secondary.origin = "https://mutated.example.org"; secondary.audience = "mutated";
+  const made = await app.handle(request(undefined, "POST", { title: "Shared project", summary: "" }), render);
+  assert.equal(made.status, 201); const { project } = await made.json();
+  const path = `/api/v1/projects/${encodeURIComponent(project.projectId)}`;
+  assert.equal((await app.handle(other(path), render)).status, 200);
+  const task = await app.handle(other(`${path}/tasks`, "POST", { title: "Shared task", instructions: "Prepare a report." }), render);
+  assert.equal(task.status, 201); const { receipt } = await task.json();
+  assert.equal((await app.handle(request(`${path}/tasks/${encodeURIComponent(receipt.jobId)}`), render)).status, 200);
+  assert.equal((await app.handle(other(path, "GET", undefined, trust.audience), render)).status, 401);
+  const crossed = other(`${path}/tasks`, "POST", { title: "Denied", instructions: "Do not save." }); crossed.headers.set("origin", origin);
+  assert.equal((await app.handle(crossed, render)).status, 403);
+  assert.equal((await app.handle(new Request("https://unknown.example.org/projects", { headers: { "x-forwarded-host": new URL(origin).host } }), render)).status, 403);
+  assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 1);
+  assert.equal((await f.client.query("SELECT * FROM control_attempts")).rows.length, 0);
+  await app.close(); await app.close(); assert.equal(closes, 1);
+});
 test("shared private page, API and finite snapshot stream respect stored identity and session state", async t => {
   const f = await fixture(); t.after(() => f.db.close());
   let current = now;
@@ -21,7 +48,8 @@ test("shared private page, API and finite snapshot stream respect stored identit
   const streamPath = `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`;
   const stream = await app.handle(request(streamPath), render);
   assert.equal(stream.status, 200); assert.match(await stream.text(), /event: project-snapshot/);
-  assert.equal((await app.handle(request("/ideas"), render)).status, 404);
+  // Idea Lab is now a mounted protected page; fixture endpoints remain absent.
+  assert.equal((await app.handle(request("/ideas"), render)).status, 200);
   assert.equal((await app.handle(request("/api/v1/fixture-snapshot"), render)).status, 404);
   assert.equal(loads, 1);
   await app.handle(request("/api/v1/session/logout", "POST"), render);

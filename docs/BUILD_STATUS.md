@@ -11,9 +11,21 @@ component acceptance. This file reports current product readiness and the next b
 **Active website/login lane:** Owner goal now targets website, login and dual website
 access. `WEBSITE_LOGIN_DELIVERY.md` records public/private separation, provider/hostname
 choices, exact-origin dual-address integration, deployment sequence and live acceptance.
-The current private process remains single-origin. New isolated verifier tests cover
+The private process now accepts an optional `secondaryAccess` exact HTTPS origin and
+distinct audience, captured before requests and preserved by startup validation.
+Both origins reuse one set of services and resource ownership; unknown origins and
+cross-origin writes are rejected. A mounted disposable test creates a project on one
+address and a task on the other, reads it from the first, verifies credential isolation,
+configuration mutation resistance and once-only cleanup. Fifteen combined tests,
+TypeScript, focused lint and VPS compilation pass; six access checks additionally
+cover invalid dual-address configurations. An old expectation that `/ideas` was absent
+was corrected to match the already-mounted protected page. Native host reconstruction
+now preserves the exact configured primary/secondary Host through the existing bridge;
+the task host supplies the secondary origin without another worker or service. All 31
+targeted tests, TypeScript, lint and VPS compilation pass. Independent integration
+review, deployment and live browser/IdP validation remain unfinished. Isolated verifier tests cover
 separate audiences, same owner with distinct tokens, cross-origin writes and spoofed
-forwarded-host rejection. They do not prove a mounted dual-address application.
+forwarded-host rejection. No actual alternate hostname is enabled by these tests.
 Private hostname, provider and employer-approved alternate use await owner answers;
 no DNS, account, service or deployment changes have been made.
 The static welcome source now reflects the recorded public pre-alpha publication,

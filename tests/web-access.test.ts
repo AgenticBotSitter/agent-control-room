@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAccessVerifier, requireSameOrigin, safeWebReturnPath } from "../src/web/v1/access-verifier.ts";
+import { captureWebOrigins, createAccessVerifier, requireSameOrigin, safeWebReturnPath } from "../src/web/v1/access-verifier.ts";
 import { now, origin, trust, token, request } from "./helpers/web-foundation.ts";
 
 test("Access signature yields only normalized human identity, without a strong effect approval", () => {
@@ -58,4 +58,12 @@ test("separate private addresses reject each other's audience and cross-origin w
     headers: { "x-forwarded-host": new URL(primary.origin).host, "cf-access-jwt-assertion": token({ aud: [primary.audience] }) },
   });
   assert.throws(() => requireSameOrigin(spoofed, primary.origin), /access_denied/);
+});
+
+test("dual-address configuration rejects reused audiences, wildcard and non-exact origins", () => {
+  const primary = { origin, audience: trust.audience };
+  for (const secondary of [{ origin, audience: "other" }, { origin: "https://second.example", audience: trust.audience },
+    { origin: "http://second.example", audience: "other" }, { origin: "https://second.example/path", audience: "other" },
+    { origin: "https://*.example.org", audience: "other" }, { origin: "*", audience: "other" }]) assert.throws(() => captureWebOrigins(primary, secondary));
+  assert.equal(captureWebOrigins(primary).length, 1);
 });

@@ -17,6 +17,21 @@ function fixture(overrides: Partial<Parameters<typeof createPrivateNodeHandler>[
 async function send(f: ReturnType<typeof fixture>, options: Parameters<typeof nodeExchange>[0] = {}) {
   const x = nodeExchange(options); await f.server.handle(x.input, x.output); return x;
 }
+test("Node bridge selects only the configured secondary Host and never a forwarded alias", async () => {
+  const options = { secondaryOrigin: "https://secondary.example.invalid" };
+  const f = fixture(options); options.secondaryOrigin = "https://changed.example.invalid";
+  const x = nodeExchange({ headers: ["X-Forwarded-Host", "attacker.example.invalid"] });
+  x.input.rawHeaders[1] = "secondary.example.invalid";
+  await f.server.handle(x.input, x.output);
+  assert.equal(x.output.statusCode, 200);
+  assert.equal(f.requests[0].url, "https://secondary.example.invalid/projects");
+  assert.equal(f.requests[0].headers.get("x-forwarded-host"), null);
+  const denied = nodeExchange({ headers: ["X-Forwarded-Host", "secondary.example.invalid"] });
+  denied.input.rawHeaders[1] = "unconfigured.example.invalid";
+  await f.server.handle(denied.input, denied.output);
+  assert.equal(denied.output.statusCode, 403); assert.equal(f.requests.length, 1);
+  await f.server.close(); assert.equal(f.closes, 1);
+});
 test("Node bridge reconstructs the fixed HTTPS origin and preserves reviewed request fields only", async () => {
   const f = fixture();
   const x = await send(f, { method: "POST", path: "/api/v1/projects", body: '{"title":"Example"}', headers: [

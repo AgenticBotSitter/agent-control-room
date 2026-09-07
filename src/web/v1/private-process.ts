@@ -1,6 +1,6 @@
 import type { DatabaseClient } from "../../persistence/database";
 import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
-import { createAccessVerifier, requireSameOrigin, WebAccessError } from "./access-verifier";
+import { captureWebOrigins, createAccessVerifier, requireSameOrigin, WebAccessError } from "./access-verifier";
 import { privateResponseHeaders, webFailure, readBoundedJson } from "./http-common";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
@@ -27,6 +27,8 @@ import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
+  /** Optional separately approved private address; same services, distinct Access audience. */
+  secondaryAccess?: { origin: string; audience: string };
   maxSessionSeconds: number; loadKeys: AccessKeyLoader;
   /** A single process-owned pool, supplied by the separately reviewed deployment bootstrap. */
   database: { client: DatabaseClient; close: () => Promise<void> };
@@ -68,6 +70,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
+  const sites = captureWebOrigins({ origin: options.origin, audience: options.audience }, options.secondaryAccess);
   const newsCollections = new Map<string, { describe: WebNewsCollectionPlanning["describe"];
     propose: WebNewsCollectionPlanning["propose"]; approve: WebNewsCollectionAdmission["approve"] }>();
   for (const entry of options.newsCollections ?? []) {
@@ -151,11 +154,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
 
     async function dispatch(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
       try {
-        requireSameOrigin(request, options.origin);
         const url = new URL(request.url);
+        const site = sites.find(candidate => candidate.origin === url.origin);
+        if (!site) throw new WebAccessError("access_denied");
+        requireSameOrigin(request, site.origin);
         // Identity credentials only arrive on the verified edge assertion header. Never consume an app cookie/header alias.
         if (!request.headers.get("cf-access-jwt-assertion")) throw new WebAccessError("authentication_required");
-        const trust = await keys.get();
+        const trust = { ...await keys.get(), audience: site.audience };
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
           const ideaSynthesis = /^\/api\/v1\/ideas\/([^/]+)\/synthesis$/.exec(url.pathname);
@@ -312,7 +317,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(await connections.readQueueAttention(identity, queueAttention), { headers: privateResponseHeaders });
           }
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
-            return await createTaskHttpHandler({ origin: options.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, submission, revisions, clock })(request);
+            return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, submission, revisions, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
@@ -328,7 +333,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               headers: { ...privateResponseHeaders, "content-type": "text/event-stream", "x-accel-buffering": "no" },
             });
           }
-          return await createProjectHttpHandler({ origin: options.origin, trust, service, clock })(request);
+          return await createProjectHttpHandler({ origin: site.origin, trust, service, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
         const taskPage = /^\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);
