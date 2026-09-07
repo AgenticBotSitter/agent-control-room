@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Overlapping source refreshes are refused:** Admission now uses the existing
+workspace transaction lock and retained plan/effect records to prevent two different
+request keys from queuing an unresolved scan of the same source. Exact retries keep
+their original receipt; uncertain effects keep the source occupied until resolved.
+No extra queue or scheduler was added. All 55 admission/execution tests pass,
+including concurrent distinct requests and a fresh refresh after confirmed completion.
+All 315 delivery tests, types and focused lint pass. This is local simulated-runtime evidence, not production
+PostgreSQL concurrency or live networking qualification.
+
 **Shared discovery assembly:** `createNewsDiscoveryIntegration` now supplies the
 private web refresh bindings and existing queue collector from one validated set of
 project/source assignments. It reuses planning, admission, plan storage and borrowed

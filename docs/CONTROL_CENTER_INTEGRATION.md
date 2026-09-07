@@ -130,7 +130,14 @@ rejects unsupported collection operations rather than silently ignoring them.
 An injected integration test now submits a fresh proposal and approval through these
 assembled HTTP bindings, consumes the queued reference with the borrowed collector,
 and confirms the same story is not duplicated after another completed refresh.
-This does not prove concurrent different-request deduplication, real queue polling,
+Admission now also checks retained plans with unresolved effects while holding its
+existing workspace transaction lock. Different request keys for the same source
+cannot both enqueue; exact replay returns its original receipt. Ambiguous effects
+continue to hold the source until resolved. Confirmed, failed or cancelled effects
+release it for a new explicitly approved refresh. This uses existing tables, not a
+second scheduler or lock service. A concurrent distinct-key regression checks one
+admission, one refusal, one effect and one queue entry.
+This does not prove real queue polling,
 native networking, production bootstrap or browser interaction.
 
 The private process accepts explicitly supplied, project/source-bound collection

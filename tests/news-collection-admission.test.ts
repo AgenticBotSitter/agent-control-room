@@ -73,6 +73,19 @@ test("owner approval, assignment, effect authorization and queue entry commit on
   assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0);
 });
 
+test("different refresh keys cannot overlap an unresolved source collection", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const second = await f.planner.propose(f.identity, { sourceDigest: f.planner.sourceDigest, idempotencyKey: "distinct-refresh-key-002" });
+  const args = { jobId: second.jobId, inputDigest: second.inputDigest };
+  const results = await Promise.allSettled([f.service.approve(f.identity, f.args), f.service.approve(f.identity, args)]);
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter(result => result.status === "rejected").length, 1);
+  assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 1);
+  const winner = results[0].status === "fulfilled" ? f.args : args;
+  assert.equal((await f.service.approve(f.identity, winner)).replayed, true);
+  assert.equal((await f.client.query("SELECT * FROM control_effect_intents")).rows.length, 1);
+});
+
 test("discovery approval and borrowed execution reuse queue claims and settlement without repeat reads", async t => {
   for (const mode of ["success", "disabled_before_approval", "disabled_before_execution", "disabled_during_read", "redirect_denied", "authority_revoked_at_commit"] as const)
     await t.test(mode, async () => {

@@ -79,6 +79,21 @@ export class WebNewsCollectionAdmission {
         // History is not resubmission permission, including after operational queue retention.
         return { ...reference, replayed: true, effectState: saved.state, networkContacted: false as const };
       }
+      // The workspace lock serializes distinct request keys as well as exact
+      // retries. Uncertain effects still occupy the source until resolved.
+      // Use retained plans rather than trusting a caller's source identifier.
+      const active = await tx.query<{ job_id: string }>(
+        `SELECT DISTINCT p.job_id FROM control_abs_feed_plans p
+         JOIN control_effect_intents e ON e.tenant_id=p.tenant_id AND e.job_id=p.job_id
+         WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.project_id=$3
+           AND e.state NOT IN ('confirmed','failed','cancelled')`,
+        [tenantId, workspaceId, projectId]);
+      const plans = new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
+      for (const row of active.rows) {
+        const retained = await plans.get(row.job_id);
+        if (!retained || retained.plan.configuration.source.sourceId === work.plan.configuration.source.sourceId)
+          throw new WebAccessError("conflict");
+      }
       const job = jobRecordSchema.parse(await canonical.get(tenantId, "job", input.jobId));
       deadline = Math.min(Date.parse(job.authority.expiresAt), Date.parse(identity.expiresAt), Date.parse(identity.verificationExpiresAt),
         Date.parse(actor.now) + ABS_FEED_JOB.maximumDurationSeconds * 1000);
