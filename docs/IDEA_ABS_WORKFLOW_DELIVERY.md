@@ -34,6 +34,19 @@ concrete finding. No independent test execution or live acceptance is inferred.
 
 ## Still required for the requested outcome
 
+Storage update (`c522684`): migration 0059 and `PostgresAbsNewsStoreV1` now implement
+immutable source versions, exact source/proposal reads, bounded pagination, and
+source-bound proposal retention using the existing DatabaseClient/PostgreSQL stack.
+No SQLite promotion, new database engine, role grant, feed or runtime activation.
+Custom code is limited to Control Room's scoped story/proposal relationships; SQL
+transactions, constraints and the existing validation/HMAC primitives do the storage work.
+Independent source review found no concrete defect within the store/test scope.
+The recomputed full private schema fingerprint is
+`aac6f3f58ff464bf5d3a7227aa16efaf2beab0aba799db3b59b6248eff2f3a9f`.
+Store/audit/database-role/rehearsal tests passed 27 checks in disposable PGlite;
+this is not real PostgreSQL concurrent-worker or production migration acceptance.
+Authenticated application wiring and its deliberately scoped SQL grants remain open.
+
 1. Mount a non-fixture private Idea Lab workspace and ABS source/proposal queue through
    the authenticated application. Existing `/ideas` and ABS fixture UI are not live.
 2. Use PostgreSQL for operational source/proposal storage. Existing SQLite ABS stores

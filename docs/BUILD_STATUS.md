@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**ABS PostgreSQL storage implemented locally:** `c522684` adds immutable story versions
+and source-bound proposals through the existing database stack. Store reopening, replay,
+pagination, identity/integrity checks and retained-source binding have regression tests.
+The private schema fingerprint was regenerated; 27 store/audit/database-role/rehearsal
+checks passed in disposable PGlite. Independent source review found no concrete store
+defect. No production DB, new SQL role grants, feed or listener was activated.
+Next: connect this store to authenticated private news pages and proposal controls;
+live participants/feeds and the complete Idea Lab/ABS user journeys remain unaccepted.
+
 **Owner reprioritized Idea Lab and ABS:** Work is on `codex/idea-abs-workflows`.
 Discussion rounds now include prior opinions; an authenticated ABS intake and browser
 client save source-backed ordinary task proposals without execution permission.
