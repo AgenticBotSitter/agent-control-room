@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Expanded isolated contributor candidate passes demo checks:** Fifty required source
+files and three serving updates are staged without replacing candidate schema/privacy
+adaptations or licensing. Exact source additions match byte-for-byte. Strict types,
+28 demo tests and two compiled-demo tests pass inside the candidate itself. A private
+reconstruction delta preserves this state beyond temporary storage. No downloads,
+live listener, provider call or publication occurred. Public setup docs, full legacy
+regression, privacy/rights review and real browser acceptance remain outstanding.
+
 **Demo import scope reduced without changing services:** Direct connection-registry
 imports now select the same existing implementations rather than every module
 re-exported by the registry index. The preview's combined import closure falls from

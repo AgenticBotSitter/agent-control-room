@@ -1,5 +1,31 @@
 # Local public source candidate staging
 
+## Expanded isolated demo rehearsal (2026-09-06)
+
+The existing candidate now contains the 50 missing tracked source files from
+`40d3b98`, plus updated asset loader, Node handler and serving lifecycle. All 50
+additions were byte-compared against source with zero differences. Candidate
+database generalization, adapted tests, LICENSE and NOTICE were left intact.
+Package scripts add explicit demo build/start/check/test commands; generated demo
+output is ignored. There are no new GitHub workflows.
+
+Evidence in the isolated candidate: strict whole-tree TypeScript passes; 28 demo,
+runtime, launcher, render and listener tests pass; the isolated frontend builds and
+both assembled-demo tests pass. These are fake-server/in-memory exchanges, not a
+real browser/listener acceptance. Existing candidate dependencies were reused;
+101 GiB free space checked before staging, no download or installation performed.
+
+`docs/research/public-demo-reconstruction-delta.json` preserves the 53 copied source
+path/hash references and two candidate-specific complete file bodies. Apply it after
+the original reconstruction receipt to recover this expanded staging state. Both
+receipts are PRIVATE and excluded from any public upload. Temporary output remains
+within the already recorded candidate cleanup root; no cleanup was performed.
+
+This staging does not approve these files for publication. Remaining work includes
+per-file privacy/rights review, refreshed public setup documentation, complete
+standalone regression, real demo/browser acceptance, and independent exact-tree
+review. No public upload or live provider call occurred.
+
 ## Contributor demo expansion review (2026-09-06)
 
 Follow-up import review replaced the local runtime's broad connection-registry barrel

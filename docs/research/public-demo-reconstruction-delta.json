@@ -1,0 +1,231 @@
+{
+  "description": "PRIVATE reconstruction delta applied after public-candidate-reconstruction.json; never publish.",
+  "sourceCommit": "40d3b98",
+  "sourceFiles": [
+    {
+      "path": "app/components/contributor-simulation.tsx",
+      "sha256": "36fe60aa182ef1209143c371e4f95733241eabfe7bee922f709d4a8d891c2464"
+    },
+    {
+      "path": "app/components/local-pilot-owner-session.tsx",
+      "sha256": "7056ff3fa99d40a28092fff3aff36f5317520a7bf0159a4ba4cbf45697bdaa18"
+    },
+    {
+      "path": "app/local-preview/workspace.tsx",
+      "sha256": "5edca9c2279a4280b641b733614d45cc5435a8375858c78092d6c7d981bf62b2"
+    },
+    {
+      "path": "contributor-demo/index.html",
+      "sha256": "c77bee9adc63195ac79c4f5c2d9b16b9bbcbf44a08c8d9f396ede95f99852683"
+    },
+    {
+      "path": "contributor-demo/main.tsx",
+      "sha256": "466b803918ec3bc3736566fb71251f2c677d6de161c8e640236e100355f8d4f7"
+    },
+    {
+      "path": "contributor-demo/view.tsx",
+      "sha256": "c3b00e808c19356a97482e7469379b386366a07f1250636bc1a2e5ed2654c3d1"
+    },
+    {
+      "path": "scripts/contributor-demo.mjs",
+      "sha256": "896588ff978edff124ff840ddae958cbe8e9b86c043f0f35f5a18171b5e9da6f"
+    },
+    {
+      "path": "src/connection-center/v1/index.ts",
+      "sha256": "222cd3baa550602c4fc58190e0488043fd15db3ee6ef742176b4b6162bdffb62"
+    },
+    {
+      "path": "src/connection-registry/v1/intake.ts",
+      "sha256": "3bae2c43588deb8a0b7f21b3689970c6c1ef6dc7e9da2c95168909c03a7e8d01"
+    },
+    {
+      "path": "src/connection-registry/v1/node-delivery.ts",
+      "sha256": "8af73346c565adf926164f07170f1c0e892f54600cba69866ecb34ce3921283f"
+    },
+    {
+      "path": "src/connection-registry/v1/node-ingress.ts",
+      "sha256": "31c05a4a5d6fce6376ef86859bcb19c7045ea3d0944b96f6d16081a8a5b3f4cd"
+    },
+    {
+      "path": "src/connection-registry/v1/private-loopback-framing.ts",
+      "sha256": "5736d39caa7e552b71b874300a9f65c456524b31adf95d9a59ca8b4e7b0881c3"
+    },
+    {
+      "path": "src/connection-registry/v1/transport-admission.ts",
+      "sha256": "69362ae7500ea54f486b666a877d066c143081d3a02d3dc19870f2088b7c1a9b"
+    },
+    {
+      "path": "src/contributor-demo/application.ts",
+      "sha256": "ccf53bea3f0fe04aab056e9122c8001044bcea86f2a4eb66995f639d8c4794ce"
+    },
+    {
+      "path": "src/contributor-demo/browser-client.ts",
+      "sha256": "fbad6f493c48cb8a215b8aedfd35734f875c742f366df856a1075ceca8c6faa5"
+    },
+    {
+      "path": "src/contributor-demo/history-view.ts",
+      "sha256": "6f8f2d65d30c37efa6c28379922ff14feb3665a60bfa0d64db942bc164162cec"
+    },
+    {
+      "path": "src/contributor-demo/http.ts",
+      "sha256": "11c91a503164e99665cab70f9ee319b3f4a9e83b703d8fa98b40dcf91eaafb26"
+    },
+    {
+      "path": "src/contributor-demo/launcher.ts",
+      "sha256": "61722e115a115bf8751362bd8cfcd3ced44e0adca79159afd1dda38bbb2993d7"
+    },
+    {
+      "path": "src/contributor-demo/revision.ts",
+      "sha256": "6987a37632d415b5ae2d2a35dfc0a66a20e8a7c26a4b1286eaa1436080648126"
+    },
+    {
+      "path": "src/contributor-demo/runtime.ts",
+      "sha256": "ce447ed1959d270949588bba009ef9413823cd1cbb179bfa8fdb2386d0d02653"
+    },
+    {
+      "path": "src/contributor-demo/simulations.ts",
+      "sha256": "e8f72fede9ac2df1efcfb33781b7020dde7fd335ecdd11cb0d82266f7d063647"
+    },
+    {
+      "path": "src/local-pilot/v1/browser-transport.ts",
+      "sha256": "ace8ed3186465fc8481c7358a7cfc9ee9f8950407ba6c8063a468f2d6e368218"
+    },
+    {
+      "path": "src/local-pilot/v1/project-task-http.ts",
+      "sha256": "05766f9eb451a679f2ca6e8cbf36bb35660fea9a2aa0514f515375848093b3e0"
+    },
+    {
+      "path": "src/local-pilot/v1/project-tasks.ts",
+      "sha256": "9da6ecd62fb02987a647187af55cb09d4d183137cc779093d6c64653cb9e8503"
+    },
+    {
+      "path": "src/local-pilot/v1/runtime.ts",
+      "sha256": "1d24eae467f9d9ca98362c90349d9f298b804f7b80504d5f8bc3566a9cbb48db"
+    },
+    {
+      "path": "src/local-pilot/v1/session-http.ts",
+      "sha256": "ada8de8faa969b8719cfee81c4a69516644f596d8bd53d5cd5b69cac61bd865d"
+    },
+    {
+      "path": "src/local-pilot/v1/synthetic-result-read.ts",
+      "sha256": "19cc29808f44012196029628d0d98da46aca68186e0c08ef19c65d7df624e4ed"
+    },
+    {
+      "path": "src/project-events/v1/contracts.ts",
+      "sha256": "ad782a5b1ffda518102f4ab57229a162f18cb66503b18452dde96ded20572247"
+    },
+    {
+      "path": "src/project-events/v1/errors.ts",
+      "sha256": "1d2f285a2e3b235c90874978a89714eb18247f75ac4448ff5b30d1b743c26b37"
+    },
+    {
+      "path": "src/project-events/v1/idea-lab-reconciler.ts",
+      "sha256": "ee1c16518c6745bf2865267bdd163f712e836b46422351f7dd73161a7539d924"
+    },
+    {
+      "path": "src/project-events/v1/index.ts",
+      "sha256": "ebabf2d3f268c4351b39704935b0077752ed324ee23a45cd414b9b285fa58689"
+    },
+    {
+      "path": "src/project-events/v1/schemas.ts",
+      "sha256": "56b431d06fe98fdc044110490fef8f8c90439c24c13fe1c932e9f2a924dfefd7"
+    },
+    {
+      "path": "src/project-events/v1/sse.ts",
+      "sha256": "e2c97e58b84bef3ddecee27e125661f3154b29adaae5a6d8d5048d9b3809b51c"
+    },
+    {
+      "path": "src/project-events/v1/store.ts",
+      "sha256": "27f64ccfba644e1d23f148f3ae09ba57afea2bc6e0248d0dab1e6af7a8a8690e"
+    },
+    {
+      "path": "src/project-events/v1/types.ts",
+      "sha256": "6e9037a20463528021e5fa4ae5df146de57cb090b88eb3f8015329f9bd73b90a"
+    },
+    {
+      "path": "src/project-workspace/v1/catalog-session.ts",
+      "sha256": "bb9eef82efa444141bf46e016fc73a5057726e474483d25a0072eac742590ac6"
+    },
+    {
+      "path": "src/project-workspace/v1/errors.ts",
+      "sha256": "78ff50cc25cb3cacb01a3576393c94e4fbd5456fb583a73173c208b0084d1317"
+    },
+    {
+      "path": "src/project-workspace/v1/exact.ts",
+      "sha256": "ea3f14ed1bc5c9403886383de6b147f27d3e6006a139cea6574a192ac16d82be"
+    },
+    {
+      "path": "src/project-workspace/v1/http-client.ts",
+      "sha256": "2c4c76c211db66d48abf742a7d7b5f788c6689af41182b9b8a75d3936822438e"
+    },
+    {
+      "path": "src/project-workspace/v1/index.ts",
+      "sha256": "5bf2602d3c65f98acf9b4b7fa65341db16b0e3771e577028b0dcdbcf0ca421b6"
+    },
+    {
+      "path": "src/project-workspace/v1/read-service.ts",
+      "sha256": "c0513684db0f0dd25d5f5df72eee4cea869646e6951b02a796df143598ac7e9d"
+    },
+    {
+      "path": "src/project-workspace/v1/schemas.ts",
+      "sha256": "6ebc5ac4c009fba64fa4dd85b9fb6cebbfc42dab6eb45557bb664b3e7888b100"
+    },
+    {
+      "path": "src/project-workspace/v1/types.ts",
+      "sha256": "2c4b4e900d3bddc07620ee8eeb98a062260b74585a1bd9ef5483d6a8600a0bf1"
+    },
+    {
+      "path": "src/project-workspace/v1/workspace.ts",
+      "sha256": "6b0b5bf59080b4748d3b1da5f07113a66ddc487f0c4b52cab6c91a7b9bd92c32"
+    },
+    {
+      "path": "tests/contributor-demo-build.test.mjs",
+      "sha256": "ba828bbafeaad41e214affcf2cfe3067d84d4fd418205cc74f16c889d36f55f1"
+    },
+    {
+      "path": "tests/contributor-demo-launcher.test.ts",
+      "sha256": "99f05cae9cae0ff484b55c788fc40cd7e26af7706587406d7290ceb6593c90c5"
+    },
+    {
+      "path": "tests/contributor-demo-runtime.test.ts",
+      "sha256": "42ba3a71699a7c58f5868943a9f41162d9a93052123141436580059d4eb01088"
+    },
+    {
+      "path": "tests/local-preview-panels.test.tsx",
+      "sha256": "cf15a137720428f2360d9d8b830a372affa681831a4e573f001684421c83b291"
+    },
+    {
+      "path": "tests/web-private-serving.test.ts",
+      "sha256": "48c22bb800e72abcd17105230fb575d2f9dddcbc6a9421ba9ecce182c937e59a"
+    },
+    {
+      "path": "vite.contributor.config.ts",
+      "sha256": "4ddcd2002c35e2e943b6e8299bd86385a767acb253a59be1a10dc260820ef70e"
+    },
+    {
+      "path": "src/web/v1/private-assets.ts",
+      "sha256": "57d4125367d50fb868a52785078c8f73c2a619362c5315269611ebed32fed381"
+    },
+    {
+      "path": "src/web/v1/private-node-handler.ts",
+      "sha256": "f6300f24f65c1759ea2fd2adc78a27df7f997cdbda4c3cee99e0b80758cd3337"
+    },
+    {
+      "path": "src/web/v1/private-serving.ts",
+      "sha256": "cb5440263aa585097829eeb6ed0439cbcacbd3d68893c71e19c0772843c73d1c"
+    }
+  ],
+  "adaptedFiles": [
+    {
+      "path": "package.json",
+      "body": "{\n  \"name\": \"control-room\",\n  \"version\": \"0.1.0\",\n  \"license\": \"Apache-2.0\",\n  \"private\": true,\n  \"packageManager\": \"pnpm@11.19.0\",\n  \"engines\": {\n    \"node\": \">=22.13.0\"\n  },\n  \"scripts\": {\n    \"check:demo\": \"tsc --noEmit --incremental false\",\n    \"build:demo\": \"vite build --config vite.contributor.config.ts\",\n    \"demo\": \"pnpm run build:demo && node --import tsx scripts/contributor-demo.mjs\",\n    \"test:demo\": \"node --import tsx --test tests/contributor-demo-launcher.test.ts tests/contributor-demo-runtime.test.ts tests/local-preview-panels.test.tsx tests/web-private-serving.test.ts\",\n    \"test:build:demo\": \"pnpm run build:demo && node --import tsx --test tests/contributor-demo-build.test.mjs\",\n    \"check\": \"tsc --project tsconfig.vps.json\",\n    \"build\": \"node scripts/build-vps.mjs\",\n    \"test\": \"node scripts/build-vps.mjs && node --import tsx --test tests/vps-built-handler.test.mjs tests/vps-built-startup.test.mjs tests/vps-built-serving.test.mjs tests/vps-built-rehearsal.test.mjs tests/vps-built-preparation.test.mjs tests/vps-built-results.test.mjs tests/vps-built-owner-review.test.mjs tests/vps-built-planning.test.mjs tests/vps-built-assignment.test.mjs tests/vps-built-task-application.test.mjs tests/vps-built-task-startup.test.mjs tests/vps-built-approval.test.mjs tests/vps-built-quality.test.mjs tests/vps-built-revision-planning.test.mjs tests/vps-built-revised-result.test.mjs tests/vps-built-capacity-release.test.mjs tests/vps-built-owner-revision-interface.test.mjs tests/vps-built-result-ownership.test.mjs tests/vps-built-native-evidence.test.mjs tests/vps-built-managed-native-sessions.test.mjs tests/vps-built-launcher.test.mjs tests/vps-built-core-schema.test.mjs\"\n  },\n  \"dependencies\": {\n    \"pg-boss\": \"12.30.0\",\n    \"postgres\": \"3.4.7\",\n    \"react\": \"19.2.6\",\n    \"react-dom\": \"19.2.6\",\n    \"zod\": \"4.1.12\"\n  },\n  \"devDependencies\": {\n    \"@cloudflare/vite-plugin\": \"1.37.1\",\n    \"@electric-sql/pglite\": \"0.3.14\",\n    \"@eslint/js\": \"9.39.4\",\n    \"@next/eslint-plugin-next\": \"16.2.6\",\n    \"@tailwindcss/postcss\": \"4.2.1\",\n    \"@types/node\": \"22.19.19\",\n    \"@types/react\": \"19.2.14\",\n    \"@types/react-dom\": \"19.2.3\",\n    \"@vitejs/plugin-react\": \"6.0.2\",\n    \"@vitejs/plugin-rsc\": \"0.5.26\",\n    \"eslint\": \"9.39.4\",\n    \"eslint-plugin-jsx-a11y\": \"6.10.2\",\n    \"eslint-plugin-react\": \"7.37.5\",\n    \"eslint-plugin-react-hooks\": \"7.1.1\",\n    \"globals\": \"16.4.0\",\n    \"react-server-dom-webpack\": \"19.2.6\",\n    \"tailwindcss\": \"4.2.1\",\n    \"tsx\": \"4.23.1\",\n    \"typescript\": \"5.9.3\",\n    \"typescript-eslint\": \"8.59.3\",\n    \"vinext\": \"1.0.0-beta.2\",\n    \"vite\": \"8.0.13\",\n    \"wrangler\": \"4.92.0\"\n  },\n  \"type\": \"module\"\n}\n",
+      "sha256": "d8abf232387ccea5a59e29a82feaa80ca4f61dc778bf77cc32ecc689ec697068"
+    },
+    {
+      "path": ".gitignore",
+      "body": "# Local dependencies and generated output are not release source.\nnode_modules/\n/.next/\n/dist/\n/dist-vps/\n/dist-contributor/\n/coverage/\n*.tsbuildinfo\n\n# Local credentials and environment overrides. Examples must contain placeholders.\n.env\n.env.*\n!.env.example\n!.env.sample\n*.pem\n*.key\n\n# Local execution logs and operating-system metadata.\n*.log\n*.ndjson\n.DS_Store\n\n# Do not add automation without an explicit budget/security review.\n/.github/workflows/\n",
+      "sha256": "d163e81bfab1cdbaa5748d4cfb2c06dcb6225ce8e7615a2ba516ce98d554956f"
+    }
+  ],
+  "publicationApproved": false
+}
