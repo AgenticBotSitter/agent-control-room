@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner Idea creation operation implemented locally:** `f0f8e49` adds an audited,
+non-executing session-save service and optional scoped POST `/api/v1/ideas` operation.
+Exact replay recovers the original receipt; `bd76e1a` preserves the original roster
+when deployment configuration changes. Current owner/read grants and web-session
+revocation are checked inside the transaction. No session writes were granted to the
+restricted web role; the standard bootstrap rejects this coordinator dependency.
+Forty-three focused tests passed, followed by seven creation/compiled-app checks for
+the replay correction. TypeScript/lint and VPS compilation pass. Creation form,
+production coordinator role/composition, panel execution and decision commands remain
+open. No fake panel was run by this service and no native/production effect occurred.
+
 **Private Idea Lab pages mounted locally:** `beeaf72` connects `/ideas` and
 `/ideas/:sessionId` to the protected retained-discussion API, with workspace navigation,
 round-by-round opinions, synthesis, owner decisions and promoted-project links. These

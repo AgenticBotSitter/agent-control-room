@@ -25,6 +25,29 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Non-executing owner session creation
+
+`f0f8e49` adds `IdeaSessionCreationService` and an optional scoped `ideaCreation`
+operation on POST `/api/v1/ideas`. Creation validates the full owner brief/round limits,
+requires current workspace-wide owner create/read grants, and writes the immutable
+session and audit record in one transaction. It does not instantiate any driver or
+start a panel. Configured participants remain draft descriptors under the existing
+session contract, not qualified live agents. There is no new database engine or queue.
+The web SQL role stays read-only for Idea records. A separate coordinator role and
+production composition still need implementing; the standard web bootstrap explicitly
+rejects silently injecting this operation. Missing configuration returns unavailable.
+The create form is not yet connected, and deployment remains unconfigured.
+
+Independent review found that replay used the current roster. `bd76e1a` recovers the
+original retained roster/time and compares owner input without substituting current
+configuration. Tests cover audited save, reopen/replay including roster changes,
+changed input conflicts, rejected oversized/scope-spoofed/non-owner requests, HTTP
+save/read/replay, foreign origin and logout denial. Forty-three focused workflow tests
+passed before the replay correction, then seven creation/compiled-app checks passed
+with the correction. Full TypeScript and focused lint pass; VPS compilation passed.
+No real concurrent PostgreSQL, production-role or live-provider acceptance is inferred.
+Independent source re-review of the replay correction found no new concrete defect.
+
 ### Private Idea Lab pages
 
 `beeaf72` mounts protected `/ideas` and `/ideas/:sessionId`, adds the private navigation
