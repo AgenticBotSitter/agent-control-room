@@ -25,6 +25,36 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Unwired bounded public-source reader
+
+`createAbsPublicReader` reuses `preparePinnedHttpsConnection` / `verifyPinnedTlsPeer`
+and Node HTTPS. Custom code is limited to the ABS URL/type/size policy, authority checks
+and lifetime adapter; no second DNS address classifier or TLS stack is introduced. The
+private machine connector remains unchanged, because its mTLS credentials and private
+address exception must not apply to news. Node's HTTPS request options support the TLS
+identity controls used here: https://nodejs.org/api/https.html#httpsrequestoptions-callback.
+
+Construction is inert. Trusted composition supplies current per-read authority and an
+exact list of public canonical URLs. The reader resolves through the existing global-IP
+guard, dials the selected IP directly with pooling disabled, and preserves the expected
+DNS hostname in SNI/certificate checks/Host. It checks the actual TLS peer again before
+accepting response bytes. GET only; no credentials, cookies, redirects, compressed bodies
+or implicit retries. XML/HTML content types, bytes and total read time are explicitly
+bounded. DNS completion after cancellation cannot issue HTTP. Failures close the reader
+against further reads. Resource-close evidence is awaited on success and bounded on close;
+missing evidence is an explicit close-uncertain error, not proven physical cleanup.
+
+Forty-eight injected reader and existing address-guard checks pass after fixing a close-only
+request event that left its response promise pending. They cover private DNS, wrong peer,
+TLS hostname/authorization, rejected headers, size/UTF-8/incomplete bodies, timeout,
+revocation, external cancellation, late DNS and withheld resource closure. TypeScript and
+focused lint pass. The 62-test workflow regression and VPS build passed before the final
+cleanup-test addition. Independent source review found no concrete introduced defect.
+These are injected events, not real Node socket-order or public-host interoperability
+evidence. No actual resolver, socket, feed, provider or deployment was used. The reader
+is not mounted in startup and does not itself mint live-read authority. Managed cleanup,
+accepted source configuration, bounded live-read admission and native acceptance remain.
+
 ### Trusted supplied-feed ingestion service
 
 `AbsFeedIngestionService` joins the reused decoder and existing PostgreSQL store. Its

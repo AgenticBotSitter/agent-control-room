@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Unwired public-source reader implemented with injected tests:** It reuses the existing
+public-address/pinned-peer guard and Node HTTPS, with exact configured URLs, direct
+checked-IP dialing and DNS identity preserved for TLS and Host. No credentials, private
+address exception, redirects, cookies or decompression are allowed. Each read is bounded
+by size/time and current authority checks. Failures disable that reader; no automatic
+retry occurs. Tests exposed a close-only request leaving cleanup pending; close now
+settles the request promise, and missing closure evidence explicitly remains uncertain.
+Forty-eight reader/address regressions pass, plus TypeScript and focused lint. The broader
+62-test workflow suite and VPS build also passed before the final cleanup-test addition.
+Independent source review found no concrete introduced defect. All network ports were
+injected; no real DNS, TLS, feed request or native qualification was attempted. The reader
+is not mounted. Managed ownership, live authorization/configuration, canonical-page
+verification and real-agent journeys remain unfinished.
+
 **Feed decoding and retained outcomes now share one ingestion service:** Trusted
 composition captures source/limits/key, decodes outside SQL and commits articles plus
 source status under the existing workspace lock. Complete checks advance last success;
