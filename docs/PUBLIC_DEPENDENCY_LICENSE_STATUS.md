@@ -108,6 +108,37 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Build module attribution follow-up
+
+At `a422fb2`, rebuilt the unchanged standalone application with a local observation-only
+`generateBundle` hook. It inspected emitted chunk module records and found each package's
+nearest installed manifest; it emitted no added application asset and changed no source
+configuration. The final pass for each environment is retained in
+[`research/bundled-package-observations.json`](research/bundled-package-observations.json),
+with package versions, declared licenses, chunk references and exact output hashes.
+Preliminary RSC/SSR analysis passes with zero rendered lengths were not mistaken for
+the final outputs. Build log: `/private/tmp/cr-bundle-module-observations.log`.
+
+| Final build environment | Package owners observed in chunk module records |
+|---|---|
+| Browser | @vitejs/plugin-rsc, react, react-dom, react-server-dom-webpack, scheduler, vinext, zod |
+| RSC server | @vitejs/plugin-rsc, postgres, react, react-dom, react-server-dom-webpack, vinext, zod |
+| SSR server | @vitejs/plugin-rsc, react-server-dom-webpack, vinext, zod |
+
+All final environments had zero unresolved package owners among the inspected
+`node_modules` module records. This makes dependency grouping more precise: framework
+packages listed as development dependencies still contribute browser/server code;
+Postgres.js is bundled, while pg-boss remains external as previously observed. The
+recorded module lengths are bundler metadata, not downloadable/compressed file sizes.
+
+Next notice review should include these exact package texts and nested/vendor notices,
+especially React server component tooling, plus the separate external pg-boss subtree.
+Nearest-manifest attribution is not proof that every byte originated with that package's
+authors. This is not a complete SBOM: CSS/Tailwind output, native/WASM payloads, computed
+runtime imports, framework-generated code and copied source need separate accounting.
+No absence of MPL/LGPL from this selected chunk-owner list clears the entire toolchain.
+No license choice, dependency removal, new installation or publication occurred.
+
 ### Runtime lockfile reachability at `2246647`
 
 A read-only traversal of importer `.` production dependencies in `pnpm-lock.yaml`

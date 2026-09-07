@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Actual bundle package owners observed:** Rebuilt the standalone app with an
+observation-only hook and recorded final browser/RSC/SSR module owners plus exact chunk
+hashes in `research/bundled-package-observations.json`. Browser output includes seven
+package owners, including development-declared framework tooling; Postgres.js is bundled
+server-side and pg-boss remains external. No unresolved owner for inspected node_modules
+records. This is not a complete SBOM or notice clearance: nested vendors, CSS, generated
+code and native/WASM remain. No configuration/dependency/license/publication change.
+
 **Runtime dependency scope narrowed from the lockfile:** The five production roots
 reach 26 exact snapshots, including optional edges, versus the earlier 476 installed
 package observations. Metadata is 22 MIT, two ISC, one Unlicense and one MIT/CC0 choice;

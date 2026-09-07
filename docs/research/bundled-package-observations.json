@@ -1,0 +1,330 @@
+{
+  "schema": "control-room.bundled-package-observation/v1",
+  "baseline": "a422fb2cfd88f62b031f431bb5615f46ad44395e",
+  "lockfileSha256": "51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0",
+  "method": "Read-only generateBundle observation hook on the existing standalone build; last pass per environment; nearest package manifest owns each node_modules module ID.",
+  "publicationApproved": false,
+  "licenseCleared": false,
+  "limits": [
+    "Module records and rendered lengths are build metadata, not final compressed byte counts.",
+    "Nearest package ownership does not resolve nested vendored notices or generated code attribution.",
+    "External runtime dependencies require separate lockfile review.",
+    "CSS assets, native payloads, WASM, computed imports and runtime-loaded resources are not fully inventoried here."
+  ],
+  "environments": [
+    {
+      "environment": "rsc",
+      "nodeModuleRecords": 215,
+      "unresolvedPackageOwners": 0,
+      "packages": [
+        {
+          "package": "@vitejs/plugin-rsc@0.5.26",
+          "declaredLicense": "MIT",
+          "moduleRecords": 3,
+          "renderedBytes": 1907,
+          "chunks": [
+            "index.js"
+          ]
+        },
+        {
+          "package": "postgres@3.4.7",
+          "declaredLicense": "Unlicense",
+          "moduleRecords": 10,
+          "renderedBytes": 63671,
+          "chunks": [
+            "_next/static/operation-signal-D7EKtcYM.js"
+          ]
+        },
+        {
+          "package": "react-dom@19.2.6",
+          "declaredLicense": "MIT",
+          "moduleRecords": 2,
+          "renderedBytes": 4436,
+          "chunks": [
+            "_next/static/framework~index~page~page~page~page~page~page~page~page~app-route-handler-dispatch-sMFWUdCW.js"
+          ]
+        },
+        {
+          "package": "react-server-dom-webpack@19.2.6",
+          "declaredLicense": "MIT",
+          "moduleRecords": 5,
+          "renderedBytes": 112965,
+          "chunks": [
+            "_next/static/framework~index-B0i0vG75.js",
+            "_next/static/framework~index~page~page~page~page~page~page~page~page~app-route-handler-dispatch-sMFWUdCW.js"
+          ]
+        },
+        {
+          "package": "react@19.2.6",
+          "declaredLicense": "MIT",
+          "moduleRecords": 4,
+          "renderedBytes": 13323,
+          "chunks": [
+            "_next/static/framework~index~app-page-cache-render~app-page-cache~seed-cache~page~layout~page~page~page~~jxq8gxa6-Ci2VvAXy.js"
+          ]
+        },
+        {
+          "package": "vinext@1.0.0-beta.2",
+          "declaredLicense": "MIT",
+          "moduleRecords": 176,
+          "renderedBytes": 697389,
+          "chunks": [
+            "_next/static/app-page-cache-Bk3jllH2.js",
+            "_next/static/app-page-cache-render-Du_T23K6.js",
+            "_next/static/app-prerender-endpoints-B8uwZKQs.js",
+            "_next/static/app-route-handler-dispatch-B7E0a8U3.js",
+            "_next/static/app-static-generation-Cx_Ws-2H.js",
+            "_next/static/cache-control-BJLw7ao8.js",
+            "_next/static/headers-BF7-PZLR.js",
+            "_next/static/isr-decision-BoI0qSDi.js",
+            "_next/static/parse-cookie-_McmUb0t.js",
+            "_next/static/protocol-headers-DqdYali7.js",
+            "_next/static/seed-cache-CN_ExkWN.js",
+            "index.js"
+          ]
+        },
+        {
+          "package": "zod@4.1.12",
+          "declaredLicense": "MIT",
+          "moduleRecords": 15,
+          "renderedBytes": 103010,
+          "chunks": [
+            "_next/static/schemas-Ce4a1icn.js"
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "file": "_next/static/app-page-cache-Bk3jllH2.js",
+          "sha256": "38c1ba191e714cf0c4e6365f50d100d6abdf918f5c73233b7f33c486eb60ff53"
+        },
+        {
+          "file": "_next/static/app-page-cache-render-Du_T23K6.js",
+          "sha256": "d071947c217d3d2bce05db67d20f730e91f7174713f395db46319605d0db8230"
+        },
+        {
+          "file": "_next/static/app-prerender-endpoints-B8uwZKQs.js",
+          "sha256": "d6a94fffd3d1f2415986b4a28362e66cb878858b50e7d2bbe2918feb4c1009b9"
+        },
+        {
+          "file": "_next/static/app-route-handler-dispatch-B7E0a8U3.js",
+          "sha256": "40b6646d50546011e0a6424513ab5d6baf56a9f248a073e9481e2832186f5306"
+        },
+        {
+          "file": "_next/static/app-static-generation-Cx_Ws-2H.js",
+          "sha256": "71451721ae4a42108e9ed32567cd9d9861beb4952215b0fd57ffc373cd3edc01"
+        },
+        {
+          "file": "_next/static/cache-control-BJLw7ao8.js",
+          "sha256": "455f545f6030346e242092bf16c2935293983b548113e905feaf98e4c431ec14"
+        },
+        {
+          "file": "_next/static/framework~index-B0i0vG75.js",
+          "sha256": "56a2f0934531073d517c8e1aee305b7d1d4ec931aad24dc7578ae8e3931d0ea8"
+        },
+        {
+          "file": "_next/static/framework~index~app-page-cache-render~app-page-cache~seed-cache~page~layout~page~page~page~~jxq8gxa6-Ci2VvAXy.js",
+          "sha256": "c57d6bf2a1f6372f8dfa8908f35593dcc3d6b51950f35f0391801a6baabd8b13"
+        },
+        {
+          "file": "_next/static/framework~index~page~page~page~page~page~page~page~page~app-route-handler-dispatch-sMFWUdCW.js",
+          "sha256": "42c1a355f8c5aa6dcdb751d38d8145458a1b68e5fec636c39116e6892c12d76a"
+        },
+        {
+          "file": "_next/static/headers-BF7-PZLR.js",
+          "sha256": "528558e2abb7a106b6e30661a3200b0feac737e471be2a952465203abf62f69f"
+        },
+        {
+          "file": "_next/static/isr-decision-BoI0qSDi.js",
+          "sha256": "f30ad8dd0798207a07598c0891bca8b10803222a7e8f1e7ce8060cae784efc8b"
+        },
+        {
+          "file": "_next/static/operation-signal-D7EKtcYM.js",
+          "sha256": "132480b504c54770d5b7580c80ba23ae1ce66d8c1d078c94ae93642b0d0c76d8"
+        },
+        {
+          "file": "_next/static/parse-cookie-_McmUb0t.js",
+          "sha256": "86dc3d12ccb5ed41963dab4e8a983c3fb37dd7c1a71f696e0bc7315d15a28d2b"
+        },
+        {
+          "file": "_next/static/protocol-headers-DqdYali7.js",
+          "sha256": "f6a174699c6b4d23e4bc803bd3d0ab7e640af192a32b1478a03c465c6a3e1a6d"
+        },
+        {
+          "file": "_next/static/schemas-Ce4a1icn.js",
+          "sha256": "e6cfc0f58220d26d907adf6890c0525b9633b233e5f901be17a652966602eb92"
+        },
+        {
+          "file": "_next/static/seed-cache-CN_ExkWN.js",
+          "sha256": "ea319073a6a9ad9140a86bc498bb2c08789b98bd7cdfcb488c9ff6766b937a10"
+        },
+        {
+          "file": "index.js",
+          "sha256": "6d4cb54229280989540a204f059b09e6f230dfcc27c9b5a6f28b9f19513b1c86"
+        }
+      ]
+    },
+    {
+      "environment": "ssr",
+      "nodeModuleRecords": 76,
+      "unresolvedPackageOwners": 0,
+      "packages": [
+        {
+          "package": "@vitejs/plugin-rsc@0.5.26",
+          "declaredLicense": "MIT",
+          "moduleRecords": 5,
+          "renderedBytes": 3459,
+          "chunks": [
+            "index.js"
+          ]
+        },
+        {
+          "package": "react-server-dom-webpack@19.2.6",
+          "declaredLicense": "MIT",
+          "moduleRecords": 2,
+          "renderedBytes": 57515,
+          "chunks": [
+            "index.js"
+          ]
+        },
+        {
+          "package": "vinext@1.0.0-beta.2",
+          "declaredLicense": "MIT",
+          "moduleRecords": 54,
+          "renderedBytes": 119383,
+          "chunks": [
+            "_next/static/app-prefetch-fetch-queue-VzlFQmkH.js",
+            "_next/static/app-router-scroll-C7vyPD0V.js",
+            "_next/static/error-boundary-Cb0xQdaY.js",
+            "_next/static/layout-segment-context-DWf82M7_.js",
+            "index.js"
+          ]
+        },
+        {
+          "package": "zod@4.1.12",
+          "declaredLicense": "MIT",
+          "moduleRecords": 15,
+          "renderedBytes": 97773,
+          "chunks": [
+            "_next/static/browser-json-Cxu7Ti5p.js"
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "file": "_next/static/app-prefetch-fetch-queue-VzlFQmkH.js",
+          "sha256": "56e1b0c10087ee6ff7f949b15d1ef63cb11228ff93a159a52f9ad7ef851e4e02"
+        },
+        {
+          "file": "_next/static/app-router-scroll-C7vyPD0V.js",
+          "sha256": "f40154cbcca4b491d6feef8fed11a2d0b5ad827437133c696e3f3b65dfc179c5"
+        },
+        {
+          "file": "_next/static/browser-json-Cxu7Ti5p.js",
+          "sha256": "cb83ca53db7abd26efc6241b38416e3649582ce70af4d4f162876df560bff113"
+        },
+        {
+          "file": "_next/static/error-boundary-Cb0xQdaY.js",
+          "sha256": "09e88bb9f1510ca9a5b1e4c5b9c4cfc7d6a662cd4257b0ef1ceb8cc5096f65b5"
+        },
+        {
+          "file": "_next/static/layout-segment-context-DWf82M7_.js",
+          "sha256": "a85fda13330113e90efe6c1de69fe06227bda852798cad24be04993695aae927"
+        },
+        {
+          "file": "index.js",
+          "sha256": "36fbfff5378474f99e4f47a074bed1a76a410062b3ddecb38fbe9b5810f484ad"
+        }
+      ]
+    },
+    {
+      "environment": "client",
+      "nodeModuleRecords": 117,
+      "unresolvedPackageOwners": 0,
+      "packages": [
+        {
+          "package": "@vitejs/plugin-rsc@0.5.26",
+          "declaredLicense": "MIT",
+          "moduleRecords": 5,
+          "renderedBytes": 3275,
+          "chunks": [
+            "_next/static/chunks/index-B4xe1xp4.js"
+          ]
+        },
+        {
+          "package": "react-dom@19.2.6",
+          "declaredLicense": "MIT",
+          "moduleRecords": 4,
+          "renderedBytes": 460592,
+          "chunks": [
+            "_next/static/chunks/framework-BgSIrAUN.js"
+          ]
+        },
+        {
+          "package": "react-server-dom-webpack@19.2.6",
+          "declaredLicense": "MIT",
+          "moduleRecords": 2,
+          "renderedBytes": 40457,
+          "chunks": [
+            "_next/static/chunks/index-B4xe1xp4.js"
+          ]
+        },
+        {
+          "package": "react@19.2.6",
+          "declaredLicense": "MIT",
+          "moduleRecords": 4,
+          "renderedBytes": 16438,
+          "chunks": [
+            "_next/static/chunks/framework-BgSIrAUN.js"
+          ]
+        },
+        {
+          "package": "scheduler@0.27.0",
+          "declaredLicense": "MIT",
+          "moduleRecords": 2,
+          "renderedBytes": 9254,
+          "chunks": [
+            "_next/static/chunks/framework-BgSIrAUN.js"
+          ]
+        },
+        {
+          "package": "vinext@1.0.0-beta.2",
+          "declaredLicense": "MIT",
+          "moduleRecords": 85,
+          "renderedBytes": 342397,
+          "chunks": [
+            "_next/static/chunks/index-B4xe1xp4.js",
+            "_next/static/chunks/layout-segment-context-CMoH1ac2.js"
+          ]
+        },
+        {
+          "package": "zod@4.1.12",
+          "declaredLicense": "MIT",
+          "moduleRecords": 15,
+          "renderedBytes": 97773,
+          "chunks": [
+            "_next/static/chunks/browser-json-BvcgJdbf.js"
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "file": "_next/static/chunks/browser-json-BvcgJdbf.js",
+          "sha256": "cb83ca53db7abd26efc6241b38416e3649582ce70af4d4f162876df560bff113"
+        },
+        {
+          "file": "_next/static/chunks/framework-BgSIrAUN.js",
+          "sha256": "a8e611453a742bf422100cc5f20f7f4139295740492196303a191d9f17033206"
+        },
+        {
+          "file": "_next/static/chunks/index-B4xe1xp4.js",
+          "sha256": "5612ab98d112115f147ccc70dc821d2d667a668153b2af9e75f120f315cb7388"
+        },
+        {
+          "file": "_next/static/chunks/layout-segment-context-CMoH1ac2.js",
+          "sha256": "a912d091a08da57afd7e058c0e504262b8cd600cfb83f6898169590bedc15bd6"
+        }
+      ]
+    }
+  ]
+}
