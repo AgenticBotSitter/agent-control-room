@@ -116,6 +116,18 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+### Library browsing
+
+History, Archive and Recent are now database-level selection over each story's
+latest retained version before the 50-story page limit. The authenticated news API
+accepts one `view=all|history|archive|fresh`; old clients retain `all` by default.
+The page preserves its selected view during pagination and starts from the first
+matching story when switching views. The PostgreSQL adapter imports the borrowed
+freshness constants; the borrowed presentation/sort modules remain unchanged.
+This avoids loading the whole library into application memory. Sorting, summary
+counts and the daily snapshot remain page-local; global ranking and archive/restore
+mutation remain unfinished. View switching performs no collection or agent action.
+
 ### Open product decision: research on discovered articles
 
 The actual borrowed-collection-to-web path saves `review_only` articles. Under the

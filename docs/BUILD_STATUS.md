@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Library-wide reading views:** History, Archive and Recent now select latest
+saved story versions before pagination, rather than filtering only the first 50
+articles in the browser. View selection resets the story cursor; pagination retains
+the chosen view. SQL uses the borrowed freshness constants, while the existing
+borrowed reading/sorting code remains in use. Sorting and daily-summary counts are
+still page-local and labeled accordingly. Tests cover archived records beyond the
+first page, latest-version selection, pagination and future-date tolerance. No new
+collector or live read is introduced. Research permission remains unchanged pending
+the owner decision below. No browser/visual acceptance or deployment is claimed.
+All 316 delivery tests, ten web-news tests, types, lint and VPS compilation pass.
+Sites guidance preserved the existing theme, authentication and dependencies; local
+authority takes precedence over starting a preview or deploying this private app.
+
 **News-to-research product gap confirmed:** The borrowed collector saves discovered
 articles as `review_only`; the mounted research endpoint refuses them under the
 existing CR9D contract. The discovery integration regression now explicitly verifies

@@ -63,3 +63,26 @@ test("story listing exposes explicit stable pagination without dropping saved it
   assert.equal(last.stories.length, 2); assert.equal(last.nextCursor, null);
   assert.equal(new Set([...first.stories, ...last.stories].map(s => s.storyId)).size, 52);
 });
+
+test("library views filter latest versions before pagination and preserve borrowed freshness limits", async t => {
+  const f = await setup(); t.after(() => f.db.close());
+  const now = Date.parse(f.story.discoveredAt), observedAt = new Date(now).toISOString();
+  const make = (storyId: string, queue: "earlier" | "archive", publishedAt: string) => {
+    const { storyDigest: _digest, ...body } = { ...f.story, storyId, queue, publishedAt }; void _digest;
+    return { ...body, storyDigest: sha256Digest(body) };
+  };
+  for (let index = 0; index < 52; index++) await f.open().saveStory(make(`story:library:${String(index).padStart(3, "0")}`, "earlier", new Date(now - 48 * 3600000).toISOString()));
+  await f.open().saveStory(make("story:z-archive", "archive", observedAt));
+  // The latest archived version must not leak the earlier non-archived snapshot.
+  await f.open().saveStory(make("story:library:000", "archive", observedAt));
+  await f.open().saveStory(make("story:z-recent", "earlier", new Date(now + 10 * 60000).toISOString()));
+  await f.open().saveStory(make("story:z-future", "earlier", new Date(now + 10 * 60000 + 1).toISOString()));
+  const archive = await f.open().listStories(undefined, { view: "archive", observedAt });
+  assert.deepEqual(archive.stories.map(story => story.storyId), ["story:library:000", "story:z-archive"]);
+  assert.equal(archive.nextCursor, null);
+  const history = await f.open().listStories(undefined, { view: "history", observedAt });
+  assert.equal(history.stories.length, 50); assert.equal(history.stories[0].storyId, "story:library:001");
+  assert.equal((await f.open().listStories(history.nextCursor!, { view: "history", observedAt })).stories.length, 3);
+  assert.deepEqual((await f.open().listStories(undefined, { view: "fresh", observedAt })).stories.map(story => story.storyId), ["story:z-recent"]);
+  await assert.rejects(f.open().listStories(undefined, { view: "unsupported" as never, observedAt }));
+});

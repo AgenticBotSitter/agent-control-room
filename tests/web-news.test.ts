@@ -195,9 +195,11 @@ test("private news routes require current access and grant only retained-source 
   assert.equal(setting.status, 200); assert.equal((await setting.json()).startsWork, false);
   assert.equal((await (await handle(request(`${path}/sources`))).json()).sources.length, 1);
   assert.equal((await handle(request(path))).status, 200);
+  for (const view of ["all", "history", "archive", "fresh"])
+    assert.equal((await handle(request(`${path}?view=${view}`))).status, 200);
   assert.equal((await handle(request(`/projects/${project.projectId}/news`))).status, 200);
   assert.equal(renders, 1);
-  for (const suffix of ["?after=one&after=two", "?other=value", "?after=", "?sourceAfter=", "?sourceAfter=one&sourceAfter=two"])
+  for (const suffix of ["?after=one&after=two", "?other=value", "?after=", "?sourceAfter=", "?sourceAfter=one&sourceAfter=two", "?view=unknown", "?view=archive&view=history"])
     assert.equal((await handle(request(path + suffix))).status, 400);
   assert.equal((await handle(request(path, "POST", {}))).status, 400);
   assert.equal((await handle(request(path + "/prepare"))).status, 400);

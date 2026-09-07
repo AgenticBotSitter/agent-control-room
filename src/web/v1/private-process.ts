@@ -262,11 +262,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const newsRoute = /^\/api\/v1\/projects\/([^/]+)\/news$/.exec(url.pathname);
           if (newsRoute) {
-            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after" && key !== "sourceAfter")
-              || url.searchParams.getAll("after").length > 1 || url.searchParams.getAll("sourceAfter").length > 1) throw new WebAccessError("invalid_request");
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => !["after", "sourceAfter", "view"].includes(key))
+              || ["after", "sourceAfter", "view"].some(key => url.searchParams.getAll(key).length > 1)) throw new WebAccessError("invalid_request");
             let projectId: string;
             try { projectId = decodeURIComponent(newsRoute[1]); } catch { throw new WebAccessError("invalid_request"); }
-            return Response.json(await news.list(identity, projectId, url.searchParams.get("after") ?? undefined, url.searchParams.get("sourceAfter") ?? undefined),
+            return Response.json(await news.list(identity, projectId, url.searchParams.get("after") ?? undefined, url.searchParams.get("sourceAfter") ?? undefined, url.searchParams.get("view") ?? "all"),
               { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me/tasks") {

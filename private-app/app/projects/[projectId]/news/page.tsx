@@ -2,8 +2,9 @@ import { PrivateNewsWorkspace } from "../../../news-workspace";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Project news · Control Room" };
 export default async function Page({ params, searchParams }: {
-  params: Promise<{ projectId: string }>; searchParams: Promise<{ after?: string; sourceAfter?: string }>;
+  params: Promise<{ projectId: string }>; searchParams: Promise<{ after?: string; sourceAfter?: string; view?: string }>;
 }) {
-  const { projectId } = await params, { after, sourceAfter } = await searchParams;
-  return <PrivateNewsWorkspace key={`${projectId}:${after ?? ""}:${sourceAfter ?? ""}`} projectId={projectId} after={after} sourceAfter={sourceAfter} />;
+  const { projectId } = await params, { after, sourceAfter, view } = await searchParams;
+  const selectedView = view === "archive" || view === "fresh" ? view : "history";
+  return <PrivateNewsWorkspace key={`${projectId}:${after ?? ""}:${sourceAfter ?? ""}:${selectedView}`} projectId={projectId} after={after} sourceAfter={sourceAfter} view={selectedView} />;
 }
