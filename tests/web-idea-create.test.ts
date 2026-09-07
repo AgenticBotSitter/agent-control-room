@@ -21,6 +21,10 @@ test("owner saves an audited Idea session, reopens it and replays without starti
   const later = new IdeaSessionCreationService(f.client, scope, key, participants, () => now + 1000);
   const replay = await later.create(f.identity, draft, "idea-create-000001");
   assert.equal(replay.replayed, true); assert.equal(replay.sessionDigest, first.sessionDigest);
+  const changedRoster = participants.map((p, i) => ({ ...p, displayName: `Updated bot ${i + 1}` }));
+  const reconfigured = new IdeaSessionCreationService(f.client, scope, key, changedRoster, () => now + 1000);
+  const recovered = await reconfigured.create(f.identity, draft, "idea-create-000001");
+  assert.equal(recovered.replayed, true); assert.equal(recovered.sessionDigest, first.sessionDigest);
   const saved = await new WebIdeaService(f.client, scope, key, () => now).detail(f.identity, first.sessionId);
   assert.equal(saved.session.ideaSummary, draft.ideaSummary); assert.equal(saved.contributions.length, 0);
   assert.equal(saved.decision, null);

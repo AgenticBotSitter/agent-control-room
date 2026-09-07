@@ -46,9 +46,10 @@ export class IdeaSessionCreationService {
       const createdByIdentityDigest = sha256Digest({ tenantId: this.scope.tenantId, identityId: actor.id, purpose: "idea_lab_creator_v1" });
       let session;
       try {
-        session = buildIdeaLabSessionV1({ ...this.scope, sessionId, ...input.data, participants: this.participants,
+        // A retry recovers its original saved roster, not today's deployment configuration.
+        session = buildIdeaLabSessionV1({ ...this.scope, sessionId, ...input.data, participants: existing?.participants ?? this.participants,
           createdByIdentityDigest, createdAt: existing?.createdAt ?? actor.now });
-        buildIdeaLabOwnerPromptV1(session);
+        if (!existing) buildIdeaLabOwnerPromptV1(session);
       } catch { throw new WebAccessError("invalid_request"); }
       if (existing && existing.sessionDigest !== session.sessionDigest) throw new WebAccessError("conflict");
       if (!existing) {
