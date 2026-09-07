@@ -1,0 +1,99 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "All nine security source files fully read; host-value read in contiguous ranges 1-195 and 196-374. No key-store, runtime or policy operations executed. Content review does not certify security correctness.",
+  "entries": [
+    {
+      "path": "src/security/canonical-digest.ts",
+      "sha256": "417a63c7c1a7ee0f8cd9d4b05955a3ca375811de00acdd1ae8a488a971c1a9ee",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    },
+    {
+      "path": "src/security/digest.ts",
+      "sha256": "d25f3461802cc8c534e01da4042da7575b4f7fb0c9626b62eba3a410e2697b18",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    },
+    {
+      "path": "src/security/host-value.ts",
+      "sha256": "307943dd689efbd26f70a821227bc5216466ca11a52baf8d59744580e7834062",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    },
+    {
+      "path": "src/security/index.ts",
+      "sha256": "8910c49ce57ee0a686aafe60872a48b013b3d0ac64b388dd67c3636a324b78b5",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    },
+    {
+      "path": "src/security/policy.ts",
+      "sha256": "40039c56371c41e5d6db0957679d5ff1d06ab4266621421f5d9e588fdc52e91f",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    },
+    {
+      "path": "src/security/redaction.ts",
+      "sha256": "4978844c2b43ac2df863e392fcfb08dc3ea1ce4e49874b87a5a4305603e2a13b",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    },
+    {
+      "path": "src/security/rollback-checkpoint.ts",
+      "sha256": "f9d44375791b27052524aae5b84aba5452e68e71dc67d8751415c8c26e97b6d9",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    },
+    {
+      "path": "src/security/safe-error.ts",
+      "sha256": "ef9cc4fbbc468c1bde5f342d5e6375de99ecf0bc25f4f30c9d6c327374c1f499",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    },
+    {
+      "path": "src/security/security-store.ts",
+      "sha256": "88e9fb6c0e84a1536fdf83becb1374daefbea3e20643b6c5abe2f3013088486f",
+      "contentReview": "no_private_values_observed",
+      "observation": "Full source text inspected. Generic supplied identities, policy and integrity operations; redaction expressions are detectors, not actual credentials. Zero-filled HMAC probe is intrinsic inspection, not a configured integrity key. No embedded live endpoint or private records.",
+      "remaining": [
+        "correctness_security_review_separate",
+        "final_publication_decision"
+      ]
+    }
+  ]
+}

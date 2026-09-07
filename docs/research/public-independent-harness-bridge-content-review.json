@@ -1,0 +1,211 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_node_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "All 50 harness/local-pilot/node-bridge/node-control files fully read; 5204 lines. No unread portions. Exact frozen inventory hashes matched.",
+  "finding": "No embedded private host/project/account values, actual credentials or unexpected vendored attribution. Local pilot loopback port3000 and generic seed IDs are intentional development literals. Real destination, key and certificate values are supplied inputs.",
+  "limitations": "Content review only, not correctness, security design, license/provenance, upstream verification or publication approval. No writes, tests, network, credentials, bootstrap, application execution or installs.",
+  "entries": [
+    {
+      "path": "src/harness/codex-v1/private-sqlite-schema.ts",
+      "sha256": "32081a211bade649306fffa882820579cd932c071252ec20e918281a03ebbd76"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/adapter.ts",
+      "sha256": "17b95f581b4d295c37fb27e211fd04af5444ef855dc00fdec65e733b09f0cb2f"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/contracts.ts",
+      "sha256": "b7929f94e6e0a118f147a73d232e7efdd1147c7fe08b8b728cc1ed88cd2cd045"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/execution-handoff.ts",
+      "sha256": "95687b76412a5d36490e28c0324e1deb3723a95fa49754d190698f31fe73471e"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/lease-evidence.ts",
+      "sha256": "6f6d9c67729045ef8db4c652642377e154c9bda83c6013785f31b98de88b1c5c"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/node-runtime.ts",
+      "sha256": "c88324c454e5255be59838551c52945896e39bc1bdd78420ad5de42abd3d3b08"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/observation-reporter.ts",
+      "sha256": "9a8dd3fffdc1c8d0d3beaade51bbd3de9a890010d9147ca2f33be6aecbc8706d"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/protocol.ts",
+      "sha256": "ebe11987056c9eadf08089f13a40651cd4fcad7108859c0410c0628fe05fd971"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/recovery-authority.ts",
+      "sha256": "c923e722146bcfda615a2ce2156eb61651e32df2ad5ebc2dd71017be11112840"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/run-journal.ts",
+      "sha256": "296d4bd6d4ee2c54c15f972af213f82b48698103c7932808d95208693ddd762b"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/start-authority.ts",
+      "sha256": "ddd841699b18ba9893433565fa2d30ca4d6413e6aef48f699f7f6868db3d5602"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/task-approval-binding.ts",
+      "sha256": "8aaf8161d2f503d80f9bbc21c9425fad350bf6470d7410544592c1817298f4c0"
+    },
+    {
+      "path": "src/harness/hermes-native-v1/task-observation.ts",
+      "sha256": "852154f095b6f2256b9ab0de2d06a81dca4c3166a3e883b7c23680b7b47479c4"
+    },
+    {
+      "path": "src/harness/v1/lifecycle.ts",
+      "sha256": "1a4c716e9c484063d0ccb247a8b21bff43735c9a247a7ca999b687a31200bde3"
+    },
+    {
+      "path": "src/harness/v1/native-approval-intake.ts",
+      "sha256": "792c562dff51eeae610dc7eebce3672a117f0c0718a135186f8a0ad8ec21b32d"
+    },
+    {
+      "path": "src/harness/v1/native-approval-packet.ts",
+      "sha256": "1b2fd09e499436d4f1b4221a5ae03c50c16985c4e9dbd28a2c9b781322d19f6d"
+    },
+    {
+      "path": "src/harness/v1/native-delivery.ts",
+      "sha256": "cdf80c4107f3f859ede9dd725e4146186b7276cb34e760076c8366fe148b8698"
+    },
+    {
+      "path": "src/harness/v1/native-http-exchange.ts",
+      "sha256": "1d5755a99ca07513db72886a6479f1f0f953e359dff62120599d5ed7199f4213"
+    },
+    {
+      "path": "src/harness/v1/native-observation.ts",
+      "sha256": "8969bdb09e24267b3b1af6a83b02849a9a419cbd29249b82c1f0ea08c9818c6c"
+    },
+    {
+      "path": "src/harness/v1/native-owner-review.ts",
+      "sha256": "ed76055119b1f8837dbcb5614b4b50f68d1b8c67d0b5b641ce966b7107173506"
+    },
+    {
+      "path": "src/harness/v1/native-run-contracts.ts",
+      "sha256": "300270bba5097ee0c67f51f4233d342905a509508162b4ef9d2e992d4477b709"
+    },
+    {
+      "path": "src/harness/v1/native-run-identifiers.ts",
+      "sha256": "c85952aae1e96eb8f3d83f5ec2e80befb9b16c3f3ab9d6be092483a4cf938300"
+    },
+    {
+      "path": "src/harness/v1/native-task-approval-binding.ts",
+      "sha256": "0a49f77870372c1d5e2135766d990552925b16bc50fd608c10e12ed5de9e8416"
+    },
+    {
+      "path": "src/harness/v1/native-task-registration.ts",
+      "sha256": "46272066c68a02df510be995c259b488ff6f95a24a237b3771dfb4dade7de61a"
+    },
+    {
+      "path": "src/harness/v1/native-wire.ts",
+      "sha256": "8643a62f31dcca45cc38aecace3c6add5bf243d010bcfc9704520b658b4fb48d"
+    },
+    {
+      "path": "src/harness/v1/schemas.ts",
+      "sha256": "b9e5ea8014e5c41fb883f94f0cc011dc095cf66240bd419f565d5f3f05f1f0ce"
+    },
+    {
+      "path": "src/harness/v1/store.ts",
+      "sha256": "00646883bca7c1552301e133ea15d56cd356e0c7b1d5803c9351ae9a3bf9b60c"
+    },
+    {
+      "path": "src/harness/v1/types.ts",
+      "sha256": "6d782874fbb6fed3aad359aac9154b515bc9ae8353a0ecae7e94608826c6a28e"
+    },
+    {
+      "path": "src/local-pilot/v1/browser-transport.ts",
+      "sha256": "ace8ed3186465fc8481c7358a7cfc9ee9f8950407ba6c8063a468f2d6e368218"
+    },
+    {
+      "path": "src/local-pilot/v1/project-task-http.ts",
+      "sha256": "05766f9eb451a679f2ca6e8cbf36bb35660fea9a2aa0514f515375848093b3e0"
+    },
+    {
+      "path": "src/local-pilot/v1/project-tasks.ts",
+      "sha256": "9da6ecd62fb02987a647187af55cb09d4d183137cc779093d6c64653cb9e8503"
+    },
+    {
+      "path": "src/local-pilot/v1/runtime.ts",
+      "sha256": "1d24eae467f9d9ca98362c90349d9f298b804f7b80504d5f8bc3566a9cbb48db"
+    },
+    {
+      "path": "src/local-pilot/v1/session-http.ts",
+      "sha256": "ada8de8faa969b8719cfee81c4a69516644f596d8bd53d5cd5b69cac61bd865d"
+    },
+    {
+      "path": "src/local-pilot/v1/synthetic-result-read.ts",
+      "sha256": "19cc29808f44012196029628d0d98da46aca68186e0c08ef19c65d7df624e4ed"
+    },
+    {
+      "path": "src/local-pilot/v1/synthetic-result-wire.ts",
+      "sha256": "558b8ba1921a55fcb9ff0049cceba895bbf9027d6ab93698441b8c6e5b9f8c33"
+    },
+    {
+      "path": "src/node-bridge/admission-handler.ts",
+      "sha256": "f6434bd43f9bf905a348545cc33006b5992da66c50c850bf3071732659381316"
+    },
+    {
+      "path": "src/node-bridge/bridge.ts",
+      "sha256": "c9997e5f4d43de5c1e1db2f648dcf0a68f870b2d7299e9ef55518008d7a86495"
+    },
+    {
+      "path": "src/node-bridge/index.ts",
+      "sha256": "fb9d8275b2d6c05514faf7fdfbbd0ae6d142bc27e294e0dd9d722186c908ca9a"
+    },
+    {
+      "path": "src/node-bridge/job-event-recorder.ts",
+      "sha256": "a7ba50d71f2a5a0db5abc60fc7f79e176c10d8f647b7eac1ddb40a10df71ab2a"
+    },
+    {
+      "path": "src/node-bridge/journal.ts",
+      "sha256": "d962329ddd93d794fe54a571acade9f397c97b2dbdd53873051f6932cc9eb579"
+    },
+    {
+      "path": "src/node-bridge/native-connector.ts",
+      "sha256": "49ca3b7c64d7a1a2e6edc1ca1fd7f22ba5fd57b34cd73a2e3622560cf9a5ae71"
+    },
+    {
+      "path": "src/node-bridge/native-dispatch-handler.ts",
+      "sha256": "da23ec5d2737af6c41501be61bc1c171cb93688f8f4e455e2394211124cdb1c9"
+    },
+    {
+      "path": "src/node-bridge/native-http-host.ts",
+      "sha256": "6b082437994751e58e8cca98d1a08c85dd1efaeba55d0ca59310da841fc0dcad"
+    },
+    {
+      "path": "src/node-bridge/native-https-client.ts",
+      "sha256": "6e913646c3f16a8ca557a0e9e4f29eefa9a0499c36e2ebd9a0347a848c1c7a79"
+    },
+    {
+      "path": "src/node-bridge/native-https-destination.ts",
+      "sha256": "b5eda70273769ddd49d23cc4b82d38e5b376ea0ca2253f3c8dd93dbfc3d16732"
+    },
+    {
+      "path": "src/node-bridge/node-operation-handler.ts",
+      "sha256": "f74a272901913bb6ed1701e5845ac9995abe857958e162d1f4760ed0352005f6"
+    },
+    {
+      "path": "src/node-bridge/protected-store-signer.ts",
+      "sha256": "5f113ad88fe6805dd11dbfa2a9b4ff67783e8a12f5c9d74776b7c0161d4fdbc3"
+    },
+    {
+      "path": "src/node-control/native-task-result-service.ts",
+      "sha256": "2734351b0757ed76f4e401b983b8858d2906bdf4ce653ef8947431eb7b6cbb0b"
+    },
+    {
+      "path": "src/node-control/native-task-snapshot-service.ts",
+      "sha256": "24b7fc04f1337471c6772ba2706568272cec390e18ee0deed74cf015ed1a66b8"
+    },
+    {
+      "path": "src/node-control/server-node-session.ts",
+      "sha256": "2db367bef60c562a9b5aaa6886c31e8f2efca9611326d8f8b5f85ddd294596b0"
+    }
+  ]
+}

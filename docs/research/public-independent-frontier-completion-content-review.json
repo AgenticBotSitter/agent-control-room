@@ -1,0 +1,163 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_domain_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "All 37 ready-frontier/completion-gate files fully read, 360319 bytes; includes initial 13-file pass. No unread files or output truncation.",
+  "finding": "Historical acceptance pins in no-relay-types.ts and no-relay-schemas.ts require provenance/reproducibility disposition. No additional private project/host/account values, actual credentials, live endpoints or unexpected vendored attribution.",
+  "historicalPins": {
+    "acceptedAuto030Commit": "adf0804a52a13d544192afc90506c3e989254ffd",
+    "acceptedAuto030ReviewSha256": "sha256:18df9e9611c5f9053962b776b8261304512b98244ba7b627fd99f4821a79fa2"
+  },
+  "limitations": "Read-only source-content evidence. No writes/network/runtime, functionality, provenance verification, legal determination, security design or publication approval.",
+  "entries": [
+    {
+      "path": "src/completion-gate/v1/async-staged-checkpoint.ts",
+      "sha256": "c8598cca3a00590e38db4f89728101fde456c9167228894ea4eb479c7c81c115"
+    },
+    {
+      "path": "src/completion-gate/v1/document-structure-contract.ts",
+      "sha256": "7ee6952cea93ea73cff54e654a5a3fafff9421128ca6d6ce2e3c9ff034b5181c"
+    },
+    {
+      "path": "src/completion-gate/v1/document-structure-verifier.ts",
+      "sha256": "1c072e20b41232e4a228aae1e28086d4a7a400525f4978b77bbb4843ade5f7d9"
+    },
+    {
+      "path": "src/completion-gate/v1/index.ts",
+      "sha256": "12e8eab5925e39311acbd37a14a74df7e99cf5c6b166973f23fee1ee2813a05b"
+    },
+    {
+      "path": "src/completion-gate/v1/native-result-submission.ts",
+      "sha256": "5fd97338118330111bd033d32467124cd81e2bcaf3a66c3fb13bf1836189fb6f"
+    },
+    {
+      "path": "src/completion-gate/v1/native-result-verification.ts",
+      "sha256": "e5fe02956b1d153ae64ba0b9d99543ada3fcdd60ae102d323c4da743e422fe31"
+    },
+    {
+      "path": "src/completion-gate/v1/native-review-plan.ts",
+      "sha256": "1c4f31be372dab5e07d73d972877f51b16247e82d344358d3b7508825d0cc843"
+    },
+    {
+      "path": "src/completion-gate/v1/native-revision-context.ts",
+      "sha256": "3c8bbc2a4fc04e5d9aea5c83c138529977749ef8e7bc906e87325cdcee01faa3"
+    },
+    {
+      "path": "src/completion-gate/v1/schemas.ts",
+      "sha256": "ed4c93d685276fe7a21aacc8103b7a9520fd7e95de0daf5c7bcbf4fb4fe3bfd4"
+    },
+    {
+      "path": "src/completion-gate/v1/staged-checkpoint.ts",
+      "sha256": "269291a2500c7e7d4999f789efee730c6616074bbd381619e0672331a815c80c"
+    },
+    {
+      "path": "src/completion-gate/v1/store.ts",
+      "sha256": "0583c89f1338ccdca93a6d915fc44cfd22c03ebcf71f0e1aa5267ddd3ed4ee35"
+    },
+    {
+      "path": "src/completion-gate/v1/types.ts",
+      "sha256": "e5706ed1bc7df0087fb28aa300892db3c8ef3d331b806a2c8852ae0a7cc6059c"
+    },
+    {
+      "path": "src/completion-gate/v1/view-model.ts",
+      "sha256": "bc4e738f15f58504062eb58e2fab7acde0a49d966015bee0aae4e1a5caa11ac9"
+    },
+    {
+      "path": "src/ready-frontier/v1/automation-schemas.ts",
+      "sha256": "331409ce58355d221155a54b323fa609f5929efccf125aaff94e96cc61caa9ac"
+    },
+    {
+      "path": "src/ready-frontier/v1/automation-types.ts",
+      "sha256": "312f37d6038a4f3f1fa4b77acbb5c143d0165912dd418bef4151f626994d6178"
+    },
+    {
+      "path": "src/ready-frontier/v1/controller.ts",
+      "sha256": "448dd1092b4835158f2d3280c223d5c116560685ecdcf3fb664deaaff747a903"
+    },
+    {
+      "path": "src/ready-frontier/v1/cycle-projection.ts",
+      "sha256": "e58ef46374ac312b91df8af82ca7f09b7d03150363736b010cd917c84782fda5"
+    },
+    {
+      "path": "src/ready-frontier/v1/durable-store.ts",
+      "sha256": "223dbd382e06116cab459064da26027fd51c4953fcf5396635425ed503a53027"
+    },
+    {
+      "path": "src/ready-frontier/v1/errors.ts",
+      "sha256": "933424c2c4e78461e3046345c766d612885e75d2d67ee926c7a905d31630c37a"
+    },
+    {
+      "path": "src/ready-frontier/v1/exact.ts",
+      "sha256": "1745dcd1c5d081f457b71ef0bfc9e16f4c062b6c822787c823dac8c110b35bab"
+    },
+    {
+      "path": "src/ready-frontier/v1/integration-schemas.ts",
+      "sha256": "2b8f442e47149ce45c36bb5f64ac783ded83819342512d07f4a93d4129e50759"
+    },
+    {
+      "path": "src/ready-frontier/v1/integration-types.ts",
+      "sha256": "5684522c40af0d1e230b081c8544fa376f5c4c6e73b7cea58dcb1f66b7a98890"
+    },
+    {
+      "path": "src/ready-frontier/v1/materialization.ts",
+      "sha256": "3c3d1f6788cd3e8061f8b1abefe1bde2d2f97ab9111c470de648ade7afbd879a"
+    },
+    {
+      "path": "src/ready-frontier/v1/no-relay-coordinator.ts",
+      "sha256": "4982ac247d971b688d2872cad5e48857fb8bd30a5e0baff4b05773c7610b9003"
+    },
+    {
+      "path": "src/ready-frontier/v1/no-relay-schemas.ts",
+      "sha256": "acfd2c85f02ff9b49af3e1ee355ee749bcbd5a3d97a53536eae8904f263a4a23"
+    },
+    {
+      "path": "src/ready-frontier/v1/no-relay-types.ts",
+      "sha256": "5656eb9c33d2f923d3d8f2f6d9caf8b9136d89eb378919ca4fd2d7e13a2ce096"
+    },
+    {
+      "path": "src/ready-frontier/v1/no-relay.ts",
+      "sha256": "3c08f63f924d6a05087f6473ee4552aad367f58fcb7710c181569220af91dc15"
+    },
+    {
+      "path": "src/ready-frontier/v1/promotion-service.ts",
+      "sha256": "00474bda6622f8f6b906277390295de315c64e864b7936cf69028b59ee4fce44"
+    },
+    {
+      "path": "src/ready-frontier/v1/promotion.ts",
+      "sha256": "4450a8dc866fadb41ec7b4f04ec11b4eecfd4d8bf7fcf6641898ecfdfaec5895"
+    },
+    {
+      "path": "src/ready-frontier/v1/ready-policy-schemas.ts",
+      "sha256": "e79614d0aa970854294845ba78f62eacd4219c35bae2af561103158e36fbffe1"
+    },
+    {
+      "path": "src/ready-frontier/v1/ready-policy-store.ts",
+      "sha256": "97d101afcdd8094b0eaba38d4510010cd465aaaed58a595e9606bf5610d83f29"
+    },
+    {
+      "path": "src/ready-frontier/v1/ready-policy-types.ts",
+      "sha256": "894bcd5dc734a7c31cadd8892956587be041f077bc640ed2d7e806ceb61727be"
+    },
+    {
+      "path": "src/ready-frontier/v1/ready-policy.ts",
+      "sha256": "89933279d522e7100bcf3247a538a118fa410d9718348dd5d9a10a4bd0babc5b"
+    },
+    {
+      "path": "src/ready-frontier/v1/schemas.ts",
+      "sha256": "fd6cdddb6e47a2742ea1390b0e895b33d0f2eb363a9f090c89bb9c61c18697c3"
+    },
+    {
+      "path": "src/ready-frontier/v1/standing-policy-store.ts",
+      "sha256": "69a9ee6acca400138ad1a4574d0a2df697724e5b6312366e630256e6f20775f7"
+    },
+    {
+      "path": "src/ready-frontier/v1/standing-policy.ts",
+      "sha256": "cbed52cd0e997d23016c9423b84b7db818fac85907fc34b45c42b78ae93cc966"
+    },
+    {
+      "path": "src/ready-frontier/v1/types.ts",
+      "sha256": "1ea0c5c57692834b5d47b3f80298abb8712a312e0a98f882feb7c8628f001b0b"
+    }
+  ]
+}

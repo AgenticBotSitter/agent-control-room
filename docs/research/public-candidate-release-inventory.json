@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Fourteen numbered content receipts match 146 exact files. Separate independent domain/node receipts cover 93 additional files: 239 unique content-reviewed files. Prior readiness review matches 26 current files, adding 24 distinct paths for a mixed-scope union of 263. Two changed readiness files now have primary content rereads, not renewed independent approval. Scope-specific evidence is not correctness, license or publication approval.",
-  "exactPriorReviewMatches": 146,
+  "manualReviewCoverageMeaning": "Sixteen numbered content receipts match 173 exact files. Five independent module receipts cover 209 additional files: 382 unique content-reviewed files. Prior readiness review matches 26 current files, adding 24 distinct paths for a mixed-scope union of 406. Nine historical numbered entries with changed/absent bytes are excluded. Two changed readiness files have primary content rereads, not renewed independent approval. Scope-specific evidence is not correctness, license or publication approval.",
+  "exactPriorReviewMatches": 173,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -2489,55 +2489,55 @@
       "path": "src/security/canonical-digest.ts",
       "bytes": 1314,
       "sha256": "417a63c7c1a7ee0f8cd9d4b05955a3ca375811de00acdd1ae8a488a971c1a9ee",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/security/digest.ts",
       "bytes": 4320,
       "sha256": "d25f3461802cc8c534e01da4042da7575b4f7fb0c9626b62eba3a410e2697b18",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/security/host-value.ts",
       "bytes": 17859,
       "sha256": "307943dd689efbd26f70a821227bc5216466ca11a52baf8d59744580e7834062",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/security/index.ts",
       "bytes": 184,
       "sha256": "8910c49ce57ee0a686aafe60872a48b013b3d0ac64b388dd67c3636a324b78b5",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/security/policy.ts",
       "bytes": 3714,
       "sha256": "40039c56371c41e5d6db0957679d5ff1d06ab4266621421f5d9e588fdc52e91f",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/security/redaction.ts",
       "bytes": 4439,
       "sha256": "4978844c2b43ac2df863e392fcfb08dc3ea1ce4e49874b87a5a4305603e2a13b",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/security/rollback-checkpoint.ts",
       "bytes": 5568,
       "sha256": "f9d44375791b27052524aae5b84aba5452e68e71dc67d8751415c8c26e97b6d9",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/security/safe-error.ts",
       "bytes": 1499,
       "sha256": "ef9cc4fbbc468c1bde5f342d5e6375de99ecf0bc25f4f30c9d6c327374c1f499",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/security/security-store.ts",
       "bytes": 12698,
       "sha256": "88e9fb6c0e84a1536fdf83becb1374daefbea3e20643b6c5abe2f3013088486f",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-16.json"
     },
     {
       "path": "src/services/v1/incident-store.ts",
@@ -3065,103 +3065,103 @@
       "path": "tests/helpers/canonical-approval-storage.ts",
       "bytes": 3594,
       "sha256": "f8d4f7831c4246443365f9ded4936a9e2fc14c544300c3be46d9d89ea7df3db3",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/native-lease-evidence.ts",
       "bytes": 5500,
       "sha256": "f9f7f3dbd4f1ab33f0d3be4c393ecc54338d695a8f579d26671255b43574ba07",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/native-quality-completion.ts",
       "bytes": 7411,
       "sha256": "32429d1a952c0833d0e62b6669acacb06148d65872746d345a615a1909fc708c",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/native-revised-result.ts",
       "bytes": 15980,
       "sha256": "c233ec8087163026907db156fb5f0ab725cd4da4fcea895432ede554e08b218e",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/native-start-authority.ts",
       "bytes": 6924,
       "sha256": "19aa3cf5a5ab727537009befd641ae948afcdef8d6de838f2b9901a602330ab1",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/native-task-lifecycle.ts",
       "bytes": 7991,
       "sha256": "fa84170c474a38f0765231a11b698374f115740dae0f168f576418be2c4aba5d",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/task-assignment.ts",
       "bytes": 3993,
       "sha256": "630b0b5ffa167b87f743696adffc9361f05e7fc0acec5b6614cfce9bf6d1dea2",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/task-startup.ts",
       "bytes": 3310,
       "sha256": "d7cff61275f84814e5be21ab147f9baaea055538fe8676a85fe23859a1d39f46",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/web-connection.ts",
       "bytes": 4411,
       "sha256": "2d39170f1081e6330e4ddcddd3affaae52974d7e705e388c4fd19a5370e7b32f",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/web-foundation.ts",
       "bytes": 3229,
       "sha256": "fec5640bffbed59635690fd99fa0f62bc1a83699c69c95f59346dff04ab906cb",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/web-idea-project.ts",
       "bytes": 2655,
       "sha256": "56526fd4069afcf912396d7b3fa28d07d27d7baf4cebdbf1c60dd9d46c28bcdf",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/web-native-result.ts",
       "bytes": 5570,
       "sha256": "d4c42b3311fcf306956cf5dfaf62e1bf4be868f85cd61a8c9666da4c05ed8313",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/web-node.ts",
       "bytes": 1393,
       "sha256": "c8aecb9fe205c462f802512b2f90e56cadde56257a2ff44b207921e38cf581e1",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/web-owner-review.ts",
       "bytes": 1775,
       "sha256": "21e4fe05e77102ff38f7e3eec8e979689fa1f2b3241880d8be58d55b7a2e3966",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/web-startup.ts",
       "bytes": 2525,
       "sha256": "7212d200cc3aaac80ac838a730967847b870efeed96b3a3a53facac0b0c0d474",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/helpers/web-task.ts",
       "bytes": 1076,
       "sha256": "442b8a083e44a4504816ebaca45cdb8523c9f33403d1bef692ad9f33b9da44a3",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/hermes-native-fixture.ts",
       "bytes": 2366,
       "sha256": "a610d7ddf3097aac38c257cdd55785695300ddeb676dbea3d0cd4178377bb6bb",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/local-preview-panels.test.tsx",
@@ -3173,7 +3173,7 @@
       "path": "tests/native-task-fixture.ts",
       "bytes": 7948,
       "sha256": "2e24229048fd96a6c2b7a9c42dd1b56b55680c64bb1be4ba3d0311dc400a7197",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-15.json"
     },
     {
       "path": "tests/private-vps-launcher.test.mjs",

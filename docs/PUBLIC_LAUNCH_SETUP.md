@@ -33,13 +33,13 @@ contributor release. The separate website repository does not supply application
 1. **Freeze and inspect the exact candidate.** The private evidence file
    [release inventory](research/public-candidate-release-inventory.json) identifies
    all 520 current source/document files and their hashes, excluding installed
-   dependencies and build output. Fourteen numbered content-review receipts match 146
-   files byte-for-byte; two independent domain/node receipts cover another 93,
-   totaling 239 unique files. A separate reconciliation of the earlier independent
+   dependencies and build output. Sixteen numbered content-review receipts match 173
+   files byte-for-byte; five independent module receipts cover another 209,
+   totaling 382 unique files. A separate reconciliation of the earlier independent
    readiness review matches 26 current files and adds 24 distinct paths, for a mixed-scope
-   union of 263. WORK_PACKAGES and package.json changed and are excluded from that prior
+   union of 406. WORK_PACKAGES and package.json changed and are excluded from that prior
    independent review; receipt 14 records their current primary content reread.
-   This is evidence coverage, not a claim that the other 257
+   This is evidence coverage, not a claim that the other 114
    files were never inspected or that all matched files have security clearance.
    Reuse other bounded reviews where their scope and exact bytes can be established;
    inspect the remaining gaps. Do not mistake automated scans for manual review.
@@ -58,6 +58,10 @@ contributor release. The separate website repository does not supply application
    working relative links. Include a private security-reporting route once configured.
    Document the maintainer's actual review process without inventing additional
    independent human maintainers or response-time promises.
+   Explain historical private acceptance pins without publishing private evidence or
+   pretending they are publicly reproducible live qualifications. See the private
+   finding in `PUBLIC_HISTORICAL_CONTRACT_REFERENCES.md`; do not copy its private
+   investigation wholesale into public docs or silently change contract constants.
 
 4. **Complete exact-tree acceptance.** Retain the successful strict type checks,
    30 demo tests, two earlier built-demo tests, 49 standalone tests and owner-approved

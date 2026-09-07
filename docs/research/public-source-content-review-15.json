@@ -1,0 +1,171 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "All 16 tests/helpers files and the two imported root Hermes/native-task fixtures fully read through EOF. No tests, database, key generation, temporary directories, native calls or cleanup code executed. Source inspection only; correctness and live acceptance remain separate.",
+  "entries": [
+    {
+      "path": "tests/helpers/canonical-approval-storage.ts",
+      "sha256": "f8d4f7831c4246443365f9ded4936a9e2fc14c544300c3be46d9d89ea7df3db3",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/native-lease-evidence.ts",
+      "sha256": "f9f7f3dbd4f1ab33f0d3be4c393ecc54338d695a8f579d26671255b43574ba07",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/native-quality-completion.ts",
+      "sha256": "32429d1a952c0833d0e62b6669acacb06148d65872746d345a615a1909fc708c",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/native-revised-result.ts",
+      "sha256": "c233ec8087163026907db156fb5f0ab725cd4da4fcea895432ede554e08b218e",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/native-start-authority.ts",
+      "sha256": "19aa3cf5a5ab727537009befd641ae948afcdef8d6de838f2b9901a602330ab1",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/native-task-lifecycle.ts",
+      "sha256": "fa84170c474a38f0765231a11b698374f115740dae0f168f576418be2c4aba5d",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/task-assignment.ts",
+      "sha256": "630b0b5ffa167b87f743696adffc9361f05e7fc0acec5b6614cfce9bf6d1dea2",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/task-startup.ts",
+      "sha256": "d7cff61275f84814e5be21ab147f9baaea055538fe8676a85fe23859a1d39f46",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/web-connection.ts",
+      "sha256": "2d39170f1081e6330e4ddcddd3affaae52974d7e705e388c4fd19a5370e7b32f",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/web-foundation.ts",
+      "sha256": "fec5640bffbed59635690fd99fa0f62bc1a83699c69c95f59346dff04ab906cb",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/web-idea-project.ts",
+      "sha256": "56526fd4069afcf912396d7b3fa28d07d27d7baf4cebdbf1c60dd9d46c28bcdf",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/web-native-result.ts",
+      "sha256": "d4c42b3311fcf306956cf5dfaf62e1bf4be868f85cd61a8c9666da4c05ed8313",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/web-node.ts",
+      "sha256": "c8aecb9fe205c462f802512b2f90e56cadde56257a2ff44b207921e38cf581e1",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/web-owner-review.ts",
+      "sha256": "21e4fe05e77102ff38f7e3eec8e979689fa1f2b3241880d8be58d55b7a2e3966",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/web-startup.ts",
+      "sha256": "7212d200cc3aaac80ac838a730967847b870efeed96b3a3a53facac0b0c0d474",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/helpers/web-task.ts",
+      "sha256": "442b8a083e44a4504816ebaca45cdb8523c9f33403d1bef692ad9f33b9da44a3",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Test identities, generated keypairs and fixed synthetic key bytes or passwords are test setup, not observed real credentials. Routes are supplied through fixtures or invalid/loopback addresses. Imported fixture implementations are separate review scope.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/hermes-native-fixture.ts",
+      "sha256": "a610d7ddf3097aac38c257cdd55785695300ddeb676dbea3d0cd4178377bb6bb",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Fabricated test identities, synthetic task prompts and generated ephemeral keys. Hermes canonicalDestination is agent.example.test; API route names are protocol fixtures, not a live endpoint.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    },
+    {
+      "path": "tests/native-task-fixture.ts",
+      "sha256": "2e24229048fd96a6c2b7a9c42dd1b56b55680c64bb1be4ba3d0311dc400a7197",
+      "contentReview": "synthetic_fixture_values_observed",
+      "observation": "Full file read. Fabricated test identities, synthetic task prompts and generated ephemeral keys. Hermes canonicalDestination is agent.example.test; API route names are protocol fixtures, not a live endpoint.",
+      "remaining": [
+        "final_candidate_review"
+      ]
+    }
+  ]
+}

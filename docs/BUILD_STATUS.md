@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Larger independent source review completed:** Three reviewers fully read 116 files
+across Idea Lab, ready-frontier/completion-gate, harness, bridge and local pilot. Main
+fully read 18 fixture and nine security source files. All newly recorded hashes match
+the frozen candidate. No embedded live credentials/private host data were reported.
+Historical private acceptance pins need a public provenance/reproducibility limitation
+note before release; see `PUBLIC_HISTORICAL_CONTRACT_REFERENCES.md`. Constants were not
+changed and private history was not published. Sixteen numbered and five independent
+content receipts cover 382 unique files. Including 24 additional unchanged readiness
+paths gives 406 of 520 files across different scopes; 114 remain outside that set.
+Nine old numbered entries no longer match and are excluded, not treated as passes.
+All three assigned reviewers have completed; no live operations or downloads occurred.
+
 **Changed readiness files reread:** Current WORK_PACKAGES and package.json were fully
 read alongside nine small configuration, icon and notice files. No embedded private
 values found; exact hashes and observations are in content receipt 14. This is a new

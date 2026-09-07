@@ -1,0 +1,141 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_readiness_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "Full text of all 29 Idea Lab files; 364503 bytes. Exact frozen inventory matched.",
+  "finding": "No embedded credentials, private host/account values, concrete live endpoints or unexpected vendored headers. Synthetic Local Trades AI Desk fixture. Historical implementation/review pins require provenance/reproducibility disposition.",
+  "historicalPinFiles": [
+    "hermes-021-panel-packet.ts",
+    "hermes-021-native-qualification.ts",
+    "hermes-021-enrollment-readiness.ts",
+    "owner-ready-live-packet.ts"
+  ],
+  "historicalImplementationPins": [
+    "c71de92dbce49ec1b8ae2af7977384c535d265fd",
+    "2bc80a20c7e4e1753b014395866972622c134fd3",
+    "d22c76444b80f8dd469380aab52ec457f5d76fad",
+    "2aa70fde1657b36a06303a744de736ec30624386",
+    "0d61d8a2a2986c166885b5d7e97bcc7e2b5e09fc",
+    "db4b2e470213cd96284cbc201cdfde21a16f09c1"
+  ],
+  "limitations": "No unread files in assigned directory. Imported modules not inspected. No runtime, tests, network, credentials, installs or writes. Not protocol/security correctness, license certification or publication approval. Source fingerprint manifests identify upstream components, not vendored copies.",
+  "entries": [
+    {
+      "path": "src/idea-lab/v1/contracts.ts",
+      "sha256": "08aea747d8682bb79551bca6a13ed6f7f66a352c0682815776e1a4bc20e84800"
+    },
+    {
+      "path": "src/idea-lab/v1/coordinator-store.ts",
+      "sha256": "c692761aa7ec334e8cf6babb359f4d870908e17ca130eebfa3c125bcf3b1aa80"
+    },
+    {
+      "path": "src/idea-lab/v1/coordinator.ts",
+      "sha256": "e32c7f380b7337afeb20f4aaf81fa34091084cb0480158e46c318a5e84f64832"
+    },
+    {
+      "path": "src/idea-lab/v1/errors.ts",
+      "sha256": "05f6c83b6fa87fab019ef4b7187e7cbb4ccdae1fb98ec32a8cb9c2a2ab531148"
+    },
+    {
+      "path": "src/idea-lab/v1/exact.ts",
+      "sha256": "22f385ad65c62e33a30aa8559d0dd06218bfaf941f3956e5ecc4bcc3835cace8"
+    },
+    {
+      "path": "src/idea-lab/v1/fixture.ts",
+      "sha256": "33f524ca03f2a7e0ac07f5c4b81ba0c68042b661d30cd84a3aff7163a1737f60"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-enrolled-connection.ts",
+      "sha256": "162f12aaf48608503ad221a30b63313349574294b9de099be995944c58244554"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-enrolled-gateway-port.ts",
+      "sha256": "f80f7e90358ab1963b413b125bcd769f40bae317dd788267182e9df79c02df44"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-enrollment-readiness.ts",
+      "sha256": "654be12194d81cee7c36ab166c3682a63cc2cbf70b0e6dc6f759474be4105aee"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-filtered-driver.ts",
+      "sha256": "dea2260909f7e8afd6cf5a2718617e19f42f1f57d7654724c81960a9ba88c78f"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-fixed-operation-set.ts",
+      "sha256": "02e7cc39b395138432b9c1eabd1cd4c93722949aac624dec4abff8ff8143ae7c"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-fixed-rpc-bridge.ts",
+      "sha256": "083e091fbaa87818674ed7dd118828c2f85c107f5165771bae71e5920d920b79"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-macos-connector.ts",
+      "sha256": "81596f38bad42668ab2062a0fd10c014b34e510c04a3a374c55bbed213899dff"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-native-launch-readiness.ts",
+      "sha256": "53bf170810e90cb2f0c3fbb49ee34f699ef7a043a6f0fe4567260cdb802e2e32"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-native-qualification.ts",
+      "sha256": "8ac80ac68304e7eadf6c949f0edc14ac20587060237fb23ad6ad1c95d8174666"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-panel-packet.ts",
+      "sha256": "0eb4ecac4f3adacbd87aa3090dbe9a7f4e9a6e4880b762dc8d783230ccf69dd8"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-profile-preparation-attestation.ts",
+      "sha256": "8c500697e637833442e228fb9ac4c18de74fcd340ba978fc793fc9bd5a277c7a"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-profile-preparation-contract.ts",
+      "sha256": "eec5513d21ed3c838da38fbe4da4994bc5d5645e6401a12cb8c408056c786863"
+    },
+    {
+      "path": "src/idea-lab/v1/hermes-021-qualification-spend-store.ts",
+      "sha256": "7d6aba05404c0cab39b023c1e52cae1a974dd04bcfabcbf21fa945370c93b40d"
+    },
+    {
+      "path": "src/idea-lab/v1/index.ts",
+      "sha256": "f1133732cce1965ce99a27e342ed3e5fa6efbdf3b706f3fafa1bb2be95690295"
+    },
+    {
+      "path": "src/idea-lab/v1/lifecycle-service.ts",
+      "sha256": "2b93e6df17e763962e397882874eee501c8e80684c21d5b3cc219d646860ad6a"
+    },
+    {
+      "path": "src/idea-lab/v1/live-panel-admission.ts",
+      "sha256": "d986bf6e67f446c65ee58b6b4bec78d810f658f0c5360bf8d93d43f82a383299"
+    },
+    {
+      "path": "src/idea-lab/v1/live-panel-authority-store.ts",
+      "sha256": "a3e05920ccdcd6a8dfc1775e74312da6b4fe727c6d3bac6da14cf1f521bf0899"
+    },
+    {
+      "path": "src/idea-lab/v1/operator-service.ts",
+      "sha256": "39246681b4590e19f477d811a209d187772283bab5526e74385713d5fa98d6db"
+    },
+    {
+      "path": "src/idea-lab/v1/owner-decision-service.ts",
+      "sha256": "fb9216b09474c1621454621a8c2291111af46a9af50528f7f605a5ec61b3c387"
+    },
+    {
+      "path": "src/idea-lab/v1/owner-ready-live-packet.ts",
+      "sha256": "a69bc6afcbd958afa46ed078018248fdb773a64e953475c6f0d16bedb0963601"
+    },
+    {
+      "path": "src/idea-lab/v1/schemas.ts",
+      "sha256": "b8e92fc2d6cddf5e5fad435d33a6c37aa726f209720e5679996f60dcf3c46f46"
+    },
+    {
+      "path": "src/idea-lab/v1/store.ts",
+      "sha256": "1369c55addca41b3d065f5cb30df5e93885780669a3b75a59c6b006970d0c9c8"
+    },
+    {
+      "path": "src/idea-lab/v1/types.ts",
+      "sha256": "48830d2c05aff0fae2b9e7bb61fac1c69af4f583c29b1db81778e78de0b38661"
+    }
+  ]
+}
