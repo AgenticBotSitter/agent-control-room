@@ -5,18 +5,32 @@ export { assertPublicUrl } from "./pinned-fetch";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 5_000_000;
 
-type SafeFetchOptions = {
+export type SafeFetchOptions = {
   headers?: HeadersInit;
   timeoutMs?: number;
   maxBytes?: number;
+  signal?: AbortSignal;
+  beforeRequest?: (url: string) => undefined;
 };
+
+function requestSignal(url: string, options: SafeFetchOptions, defaultTimeout: number) {
+  options.signal?.throwIfAborted();
+  const result: unknown = options.beforeRequest?.(url);
+  if (result !== undefined) {
+    if (result instanceof Promise) void result.catch(() => undefined);
+    throw new Error("Source permission must be checked synchronously.");
+  }
+  options.signal?.throwIfAborted();
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? defaultTimeout);
+  return options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+}
 
 export async function safeFetchText(value: string, options: SafeFetchOptions = {}, dependencies: PinnedFetchDependencies = {}) {
   let currentUrl = new URL(value).toString();
   let response: Response | undefined;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
     response = await fetchPinned(currentUrl, {
-      signal: AbortSignal.timeout(options.timeoutMs ?? 12_000),
+      signal: requestSignal(currentUrl, options, 12_000),
       headers: {
         "User-Agent": "ControlCenter/1.0 (+self-hosted feed reader)",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -48,13 +62,13 @@ export async function safeFetchText(value: string, options: SafeFetchOptions = {
 
 export async function resolvePublicRedirect(
   value: string,
-  options: Pick<SafeFetchOptions, "headers" | "timeoutMs"> = {},
+  options: Pick<SafeFetchOptions, "headers" | "timeoutMs" | "signal" | "beforeRequest"> = {},
   dependencies: PinnedFetchDependencies = {},
 ) {
   let currentUrl = new URL(value).toString();
   for (let redirects = 0; redirects <= 5; redirects += 1) {
     const response = await fetchPinned(currentUrl, {
-      signal: AbortSignal.timeout(options.timeoutMs ?? 8_000),
+      signal: requestSignal(currentUrl, options, 8_000),
       headers: {
         "User-Agent": "ControlCenter/1.0 (+self-hosted newsletter reader)",
         Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",

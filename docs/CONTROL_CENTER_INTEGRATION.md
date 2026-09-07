@@ -65,6 +65,20 @@ for live collection. No second database, scheduler or discovery algorithm was ad
 
 ## Avoid incompatible silent changes
 
+`createControlCenterCollectionReader` now wraps the borrowed source/fetch modules
+with existing current-source assertions, HTTPS validation, physical-attempt limits,
+shared deadline/cancellation and a conservative per-document body reservation.
+Pass `reader.signal` to ingestion's `collect(reader, reader.signal)` so persistence
+uses the same deadline. It requires explicitly supplied DNS/transport dependencies;
+there is no default connection or runtime mount. Reservation counts maximum decoded
+body bytes per logical document, including failed documents, not total wire traffic.
+Redirect destinations are checked before DNS; each pinned attempt rechecks authority.
+Configured source persistence/UI and application startup/queue wiring remain open.
+Discovered endpoint query strings are accepted by the fetch guard but still need
+reconciliation with the stricter ingestion endpoint schema before live wiring.
+Current limits are decoded-body reservations, not a measurement of all bytes on
+the network; HTTP headers/redirect-body transport cleanup require native validation.
+
 Public HTTP cohort is now retained in `src/vendor/control-center/`: complete
 upstream address classification, pinned request implementation and safe-fetch module.
 Tests inject both DNS and transport (no native requests), including the full 250-item

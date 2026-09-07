@@ -92,3 +92,8 @@ HTTPS-only policy or native-runtime qualification. Tests supply fake DNS and fet
 Review correction: reject pre-aborted resolution before scheduling DNS, and observe
 an already-created promise when abort wins. This avoids needless lookup/unhandled
 rejection; an injected rejecting-lookup regression proves no DNS/transport call.
+Application integration hooks in safe-fetch: optional shared cancellation signal and
+synchronous per-hop `beforeRequest`, applied before pinned DNS resolution in both
+text fetching and redirect resolution. Asynchronous guard returns are refused.
+Control Room's separate adapter reuses this module with configured HTTPS authority,
+physical-attempt cap, per-document reserved decoded-body budget and shared deadline.

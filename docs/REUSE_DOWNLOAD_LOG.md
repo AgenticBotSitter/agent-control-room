@@ -572,7 +572,7 @@ then again to retain exact module bodies via apply_patch. Stored under
 temporary files, packages or caches downloaded. Retained for integration and fake
 tests; remove only if the corresponding imports/tests are removed. No native fetch,
 source collection, credential operation, GitHub write or Actions run occurred.
-Retained adapted code totals 14,790 bytes. SHA256: public-address
+At local checkpoint 91e62ae, retained adapted code totaled 14,790 bytes. SHA256: public-address
 `291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48`;
 pinned-fetch `1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca`;
 safe-fetch `986fe50ac2579e6a97f2bebbfcce6c1fd8b87eb709f5bc04c6310e2d8427e03f`.

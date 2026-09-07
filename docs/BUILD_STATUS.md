@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Application limits now wrap the borrowed reader:** Added a thin composition of
+the adopted discovery and HTTP modules with shared timeout/cancellation, HTTPS
+destination checks, existing synchronous source authority, physical-attempt cap
+and conservative per-document body reservations. Redirect permission runs before
+DNS; each address attempt rechecks it. The exposed signal can guard ingestion's
+commit too. No default transport or runtime mounting was added. Initial tests
+caught noncanonical fixture URLs after entry checks; corrected fixtures and explicit
+guard assertions now exercise the intended boundary. Runtime source settings,
+endpoint normalization (including query-bearing discovered feeds), native cleanup
+qualification and final startup/queue wiring remain open.
+The 297-entry delivery lane, types, focused lint and VPS compilation pass.
+Independent re-review found no new concrete defect. No native collection, credentials,
+service, deployment or GitHub writes occurred.
+
 **Borrowed HTTP reader cohort retained:** Full upstream address checks, pinned
 fetch and safe-fetch modules are adopted with local imports and an injected test
 seam. Fake DNS/transport tests cover private/embedded addresses, mixed DNS answers,
