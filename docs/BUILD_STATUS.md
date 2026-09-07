@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**General synthetic review/revision path verified for reuse:** The existing CR8
+integration already connects synthetic execution, artifact bytes and the general
+completion store without native snapshots. Its test now checks ordered progress in
+both rounds and preserves changes-requested status throughout revision execution.
+The integration passes. Prefer these general components for the preview over fake
+Hermes provenance; the historical fixture still seeds work and is not a fresh-project
+interactive demo. See `PUBLIC_EXPORT_INVENTORY_STATUS.md`. No runtime activation.
+
 **Existing synthetic runner reuse prepared:** Found and fixed final-progress/checkpoint
 cancellation returning success in the reusable synthetic executor. Both new regressions
 failed before the change; all 25 executor/coordinator tests now pass. The preview should

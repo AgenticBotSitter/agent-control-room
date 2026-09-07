@@ -4,6 +4,31 @@
 
 ### Existing synthetic execution reuse
 
+Follow-up: `tests/cr8-integration-acceptance.test.ts` already connects the synthetic
+executor to `buildTextArtifactBundle`, general completion targets, a changes-requested
+review, a second synthetic execution and `CompletionGateStoreV1.recordRevision`.
+This is a stronger reuse lead than introducing synthetic data into native result
+receipts. The general completion view model is already separate from the web task's
+native-result projection. Prefer composing these general components for the clearly
+synthetic preview; keep the native service contracts unchanged.
+
+The integration test now observes both executions' ordered start/progress/checkpoint/
+completion events, their synthetic schema and exact job/attempt identity, and 50/100
+percent progress. During every revision callback it verifies that the original target
+remains changes-requested until the revised result is registered. The test passed,
+including its existing exact-byte comparison, supersession, quality and no-effect
+assertions. This proves a reusable library-level path, not an interactive preview.
+
+Do not copy the whole historical test into the demo. Its setup seeds running canonical
+work, includes synthetic Telegram/secret/approval exercises unrelated to the minimal
+preview, and uses one attempt identity in both explicitly separate execution phases.
+The contributor composition must begin with a fresh project/proposal and assign distinct
+execution/revision identities as appropriate; it must preserve policy admission rather
+than execute the proposal's no-effect authority as though it authorized something else.
+Required next work is that composition and the common project-page presentation, not
+another runner, queue, completion engine or fake Hermes connector. No runtime path or
+preview export has been activated by this test-only follow-up.
+
 The existing `src/node-executor/synthetic-executor.ts` already emits ordered progress,
 checkpoint and cancellation events and returns bounded text bytes. Its admitted
 coordinator uses existing authority, event-recording and artifact-storage ports. Prefer

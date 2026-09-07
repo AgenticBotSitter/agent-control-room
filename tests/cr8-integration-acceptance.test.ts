@@ -32,6 +32,7 @@ import {
   type NormalizedLocalPolicyRequestV1,
 } from "../src/node-policy/v1";
 import { buildArtifactLineageRecord, buildTextArtifactBundle, runSyntheticExecution } from "../src/node-executor";
+import type { SyntheticExecutionEventV1 } from "../src/node-executor/synthetic-executor";
 import { OperatorSurfaceStoreV1, type ActionInboxItemV1 } from "../src/operator-surfaces/v1";
 import { adaptPglite } from "../src/persistence/database";
 import {
@@ -594,12 +595,18 @@ test("CR8I composes one disposable question, bounded response, exact approval, s
       stepDelayMilliseconds: 0,
       artifactText: initialArtifactText,
     };
+    const initialProgress: SyntheticExecutionEventV1[] = [];
     const initialResult = await runSyntheticExecution(initialSpec, {
       signal: new AbortController().signal,
       now: () => tInitialExecution,
       sleep: async () => {},
-      emit: () => {},
+      emit: event => { initialProgress.push(event); },
     });
+    assert.deepEqual(initialProgress.map(event => event.event),
+      ["started", "progress", "checkpointed", "progress", "checkpointed", "completed"]);
+    assert.deepEqual(initialProgress.filter(event => event.event === "progress").map(event => event.progressPercent), [50, 100]);
+    assert.ok(initialProgress.every((event, index) => event.sequence === index + 1
+      && event.schema === "control-room.synthetic-execution-event/v1" && event.jobId === jobId && event.attemptId === attemptId));
     assert.equal(initialResult.state, "succeeded");
     if (initialResult.state !== "succeeded") throw new Error("initial synthetic execution failed");
     const initialBundle = buildTextArtifactBundle({
@@ -720,12 +727,21 @@ test("CR8I composes one disposable question, bounded response, exact approval, s
       stepDelayMilliseconds: 0,
       artifactText: revisionArtifactText,
     };
+    const revisionProgress: SyntheticExecutionEventV1[] = [];
     const revisionResult = await runSyntheticExecution(revisionSpec, {
       signal: new AbortController().signal,
       now: () => tRevisionExecution,
       sleep: async () => {},
-      emit: () => {},
+      emit: async event => {
+        // Until the new result is registered, the original review must stay open.
+        assert.equal((await completionStore.snapshot(tenantId, initialTarget.id)).status, "changes_requested");
+        revisionProgress.push(event);
+      },
     });
+    assert.deepEqual(revisionProgress.map(event => event.event), initialProgress.map(event => event.event));
+    assert.deepEqual(revisionProgress.filter(event => event.event === "progress").map(event => event.progressPercent), [50, 100]);
+    assert.ok(revisionProgress.every((event, index) => event.sequence === index + 1
+      && event.schema === "control-room.synthetic-execution-event/v1" && event.jobId === jobId && event.attemptId === attemptId));
     assert.equal(revisionResult.state, "succeeded");
     if (revisionResult.state !== "succeeded") throw new Error("revision synthetic execution failed");
     const revisionBundle = buildTextArtifactBundle({
