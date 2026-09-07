@@ -32,9 +32,9 @@ contributor release. The separate website repository does not supply application
 
 1. **Freeze and inspect the exact candidate.** The private evidence file
    [release inventory](research/public-candidate-release-inventory.json) identifies
-   all 518 current source/document files and their hashes, excluding installed
+   all 520 current source/document files and their hashes, excluding installed
    dependencies and build output. Nine content-review receipts match 72
-   files byte-for-byte. This is evidence coverage, not a claim that the other 446
+   files byte-for-byte. This is evidence coverage, not a claim that the other 448
    files were never inspected or that all matched files have security clearance.
    Reuse other bounded reviews where their scope and exact bytes can be established;
    inspect the remaining gaps. Do not mistake automated scans for manual review.
@@ -55,7 +55,7 @@ contributor release. The separate website repository does not supply application
    independent human maintainers or response-time promises.
 
 4. **Complete exact-tree acceptance.** Retain the successful strict type checks,
-   28 demo tests, two built-demo tests, 47 standalone compiled tests and owner-approved
+   30 demo tests, two earlier built-demo tests, 49 standalone tests and owner-approved
    macOS browser trial. Rerun affected checks after changes. Independent review must
    identify the exact candidate and unresolved findings. Windows/Linux and live-agent
    acceptance remain contributor work, not prerequisites we falsely claim passed.

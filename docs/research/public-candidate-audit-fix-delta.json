@@ -1,0 +1,52 @@
+{
+  "schema": "control-room.public-candidate-audit-fix-delta/v1",
+  "privateEvidenceOnly": true,
+  "publicationApproved": false,
+  "applyAfter": [
+    "public-candidate-reconstruction.json",
+    "public-demo-reconstruction-delta.json",
+    "public-candidate-finalization-delta.json"
+  ],
+  "sourceCommit": "70655d8be2e2ba9e831d70fa905452f9676df4b6",
+  "sourceFiles": [
+    {
+      "path": "db/migrations/0058_audit_chain_required_hashes.sql",
+      "sha256": "0d757ee0e751c3ef0f5a71524ce0184a7c9bea581aa46fbd7204de166b3460ac"
+    },
+    {
+      "path": "tests/audit-required-hashes.test.mjs",
+      "sha256": "fa2aeafcf9fc351319bf1c04f5008aaffcc322ad6d8ac6f667cf272ce61ef4f2"
+    }
+  ],
+  "transforms": [
+    {
+      "path": "src/web/v1/private-database-preflight.ts",
+      "replacements": [
+        {
+          "from": "public-candidate migrations 0001-0057",
+          "to": "public-candidate migrations 0001-0058"
+        },
+        {
+          "from": "5ddb1f082f2e598bf0434f63708063674829fcde2c2b4384aecc32f6dff238e3",
+          "to": "1d03ff658c8c413abebca42b783f3bd7e18320b51c24e35fb3c96c8cea712199"
+        }
+      ],
+      "sha256": "1d5ecfba03bb6a3516fbf2a50c0197ba9e0d9bb6f1c9004bcee5dfb3be0ab61b"
+    },
+    {
+      "path": "package.json",
+      "replacements": [
+        {
+          "from": "\"node --import tsx --test tests/contributor-demo-launcher.test.ts tests/contributor-demo-runtime.test.ts tests/local-preview-panels.test.tsx tests/web-private-serving.test.ts\"",
+          "to": "\"node --import tsx --test tests/audit-required-hashes.test.mjs tests/contributor-demo-launcher.test.ts tests/contributor-demo-runtime.test.ts tests/local-preview-panels.test.tsx tests/web-private-serving.test.ts\""
+        },
+        {
+          "from": "\"node scripts/build-vps.mjs && node --import tsx --test tests/vps-built-handler.test.mjs tests/vps-built-startup.test.mjs tests/vps-built-serving.test.mjs tests/vps-built-rehearsal.test.mjs tests/vps-built-preparation.test.mjs tests/vps-built-results.test.mjs tests/vps-built-owner-review.test.mjs tests/vps-built-planning.test.mjs tests/vps-built-assignment.test.mjs tests/vps-built-task-application.test.mjs tests/vps-built-task-startup.test.mjs tests/vps-built-approval.test.mjs tests/vps-built-quality.test.mjs tests/vps-built-revision-planning.test.mjs tests/vps-built-revised-result.test.mjs tests/vps-built-capacity-release.test.mjs tests/vps-built-owner-revision-interface.test.mjs tests/vps-built-result-ownership.test.mjs tests/vps-built-native-evidence.test.mjs tests/vps-built-managed-native-sessions.test.mjs tests/vps-built-launcher.test.mjs tests/vps-built-core-schema.test.mjs\"",
+          "to": "\"node scripts/build-vps.mjs && node --import tsx --test tests/audit-required-hashes.test.mjs tests/vps-built-handler.test.mjs tests/vps-built-startup.test.mjs tests/vps-built-serving.test.mjs tests/vps-built-rehearsal.test.mjs tests/vps-built-preparation.test.mjs tests/vps-built-results.test.mjs tests/vps-built-owner-review.test.mjs tests/vps-built-planning.test.mjs tests/vps-built-assignment.test.mjs tests/vps-built-task-application.test.mjs tests/vps-built-task-startup.test.mjs tests/vps-built-approval.test.mjs tests/vps-built-quality.test.mjs tests/vps-built-revision-planning.test.mjs tests/vps-built-revised-result.test.mjs tests/vps-built-capacity-release.test.mjs tests/vps-built-owner-revision-interface.test.mjs tests/vps-built-result-ownership.test.mjs tests/vps-built-native-evidence.test.mjs tests/vps-built-managed-native-sessions.test.mjs tests/vps-built-launcher.test.mjs tests/vps-built-core-schema.test.mjs\""
+        }
+      ],
+      "sha256": "2fb42f092ab023206f565a96d36e2477076983b905c6bd6054417f73c69bb95d"
+    }
+  ],
+  "instructions": "Copy the two exact committed source files, then apply each literal replacement once to the target path. Require an exact single match and verify final hashes. Preserve candidate generalization; do not copy the private preflight file."
+}

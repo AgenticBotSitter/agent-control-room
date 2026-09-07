@@ -42,6 +42,19 @@ No live database, provider, listener or external account was changed.
 
 ## Required before source release
 
+**Candidate propagation completed:** The migration and regression are now copied
+byte-for-byte from private commit `70655d8`; both candidate test commands include
+the regression. Its independently derived generalized schema digest is
+`1d03ff658c8c413abebca42b783f3bd7e18320b51c24e35fb3c96c8cea712199`.
+Thirty demo tests and full TypeScript pass; the rebuilt standalone suite passes
+49 tests. `research/public-candidate-audit-fix-delta.json` is the fourth private
+reconstruction receipt, applied after the three existing receipts. The refreshed
+inventory now contains 520 source files. These runs are synthetic/PGlite evidence,
+All four receipts were then applied in memory from their exact private commits;
+all 520 reconstructed files match both the inventory and staged candidate bytes.
+not production PostgreSQL acceptance. The earlier propagation instructions below
+are retained as the completed action's scope.
+
 Propagate the migration and regression into the isolated source candidate, add the
 test to its selected commands, recompute its distinct generalized-schema fingerprint,
 refresh reconstruction/inventory records, and rerun candidate checks. Do not copy

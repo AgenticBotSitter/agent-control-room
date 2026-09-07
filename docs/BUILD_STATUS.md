@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Audit fix propagated to public candidate:** The reviewed migration and test are
+byte-identical to private commit `70655d8`. Candidate-specific schema fingerprint
+was recomputed, not copied from private schema. Thirty demo tests, full TypeScript
+and 49 rebuilt standalone tests pass. The fourth reconstruction receipt preserves
+the two additions and exact preflight/package transformations; current inventory
+contains 520 source files. No live database or public repository was changed.
+Broader publication review and repository-security approval remain outstanding.
+
 **Real audit integrity defect corrected privately:** A disposable reproduction
 confirmed incomplete v1 audit rows could pass the original nullable-hash trigger.
 Forward migration 0058 requires all three hashes without rewriting existing history.

@@ -1,8 +1,8 @@
 {
   "scope": "Private evidence for staged source, not a public distribution or publication approval",
-  "candidateDigest": "0f90f99a697b681edb6bd98e93734041c32b3994c4d2e64dcadb90404926ef9d",
-  "fileCount": 518,
-  "totalBytes": 3712760,
+  "candidateDigest": "92741e1a836800f4ffdd9de754584229cf99a0b6d9f1e5cb58e5507874d15b39",
+  "fileCount": 520,
+  "totalBytes": 3716033,
   "excludedDirectoryNames": [
     "node_modules",
     ".git",
@@ -698,6 +698,12 @@
       "priorContentReviewReceipt": null
     },
     {
+      "path": "db/migrations/0058_audit_chain_required_hashes.sql",
+      "bytes": 528,
+      "sha256": "0d757ee0e751c3ef0f5a71524ce0184a7c9bea581aa46fbd7204de166b3460ac",
+      "priorContentReviewReceipt": null
+    },
+    {
       "path": "db/roles/native_evidence_roles.sql",
       "bytes": 1864,
       "sha256": "4dc5a79706a46042482e36573859ccd586c25b4a9ed5b8ffd3653c7c52220c15",
@@ -777,8 +783,8 @@
     },
     {
       "path": "package.json",
-      "bytes": 2654,
-      "sha256": "d8abf232387ccea5a59e29a82feaa80ca4f61dc778bf77cc32ecc689ec697068",
+      "bytes": 2728,
+      "sha256": "2fb42f092ab023206f565a96d36e2477076983b905c6bd6054417f73c69bb95d",
       "priorContentReviewReceipt": null
     },
     {
@@ -2686,7 +2692,7 @@
     {
       "path": "src/web/v1/private-database-preflight.ts",
       "bytes": 19734,
-      "sha256": "13dc4e536c4373cfa0663a3c7f8eb780e2736f21758e4abbe803f2383df3fb87",
+      "sha256": "1d5ecfba03bb6a3516fbf2a50c0197ba9e0d9bb6f1c9004bcee5dfb3be0ab61b",
       "priorContentReviewReceipt": null
     },
     {
@@ -3029,6 +3035,12 @@
       "path": "styles/control-room.css",
       "bytes": 96283,
       "sha256": "b3754e1d908ac148d3433f5fce147f046557fde820bca16ff1d49726dc2028c7",
+      "priorContentReviewReceipt": null
+    },
+    {
+      "path": "tests/audit-required-hashes.test.mjs",
+      "bytes": 2671,
+      "sha256": "fa2aeafcf9fc351319bf1c04f5008aaffcc322ad6d8ac6f667cf272ce61ef4f2",
       "priorContentReviewReceipt": null
     },
     {
