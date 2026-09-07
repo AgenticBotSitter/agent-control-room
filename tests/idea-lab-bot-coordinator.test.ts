@@ -19,9 +19,11 @@ async function setup(){const raw=new PGlite();for(const file of (await readdir(r
   return {raw,db,registry,ledger,fixture,evidence};}
 
 test("CR12B-IDEA-030 runs every bounded fake panel turn and retains only filtered contributions",async()=>{const target=await setup();try{
-  let calls=0;const driver=new DeterministicIdeaLabFakeDriverV1();const coordinator=new IdeaLabBotCoordinatorV1(target.ledger,target.registry,{mode:"repository_fake",async invoke(input){calls+=1;return driver.invoke(input);}},()=>now);
+  let calls=0;const prompts: { round:number; text:string }[]=[];const driver=new DeterministicIdeaLabFakeDriverV1();const coordinator=new IdeaLabBotCoordinatorV1(target.ledger,target.registry,{mode:"repository_fake",async invoke(input){calls+=1;prompts.push({round:input.round,text:input.safePrompt});return driver.invoke(input);}},()=>now);
   const run=await coordinator.execute({runId:"idea-run:complete",session:target.fixture.session,evidence:target.evidence,safePrompt:"Evaluate this bounded business idea."});
   assert.equal(run.state,"completed");assert.equal(run.messagesUsed,8);assert.equal(run.costUsd,0);assert.equal(run.providerContacted,false);assert.equal(calls,8);
+  assert.ok(prompts.filter(p=>p.round===1).every(p=>p.text==="Evaluate this bounded business idea."));
+  assert.ok(prompts.filter(p=>p.round===2).every(p=>p.text.includes("prior opinions")&&p.text.length<=800));
   assert.equal((await target.registry.listContributions(target.fixture.session.tenantId,target.fixture.session.sessionId)).length,8);
   assert.equal((await target.raw.query(`SELECT * FROM control_idea_bot_run_events WHERE run_id='idea-run:complete'`)).rows.length,18);
 }finally{await target.raw.close();}});

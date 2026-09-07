@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { buildIdeaLabDiscussionPromptV1 } from "./discussion-prompt";
 import { sha256Digest } from "../../security";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
@@ -234,6 +235,14 @@ export class IdeaLabBotCoordinatorV1 {
         return this.ledger.failDefinite(run.runId, "budget_exhausted_before_provider", this.clock());
       }
       const participantEvidence = evidence.find((item) => item.participantId === participant.participantId)!;
+      let safePrompt: string;
+      try {
+        safePrompt = buildIdeaLabDiscussionPromptV1({ session, participantId: participant.participantId,
+          round, prompt: input.safePrompt, contributions: round === 1 ? []
+            : await this.registry.listContributions(session.tenantId, session.sessionId) });
+      } catch {
+        return this.ledger.failDefinite(run.runId, "discussion_context_unavailable", this.clock());
+      }
       const attemptId = `attempt.idea:${sha256Digest({ runId: run.runId, participantId: participant.participantId, round }).slice(7, 31)}`;
       const startedAt = this.clock(), markerDigest = sha256Digest({ runDigest: run.runDigest, attemptId,
         evidenceDigest: participantEvidence.evidenceDigest, startedAt });
@@ -241,7 +250,7 @@ export class IdeaLabBotCoordinatorV1 {
         participantIdentityDigest: participant.identityDigest, round, state: "provider_marked", markerDigest,
         costUsd: 0, messagesUsed: 0, startedAt });
       let raw: unknown;
-      try { raw = await this.driver.invoke({ session, participant, round, safePrompt: input.safePrompt,
+      try { raw = await this.driver.invoke({ session, participant, round, safePrompt,
         evidence: participantEvidence, markerDigest, ...(liveAdmission ? { liveAdmission } : {}) }); }
       catch { return this.ledger.markAmbiguous(run.runId, attemptId, "provider_outcome_unknown", this.clock()); }
       let result: IdeaLabBotDriverResultV1;

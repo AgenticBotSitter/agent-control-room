@@ -27,6 +27,17 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
       requireSameOrigin(request, options.origin);
       const identity = verify(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const absRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/from-abs$/.exec(url.pathname);
+      if (absRoute) {
+        if (request.method !== "POST" || url.search) throw new WebAccessError("invalid_request");
+        if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
+          throw new WebAccessError("invalid_request");
+        let projectId: string;
+        try { projectId = decodeURIComponent(absRoute[1]); } catch { throw new WebAccessError("invalid_request"); }
+        const result = await options.service.proposeAbsResearch(identity, projectId,
+          await readBoundedJson(request.body, 24_576), request.headers.get("idempotency-key") ?? "");
+        return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+      }
       const submissionRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/submission$/.exec(url.pathname);
       if (submissionRoute) {
         if (request.headers.has("idempotency-key")) throw new WebAccessError("invalid_request");
