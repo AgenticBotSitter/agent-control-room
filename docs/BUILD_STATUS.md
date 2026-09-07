@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Browser simulation client added and verified:** A thin browser-only client uses the
+existing bounded JSON reader, same-origin/no-store requests, redirect rejection and
+a timeout. It sends only explicit simulation intent and project/job IDs, validates
+the strict receipt and its scope, and never automatically retries. The integration
+test loses a committed reply, then explicitly reconciles the same task to the original
+artifact. Negative tests reject wrong scope, native-authority flags and extra locator
+fields. Four demo tests, strict types, focused lint and whitespace checks pass after
+correcting an initial TypeScript syntax error. UI mounting, revision and standalone
+startup are still unfinished; no browser interaction, listener or public export claimed.
+
 **Contributor simulation request endpoint connected and tested:** The demo-only router
 accepts a bounded strict `simulate_task` request with explicit simulation-only intent,
 project/job IDs and existing owner authentication. No arbitrary commands, prompts or

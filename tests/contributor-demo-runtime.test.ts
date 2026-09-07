@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import test from "node:test";
 import { createContributorDemoRuntime } from "../src/contributor-demo/runtime";
 import { createContributorDemoHttp } from "../src/contributor-demo/http";
+import { createContributorDemoBrowserClient } from "../src/contributor-demo/browser-client";
 
 test("disposable demo uses real local authentication and project/task services, then removes its data", async t => {
   const demo = await createContributorDemoRuntime(process.cwd());
@@ -63,6 +64,20 @@ test("demo rejects relative repository roots before allocating data", async () =
   await assert.rejects(createContributorDemoRuntime("."), /demo_repository_root_must_be_absolute/);
 });
 
+test("simulation browser client rejects mismatched or authority-bearing receipts without retry", async () => {
+  const receipt = { simulationOnly: true, grantsExecutionAuthority: false,
+    artifactId: "artifact:demo:1", projectId: "project:demo:1", jobId: "job:demo:1" };
+  for (const extra of [{ simulationOnly: false }, { grantsExecutionAuthority: true },
+    { projectId: "project:other" }, { jobId: "job:other" }, { opaqueLocator: "not-for-browser" }]) {
+    let calls = 0;
+    const browser = createContributorDemoBrowserClient(async () => {
+      calls++; return Response.json({ ...receipt, ...extra });
+    });
+    await assert.rejects(browser.simulate(receipt.projectId, receipt.jobId), { code: "uncertain" });
+    assert.equal(calls, 1);
+  }
+});
+
 test("demo HTTP composes protected login and project routes without operational endpoints", async t => {
   const demo = await createContributorDemoRuntime(process.cwd());
   t.after(() => demo.close());
@@ -114,6 +129,21 @@ test("demo HTTP composes protected login and project routes without operational 
   assert.equal(simulated.status, 200);
   const receipt = await simulated.json();
   assert.deepEqual(await (await handle(simulate())).json(), receipt);
+  let calls = 0, loseReply = true;
+  const browser = createContributorDemoBrowserClient(async (input, init) => {
+    calls++;
+    assert.equal(init?.credentials, "same-origin");
+    assert.equal(init?.redirect, "error");
+    const headers = new Headers(init?.headers);
+    headers.set("cookie", cookie); headers.set("origin", demo.origin);
+    const response = await handle(new Request(`${demo.origin}${String(input)}`, { ...init, headers }));
+    if (loseReply) { loseReply = false; throw new Error("lost response"); }
+    return response;
+  });
+  await assert.rejects(browser.simulate(projectId, jobId), { code: "uncertain" });
+  assert.equal(calls, 1);
+  assert.deepEqual(await browser.simulate(projectId, jobId), receipt);
+  assert.equal(calls, 2);
   const query = new URLSearchParams({ resource: "synthetic_result", projectId, jobId, artifactId: receipt.artifactId });
   const resultResponse = await handle(new Request(`${workspace}?${query}`, { headers: { cookie } }));
   assert.equal(resultResponse.status, 200);
