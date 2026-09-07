@@ -12,6 +12,12 @@ export const privateServerOptions: Readonly<ServerOptions> = Object.freeze({
 });
 type ServerFactory = (options: Readonly<ServerOptions>) => Server;
 type Socket = IncomingMessage["socket"];
+type ListenerOptions = {
+  port: number;
+  createServer?: ServerFactory;
+  listenerTiming?: { bindMs?: number; closeMs?: number };
+};
+type RequestBridge = ReturnType<typeof createPrivateNodeHandler>;
 
 /** Inert until explicit start(). Tests inject a server with no sockets.
  * Start is a physical effect and requires the separate approved deployment/rehearsal packet.
@@ -19,16 +25,26 @@ type Socket = IncomingMessage["socket"];
  * including close-before-start and startup failure. Invalid factory configuration does not transfer it.
  * No signal handler, service installation, environment loader or retry is installed.
  */
-export function createPrivateNodeService(options: Parameters<typeof createPrivateNodeHandler>[0] & {
-  port: number;
-  createServer?: ServerFactory;
-  listenerTiming?: { bindMs?: number; closeMs?: number };
-}) {
+export function createPrivateNodeService(options: Parameters<typeof createPrivateNodeHandler>[0] & ListenerOptions) {
+  return createLoopbackService(options, () => createPrivateNodeHandler(options));
+}
+
+/** Owns an already assembled disposable demo bridge, never a production runtime.
+ * Construction is inert; the caller must explicitly start the fixed local listener.
+ * Invalid configuration leaves bridge ownership with the caller.
+ */
+export function createContributorDemoService(bridge: RequestBridge & { origin: string },
+  options: Omit<ListenerOptions, "port"> = {}) {
+  if (bridge.origin !== "http://127.0.0.1:3000") throw new Error("contributor_listener_config_invalid");
+  return createLoopbackService({ ...options, port: 3000 }, () => bridge);
+}
+
+function createLoopbackService(options: ListenerOptions, makeBridge: () => RequestBridge) {
   if (!Number.isSafeInteger(options.port) || options.port < 1 || options.port > 65535) throw new Error("private_listener_config_invalid");
   const bindMs = options.listenerTiming?.bindMs ?? 5000, closeMs = options.listenerTiming?.closeMs ?? 35_000;
   if (!Number.isSafeInteger(bindMs) || bindMs < 1 || bindMs > 5000
     || !Number.isSafeInteger(closeMs) || closeMs < 1 || closeMs > 35_000) throw new Error("private_listener_config_invalid");
-  const bridge = createPrivateNodeHandler(options);
+  const bridge = makeBridge();
   const binding = new AbortController();
   let attempted = false, ready = false, closed: Promise<void> | undefined, server: Server | undefined;
   const sockets = new Set<Socket>();

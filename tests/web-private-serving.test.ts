@@ -6,11 +6,11 @@ import type { ListenOptions } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 import ts from "typescript";
-import { createPrivateNodeService } from "../src/web/v1/private-serving.ts";
+import { createContributorDemoService, createPrivateNodeService } from "../src/web/v1/private-serving.ts";
 import { privateResponseHeaders } from "../src/web/v1/http-common.ts";
 
 function fixture(mode: "normal" | "bind_stalls" | "bind_error" | "close_stalls" | "close_error" = "normal",
-  applicationClose?: () => Promise<void>) {
+  applicationClose?: () => Promise<void>, demo = false) {
   let created = 0, dbCloses = 0, closes = 0, forceCloses = 0;
   let observedOptions: Readonly<ServerOptions> | undefined, listenOptions: ListenOptions | undefined;
   let completeBind: (() => void) | undefined;
@@ -25,15 +25,51 @@ function fixture(mode: "normal" | "bind_stalls" | "bind_error" | "close_stalls" 
     queueMicrotask(() => callback?.(mode === "close_error" ? new Error("synthetic close failure") : undefined)); return server; };
   server.closeIdleConnections = () => {};
   server.closeAllConnections = () => { forceCloses++; };
-  const service = createPrivateNodeService({ origin: "https://private.example.invalid", port: 3210,
+  const listener = {
+    createServer: (options: Readonly<ServerOptions>) => { created++; observedOptions = options; return server; },
+    listenerTiming: { bindMs: 20, closeMs: 25 },
+  };
+  const service = demo ? createContributorDemoService({ origin: "http://127.0.0.1:3000",
+    isReady: () => true, handle: async () => {},
+    close: async () => { dbCloses++; await applicationClose?.(); },
+  }, listener) : createPrivateNodeService({ origin: "https://private.example.invalid", port: 3210,
     application: { isReady: () => true, close: async () => { dbCloses++; await applicationClose?.(); } },
     handler: () => Response.json({ ok: true }), assets: { count: 1, digest: "synthetic", respond: () => undefined },
-    createServer: options => { created++; observedOptions = options; return server; },
-    listenerTiming: { bindMs: 20, closeMs: 25 },
+    ...listener,
   });
   return { service, server, completeBind: () => completeBind?.(), counts: () => ({ created, dbCloses, closes, forceCloses }),
     observed: () => ({ options: observedOptions, listen: listenOptions }) };
 }
+test("demo lifecycle reuses bounded loopback start, failure and cleanup without real sockets", async () => {
+  for (const mode of ["normal", "bind_stalls", "bind_error", "close_stalls"] as const) {
+    const f = fixture(mode, undefined, true);
+    assert.equal(f.counts().created, 0);
+    if (mode === "bind_stalls" || mode === "bind_error") {
+      await assert.rejects(f.service.start(), /start_failed/);
+      f.completeBind(); assert.equal(f.service.isReady(), false);
+    } else {
+      await f.service.start(); assert.equal(f.service.isReady(), true);
+      if (mode === "close_stalls") await assert.rejects(f.service.close(), /close_uncertain/);
+      else await f.service.close();
+    }
+    assert.equal(f.observed().listen?.host, "127.0.0.1");
+    assert.equal(f.observed().listen?.port, 3000);
+    assert.equal(f.counts().dbCloses, 1);
+    await assert.rejects(f.service.start(), /already_attempted/);
+  }
+  const unstarted = fixture("normal", undefined, true);
+  await unstarted.service.close(); assert.equal(unstarted.counts().created, 0);
+  assert.equal(unstarted.counts().dbCloses, 1);
+});
+test("demo service rejects other origins and invalid timing without taking ownership", () => {
+  let closes = 0;
+  const bridge = { origin: "https://private.example.invalid", isReady: () => true,
+    handle: async () => {}, close: async () => { closes++; } };
+  assert.throws(() => createContributorDemoService(bridge), /config_invalid/);
+  assert.throws(() => createContributorDemoService({ ...bridge, origin: "http://127.0.0.1:3000" },
+    { listenerTiming: { bindMs: 0 } }), /config_invalid/);
+  assert.equal(closes, 0);
+});
 test("private service is inert, starts only the fixed loopback profile and closes once", async () => {
   const f = fixture(); assert.equal(f.counts().created, 0); assert.equal(f.service.isReady(), false);
   await f.service.start(); assert.equal(f.service.isReady(), true);

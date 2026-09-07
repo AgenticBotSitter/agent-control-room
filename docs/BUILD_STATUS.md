@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor listener lifecycle reused, fake-tested:** The existing loopback server
+lifecycle now also accepts the assembled disposable demo bridge through a separate
+fixed-origin factory. It stays inert until explicit start, fixes the demo port at
+3000, and reuses bounded binding, draining and cleanup rather than a second server
+implementation. Eleven listener tests pass, including demo startup failure, late
+binding, uncertain shutdown, close-before-start and invalid configuration ownership.
+Strict types and focused lint pass. No physical listener was attempted. The CLI
+launcher, signal handling, revision journey and browser acceptance remain unfinished.
+
 **Built demo frontend and disposable backend assembled:** The contributor application
 loads the fixed `dist-contributor/client` snapshot through the existing bounded asset
 loader, adding only its exact index document. Production loading still requires the
