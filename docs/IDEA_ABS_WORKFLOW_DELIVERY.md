@@ -25,6 +25,29 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Trusted supplied-feed ingestion service
+
+`AbsFeedIngestionService` joins the reused decoder and existing PostgreSQL store. Its
+constructor captures source configuration and byte/item limits; it does not fetch or
+authorize network access. XML is decoded before SQL. A workspace lock serializes ingestion
+before reading prior source health and committing the collection. Full success advances
+lastSuccessfulAt, whereas partial/failed checks carry prior success forward. Structured
+read-failure reasons are fixed codes. Parser failures retain safe source outcomes; storage
+failures propagate and never trigger a second fetch or misleading source-failure write.
+
+Older observations are refused, without retry authority, to protect insertion-ordered
+story versions. Independent review caught that source-only chronology missed shared
+canonical URLs across feeds. The correction checks matching story lastVerifiedAt under
+the workspace lock before any writes. The added regression keeps the newer headline and
+omits the rejected source's status record. Re-review confirmed that finding addressed;
+no new concrete defect was found. Fourteen focused tests, TypeScript and focused lint
+pass after correction; 62 broader workflow tests and VPS compilation passed before it.
+These are supplied synthetic feeds and PGlite, not actual source or real PostgreSQL
+concurrency acceptance. No live HTTP port, ingestion SQL login, scheduler, provider call
+or runtime activation is added. The existing network-target guard and pinned-TLS peer
+verification were identified for reuse by the forthcoming public-source reader; the
+private mTLS connector's credentials/private-address exception must not be reused.
+
 ### Source-health projection on the news page
 
 The existing authenticated news service reads source observations using its scoped

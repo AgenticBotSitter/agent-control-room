@@ -8,7 +8,7 @@ import { canonicalizeAbsNewsDiscoveredUrlV1 } from "./collection";
 import { buildAbsNewsStoryV1 } from "./story";
 import type { AbsNewsStoryV1 } from "./types";
 
-const inputSchema = z.object({
+export const absFeedInputSchema = z.object({
   tenantId: id, workspaceId: id, projectId: id,
   source: z.object({ sourceId: id, sourceLabel: label, sourceKind: z.enum(["rss", "atom"]),
     endpointUrl: absNewsCanonicalUrlSchemaV1 }).strict(),
@@ -32,7 +32,7 @@ const digestId = (prefix: string, value: unknown) => `${prefix}:${sha256Digest(v
  * rss-parser handles XML; our small adapter binds provenance and existing story shape.
  * Invalid entries are counted, never silently treated as a complete successful feed. */
 export async function decodeAbsFeed(value: unknown) {
-  const parsed = inputSchema.safeParse(value);
+  const parsed = absFeedInputSchema.safeParse(value);
   if (!parsed.success) throw new AbsFeedDecodeError("invalid_feed");
   const { xml, source, observedAt, maxBytes, maxItems, ...scope } = parsed.data;
   const byteCount = Buffer.byteLength(xml, "utf8");

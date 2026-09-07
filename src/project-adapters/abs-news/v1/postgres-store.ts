@@ -116,6 +116,14 @@ export class PostgresAbsNewsStoreV1 {
     const statuses = rows.rows.slice(0, 50).map(row => this.source(row));
     return { statuses, nextCursor: rows.rows.length > 50 ? statuses.at(-1)!.sourceId : null };
   }
+  async getSourceStatus(sourceId: string) {
+    id.parse(sourceId);
+    const row = (await this.db.query<Row & { source_id: string; status_digest: string; checked_at: Date | string }>(
+      `SELECT source_id,status_digest,checked_at,payload,auth_tag FROM control_abs_source_observations
+       WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3 AND source_id=$4
+       ORDER BY checked_at DESC,sequence DESC LIMIT 1`, [...this.values(), sourceId])).rows[0];
+    return row ? this.source(row) : undefined;
+  }
   /** Source outcome and its articles must be visible together, including empty feeds. */
   async saveCollection(values: unknown, statusValue: unknown) {
     const status = this.sourceStatus(statusValue);

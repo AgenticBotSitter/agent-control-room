@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Feed decoding and retained outcomes now share one ingestion service:** Trusted
+composition captures source/limits/key, decodes outside SQL and commits articles plus
+source status under the existing workspace lock. Complete checks advance last success;
+partial/failed checks preserve prior success and failures omit item counts. Database
+errors propagate without being recast as source failures. Independent review found an
+older second source could replace a newer canonical story; matching story times are now
+checked before any write, and re-review confirmed the correction. Fourteen focused
+checks and TypeScript/focused lint pass; the preceding 62-test workflow suite and VPS
+build passed before the final stale-story correction. This is supplied-text/PGlite
+evidence, not real retrieval or multi-process PostgreSQL acceptance. The ingestion
+service is not mounted or granted a production login. Live reader, canonical-page
+verification, managed ownership and real-agent journeys remain unfinished.
+
 **News page now shows retained source health:** An expandable section keeps article
 actions visible while showing check times, last recorded success, test-data labels and
 unknown counts after failure. Source and story cursors paginate independently through
