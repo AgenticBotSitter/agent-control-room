@@ -1,5 +1,22 @@
 # Complete tracked-path planning inventory
 
+## Protected application content pass completed
+
+[Batch 03](research/public-source-content-review-03.json) adds 14 full-text observations:
+the eleven task-control files, task attention, private CSS and shared connection panel.
+Together the three batches cover all 28 tracked files under `private-app/app`, the four
+shared UI components imported there and two standalone build files: 34 distinct paths.
+Every recorded hash was checked against current bytes at baseline `46dc478`; all match.
+No embedded private values were observed in this bounded content review.
+
+The review records operational limitations rather than hiding them: external signing,
+page-memory-only unfinished review drafts, the Access reauthentication dependency,
+and legacy Mac/SSH/Hermes-specific connection labels. Result text is rendered as text,
+not executed. These source observations do not establish complete behavioral security,
+visual/accessibility correctness, runtime input safety or imported-service clearance.
+The shared 995-line stylesheet, deeper services, SQL, tests, assets and dependencies
+still require their relevant review. None of the 34 paths is approved for publication.
+
 ## Exact-content batch 02
 
 [Batch 02](research/public-source-content-review-02.json) records full-text review of

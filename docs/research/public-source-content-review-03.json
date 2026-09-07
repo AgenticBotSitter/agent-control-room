@@ -1,0 +1,192 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "baseline": "46dc47840ced290757a30b995a9a9ea926b72e2a",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full source text of listed task UI files inspected for embedded personal project records, credentials and private infrastructure locators. This is not a complete behavioral security audit, imported-dependency review, or licensing clearance.",
+  "entries": [
+    {
+      "path": "private-app/app/task-approval.tsx",
+      "sha256": "48ceb7d3617a2079b62b0f8b580950324787130e195c98acfcbac964143021b3",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied approval request and bounded user-selected signed JSON file; no embedded key values. Owner signing remains external and saving approval is distinct from submission.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-assignment.tsx",
+      "sha256": "928b776293ffcbb1a990352f826515a47df2c802886db291f920ee3ecfd76c4e",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied machine candidates and reservation receipt; no embedded host addresses. Assignment is displayed separately from execution approval.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-owner-review.tsx",
+      "sha256": "98f10c6e58a01dc9672159e26cf66801ed4fd7fb4d1f77c8676cc2a49dbbf909",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Result-bound review session and supplied feedback; no embedded project records. Unfinished drafts and pending checks are page-memory only; imported session logic is separately reviewable.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-owner-revision.tsx",
+      "sha256": "762466b90ccc740471bfb2ca25b602b586434de5af8844fb52783e5e01c6d596",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied saved-review revision data and encoded relative task link. Preparation does not assert execution authority.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-owner-verification.tsx",
+      "sha256": "f0a2e909d68b2a4ab20ee3390c93f62dcd55f754ac0fed355648f6c796e78730",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Configured human-check options and notes; no embedded private checks or credentials. UI explains note fingerprints and unfinished page-memory retention.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-panels.tsx",
+      "sha256": "061b3aa7c8503a6e49505efeae162f56a81df2fac03cff9c5e09e32aafc04bf7",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic supplied task/run metadata, encoded links and task proposal form. Latest proposal copy no longer claims assignment is universally unconnected.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-planning.tsx",
+      "sha256": "9c4ec799d895c68e0ce4f59ad68948d7c7b2c9e3fbed8ad6fac9f9efd9aeadac",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied preparation options and exact saved-receipt identity. No personal defaults or private infrastructure locators.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-results.tsx",
+      "sha256": "59113ba094fa61be716ae75f88573c3d07658e2cdb9eb1d784e871edcbf9ab4b",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied result bytes rendered in a read-only text area; result/review matching uses IDs and fingerprints. No automatic execution of result text; imported validation/security remains outside this content review.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-submission.tsx",
+      "sha256": "12494b2d5587b0acb909bae87af01ad09448fbd8e93818d4dd45940a00595848",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied task and packet identifiers with submission status. Queue controls depend on imported client checks; no runtime keys or network destinations embedded.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-workflow-guide.tsx",
+      "sha256": "ac48778cc8193e62116dcd6f825bedad4d390e00bfbf67ae5643788b67efca40",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Relative in-page workflow links and capability limits; no private records or identities.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/task-workspace.tsx",
+      "sha256": "cec929507adc733ef66eb5bd4c7d33bb6f075c69e987f46c2cca5fe780e11167",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic task workspace over imported browser services with initially empty draft. Fixed relative Cloudflare Access reauthentication link and page-memory review state require explicit demo setup.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/needs-me/task-attention.tsx",
+      "sha256": "714e525b718dd59e917e26c16492f09fe78a27f8e3ecd07c968184fcd5ddb809",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied task-attention records with encoded relative links and explicit no-all-clear wording; no embedded project records or private addresses.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "private-app/app/private.css",
+      "sha256": "a4bfdd969c5c0365726520798fd0633c8e6bf9aad364a16fcc041f907541153e",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Presentation rules only; no URLs, font downloads or embedded asset/data values. Shared styles and visual/accessibility behavior require separate review.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "app/components/connection-center.tsx",
+      "sha256": "95df7975706104a8384db5f4ca781777f9743747c6dcd9c889a85a4b96641ff8",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Supplied legacy connection projection; transport labels assume local Mac or private SSH and version copy assumes Hermes 0.21. No actual host identity or credentials embedded; not a generic live fleet view.",
+      "remaining": [
+        "original_code_license_authority",
+        "dependency_and_asset_review",
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    }
+  ]
+}

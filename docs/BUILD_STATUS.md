@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Protected UI content pass recorded:** [Batch 03](research/public-source-content-review-03.json)
+adds 14 observations. Across all three batches, 34 current hashes match, covering all
+28 protected-app files, four shared UI components and two build files. No embedded
+private values observed; deeper services/shared CSS/SQL/dependencies and independent
+candidate review remain. The full `pnpm test` refresh is still running in the local
+log `/private/tmp/cr-public-schema-full-test.log`; do not treat it as a completed pass.
+
 **Core-only application rehearsal found a schema gate:** Omitting the two content
 adapter migrations changes the fixed structural fingerprint, so compiled startup
 correctly refuses the smaller schema before installation and closes its pool. The
