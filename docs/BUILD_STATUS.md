@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Full feed plans now persist with owner-proposed canonical work:** Migration 0061 adds
+immutable, authenticated plan records linked to the existing jobs/projects/workspaces.
+The store saves request/workflow/job/plan atomically and checks the current job on replay.
+A fixed-source owner planning service saves audit in the same authenticated transaction;
+requests cannot select URLs, executors or limits. Revocation, expiry and audit failure
+prevent commit. An initial read query used a nonexistent normalized job column; it now
+uses the existing validated payload. Thirteen focused checks then passed. The new
+`pnpm test:idea-abs:delivery` command passed 62 base plus 134 extended checks; a final
+owner/paused-project check also passes. Eight startup/runtime-role checks, TypeScript,
+focused lint and VPS build pass. Independent source review found no introduced defect.
+The schema fingerprint was regenerated from disposable migrations through 0061.
+Production role grants, HTTP/startup mounting, actual execution admission/markers and
+real multi-agent/feed journeys remain unfinished. Nothing was deployed or read live.
+
 **Proposed feed jobs now bind source and limits to canonical job input:** The builder
 produces only draft/proposed records with one approval-required read operation, fixed
 host/port authority, full-path input binding, no credentials/filesystem access and no

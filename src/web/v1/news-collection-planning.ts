@@ -1,0 +1,67 @@
+import { z } from "zod";
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
+import { sha256Digest } from "../../security";
+import { appendAuditWith } from "../../audit/audit-store";
+import { absFeedCollectionConfigurationSchema } from "../../project-adapters/abs-news/v1/feed-collection";
+import { AbsFeedPlanStore } from "../../project-adapters/abs-news/v1/feed-plan-store";
+import { buildAbsFeedProposedWork } from "../../project-adapters/abs-news/v1/feed-job-plan";
+import { WebSessionAuthority } from "./session-authority";
+import { WebProjectService } from "./project-service";
+import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+
+const inputSchema = z.object({ sourceDigest: digestSchema, idempotencyKey: localId.refine(value => value.length >= 12) }).strict();
+const templateSchema = z.object({ configuration: absFeedCollectionConfigurationSchema,
+  executorId: localId.refine(value => value !== "executor:unassigned"), windowSeconds: z.number().int().min(60).max(3600) }).strict();
+const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: work => work(tx),
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
+
+/** Fixed server-configured source. Owner can propose a collection, not supply a URL,
+ * executor or ceiling. No HTTP mounting, ready transition, effect grant or queue write. */
+export class WebNewsCollectionPlanning {
+  private readonly template: z.infer<typeof templateSchema>;
+  private readonly authority: WebSessionAuthority;
+  private readonly projects: WebProjectService;
+  private readonly key: Uint8Array;
+  readonly sourceDigest: string;
+  constructor(db: DatabaseClient, template: unknown, key: Uint8Array, clock: () => number = Date.now) {
+    this.template = templateSchema.parse(template);
+    if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error("news_plan_key_invalid"); this.key = Uint8Array.from(key);
+    this.sourceDigest = sha256Digest(this.template);
+    const { tenantId, workspaceId } = this.template.configuration;
+    this.authority = new WebSessionAuthority(db, { tenantId, workspaceId }, clock, "task");
+    this.projects = new WebProjectService(db, { tenantId, workspaceId }, clock);
+  }
+  async propose(identity: VerifiedWebIdentity, value: unknown) {
+    const parsed = inputSchema.safeParse(value);
+    if (!parsed.success) throw new WebAccessError("invalid_request");
+    const input = parsed.data, { configuration, executorId, windowSeconds } = this.template;
+    if (input.sourceDigest !== sha256Digest(this.template)) throw new WebAccessError("conflict");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const { tenantId, workspaceId, projectId } = configuration;
+      actor.require("tasks.read", projectId, true); actor.require("tasks.propose", projectId, true);
+      // Serialize with plan saves and current owner operations; the outer authority owns precommit.
+      await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, workspaceId]);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (project.lifecycle !== "active") throw new WebAccessError("conflict");
+      const suffix = sha256Digest({ tenantId, workspaceId, projectId, ownerId: actor.id, requestKey: input.idempotencyKey }).slice(7, 47);
+      const jobId = `job:abs-feed:${suffix}`, store = new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
+      const prior = await store.get(jobId);
+      if (prior) {
+        if (sha256Digest(prior.plan.configuration) !== sha256Digest(configuration) || prior.request.requestedBy.actorId !== actor.id
+          || prior.job.authority.allowedExecutor !== executorId
+          || Date.parse(prior.job.authority.expiresAt) - Date.parse(prior.plan.plannedAt) !== windowSeconds * 1000)
+          throw new WebAccessError("conflict");
+        return { jobId, inputDigest: prior.job.inputDigest, sourceDigest: input.sourceDigest, replayed: true, startsWork: false as const };
+      }
+      const work = buildAbsFeedProposedWork({ plan: { schema: "control-room.abs-feed-plan/v1", jobId, configuration, plannedAt: actor.now },
+        requestId: `request:abs-feed:${suffix}`, workflowId: `workflow:abs-feed:${suffix}`, ownerId: actor.id, executorId,
+        expiresAt: new Date(Date.parse(actor.now) + windowSeconds * 1000).toISOString() });
+      await store.saveProposed(work);
+      await appendAuditWith(tx, { id: `audit:abs-feed-plan:${suffix}`, tenantId, workspaceId, actorId: actor.id, actorType: "human",
+        action: "tasks.propose", targetType: "job", targetId: jobId, idempotencyKey: `abs-feed-plan:${suffix}`, occurredAt: actor.now,
+        safeMetadata: { inputDigest: work.job.inputDigest, sourceDigest: input.sourceDigest, startsWork: false } });
+      return { jobId, inputDigest: work.job.inputDigest, sourceDigest: input.sourceDigest, replayed: false, startsWork: false as const };
+    });
+  }
+}

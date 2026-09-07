@@ -25,6 +25,33 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Durable plans and authenticated owner proposal
+
+Migration 0061 retains the complete signed proposed bundle in `control_abs_feed_plans`,
+with canonical job/project/workspace foreign keys and update/delete/truncate refusal.
+`AbsFeedPlanStore` rebuilds the fixed proposed shape, checks scope/HMAC/current immutable
+job material and permits exact replay while allowing ordinary job state progression.
+New proposed request/workflow/job/plan records share one transaction and workspace lock.
+The HMAC is record-integrity evidence, not whole-database rollback protection.
+
+`WebNewsCollectionPlanning` captures one server source/executor/window. Owner requests
+supply its fingerprint and an idempotency key, never a URL or permission. Current owner
+task permissions and active project are checked; deterministic scoped IDs preserve replay.
+Audit shares the outer authenticated transaction and its precommit freshness check.
+No approval, ready transition, lease, effect or queue entry is created. The service is not
+HTTP/startup mounted and its production SQL role is not granted.
+
+Initial tests found a nonexistent `control_jobs.input_digest` column assumption; the
+reader now checks the validated job payload instead. Thirteen focused tests then passed,
+covering concurrent replay, source drift, wrong scope/key, immutable storage and full
+rollback on audit failure or expiry. A final additional test rejects non-owner grants and
+paused projects. Eight startup/runtime-role checks, TypeScript, focused lint and VPS build
+pass. The new `pnpm test:idea-abs:delivery` command passed the existing 62 workflow tests
+plus 134 newer Idea/ABS checks before that last owner test was added. No actual provider,
+network source or production PostgreSQL was used. Independent source review found no
+introduced defect; its stale migration-range comment was corrected. The expected schema
+fingerprint is now computed from disposable migrations 0001–0061, not a mutable DB marker.
+
 ### Proposed feed jobs bind the complete source configuration
 
 `buildAbsFeedProposedWork` creates ordinary draft/proposed request/workflow/job records.
