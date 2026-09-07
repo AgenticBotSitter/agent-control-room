@@ -192,6 +192,19 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(sessionId === undefined ? await ideas.list(identity, url.searchParams.get("after") ?? undefined)
               : await ideas.detail(identity, sessionId), { headers: privateResponseHeaders });
           }
+          const newsSources = /^\/api\/v1\/projects\/([^/]+)\/news\/sources$/.exec(url.pathname);
+          if (newsSources) {
+            let projectId: string;
+            try { projectId = decodeURIComponent(newsSources[1]); } catch { throw new WebAccessError("invalid_request"); }
+            if (request.method === "GET") {
+              if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1)
+                throw new WebAccessError("invalid_request");
+              return Response.json(await news.sourceSettings(identity, projectId, url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+            }
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
+            return Response.json(await news.saveSourceSetting(identity, projectId, await readBoundedJson(request.body, 8192)), { headers: privateResponseHeaders });
+          }
           const newsPrepare = /^\/api\/v1\/projects\/([^/]+)\/news\/prepare$/.exec(url.pathname);
           if (newsPrepare) {
             if (request.method !== "POST" || url.search || !request.body

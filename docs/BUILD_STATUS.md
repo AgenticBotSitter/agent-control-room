@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner source-setting API connected:** Authenticated news source list/save routes
+reuse project/session authority and the settings store. Edits require owner-only
+`news.sources.manage` on an active project; operators can read within their grant
+but cannot edit. Safe digest-only audit metadata commits with the setting, and a
+repeated request preserves the existing revision without duplicate audit. Offline
+private-web grants/preflight now include source-setting SELECT/INSERT; no production
+role change occurred. Tests cover real restricted-role save/read, auth/origin denial,
+conflicts, replay and absence of news reads or jobs. Browser controls are next.
+The 300-entry delivery lane, final restricted-role HTTP tests, types, lint and VPS
+compilation pass. Independent source review found no concrete introduced defect.
+
 **Project source settings now have durable storage:** Migration 0063 and
 `PostgresNewsSourceSettings` retain the upstream source fields plus enabled state,
 with project scope, authenticated revisions, expected-version writes and pagination.

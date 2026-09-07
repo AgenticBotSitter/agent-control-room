@@ -9,13 +9,17 @@ import { buildAbsNewsWorkOrderProposalV1 } from "../../project-adapters/abs-news
 import { sha256Digest } from "../../security/digest";
 import { absResearchTaskDraft } from "./abs-research-draft";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { PostgresNewsSourceSettings, newsSourceSettingSchema } from "../../project-adapters/abs-news/v1/source-settings";
+import { appendAuditWith } from "../../audit/audit-store";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx),
   transaction: async work => work(tx), transactionWithPreCommitCheck: async (work, check) => {
     const value = await work(tx); await check(); return value;
   } });
 
-/** Read-only web composition. Ingestion and proposal writes are not granted here. */
+/** Saved-news reads, read-only task preparation and owner source-setting edits.
+ * Ingestion and agent execution are not granted here. */
 export class WebNewsService {
   private readonly authority: WebSessionAuthority;
   private readonly projects: WebProjectService;
@@ -28,6 +32,39 @@ export class WebNewsService {
       if (!(options.integrityKey instanceof Uint8Array) || options.integrityKey.length !== 32) throw new Error("news_key_invalid");
       this.key = Uint8Array.from(options.integrityKey);
     }
+  }
+  async sourceSettings(identity: VerifiedWebIdentity, projectId: string, after?: string) {
+    if (!catalogProjectIdSchema.safeParse(projectId).success || after !== undefined && !catalogProjectIdSchema.safeParse(after).success)
+      throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("projects.read", projectId);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (!this.key) return { projectId, configured: false, sources: [], nextCursor: null, canEdit: false };
+      const page = await new PostgresNewsSourceSettings(joined(tx), { ...this.scope, projectId }, this.key).list(after);
+      return { ...page, projectId, configured: true, canEdit: project.lifecycle === "active" && actor.can("news.sources.manage", projectId, true) };
+    });
+  }
+  async saveSourceSetting(identity: VerifiedWebIdentity, projectId: string, value: unknown) {
+    const parsed = z.object({ source: newsSourceSettingSchema, expectedRevision: z.number().int().min(0).max(2_147_483_646) }).strict().safeParse(value);
+    if (!parsed.success || !catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("news.sources.manage", projectId, true);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (!this.key || project.lifecycle !== "active") throw new WebAccessError("conflict");
+      const settings = new PostgresNewsSourceSettings(joined(tx), { ...this.scope, projectId }, this.key);
+      const { source, expectedRevision } = parsed.data, previous = await settings.get(source.id);
+      const replay = previous?.revision === expectedRevision + 1 && sha256Digest(previous.source) === sha256Digest(source);
+      let saved;
+      try { saved = await settings.save(source, expectedRevision, replay ? previous!.updatedAt : actor.now); }
+      catch (error) {
+        if (error instanceof Error && ["news_source_setting_conflict", "news_source_setting_stale"].includes(error.message)) throw new WebAccessError("conflict");
+        throw error;
+      }
+      if (!saved.replayed) await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, projectId,
+        actorId: actor.id, actorType: "human", action: "news.source.updated", targetType: "news_source", targetId: source.id,
+        occurredAt: actor.now, safeMetadata: { sourceDigest: sha256Digest(source), revision: saved.record.revision } });
+      return saved;
+    });
   }
   async list(identity: VerifiedWebIdentity, projectId: string, after?: string, sourceAfter?: string) {
     if (!catalogProjectIdSchema.safeParse(projectId).success

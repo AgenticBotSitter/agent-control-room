@@ -17,6 +17,29 @@ import { installNewsNavigationGuard } from "../src/web/v1/news-navigation-guard"
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(37);
 
+test("source settings HTTP edits require owner authority, replay safely, and do not collect", async t => {
+  const f = await taskFixture();
+  const app = createPrivateWebProcess({ ...startupConfig, news: { integrityKey: key }, database: { client: f.client, close: () => f.db.close() }, clock: () => now });
+  t.after(() => app.close());
+  const path = `/api/v1/projects/${f.project.projectId}/news/sources`;
+  const handle = (req: Request) => app.handle(req, () => new Response("shell"));
+  const input = { source: { id: "source:settings", name: "Example", url: "https://example.org/?feed=rss", enabled: true }, expectedRevision: 0 };
+  const saved = await handle(request(path, "POST", input)); assert.equal(saved.status, 200);
+  const receipt = await saved.json(); assert.equal(receipt.startsWork, false); assert.equal(receipt.record.revision, 1);
+  const replay = await handle(request(path, "POST", input)); assert.equal(replay.status, 200); assert.equal((await replay.json()).replayed, true);
+  const page = await (await handle(request(path))).json(); assert.equal(page.canEdit, true); assert.equal(page.sources.length, 1);
+  assert.equal((await handle(request(path, "POST", { ...input, source: { ...input.source, name: "Changed" } }))).status, 409);
+  assert.equal((await f.client.query("SELECT * FROM audit_events WHERE action='news.source.updated'")).rows.length, 1);
+  for (const table of ["control_jobs", "control_abs_source_observations", "control_abs_story_versions"])
+    assert.equal((await f.client.query(`SELECT * FROM ${table}`)).rows.length, 0);
+  const foreign = request(path, "POST", input); foreign.headers.set("origin", "https://other.example");
+  assert.equal((await handle(foreign)).status, 403);
+  const anonymous = request(path); anonymous.headers.delete("cf-access-jwt-assertion"); assert.equal((await handle(anonymous)).status, 401);
+  await f.client.query("UPDATE control_role_grants SET role_key='operator'");
+  assert.equal((await (await handle(request(path))).json()).canEdit, false);
+  assert.equal((await handle(request(path, "POST", { ...input, expectedRevision: 1 }))).status, 403);
+});
+
 test("all four article actions prepare and save ordinary proposed tasks with exact evidence", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
   const projectId = f.project.projectId, story = storyFor(projectId);
@@ -93,6 +116,10 @@ test("private news routes require current access and grant only retained-source 
   const handle = (req: Request) => app.handle(req, () => { renders++; return new Response("news-shell"); });
   const { project } = await (await handle(request(undefined, "POST", { title: "Saved news", summary: "" }))).json();
   const path = `/api/v1/projects/${project.projectId}/news`;
+  const setting = await handle(request(`${path}/sources`, "POST", { source: { id: "source:restricted", name: "Restricted role source",
+    url: "https://example.org/feed", enabled: false }, expectedRevision: 0 }));
+  assert.equal(setting.status, 200); assert.equal((await setting.json()).startsWork, false);
+  assert.equal((await (await handle(request(`${path}/sources`))).json()).sources.length, 1);
   assert.equal((await handle(request(path))).status, 200);
   assert.equal((await handle(request(`/projects/${project.projectId}/news`))).status, 200);
   assert.equal(renders, 1);

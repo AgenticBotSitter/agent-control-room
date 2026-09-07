@@ -120,7 +120,11 @@ Source setting persistence now uses PostgreSQL migration 0063 and
 `PostgresNewsSourceSettings`: upstream id/name/url plus enabled, scoped by project,
 with authenticated revisions and expected-version writes. Restart, disable, conflicts,
 scope isolation and paginated listing are tested. This replaces neither source
-authority nor scheduling. No web/runtime grants or UI route have been enabled yet.
+authority nor scheduling. Authenticated GET/POST `/api/v1/projects/:id/news/sources`
+now exposes settings: project read permission for listing, owner-only
+`news.sources.manage` and active project for edits. Audit and setting commit together.
+The offline private-web role/preflight adds only source-settings SELECT/INSERT;
+no live role change occurred. Owner-facing browser controls remain to be connected.
 Reason for this adapter rather than upstream settings persistence: one shared private
 PostgreSQL authority and project/session permissions, not machine-local global settings.
 
