@@ -17,7 +17,7 @@ export const browserErrorMessage: Record<BrowserFailureCode, string> = {
 };
 
 export function createProjectBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID()) {
-  let pending: { path: string; body: string; key: string; matches: (project: WebProject) => boolean } | undefined;
+  let pending: { path: string; body: string; key: string; uncertain: boolean; matches: (project: WebProject) => boolean } | undefined;
   let busy = false;
   async function call(path: string, method = "GET", body?: string, key?: string): Promise<Response> {
     try {
@@ -37,12 +37,17 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
     if (busy) throw new BrowserRequestError("uncertain");
     const body = JSON.stringify(value);
     if (pending && (pending.path !== path || pending.body !== body)) throw new BrowserRequestError("uncertain");
-    pending ??= { path, body, key: makeKey(), matches };
+    pending ??= { path, body, key: makeKey(), uncertain: false, matches };
     busy = true;
     try {
       const response = await call(path, "POST", body, pending.key);
       if (!response.ok) {
-        if ([400, 401, 403, 404, 409].includes(response.status)) { pending = undefined; throw new BrowserRequestError(errorFor(response.status)); }
+        if ([400, 401, 403, 404, 409].includes(response.status)) {
+          // A later denial cannot settle an earlier unconfirmed save. Retain its exact
+          // key until a matching receipt is read, just as the task client does.
+          if (!pending.uncertain) pending = undefined;
+          throw new BrowserRequestError(errorFor(response.status));
+        }
         throw new BrowserRequestError("uncertain");
       }
       const result = z.object({ project: webProjectSchema, replayed: z.boolean() }).strict().parse(await response.json());
@@ -50,7 +55,9 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
       pending = undefined;
       return result.project;
     } catch (error) {
-      throw error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain");
+      const failure = error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain");
+      if (pending && failure.code === "uncertain") pending.uncertain = true;
+      throw failure;
     } finally { busy = false; }
   }
   return {

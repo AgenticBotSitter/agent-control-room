@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Project uncertainty preservation fixed:** An unconfirmed project create/lifecycle
+save now keeps its original request key after a later 400/401/403/404/409 response.
+Only a first definitive rejection or matching success clears the relevant hold. This
+reuses the existing task-client rule, without automatic retries. Twenty-six project
+client/foundation tests, standalone TypeScript and targeted lint pass. No live effects.
+
+**Browser schema/content review advanced:** [Batch 04](research/public-source-content-review-04.json)
+records 16 more exact-file observations, bringing the count to 50. No embedded private
+values observed. This review also identified direct unbounded JSON reads in project
+and connection clients for follow-up; privacy observations are not security clearance.
+
 **Protected UI content pass recorded:** [Batch 03](research/public-source-content-review-03.json)
 adds 14 observations. Across all three batches, 34 current hashes match, covering all
 28 protected-app files, four shared UI components and two build files. No embedded

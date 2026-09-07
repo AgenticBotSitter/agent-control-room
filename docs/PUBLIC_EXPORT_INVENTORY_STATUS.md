@@ -1,5 +1,19 @@
 # Complete tracked-path planning inventory
 
+## Browser schemas and clients
+
+[Batch 04](research/public-source-content-review-04.json) covers thirteen wire schemas
+and three browser clients, for 50 distinct observed paths across the four batches.
+No embedded private values were observed. The project client observation includes its
+local uncertain-save correction, so its working-tree hash rather than the prior HEAD
+bytes defines the reviewed content. Its authorization/receipt behavior has focused
+regression coverage; that is not a comprehensive security acceptance.
+
+Follow-up found during review: project and connection clients call `response.json()`
+directly, unlike the byte-bounded attention/task readers. Review and reuse a browser-safe
+bounded reader; do not import server-side authentication/crypto into browser bundles.
+Preserve fixed errors, uncertain write identities and current same-origin request policy.
+
 ## Protected application content pass completed
 
 [Batch 03](research/public-source-content-review-03.json) adds 14 full-text observations:

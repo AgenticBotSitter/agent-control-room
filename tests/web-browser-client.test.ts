@@ -4,6 +4,35 @@ import { createProjectBrowserClient } from "../src/web/v1/browser-client.ts";
 
 const project = { projectId: "project:web", title: "Work", summary: "", lifecycle: "active", version: 1,
   createdAt: "2026-09-04T12:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+test("denied follow-up checks cannot erase an earlier uncertain project save", async () => {
+  for (const operation of ["create", "transition"]) for (const status of [400, 401, 403, 404, 409]) {
+    const keys: string[] = [], bodies: string[] = []; let calls = 0, generated = 0;
+    const expected = operation === "create" ? project : { ...project, lifecycle: "archived", version: 2 };
+    const client = createProjectBrowserClient((async (_, init) => {
+      calls++; keys.push(new Headers(init?.headers).get("idempotency-key")!); bodies.push(String(init?.body));
+      if (calls === 1) throw new Error("Unconfirmed response");
+      if (calls === 2) return new Response(null, { status });
+      return Response.json({ project: expected, replayed: true });
+    }) as typeof fetch, () => `retained-project-key-${++generated}`);
+    const save = () => operation === "create" ? client.create({ title: "Work", summary: "" }) : client.transition(project as never, "archived");
+    const replacement = () => operation === "create" ? client.create({ title: "Replacement", summary: "" }) : client.transition(project as never, "paused");
+    await assert.rejects(save(), /uncertain/);
+    await assert.rejects(client.retryPending());
+    assert.equal(client.hasPending(), true, `retain key after ${status}`);
+    await assert.rejects(replacement(), /uncertain/);
+    assert.equal(calls, 2);
+    assert.deepEqual(await client.retryPending(), expected);
+    assert.equal(client.hasPending(), false); assert.equal(generated, 1);
+    assert.equal(new Set(keys).size, 1); assert.equal(new Set(bodies).size, 1);
+  }
+});
+test("a first definitive project rejection releases the unsaved command", async () => {
+  for (const status of [400, 401, 403, 404, 409]) {
+    const client = createProjectBrowserClient((async () => new Response(null, { status })) as typeof fetch, () => "first-project-key");
+    await assert.rejects(client.create({ title: "Work", summary: "" }));
+    assert.equal(client.hasPending(), false);
+  }
+});
 test("project creation rejects a different result and retains the original explicit retry key", async () => {
   for (const mismatch of [{ title: "Different" }, { summary: "Different" }, { lifecycle: "archived" },
     { version: 2 }, { updatedAt: "2026-09-04T12:01:00.000Z" }]) {
