@@ -25,6 +25,25 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Retained Idea Lab discussion access
+
+`0599aea` adds protected GET `/api/v1/ideas` and `/api/v1/ideas/:sessionId`.
+These use owner-only workspace-wide session read/list grants, shared session revocation,
+and the existing keyed registry. Detail returns retained contributions, synthesis and
+owner decision; it does not infer a live run state from their presence. Missing keys are
+explicitly unavailable, with no fixture fallback. Exact selected session identity and
+workspace are checked; cursor pagination retains every session instead of truncating at 25.
+The private SQL role template adds SELECT only on sessions/contributions/syntheses/decisions.
+No SQL grants were applied outside disposable tests. Page mounting and commands remain open.
+Four added tests cover retained records/reopening, owner/operator rejection and wrong scope/key,
+52-session pagination, protected HTTP routes, and denied Idea table writes. TypeScript,
+focused lint, VPS compilation and 41 combined workflow/compiled-app tests pass locally.
+Independent review found a possible READ COMMITTED mixed snapshot. `e04fb08` validates
+the exact returned contribution/synthesis/decision tuple with existing parsers and rejects
+an incoherent response. The new interleaved-visibility regression and all four Idea read
+tests pass; this is injected statement visibility, not real PostgreSQL concurrency evidence.
+Independent source re-review found no residual concrete defect in the correction.
+
 ### Protected saved-news workflow and full idea brief
 
 `b98991a` and `91a82fe` add a private project News page, authenticated GET list and

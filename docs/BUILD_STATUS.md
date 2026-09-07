@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Private Idea Lab retained-discussion API implemented:** `0599aea` adds owner-only
+catalog/detail reads for saved sessions, contributions, synthesis and decisions, using
+the existing PostgreSQL registry and shared revocable web session. Catalog pagination
+is explicit (50 plus cursor), and stored session identity is checked against the selected
+row/scope. The role template adds SELECT only on the four Idea record tables. No operator,
+provider, session-create, run or promotion endpoint is enabled. The discussion page and
+command integration still need building; API availability does not mean live panels.
+Thirty-seven focused workflow tests plus four compiled-app checks pass; TypeScript,
+focused lint, VPS compilation and 16 Idea/database-role checks passed locally.
+Independent review's mixed-snapshot finding was fixed in `e04fb08` and re-reviewed
+without a residual concrete defect. Four Idea read tests now include injected
+interleaved visibility; no real concurrent PostgreSQL claim is made.
+
 **Protected article-to-task slice implemented locally:** `b98991a` / `91a82fe`
 mount `/projects/:projectId/news` and authenticated saved-story reads. Owners can
 prepare research/setup-guide drafts from exact retained versions, inspect all source
