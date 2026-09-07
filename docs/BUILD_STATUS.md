@@ -8,6 +8,23 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Discovery jobs execute through the existing lifecycle:** Explicit discovery admission
+rechecks the saved source then uses existing approval/claim/queue-reference storage.
+Execution with supplied discovery ports invokes the borrowed collector under origin,
+time and current-source checks; a verified receipt settles the ordinary job. Canonical
+attempt checks recognize the distinct discovery capability/operation/spec without
+removing owner, approval, lease, digest or no-repeat protections. Default feed admission
+and execution without discovery ports remain closed to discovery. Tests follow the
+injected HTML/alternate-feed path through saved articles and confirmed settlement,
+plus disabled sources, denied redirects, duplicate delivery and commit-time revocation.
+Initial success tests wrongly assumed an article outside the source section and exactly
+two reads; corrected fixtures/assertions preserve upstream section filtering/probing.
+All 312 delivery tests, seven focused discovery lifecycle cases, types, lint and VPS
+compilation pass. Independent source re-review found no concrete residual defect,
+including the commit-time authority fence. Native transport cleanup, actual queue/runtime mounting, browser
+refresh and article-to-agent end-to-end acceptance remain open. No live reads or
+production/GitHub changes occurred.
+
 **Discovery proposals reuse ordinary jobs:** The existing plan builder, authenticated
 proposal service and immutable plan store now accept a separate discovery plan. It
 binds the saved enabled source revision/name/URL, explicit public HTTPS origins and

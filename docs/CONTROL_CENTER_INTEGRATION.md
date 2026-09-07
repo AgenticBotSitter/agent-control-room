@@ -135,10 +135,18 @@ This distinction is necessary for HTML alternate feeds and sitemap discovery.
 
 Authenticated proposal reuses the existing owner/project checks and saves only when
 the source is enabled and the revision/name/URL match. The plan is still proposed:
-no lease, approval, network or queue action is created. Legacy admission and execution
-explicitly reject discovery plans. Next, compose the discovery executor and carry the
-same bounded plan through existing attempt/settlement checks; do not merely remove
-those rejection checks. Native transport cleanup and runtime qualification remain open.
+no lease, approval, network or queue action is created by proposal. Admission now has
+an explicit trusted `discovery` mode; the default still accepts only legacy feed plans.
+Discovery admission rechecks the saved setting before atomically authorizing and
+queueing the existing locator-only job reference. Execution requires explicitly
+supplied discovery transport ports, rechecks the source before the durable attempt
+marker, and invokes the borrowed collector. Each destination is intersected with the
+plan's origins and current local authority; the commit also rechecks current authority.
+Canonical attempt/settlement retains owner, approval, lease, digest and duplicate
+protection while recognizing the separate discovery spec, operation and capability.
+Verified receipts settle the ordinary job; uncertainty does not authorize another read.
+This composition is injected-test evidence, not application startup or native operation.
+Native transport cleanup and runtime qualification remain open.
 Offline coordinator grants/preflight now add source-settings SELECT only. Restricted
 role tests prove proposal, replay and saved-plan retrieval, with settings INSERT denied.
 Disabling a source as owner then retrying as the restricted coordinator is refused.
@@ -150,9 +158,10 @@ It starts nothing at construction and requires supplied transport/current author
 Tests exercise cancellation and verifiable completion without native requests.
 Logical settlement is not evidence of physical socket cleanup. Existing
 `abs-feed-plan/v1` grants a single fixed RSS/Atom collection; do not inject this broader
-discovery collector under that unchanged job contract. The next integration must bind
-source revision, permitted discovery destinations and total limits in the durable plan,
-then reuse the existing pg-boss dispatch and attempt settlement, not add another queue.
+discovery collector under that unchanged job contract. The separate discovery plan
+now binds source revision, destinations and total limits and uses the same attempt
+settlement. Startup must qualify and compose the reader and existing queue runtime;
+there is no separate discovery scheduler.
 
 Configured collection now composes saved source settings with the borrowed reader
 through `collectConfiguredControlCenterSource`. The caller supplies an already

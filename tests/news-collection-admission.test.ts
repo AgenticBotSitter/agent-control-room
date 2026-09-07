@@ -16,6 +16,8 @@ import type { DatabaseClient, DatabaseSession } from "../src/persistence/databas
 import type { AbsFeedJobReference } from "../src/persistence/pg-boss-abs-feed-worker";
 import { createAbsFeedJobExecution } from "../src/project-adapters/abs-news/v1/feed-job-execution";
 import { AbsFeedIngestionService } from "../src/project-adapters/abs-news/v1/feed-ingestion";
+import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
+import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 
 // Routing evidence only: real restricted-login qualification has separate tests.
 function ingestionClient(db: DatabaseClient): DatabaseClient {
@@ -66,6 +68,76 @@ test("owner approval, assignment, effect authorization and queue entry commit on
   await f.client.query("DELETE FROM synthetic_feed_queue");
   assert.equal((await f.service.approve(f.identity, f.args)).replayed, true);
   assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0);
+});
+
+test("discovery approval and borrowed execution reuse queue claims and settlement without repeat reads", async t => {
+  for (const mode of ["success", "disabled_before_approval", "disabled_before_execution", "disabled_during_read", "redirect_denied", "authority_revoked_at_commit"] as const)
+    await t.test(mode, async () => {
+      const f = await fixture();
+      try {
+        const projectScope = { tenantId: f.scope.tenantId, workspaceId: f.scope.workspaceId, projectId: f.scope.projectId };
+        const settings = new PostgresNewsSourceSettings(f.client, projectScope, f.key);
+        const source = { id: "source:discovery", name: "Example discovery", url: "https://example.org/news", enabled: true };
+        const at = new Date(now).toISOString(); await settings.save(source, 0, at);
+        const configuration = { ...projectScope,
+          source: { sourceId: source.id, sourceLabel: source.name, sourceKind: "discovery", endpointUrl: source.url },
+          expectedRevision: 1, allowedOrigins: ["https://example.org/", "https://feeds.example.org/"],
+          limits: { timeoutMs: 10000, maxAttempts: 8, maxDocumentBytes: 4096, maxReservedBodyBytes: 32768 } };
+        const planner = new WebNewsCollectionPlanning(f.client, { configuration, executorId: f.scope.executorId, windowSeconds: 300 }, f.key, f.clock);
+        const plan = await planner.propose(f.identity, { sourceDigest: planner.sourceDigest, idempotencyKey: "discovery-execution-001" });
+        const admission = new WebNewsCollectionAdmission(f.client, f.scope, f.key, f.submission, f.clock, "discovery");
+        const args = { jobId: plan.jobId, inputDigest: plan.inputDigest };
+        if (mode === "disabled_before_approval") {
+          await settings.save({ ...source, enabled: false }, 1, at);
+          await assert.rejects(admission.approve(f.identity, args), /conflict/);
+          assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0); return;
+        }
+        const approved = await admission.approve(f.identity, args);
+        assert.equal((await admission.approve(f.identity, args)).replayed, true);
+        const queued = (await f.client.query<{ reference: AbsFeedJobReference }>("SELECT reference FROM synthetic_feed_queue")).rows;
+        assert.equal(queued.length, 1);
+        if (mode === "disabled_before_execution") await settings.save({ ...source, enabled: false }, 1, at);
+        const fetched: string[] = [], resolved: string[] = [];
+        let revoked = false;
+        const ingestion = ingestionClient(f.client);
+        const guarded: DatabaseClient = { ...ingestion,
+          transactionWithPreCommitCheck: (work, check) => ingestion.transactionWithPreCommitCheck(work, async () => {
+            if (mode === "authority_revoked_at_commit") revoked = true;
+            await check();
+          }) };
+        const executor = createAbsFeedJobExecution({ coordinator: f.client, ingestion: guarded }, f.scope, f.key,
+          { assertCurrent(url) { if (revoked) throw new Error("source_revoked"); assert.ok(configuration.allowedOrigins.includes(new URL(url).origin + "/")); } }, f.clock, undefined, {
+            lookup: async host => { resolved.push(host); return [{ address: "8.8.8.8", family: 4 }]; },
+            fetch: async url => {
+              fetched.push(url.toString());
+              if (mode === "disabled_during_read") await settings.save({ ...source, enabled: false }, 1, at);
+              if (mode === "redirect_denied") return new Response(null, { status: 302, headers: { location: "https://unapproved.example.org/feed" } });
+              return new Response(url.toString() === source.url
+                ? '<html><head><link rel="alternate" type="application/rss+xml" href="https://feeds.example.org/?feed=rss"></head></html>'
+                : `<rss><channel><item><title>AI model release</title><link>https://example.org/news/model</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item></channel></rss>`);
+            },
+          });
+        if (mode === "disabled_before_execution") {
+          await assert.rejects(executor.collect(queued[0].reference, new AbortController().signal), /unavailable/);
+          assert.equal(fetched.length, 0); return;
+        }
+        const result = await executor.collect(queued[0].reference, new AbortController().signal);
+        assert.equal(result.disposition, mode === "success" ? "delivered" : "held");
+        const before = fetched.length;
+        await assert.rejects(executor.collect(queued[0].reference, new AbortController().signal));
+        assert.equal(fetched.length, before);
+        assert.equal(resolved.includes("unapproved.example.org"), false);
+        const stories = await new PostgresAbsNewsStoreV1(f.client, projectScope, f.key).listStories();
+        assert.equal(stories.stories.length, mode === "success" ? 1 : 0);
+        const effect = (await f.client.query<{ state: string }>("SELECT state FROM control_effect_intents WHERE id=$1", [approved.effectId])).rows[0];
+        assert.equal(effect.state, mode === "success" ? "confirmed" : "ambiguous");
+        if (mode === "success") {
+          assert.deepEqual(fetched.slice(0, 2), [source.url, "https://feeds.example.org/?feed=rss"]);
+          assert.ok(fetched.length <= configuration.limits.maxAttempts);
+          assert.ok(fetched.every(url => configuration.allowedOrigins.includes(new URL(url).origin + "/")));
+        }
+      } finally { await f.db.close(); }
+    });
 });
 
 test("collection HTTP admission requires owner authentication and exact protected route", async t => {

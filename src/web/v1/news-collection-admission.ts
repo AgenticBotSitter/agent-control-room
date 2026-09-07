@@ -9,6 +9,7 @@ import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import type { AbsFeedJobReference } from "../../persistence/pg-boss-abs-feed-worker";
 import { AbsFeedPlanStore } from "../../project-adapters/abs-news/v1/feed-plan-store";
 import { ABS_FEED_JOB } from "../../project-adapters/abs-news/v1/feed-job-plan";
+import { PostgresNewsSourceSettings } from "../../project-adapters/abs-news/v1/source-settings";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
@@ -27,7 +28,8 @@ export class WebNewsCollectionAdmission {
   private readonly enqueue: (tx: DatabaseSession, reference: AbsFeedJobReference) => Promise<void>;
   constructor(private readonly db: DatabaseClient, scope: unknown, key: Uint8Array,
     submission: { enqueueInSession(tx: DatabaseSession, reference: AbsFeedJobReference): Promise<void> },
-    private readonly clock: () => number = Date.now) {
+    private readonly clock: () => number = Date.now,
+    private readonly collectionMode: "feed" | "discovery" = "feed") {
     this.scope = scopeSchema.parse(scope);
     if (!(key instanceof Uint8Array) || key.length !== 32 || this.scope.executorId === "executor:unassigned") throw new Error("news_admission_config_invalid");
     this.key = Uint8Array.from(key); this.enqueue = submission.enqueueInSession.bind(submission);
@@ -47,14 +49,20 @@ export class WebNewsCollectionAdmission {
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
       const work = await new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(input.jobId);
       if (!work || work.job.inputDigest !== input.inputDigest || work.job.authority.allowedExecutor !== executorId) throw new WebAccessError("conflict");
-      // Discovery has a separate capability and multi-destination contract. Legacy
-      // admission stays closed to it until that executor is explicitly composed.
-      if (work.plan.schema !== "control-room.abs-feed-plan/v1") throw new WebAccessError("conflict");
+      if ((work.plan.schema === "control-room.abs-discovery-plan/v1") !== (this.collectionMode === "discovery"))
+        throw new WebAccessError("conflict");
+      if (work.plan.schema === "control-room.abs-discovery-plan/v1") {
+        const config = work.plan.configuration;
+        const setting = await new PostgresNewsSourceSettings(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(config.source.sourceId);
+        if (!setting?.source.enabled || setting.revision !== config.expectedRevision
+          || setting.source.name !== config.source.sourceLabel || setting.source.url !== config.source.endpointUrl)
+          throw new WebAccessError("conflict");
+      }
       const canonical = new CanonicalStore(joined(tx)), suffix = sha256Digest({ tenantId, projectId, jobId: input.jobId, inputDigest: input.inputDigest }).slice(7, 47);
       const effectId = `effect:abs-feed:${suffix}`, attemptId = `attempt:abs-feed:${suffix}`, approvalId = `approval:abs-feed:${suffix}`;
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
       const effect = effectIntentRecordSchema.parse({ ...base, kind: "effect_intent", id: effectId, jobId: input.jobId, attemptId,
-        operation: ABS_FEED_JOB.operation, operationDigest: sha256Digest("pending"), destination: work.job.authority.allowedNetworkDestinations[0],
+        operation: work.job.authority.allowedOperations[0], operationDigest: sha256Digest("pending"), destination: work.job.authority.allowedNetworkDestinations[0],
         idempotencyKey: `abs-feed-effect:${suffix}`, risk: "low", state: "proposed", approvalId });
       effect.operationDigest = computeEffectOperationDigest(effect, projectId);
       const reference: AbsFeedJobReference = { schema: "control-room.abs-feed-job/v1", tenantId, projectId,

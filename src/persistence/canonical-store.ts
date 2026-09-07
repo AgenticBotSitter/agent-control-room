@@ -919,20 +919,23 @@ export class CanonicalStore {
       const lease = leases.rows[0] ? domainEntitySchema.parse(leases.rows[0].payload) as LeaseRecord : undefined;
       const node = (await tx.query<{ state: string }>("SELECT state FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [input.tenantId, input.nodeId])).rows[0];
+      const discovery = job.specVersion === "abs-news-discovery/v1";
+      const collectionOperation = discovery ? "abs.news.discover" : "abs.feed.collect";
       if (job.projectId !== input.projectId || job.inputDigest !== input.inputDigest || job.state !== "leased"
-        || job.specVersion !== "abs-feed-collection/v1" || job.jobType !== "abs.feed.collection"
+        || !discovery && job.specVersion !== "abs-feed-collection/v1" || job.jobType !== "abs.feed.collection"
         || job.authority.allowedExecutor !== input.executorId || job.authority.allowedOperations.length !== 1
-        || job.authority.allowedOperations[0] !== "abs.feed.collect" || job.authority.effectPolicy !== "approval_required"
+        || job.authority.allowedOperations[0] !== collectionOperation || job.authority.effectPolicy !== "approval_required"
         || job.authority.maxConcurrentEffects !== 1 || job.authority.credentialRefs.length || job.authority.filesystemRoots.length
         || job.authority.maxRisk !== "low" || job.authority.maxCostUsd !== 0 || job.authority.maxDurationSeconds !== 60
-        || job.requiredCapability !== "news.public_feed.read" || job.dependsOnJobIds.length
+        || job.requiredCapability !== (discovery ? "news.public_discovery.read" : "news.public_feed.read") || job.dependsOnJobIds.length
         || job.retryPolicy.maxAttempts !== 1 || job.retryPolicy.retryAfterOrphan || job.retryPolicy.retryableFailureCodes.length
         || job.retryPolicy.backoffSeconds !== 0 || job.retryPolicy.ambiguousEffectPolicy !== "attention"
-        || job.authority.networkPolicy !== "allowlist" || job.authority.allowedNetworkDestinations.length !== 1
+        || job.authority.networkPolicy !== "allowlist" || job.authority.allowedNetworkDestinations.length < 1
+        || job.authority.allowedNetworkDestinations.length > (discovery ? 16 : 1)
         || attempt.jobId !== job.id || attempt.nodeId !== input.nodeId || attempt.state !== "leased"
         || !lease || leases.rows.length !== 1 || lease.jobId !== job.id || lease.nodeId !== input.nodeId || lease.epoch !== attempt.leaseEpoch
         || node?.state !== "active" || effect.jobId !== job.id || effect.attemptId !== attempt.id || effect.state !== "authorized"
-        || effect.operation !== "abs.feed.collect" || effect.risk !== "low" || !effect.approvalId
+        || effect.operation !== collectionOperation || effect.risk !== "low" || !effect.approvalId
         || proof.approval_id !== effect.approvalId || proof.operation_digest !== effect.operationDigest
         || effect.operationDigest !== input.operationDigest || effect.operationDigest !== computeEffectOperationDigest(effect, job.projectId)
         || effect.destination !== job.authority.allowedNetworkDestinations[0]) throw new Error("abs_feed_attempt_unavailable");
@@ -988,9 +991,10 @@ export class CanonicalStore {
       const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
       const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
       const effect = await this.#requireWith(tx, input.tenantId, "effect_intent", input.effectId) as EffectIntentRecord;
-      if (job.projectId !== input.projectId || job.specVersion !== "abs-feed-collection/v1" || job.jobType !== "abs.feed.collection"
+      const discovery = job.specVersion === "abs-news-discovery/v1";
+      if (job.projectId !== input.projectId || !discovery && job.specVersion !== "abs-feed-collection/v1" || job.jobType !== "abs.feed.collection"
         || attempt.jobId !== job.id || attempt.nodeId !== input.nodeId || effect.jobId !== job.id || effect.attemptId !== attempt.id
-        || effect.operation !== "abs.feed.collect" || effect.risk !== "low") throw new Error("abs_feed_settlement_unavailable");
+        || effect.operation !== (discovery ? "abs.news.discover" : "abs.feed.collect") || effect.risk !== "low") throw new Error("abs_feed_settlement_unavailable");
       const marker = (await tx.query<{ safe_metadata: { markerDigest?: string; deadline?: string } }>(
         "SELECT safe_metadata FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='effect_intent' AND entity_id=$2 AND to_state='executing'",
         [input.tenantId, effect.id])).rows;
