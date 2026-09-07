@@ -15,6 +15,27 @@ function safeCode(code: ArtifactStorageError["safeFailureCode"]) {
   return (error: unknown) => error instanceof ArtifactStorageError && error.safeFailureCode === code;
 }
 
+test("queued artifact writes retain the submitted identity, bytes and cancellation signal", async () => {
+  const { parent, root } = await privateRoot("control-room-artifact-snapshot-");
+  try {
+    const storage = await DisposableFilesystemArtifactStorage.create(root);
+    const input = { artifactId: "artifact:submitted", bytes: Uint8Array.from([1, 2, 3]) };
+    const pending = storage.put(input);
+    input.bytes.fill(9); input.artifactId = "artifact:changed"; input.bytes = Uint8Array.from([8]);
+    const receipt = await pending;
+    assert.equal(receipt.artifactId, "artifact:submitted");
+    assert.deepEqual(await storage.read("artifact:submitted"), Uint8Array.from([1, 2, 3]));
+    assert.equal(await storage.read("artifact:changed"), undefined);
+    const controller = new AbortController();
+    const cancellable = { artifactId: "artifact:cancelled", bytes: Uint8Array.from([4]), signal: controller.signal };
+    const cancellation = storage.put(cancellable);
+    const rejected = assert.rejects(cancellation);
+    cancellable.signal = new AbortController().signal; controller.abort();
+    await rejected;
+    assert.equal(await storage.read("artifact:cancelled"), undefined);
+  } finally { await rm(parent, { recursive: true, force: true }); }
+});
+
 test("disposable storage writes exact bytes atomically and retries idempotently without exposing its root", async () => {
   const { parent, root } = await privateRoot("control-room-artifacts-");
   try {

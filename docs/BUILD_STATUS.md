@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Queued artifact input-mutation bug fixed:** A regression reproduced a submitted
+artifact being written under a caller-mutated ID. The existing disposable filesystem
+adapter now validates and snapshots ID, bounded bytes and cancellation signal before
+queueing; later caller edits cannot rename/change the saved write or replace its signal.
+The new regression failed before the fix and passes after it. All 37 selected storage,
+simulator and task checks plus 12 native-result storage/database checks pass, along with
+both strict type checks and focused lint. Disposable filesystem readback/reopen is
+covered; no real provider, production database or new storage backend was introduced.
+Complete interactive result/review wiring remains unfinished. No GitHub write.
+
 **Unattributed favicon replaced in the local source candidate:** The initial-import
 icon's upstream source was not established. A new code-authored SVG uses only original
 geometric primitives, with provenance and SHA-256 in `PUBLIC_ASSET_PROVENANCE.md`.

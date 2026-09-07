@@ -177,8 +177,15 @@ export class DisposableFilesystemArtifactStorage implements ArtifactStoragePortV
     return adapter;
   }
 
-  put(input: ArtifactStorageWriteV1): Promise<StoredArtifactV1> {
-    const result = this.queue.then(() => this.putExclusive(input), () => this.putExclusive(input));
+  async put(input: ArtifactStorageWriteV1): Promise<StoredArtifactV1> {
+    // Snapshot before the queue or filesystem awaits. A caller may reuse its
+    // buffer/draft immediately; that must not rename or alter this write.
+    const { artifactId, bytes, signal } = input;
+    signal?.throwIfAborted();
+    validateArtifactId(artifactId);
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength > 65_536) throw new ArtifactStorageError("storage_invalid");
+    const submitted = { artifactId, bytes: Uint8Array.from(bytes), signal };
+    const result = this.queue.then(() => this.putExclusive(submitted), () => this.putExclusive(submitted));
     this.queue = result.then(() => undefined, () => undefined);
     return result;
   }
