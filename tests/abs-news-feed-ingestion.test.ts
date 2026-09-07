@@ -3,6 +3,7 @@ import test from "node:test";
 import { taskFixture } from "./helpers/web-task";
 import { AbsFeedIngestionService } from "../src/project-adapters/abs-news/v1/feed-ingestion";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 
 const at = "2026-09-07T12:00:00.000Z", later = "2026-09-07T12:01:00.000Z";
 const xml = (title = "Model news") => `<rss version="2.0"><channel><title>News</title><item><title>${title}</title><link>https://example.org/story</link></item></channel></rss>`;
@@ -23,6 +24,40 @@ test("one ingestion path records parsed articles, safe failures and last success
   await assert.rejects(f.open().ingest(xml("Old content"), at), /news_observation_stale/);
   assert.equal((await f.store.listStories()).stories[0].title, "Model news");
   assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 0);
+});
+
+test("collection receipt binds exact retained versions after newer observations arrive", async t => {
+  const f = await setup(); t.after(() => f.db.close());
+  const first = await f.open().ingest(xml(), at), replay = await f.open().ingest(xml(), at);
+  assert.deepEqual(replay.receipt, first.receipt);
+  await f.open().ingest(xml("New headline"), later);
+  const result = await new PostgresAbsNewsStoreV1(f.client, f.scope, f.key).verifyCollectionReceipt(first.receipt);
+  assert.equal(result.status.checkedAt, at); assert.equal(result.storyCount, 1); assert.equal(result.grantsNetworkAuthority, false);
+  assert.equal((await f.store.getSourceStatus(first.receipt.sourceId, first.receipt.statusDigest))?.checkedAt, at);
+  assert.equal((await f.store.getSourceStatus(first.receipt.sourceId))?.checkedAt, later);
+  for (const changed of [{ ...first.receipt, stories: [] }, { ...first.receipt, sourceId: "source:other" },
+    { ...first.receipt, projectId: "project:other" }, { ...first.receipt, startsWork: true }])
+    await assert.rejects(f.store.verifyCollectionReceipt(changed));
+  await assert.rejects(new PostgresAbsNewsStoreV1(f.client, f.scope, new Uint8Array(32).fill(44)).verifyCollectionReceipt(first.receipt));
+});
+
+test("receipt verification refuses missing retained data and preserves unsuccessful source state", async t => {
+  const f = await setup(); t.after(() => f.db.close());
+  const saved = await f.open().ingest(xml(), at);
+  for (const missing of ["control_abs_story_versions", "control_abs_source_observations"]) {
+    const session = (tx: DatabaseSession): DatabaseSession => ({ query: <T>(sql: string, values?: unknown[]) =>
+      sql.includes(`FROM ${missing}`) ? Promise.resolve({ rows: [] as T[] }) : tx.query<T>(sql, values) });
+    const db: DatabaseClient = { query: f.client.query.bind(f.client), transaction: work => f.client.transaction(tx => work(session(tx))),
+      transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
+    await assert.rejects(new PostgresAbsNewsStoreV1(db, f.scope, f.key).verifyCollectionReceipt(saved.receipt));
+  }
+  const empty = await f.open().ingest('<rss version="2.0"><channel><title>Empty feed</title></channel></rss>', "2026-09-07T12:00:30.000Z");
+  const checkedEmpty = await f.store.verifyCollectionReceipt(empty.receipt);
+  assert.equal(checkedEmpty.status.state, "available"); assert.equal(checkedEmpty.status.itemCount, 0);
+  const failed = await f.open().recordReadFailure({ checkedAt: later, reason: "read_failed" });
+  const checked = await f.store.verifyCollectionReceipt(failed.receipt);
+  assert.equal(checked.status.state, "unavailable"); assert.equal(checked.storyCount, 0);
+  assert.equal(checked.status.itemCount, undefined);
 });
 test("invalid and partial feeds retain honest outcomes without silently claiming a full successful check", async t => {
   const f = await setup(); t.after(() => f.db.close());

@@ -8,6 +8,12 @@ import { buildAbsNewsWorkOrderProposalV1, parseAbsNewsWorkOrderProposalV1 } from
 import type { AbsNewsStoryV1, AbsNewsWorkOrderProposalV1 } from "./types";
 
 const scopeSchema = z.object({ tenantId: id, workspaceId: id, projectId: id }).strict();
+const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const collectionReceiptSchema = scopeSchema.extend({ schema: z.literal("control-room.abs-collection-receipt/v1"),
+  sourceId: id, statusDigest: digestSchema,
+  stories: z.array(z.object({ storyId: id, storyDigest: digestSchema }).strict()).max(100),
+  authTag: z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/),
+}).strict();
 type Scope = z.infer<typeof scopeSchema>;
 type Row = { payload: unknown; auth_tag: string };
 
@@ -116,12 +122,14 @@ export class PostgresAbsNewsStoreV1 {
     const statuses = rows.rows.slice(0, 50).map(row => this.source(row));
     return { statuses, nextCursor: rows.rows.length > 50 ? statuses.at(-1)!.sourceId : null };
   }
-  async getSourceStatus(sourceId: string) {
+  async getSourceStatus(sourceId: string, digest?: string) {
     id.parse(sourceId);
+    if (digest !== undefined) digestSchema.parse(digest);
     const row = (await this.db.query<Row & { source_id: string; status_digest: string; checked_at: Date | string }>(
       `SELECT source_id,status_digest,checked_at,payload,auth_tag FROM control_abs_source_observations
        WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3 AND source_id=$4
-       ORDER BY checked_at DESC,sequence DESC LIMIT 1`, [...this.values(), sourceId])).rows[0];
+       AND ($5::text IS NULL OR status_digest=$5)
+       ORDER BY checked_at DESC,sequence DESC LIMIT 1`, [...this.values(), sourceId, digest ?? null])).rows[0];
     return row ? this.source(row) : undefined;
   }
   /** Source outcome and its articles must be visible together, including empty feeds. */
@@ -140,7 +148,38 @@ export class PostgresAbsNewsStoreV1 {
       const store = new PostgresAbsNewsStoreV1(joined, this.scope, this.key, this.clock);
       const saved = await store.saveStories(stories);
       const source = await store.saveSourceStatus(status);
-      return { ...saved, status: source.status, statusReplayed: source.replayed };
+      const payload = { schema: "control-room.abs-collection-receipt/v1" as const, ...this.scope,
+        sourceId: status.sourceId, statusDigest: sha256Digest(source.status),
+        stories: stories.map(story => ({ storyId: story.storyId, storyDigest: story.storyDigest }))
+          .sort((a, b) => a.storyId < b.storyId ? -1 : a.storyId > b.storyId ? 1 : 0) };
+      if (new Set(payload.stories.map(story => story.storyId)).size !== payload.stories.length)
+        throw new ProjectWorkspaceContractErrorV1("invalid_input");
+      const receipt = { ...payload, authTag: this.tag("collection-receipt", payload) };
+      return { ...saved, status: source.status, statusReplayed: source.replayed, receipt };
+    });
+  }
+  /** Verifies the exact retained versions, not today's latest source/story values.
+   * Evidence integrity is not factual verification, network permission or job completion. */
+  async verifyCollectionReceipt(value: unknown) {
+    const { authTag, ...receipt } = collectionReceiptSchema.parse(value); this.check(receipt);
+    if (authTag !== this.tag("collection-receipt", receipt)
+      || receipt.stories.some((story, index) => index > 0 && receipt.stories[index - 1].storyId >= story.storyId))
+      throw new ProjectWorkspaceContractErrorV1("integrity_failed");
+    return this.db.transaction(async tx => {
+      const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: async work => work(tx),
+        transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } };
+      const store = new PostgresAbsNewsStoreV1(joined, this.scope, this.key, this.clock);
+      await this.project(tx);
+      const status = await store.getSourceStatus(receipt.sourceId, receipt.statusDigest);
+      if (!status || (["available", "partial"].includes(status.state) ? status.itemCount !== receipt.stories.length : receipt.stories.length !== 0))
+        throw new ProjectWorkspaceContractErrorV1("integrity_failed");
+      for (const reference of receipt.stories) {
+        const story = await store.getStory(reference.storyId, reference.storyDigest);
+        if (!story || story.sourceEvidence.some(source => source.sourceId !== status.sourceId || source.observedAt !== status.checkedAt
+          || source.sourceLabel !== status.label || source.sourceKind !== status.sourceKind))
+          throw new ProjectWorkspaceContractErrorV1("integrity_failed");
+      }
+      return { receiptDigest: sha256Digest(receipt), status, storyCount: receipt.stories.length, grantsNetworkAuthority: false as const };
     });
   }
   async listStories(after?: string) {

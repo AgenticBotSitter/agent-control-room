@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Collection receipts now verify exact retained evidence:** Collection storage returns
+an authenticated, scope-bound manifest of the source-status digest and sorted unique
+story versions. Verification reads those exact historical records, authenticates them,
+and checks attribution/count consistency; later news cannot replace earlier evidence.
+Missing records, changed manifests and wrong keys fail. Empty successful feeds remain
+distinct from unavailable reads. Twenty focused store/collection checks pass, the final
+six ingestion checks pass again with the empty-feed assertion, and 199 delivery
+regressions pass, plus TypeScript, focused lint and VPS build. Independent source review
+found no concrete defect. No schema or permission change, network read, provider or
+deployment occurred. These receipts establish retained-data integrity, not factual truth
+or that a particular native request happened. The owned runtime must connect the freshly
+returned receipt to its exact job before settlement; that wiring is still next.
+
 **Coordinator feed outcomes can now settle without restarting collection:** One
 marker-bound transaction records the effect outcome, job/attempt terminal state and
 lease release. Exact replay is inert; changed outcomes are rejected. Late or already
