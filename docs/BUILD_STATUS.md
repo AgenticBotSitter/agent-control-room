@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Completion checkpoint port composed with existing etcd access:**
+`createEtcdCompletionCheckpointStoreV1` now supplies the awaited completion-store port
+using the existing bounded exact-key range/CAS implementation. It captures one trusted
+scope, rejects wrong-scope or malformed advances before transport, forwards cancellation,
+and refuses provisioning. Tests exercise real asynchronous checkpoint staging through
+scripted RPC responses: no CAS before flush, one write on success, no retry on uncertainty,
+and no initialization on missing records. All 26 selected checkpoint tests, both strict
+type checks and focused lint pass. No channel, service, credentials or deployment created.
+This is an unwired integration adapter, not qualified independent durable storage.
+The next simulated review wiring must not silently use the test-only memory checkpoint
+as restart-safe storage. Provisioning/independent restore evidence remains outstanding.
+
 **Local saved-project preview controls mounted:** `/local-preview` now reuses the
 existing project creation/catalog and task proposal/catalog/detail components through
 the local-pilot transport. Each project has its own URL/new-tab link; status changes,

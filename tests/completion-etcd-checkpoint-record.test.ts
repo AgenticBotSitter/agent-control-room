@@ -4,6 +4,8 @@ import { parseEtcdCheckpointRecord } from "../src/completion-gate/v1/etcd-checkp
 import { ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1 } from "../src/security/rollback-checkpoint";
 import { parseEtcdCheckpointAdvanceReceipt, prepareEtcdCheckpointAdvance } from "../src/completion-gate/v1/etcd-checkpoint-advance";
 import { createEtcdCheckpointAccess } from "../src/completion-gate/v1/etcd-checkpoint-access";
+import { createEtcdCompletionCheckpointStoreV1 } from "../src/completion-gate/v1/etcd-checkpoint-store";
+import { stageAsyncCompletionCheckpoint } from "../src/completion-gate/v1/async-staged-checkpoint";
 
 const binding = { clusterId: "18446744073709551615", createRevision: "9007199254740993",
   key: Buffer.from("synthetic/checkpoint"), scope: "completion-gate:synthetic" };
@@ -14,6 +16,65 @@ function fixture() {
     kvs: [{ key: Buffer.from(binding.key), value: Buffer.from(JSON.stringify(checkpoint)),
       create_revision: binding.createRevision, mod_revision: "9007199254740994", version: "1", lease: "0" }] };
 }
+
+test("completion checkpoint port rejects scope changes, initialization and cancelled calls before transport", async () => {
+  let calls = 0;
+  const options = { binding: { ...binding, key: Buffer.from(binding.key) }, timeoutMs: 1000,
+    range: () => { calls++; throw new Error("unexpected transport"); },
+    txn: () => { calls++; throw new Error("unexpected transport"); } };
+  const store = createEtcdCompletionCheckpointStoreV1(options);
+  options.binding.scope = "completion-gate:changed";
+  options.binding.key.fill(0);
+  await assert.rejects(async () => store.read(options.binding.scope), /scope_invalid/);
+  await assert.rejects(async () => store.initialize(checkpoint), /provisioning_required/);
+  await assert.rejects(async () => store.advance(rollbackCheckpointDigestV1(checkpoint), { ...checkpoint, scope: options.binding.scope }), /scope_invalid/);
+  await assert.rejects(async () => store.advance("invalid", { ...checkpoint, revision: 2 }), /digest_invalid/);
+  await assert.rejects(async () => store.read(binding.scope, AbortSignal.abort()));
+  await assert.rejects(async () => store.advance(rollbackCheckpointDigestV1(checkpoint), { ...checkpoint, revision: 2 }, AbortSignal.abort()));
+  assert.equal(calls, 0);
+  assert.throws(() => createEtcdCompletionCheckpointStoreV1({ ...options, binding: { ...binding, scope: "other:scope" } }), /scope_invalid/);
+});
+
+test("async completion staging uses the exact-key CAS port and never writes before flush", async () => {
+  let ranges = 0, writes = 0;
+  const next = { ...checkpoint, revision: 2, recordCount: 1 };
+  const store = createEtcdCompletionCheckpointStoreV1({ binding, timeoutMs: 1000,
+    range(request, _deadline, callback) {
+      ranges++; assert.deepEqual(request.key, binding.key); assert.equal(request.serializable, false);
+      callback(null, fixture()); return { cancel() {} };
+    },
+    txn(request, _deadline, callback) {
+      writes++;
+      assert.deepEqual(request, prepareEtcdCheckpointAdvance({ response: fixture(), binding,
+        expectedDigest: rollbackCheckpointDigestV1(checkpoint), next }));
+      callback(null, { header: { cluster_id: binding.clusterId, revision: "9007199254740996" }, succeeded: true,
+        responses: [{ response: "response_put", response_put: {} }] });
+      return { cancel() {} };
+    },
+  });
+  const stage = stageAsyncCompletionCheckpoint(store, "synthetic");
+  assert.deepEqual(await stage.checkpoints.read(binding.scope), checkpoint);
+  await stage.checkpoints.advance(rollbackCheckpointDigestV1(checkpoint), next);
+  assert.equal(ranges, 1); assert.equal(writes, 0);
+  await stage.flush();
+  assert.equal(ranges, 2); assert.equal(writes, 1);
+  await assert.rejects(stage.flush()); assert.equal(writes, 1);
+});
+
+test("missing or uncertain external checkpoint never becomes initialization or automatic retry", async () => {
+  let ranges = 0, writes = 0;
+  const store = createEtcdCompletionCheckpointStoreV1({ binding, timeoutMs: 1000,
+    range(_request, _deadline, callback) { ranges++; callback(null, fixture()); return { cancel() {} }; },
+    txn(_request, _deadline, callback) { writes++; callback(new Error("response lost")); return { cancel() {} }; },
+  });
+  await assert.rejects(async () => store.advance(rollbackCheckpointDigestV1(checkpoint), { ...checkpoint, revision: 2 }));
+  assert.equal(ranges, 1); assert.equal(writes, 1);
+  const missing = createEtcdCompletionCheckpointStoreV1({ binding, timeoutMs: 1000,
+    range(_request, _deadline, callback) { callback(null, { ...fixture(), count: "0", kvs: [] }); return { cancel() {} }; },
+    txn() { throw new Error("must not dispatch"); },
+  });
+  await assert.rejects(async () => missing.read(binding.scope), /record_unavailable/);
+});
 
 test("exact record retains large revisions and copies original CAS bytes", () => {
   const response = fixture();

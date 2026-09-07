@@ -23,6 +23,15 @@ E51; E51 has focused and compiled verification, not another full lifecycle run.
 
 ## The immediate critical path
 
+**2026-09-06 local source update:** The historical E64 gap below now has asynchronous
+completion-store integration and a scoped etcd storage-port adapter in
+`src/completion-gate/v1/etcd-checkpoint-store.ts`, built on the bounded exact-key RPC
+access. Scripted-transport tests pass; no real independent service is provisioned or
+qualified. Trusted binding provisioning, authenticated runtime transport, restore
+independence and actual operational acceptance remain open. The adapter cannot initialize
+a missing checkpoint. Local project/task browser controls now exist at `/local-preview`,
+but interactive acceptance and saved synthetic result/review wiring remain unfinished.
+
 **E64 configuration finding:** [Durable checkpoint gap](research/REUSE_E64_DURABLE_CHECKPOINT_GAP.md)
 is a concrete missing implementation, not an operator-supplied password. The current
 rollback-checkpoint port has only a test-memory implementation. Evaluate an existing
