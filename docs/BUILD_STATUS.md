@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner-approved real local browser trial completed:** The staged demo accepted its
+disposable login, created a project/task, generated and revised a labelled sample,
+restored both versions after reload, kept a second project separate and archived it.
+The owned server exited normally after SIGTERM; its temporary directory was absent
+and its listener was gone. Trial stayed below ten minutes with no provider, existing
+agent credentials, download, publication or deployment. Sanitized evidence and limits
+are in `CONTRIBUTOR_DEMO_BROWSER_TRIAL.md`. This is one local synthetic journey, not
+production/fleet or complete accessibility acceptance. Final release gates remain.
+
 **Final staged source reconstruction and links verified:** All 518 candidate files
 match the three private reconstruction records; no extra source or broken relative
 Markdown link was found. Automated and bounded review evidence does not prove actual
