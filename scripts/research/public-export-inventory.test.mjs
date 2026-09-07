@@ -90,4 +90,8 @@ test('contributor inventory includes its explicit launcher, browser and verifica
   }
   assert.equal(report.publicationApproved, false);
   assert.ok(report.unresolved.every(entry => entry.file.startsWith('dist-vps/')));
+  for (const file of ['src/connection-registry/v1/index.ts',
+    'src/connection-registry/v1/private-loopback-native-issuer-composition-implementation.ts']) {
+    assert.notEqual(report.entries.find(entry => entry.path === file)?.reason, 'application_or_build_import');
+  }
 });

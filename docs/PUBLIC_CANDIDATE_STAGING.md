@@ -2,6 +2,14 @@
 
 ## Contributor demo expansion review (2026-09-06)
 
+Follow-up import review replaced the local runtime's broad connection-registry barrel
+import with direct imports of the same store, intake and disabled ingress/listener
+implementations. No implementation or authority changed. The combined closure drops
+from 461 to 431 files and missing candidate additions from 80 to 50. Thirty unrelated
+re-exported modules no longer enter this preview through the demo runtime. The JSON
+expansion receipt above remains the historical pre-refinement inventory; regenerate
+against the accepted current commit before selecting candidate bytes.
+
 At private baseline `904748a297c1ed5f3debe8c3d68dcb96e90619f3`, the compiler-parser
 inventory now accepts `--with-contributor-demo` alongside `--with-compiled-tests`.
 It includes the explicit HTML/browser entry, launcher, build configuration and demo

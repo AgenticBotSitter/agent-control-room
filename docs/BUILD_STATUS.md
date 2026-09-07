@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Demo import scope reduced without changing services:** Direct connection-registry
+imports now select the same existing implementations rather than every module
+re-exported by the registry index. The preview's combined import closure falls from
+461 to 431 files; additions needed by the isolated candidate fall from 80 to 50.
+No original module was deleted or disabled. Demo runtime and inventory tests, strict
+types and focused lint pass. The expansion receipt is historical until refreshed
+against this accepted change; content review and isolated packaging remain next.
+
 **Public demo package gap measured:** The read-only export inventory now includes the
 demo launcher, browser entry and tests. Against the staged candidate, the combined
 461-file import closure identifies 80 additions and seven differences. The private

@@ -16,13 +16,13 @@ import {
 } from "../../idea-lab/v1";
 import { AuthenticatedFleetTelemetryFreshnessSourceV1,
   type ConnectionCenterFreshnessSourceV1, type ConnectionCenterRosterSourceV1 } from "../../connection-center/v1";
-import { ConnectionEnrollmentIntakeServiceV1, ConnectionRegistryStoreV1,
-  DisabledConnectionEnrollmentDeliverySourceV1, DisabledConnectionEnrollmentNodeIngressV1,
-  DisabledConnectionEnrollmentPrivateLoopbackListenerV1,
-  DisabledConnectionEnrollmentTransportAdmissionV1,
-  type ConnectionEnrollmentNodeIngressPortV1,
-  type ConnectionEnrollmentPrivateLoopbackListenerPortV1,
-  type ConnectionEnrollmentTransportAdmissionPortV1 } from "../../connection-registry/v1";
+import { ConnectionRegistryStoreV1 } from "../../connection-registry/v1/store";
+import { ConnectionEnrollmentIntakeServiceV1, DisabledConnectionEnrollmentDeliverySourceV1 } from "../../connection-registry/v1/intake";
+import { DisabledConnectionEnrollmentNodeIngressV1, type ConnectionEnrollmentNodeIngressPortV1 } from "../../connection-registry/v1/node-ingress";
+import { DisabledConnectionEnrollmentPrivateLoopbackListenerV1,
+  type ConnectionEnrollmentPrivateLoopbackListenerPortV1 } from "../../connection-registry/v1/private-loopback-framing";
+import { DisabledConnectionEnrollmentTransportAdmissionV1,
+  type ConnectionEnrollmentTransportAdmissionPortV1 } from "../../connection-registry/v1/transport-admission";
 import {
   buildProjectWorkspaceVerifiedOwnerSessionV1,
   buildProtectedProjectCatalogHighWaterV1,
