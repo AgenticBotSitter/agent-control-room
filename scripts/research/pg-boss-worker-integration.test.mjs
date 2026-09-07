@@ -308,6 +308,55 @@ test('feed pickup uses installed pg-boss with no automatic re-read after handler
   // Operational retention and completion are not permanent effect-claim evidence.
 });
 
+test('feed pickup and failure settlement run under the existing restricted operational worker role', async t => {
+  const f = await fixture(t), name = ABS_FEED_QUEUE.name;
+  await f.boss.createQueue(name, { retryLimit: 0 });
+  await f.raw.exec('CREATE TABLE control_jobs(id text PRIMARY KEY)'); // Permission probe only, not canonical job evidence.
+  await f.raw.exec(await readFile('db/roles/native_queue_worker_roles.sql', 'utf8'));
+  await f.raw.exec(`CREATE ROLE feed_worker_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+    GRANT control_room_native_queue_worker TO feed_worker_test;
+    SET search_path=pg_catalog, public; SET statement_timeout='5s'; SET lock_timeout='2s';
+    SET transaction_timeout='10s'; SET idle_in_transaction_session_timeout='5s'`);
+  const scoped = work => f.raw.transaction(async tx => {
+    await tx.exec('SET LOCAL SESSION AUTHORIZATION feed_worker_test');
+    return work(tx);
+  });
+  const db = { query: (sql, values) => scoped(tx => tx.query(sql, values)), transaction: work => scoped(tx => work({ async query(sql, values) {
+    const result = await tx.query(sql, values);
+    // PGlite-only TEMP metadata exception; no production bypass is introduced.
+    if (sql.includes('AS database_temp')) result.rows = result.rows.map(row => ({ ...row, database_temp: false }));
+    return result;
+  } })) };
+  await verifyNativeQueueWorkerDatabase(db, { host: '127.0.0.1', port: 5432, database: 'template1', username: 'feed_worker_test', password: 'synthetic-only', majorVersion: 17 });
+  await assert.rejects(db.query('SELECT * FROM control_jobs'), /permission denied/);
+  await assert.rejects(db.query('INSERT INTO control_jobs VALUES ($1)', ['job:forbidden']), /permission denied/);
+  const client = new PgBoss({ db: { executeSql: (sql, values) => scoped(async tx =>
+    values?.length ? tx.query(sql, values) : (await tx.exec(sql)).at(-1) ?? { rows: [] }) },
+    schema: spec.schema, backend: 'pglite', migrate: false, createSchema: false,
+    schedule: false, supervise: false, useListenNotify: false });
+  const errors = []; client.on('error', error => errors.push(error));
+  let worker;
+  f.workers.push({ async close() { try { await worker?.close(); } finally { await client.stop({ graceful: false }); } } });
+  await client.start();
+  const refs = ['held', 'uncertain'].map(suffix => ({ schema: 'control-room.abs-feed-job/v1', tenantId: 'tenant:feed', projectId: 'project:feed',
+    jobId: `job:${suffix}`, attemptId: `attempt:${suffix}`, effectId: `effect:${suffix}`, operationDigest: sha256Digest(suffix) }));
+  const calls = [];
+  worker = await startPgBossAbsFeedWorker(client, { async collect(reference) {
+    calls.push(reference.jobId);
+    if (reference.jobId === 'job:uncertain') throw new Error('synthetic unknown outcome');
+    return { disposition: 'held' };
+  } });
+  for (const ref of refs) await f.boss.send(name, ref, { id: absFeedJobId(ref), retryLimit: 0 });
+  await until(async () => (await f.boss.getJobById(name, absFeedJobId(refs[0])))?.state === 'completed'
+    && (await f.boss.getJobById(name, absFeedJobId(refs[1])))?.state === 'failed');
+  const failed = await f.boss.getJobById(name, absFeedJobId(refs[1]));
+  assert.equal(failed.retryLimit, 0); assert.equal(failed.retryCount, 0);
+  assert.deepEqual(calls.sort(), ['job:held', 'job:uncertain']);
+  await worker.close(); await client.stop({ graceful: false });
+  assert.equal(worker.isAccepting(), false); assert.deepEqual(errors, []);
+  // The fixture's scoped transactions do not certify production connection-pool isolation.
+});
+
 test('feed submission and its caller marker commit or roll back together with installed pg-boss', async t => {
   const f = await fixture(t), name = ABS_FEED_QUEUE.name;
   await f.boss.createQueue(name, { retryLimit: 0 });

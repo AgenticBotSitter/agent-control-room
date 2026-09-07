@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Restricted operational feed pickup is verified locally:** The installed pg-boss
+client now runs feed pickup and failure settlement through the existing restricted
+operational worker role in disposable PGlite. A held callback completes operational
+delivery; a throwing callback fails with zero retries, each called once. The login
+cannot read or write a synthetic canonical-job permission probe. All 30 installed-
+package checks, focused lint and diff checks pass. Independent source review found
+no concrete test defect. This is operational queue evidence, not canonical outcome
+settlement, durable hold evidence, network collection or production pool isolation.
+The fixture uses serialized restricted-session transactions and the existing role
+template's native-queue prerequisite; standalone feed-only provisioning is not proven.
+No production grants, services or GitHub writes occurred. **Next:** reuse managed
+worker lifecycle code for feed collection, then configured startup/source authority.
+
 **Feed submission permissions now pass installed-package testing:** The offline
 producer template requires the fixed non-retrying feed queue; an explicit `newsQueue`
 preflight option reuses existing pg-boss producer checks without recovery privileges.
