@@ -8,6 +8,22 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner feed admission is implemented locally, not mounted:** One authenticated owner
+operation binds the saved plan, assigns a configured active collector, records approval
+and effect authorization, inserts the queue reference and audit atomically. Exact replay
+returns history without requeueing, including after operational queue retention.
+Sixteen focused admission checks and 197 existing delivery regressions pass, plus
+TypeScript, focused lint and VPS compilation. Independent review found an external-grant expiry gap;
+contributing grant expirations now bound the transaction's precommit deadline. The
+regression confirms enqueue was reached before expiry and all writes rolled back.
+Its first fixture run failed on a nonexistent `granted_at` column; corrected timestamp
+columns pass. Re-review found no new concrete defect. Tests use a synthetic queue and
+disposable PGlite, not a live collector. No network, provider, deployment or GitHub write.
+**Next:** durable feed execution claim/settlement with current authority checks, then
+restricted role/startup/HTTP wiring and canonical-page verification. Retain the current
+model/effort for local implementation; real host/provider acceptance still needs scoped
+authority. Full multi-bot and article-to-agent journeys are not yet complete.
+
 **Full feed plans now persist with owner-proposed canonical work:** Migration 0061 adds
 immutable, authenticated plan records linked to the existing jobs/projects/workspaces.
 The store saves request/workflow/job/plan atomically and checks the current job on replay.
