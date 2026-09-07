@@ -5,6 +5,7 @@ import { isAbsolute, join } from "node:path";
 import { createControlRoomLocalPilotRuntimeV1 } from "../local-pilot/v1/runtime";
 import { sha256Digest } from "../security";
 import { createContributorSimulations } from "./simulations";
+import type { ContributorRevision } from "./revision";
 
 /** Disposable contributor composition, not an operational startup entry.
  * Does not read environment credentials, access Keychain, start a listener or accept
@@ -30,7 +31,7 @@ export async function createContributorDemoRuntime(repositoryRoot: string) {
       dataDir,
       ownerCode,
       runtime,
-      simulate: (request: Request, projectId: string, jobId: string) => simulations.start(runtime, request, projectId, jobId),
+      simulate: (request: Request, projectId: string, jobId: string, revision?: ContributorRevision) => simulations.start(runtime, request, projectId, jobId, revision),
       close(): Promise<void> {
         // Do not remove a database that failed to close. Retain the exact path so
         // the caller can report cleanup failure without erasing recovery evidence.

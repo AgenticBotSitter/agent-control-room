@@ -2,6 +2,7 @@ import { z } from "zod";
 import { BrowserRequestError, type BrowserFailureCode } from "../web/v1/browser-client";
 import { readBrowserJson } from "../web/v1/browser-json";
 import { catalogProjectIdSchema } from "../web/v1/project-wire";
+import { contributorRevisionSchema, type ContributorRevision } from "./revision";
 
 const receiptSchema = z.object({ simulationOnly: z.literal(true), grantsExecutionAuthority: z.literal(false),
   artifactId: catalogProjectIdSchema, jobId: catalogProjectIdSchema, projectId: catalogProjectIdSchema }).strict();
@@ -12,15 +13,18 @@ const receiptSchema = z.object({ simulationOnly: z.literal(true), grantsExecutio
  */
 export function createContributorDemoBrowserClient(transport: typeof fetch = fetch) {
   return {
-    async simulate(projectId: string, jobId: string) {
+    async simulate(projectId: string, jobId: string, revision?: ContributorRevision) {
       if (!catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success) {
         throw new BrowserRequestError("invalid_request");
       }
+      const parsedRevision = revision === undefined ? undefined : contributorRevisionSchema.safeParse(revision);
+      if (parsedRevision && !parsedRevision.success) throw new BrowserRequestError("invalid_request");
       try {
         const response = await transport("/api/v1/contributor-demo/simulations", {
           method: "POST", credentials: "same-origin", redirect: "error", cache: "no-store",
           signal: AbortSignal.timeout(10_000), headers: { accept: "application/json", "content-type": "application/json" },
-          body: JSON.stringify({ operation: "simulate_task", simulationOnly: true, projectId, jobId }),
+          body: JSON.stringify({ operation: "simulate_task", simulationOnly: true, projectId, jobId,
+            ...(parsedRevision?.success ? { revision: parsedRevision.data } : {}) }),
         });
         if (!response.ok) {
           const failures: Record<number, BrowserFailureCode> = {
@@ -31,6 +35,7 @@ export function createContributorDemoBrowserClient(transport: typeof fetch = fet
         }
         const receipt = receiptSchema.parse(await readBrowserJson(response));
         if (receipt.projectId !== projectId || receipt.jobId !== jobId) throw new Error("receipt_mismatch");
+        if (revision && receipt.artifactId === revision.parentArtifactId) throw new Error("revision_receipt_mismatch");
         return receipt;
       } catch (error) {
         throw error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain");

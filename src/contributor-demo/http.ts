@@ -6,9 +6,10 @@ import { privateResponseHeaders, readBoundedJson, webFailure } from "../web/v1/h
 import { catalogProjectIdSchema } from "../web/v1/project-wire";
 import { z } from "zod";
 import type { createContributorDemoRuntime } from "./runtime";
+import { contributorRevisionSchema } from "./revision";
 
 const simulationRequest = z.object({ operation: z.literal("simulate_task"), simulationOnly: z.literal(true),
-  projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict();
+  projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema, revision: contributorRevisionSchema.optional() }).strict();
 
 /** Request-only composition. Does not bind a socket, mount production routes or
  * discover runtime configuration. Existing handlers enforce authentication/scope.
@@ -38,9 +39,9 @@ export function createContributorDemoHttp(runtime: ControlRoomLocalPilotRuntimeV
         return failure("invalid_request", 400);
       }
       try {
-        const parsed = simulationRequest.safeParse(await readBoundedJson(request.body, 1024));
+        const parsed = simulationRequest.safeParse(await readBoundedJson(request.body, 4096));
         if (!parsed.success || request.signal.aborted) return failure("invalid_request", 400);
-        const result = await simulate(request, parsed.data.projectId, parsed.data.jobId);
+        const result = await simulate(request, parsed.data.projectId, parsed.data.jobId, parsed.data.revision);
         return Response.json(result, { headers: { ...privateResponseHeaders, "x-control-room-pilot": "repository-fake" } });
       } catch (error) {
         if (error instanceof LocalPilotErrorV1) {

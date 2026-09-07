@@ -46,6 +46,28 @@ test("disposable demo uses real local authentication and project/task services, 
   assert.match(result.text, /SIMULATED RESULT/);
   assert.match(result.text, /Compare options/);
   assert.equal(result.untrustedContent, true);
+  const revisionInput = { parentArtifactId: simulation.artifactId, feedback: "Add a short summary." };
+  const [revision, repeatedRevision] = await Promise.all([
+    demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId, revisionInput),
+    demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId, revisionInput),
+  ]);
+  assert.deepEqual(repeatedRevision, revision); assert.notEqual(revision.artifactId, simulation.artifactId);
+  const revisedResult = await demo.runtime.projectTasks.getSyntheticResult(request("GET", cookie),
+    project.project.projectId, proposed.receipt.jobId, revision.artifactId);
+  assert.match(revisedResult.text, /REVISED SAMPLE/); assert.match(revisedResult.text, /Add a short summary/);
+  assert.match(revisedResult.text, /no agent performed/);
+  assert.equal((await demo.runtime.projectTasks.getSyntheticResult(request("GET", cookie),
+    project.project.projectId, proposed.receipt.jobId, simulation.artifactId)).text, result.text);
+  await assert.rejects(demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId,
+    { ...revisionInput, feedback: "Replace the previous request." }), /revision_conflict/);
+  await assert.rejects(demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId,
+    { ...revisionInput, parentArtifactId: "artifact:missing" }), /parent_unavailable/);
+  await assert.rejects(demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId,
+    { ...revisionInput, feedback: " " }));
+  const anotherTask = await demo.runtime.projectTasks.proposeTask(request("POST", cookie), project.project.projectId,
+    { title: "Another task", instructions: "Separate task scope." }, "contributor-demo-task-002");
+  await assert.rejects(demo.simulate(request("POST", cookie), project.project.projectId, anotherTask.receipt.jobId, revisionInput),
+    /parent_unavailable/);
   const other = await demo.runtime.projectTasks.createProject(request("POST", cookie), {
     title: "Other demo project", summary: "Separate scope",
   }, "contributor-demo-project-002");
@@ -180,6 +202,18 @@ test("demo HTTP composes protected login and project routes without operational 
   assert.equal(calls, 1);
   assert.deepEqual(await browser.simulate(projectId, jobId), receipt);
   assert.equal(calls, 2);
+  const feedback = { parentArtifactId: receipt.artifactId, feedback: "Use a shorter summary." };
+  loseReply = true;
+  await assert.rejects(browser.simulate(projectId, jobId, feedback), { code: "uncertain" });
+  const revised = await browser.simulate(projectId, jobId, feedback);
+  assert.notEqual(revised.artifactId, receipt.artifactId);
+  assert.deepEqual(await browser.simulate(projectId, jobId, feedback), revised);
+  const revisionQuery = new URLSearchParams({ resource: "synthetic_result", projectId, jobId, artifactId: revised.artifactId });
+  const revisionReply = await handle(new Request(`${workspace}?${revisionQuery}`, { headers: { cookie } }));
+  assert.equal(revisionReply.status, 200);
+  assert.match((await revisionReply.json()).text, /Use a shorter summary/);
+  assert.equal((await handle(simulate({ revision: { ...feedback, feedback: "x".repeat(501) } }))).status, 400);
+  assert.equal((await handle(simulate({ revision: { ...feedback, command: "no" } }))).status, 400);
   const query = new URLSearchParams({ resource: "synthetic_result", projectId, jobId, artifactId: receipt.artifactId });
   const resultResponse = await handle(new Request(`${workspace}?${query}`, { headers: { cookie } }));
   assert.equal(resultResponse.status, 200);

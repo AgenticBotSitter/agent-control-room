@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Simulated revisions supported through the protected backend/client:** Explicit
+feedback produces a separate sample artifact without overwriting its parent. The
+session permits one immutable child per parent; identical submissions reconcile a
+lost response, while conflicting feedback is rejected. Parent project/task scope,
+feedback size and simulation-only authority remain checked. Runtime and HTTP/client
+tests verify original preservation, duplicate requests, lost replies, missing/wrong
+task parents and malformed feedback; strict types and focused lint pass. No real
+agent performs these sample changes. The revision UI and browser journey are next;
+this is not yet a complete contributor release.
+
 **Explicit contributor launch command implemented:** `pnpm demo` builds the isolated
 frontend and explicitly starts the existing fixed-loopback demo service. The launcher
 prints the one-time login code only after successful binding, handles SIGINT/SIGTERM,

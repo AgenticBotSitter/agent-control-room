@@ -4,6 +4,7 @@ import { LOCAL_PILOT_TENANT_ID_V1 } from "../local-pilot/v1/runtime";
 import { InMemoryArtifactStorage } from "../node-executor/artifact-storage";
 import { buildArtifactLineageRecord, buildTextArtifactBundle, type ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
 import { runSyntheticExecution } from "../node-executor/synthetic-executor";
+import { contributorRevisionSchema, type ContributorRevision } from "./revision";
 
 /** Session-local simulation only. Does not create native attempts, leases, approval
  * receipts or canonical completion. Completed output is exposed through the existing
@@ -14,11 +15,13 @@ export function createContributorSimulations() {
   const lineages = new Map<string, ArtifactLineageRecordV1>();
   type Receipt = { simulationOnly: true; grantsExecutionAuthority: false; artifactId: string; jobId: string; projectId: string };
   const runs = new Map<string, Promise<Receipt>>();
+  const feedbackByParent = new Map<string, string>();
   const controller = new AbortController();
   let closed = false;
   return {
     source: { storage, lineage: (id: string) => lineages.get(id) },
-    async start(runtime: ControlRoomLocalPilotRuntimeV1, request: Request, projectId: string, jobId: string): Promise<Receipt> {
+    async start(runtime: ControlRoomLocalPilotRuntimeV1, request: Request, projectId: string, jobId: string,
+      revisionInput?: ContributorRevision): Promise<Receipt> {
       if (closed || request.method !== "POST" || request.headers.get("origin") !== "http://127.0.0.1:3000") {
         throw new Error("demo_simulation_unavailable");
       }
@@ -29,13 +32,22 @@ export function createContributorSimulations() {
       const detail = await runtime.projectTasks.getTask(read, projectId, jobId);
       request.signal.throwIfAborted();
       if (closed) throw new Error("demo_simulation_unavailable");
-      const key = JSON.stringify([projectId, jobId]);
+      const revision = revisionInput === undefined ? undefined : contributorRevisionSchema.parse(revisionInput);
+      if (revision) {
+        const parent = lineages.get(revision.parentArtifactId);
+        if (!parent || parent.projectId !== projectId || parent.jobId !== jobId) throw new Error("demo_revision_parent_unavailable");
+      }
+      const key = JSON.stringify([projectId, jobId, revision?.parentArtifactId ?? null]);
+      // One immutable child per parent. Identical resubmission reconciles a lost
+      // reply; changed feedback must target the next result, not replace history.
+      if (feedbackByParent.has(key) && feedbackByParent.get(key) !== revision?.feedback) throw new Error("demo_revision_conflict");
       const existing = runs.get(key);
       if (existing) return { ...await existing };
       if (detail.task.state !== "proposed" || runs.size >= 100) throw new Error("demo_simulation_unavailable");
       const work = (async (): Promise<Receipt> => {
         const artifactId = `artifact:demo:${randomUUID()}`, attemptId = `simulation:demo:${randomUUID()}`;
-        const text = `SIMULATED RESULT — no agent was called.\n\nTask: ${detail.task.title}\n\nThis sample demonstrates result delivery, not completed research.\n`;
+        const text = `SIMULATED RESULT — no agent was called.\n\nTask: ${detail.task.title}\n\nThis sample demonstrates result delivery, not completed research.\n`
+          + (revision ? `\nREVISED SAMPLE\nPrevious result: ${revision.parentArtifactId}\nRequested change: ${revision.feedback}\n\nFeedback recorded in this sample only; no agent performed the requested change.\n` : "");
         const result = await runSyntheticExecution({ schema: "control-room.synthetic-execution/v1",
           jobId, attemptId, steps: 3, checkpointEverySteps: 1, stepDelayMilliseconds: 0, artifactText: text }, {
           signal: controller.signal, now: () => new Date().toISOString(), sleep: async () => {}, emit: () => {},
@@ -51,6 +63,7 @@ export function createContributorSimulations() {
       })();
       // Retain failed outcomes too: refreshing must not silently run another attempt.
       runs.set(key, work);
+      if (revision) feedbackByParent.set(key, revision.feedback);
       return { ...await work };
     },
     async close() {
@@ -59,6 +72,7 @@ export function createContributorSimulations() {
       await Promise.allSettled(runs.values());
       lineages.clear();
       runs.clear();
+      feedbackByParent.clear();
     },
   };
 }
