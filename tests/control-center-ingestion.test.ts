@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createIndustrySourceReader } from "../src/vendor/control-center/source-reader";
+import { safeFetchText } from "../src/vendor/control-center/safe-fetch";
 import { AbsControlCenterIngestion } from "../src/project-adapters/abs-news/v1/control-center-ingestion";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { WebNewsService } from "../src/web/v1/news-service";
@@ -46,8 +47,9 @@ test("a complete borrowed 250-story feed saves across batches with one verifiabl
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
   const key = new Uint8Array(32).fill(25), config = { ...scope, source };
   const reader = createIndustrySourceReader({ now: () => now, async readText(url) {
-    return { finalUrl: url, text: `<rss><channel>${Array.from({ length: 250 }, (_, i) =>
-      `<item><title>AI model release ${i}</title><link>https://example.org/story-${i}</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item>`).join("")}</channel></rss>` };
+    return safeFetchText(url, {}, { lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+      fetch: async () => new Response(`<rss><channel>${Array.from({ length: 250 }, (_, i) =>
+        `<item><title>AI model release ${i}</title><link>https://example.org/story-${i}</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item>`).join("")}</channel></rss>`) });
   } });
   const result = await reader.readSource(source); assert.equal(result.items.length, 250);
   let inserts = 0;

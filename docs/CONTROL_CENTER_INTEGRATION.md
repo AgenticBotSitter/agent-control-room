@@ -65,6 +65,16 @@ for live collection. No second database, scheduler or discovery algorithm was ad
 
 ## Avoid incompatible silent changes
 
+Public HTTP cohort is now retained in `src/vendor/control-center/`: complete
+upstream address classification, pinned request implementation and safe-fetch module.
+Tests inject both DNS and transport (no native requests), including the full 250-item
+reader/storage test through safe-fetch. A review found pre-aborted requests could
+launch DNS and leave a rejection unobserved; the small documented patch checks abort
+before lookup and observes already-created promises. This code is not runtime-mounted.
+Before wiring, impose configured-source authority, HTTPS-only destinations, a shared
+collection deadline/cancellation signal, total requests/bytes and cleanup accounting.
+Upstream supports HTTP and multiple address attempts; its defaults are not our grants.
+
 Reading integration now retains the complete upstream `lib/industry.ts` and an
 adapted daily-snapshot component in the actual private project news page. It offers
 recent/history/archive views and important/newest/oldest sorting over each saved

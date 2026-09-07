@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Borrowed HTTP reader cohort retained:** Full upstream address checks, pinned
+fetch and safe-fetch modules are adopted with local imports and an injected test
+seam. Fake DNS/transport tests cover private/embedded addresses, mixed DNS answers,
+pinning, redirects and response bounds. The 250-item ingestion test now passes
+through this borrowed fetch layer. Review found a pre-aborted DNS/unhandled-rejection
+bug; patched before lookup and added a no-DNS/no-transport regression. Native runtime,
+total collection budgets and configured-source authorization are not qualified.
+No runtime imports enable this transport; application wiring remains unfinished.
+The 292-entry delivery lane, types, focused lint and VPS build pass. Independent
+re-review accepted the cancellation correction. All network tests use injected
+responses; no native source reads, credentials, service or deployment occurred.
+
 **Borrowed reader and durable ingestion compose directly:** `collect(reader,
 signal, clock)` loads the stored baseline, runs the supplied upstream reader and
 commits the result with that baseline. It reuses the existing pre-commit abort

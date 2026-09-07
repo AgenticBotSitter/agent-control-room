@@ -79,3 +79,16 @@ was inspected but is not retained. No new icon/style dependency installed.
 `news-reading-view.ts` is Control Room field translation, using publication date
 or discovery date for ordering/freshness while retaining the original story fields
 for display and evidence. No collection, archive writes or task authority is added.
+# HTTP reader adoption (2026-09-07)
+
+Retained full upstream `lib/server/public-address.ts`, `pinned-fetch.ts` and
+`safe-fetch.ts` at d13e79e866cc33a1fddfe84f563ce2fb9a2113e0 under
+`src/vendor/control-center/`. MIT, copyright Matt Wolfe; existing LICENSE applies.
+Changes: local imports, remove framework-only `server-only` marker, pass the
+existing optional pinned-fetch dependency seam through the two safe-fetch exports.
+Address classification, address pinning/racing, redirect loops and body bounds remain
+upstream. Not production-mounted; no claim of total collection budget, source grants,
+HTTPS-only policy or native-runtime qualification. Tests supply fake DNS and fetch.
+Review correction: reject pre-aborted resolution before scheduling DNS, and observe
+an already-created promise when abort wins. This avoids needless lookup/unhandled
+rejection; an injected rejecting-lookup regression proves no DNS/transport call.
