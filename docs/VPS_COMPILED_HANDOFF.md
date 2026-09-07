@@ -1,6 +1,6 @@
 # VPS compiled handoff — preparation, not installation authority
 
-Updated 2026-09-06. Intended reader: the Control Room integration owner and Johnny5.
+Updated 2026-09-07. Intended reader: the Control Room integration owner and Johnny5.
 GitHub publication and deployment remain paused. Do not run production setup from this
 document. Current readiness is in BUILD_STATUS.md, not inferred from a compiled file.
 
@@ -54,6 +54,66 @@ It opens no PostgreSQL service, listener or real agent. It is not Linux/Windows 
 physical PostgreSQL acceptance merely because the command is shell-portable.
 
 ## Before production startup is permitted
+
+### Website-only and optional second address
+
+See [website delivery](WEBSITE_LOGIN_DELIVERY.md) for pending owner choices and live
+acceptance. The existing launcher passes `prepared.configuration` unchanged to the
+host; a second address needs no new launcher, process, database or queue. Assemble
+these fields inside the existing trusted operator module, not a browser form or
+public-site configuration. This illustrative fragment is deliberately incomplete
+and contains no usable production identity or endpoint:
+
+```js
+// Within the separately reviewed createConfiguration result:
+mode: "website-only",
+configuration: {
+  // Preserve the separately reviewed coordinator and other required settings.
+  web: {
+    // Preserve reviewed database, tenant/workspace, issuer, key loader and session settings.
+    origin: "https://primary.example.invalid",
+    audience: "PRIMARY_ACCESS_APPLICATION_AUDIENCE",
+    secondaryAccess: {
+      origin: "https://secondary.example.invalid",
+      audience: "SECONDARY_ACCESS_APPLICATION_AUDIENCE"
+    }
+  }
+}
+```
+
+Omit `secondaryAccess` until the alternate hostname and its permitted use are
+approved. Both sites use the same configured issuer and identity mapping, with
+distinct Access audiences. HTTPS origins must be exact and have no path or wildcard.
+Website-only mode must omit native queue/worker, machine HTTP and native TLS setup;
+it is not proof that agents can execute tasks. A database and the reviewed web and
+coordinator resources are still required. Do not copy fixture keys or role grants.
+
+Once specifically authorized, adapt the existing tunnel's hostname ingress rules
+to the same loopback service. Each route must preserve or explicitly set its own
+matching Host, enforce its own Access policy, and terminate unknown routes with a
+catch-all rejection. Keep the public welcome page on its existing separate static
+route and never route machine endpoints through the human websites. Retain the
+existing supervisor; do not introduce a second app instance to serve the alias.
+
+Acceptance must demonstrate, at the actual configured addresses:
+
+- Anonymous requests and a nonmember identity cannot read private pages, APIs or assets.
+- Each site accepts its own login; a credential from the other audience is rejected.
+- The same owner sees the same project/task data on both sites; a restricted account
+  cannot gain access by switching sites. Cross-origin writes remain denied.
+- Reload/deep links, expiration, logout, MFA and remembered sessions behave as intended
+  on desktop and phone. Observe cookies and Access-wide logout separately from the
+  already-tested application token revocation; do not assume they are identical.
+- The application origin is not Internet-accessible around Access, unknown Host
+  values are rejected, and the public welcome page exposes no private data or links.
+
+Before applying changes, retain the exact prior release and protected configuration
+through the operator's existing backup procedure, never in a public repository.
+If alias acceptance fails, disable its ingress, remove its optional application
+configuration and restore the last accepted configuration/release using the existing
+supervisor procedure. Verify the primary site and shared data still work. Do not
+drop databases, undo unrelated schema changes or delete projects to roll back an alias.
+This is a deployment handoff, not authorization to run it or a zero-downtime claim.
 
 1. Prepare one approved private PostgreSQL primary on the Hostinger VPS, not AWS RDS.
    Apply reviewed schema/role preparation through a separately authorized operator.

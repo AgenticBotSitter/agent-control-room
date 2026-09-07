@@ -36,6 +36,11 @@ separate audiences, same owner with distinct tokens, cross-origin writes and spo
 forwarded-host rejection. No actual alternate hostname is enabled by these tests.
 Private hostname, provider and employer-approved alternate use await owner answers;
 no DNS, account, service or deployment changes have been made.
+The compiled VPS handoff now maps the existing operator configuration to optional
+dual-address website-only startup, existing tunnel routing, live acceptance and
+non-destructive alias rollback. No new deployment wrapper is required: the launcher
+already passes that configuration through. The examples are incomplete placeholders,
+not production configuration or installation authority.
 The static welcome source now reflects the recorded public pre-alpha publication,
 removing stale “no public download” wording and inviting coordinated contributor
 work. Existing styling and private/public separation are unchanged. Four static-source
